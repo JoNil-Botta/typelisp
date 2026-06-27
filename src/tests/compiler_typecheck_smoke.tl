@@ -2014,17 +2014,23 @@
 (define value : i64 1)")
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-unused-source) : String
-  "(module tc.lazy.summary.macro.entry)
+  "(module tc.lazy.summary.macro.provider)
+(define summary-stub : i64 0)
+(module tc.lazy.summary.macro.entry)
 (import tc.lazy.summary.macro.provider as provider)
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-call-source) : String
-  "(module tc.lazy.summary.macro.entry)
+  "(module tc.lazy.summary.macro.provider)
+(define summary-stub : i64 0)
+(module tc.lazy.summary.macro.entry)
 (import tc.lazy.summary.macro.provider as provider)
 (define (main) : i64 (provider.hook 41))")
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-hook-source) : String
-  "(module tc.lazy.summary.macro.entry)
+  "(module tc.lazy.summary.macro.provider)
+(define summary-stub : i64 0)
+(module tc.lazy.summary.macro.entry)
 (import tc.lazy.summary.macro.provider as provider)
 (defmacro (make [factory : Module]) : Module
   (let

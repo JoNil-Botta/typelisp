@@ -56,9 +56,7 @@
   (let
     [items : (Array Pair 1) (array (Pair 1 2))]
     (begin
-      ;; Compatibility exception for #3772: borrow-place syntax still requires
-      ;; the bare array-ref alias until qualified array macro calls become places.
-      (mut-ref-field-set! (&mut (array-ref items 0)))
+      (mut-ref-field-set! (&mut (array.array-ref items 0)))
       (struct-get (array.array-ref items 0) x))))
 
 (define (tuple-field-set) : i64

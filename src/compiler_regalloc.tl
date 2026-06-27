@@ -3,9 +3,8 @@
 ;; This pass mirrors the legacy backend's planning shape without changing
 ;; assembly emission. It computes inspectable live intervals, ineligible vars,
 ;; and register/spill homes for scalar IR values. The selfhost pools keep
-;; %rsp/%rbp and the emitter's hard scratch registers reserved, and only admit
-;; caller-saved integer/XMM registers for values that cannot be clobbered by
-;; call emission.
+;; %rsp/%rbp reserved and admit caller-saved integer/XMM registers only for
+;; values that cannot be clobbered by call emission.
 (import "../stdlib/io.tl")
 (import "../stdlib/string.tl")
 (import "../stdlib/str_cat.tl")
@@ -287,9 +286,8 @@
 ;;
 ;; %rbx is callee-saved under both SysV and Win64 and was historically reserved
 ;; as the backend's hard scratch register for the right-hand operand of integer
-;; binops/compares/gep/div/shift. That scratch role moved to %r8 (caller-saved
-;; under both ABIs, only ever live inside a single instruction's emission, never
-;; across a call), freeing %rbx to join the allocatable pool. It is added LAST so
+;; binops/compares/gep/div/shift. That fixed scratch role moved under the
+;; scavenger, freeing %rbx to join the callee-saved pool. It is added LAST so
 ;; functions needing four or fewer registers keep their previous r12-r15 homes;
 ;; %rbx only homes a value once the four call-safe registers are exhausted, and
 ;; when it does the backend prologue/epilogue saves/restores it into a frame slot
@@ -311,9 +309,9 @@
 ;; Conservative caller-saved extension for the scalar opt2 pass. These registers
 ;; are caller-saved on both SysV and Win64, are not callee-saved registers that
 ;; would need prologue/epilogue save/restore, and are used only for intervals
-;; that do not span a modeled backend caller-clobber point. %r8 stays reserved as
-;; the backend's primary integer scratch, %rax is the result/scratch register,
-;; and %r10/%r11 are backend address/division scratch registers.
+;; that do not span a modeled backend caller-clobber point. This legacy helper is
+;; intentionally the three-register subset; the unified greedy pool owns
+;; %r10/%r11/%r8 behind the same clobber filter.
 (define (compiler-reg-zero-call-caller-saved-integer-registers) : CompilerRegStringList
   (compiler-reg-string-cons
     "%r9"
@@ -2266,16 +2264,16 @@
           [(= idx 1) (CompilerRegSomeString "%rsi")]
           [(= idx 2) (CompilerRegSomeString "%rdx")]
           [(= idx 3) (CompilerRegSomeString "%rcx")]
-          ;; %r8 is the backend's integer scratch register. %r9 is safe for
-          ;; clobber-free leaf ranges and the zero-call extension now checks
-          ;; preassigned conflicts before reusing it.
+          ;; Skip Linux arg4 (%r8) in this legacy zero-call pin set; the unified
+          ;; greedy pool owns %r8 behind the clobber filter.
           [(= idx 5) (CompilerRegSomeString "%r9")]
           [else CompilerRegNoString])]
       [(CompilerRegAbiWindows)
         (cond
           [(= idx 0) (CompilerRegSomeString "%rcx")]
           [(= idx 1) (CompilerRegSomeString "%rdx")]
-          ;; Windows arg2 is %r8, the backend's integer scratch register.
+          ;; Skip Win64 arg2 (%r8) in this legacy zero-call pin set; the unified
+          ;; greedy pool owns %r8 behind the clobber filter.
           [(= idx 3) (CompilerRegSomeString "%r9")]
           [else CompilerRegNoString])])))
 
@@ -8543,19 +8541,14 @@
 
 ;; Unified Greedy integer register pool: caller-saved zero-call scratch
 ;; (%r9/%rcx/%rdx) FIRST so non-call-spanning values prefer them -- no
-;; prologue/epilogue save/restore, the LLVM CSR-cost try-order -- then the
-;; callee-saved pool. The first `caller-saved-count` entries are caller-saved: a
-;; value whose live range spans a backend clobber-point (call site / op that
-;; clobbers caller-saved regs) may NOT use them (it would be clobbered across the
-;; clobber), exactly the regmask-as-interference rule. Such values start their
-;; register search at the callee-saved offset. This folds the old
-;; prepass-partition + caller-saved-overflow into ONE allocation pass.
-;; %r10/%r11 are caller-saved pool members. They are de-hardcoded in the backend
-;; (active-scavenge across GEP/copy/div/c-abi/jump/indirect-call/phi-temp) and the
-;; scavenge avoids them (superset exclude + the #23 freeness-based emergency picks
-;; a non-pool-occupied candidate). The kind-0 clobber model forbids them across
-;; calls/syscall (covering tail-indirect closure targets, c-abi return-stores,
-;; syscall arg-4 %r10); idiv no longer clobbers them (guard de-hardcoded).
+;; prologue/epilogue save/restore, the LLVM CSR-cost try-order -- then the other
+;; caller-saved pool members (%r10/%r11/%r8), then the callee-saved pool. The
+;; first `caller-saved-count` entries are caller-saved: a value whose live range
+;; spans a backend clobber-point (call site / op that clobbers caller-saved regs)
+;; may NOT use them (it would be clobbered across the clobber), exactly the
+;; regmask-as-interference rule. Such values start their register search at the
+;; callee-saved offset. This folds the old prepass-partition +
+;; caller-saved-overflow into ONE allocation pass.
 (define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
   (compiler-reg-string-cons
     "%r9"
@@ -8567,10 +8560,12 @@
           "%r10"
           (compiler-reg-string-cons
             "%r11"
-            (compiler-reg-sysv-integer-registers)))))))
+            (compiler-reg-string-cons
+              "%r8"
+              (compiler-reg-sysv-integer-registers))))))))
 
 (define (compiler-reg-greedy-caller-saved-count) : i64
-  5)
+  6)
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check
@@ -12690,7 +12685,8 @@
     [(CompilerRegPlan assignments _ _ _ _)
       ;; Seven simultaneously live values against a five-register callee-saved
       ;; pool: the first five take %r12..%r15 and %rbx, and the remaining two
-      ;; spill. %rbx joined the pool once its hard-scratch role moved to %r8.
+      ;; spill. %rbx joined the pool once its fixed scratch role moved under the
+      ;; scavenger.
       (and
         (= (compiler-reg-assignment-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 2)
@@ -15748,6 +15744,8 @@
   (let
     [zero-call-callers : CompilerRegStringList
       (compiler-reg-zero-call-caller-saved-integer-registers)]
+    [greedy-pool : CompilerRegStringList
+      (compiler-reg-greedy-integer-pool)]
     [sysv-callers : CompilerRegStringList
       (compiler-reg-sysv-caller-saved-integer-registers)]
     [sysv-callees : CompilerRegStringList
@@ -15765,16 +15763,19 @@
         (=
           (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers))
           (compiler-reg-string-list-count win-callees)))
-      ;; The primary allocatable pool admits only callee-saved registers, so a
-      ;; value homed there survives an intervening call. It must never offer a
-      ;; caller-saved register such as %r8/%r9.
+      ;; The callee-saved subpool admits only registers that survive an
+      ;; intervening call.
       (compiler-reg-string-list-contains?
         (compiler-reg-sysv-integer-registers)
         "%r12")
-      ;; The scalar zero-call extension only admits registers that are
-      ;; caller-saved under both supported x64 ABIs and safe behind the backend
-      ;; clobber-point filter. Keep backend hard scratch registers and Win64
-      ;; callee-saved %rsi/%rdi out of this pool.
+      ;; The greedy pool owns the caller-saved backend temps behind the
+      ;; clobber-point filter.
+      (= (compiler-reg-greedy-caller-saved-count) 6)
+      (compiler-reg-string-list-contains? greedy-pool "%r8")
+      (compiler-reg-string-list-contains? greedy-pool "%r10")
+      (compiler-reg-string-list-contains? greedy-pool "%r11")
+      ;; The scalar zero-call extension is the older three-register subset.
+      ;; Keep ABI/result registers and Win64 callee-saved %rsi/%rdi out of it.
       (= (compiler-reg-string-list-count zero-call-callers) 3)
       (compiler-reg-string-list-contains? zero-call-callers "%r9")
       (compiler-reg-string-list-contains? zero-call-callers "%rcx")

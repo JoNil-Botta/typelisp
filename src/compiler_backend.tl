@@ -18299,18 +18299,16 @@
 
 (define (compiler-backend-c-abi-return-store-base-exclude) : (Array String)
   (let
-    [a : (Array String) (make-array String 3)]
+    [a : (Array String) (make-array String 2)]
     (begin
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
-      ;; %r8 is still a legacy scratch candidate, not a greedy-pool member.
-      (array-set! a 2 "%r8")
       a)))
 
 (define (compiler-backend-scavenge-c-abi-return-store-base-reg) : String
   (compiler-backend-scavenge-reg-here
     (compiler-backend-c-abi-return-store-base-exclude)
-    3
+    2
     "%r11"))
 
 (define (compiler-backend-emit-c-abi-return-stores
@@ -18332,7 +18330,7 @@
       (compiler-backend-scavenge-reg
         dst
         (compiler-backend-c-abi-return-store-base-exclude)
-        3
+        2
         "%r11")]
     [scratch-asm : String
       (string-append
@@ -25708,22 +25706,20 @@
       (array-set! a 6 (if (string-eq r2 "") "%rax" r2))
       a)))
 
-;; Scavenge candidate pool. The allocator-owned entries must stay in sync with
+;; Scavenge candidate pool. The entries must stay in sync with
 ;; compiler-reg-greedy-integer-pool's caller-saved and callee-saved registers.
-;; %r8 is still a legacy backend scratch candidate until its remaining fixed
-;; templates are moved under allocator ownership. Non-candidates such as
-;; %rax/%rsi/%rdi are ABI/result registers or are not tracked by the liveness
-;; query in this pool.
+;; Non-candidates such as %rax/%rsi/%rdi are ABI/result registers or are not
+;; tracked by the liveness query in this pool.
 (define (compiler-backend-scavenge-candidates) : (Array String)
   (let
     [a : (Array String) (make-array String 11)]
     (begin
-      (array-set! a 0 "%r8")
-      (array-set! a 1 "%r9")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "%rdx")
-      (array-set! a 4 "%r10")
-      (array-set! a 5 "%r11")
+      (array-set! a 0 "%r9")
+      (array-set! a 1 "%rcx")
+      (array-set! a 2 "%rdx")
+      (array-set! a 3 "%r10")
+      (array-set! a 4 "%r11")
+      (array-set! a 5 "%r8")
       (array-set! a 6 "%r12")
       (array-set! a 7 "%r13")
       (array-set! a 8 "%r14")

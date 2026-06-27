@@ -6412,7 +6412,7 @@
                     (compiler-backend-var-register-home assignments dst)]
                   ;; vreg-model: a register-homed 8-byte dst takes the spilled word
                   ;; straight into its home (movq operand, dst-home), skipping the
-                  ;; %rax stage + store -- this is the struct-word/param move flood
+                  ;; temp stage + store -- this is the struct-word/param move flood
                   ;; (e.g. (struct-get pair left) of a spilled register-group arg).
                   ;; An 8-byte scalar word fills the whole register; float words can
                   ;; also load directly to an XMM home. Spilled / narrow scalar dsts
@@ -11074,46 +11074,8 @@
                   dst
                   addr-reg)))])))))
 
-(define (compiler-backend-gep-index-asm [scale : i64] [index-reg : String]) : String
-  (if (= scale 1)
-    (str-cat "    addq " index-reg ", %rax\n")
-    (if (or (= scale 2) (= scale 4) (= scale 8))
-      (str-cat
-        "    leaq (%rax,"
-        index-reg
-        ","
-        (int->string scale)
-        "), %rax\n"
-        "")
-      (string-append
-        (str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
-        (str-cat "    addq " index-reg ", %rax\n")))))
-
-(define (compiler-backend-gep-index-r10-asm [scale : i64] [index-reg : String]) : String
-  (if (= scale 1)
-    (str-cat "    addq " index-reg ", %r10\n")
-    (if (or (= scale 2) (= scale 4) (= scale 8))
-      (str-cat
-        "    leaq (%r10,"
-        index-reg
-        ","
-        (int->string scale)
-        "), %r10\n"
-        "")
-      (string-append
-        (str-cat "    imulq $" (int->string scale) ", " index-reg "\n")
-        (str-cat "    addq " index-reg ", %r10\n")))))
-
-(define (compiler-backend-gep-index-address-r10
-  [scale : i64]
-  [index-reg : String]) : String
-  (if (or (= scale 1) (= scale 2) (= scale 4) (= scale 8))
-    (str-cat "(%r10," index-reg "," (int->string scale) ")" "")
-    ""))
-
-;; Generic (base-reg-parameterized) form of gep-index-r10-asm: fold the scaled
-;; index into base-reg in place for non-SIB scales (1 or odd), so a scavenged
-;; base register works the same way %r10 did.
+;; Fold the scaled index into base-reg in place for non-SIB scales (1 or odd),
+;; so a scavenged base register works the same way the old fixed scratch did.
 (define (compiler-backend-gep-index-base-asm
   [base-reg : String]
   [scale : i64]
@@ -11144,24 +11106,8 @@
     (str-cat "(" base-reg "," index-reg "," (int->string scale) ")")
     ""))
 
-(define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
-  (if (= disp 0)
-    (CompilerBackendSomeAsm "")
-    (if (compiler-backend-imm32? disp)
-      (CompilerBackendSomeAsm
-        (str-cat "    addq $" (int->string disp) ", %rax\n" ""))
-      (CompilerBackendNoAsm))))
-
-(define (compiler-backend-gep-immediate-r10-asm [disp : i64]) : CompilerBackendMaybeAsm
-  (if (= disp 0)
-    (CompilerBackendSomeAsm "")
-    (if (compiler-backend-imm32? disp)
-      (CompilerBackendSomeAsm
-        (str-cat "    addq $" (int->string disp) ", %r10\n" ""))
-      (CompilerBackendNoAsm))))
-
-;; Generic (base-reg-parameterized) form of gep-immediate-r10-asm: fold a constant
-;; displacement into base-reg in place, so a scavenged base works like %r10 did.
+;; Fold a constant displacement into base-reg in place, so a scavenged base works
+;; like the old fixed scratch did.
 (define (compiler-backend-gep-immediate-base-asm
   [base-reg : String]
   [disp : i64]) : CompilerBackendMaybeAsm
@@ -11180,9 +11126,8 @@
   [elem-ty : AstType]) : ResultCompilerBackend
   ;; vreg-model: when the GEP result has a register home and the base is already
   ;; in a register, compute the address straight into that home with a single
-  ;; leaq (constant offset), instead of loading base into %rax, adding, and
-  ;; storing it (bucket f). Variable-index GEPs and spilled/stack operands fall
-  ;; through to the staged %rax path.
+  ;; leaq (constant offset). Variable-index GEPs and spilled/stack operands fall
+  ;; through to the staged/scavenged path.
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     [base-reg : String

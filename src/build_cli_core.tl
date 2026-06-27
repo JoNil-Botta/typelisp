@@ -2973,6 +2973,32 @@
         (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
         0)]))
 
+(define (build-package-write-assembly
+  [path : String]
+  [asm : String]
+  [target : CompilerBackendTarget]) : SourceToolCommandStatus
+  (match (source-tool-write-file
+    path
+    asm
+    "build: failed to write package assembly")
+    [(SourceToolCommandErr message) (SourceToolCommandErr message)]
+    [(SourceToolCommandOk)
+      (let
+        [haystack : String asm]
+        [needle : String ".note.GNU-stack"]
+        [note : String (source-tool-noexecstack-note)]
+        (if (and
+          (compiler-backend-target-linux? target)
+          (not (string.string-contains (& haystack) (& needle))))
+          (match (io.try-append-file (& path) (& note))
+            [(io.OkIoUnit) SourceToolCommandOk]
+            [(io.ErrIoUnit error)
+              (SourceToolCommandErr
+                (str_cat.str-cat
+                  "build: failed to write package assembly: "
+                  (io.io-error-message error)))])
+          SourceToolCommandOk))]))
+
 (define (build-package-finish-artifacts
   [kind : CompilerPkgKind]
   [target : CompilerBackendTarget]
@@ -2984,10 +3010,7 @@
   [tlci-text : String]
   [asm : String]
   [direct-object : ResultSourceToolString]) : i64
-  (match (source-tool-write-file
-    asm-path
-    (source-tool-augment-assembly-for-target asm target)
-    "build: failed to write package assembly")
+  (match (build-package-write-assembly asm-path asm target)
     [(SourceToolCommandErr message)
       (begin
         (io.print-error message)

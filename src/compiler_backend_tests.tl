@@ -8950,6 +8950,50 @@
       (IrInstrCast 6 (IrValueVar 5) (AstTyF32) (AstTyF64))
       "    cvtss2sd %xmm0, %xmm0\n")))
 
+(define (compiler-backend-direct-float-precision-cast-asm
+  [from-ty : AstType]
+  [to-ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-cast
+    "test_cast"
+    "entry"
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm2"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    from-ty
+    to-ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-direct-float-precision-cast-home-ok?) : bool
+  (match (compiler-backend-direct-float-precision-cast-asm
+    (AstTyF64)
+    (AstTyF32))
+    [(OkCompilerBackend narrow-asm)
+      (match (compiler-backend-direct-float-precision-cast-asm
+        (AstTyF32)
+        (AstTyF64))
+        [(OkCompilerBackend widen-asm)
+          (and
+            (compiler-backend-string-contains?
+              narrow-asm
+              "    movsd %xmm2, %xmm3\n")
+            (compiler-backend-string-contains?
+              narrow-asm
+              "    cvtsd2ss %xmm3, %xmm3\n")
+            (compiler-backend-string-contains?
+              widen-asm
+              "    movss %xmm2, %xmm3\n")
+            (compiler-backend-string-contains?
+              widen-asm
+              "    cvtss2sd %xmm3, %xmm3\n")
+            (not (compiler-backend-string-contains? narrow-asm "%xmm0"))
+            (not (compiler-backend-string-contains? widen-asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-bitcast-shape-ok?) : bool
   (and
     (backend-and4
@@ -12450,7 +12494,9 @@
         (compiler-backend-scavenge-pooled-r10-r11-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
-        (compiler-backend-numeric-cast-shape-ok?)
+        (and
+          (compiler-backend-numeric-cast-shape-ok?)
+          (compiler-backend-direct-float-precision-cast-home-ok?))
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)

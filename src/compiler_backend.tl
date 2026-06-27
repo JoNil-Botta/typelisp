@@ -11133,6 +11133,21 @@
         [_ ""])]
     [_ ""]))
 
+(define (compiler-backend-float-precision-cast-reg-asm
+  [from-ty : AstType]
+  [to-ty : AstType]
+  [reg : String]) : String
+  (match from-ty
+    [(AstTyF64)
+      (match to-ty
+        [(AstTyF32) (str-cat "    cvtsd2ss " reg ", " reg "\n")]
+        [_ ""])]
+    [(AstTyF32)
+      (match to-ty
+        [(AstTyF64) (str-cat "    cvtss2sd " reg ", " reg "\n")]
+        [_ ""])]
+    [_ ""]))
+
 (define (compiler-backend-int-to-float-cast-asm [to-ty : AstType]) : String
   (match to-ty
     [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
@@ -11195,23 +11210,40 @@
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-float-value-with-plan
-    assignments
-    src
-    from-ty
-    "%xmm0")
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
-        (string-append
-          load
-          (string-append
-            (compiler-backend-float-precision-cast-asm from-ty to-ty)
-            (compiler-backend-emit-store-float-var-with-plan
-              assignments
-              dst
-              "%xmm0"
-              to-ty))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        src
+        from-ty
+        dst-home)
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (compiler-backend-float-precision-cast-reg-asm
+                from-ty
+                to-ty
+                dst-home)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+      (match (compiler-backend-emit-load-float-value-with-plan
+        assignments
+        src
+        from-ty
+        "%xmm0")
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (string-append
+              load
+              (string-append
+                (compiler-backend-float-precision-cast-asm from-ty to-ty)
+                (compiler-backend-emit-store-float-var-with-plan
+                  assignments
+                  dst
+                  "%xmm0"
+                  to-ty))))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-int-to-float-cast
   [function : String]

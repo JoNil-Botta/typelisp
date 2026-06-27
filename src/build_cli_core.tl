@@ -2620,6 +2620,11 @@
     [(ResultSourceToolString.Err message)
       (SourceToolDirectObjectUnavailable message)]))
 
+(define (build-package-direct-object-mode? [mode : CompilerBackendMode]) : bool
+  (match mode
+    [(BackendModeScalar) true]
+    [_ false]))
+
 (define (build-package-try-render-linux-direct-object
   [kind : CompilerPkgKind]
   [target : CompilerBackendTarget]
@@ -2629,7 +2634,9 @@
   [crt-entry : bool]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultSourceToolString
-  (if (compiler-backend-target-linux? target)
+  (if (and
+    (compiler-backend-target-linux? target)
+    (build-package-direct-object-mode? mode))
     (match (compiler-driver-emit-package-loaded-object-image
       ""
       target
@@ -3093,6 +3100,32 @@
           asm
           (ResultSourceToolString.Err direct-message)))]))
 
+(define (build-package-write-side-assembly
+  [target : CompilerBackendTarget]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [owned-paths : AstDeclPathList]
+  [asm-path : String]) : SourceToolCommandStatus
+  (match (compiler-driver-emit-package-loaded
+    ""
+    target
+    true
+    opt-level
+    mode
+    emit-entry
+    crt-entry
+    decls
+    owned-paths)
+    [(ErrCompilerDriver diag)
+      (SourceToolCommandErr (compiler-diagnostic-render (box-get diag)))]
+    [(OkCompilerDriver asm)
+      (begin
+        (compiler-driver-release-lower-arenas-after-emit!)
+        (build-package-write-assembly asm-path asm target))]))
+
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
     [(AstDeclPathNil) AstDeclPathNil]
@@ -3298,12 +3331,26 @@
                               effective-link-inputs)]
                           (match direct-status
                             [(SourceToolDirectObjectOk)
-                              (begin
-                                (compiler-driver-reset-file-state!)
-                                (build-package-finish-built-artifact
-                                  artifact-path
-                                  tlci-path
-                                  tlci-text))]
+                              (match (build-package-write-side-assembly
+                                target
+                                opt-level
+                                mode
+                                emit-entry
+                                crt-entry
+                                decls
+                                owned-paths
+                                asm-path)
+                                [(SourceToolCommandErr message)
+                                  (begin
+                                    (io.print-error message)
+                                    1)]
+                                [(SourceToolCommandOk)
+                                  (begin
+                                    (compiler-driver-reset-file-state!)
+                                    (build-package-finish-built-artifact
+                                      artifact-path
+                                      tlci-path
+                                      tlci-text))])]
                             [(SourceToolDirectObjectErr message)
                               (begin
                                 (io.print-error message)

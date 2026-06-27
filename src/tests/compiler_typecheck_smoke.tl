@@ -1993,17 +1993,30 @@
 
 (define (compiler-typecheck-smoke-qualified-array-source) : String
   "(import stdlib.array)
+(define (take-array-ref [r : (& items i64)]) : i64 1)
 (define (main) : i64
   (let
     [items : (Array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 3 4)]
     (begin
       (array.array-set! items 0 (array.array-ref fixed 1))
-      (array.array-push! items 9)
-      (+ (array.array-length items) (array.array-ref items 0)))))")
+      (let
+        [borrow-score : i64
+          (let
+            [borrowed : (& items i64) (& (array.array-ref items 0))]
+            (take-array-ref borrowed))]
+        (begin
+          (array.array-push! items 9)
+          (+ borrow-score (+ (array.array-length items) (array.array-ref items 0))))))))")
 
 (define (compiler-typecheck-smoke-qualified-array-ok?) : bool
   (compiler-typecheck-ok? (compiler-typecheck-smoke-qualified-array-source)))
+
+(test
+  compiler-typecheck-qualified-array-borrow
+  (if (compiler-typecheck-smoke-qualified-array-ok?)
+    unit
+    (io.panic "typecheck: qualified array borrow smoke failed")))
 
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-source) : String
   "(module helper.module)

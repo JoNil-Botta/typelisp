@@ -41412,6 +41412,343 @@
   [e : i64]) : AstExprList
   (ast-expr-cons a (macro-str-cat-fast-list4 b c d e)))
 
+(define (macro-array-module? [definition-module : String]) : bool
+  (or
+    (string-eq definition-module "stdlib.array")
+    (string-eq definition-module "stdlib/array")))
+
+(define (macro-array-fast-path-base-known? [base : String]) : bool
+  (or
+    (string-eq base "make-array")
+    (string-eq base "array-length")
+    (string-eq base "array-ref")
+    (string-eq base "array-set!")
+    (string-eq base "array-push!")))
+
+(define (macro-array-fast-path?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (macro-array-module? definition-module)
+    (macro-array-fast-path-base-known? (macro-core-fast-path-base macro-name))))
+
+(define (macro-array-fast-private-call [name : String] [args : AstExprList]) : i64
+  (ast-expr-call (macro-core-fast-var name) args))
+
+(define (macro-array-fast-make-array
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons type-id rest1-box)
+      (let
+        [type-expr : AstExpr (ast-node-get type-id)]
+        [rest1 : AstExprList (box-get rest1-box)]
+        (match rest1
+          [(AstExprCons count-id rest2-box)
+            (match (box-get rest2-box)
+              [(AstExprNil)
+                (match (macro-type-arg-with-fallback
+                  ctx
+                  decls
+                  (tc-context-module ctx)
+                  type-expr)
+                  [(OkMacroTypeArg elem-ty)
+                    (match (macro-expand-expr
+                      ctx
+                      type-env
+                      decls
+                      depth
+                      (ast-node-get count-id))
+                      [(OkMacroExpr ncount)
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          (macro-core-fast-profile-ok
+                            macro-name
+                            args
+                            (ast-expr-make-array elem-ty ncount)))]
+                      [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                  [(ErrMacroTypeArg diag) (ErrMacroCompatCall diag)])]
+              [_
+                (macro-core-fast-arity-error
+                  call-expr
+                  "typecheck: make-array expects exactly two arguments")])]
+          [_
+            (macro-core-fast-arity-error
+              call-expr
+              "typecheck: make-array expects exactly two arguments")]))]
+    [_
+      (macro-core-fast-arity-error
+        call-expr
+        "typecheck: make-array expects exactly two arguments")]))
+
+(define (macro-array-fast-array-length
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons items-id rest-box)
+      (match (box-get rest-box)
+        [(AstExprNil)
+          (match (macro-expand-expr
+            ctx
+            type-env
+            decls
+            depth
+            (ast-node-get items-id))
+            [(OkMacroExpr nitems)
+              (begin
+                (tc-context-capture-active-pools! ctx)
+                (macro-core-fast-profile-ok
+                  macro-name
+                  args
+                  (macro-array-fast-private-call
+                    "__tl_array-length"
+                    (macro-str-cat-fast-list1 nitems))))]
+            [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+        [_
+          (macro-core-fast-arity-error
+            call-expr
+            "typecheck: array-length expects exactly one argument")])]
+    [_
+      (macro-core-fast-arity-error
+        call-expr
+        "typecheck: array-length expects exactly one argument")]))
+
+(define (macro-array-fast-array-ref
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons items-id rest1-box)
+      (let
+        [rest1 : AstExprList (box-get rest1-box)]
+        (match rest1
+          [(AstExprCons index-id rest2-box)
+            (match (box-get rest2-box)
+              [(AstExprNil)
+                (match (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  depth
+                  (ast-node-get items-id))
+                  [(OkMacroExpr nitems)
+                    (match (macro-expand-expr
+                      ctx
+                      type-env
+                      decls
+                      depth
+                      (ast-node-get index-id))
+                      [(OkMacroExpr nindex)
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          (macro-core-fast-profile-ok
+                            macro-name
+                            args
+                            (ast-expr-array-ref nitems nindex)))]
+                      [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                  [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+              [_
+                (macro-core-fast-arity-error
+                  call-expr
+                  "typecheck: array-ref expects exactly two arguments")])]
+          [_
+            (macro-core-fast-arity-error
+              call-expr
+              "typecheck: array-ref expects exactly two arguments")]))]
+    [_
+      (macro-core-fast-arity-error
+        call-expr
+        "typecheck: array-ref expects exactly two arguments")]))
+
+(define (macro-array-fast-array-set
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons items-id rest1-box)
+      (let
+        [rest1 : AstExprList (box-get rest1-box)]
+        (match rest1
+          [(AstExprCons index-id rest2-box)
+            (let
+              [rest2 : AstExprList (box-get rest2-box)]
+              (match rest2
+                [(AstExprCons value-id rest3-box)
+                  (match (box-get rest3-box)
+                    [(AstExprNil)
+                      (match (macro-expand-expr
+                        ctx
+                        type-env
+                        decls
+                        depth
+                        (ast-node-get items-id))
+                        [(OkMacroExpr nitems)
+                          (match (macro-expand-expr
+                            ctx
+                            type-env
+                            decls
+                            depth
+                            (ast-node-get index-id))
+                            [(OkMacroExpr nindex)
+                              (match (macro-expand-expr
+                                ctx
+                                type-env
+                                decls
+                                depth
+                                (ast-node-get value-id))
+                                [(OkMacroExpr nvalue)
+                                  (begin
+                                    (tc-context-capture-active-pools! ctx)
+                                    (macro-core-fast-profile-ok
+                                      macro-name
+                                      args
+                                      (ast-expr-array-set nitems nindex nvalue)))]
+                                [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                            [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                        [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                    [_
+                      (macro-core-fast-arity-error
+                        call-expr
+                        "typecheck: array-set! expects exactly three arguments")])]
+                [_
+                  (macro-core-fast-arity-error
+                    call-expr
+                    "typecheck: array-set! expects exactly three arguments")]))]
+          [_
+            (macro-core-fast-arity-error
+              call-expr
+              "typecheck: array-set! expects exactly three arguments")]))]
+    [_
+      (macro-core-fast-arity-error
+        call-expr
+        "typecheck: array-set! expects exactly three arguments")]))
+
+(define (macro-array-fast-array-push
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (match args
+    [(AstExprCons items-id rest1-box)
+      (let
+        [rest1 : AstExprList (box-get rest1-box)]
+        (match rest1
+          [(AstExprCons value-id rest2-box)
+            (match (box-get rest2-box)
+              [(AstExprNil)
+                (match (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  depth
+                  (ast-node-get items-id))
+                  [(OkMacroExpr nitems)
+                    (match (macro-expand-expr
+                      ctx
+                      type-env
+                      decls
+                      depth
+                      (ast-node-get value-id))
+                      [(OkMacroExpr nvalue)
+                        (begin
+                          (tc-context-capture-active-pools! ctx)
+                          (macro-core-fast-profile-ok
+                            macro-name
+                            args
+                            (ast-expr-array-push nitems nvalue)))]
+                      [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                  [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+              [_
+                (macro-core-fast-arity-error
+                  call-expr
+                  "typecheck: array-push! expects exactly two arguments")])]
+          [_
+            (macro-core-fast-arity-error
+              call-expr
+              "typecheck: array-push! expects exactly two arguments")]))]
+    [_
+      (macro-core-fast-arity-error
+        call-expr
+        "typecheck: array-push! expects exactly two arguments")]))
+
+(define (macro-array-fast-expand
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroCompatCall
+  (let
+    [base : String (macro-core-fast-path-base macro-name)]
+    (cond
+      [(string-eq base "make-array")
+        (macro-array-fast-make-array
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
+      [(string-eq base "array-length")
+        (macro-array-fast-array-length
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
+      [(string-eq base "array-ref")
+        (macro-array-fast-array-ref
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
+      [(string-eq base "array-set!")
+        (macro-array-fast-array-set
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
+      [else
+        (macro-array-fast-array-push
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)])))
+
 (define (macro-str-cat-fast-pack
   [definition-module : String]
   [parts : i64]
@@ -41520,31 +41857,41 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (macro-str-cat-fast-path? macro-name definition-module)
-    (match (macro-expand-exprs ctx type-env decls depth args)
-      [(OkMacroExprList expanded-args)
-        (begin
-          (tc-context-capture-active-pools! ctx)
-          (match (macro-bind-params
-            ctx
-            decls
-            (tc-context-module ctx)
-            type-env
-            params
-            expanded-args
-            (tc-ctfe-env ctx)
-            (tc-string-list-contains
-              macro-expand-expr-type-macro-names
-              macro-name)
-            call-expr)
-            [(OkMacroEnv _)
-              (macro-core-fast-profile-ok
-                macro-name
-                expanded-args
-                (macro-str-cat-fast-expand definition-module expanded-args))]
-            [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
-      [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
-    (if (macro-core-prelude-module? definition-module)
+  (cond
+    [(macro-array-fast-path? macro-name definition-module)
+      (macro-array-fast-expand
+        ctx
+        type-env
+        decls
+        macro-name
+        args
+        depth
+        call-expr)]
+    [(macro-str-cat-fast-path? macro-name definition-module)
+      (match (macro-expand-exprs ctx type-env decls depth args)
+        [(OkMacroExprList expanded-args)
+          (begin
+            (tc-context-capture-active-pools! ctx)
+            (match (macro-bind-params
+              ctx
+              decls
+              (tc-context-module ctx)
+              type-env
+              params
+              expanded-args
+              (tc-ctfe-env ctx)
+              (tc-string-list-contains
+                macro-expand-expr-type-macro-names
+                macro-name)
+              call-expr)
+              [(OkMacroEnv _)
+                (macro-core-fast-profile-ok
+                  macro-name
+                  expanded-args
+                  (macro-str-cat-fast-expand definition-module expanded-args))]
+              [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
+        [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])]
+    [(macro-core-prelude-module? definition-module)
       (let
         [base : String (macro-core-fast-path-base macro-name)]
         (if (macro-core-fast-path-base-known? base)
@@ -41593,8 +41940,8 @@
                           (macro-core-fast-cond-call expanded-args))])]
                   [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
             [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
-          (NoMacroCompatCall)))
-      (NoMacroCompatCall))))
+          (NoMacroCompatCall)))]
+    [else (NoMacroCompatCall)]))
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
@@ -42117,6 +42464,13 @@
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
             [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-cast ninner ty))]
+            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+      [(AstExprBorrow mutable lifetime place-box)
+        (let
+          [place : AstExpr (ast-node-get place-box)]
+          (match (macro-expand-expr ctx env decls depth place)
+            [(OkMacroExpr nplace)
+              (OkMacroExpr (ast-expr-borrow mutable lifetime nplace))]
             [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
       [(AstExprStructGet inner-box field)
         (let

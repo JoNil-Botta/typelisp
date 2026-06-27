@@ -1023,6 +1023,274 @@
 
 (cfg
   compile-profile
+  (define compiler-tc-reinfer-profile-site-count : i64
+    18))
+(cfg
+  compile-profile
+  (define compiler-tc-reinfer-profile-calls : (Array i64)
+    (array.make-array i64 18)))
+(cfg
+  compile-profile
+  (define compiler-tc-reinfer-profile-ms : (Array i64)
+    (array.make-array i64 18)))
+(cfg
+  compile-profile
+  (define compiler-tc-reinfer-profile-alloc : (Array i64)
+    (array.make-array i64 18)))
+(cfg
+  compile-profile
+  (define compiler-tc-reinfer-profile-live : (Array i64)
+    (array.make-array i64 18)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-site-index [site : String]) : i64
+    (cond
+      [(string.string-eq site "move.call_func") 0]
+      [(string.string-eq site "move.call_arg") 1]
+      [(string.string-eq site "move.let_init") 2]
+      [(string.string-eq site "move.resource_init") 3]
+      [(string.string-eq site "move.match_scrutinee") 4]
+      [(string.string-eq site "move.tuple_list") 5]
+      [(string.string-eq site "move.array_list") 6]
+      [(string.string-eq site "move.bind_init") 7]
+      [(string.string-eq site "borrow.call_func") 8]
+      [(string.string-eq site "borrow.call_arg") 9]
+      [(string.string-eq site "borrow.let_init") 10]
+      [(string.string-eq site "borrow.resource_init") 11]
+      [(string.string-eq site "borrow.match_scrutinee") 12]
+      [(string.string-eq site "borrow.tuple_list") 13]
+      [(string.string-eq site "borrow.array_list") 14]
+      [(string.string-eq site "borrow.bind_init") 15]
+      [(string.string-eq site "borrow.return_arg") 16]
+      [(string.string-eq site "borrow.return_call") 17]
+      [else -1])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-site-name [index : i64]) : String
+    (cond
+      [(= index 0) "move.call_func"]
+      [(= index 1) "move.call_arg"]
+      [(= index 2) "move.let_init"]
+      [(= index 3) "move.resource_init"]
+      [(= index 4) "move.match_scrutinee"]
+      [(= index 5) "move.tuple_list"]
+      [(= index 6) "move.array_list"]
+      [(= index 7) "move.bind_init"]
+      [(= index 8) "borrow.call_func"]
+      [(= index 9) "borrow.call_arg"]
+      [(= index 10) "borrow.let_init"]
+      [(= index 11) "borrow.resource_init"]
+      [(= index 12) "borrow.match_scrutinee"]
+      [(= index 13) "borrow.tuple_list"]
+      [(= index 14) "borrow.array_list"]
+      [(= index 15) "borrow.bind_init"]
+      [(= index 16) "borrow.return_arg"]
+      [(= index 17) "borrow.return_call"]
+      [else "unknown"])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-reset-at [index : i64]) : unit
+    (if (< index compiler-tc-reinfer-profile-site-count)
+      (begin
+        (array.array-set! compiler-tc-reinfer-profile-calls index 0)
+        (array.array-set! compiler-tc-reinfer-profile-ms index 0)
+        (array.array-set! compiler-tc-reinfer-profile-alloc index 0)
+        (array.array-set! compiler-tc-reinfer-profile-live index 0)
+        (compiler-tc-reinfer-profile-reset-at (+ index 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-reset) : unit
+    (compiler-tc-reinfer-profile-reset-at 0)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-record
+    [site : String]
+    [start-ms : i64]
+    [start-total : i64]
+    [start-live : i64]) : unit
+    (let
+      [index : i64 (compiler-tc-reinfer-profile-site-index site)]
+      (if (< index 0)
+        unit
+        (begin
+          (array.array-set!
+            compiler-tc-reinfer-profile-calls
+            index
+            (+ (array.array-ref compiler-tc-reinfer-profile-calls index) 1))
+          (array.array-set!
+            compiler-tc-reinfer-profile-ms
+            index
+            (+
+              (array.array-ref compiler-tc-reinfer-profile-ms index)
+              (- (profile.profile-now-ms) start-ms)))
+          (array.array-set!
+            compiler-tc-reinfer-profile-alloc
+            index
+            (+
+              (array.array-ref compiler-tc-reinfer-profile-alloc index)
+              (- (profile.profile-alloc-total) start-total)))
+          (array.array-set!
+            compiler-tc-reinfer-profile-live
+            index
+            (+
+              (array.array-ref compiler-tc-reinfer-profile-live index)
+              (- (profile.profile-alloc-live) start-live))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-expr
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [expr : AstExpr]) : ResultTcType
+    (let
+      [start-ms : i64 (profile.profile-now-ms)]
+      [start-total : i64 (profile.profile-alloc-total)]
+      [start-live : i64 (profile.profile-alloc-live)]
+      [result : ResultTcType (tc-expr ctx env expr)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-expr-list-types
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [exprs : AstExprList]) : ResultTcTypeList
+    (let
+      [start-ms : i64 (profile.profile-now-ms)]
+      [start-total : i64 (profile.profile-alloc-total)]
+      [start-live : i64 (profile.profile-alloc-live)]
+      [result : ResultTcTypeList (tc-expr-list-types ctx env exprs)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-effective-arg-expr
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [arg : AstExpr]
+    [want : AstType]) : ResultTcExpr
+    (let
+      [start-ms : i64 (profile.profile-now-ms)]
+      [start-total : i64 (profile.profile-alloc-total)]
+      [start-live : i64 (profile.profile-alloc-live)]
+      [result : ResultTcExpr (tc-call-effective-arg-expr ctx env arg want)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-call-param-types
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [func : AstExpr]) : ResultTcTypeList
+    (let
+      [start-ms : i64 (profile.profile-now-ms)]
+      [start-total : i64 (profile.profile-alloc-total)]
+      [start-live : i64 (profile.profile-alloc-live)]
+      [result : ResultTcTypeList (tc-move-call-param-types ctx env func)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-binding-type
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [maybe-ty : AstMaybeType]
+    [init : AstExpr]) : AstType
+    (match maybe-ty
+      [(AstSomeType t) (tc-resolve-type ctx t)]
+      [(AstNoType)
+        (match (compiler-tc-reinfer-profile-expr site ctx env init)
+          [(OkTcType t) t]
+          [(ErrTcType _) (AstTyI64)])])))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-line
+    [site : String]
+    [elapsed-ms : i64]
+    [alloc-delta : i64]
+    [live-delta : i64]) : unit
+    (io.print-error
+      (string.string-append
+        "compile-profile|typecheck.reinfer."
+        (string.string-append
+          site
+          (string.string-append
+            (compiler-tc-profile-field elapsed-ms)
+            (string.string-append
+              (compiler-tc-profile-field alloc-delta)
+              (string.string-append
+                (compiler-tc-profile-field live-delta)
+                "|0\n"))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-emit-entry [index : i64]) : unit
+    (begin
+      (compiler-tc-reinfer-profile-line
+        (compiler-tc-reinfer-profile-site-name index)
+        (array.array-ref compiler-tc-reinfer-profile-ms index)
+        (array.array-ref compiler-tc-reinfer-profile-alloc index)
+        (array.array-ref compiler-tc-reinfer-profile-live index))
+      (compiler-tc-reinfer-profile-line
+        (string.string-append
+          (compiler-tc-reinfer-profile-site-name index)
+          ".calls")
+        (array.array-ref compiler-tc-reinfer-profile-calls index)
+        0
+        0))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-emit-at [index : i64]) : unit
+    (if (< index compiler-tc-reinfer-profile-site-count)
+      (begin
+        (compiler-tc-reinfer-profile-emit-entry index)
+        (compiler-tc-reinfer-profile-emit-at (+ index 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-emit) : unit
+    (compiler-tc-reinfer-profile-emit-at 0)))
+
+(cfg
+  compile-profile
   (define compiler-tc-decl-profile-start-ms : i64
     0))
 (cfg
@@ -1265,6 +1533,7 @@
       (set! compiler-tc-env-profile-marker-scans 0)
       (set! compiler-tc-env-profile-module-local-hits 0)
       (set! compiler-tc-env-profile-module-local-misses 0)
+      (compiler-tc-reinfer-profile-reset)
       (tc-lp-reset 0))))
 
 (cfg
@@ -1689,6 +1958,7 @@
       (compiler-tc-env-profile-line
         "module_local_misses"
         compiler-tc-env-profile-module-local-misses)
+      (compiler-tc-reinfer-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
       (tc-lp-line "repr_c_field_visits" 1)
       (tc-lp-line "inline_field_builds" 2)
@@ -31221,7 +31491,10 @@
             (OkTcMove (tc-moved-add-origin moved v init))))
         (OkTcMove moved))]
     [(TcNoString)
-      (match (tc-expr ctx env init)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr "move.bind_init" ctx env init)
+        (tc-expr ctx env init))
         [(OkTcType init-ty)
           (if (tc-type-consuming-by-value-now? ctx init-ty)
             (tc-move-after-consuming-projection
@@ -31508,7 +31781,15 @@
             (let
               [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-call-effective-arg-expr ctx env head-expr ty)
+              (match (cfg
+                compile-profile
+                (compiler-tc-reinfer-profile-effective-arg-expr
+                  "move.call_arg"
+                  ctx
+                  env
+                  head-expr
+                  ty)
+                (tc-call-effective-arg-expr ctx env head-expr ty))
                 [(OkTcExpr effective-head)
                   (match (tc-move-check-expr
                     ctx
@@ -31685,7 +31966,15 @@
                         ctx
                         (let
                           [binding-ty : AstType
-                            (tc-move-binding-type ctx env maybe-ty init)]
+                            (cfg
+                              compile-profile
+                              (compiler-tc-reinfer-profile-binding-type
+                                "move.let_init"
+                                ctx
+                                env
+                                maybe-ty
+                                init)
+                              (tc-move-binding-type ctx env maybe-ty init))]
                           (tc-bind-c-abi-fnptr-if-needed-id
                             ctx
                             env
@@ -31733,7 +32022,14 @@
                     moved1
                     init)
                     [(OkTcMove moved2)
-                      (match (tc-expr ctx env init)
+                      (match (cfg
+                        compile-profile
+                        (compiler-tc-reinfer-profile-expr
+                          "move.resource_init"
+                          ctx
+                          env
+                          init)
+                        (tc-expr ctx env init))
                         [(OkTcType init-ty)
                           (match (tc-move-check-resource-bindings
                             ctx
@@ -31931,7 +32227,14 @@
         [func : AstExpr (ast-node-get func-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved func)
           [(OkTcMove moved1)
-            (match (tc-move-call-param-types ctx env func)
+            (match (cfg
+              compile-profile
+              (compiler-tc-reinfer-profile-call-param-types
+                "move.call_func"
+                ctx
+                env
+                func)
+              (tc-move-call-param-types ctx env func))
               [(OkTcTypeList params)
                 (match (tc-call-extern-abi ctx func)
                   [(TcSomeExternAbi abi)
@@ -32044,7 +32347,14 @@
                   body)]
               [(ErrTcMove message) (ErrTcMove message)]))])]
     [(AstExprTuple exprs)
-      (match (tc-expr-list-types ctx env exprs)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr-list-types
+          "move.tuple_list"
+          ctx
+          env
+          exprs)
+        (tc-expr-list-types ctx env exprs))
         [(OkTcTypeList types)
           (tc-move-check-exprs-with-types
             ctx
@@ -32073,7 +32383,14 @@
               [(TcNoString) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExprArray exprs)
-      (match (tc-expr-list-types ctx env exprs)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr-list-types
+          "move.array_list"
+          ctx
+          env
+          exprs)
+        (tc-expr-list-types ctx env exprs))
         [(OkTcTypeList types)
           (tc-move-check-exprs-with-types
             ctx
@@ -32231,7 +32548,14 @@
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
               [(OkTcMove moveds)
-                (match (tc-expr ctx env scrut)
+                (match (cfg
+                  compile-profile
+                  (compiler-tc-reinfer-profile-expr
+                    "move.match_scrutinee"
+                    ctx
+                    env
+                    scrut)
+                  (tc-expr ctx env scrut))
                   [(OkTcType scrut-ty)
                     (tc-move-check-arms
                       ctx
@@ -33262,7 +33586,10 @@
           [(ErrTcUnit message) (ErrTcBorrowCheck message)])
         (OkTcBorrowCheck borrowed))]
     [(TcNoString)
-      (match (tc-expr ctx env init)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr "borrow.bind_init" ctx env init)
+        (tc-expr ctx env init))
         [(OkTcType init-ty)
           (if (tc-type-consuming-by-value-now? ctx init-ty)
             (tc-borrow-check-after-consuming-place locals borrowed init)
@@ -33487,7 +33814,15 @@
   [borrowed : TcMovedSet]
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
-  (match (tc-call-effective-arg-expr ctx env arg ty)
+  (match (cfg
+    compile-profile
+    (compiler-tc-reinfer-profile-effective-arg-expr
+      "borrow.call_arg"
+      ctx
+      env
+      arg
+      ty)
+    (tc-call-effective-arg-expr ctx env arg ty))
     [(OkTcExpr effective)
       (tc-borrow-check-effective-arg-with-type
         ctx
@@ -33645,7 +33980,15 @@
             (let
               [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-call-effective-arg-expr ctx env head-expr ty)
+              (match (cfg
+                compile-profile
+                (compiler-tc-reinfer-profile-effective-arg-expr
+                  "borrow.call_arg"
+                  ctx
+                  env
+                  head-expr
+                  ty)
+                (tc-call-effective-arg-expr ctx env head-expr ty))
                 [(OkTcExpr effective-head)
                   (match (ast-expr-unspan effective-head)
                     [(AstExprBorrow mutable _ place-box)
@@ -33727,7 +34070,15 @@
   [ty : AstType]) : TcBorrowCheckResult
   (if (tc-call-explicit-borrow-expr? arg)
     (OkTcBorrowCheck borrowed)
-    (match (tc-call-effective-arg-expr ctx env arg ty)
+    (match (cfg
+      compile-profile
+      (compiler-tc-reinfer-profile-effective-arg-expr
+        "borrow.call_arg"
+        ctx
+        env
+        arg
+        ty)
+      (tc-call-effective-arg-expr ctx env arg ty))
       [(OkTcExpr effective)
         (match (ast-expr-unspan effective)
           [(AstExprBorrow mutable _ place-box)
@@ -34603,7 +34954,14 @@
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed scrut)
               [(OkTcBorrowCheck borroweds)
-                (match (tc-expr ctx env scrut)
+                (match (cfg
+                  compile-profile
+                  (compiler-tc-reinfer-profile-expr
+                    "borrow.match_scrutinee"
+                    ctx
+                    env
+                    scrut)
+                  (tc-expr ctx env scrut))
                   [(OkTcType scrut-ty)
                     (tc-borrow-check-arms-loop
                       ctx
@@ -34650,7 +35008,10 @@
   [borrowed : TcMovedSet]
   [arg : AstExpr]
   [result-lifetimes : TcStringList]) : TcBorrowCheckResult
-  (match (tc-expr ctx env arg)
+  (match (cfg
+    compile-profile
+    (compiler-tc-reinfer-profile-expr "borrow.return_arg" ctx env arg)
+    (tc-expr ctx env arg))
     [(OkTcType arg-ty)
       (if (tc-string-list-overlaps?
         (tc-type-collect-reference-lifetimes (tc-resolve-type ctx arg-ty))
@@ -34726,7 +35087,10 @@
   [borrowed : TcMovedSet]
   [call-expr : AstExpr]
   [args : AstExprList]) : TcBorrowCheckResult
-  (match (tc-expr ctx env call-expr)
+  (match (cfg
+    compile-profile
+    (compiler-tc-reinfer-profile-expr "borrow.return_call" ctx env call-expr)
+    (tc-expr ctx env call-expr))
     [(OkTcType result-ty)
       (let
         [result-lifetimes : TcStringList
@@ -34771,7 +35135,15 @@
                         ctx
                         (let
                           [binding-ty : AstType
-                            (tc-move-binding-type ctx env maybe-ty init)]
+                            (cfg
+                              compile-profile
+                              (compiler-tc-reinfer-profile-binding-type
+                                "borrow.let_init"
+                                ctx
+                                env
+                                maybe-ty
+                                init)
+                              (tc-move-binding-type ctx env maybe-ty init))]
                           (tc-bind-c-abi-fnptr-if-needed-id
                             ctx
                             env
@@ -34812,7 +35184,14 @@
                     borrowed1
                     init)
                     [(OkTcBorrowCheck borrowed2)
-                      (match (tc-expr ctx env init)
+                      (match (cfg
+                        compile-profile
+                        (compiler-tc-reinfer-profile-expr
+                          "borrow.resource_init"
+                          ctx
+                          env
+                          init)
+                        (tc-expr ctx env init))
                         [(OkTcType init-ty)
                           (tc-borrow-check-resource-bindings
                             ctx
@@ -34933,7 +35312,14 @@
         [func : AstExpr (ast-node-get func-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed func)
           [(OkTcBorrowCheck borrowed1)
-            (match (tc-move-call-param-types ctx env func)
+            (match (cfg
+              compile-profile
+              (compiler-tc-reinfer-profile-call-param-types
+                "borrow.call_func"
+                ctx
+                env
+                func)
+              (tc-move-call-param-types ctx env func))
               [(OkTcTypeList params)
                 (match (tc-call-extern-abi ctx func)
                   [(TcSomeExternAbi abi)
@@ -35055,7 +35441,14 @@
               [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
               [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
     [(AstExprTuple exprs)
-      (match (tc-expr-list-types ctx env exprs)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr-list-types
+          "borrow.tuple_list"
+          ctx
+          env
+          exprs)
+        (tc-expr-list-types ctx env exprs))
         [(OkTcTypeList types)
           (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
         [(ErrTcTypeList _)
@@ -35068,7 +35461,14 @@
             (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExprArray exprs)
-      (match (tc-expr-list-types ctx env exprs)
+      (match (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr-list-types
+          "borrow.array_list"
+          ctx
+          env
+          exprs)
+        (tc-expr-list-types ctx env exprs))
         [(OkTcTypeList types)
           (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
         [(ErrTcTypeList _)
@@ -35283,7 +35683,14 @@
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed scrut)
               [(OkTcBorrowCheck borroweds)
-                (match (tc-expr ctx env scrut)
+                (match (cfg
+                  compile-profile
+                  (compiler-tc-reinfer-profile-expr
+                    "borrow.match_scrutinee"
+                    ctx
+                    env
+                    scrut)
+                  (tc-expr ctx env scrut))
                   [(OkTcType scrut-ty)
                     (tc-borrow-check-arms
                       ctx

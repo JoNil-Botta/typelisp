@@ -1991,6 +1991,97 @@
                     "missing")))))]
         [(ErrCompilerLoadWithPaths _) false]))))
 
+(define (compiler-typecheck-smoke-record-surface-summary?
+  [path : String]
+  [source : String]) : bool
+  (match (parse-ast-source-diagnostic path source)
+    [(OkAstProgramDiagnostic program)
+      (match (compiler-load-surface-summary-build
+        path
+        (compiler-load-dirname path)
+        (compiler-cfg-empty)
+        program)
+        [(OkCompilerLoadSurfaceSummary summary)
+          (begin
+            (compiler-load-record-surface-summary! summary)
+            true)]
+        [(ErrCompilerLoadSurfaceSummary _) false])]
+    [(ErrAstProgramDiagnostic _) false]))
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-provider-source) : String
+  "(module tc.lazy.summary.macro.provider)
+(defmacro (hook [value : i64]) : i64 `(+ ,value 1))
+(define value : i64 1)")
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-unused-source) : String
+  "(module tc.lazy.summary.macro.entry)
+(import tc.lazy.summary.macro.provider as provider)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-call-source) : String
+  "(module tc.lazy.summary.macro.entry)
+(import tc.lazy.summary.macro.provider as provider)
+(define (main) : i64 (provider.hook 41))")
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-hook-source) : String
+  "(module tc.lazy.summary.macro.entry)
+(import tc.lazy.summary.macro.provider as provider)
+(defmacro (make [factory : Module]) : Module
+  (let
+    [emit : Expr (module-hook factory \"hook\")]
+    `(begin
+      (module generated.lazy_summary_macro_hook)
+      (define (answer) : i64 (,emit 41)))))
+(import (make provider) as gen)
+(define (main) : i64 (gen.answer))")
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-check
+  [entry-source : String]
+  [expected-forces : i64]) : bool
+  (let
+    [provider-path : String "target/tc_lazy_summary_macro_provider.tl"]
+    [ok : bool false]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      (if (compiler-typecheck-smoke-record-surface-summary?
+        provider-path
+        (compiler-typecheck-smoke-lazy-summary-macro-provider-source))
+        (match (parse-ast-source-diagnostic "" entry-source)
+          [(OkAstProgramDiagnostic entry-program)
+            (match (typecheck-compiler-program-with-paths-checked
+              entry-program
+              AstDeclPathNil)
+              [(OkCompilerTypecheckChecked _ _ _)
+                (set!
+                  ok
+                  (and
+                    (> (tc-lazy-import-summary-backed-stub-count) 0)
+                    (if (= expected-forces 0)
+                      (= (tc-lazy-import-summary-macro-force-count) 0)
+                      (> (tc-lazy-import-summary-macro-force-count) 0))))]
+              [(ErrCompilerTypecheckChecked _) (set! ok false)])]
+          [(ErrAstProgramDiagnostic _) (set! ok false)])
+        (set! ok false))
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-unused-ok?) : bool
+  (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-unused-source)
+    0))
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-call-ok?) : bool
+  (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-call-source)
+    1))
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-hook-ok?) : bool
+  (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-hook-source)
+    1))
+
 (define (compiler-typecheck-smoke-qualified-array-source) : String
   "(import stdlib.array)
 (define (take-array-ref [r : (& items i64)]) : i64 1)
@@ -2175,6 +2266,15 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?)
       (io.panic "typecheck: lazy import summary smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-summary-macro-unused-ok?)
+      (io.panic "typecheck: lazy summary macro unused smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-summary-macro-call-ok?)
+      (io.panic "typecheck: lazy summary macro call smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-summary-macro-hook-ok?)
+      (io.panic "typecheck: lazy summary macro hook smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (io.panic "typecheck: prefix cache root smoke failed"))

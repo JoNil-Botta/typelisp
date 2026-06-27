@@ -6092,6 +6092,13 @@
       (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
       CompilerRegAssignmentNil)))
 
+(define (compiler-backend-stack-splat-float-register-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%xmm3"))
+      CompilerRegAssignmentNil)))
+
 (define (compiler-backend-stack-memory-operand-ok?) : bool
   (and
     (match (compiler-backend-stack-memory-operand
@@ -6177,18 +6184,36 @@
 
 (define (compiler-backend-register-splat-fallback-ok?) : bool
   (and
-    (match (compiler-backend-emit-avx2-splat
-      (compiler-backend-stack-splat-register-assignments)
-      0
-      (IrValueVar 1)
-      4
-      (AstTyI64)
-      (compiler-diagnostic-at-start "" ""))
-      [(OkCompilerBackend asm)
-        (string-eq
-          asm
-          "    movq %r12, %rax\n    vmovq %rax, %xmm0\n    vpbroadcastq %xmm0, %ymm6\n")]
-      [(ErrCompilerBackend _) false])
+    (and
+      (match (compiler-backend-emit-avx2-splat
+        (compiler-backend-stack-splat-register-assignments)
+        0
+        (IrValueVar 1)
+        4
+        (AstTyI64)
+        (compiler-diagnostic-at-start "" ""))
+        [(OkCompilerBackend asm)
+          (and
+            (string-eq
+              asm
+              "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
+            (not (compiler-backend-string-contains? asm "%rax"))
+            (not (compiler-backend-string-contains? asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-avx2-splat
+        (compiler-backend-stack-splat-float-register-assignments)
+        0
+        (IrValueVar 1)
+        4
+        (AstTyF64)
+        (compiler-diagnostic-at-start "" ""))
+        [(OkCompilerBackend asm)
+          (and
+            (string-eq
+              asm
+              "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
+            (not (compiler-backend-string-contains? asm "%xmm0")))]
+        [(ErrCompilerBackend _) false]))
     (match (compiler-backend-emit-avx512-splat
       (compiler-backend-stack-splat-register-assignments)
       0

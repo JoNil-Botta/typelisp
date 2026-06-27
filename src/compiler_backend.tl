@@ -12124,11 +12124,6 @@
     [(AstTyU64) true]
     [_ false]))
 
-(define (compiler-backend-int-to-float-bitcast-asm [to-ty : AstType]) : String
-  (match to-ty
-    [(AstTyF32) "    movd %eax, %xmm0\n"]
-    [_ "    movq %rax, %xmm0\n"]))
-
 (define (compiler-backend-float-to-int-bitcast-reg-asm
   [from-ty : AstType]
   [src-reg : String]
@@ -12258,23 +12253,46 @@
                 to-ty
                 src-reg
                 dst-home))
-            (match (compiler-backend-emit-load-typed-value-with-plan
-              assignments
-              src
-              from-ty
-              program-index)
-              [(OkCompilerBackend load)
-                (OkCompilerBackend
-                  (string-append
-                    load
+            (let
+              [src-tmp : String
+                (if (string-eq src-reg "")
+                  (compiler-backend-scavenge-reg
+                    dst
+                    (make-array String 0)
+                    0
+                    "%r8")
+                  src-reg)]
+              [dst-tmp : String
+                (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+                  dst-home
+                  (compiler-backend-scavenge-xmm-reg
+                    dst
+                    (make-array String 0)
+                    0
+                    "%xmm2"))]
+              (match (if (string-eq src-reg "")
+                (compiler-backend-emit-load-typed-value-to-reg-with-plan
+                  assignments
+                  src
+                  from-ty
+                  src-tmp
+                  program-index)
+                (OkCompilerBackend ""))
+                [(OkCompilerBackend load)
+                  (OkCompilerBackend
                     (string-append
-                      (compiler-backend-int-to-float-bitcast-asm to-ty)
-                      (compiler-backend-emit-store-float-var-with-plan
-                        assignments
-                        dst
-                        "%xmm0"
-                        to-ty))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
+                      load
+                      (string-append
+                        (compiler-backend-int-to-float-bitcast-reg-asm
+                          to-ty
+                          src-tmp
+                          dst-tmp)
+                        (compiler-backend-emit-store-float-var-with-plan
+                          assignments
+                          dst
+                          dst-tmp
+                          to-ty))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
       [(and from-int to-int)
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments

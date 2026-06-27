@@ -9266,13 +9266,13 @@
         "    movd %xmm2, %r8d\n")
       (compiler-backend-instr-contains?
         (IrInstrBitcast 6 (IrValueVar 5) (AstTyU64) (AstTyF32))
-        "    movd %eax, %xmm0\n")
+        "    movd %r8d, %xmm2\n")
       (compiler-backend-instr-contains?
         (IrInstrBitcast 6 (IrValueVar 5) (AstTyF64) (AstTyU64))
         "    movq %xmm2, %r8\n")
       (compiler-backend-instr-contains?
         (IrInstrBitcast 6 (IrValueVar 5) (AstTyU64) (AstTyF64))
-        "    movq %rax, %xmm0\n"))
+        "    movq %r8, %xmm2\n"))
     (not
       (compiler-backend-instr-contains?
         (IrInstrBitcast 6 (IrValueVar 5) (AstTyF64) (AstTyF32))
@@ -9371,6 +9371,37 @@
             (compiler-backend-string-contains? f64-asm "    movq %r8, -16(%rbp)\n")
             (compiler-backend-string-contains? f32-asm "    movd %xmm3, %r8d\n")
             (compiler-backend-string-contains? f32-asm "    movq %r8, -16(%rbp)\n")
+            (not (compiler-backend-string-contains? f64-asm "%rax"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%rax"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-spill-int-to-float-bitcast-asm
+  [to-ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-bitcast
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    (AstTyU64)
+    to-ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-spill-int-to-float-bitcast-home-ok?) : bool
+  (match (compiler-backend-spill-int-to-float-bitcast-asm (AstTyF64))
+    [(OkCompilerBackend f64-asm)
+      (match (compiler-backend-spill-int-to-float-bitcast-asm (AstTyF32))
+        [(OkCompilerBackend f32-asm)
+          (and
+            (compiler-backend-string-contains? f64-asm "    movq %r12, %xmm2\n")
+            (compiler-backend-string-contains? f64-asm "    movsd %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains? f32-asm "    movd %r12d, %xmm2\n")
+            (compiler-backend-string-contains? f32-asm "    movss %xmm2, -16(%rbp)\n")
             (not (compiler-backend-string-contains? f64-asm "%rax"))
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
             (not (compiler-backend-string-contains? f32-asm "%rax"))
@@ -13350,7 +13381,8 @@
         (and
           (compiler-backend-bitcast-shape-ok?)
           (compiler-backend-direct-bitcast-home-ok?)
-          (compiler-backend-spill-float-to-int-bitcast-home-ok?)))
+          (compiler-backend-spill-float-to-int-bitcast-home-ok?)
+          (compiler-backend-spill-int-to-float-bitcast-home-ok?)))
       (compiler-backend-bool-control-flow-ok?)
       (and
         (compiler-backend-stack-args-ok?)

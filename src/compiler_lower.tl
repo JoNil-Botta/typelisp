@@ -28939,21 +28939,20 @@
               lane-locals
               cond)
             0)
-          (or
-            (lower-masked-vector-body-has-varying-while-with-locals?
-              mode
-              env
-              type-env
-              index
-              lane-locals
-              cond)
-            (lower-masked-vector-body-has-varying-while-with-locals?
-              mode
-              env
-              type-env
-              index
-              lane-locals
-              body))))]
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            cond)
+          (lower-masked-vector-body-has-varying-while-with-locals?
+            mode
+            env
+            type-env
+            index
+            lane-locals
+            body)))]
     [(AstExprIf cond-box then-box else-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
@@ -28963,21 +28962,20 @@
           index
           lane-locals
           (ast-node-get cond-box))
-        (or
-          (lower-masked-vector-body-has-varying-while-with-locals?
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            (ast-node-get then-box))
-          (lower-masked-vector-body-has-varying-while-with-locals?
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            (ast-node-get else-box))))]
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get then-box))
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get else-box)))]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
@@ -29063,21 +29061,20 @@
           index
           lane-locals
           (ast-node-get arr-box))
-        (or
-          (lower-masked-vector-body-has-varying-while-with-locals?
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            (ast-node-get idx-box))
-          (lower-masked-vector-body-has-varying-while-with-locals?
-            mode
-            env
-            type-env
-            index
-            lane-locals
-            (ast-node-get value-box))))]
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get idx-box))
+        (lower-masked-vector-body-has-varying-while-with-locals?
+          mode
+          env
+          type-env
+          index
+          lane-locals
+          (ast-node-get value-box)))]
     [(AstExprStructSet receiver-box _ value-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?

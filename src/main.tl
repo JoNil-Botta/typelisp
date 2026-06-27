@@ -33,6 +33,15 @@
 (import "lsp_frame_core.tl")
 (import stdlib.string)
 
+(cfg
+  stage0-build-version
+  (include-str cli-build-git-hash "../target/build-stage0/git-hash.txt"))
+
+(cfg
+  (not stage0-build-version)
+  (define cli-build-git-hash : String
+    "unknown"))
+
 (define (cli-argc) : i64
   (arg-count))
 
@@ -77,6 +86,7 @@ Commands:
 
 Global Options:
     --help, -h                     Show root or command help
+    --version                      Show the compiler build git hash
 
 Common Command Options:
     --target <target>              linux-x86_64 or windows-x86_64
@@ -309,6 +319,11 @@ Options:
 (define (cli-print-help [code : i64]) : i64
   (cli-print-help-text (cli-help-text) code))
 
+(define (cli-print-version) : i64
+  (begin
+    (io.print-string (cli-cat "typelisp " (cli-cat cli-build-git-hash "\n")))
+    0))
+
 ;; A stage0 command listed in the help but not yet wired into the selfhost CLI.
 (define (cli-pending [command : String] [issue : String]) : i64
   (begin
@@ -329,6 +344,7 @@ Options:
         (cli-eq? command "--help")
         (cli-eq? command "-h"))
       (cli-print-help 0)]
+    [(cli-eq? command "--version") (cli-print-version)]
     [(cli-eq? command "build")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-build-help-text) 0)

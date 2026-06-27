@@ -45,6 +45,16 @@ ASM="$WORKDIR/cli.s"
 OBJ="$WORKDIR/cli.$NL_OBJ_EXT"
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
+VERSION_STDOUT="$WORKDIR/version.stdout"
+VERSION_STDERR="$WORKDIR/version.stderr"
+BUILD_GIT_HASH=$(git rev-parse --verify HEAD)
+BUILD_GIT_HASH_FILE="$WORKDIR/git-hash.txt"
+RUN_OUT=$OUT
+case "$RUN_OUT" in
+    */* | *\\* | [A-Za-z]:*) ;;
+    *) RUN_OUT="./$RUN_OUT" ;;
+esac
+printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
 
 # The published stage0 is built at opt-level 2: it enables scalar register
 # allocation in the binary's own code, which makes the shipped binary both
@@ -58,7 +68,8 @@ if ! run_with_heartbeat_capture "compile cli.tl" "$COMPILE_STDOUT" "$COMPILE_STD
     "$SEED" compile src/main.tl -o "$ASM" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
-    --stdlib-root stdlib --stdlib-root src --opt-level 2; then
+    --stdlib-root stdlib --stdlib-root src --opt-level 2 \
+    --cfg stage0-build-version; then
     echo "[build-stage0] seed compiler failed while compiling src/main.tl" >&2
     echo "[build-stage0] compiler stdout:" >&2
     sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true
@@ -81,6 +92,26 @@ fi
 
 if [ ! -s "$OUT" ]; then
     echo "[build-stage0] output binary is empty: $OUT" >&2
+    exit 1
+fi
+
+if ! "$RUN_OUT" --version > "$VERSION_STDOUT" 2> "$VERSION_STDERR"; then
+    echo "[build-stage0] built compiler failed --version" >&2
+    echo "[build-stage0] stdout:" >&2
+    sed 's/^/  /' "$VERSION_STDOUT" >&2 || true
+    echo "[build-stage0] stderr:" >&2
+    sed 's/^/  /' "$VERSION_STDERR" >&2 || true
+    exit 1
+fi
+if ! grep -F -- "typelisp $BUILD_GIT_HASH" "$VERSION_STDOUT" >/dev/null; then
+    echo "[build-stage0] built compiler did not report git hash $BUILD_GIT_HASH" >&2
+    echo "[build-stage0] stdout:" >&2
+    sed 's/^/  /' "$VERSION_STDOUT" >&2 || true
+    exit 1
+fi
+if [ -s "$VERSION_STDERR" ]; then
+    echo "[build-stage0] built compiler wrote unexpected --version stderr" >&2
+    sed 's/^/  /' "$VERSION_STDERR" >&2 || true
     exit 1
 fi
 

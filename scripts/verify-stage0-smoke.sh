@@ -42,6 +42,28 @@ if [ ! -x "$TL" ]; then
     exit 1
 fi
 
+mkdir -p "$ROOT/target"
+VERSION_OUT="$ROOT/target/stage0-smoke-version.out"
+VERSION_ERR="$ROOT/target/stage0-smoke-version.err"
+
+echo "[stage0-smoke] report compiler version"
+if ! "$TL" --version > "$VERSION_OUT" 2> "$VERSION_ERR"; then
+    echo "stage0 --version failed" >&2
+    sed 's/^/  /' "$VERSION_OUT" >&2 || true
+    sed 's/^/  /' "$VERSION_ERR" >&2 || true
+    exit 1
+fi
+if ! grep -F -- "typelisp " "$VERSION_OUT" >/dev/null; then
+    echo "stage0 --version did not report a typelisp version line" >&2
+    sed 's/^/  /' "$VERSION_OUT" >&2 || true
+    exit 1
+fi
+if [ -s "$VERSION_ERR" ]; then
+    echo "stage0 --version wrote unexpected stderr" >&2
+    sed 's/^/  /' "$VERSION_ERR" >&2 || true
+    exit 1
+fi
+
 echo "[stage0-smoke] check examples/hello.tl with source stdlib"
 "$TL" check examples/hello.tl --stdlib-root stdlib
 

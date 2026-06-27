@@ -12558,7 +12558,7 @@
           "    cmpq %r10, %rax\n    jne 1f\n")
         (compiler-backend-string-contains?
           asm
-          "    cmpq %r11, %r8\n    jne 1f\n    call tl_div_abort\n1:\n")
+          "    cmpq %r9, %r8\n    jne 1f\n    call tl_div_abort\n1:\n")
         (compiler-backend-string-contains? asm "    cqto\n")
         (compiler-backend-string-contains? asm "    idivq %r8\n")
         (compiler-backend-string-contains? asm "    movq %rdx, %rax\n")

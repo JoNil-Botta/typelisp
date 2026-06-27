@@ -7366,9 +7366,8 @@
   (if (compiler-backend-type-signed? ty)
     (let
       ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
-      ;; Scavenge them instead of hardcoding %r10/%r11, excluding the dividend
-      ;; (%rax), %rdx, the divisor, and each other. The exclude omits %r10/%r11 so
-      ;; the fallbacks stay pickable -> byte-identical while %r10/%r11 are reserved.
+      ;; Scavenge them instead of hardcoding guard temps, excluding the dividend
+      ;; (%rax), %rdx, the divisor, and each other.
       [min-excl : (Array String)
         (let
           [a : (Array String) (make-array String 3)]
@@ -7389,7 +7388,7 @@
             (array-set! a 3 min-full)
             a))]
       [neg-full : String
-        (compiler-backend-scavenge-reg-here neg-excl 4 "%r11")]
+        (compiler-backend-scavenge-reg-here neg-excl 4 "%r9")]
       [lhs : String (compiler-backend-sized-reg "%rax" ty)]
       [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
       [min-reg : String (compiler-backend-sized-reg min-full ty)]
@@ -8089,9 +8088,8 @@
     [_ (CompilerBackendNoAsm)]))
 
 ;; Scavenge the 3 constant-divmod scratch (magic constant, saved-dividend,
-;; sign-mask) off dst's def point, then emit. The magic stays on %r8 (its existing
-;; scavenge); dividend/mask actively scavenge off their %r10/%r11 fallbacks,
-;; reserving the magic pick + each other so all three are mutually distinct.
+;; sign-mask) off dst's def point, then emit. The temps reserve the magic pick
+;; plus each other so all three are mutually distinct.
 (define (compiler-backend-binop-literal-divmod-asm-dst
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
@@ -8115,7 +8113,7 @@
         dst
         (compiler-backend-divmod-mask-exclude magic dividend)
         6
-        "%r11")]
+        "%r9")]
     (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask)))
 
 ;; Same, but at the current emit point (no dst -- tail-return position). The magic
@@ -8140,7 +8138,7 @@
       (compiler-backend-scavenge-reg-here
         (compiler-backend-divmod-mask-exclude magic dividend)
         6
-        "%r11")]
+        "%r9")]
     (compiler-backend-binop-literal-divmod-asm op rhs ty magic dividend mask)))
 
 (define (compiler-backend-shift-count-width [ty : AstType]) : i64
@@ -9827,7 +9825,7 @@
         dst
         (compiler-backend-divmod-mask-exclude scav-rhs scav-dividend)
         6
-        "%r11")]
+        "%r9")]
     (match (compiler-backend-binop-literal-divmod-asm
       op
       rhs
@@ -12767,7 +12765,7 @@
               dst
               scratch-exclude
               1
-              "%r11")]
+              "%r9")]
           [result-reg : String
             (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
               dst-home

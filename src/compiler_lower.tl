@@ -45815,34 +45815,6 @@
     [(OkCompilerLower _ _) true]
     [(ErrCompilerLower _) false]))
 
-(define (compiler-lower-module-macro-stdlib-vector-import-no-main-source) : String
-  "(defmacro (vector-user) : Module
-  `(begin
-    (module generated.lower_vector_user_no_main)
-    (import stdlib.vector)
-    (defstruct T
-      (value i64))
-    (import (vector T) as vec)
-    (define (make [value : i64]) : T
-      (T value))
-    (define (score [first : T] [fallback : T]) : i64
-      (let
-        [items : vec.Vec (vec.new)]
-        (begin
-          (vec.push (&mut items) first)
-          (if (= (vec.len (& items)) 1)
-            (begin
-              (vec.get (& items) 0 fallback)
-              42)
-            0))))))
-(import (vector-user) as user)")
-
-(define (compiler-lower-module-macro-stdlib-vector-import-no-main-ok?) : bool
-  (match (lower-compiler-source
-    (compiler-lower-module-macro-stdlib-vector-import-no-main-source))
-    [(OkCompilerLower _ _) true]
-    [(ErrCompilerLower _) false]))
-
 (define (compiler-lower-function-decl-count-wrapped-ok?) : bool
   (let
     [fn : AstDecl
@@ -50451,9 +50423,6 @@
         unit
         (set! ok false))
       (if (compiler-lower-module-macro-stdlib-vector-import-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-macro-stdlib-vector-import-no-main-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-function-decl-count-wrapped-ok?)

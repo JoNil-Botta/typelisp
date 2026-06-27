@@ -48,6 +48,29 @@ default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
 `spmd_reduce`, `opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one
 cachegrind run.
 
+## Compile-profile optimizer escape capture
+
+Use the compile-profile verifier to build a profile-enabled CLI, then capture an
+optimized self-compile stderr log:
+
+```sh
+scripts/verify-compile-profile.sh
+target/compile-profile-verify/<host>/typelisp-profile compile src/main.tl \
+  -o target/compile-profile-verify/<host>/self-profile.s \
+  --target <target> \
+  --cfg <host-cfg> \
+  --stdlib-root stdlib \
+  --stdlib-root src \
+  --opt-level 1 \
+  2> target/compile-profile-verify/<host>/self-profile.stderr
+grep -E 'compile-profile\|optimize\.functions\||compile-profile-detail\|optimize\.escape\.(body|compact|clone|restore)\|' \
+  target/compile-profile-verify/<host>/self-profile.stderr
+```
+
+Use the same target and cfgs that match the host being measured. The escape rows
+are `compile-profile-detail|optimize.escape.<phase>|elapsed_ms|opt_level|function`
+with phases for `body`, `compact`, `clone`, and `restore`.
+
 The heavy nightly workflow measures `spmd_map`, `spmd_mask`, `spmd_zip`,
 `spmd_short_tail`, and `string_scan` as benchmark-only cases with one
 cachegrind run. Heavy improvements and regressions are visible in the scheduled

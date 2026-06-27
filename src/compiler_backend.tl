@@ -10514,12 +10514,28 @@
   [op : CompilerIrBinOp]
   [rhs : String]
   [ty : AstType]) : String
+  (compiler-backend-emit-compare-operand-flags
+    op
+    rhs
+    (compiler-backend-sized-reg "%rax" ty)
+    ty
+    true))
+
+(define (compiler-backend-emit-compare-operand-flags
+  [op : CompilerIrBinOp]
+  [rhs : String]
+  [lhs : String]
+  [ty : AstType]
+  [lhs-register? : bool]) : String
   (if (and (string-eq rhs "$0") (compiler-backend-compare-uses-zero-test? op))
-    (compiler-backend-binop-reg-asm
-      "test"
-      ty
-      (compiler-backend-sized-reg "%rax" ty)
-      (compiler-backend-sized-reg "%rax" ty))
+    (if lhs-register?
+      (compiler-backend-binop-reg-asm "test" ty lhs lhs)
+      (str-cat
+        "    cmp"
+        (compiler-backend-int-instruction-suffix ty)
+        " $0, "
+        lhs
+        "\n"))
     (string-append
       (str-cat
         "    cmp"
@@ -10527,15 +10543,12 @@
         " "
         rhs
         ", ")
-      (str-cat (compiler-backend-sized-reg "%rax" ty) "\n" ""))))
+      (str-cat lhs "\n" ""))))
 
-;; A scalar register-homed var IS its own cmp source operand, so a comparison can
-;; emit `cmp <home>, %rax` directly instead of `movq <home>, %r8; cmp %r8, %rax`
-;; -- one fewer instruction per comparison (hot in every loop bound test). Returns
-;; "" (forcing the %r8 load path) for spilled vars, register groups/pairs (not a
-;; scalar operand) and addr-of-forwarded vars (whose value is a computed address,
-;; not the contents of the home register). The home is always a callee-saved
-;; register (never %rax/%r8), so it cannot be clobbered by the lhs load into %rax.
+;; A scalar register-homed var IS its own cmp operand, so comparisons can emit
+;; `cmp <rhs>, <home>` directly instead of staging either side through a fixed
+;; scratch. Returns "" for register groups/pairs and addr-of-forwarded vars (whose
+;; value is a computed address, not the contents of the home register).
 (define (compiler-backend-value-scalar-register-home
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : String
@@ -10550,6 +10563,106 @@
               [_ ""])]
           [_ ""]))]
     [_ ""]))
+
+(define (compiler-backend-compare-rhs-scavenge-exclude
+  [lhs-reg : String]) : (Array String)
+  (if (string-eq lhs-reg "")
+    (compiler-backend-binop-scavenge-exclude-build)
+    (compiler-backend-scavenge-exclude-append
+      (compiler-backend-binop-scavenge-exclude-build)
+      5
+      lhs-reg)))
+
+(define (compiler-backend-compare-rhs-scavenge-exclude-n [lhs-reg : String]) : i64
+  (if (string-eq lhs-reg "") 5 6))
+
+(define (compiler-backend-emit-compare-branch-with-lhs-operand
+  [assignments : CompilerRegAssignmentList]
+  [function : String]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]
+  [true-label : String]
+  [false-label : String]
+  [fallthrough : CompilerBackendMaybeLabel]
+  [true-jcc : String]
+  [false-jcc : String]
+  [lhs-asm : String]
+  [lhs-operand : String]
+  [lhs-register? : bool]
+  [lhs-reg : String]) : ResultCompilerBackend
+  (match (compiler-backend-immediate-operand rhs)
+    [(CompilerBackendSomeImmediate imm)
+      (OkCompilerBackend
+        (string-append
+          lhs-asm
+          (string-append
+            (compiler-backend-emit-compare-operand-flags
+              op
+              imm
+              lhs-operand
+              ty
+              lhs-register?)
+            (compiler-backend-emit-compare-branch-jumps
+              function
+              true-label
+              false-label
+              fallthrough
+              true-jcc
+              false-jcc))))]
+    [(CompilerBackendNoImmediate)
+      (let
+        [rhs-home : String
+          (compiler-backend-value-scalar-register-home assignments rhs)]
+        (if (not (string-eq rhs-home ""))
+          (OkCompilerBackend
+            (string-append
+              lhs-asm
+              (string-append
+                (compiler-backend-emit-compare-operand-flags
+                  op
+                  (compiler-backend-sized-reg rhs-home ty)
+                  lhs-operand
+                  ty
+                  lhs-register?)
+                (compiler-backend-emit-compare-branch-jumps
+                  function
+                  true-label
+                  false-label
+                  fallthrough
+                  true-jcc
+                  false-jcc))))
+          (let
+            [rhs-reg : String
+              (compiler-backend-scavenge-reg-here
+                (compiler-backend-compare-rhs-scavenge-exclude lhs-reg)
+                (compiler-backend-compare-rhs-scavenge-exclude-n lhs-reg)
+                "%r8")]
+            (match (compiler-backend-emit-load-value-with-plan
+              assignments
+              rhs
+              rhs-reg)
+              [(OkCompilerBackend rhs-asm)
+                (OkCompilerBackend
+                  (string-append
+                    lhs-asm
+                    (string-append
+                      rhs-asm
+                      (string-append
+                        (compiler-backend-emit-compare-operand-flags
+                          op
+                          (compiler-backend-sized-reg rhs-reg ty)
+                          lhs-operand
+                          ty
+                          lhs-register?)
+                        (compiler-backend-emit-compare-branch-jumps
+                          function
+                          true-label
+                          false-label
+                          fallthrough
+                          true-jcc
+                          false-jcc)))))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))
 
 (define (compiler-backend-emit-compare-branch
   [assignments : CompilerRegAssignmentList]
@@ -10567,75 +10680,61 @@
     (if (string-eq true-jcc "")
       (ErrCompilerBackend
         (compiler-diagnostic-at-start "" "backend: unsupported compare branch"))
-      (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
-        [(OkCompilerBackend lhs-asm)
-          (match (compiler-backend-immediate-operand rhs)
-            [(CompilerBackendSomeImmediate imm)
-              (OkCompilerBackend
-                (string-append
+      (let
+        [lhs-home : String
+          (compiler-backend-value-scalar-register-home assignments lhs)]
+        [lhs-address : String
+          (compiler-backend-value-stack-address assignments lhs)]
+        (if (not (string-eq lhs-home ""))
+          (compiler-backend-emit-compare-branch-with-lhs-operand
+            assignments
+            function
+            op
+            rhs
+            ty
+            true-label
+            false-label
+            fallthrough
+            true-jcc
+            false-jcc
+            ""
+            (compiler-backend-sized-reg lhs-home ty)
+            true
+            lhs-home)
+          (if (not (string-eq lhs-address ""))
+            (compiler-backend-emit-compare-branch-with-lhs-operand
+              assignments
+              function
+              op
+              rhs
+              ty
+              true-label
+              false-label
+              fallthrough
+              true-jcc
+              false-jcc
+              ""
+              lhs-address
+              false
+              "")
+            (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
+              [(OkCompilerBackend lhs-asm)
+                (compiler-backend-emit-compare-branch-with-lhs-operand
+                  assignments
+                  function
+                  op
+                  rhs
+                  ty
+                  true-label
+                  false-label
+                  fallthrough
+                  true-jcc
+                  false-jcc
                   lhs-asm
-                  (string-append
-                    (compiler-backend-emit-compare-flags op imm ty)
-                    (compiler-backend-emit-compare-branch-jumps
-                      function
-                      true-label
-                      false-label
-                      fallthrough
-                      true-jcc
-                      false-jcc))))]
-            [(CompilerBackendNoImmediate)
-              (let
-                [rhs-home : String
-                  (compiler-backend-value-scalar-register-home assignments rhs)]
-                (if (not (string-eq rhs-home ""))
-                  (OkCompilerBackend
-                    (string-append
-                      lhs-asm
-                      (string-append
-                        (compiler-backend-emit-compare-flags
-                          op
-                          (compiler-backend-sized-reg rhs-home ty)
-                          ty)
-                        (compiler-backend-emit-compare-branch-jumps
-                          function
-                          true-label
-                          false-label
-                          fallthrough
-                          true-jcc
-                          false-jcc))))
-                  (match (compiler-backend-emit-load-value-with-plan
-                    assignments
-                    rhs
-                    (compiler-backend-scavenge-reg-here
-                      (compiler-backend-binop-scavenge-exclude-build)
-                      5
-                      "%r8"))
-                    [(OkCompilerBackend rhs-asm)
-                      (OkCompilerBackend
-                        (string-append
-                          lhs-asm
-                          (string-append
-                            rhs-asm
-                            (string-append
-                              (compiler-backend-emit-compare-flags
-                                op
-                                (compiler-backend-sized-reg
-                                  (compiler-backend-scavenge-reg-here
-                                    (compiler-backend-binop-scavenge-exclude-build)
-                                    5
-                                    "%r8")
-                                  ty)
-                                ty)
-                              (compiler-backend-emit-compare-branch-jumps
-                                function
-                                true-label
-                                false-label
-                                fallthrough
-                                true-jcc
-                                false-jcc)))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
-
+                  (compiler-backend-sized-reg "%rax" ty)
+                  true
+                  "")]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))))
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
   (and
     (not (compiler-backend-float-type? ty))

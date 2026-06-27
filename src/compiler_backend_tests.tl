@@ -11780,6 +11780,61 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-compare-branch-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%r13"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-direct-compare-branch-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-direct-compare-branch-assignments)]
+    (match (compiler-backend-emit-compare-branch
+      assignments
+      "cmp_branch"
+      (IrBinLt)
+      (IrValueVar 0)
+      (IrValueI64 10)
+      (AstTyI64)
+      "yes"
+      "no"
+      (CompilerBackendNoLabel))
+      [(OkCompilerBackend reg-asm)
+        (match (compiler-backend-emit-compare-branch
+          assignments
+          "cmp_branch"
+          (IrBinNe)
+          (IrValueVar 2)
+          (IrValueVar 1)
+          (AstTyI64)
+          "yes"
+          "no"
+          (CompilerBackendNoLabel))
+          [(OkCompilerBackend stack-asm)
+            (and
+              (compiler-backend-string-contains?
+                reg-asm
+                "    cmpq $10, %r12\n")
+              (not
+                (compiler-backend-string-contains?
+                  reg-asm
+                  "    movq %r12, %rax\n"))
+              (not (compiler-backend-string-contains? reg-asm "%rax"))
+              (compiler-backend-string-contains?
+                stack-asm
+                "    cmpq %r13, -16(%rbp)\n")
+              (not
+                (compiler-backend-string-contains?
+                  stack-asm
+                  "    movq -16(%rbp), %rax\n"))
+              (not (compiler-backend-string-contains? stack-asm "%rax")))]
+          [(ErrCompilerBackend _) false])]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-todo-marker) : String
   (string-append "# " "TODO"))
 
@@ -11820,7 +11875,9 @@
       (compiler-backend-source-not-contains?
         (compiler-backend-bool-not-source)
         (compiler-backend-todo-marker))
-      (compiler-backend-direct-condition-branch-ok?))))
+      (and
+        (compiler-backend-direct-condition-branch-ok?)
+        (compiler-backend-direct-compare-branch-ok?)))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms (#1353).

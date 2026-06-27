@@ -4844,7 +4844,9 @@
                     (string.string-append
                       "  "
                       (string.string-append eq-expr ")\n"))
-                    (string.string-append prefix "-key-eq? (& slot-key) key)")
+                    (string.string-append
+                      prefix
+                      "-key-eq? (& slot-key) (& key))")
                     (string.string-append
                       prefix
                       "-key-eq? (& slot-key) (& key))")

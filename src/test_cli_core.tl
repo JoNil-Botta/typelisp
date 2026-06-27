@@ -2525,11 +2525,11 @@
               AstDeclNil))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
-        "generated.tl"
+        "driver.tl"
         (ast-decl-path-cons
-          "generated.tl"
+          "driver.tl"
           (ast-decl-path-cons
-            "generated.tl"
+            "driver.tl"
             (ast-decl-path-cons "driver.tl" AstDeclPathNil))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness program _ count)

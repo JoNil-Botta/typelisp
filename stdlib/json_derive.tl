@@ -103,9 +103,9 @@
             (string-append
               (string-append "json-derive: field " field-name)
               (string-append " outside " (string-append field-key " range"))))]
-        [out-access : Expr (expr-struct-get out field-name)]
-        [set-parsed : Expr `(set! ,out-access parsed)]
-        [set-cast-parsed : Expr `(set! ,out-access (cast parsed : ,field-type))]
+        [set-parsed : Expr (expr-struct-set out field-name `parsed)]
+        [set-cast-parsed : Expr
+          (expr-struct-set out field-name `(cast parsed : ,field-type))]
         [min-expr : Expr
           (match field-key
             ["i32" (expr-int (- 0 2147483648))]
@@ -171,7 +171,9 @@
             (string-append
               (string-append "json-derive: field " field-name)
               (string-append " outside " (string-append field-key " range"))))]
-        [out-access : Expr (expr-struct-get out field-name)]
+        [set-parsed : Expr (expr-struct-set out field-name `parsed)]
+        [set-cast-parsed : Expr
+          (expr-struct-set out field-name `(cast parsed : ,field-type))]
         [min-expr : Expr
           (match field-key
             ["i32" (expr-int (- 0 2147483648))]
@@ -194,7 +196,7 @@
               (match (json.json-object-get-owned ,value __json_key)
                 [(json.JsonFound __json_value)
                   (match __json_value
-                    [(json.JsonBool parsed) (set! ,out-access parsed)]
+                    [(json.JsonBool parsed) ,set-parsed]
                     [_ (return (,err-ctor ,kind-error))])]
                 [(json.JsonMissing) (return (,err-ctor ,missing-error))]))]
           ["String"
@@ -203,7 +205,7 @@
               (match (json.json-object-get-owned ,value __json_key)
                 [(json.JsonFound __json_value)
                   (match __json_value
-                    [(json.JsonString parsed) (set! ,out-access parsed)]
+                    [(json.JsonString parsed) ,set-parsed]
                     [_ (return (,err-ctor ,kind-error))])]
                 [(json.JsonMissing) (return (,err-ctor ,missing-error))]))]
           ["i64"
@@ -214,8 +216,7 @@
                   (match __json_value
                     [(json.JsonNumber text)
                       (match (json.json-number-owned->i64 text)
-                        [(json.OkJsonNumberI64 parsed)
-                          (set! ,out-access parsed)]
+                        [(json.OkJsonNumberI64 parsed) ,set-parsed]
                         [(json.ErrJsonNumberI64 err)
                           (return
                             (,err-ctor
@@ -237,7 +238,7 @@
                                 true
                                 (> parsed ,max-expr))
                                 (return (,err-ctor ,range-error))
-                                (set! ,out-access (cast parsed : ,field-type)))]
+                                ,set-cast-parsed)]
                             [(json.ErrJsonNumberI64 err)
                               (return
                                 (,err-ctor
@@ -257,7 +258,7 @@
                                 true
                                 (> parsed ,max-expr))
                                 (return (,err-ctor ,range-error))
-                                (set! ,out-access (cast parsed : ,field-type)))]
+                                ,set-cast-parsed)]
                             [(json.ErrJsonNumberI64 err)
                               (return
                                 (,err-ctor
@@ -277,7 +278,7 @@
                                 true
                                 (> parsed ,max-expr))
                                 (return (,err-ctor ,range-error))
-                                (set! ,out-access (cast parsed : ,field-type)))]
+                                ,set-cast-parsed)]
                             [(json.ErrJsonNumberI64 err)
                               (return
                                 (,err-ctor
@@ -297,7 +298,7 @@
                                 true
                                 (> parsed ,max-expr))
                                 (return (,err-ctor ,range-error))
-                                (set! ,out-access (cast parsed : ,field-type)))]
+                                ,set-cast-parsed)]
                             [(json.ErrJsonNumberI64 err)
                               (return
                                 (,err-ctor
@@ -317,7 +318,7 @@
                                 true
                                 (> parsed ,max-expr))
                                 (return (,err-ctor ,range-error))
-                                (set! ,out-access (cast parsed : ,field-type)))]
+                                ,set-cast-parsed)]
                             [(json.ErrJsonNumberI64 err)
                               (return
                                 (,err-ctor
@@ -337,7 +338,7 @@
                                 true
                                 (> parsed ,max-expr))
                                 (return (,err-ctor ,range-error))
-                                (set! ,out-access (cast parsed : ,field-type)))]
+                                ,set-cast-parsed)]
                             [(json.ErrJsonNumberI64 err)
                               (return
                                 (,err-ctor
@@ -371,7 +372,7 @@
                               [__json_nested_result : ,__json_nested_result_type
                                 (,nested-from __json_value)]
                               (match __json_nested_result
-                                [(Ok parsed) (set! ,out-access parsed)]
+                                [(Ok parsed) ,set-parsed]
                                 [(Err err)
                                   (return
                                     (,err-ctor

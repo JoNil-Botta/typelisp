@@ -6860,33 +6860,33 @@
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 0)
       (AstTyI64)
-      "    movq 0(%rdi), %r8\n"
+      "    movq %rdi, %r8\n"
       "(%r8)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueI64 4)
       (AstTyI64)
-      "    movq 0(%rdi), %r8\n"
+      "    movq %rdi, %r8\n"
       "32(%r8)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 1)
       (AstTyI32)
-      "    movq 0(%rdi), %r8\n"
+      "    movq %rdi, %r8\n"
       "(%r8,%r12,4)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 2)
       (AstTyI64)
-      "    movq 0(%rdi), %r8\n"
+      "    movq %rdi, %r8\n"
       "(%r8,%rax,8)")
     (compiler-backend-simd-indexed-address-with-base-emits?
       (IrValueVar 6)
       (IrValueVar 2)
       (AstTyI64)
-      "    movq 0(%rcx), %r8\n"
+      "    movq %rcx, %r8\n"
       "(%r8,%rax,8)")
     (compiler-backend-simd-indexed-address-emits?
       (IrValueVar 7)
       (AstTyI64)
-      "    movq 0(%rdi), %r8\n    movq -64(%rbp), %r9\n"
+      "    movq %rdi, %r8\n    movq -64(%rbp), %r9\n"
       "(%r8,%r9,8)")))
 
 (define (compiler-backend-avx2-vector-load-address-ok?) : bool
@@ -6899,7 +6899,7 @@
     (AstTyI64)
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
-      (string-eq asm "    movq 0(%rdi), %r8\n    vmovdqu 32(%r8), %ymm6\n")]
+      (string-eq asm "    movq %rdi, %r8\n    vmovdqu 32(%r8), %ymm6\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx2-vector-store-address-ok?) : bool
@@ -6914,7 +6914,7 @@
     [(OkCompilerBackend asm)
       (string.string-eq
         asm
-        "    movq 0(%rdi), %r8\n    vmovdqu %ymm7, (%r8,%r12,8)\n")]
+        "    movq %rdi, %r8\n    vmovdqu %ymm7, (%r8,%r12,8)\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-avx512-predicated-load-address-ok?) : bool
@@ -6930,7 +6930,7 @@
     [(OkCompilerBackend asm)
       (string.string-eq
         asm
-        "    movq 0(%rdi), %r8\n    vmovdqu64 32(%r8), %zmm6{%k1}{z}\n")]
+        "    movq %rdi, %r8\n    vmovdqu64 32(%r8), %zmm6{%k1}{z}\n")]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-simd-indexed-address-users-ok?) : bool
@@ -7056,7 +7056,7 @@
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq 0(%r12), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
         (compiler-backend-string-contains?
           asm
           "    vmovdqu8 (%r8), %zmm6{%k2}{z}\n")
@@ -7090,7 +7090,7 @@
     (compiler-diagnostic-at-start "" ""))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq 0(%r12), %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
         (compiler-backend-string-contains?
           asm
           "    vpxord %zmm6, %zmm6, %zmm6\n")
@@ -9700,6 +9700,31 @@
             (compiler-backend-string-contains? asm "    movq -16(%rbp), %rax\n")))]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-gep-store-index-home-preserved-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r9"))
+        CompilerRegAssignmentNil)]
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 3 (IrValueVar 0) (IrValueVar 2) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 3) (IrValueI64 0) (AstTyI64))
+          IrInstrNil))
+      assignments
+      4)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    movq %r9, %r8\n    movq -8(%rbp), %r9\n    movq $0, (%r9,%r8,8)\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq -8(%rbp), %r9\n    movq %r9, %r8\n    movq $0, (%r9,%r8,8)\n")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-store-home-base-shape-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -10149,7 +10174,7 @@
       (compiler-backend-gep-load-compare-priority-shape-ok?)
       (compiler-backend-gep-load-store-order-shape-ok?)
       (compiler-backend-gep-load-register-homes-shape-ok?)
-      true)))
+      (compiler-backend-gep-store-index-home-preserved-ok?))))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr
   (IrInstrSyscall

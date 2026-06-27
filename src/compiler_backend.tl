@@ -1348,14 +1348,10 @@
   (let
     [home : String (compiler-backend-simd-base-home assignments base)]
     (if (string-eq home "")
-      (match (compiler-backend-emit-load-value-with-plan
-        assignments
-        base
-        base-reg)
-        [(OkCompilerBackend base-asm)
-          (OkCompilerBackend (str-cat base-asm "    movq 0(" base-reg "), " base-reg "\n"))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
-      (OkCompilerBackend (str-cat "    movq 0(" home "), " base-reg "\n")))))
+      (compiler-backend-emit-load-value-with-plan assignments base base-reg)
+      (if (string-eq home base-reg)
+        (OkCompilerBackend "")
+        (OkCompilerBackend (str-cat "    movq " home ", " base-reg "\n"))))))
 
 (define (compiler-backend-emit-simd-indexed-address
   [assignments : CompilerRegAssignmentList]
@@ -3364,12 +3360,14 @@
                                 "\n")))]
                         [(ErrBackendReg message)
                           (ErrCompilerBackend
-                            (compiler-diagnostic-with-message
-                              instr-diag
-                              message))])]
+                            (box
+                              (compiler-diagnostic-with-message
+                                instr-diag
+                                message)))])]
                     [(ErrBackendReg message)
                       (ErrCompilerBackend
-                        (compiler-diagnostic-with-message instr-diag message))]))]
+                        (box
+                          (compiler-diagnostic-with-message instr-diag message)))]))]
               [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
                   (box
@@ -3457,12 +3455,14 @@
                                 "}\n")))]
                         [(ErrBackendReg message)
                           (ErrCompilerBackend
-                            (compiler-diagnostic-with-message
-                              instr-diag
-                              message))])]
+                            (box
+                              (compiler-diagnostic-with-message
+                                instr-diag
+                                message)))])]
                     [(ErrBackendReg message)
                       (ErrCompilerBackend
-                        (compiler-diagnostic-with-message instr-diag message))]))]
+                        (box
+                          (compiler-diagnostic-with-message instr-diag message)))]))]
               [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
                   (box
@@ -3743,9 +3743,10 @@
                                   "}\n"))]
                             [(ErrBackendReg message)
                               (ErrCompilerBackend
-                                (compiler-diagnostic-with-message
-                                  instr-diag
-                                  message))])
+                                (box
+                                  (compiler-diagnostic-with-message
+                                    instr-diag
+                                    message)))])
                           (OkCompilerBackend
                             (if (string-eq (& true-reg) (& false-reg))
                               (if (string-eq (& dst-reg) (& false-reg))
@@ -5255,9 +5256,10 @@
               gp-part
               "\n"))
           (ErrCompilerBackend
-            (compiler-diagnostic-at-start
-              ""
-              "backend: unsupported float stack argument value")))))))
+            (box
+              (compiler-diagnostic-at-start
+                ""
+                "backend: unsupported float stack argument value"))))))))
 
 (define (compiler-backend-float-direct-rhs-operand
   [assignments : CompilerRegAssignmentList]
@@ -9031,7 +9033,8 @@
         result-reg)]
     (if (string-eq rhs-operand "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: cannot direct spilled float binop"))
+        (box
+          (compiler-diagnostic-at-start "" "backend: cannot direct spilled float binop")))
       (match (compiler-backend-emit-float-binop-direct
         assignments
         result-reg
@@ -9063,7 +9066,8 @@
       (compiler-backend-float-direct-rhs-operand assignments rhs fty dst-home)]
     (if (or (string-eq lhs-reg "") (string-eq rhs-operand ""))
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: cannot direct float compare"))
+        (box
+          (compiler-diagnostic-at-start "" "backend: cannot direct float compare")))
       (OkCompilerBackend
         (compiler-backend-float-compare-reg-asm
           op
@@ -9255,7 +9259,8 @@
                     result-ty)))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported float binary op")))))
+        (box
+          (compiler-diagnostic-at-start "" "backend: unsupported float binary op"))))))
 
 (define (compiler-backend-f64-unop-reg-asm
   [op : CompilerIrUnOp]
@@ -9594,9 +9599,10 @@
                   result-ty)))]
           [(CompilerBackendNoAsm)
             (ErrCompilerBackend
-              (compiler-diagnostic-at-start
-                ""
-                "backend: unsupported immediate spill binop"))])]
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: unsupported immediate spill binop")))])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-binop-spill-source-operand
@@ -10493,7 +10499,8 @@
                     return-tail))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
     (ErrCompilerBackend
-      (compiler-diagnostic-at-start "" "backend: unsupported float return compare"))))
+      (box
+        (compiler-diagnostic-at-start "" "backend: unsupported float return compare")))))
 
 (define (compiler-backend-scavenge-binop-return-rhs-reg
   [assignments : CompilerRegAssignmentList]
@@ -11053,7 +11060,8 @@
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string.string-eq true-jcc "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start "" "backend: unsupported compare branch"))
+        (box
+          (compiler-diagnostic-at-start "" "backend: unsupported compare branch")))
       (let
         [lhs-home : String
           (compiler-backend-value-scalar-register-home assignments lhs)]
@@ -11137,9 +11145,10 @@
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string.string-eq true-jcc "")
       (ErrCompilerBackend
-        (compiler-diagnostic-at-start
-          ""
-          "backend: unsupported load compare branch"))
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: unsupported load compare branch")))
       (let
         [scav-base : String
           (compiler-backend-scavenge-reg-here
@@ -12628,9 +12637,10 @@
                       [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
                   [(CompilerBackendNoAsm)
                     (ErrCompilerBackend
-                      (compiler-diagnostic-at-start
-                        ""
-                        "backend: fused gep copy displacement out of range"))])]
+                      (box
+                        (compiler-diagnostic-at-start
+                          ""
+                          "backend: fused gep copy displacement out of range")))])]
               [(CompilerBackendNoI64)
                 ;; index scratch: avoid scav-base (live) + src's home (loaded later) +
                 ;; the active set. Scavenged only here (unused in SomeI64) so an
@@ -13121,18 +13131,17 @@
         [scale : i64 (compiler-backend-type-size elem-ty)]
         [value-home : String (compiler-backend-value-scalar-register assignments value)]
         [base-home : String (compiler-backend-value-scalar-register assignments base)]
+        [offset-home : String
+          (compiler-backend-value-scalar-register assignments offset)]
         [scav-idx : String
           (compiler-backend-scavenge-reg-here
             (compiler-backend-scavenge-exclude-ops2 assignments base value)
             7
             "%r8")]
-        ;; Fold-base scratch. For non-SIB scales the scaled
-        ;; index is folded into a register, which must not clobber the base's live
-        ;; home, so the base is copied into this scratch first; it also serves as
-        ;; the load fallback when the base is spilled. Scavenged AFTER scav-idx and
-        ;; excluding it (so the two scratch never collide); the sound freeness query
-        ;; keeps it off every live operand home (base/offset/value all read OCCUPIED
-        ;; here). Actively picks a non-%r10 register (the exclude lists %r10).
+        ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
+        ;; register, which must not clobber the base/value homes; it also serves as
+        ;; the load fallback when the base is spilled. If that fallback aliases the
+        ;; offset home, the offset copy is emitted before the base reload below.
         [scav-fold : String
           (compiler-backend-scavenge-reg-here
             (compiler-backend-scavenge-exclude-append
@@ -13174,6 +13183,13 @@
                       (compiler-backend-two-exclude base-reg scav-idx))]
                   [store-exclude-n : i64
                     (if (string-eq addr "") 1 2)]
+                  [base-asm : String (struct-get base-plan asm)]
+                  [addr-prefix-asm : String
+                    (if (and
+                      (not (string-eq offset-home ""))
+                      (string-eq base-reg offset-home))
+                      (string.string-append offset-asm base-asm)
+                      (string.string-append base-asm offset-asm))]
                   (match (compiler-backend-emit-store-value-to-address
                     assignments
                     value
@@ -13185,10 +13201,10 @@
                     [(OkCompilerBackend store-asm)
                       (OkCompilerBackend
                         (string.string-append
-                          (struct-get base-plan asm)
+                          addr-prefix-asm
                           (string.string-append
-                            offset-asm
-                            (string.string-append addr-asm store-asm))))]
+                            addr-asm
+                            store-asm)))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]))
@@ -13774,25 +13790,26 @@
               from-int
               to-int)))
         (ErrCompilerBackend
-          (compiler-diagnostic-at-start
-            ""
-            (str-cat
-              "backend: unsupported bitcast width "
-              (compiler-backend-bitcast-type-debug-name from-ty)
-              " -> "
-              (compiler-backend-bitcast-type-debug-name to-ty)
-              " from-width="
-              (int->string from-width)
-              " to-width="
-              (int->string to-width)
-              " from-float="
-              (if from-float "1" "0")
-              " to-float="
-              (if to-float "1" "0")
-              " from-int="
-              (if from-int "1" "0")
-              " to-int="
-              (if to-int "1" "0"))))]
+          (box
+            (compiler-diagnostic-at-start
+              ""
+              (str-cat
+                "backend: unsupported bitcast width "
+                (compiler-backend-bitcast-type-debug-name from-ty)
+                " -> "
+                (compiler-backend-bitcast-type-debug-name to-ty)
+                " from-width="
+                (int->string from-width)
+                " to-width="
+                (int->string to-width)
+                " from-float="
+                (if from-float "1" "0")
+                " to-float="
+                (if to-float "1" "0")
+                " from-int="
+                (if from-int "1" "0")
+                " to-int="
+                (if to-int "1" "0")))))]
       [(and from-float to-int)
         (let
           [dst-home : String (compiler-backend-var-register-home assignments dst)]
@@ -16910,9 +16927,10 @@
   [var-id : i64]) : ResultCompilerBackend
   (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
     (ErrCompilerBackend
-      (compiler-diagnostic-at-start
-        ""
-        "backend: phi temp save of forwarded addr-of dst (unexpected)"))
+      (box
+        (compiler-diagnostic-at-start
+          ""
+          "backend: phi temp save of forwarded addr-of dst (unexpected)")))
     (match (compiler-reg-assignment-lookup assignments var-id)
       [(CompilerRegSomeLocation location)
         (match location
@@ -16922,9 +16940,10 @@
             (OkCompilerBackend (compiler-backend-frame-offset offset))]
           [(CompilerRegRemat _)
             (ErrCompilerBackend
-              (compiler-diagnostic-at-start
-                ""
-                "backend: phi temp save of rematerialised dst (unexpected)"))])]
+              (box
+                (compiler-diagnostic-at-start
+                  ""
+                  "backend: phi temp save of rematerialised dst (unexpected)")))])]
       [(CompilerRegNoLocation)
         (OkCompilerBackend (compiler-backend-slot var-id))])))
 
@@ -20378,7 +20397,10 @@
                           (compiler-backend-group-word-sse? program-index ty 1)))))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))
+                    (box
+                      (compiler-backend-apply-instr-diagnostic
+                        (box-get message)
+                        instr-diag)))]))
             (let
               [no-exclude : (Array String) (make-array String 0)]
               (match (compiler-backend-emit-store-value-to-address
@@ -20392,9 +20414,10 @@
                 [(OkCompilerBackend store-asm) (OkCompilerBackend store-asm)]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic
-                      message
-                      instr-diag))]))))]
+                    (box
+                      (compiler-backend-apply-instr-diagnostic
+                        (box-get message)
+                        instr-diag)))]))))]
       [(IrInstrJump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           source-function
@@ -22944,9 +22967,10 @@
                                     "")))))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend
-                            (compiler-backend-apply-instr-diagnostic
-                              message
-                              instr-diag))]))])]
+                            (box
+                              (compiler-backend-apply-instr-diagnostic
+                                (box-get message)
+                                instr-diag)))]))])]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
                   (box
@@ -23093,10 +23117,13 @@
                                 "")))))))]
                 [(ErrBackendReg message)
                   (ErrCompilerBackend
-                    (compiler-diagnostic-with-message instr-diag message))])]
+                    (box (compiler-diagnostic-with-message instr-diag message)))])]
             [(ErrCompilerBackend message)
               (ErrCompilerBackend
-                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    instr-diag)))]))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (box
@@ -23230,7 +23257,10 @@
                           "")))))]
               [(ErrCompilerBackend message)
                 (ErrCompilerBackend
-                  (compiler-backend-apply-instr-diagnostic message instr-diag))]))
+                  (box
+                    (compiler-backend-apply-instr-diagnostic
+                      (box-get message)
+                      instr-diag)))]))
           (OkCompilerBackend
             (string.string-append
               (compiler-backend-emit-call-space-sub call-space)
@@ -23443,7 +23473,10 @@
                               ""))))))]
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
-                    (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
+                    (box
+                      (compiler-backend-apply-instr-diagnostic
+                        (box-get message)
+                        instr-diag)))]))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
               (box

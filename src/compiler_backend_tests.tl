@@ -2034,7 +2034,7 @@
             asm
             (compiler-backend-alloc-generic-call-text 4 "%rdi"))
           (compiler-backend-string-contains-alloc-size? asm 8))
-        (compiler-backend-string-contains? asm "    movl %r8d, (%r9)\n")
+        (compiler-backend-string-contains? asm "    movl %r8d, (%r10)\n")
         (compiler-backend-string-contains? asm "    movl (%r10), %r8d\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
         (and
@@ -2060,7 +2060,7 @@
             asm
             (compiler-backend-alloc-generic-call-text 4 "%rcx"))
           (compiler-backend-string-contains-alloc-size? asm 8))
-        (compiler-backend-string-contains? asm "    movl %r8d, (%r9)\n")
+        (compiler-backend-string-contains? asm "    movl %r8d, (%r10)\n")
         (compiler-backend-string-contains? asm "    movl (%r10), %r8d\n")
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
         (and
@@ -2946,8 +2946,8 @@
           (compiler-backend-string-contains?
             asm
             ".globl _tl___enum_obj_Shape_Nothing\n")
-          (compiler-backend-string-contains? asm "    movq $1, (%r9)\n")
-          (compiler-backend-string-contains? asm "    movq $2, (%r9)\n")
+          (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
+          (compiler-backend-string-contains? asm "    movq $2, (%r10)\n")
           (not (compiler-backend-string-contains? asm "    call _tl_Point\n"))
           (not (compiler-backend-string-contains? asm "    call _tl_Nothing\n"))
           (not (compiler-backend-string-contains? asm "    call _tl_Circle\n"))
@@ -8530,6 +8530,34 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : ResultCompilerBackend
   (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-addr-forward-enabled : bool
+      compiler-backend-addr-of-forwarding-enabled]
+    [prev-addr-forward-src : (Array i64)
+      compiler-backend-addr-of-forwarding-src]
+    [prev-fuse-ready : bool compiler-backend-fuse-need-ready]
+    [prev-fuse-use-counts : (Array i64) compiler-backend-fuse-use-counts]
+    [prev-fuse-free-counts : (Array i64) compiler-backend-fuse-free-counts]
+    [prev-loop-active : bool compiler-backend-emit-instrs-loop-active]
+    [prev-continue-pending : bool
+      compiler-backend-emit-instrs-continue-pending]
+    [prev-identity-tail : bool compiler-backend-identity-tail-forwarder-active]
+    [prev-emergency-pending : bool compiler-backend-emergency-pending]
+    [prev-emergency-reg : String compiler-backend-emergency-reg]
+    [prev-emergency-used : bool compiler-backend-emergency-used]
+    [prev-emergency-slot-offset : i64
+      compiler-backend-emergency-slot-offset]
+    [prev-callee0 : bool (array-ref compiler-backend-scavenge-used-callee 0)]
+    [prev-callee1 : bool (array-ref compiler-backend-scavenge-used-callee 1)]
+    [prev-callee2 : bool (array-ref compiler-backend-scavenge-used-callee 2)]
+    [prev-callee3 : bool (array-ref compiler-backend-scavenge-used-callee 3)]
+    [prev-callee4 : bool (array-ref compiler-backend-scavenge-used-callee 4)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [use-counts : (Array i64)
@@ -8559,13 +8587,77 @@
       (text_buf.text-buf-empty))
       [(OkCompilerBackend asm)
         (let
-          [_addr-forward-done : unit
-            (compiler-backend-addr-of-forwarding-disable!)]
+          [_restore : unit
+            (begin
+              (compiler-backend-set-scavenge-ctx!
+                prev-starts
+                prev-ends
+                prev-assignments
+                prev-vars)
+              (set! compiler-backend-emit-instr-post-base prev-post-base)
+              (set! compiler-backend-emit-current-count prev-current-count)
+              (set!
+                compiler-backend-addr-of-forwarding-enabled
+                prev-addr-forward-enabled)
+              (set! compiler-backend-addr-of-forwarding-src prev-addr-forward-src)
+              (set! compiler-backend-fuse-need-ready prev-fuse-ready)
+              (set! compiler-backend-fuse-use-counts prev-fuse-use-counts)
+              (set! compiler-backend-fuse-free-counts prev-fuse-free-counts)
+              (set! compiler-backend-emit-instrs-loop-active prev-loop-active)
+              (set!
+                compiler-backend-emit-instrs-continue-pending
+                prev-continue-pending)
+              (set!
+                compiler-backend-identity-tail-forwarder-active
+                prev-identity-tail)
+              (set! compiler-backend-emergency-pending prev-emergency-pending)
+              (set! compiler-backend-emergency-reg prev-emergency-reg)
+              (set! compiler-backend-emergency-used prev-emergency-used)
+              (set!
+                compiler-backend-emergency-slot-offset
+                prev-emergency-slot-offset)
+              (array-set! compiler-backend-scavenge-used-callee 0 prev-callee0)
+              (array-set! compiler-backend-scavenge-used-callee 1 prev-callee1)
+              (array-set! compiler-backend-scavenge-used-callee 2 prev-callee2)
+              (array-set! compiler-backend-scavenge-used-callee 3 prev-callee3)
+              (array-set! compiler-backend-scavenge-used-callee 4 prev-callee4))]
           (OkCompilerBackend asm))]
       [(ErrCompilerBackend message)
         (let
-          [_addr-forward-done : unit
-            (compiler-backend-addr-of-forwarding-disable!)]
+          [_restore : unit
+            (begin
+              (compiler-backend-set-scavenge-ctx!
+                prev-starts
+                prev-ends
+                prev-assignments
+                prev-vars)
+              (set! compiler-backend-emit-instr-post-base prev-post-base)
+              (set! compiler-backend-emit-current-count prev-current-count)
+              (set!
+                compiler-backend-addr-of-forwarding-enabled
+                prev-addr-forward-enabled)
+              (set! compiler-backend-addr-of-forwarding-src prev-addr-forward-src)
+              (set! compiler-backend-fuse-need-ready prev-fuse-ready)
+              (set! compiler-backend-fuse-use-counts prev-fuse-use-counts)
+              (set! compiler-backend-fuse-free-counts prev-fuse-free-counts)
+              (set! compiler-backend-emit-instrs-loop-active prev-loop-active)
+              (set!
+                compiler-backend-emit-instrs-continue-pending
+                prev-continue-pending)
+              (set!
+                compiler-backend-identity-tail-forwarder-active
+                prev-identity-tail)
+              (set! compiler-backend-emergency-pending prev-emergency-pending)
+              (set! compiler-backend-emergency-reg prev-emergency-reg)
+              (set! compiler-backend-emergency-used prev-emergency-used)
+              (set!
+                compiler-backend-emergency-slot-offset
+                prev-emergency-slot-offset)
+              (array-set! compiler-backend-scavenge-used-callee 0 prev-callee0)
+              (array-set! compiler-backend-scavenge-used-callee 1 prev-callee1)
+              (array-set! compiler-backend-scavenge-used-callee 2 prev-callee2)
+              (array-set! compiler-backend-scavenge-used-callee 3 prev-callee3)
+              (array-set! compiler-backend-scavenge-used-callee 4 prev-callee4))]
           (ErrCompilerBackend message))])))
 
 (define (compiler-backend-runtime-helper-full-plan) : CompilerBackendRuntimePlan
@@ -9236,7 +9328,7 @@
       "    movzbq (%r10), %r8\n")
     (compiler-backend-instr-contains?
       (IrInstrStorePtr (IrValueVar 1) (IrValueI64 7) (AstTyI32))
-      "    movl $7, (%r9)\n")
+      "    movl $7, (%r10)\n")
     (compiler-backend-instr-contains?
       (IrInstrCast 6 (IrValueVar 5) (AstTyI8) (AstTyI64))
       "    movsbq -48(%rbp), %r8\n")
@@ -9406,8 +9498,8 @@
     4)
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    leaq -16(%rbp), %r9\n")
-        (compiler-backend-string-contains? asm "    movq $7, (%r9)\n")
+        (compiler-backend-string-contains? asm "    leaq -16(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    movq $7, (%r10)\n")
         (not (compiler-backend-string-contains? asm "%r12"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
@@ -9634,13 +9726,13 @@
     4)
     [(OkCompilerBackend asm)
       (and
-        (= (compiler-backend-string-count asm "    movq -8(%rbp), %r9\n") 1)
-        (compiler-backend-string-contains? asm "    movq $1, (%r9)\n")
-        (compiler-backend-string-contains? asm "    movq $2, 8(%r9)\n")
+        (= (compiler-backend-string-count asm "    movq -8(%rbp), %r10\n") 1)
+        (compiler-backend-string-contains? asm "    movq $1, (%r10)\n")
+        (compiler-backend-string-contains? asm "    movq $2, 8(%r10)\n")
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
         (not
-          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r9\n")))]
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-store-value-scratch-shape-ok?) : bool
@@ -9655,7 +9747,7 @@
       3)
       [(OkCompilerBackend asm)
         (and
-          (compiler-backend-string-contains? asm "    movq %r12, (%r9)\n")
+          (compiler-backend-string-contains? asm "    movq %r12, (%r10)\n")
           (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n")))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-test-instrs
@@ -9667,7 +9759,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movq -16(%rbp), %r8\n")
-          (compiler-backend-string-contains? asm "    movq %r8, (%r9)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, (%r10)\n")
           (not (compiler-backend-string-contains? asm "%rax")))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-test-instrs
@@ -9679,7 +9771,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm2\n")
-          (compiler-backend-string-contains? asm "    movsd %xmm2, (%r9)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, (%r10)\n")
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-test-instrs
@@ -9724,6 +9816,64 @@
               asm
               "    movq -8(%rbp), %r9\n    movq %r9, %r8\n    movq $0, (%r9,%r8,8)\n")))]
       [(ErrCompilerBackend _) false])))
+
+(define (compiler-backend-store-address-source-home-preserved-ok?) : bool
+  (let
+    [src-r9 : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+        CompilerRegAssignmentNil)]
+    [pair-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r8"))
+        CompilerRegAssignmentNil)]
+    [plain-ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          IrInstrNil)
+        src-r9
+        3)
+        [(OkCompilerBackend asm)
+          (string.string-eq
+            asm
+            "    movq -8(%rbp), %r10\n    movq %r9, (%r10)\n")]
+        [(ErrCompilerBackend _) false])]
+    [gep-ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (IrInstrGep 2 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+          (compiler-ir-instr-cons
+            (IrInstrStorePtr (IrValueVar 2) (IrValueVar 1) (AstTyI64))
+            IrInstrNil))
+        src-r9
+        3)
+        [(OkCompilerBackend asm)
+          (string.string-eq
+            asm
+            "    movq -8(%rbp), %r10\n    movq %r9, 8(%r10)\n")]
+        [(ErrCompilerBackend _) false])]
+    [pair-ok : bool
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrGep 3 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrStorePtr (IrValueVar 3) (IrValueVar 2) (AstTyI64))
+              IrInstrNil)))
+        pair-assignments
+        4)
+        [(OkCompilerBackend asm)
+          (string.string-eq
+            asm
+            (str_cat.str-cat
+              "    movq -8(%rbp), %r10\n"
+              "    movq -16(%rbp), %r9\n"
+              "    movq %r9, (%r10)\n"
+              "    movq %r8, 8(%r10)\n"))]
+        [(ErrCompilerBackend _) false])]
+    (backend-and4 plain-ok gep-ok pair-ok true)))
 
 (define (compiler-backend-store-home-base-shape-ok?) : bool
   (let
@@ -10174,7 +10324,8 @@
       (compiler-backend-gep-load-compare-priority-shape-ok?)
       (compiler-backend-gep-load-store-order-shape-ok?)
       (compiler-backend-gep-load-register-homes-shape-ok?)
-      (compiler-backend-gep-store-index-home-preserved-ok?))))
+      (compiler-backend-gep-store-index-home-preserved-ok?))
+    (compiler-backend-store-address-source-home-preserved-ok?)))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr
   (IrInstrSyscall
@@ -14731,7 +14882,7 @@
           ;; (box 42): allocate size-of(i64)=8 bytes for the box storage,
           (compiler-backend-string-contains-alloc-size? asm 8)
           ;; Store the boxed value through allocator-owned pointer/value homes.
-          (compiler-backend-string-contains? asm "    movq %r8, (%r9)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, (%r10)\n")
           ;; (box-get b): load the boxed value back through the box pointer.
           (compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
           (not
@@ -14797,9 +14948,9 @@
         (backend-and8
           (compiler-backend-string-contains-alloc-size? asm 16)
           (compiler-backend-string-contains? asm "    movq $1,")
-          (compiler-backend-string-contains? asm "    movb %r8b, (%r9)\n")
+          (compiler-backend-string-contains? asm "    movb %r8b, (%r10)\n")
           (compiler-backend-string-contains? asm "    movq $42,")
-          (compiler-backend-string-contains? asm "    movq %r8, 8(%r9)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, 8(%r10)\n")
           (compiler-backend-string-contains? asm "    movq 8(%r10), %r8\n")
           (not (compiler-backend-string-contains? asm "    movb %al, (%r10)\n"))
           (not

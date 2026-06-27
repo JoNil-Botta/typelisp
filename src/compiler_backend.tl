@@ -13068,10 +13068,12 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
+    [dst-home : String (compiler-backend-value-register-home assignments dst)]
+    [src-home : String (compiler-backend-value-register-home assignments src)]
     [scav-base : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-binop-scavenge-exclude-build)
-        5
+        (compiler-backend-two-exclude dst-home src-home)
+        2
         "%r10")]
   (match (compiler-backend-emit-address-base assignments dst scav-base)
     [(OkCompilerBackendAddressBase base)
@@ -13103,10 +13105,12 @@
     [(CompilerBackendSomeI64 n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
+        [base-home : String (compiler-backend-value-register-home assignments base)]
+        [value-home : String (compiler-backend-value-register-home assignments value)]
         [scav-base : String
           (compiler-backend-scavenge-reg-here
-            (compiler-backend-binop-scavenge-exclude-build)
-            5
+            (compiler-backend-two-exclude base-home value-home)
+            2
             "%r10")]
         (match (compiler-backend-emit-address-base assignments base scav-base)
           [(OkCompilerBackendAddressBase base-plan)
@@ -13219,10 +13223,15 @@
   [ty1 : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
+    [ptr-home : String (compiler-backend-value-register-home assignments ptr)]
+    [value0-home : String
+      (compiler-backend-value-register-home assignments value0)]
+    [value1-home : String
+      (compiler-backend-value-register-home assignments value1)]
     [scav-base : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-binop-scavenge-exclude-build)
-        5
+        (compiler-backend-three-exclude ptr-home value0-home value1-home)
+        3
         "%r10")]
   (match (compiler-backend-emit-address-base assignments ptr scav-base)
     [(OkCompilerBackendAddressBase base-plan)
@@ -13237,8 +13246,8 @@
           ty0
           addr0
           program-index
-          (compiler-backend-one-exclude base-reg)
-          1)
+          (compiler-backend-two-exclude base-reg value1-home)
+          2)
           [(OkCompilerBackend store0)
             (match (compiler-backend-emit-store-value-to-address
               assignments

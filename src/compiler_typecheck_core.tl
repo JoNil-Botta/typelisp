@@ -11278,9 +11278,8 @@
     [(AstExprNil) (OkTcTypeList AstTypeNil)]
     [(AstExprCons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-expr ctx env expr)
+        (match (tc-expr-id ctx env expr)
           [(OkTcType ty)
             (match (tc-expr-list-types ctx env rest)
               [(OkTcTypeList rest-types)
@@ -11297,9 +11296,8 @@
     [(AstExprNil) OkTcUnit]
     [(AstExprCons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-expr-with-expected-or-actual ctx env expr elem-ty)
+        (match (tc-expr-with-expected-or-actual-id ctx env expr elem-ty)
           [(OkTcType ty)
             (match (tc-expect
               ty
@@ -13532,9 +13530,8 @@
     [(AstExprNil) OkTcUnit]
     [(AstExprCons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-expr-with-expected-or-actual ctx env expr elem-ty)
+        (match (tc-expr-with-expected-or-actual-id ctx env expr elem-ty)
           [(OkTcType got)
             (match (tc-expect
               got
@@ -13615,14 +13612,13 @@
         [_ (ErrTcTypeList "typecheck: tuple element type mismatch")])]
     [(AstExprCons expr rest-exprs)
       (let
-        [expr : AstExpr (ast-node-get expr)]
         [rest-exprs : AstExprList (box-get rest-exprs)]
         (match types
           [(AstTypeCons want rest-types)
             (let
               [want : AstType (ty-node-get want)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-expr-with-expected-or-actual ctx env expr want)
+              (match (tc-expr-with-expected-or-actual-id ctx env expr want)
                 [(OkTcType got)
                   (match (tc-expect
                     got
@@ -13675,12 +13671,12 @@
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
-          [(AstExprNil) (tc-expr-with-expected-or-actual ctx env expr expected)]
+          [(AstExprNil)
+            (tc-expr-with-expected-or-actual-id ctx env expr expected)]
           [_
-            (match (tc-expr ctx env expr)
+            (match (tc-expr-id ctx env expr)
               [(OkTcType _) (tc-begin-list-with-expected ctx env rest expected)]
               [(ErrTcType message) (ErrTcType message)])]))]))
 
@@ -13749,10 +13745,10 @@
                 expected
                 (TcSomeAstSourceSpan span))]
             [_
-              (tc-expr-with-expected-or-actual-core
+              (tc-expr-with-expected-or-actual-core-id
                 ctx
                 env
-                inner
+                inner-box
                 expected
                 allow-mut-by-value-borrow)])]
         (match result
@@ -13789,12 +13785,10 @@
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
-          (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-            (match (tc-expr ctx env scrutinee)
-              [(OkTcType scrut-ty)
-                (tc-match-expr-with-expected ctx env scrut-ty arms expected)]
-              [(ErrTcType message) (ErrTcType message)]))])]
+          (match (tc-expr-id ctx env scrutinee-box)
+            [(OkTcType scrut-ty)
+              (tc-match-expr-with-expected ctx env scrut-ty arms expected)]
+            [(ErrTcType message) (ErrTcType message)])])]
     [(AstExprArray exprs)
       (match (tc-type-strip-region expected)
         [(AstTyArray elem-ty len)
@@ -13829,10 +13823,10 @@
             [body : AstExpr (ast-node-get body-box)]
             (match (tc-let-bindings-for-body ctx env bindings body)
               [(OkTcEnv next-env)
-                (match (tc-expr-with-expected-or-actual
+                (match (tc-expr-with-expected-or-actual-id
                   ctx
                   next-env
-                  body
+                  body-box
                   expected)
                   [(OkTcType body-ty)
                     (match (tc-ensure-reference-type-does-not-escape-names
@@ -13946,6 +13940,42 @@
   [expr : AstExpr]
   [expected : AstType]) : ResultTcType
   (tc-expr-with-expected-or-actual-core ctx env expr expected true))
+
+;; Id entrypoints keep the original AST node identity available to future
+;; body-local type caches. The value-based forms above remain necessary for
+;; synthetic expressions that were never pushed into the node pool.
+(define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
+  (tc-expr ctx env (ast-node-get expr-id)))
+
+;; Contextual typing is deliberately separate from non-contextual `tc-expr-id`:
+;; the same node can produce a different result type when an expected type
+;; guides literal, array, tuple, borrow, or call-argument typing.
+(define (tc-expr-with-expected-or-actual-core-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [expected : AstType]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (tc-expr-with-expected-or-actual-core
+    ctx
+    env
+    (ast-node-get expr-id)
+    expected
+    allow-mut-by-value-borrow))
+
+(define (tc-expr-with-expected-or-actual-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [expected : AstType]) : ResultTcType
+  (tc-expr-with-expected-or-actual-core-id ctx env expr-id expected false))
+
+(define (tc-expr-with-expected-or-actual-call-arg-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [expected : AstType]) : ResultTcType
+  (tc-expr-with-expected-or-actual-core-id ctx env expr-id expected true))
 
 (define (tc-binop-type [op : AstBinOp] [left : AstType] [right : AstType]) : ResultTcType
   (match op
@@ -18294,12 +18324,11 @@
     [(AstExprNil) (OkTcType (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (match rest
-          [(AstExprNil) (tc-expr ctx env expr)]
+          [(AstExprNil) (tc-expr-id ctx env expr)]
           [_
-            (match (tc-expr ctx env expr)
+            (match (tc-expr-id ctx env expr)
               [(OkTcType _) (tc-begin-list ctx env rest)]
               [(ErrTcType message) (ErrTcType message)])]))]))
 
@@ -28159,7 +28188,7 @@
           (match inner
             [(AstExprUnsafe exprs)
               (tc-unsafe-begin-list ctx env exprs (TcSomeAstSourceSpan span))]
-            [_ (tc-expr ctx env inner)])]
+            [_ (tc-expr-id ctx env inner-box)])]
         (match result
           [(OkTcType ty) (OkTcType ty)]
           [(ErrTcType message) (tc-locate-spanned-error inner span message)]))]
@@ -28170,8 +28199,7 @@
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-expr-id env name-text)
-            [(OkTcExprId virtual-id)
-              (tc-expr ctx env (ast-node-get virtual-id))]
+            [(OkTcExprId virtual-id) (tc-expr-id ctx env virtual-id)]
             [(ErrTcExprId message) (ErrTcType message)])
           (if (tc-hygiene-global-name? name-text)
             (match (tc-hygiene-global-decode name-text)
@@ -28249,9 +28277,8 @@
             "typecheck: contextual init requires an expected type; use (init : T) or add an annotation")])]
     [(AstExprAnn inner-box ty)
       (let
-        [inner : AstExpr (ast-node-get inner-box)]
         [want-ty : AstType (tc-resolve-type ctx ty)]
-        (match (tc-expr-with-expected-or-actual ctx env inner want-ty)
+        (match (tc-expr-with-expected-or-actual-id ctx env inner-box want-ty)
           [(OkTcType got)
             (match (tc-expect got want-ty "typecheck: annotation type mismatch")
               [(OkTcUnit)
@@ -28268,7 +28295,7 @@
             [body : AstExpr (ast-node-get body-box)]
             (match (tc-let-bindings-for-body ctx env bindings body)
               [(OkTcEnv next-env)
-                (match (tc-expr ctx next-env body)
+                (match (tc-expr-id ctx next-env body-box)
                   [(OkTcType body-ty)
                     (match (tc-ensure-reference-type-does-not-escape-names
                       body-ty
@@ -28292,19 +28319,16 @@
             [(ErrTcTypeList message) (ErrTcType message)])]
         [(ErrTcUnit message) (ErrTcType message)])]
     [(AstExprTupleRef tuple-box index)
-      (let
-        [tuple : AstExpr (ast-node-get tuple-box)]
-        (match (tc-expr ctx env tuple)
-          [(OkTcType tuple-ty)
-            (match (tc-type-strip-region tuple-ty)
-              [(AstTyTuple tys)
-                (match (tc-type-list-ref (box-get tys) index)
-                  [(OkTcType elem-ty)
-                    (OkTcType
-                      (tc-project-from-region-container tuple-ty elem-ty))]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env tuple-box)
+        [(OkTcType tuple-ty)
+          (match (tc-type-strip-region tuple-ty)
+            [(AstTyTuple tys)
+              (match (tc-type-list-ref (box-get tys) index)
+                [(OkTcType elem-ty)
+                  (OkTcType (tc-project-from-region-container tuple-ty elem-ty))]
+                [(ErrTcType message) (ErrTcType message)])]
+            [_ (ErrTcType "typecheck: tuple-ref requires tuple type")])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprArray exprs)
       (match (tc-ensure-cleanup-resource-not-stored-list env exprs)
         [(OkTcUnit)
@@ -28313,9 +28337,8 @@
               (ErrTcType "typecheck: cannot infer type of empty array")]
             [(AstExprCons first rest)
               (let
-                [first : AstExpr (ast-node-get first)]
                 [rest : AstExprList (box-get rest)]
-                (match (tc-expr ctx env first)
+                (match (tc-expr-id ctx env first)
                   [(OkTcType first-ty)
                     (match (tc-check-array-rest ctx env rest first-ty)
                       [(OkTcUnit)
@@ -28328,7 +28351,7 @@
       (let
         [len : AstExpr (ast-node-get len-box)]
         [elem : AstType (tc-resolve-type ctx elem-ty)]
-        (match (tc-expr-with-expected-or-actual ctx env len (AstTyI64))
+        (match (tc-expr-with-expected-or-actual-id ctx env len-box (AstTyI64))
           [(OkTcType len-ty)
             (cond
               [(not (tc-integer-type? len-ty))
@@ -28346,34 +28369,38 @@
                   [(ErrTcUnit message) (ErrTcType message)])])]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprArrayRef array-box index-box)
-      (let
-        [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-expr ctx env array)
-          [(OkTcType array-ty)
-            (match (tc-expr-with-expected-or-actual ctx env index (AstTyI64))
-              [(OkTcType index-ty)
-                (if (tc-integer-type? index-ty)
-                  (match (tc-array-readable-receiver ctx array-ty)
-                    [(OkTcArrayReceiver receiver)
-                      (match receiver
-                        [(TcArrayReceiver container-ty elem-ty)
-                          (OkTcType
-                            (tc-project-from-region-container
-                              container-ty
-                              elem-ty))])]
-                    [(ErrTcArrayReceiver message) (ErrTcType message)])
-                  (ErrTcType "typecheck: array index must be integer"))]
-              [(ErrTcType message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env array-box)
+        [(OkTcType array-ty)
+          (match (tc-expr-with-expected-or-actual-id
+            ctx
+            env
+            index-box
+            (AstTyI64))
+            [(OkTcType index-ty)
+              (if (tc-integer-type? index-ty)
+                (match (tc-array-readable-receiver ctx array-ty)
+                  [(OkTcArrayReceiver receiver)
+                    (match receiver
+                      [(TcArrayReceiver container-ty elem-ty)
+                        (OkTcType
+                          (tc-project-from-region-container
+                            container-ty
+                            elem-ty))])]
+                  [(ErrTcArrayReceiver message) (ErrTcType message)])
+                (ErrTcType "typecheck: array index must be integer"))]
+            [(ErrTcType message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
-        [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
-        (match (tc-expr ctx env array)
+        (match (tc-expr-id ctx env array-box)
           [(OkTcType array-ty)
-            (match (tc-expr-with-expected-or-actual ctx env index (AstTyI64))
+            (match (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              index-box
+              (AstTyI64))
               [(OkTcType index-ty)
                 (if (tc-integer-type? index-ty)
                   (match (tc-array-set-receiver ctx array-ty)
@@ -28396,7 +28423,7 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
-        (match (tc-expr ctx env array)
+        (match (tc-expr-id ctx env array-box)
           [(OkTcType array-ty)
             (match (tc-array-push-receiver ctx array-ty)
               [(OkTcArrayReceiver receiver)
@@ -28413,66 +28440,61 @@
               [(ErrTcArrayReceiver message) (ErrTcType message)])]
           [(ErrTcType message) (ErrTcType message)]))]
     [(AstExprStringRef str-box index-box)
-      (let
-        [str : AstExpr (ast-node-get str-box)]
-        [index : AstExpr (ast-node-get index-box)]
-        (match (tc-expr ctx env str)
-          [(OkTcType str-ty)
-            (match (tc-expect
-              str-ty
-              (AstTyString)
-              "typecheck: string-ref requires String")
-              [(OkTcUnit)
-                (match (tc-expr-with-expected-or-actual
-                  ctx
-                  env
-                  index
-                  (AstTyI64))
-                  [(OkTcType index-ty)
-                    (if (tc-integer-type? index-ty)
-                      (OkTcType (AstTyChar))
-                      (ErrTcType "typecheck: string index must be integer"))]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [(ErrTcUnit message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env str-box)
+        [(OkTcType str-ty)
+          (match (tc-expect
+            str-ty
+            (AstTyString)
+            "typecheck: string-ref requires String")
+            [(OkTcUnit)
+              (match (tc-expr-with-expected-or-actual-id
+                ctx
+                env
+                index-box
+                (AstTyI64))
+                [(OkTcType index-ty)
+                  (if (tc-integer-type? index-ty)
+                    (OkTcType (AstTyChar))
+                    (ErrTcType "typecheck: string index must be integer"))]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBegin exprs) (tc-begin-list ctx env exprs)]
     ;; `(unsafe ...)` types like `begin` in v1; the unsafe-context flag for
     ;; raw-pointer ops is added with their checks (#955).
     [(AstExprUnsafe exprs)
       (tc-unsafe-begin-list ctx env exprs TcNoAstSourceSpan)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
-      (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
-        (match (tc-expr ctx env cond)
-          [(OkTcType cond-ty)
-            (match (tc-expect
-              cond-ty
-              (AstTyBool)
-              "typecheck: if condition must be bool")
-              [(OkTcUnit)
-                (match (tc-expr ctx env then-branch)
-                  [(OkTcType then-ty)
-                    (match (tc-expr ctx env else-branch)
-                      [(OkTcType else-ty)
-                        (tc-merge-branch-type then-ty else-ty)]
-                      [(ErrTcType message) (ErrTcType message)])]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [(ErrTcUnit message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env cond-box)
+        [(OkTcType cond-ty)
+          (match (tc-expect
+            cond-ty
+            (AstTyBool)
+            "typecheck: if condition must be bool")
+            [(OkTcUnit)
+              (match (tc-expr-id ctx env then-branch-box)
+                [(OkTcType then-ty)
+                  (match (tc-expr-id ctx env else-branch-box)
+                    [(OkTcType else-ty) (tc-merge-branch-type then-ty else-ty)]
+                    [(ErrTcType message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name-text value-box)
-            [(OkTcExprId virtual-id)
-              (tc-expr ctx env (ast-node-get virtual-id))]
+            [(OkTcExprId virtual-id) (tc-expr-id ctx env virtual-id)]
             [(ErrTcExprId message) (ErrTcType message)])
           (match (tc-lookup-visible-id ctx env name)
             [(OkTcType var-ty)
-              (match (tc-expr-with-expected-or-actual ctx env value var-ty)
+              (match (tc-expr-with-expected-or-actual-id
+                ctx
+                env
+                value-box
+                var-ty)
                 [(OkTcType value-ty)
                   (match (tc-expect
                     value-ty
@@ -28499,33 +28521,27 @@
                 [(ErrTcType message) (ErrTcType message)])]
             [(ErrTcType message) (ErrTcType message)])))]
     [(AstExprCast inner-box ty)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-expr ctx env inner)
-          [(OkTcType inner-ty)
-            (let
-              [target-ty : AstType (tc-resolve-type ctx ty)]
-              (if (and
-                (tc-castable-type? inner-ty)
-                (tc-castable-type? target-ty))
-                (OkTcType target-ty)
-                (if (tc-function-to-integer-cast? inner-ty target-ty)
-                  (match (tc-require-unsafe env "function-to-integer cast")
-                    [(OkTcUnit) (OkTcType target-ty)]
-                    [(ErrTcUnit message) (ErrTcType message)])
-                  (ErrTcType
-                    "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env inner-box)
+        [(OkTcType inner-ty)
+          (let
+            [target-ty : AstType (tc-resolve-type ctx ty)]
+            (if (and (tc-castable-type? inner-ty) (tc-castable-type? target-ty))
+              (OkTcType target-ty)
+              (if (tc-function-to-integer-cast? inner-ty target-ty)
+                (match (tc-require-unsafe env "function-to-integer cast")
+                  [(OkTcUnit) (OkTcType target-ty)]
+                  [(ErrTcUnit message) (ErrTcType message)])
+                (ErrTcType
+                  "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBorrow mutable lifetime place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (tc-borrow-expr ctx env mutable lifetime place))]
     [(AstExprUnary op inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-expr ctx env inner)
-          [(OkTcType ty) (tc-unop-type op ty)]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env inner-box)
+        [(OkTcType ty) (tc-unop-type op ty)]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -28543,54 +28559,49 @@
       (ErrTcType
         "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")]
     [(AstExprWhile cond-box body-box)
-      (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-expr ctx env cond)
-          [(OkTcType cond-ty)
-            (match (tc-expect
-              cond-ty
-              (AstTyBool)
-              "typecheck: while condition must be bool")
-              [(OkTcUnit)
-                (match (tc-expr ctx env body)
-                  [(OkTcType body-ty)
-                    (match (tc-expect
-                      body-ty
-                      (AstTyUnit)
-                      "typecheck: while body must be unit")
-                      [(OkTcUnit) (OkTcType (AstTyUnit))]
-                      [(ErrTcUnit message) (ErrTcType message)])]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [(ErrTcUnit message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env cond-box)
+        [(OkTcType cond-ty)
+          (match (tc-expect
+            cond-ty
+            (AstTyBool)
+            "typecheck: while condition must be bool")
+            [(OkTcUnit)
+              (match (tc-expr-id ctx env body-box)
+                [(OkTcType body-ty)
+                  (match (tc-expect
+                    body-ty
+                    (AstTyUnit)
+                    "typecheck: while body must be unit")
+                    [(OkTcUnit) (OkTcType (AstTyUnit))]
+                    [(ErrTcUnit message) (ErrTcType message)])]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
         [(AstForeach index index-ty start-box end-box body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
             [body : AstExpr (ast-node-get body-box)]
             [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
             (if (tc-integer-type? resolved-index-ty)
-              (match (tc-expr-with-expected-or-actual
+              (match (tc-expr-with-expected-or-actual-id
                 ctx
                 env
-                start
+                start-box
                 resolved-index-ty)
                 [(OkTcType start-ty)
                   (if (tc-integer-type? start-ty)
-                    (match (tc-expr-with-expected-or-actual
+                    (match (tc-expr-with-expected-or-actual-id
                       ctx
                       env
-                      end
+                      end-box
                       resolved-index-ty)
                       [(OkTcType end-ty)
                         (if (tc-integer-type? end-ty)
                           (let
                             [body-env : TcTypeEnv
                               (tc-bind-id env index resolved-index-ty)]
-                            (match (tc-expr ctx body-env body)
+                            (match (tc-expr-id ctx body-env body-box)
                               [(OkTcType body-ty)
                                 (match (tc-expect
                                   body-ty
@@ -28618,16 +28629,14 @@
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
             (if (tc-integer-type? resolved-index-ty)
-              (match (tc-expr ctx env start)
+              (match (tc-expr-id ctx env start-box)
                 [(OkTcType start-ty)
                   (if (tc-integer-type? start-ty)
-                    (match (tc-expr ctx env end)
+                    (match (tc-expr-id ctx env end-box)
                       [(OkTcType end-ty)
                         (if (tc-integer-type? end-ty)
                           (let
@@ -28671,25 +28680,23 @@
             value-box
             body-box)
           (let
-            [start : AstExpr (ast-node-get start-box)]
-            [end : AstExpr (ast-node-get end-box)]
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             [body : AstExpr (ast-node-get body-box)]
             [resolved-index-ty : AstType (tc-resolve-type ctx index-ty)]
             [resolved-prefix-ty : AstType (tc-resolve-type ctx prefix-ty)]
             (if (tc-integer-type? resolved-index-ty)
-              (match (tc-expr-with-expected-or-actual
+              (match (tc-expr-with-expected-or-actual-id
                 ctx
                 env
-                start
+                start-box
                 resolved-index-ty)
                 [(OkTcType start-ty)
                   (if (tc-integer-type? start-ty)
-                    (match (tc-expr-with-expected-or-actual
+                    (match (tc-expr-with-expected-or-actual-id
                       ctx
                       env
-                      end
+                      end-box
                       resolved-index-ty)
                       [(OkTcType end-ty)
                         (if (tc-integer-type? end-ty)
@@ -28707,7 +28714,7 @@
                               init
                               value)
                               [(OkTcType _)
-                                (match (tc-expr ctx body-env body)
+                                (match (tc-expr-id ctx body-env body-box)
                                   [(OkTcType body-ty)
                                     (match (tc-expect
                                       body-ty
@@ -28736,62 +28743,52 @@
                 [(ErrTcType message) (ErrTcType message)])
               (ErrTcType "typecheck: spmd-scan index type must be integer")))])]
     [(AstExprSpmdBroadcast value-box lane-box)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-expr-with-expected-or-actual ctx env lane (AstTyI64))
-          [(OkTcType lane-ty)
-            (match (tc-expect
-              (tc-resolve-type ctx lane-ty)
-              (AstTyI64)
-              "typecheck: spmd-broadcast lane must have type i64")
-              [(OkTcUnit)
-                (match (tc-expr ctx env value)
-                  [(OkTcType value-ty)
-                    (if (tc-spmd-broadcast-type-supported?
-                      (tc-resolve-type ctx value-ty))
-                      (OkTcType value-ty)
-                      (ErrTcType (tc-spmd-broadcast-type-message)))]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [(ErrTcUnit message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-with-expected-or-actual-id ctx env lane-box (AstTyI64))
+        [(OkTcType lane-ty)
+          (match (tc-expect
+            (tc-resolve-type ctx lane-ty)
+            (AstTyI64)
+            "typecheck: spmd-broadcast lane must have type i64")
+            [(OkTcUnit)
+              (match (tc-expr-id ctx env value-box)
+                [(OkTcType value-ty)
+                  (if (tc-spmd-broadcast-type-supported?
+                    (tc-resolve-type ctx value-ty))
+                    (OkTcType value-ty)
+                    (ErrTcType (tc-spmd-broadcast-type-message)))]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprSpmdShuffle value-box lane-box)
-      (let
-        [value : AstExpr (ast-node-get value-box)]
-        [lane : AstExpr (ast-node-get lane-box)]
-        (match (tc-expr-with-expected-or-actual ctx env lane (AstTyI64))
-          [(OkTcType lane-ty)
-            (match (tc-expect
-              (tc-resolve-type ctx lane-ty)
-              (AstTyI64)
-              "typecheck: spmd-shuffle lane must have type i64")
-              [(OkTcUnit)
-                (match (tc-expr ctx env value)
-                  [(OkTcType value-ty)
-                    (if (tc-spmd-broadcast-type-supported?
-                      (tc-resolve-type ctx value-ty))
-                      (OkTcType value-ty)
-                      (ErrTcType (tc-spmd-shuffle-type-message)))]
-                  [(ErrTcType message) (ErrTcType message)])]
-              [(ErrTcUnit message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-with-expected-or-actual-id ctx env lane-box (AstTyI64))
+        [(OkTcType lane-ty)
+          (match (tc-expect
+            (tc-resolve-type ctx lane-ty)
+            (AstTyI64)
+            "typecheck: spmd-shuffle lane must have type i64")
+            [(OkTcUnit)
+              (match (tc-expr-id ctx env value-box)
+                [(OkTcType value-ty)
+                  (if (tc-spmd-broadcast-type-supported?
+                    (tc-resolve-type ctx value-ty))
+                    (OkTcType value-ty)
+                    (ErrTcType (tc-spmd-shuffle-type-message)))]
+                [(ErrTcType message) (ErrTcType message)])]
+            [(ErrTcUnit message) (ErrTcType message)])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprSpmdProgramIndex) (OkTcType (AstTyI64))]
     [(AstExprSpmdProgramCount) (OkTcType (AstTyI64))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
-          (let
-            [scrutinee : AstExpr (ast-node-get scrutinee-box)]
-            (match (tc-expr ctx env scrutinee)
-              [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
-              [(ErrTcType message) (ErrTcType message)]))])]
+          (match (tc-expr-id ctx env scrutinee-box)
+            [(OkTcType scrut-ty) (tc-match-expr ctx env scrut-ty arms)]
+            [(ErrTcType message) (ErrTcType message)])])]
     [(AstExprStructGet receiver-box field)
-      (let
-        [receiver : AstExpr (ast-node-get receiver-box)]
-        (match (tc-expr ctx env receiver)
-          [(OkTcType receiver-ty)
-            (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env receiver-box)
+        [(OkTcType receiver-ty)
+          (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprStructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -28869,17 +28866,14 @@
             (ErrTcType
               "typecheck: ptr-null requires a pointer type, e.g. (ptr-null : (Ptr i64))")]))]
     [(AstExprPtrNullCheck inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-expr ctx env inner)
-          [(OkTcType inner-ty)
-            (match (tc-type-strip-region inner-ty)
-              [(AstTyPtr _) (OkTcType (AstTyBool))]
-              [(AstTyMutPtr _) (OkTcType (AstTyBool))]
-              [_
-                (ErrTcType
-                  "typecheck: ptr-null? requires a raw pointer operand")])]
-          [(ErrTcType message) (ErrTcType message)]))]
+      (match (tc-expr-id ctx env inner-box)
+        [(OkTcType inner-ty)
+          (match (tc-type-strip-region inner-ty)
+            [(AstTyPtr _) (OkTcType (AstTyBool))]
+            [(AstTyMutPtr _) (OkTcType (AstTyBool))]
+            [_
+              (ErrTcType "typecheck: ptr-null? requires a raw pointer operand")])]
+        [(ErrTcType message) (ErrTcType message)])]
     [(AstExprPtrAddrOf name) (tc-ptr-addr-of-expr ctx env (intern-str name))]
     [(AstExprPtrRead ptr-box)
       (let
@@ -31730,13 +31724,13 @@
             (let
               [ty : AstType (ty-node-get ty)]
               [rest-types : AstTypeList (box-get rest-types)]
-              (match (tc-move-check-expr
+              (match (tc-move-check-expr-id
                 ctx
                 env
                 locals
                 loop-carried
                 moved
-                head-expr)
+                head)
                 [(OkTcMove moved1)
                   (match (tc-move-after-consuming-value
                     ctx
@@ -31918,6 +31912,19 @@
         [_ (ErrTcTypeList "typecheck: call target is not a function")])]
     [(ErrTcType message) (ErrTcTypeList message)]))
 
+(define (tc-move-call-param-types-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]) : ResultTcTypeList
+  (match (tc-expr-id ctx env func-id)
+    [(OkTcType fn-ty)
+      (match (tc-type-strip-region fn-ty)
+        [(AstTyFunc params _) (OkTcTypeList (box-get params))]
+        [(AstTyEnum _) (OkTcTypeList AstTypeNil)]
+        [(AstTyEnumArgs _ _) (OkTcTypeList AstTypeNil)]
+        [_ (ErrTcTypeList "typecheck: call target is not a function")])]
+    [(ErrTcType message) (ErrTcTypeList message)]))
+
 (define (tc-move-check-exprs
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -31929,9 +31936,8 @@
     [(AstExprNil) (OkTcMove moved)]
     [(AstExprCons head rest)
       (let
-        [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved head)
+        (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
           [(OkTcMove moved1)
             (tc-move-check-exprs ctx env locals loop-carried moved1 rest)]
           [(ErrTcMove message) (ErrTcMove message)]))]))
@@ -31952,7 +31958,13 @@
           [(AstLetBinding name maybe-ty init-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
-              (match (tc-move-check-expr ctx env locals loop-carried moved init)
+              (match (tc-move-check-expr-id
+                ctx
+                env
+                locals
+                loop-carried
+                moved
+                init-box)
                 [(OkTcMove moved1)
                   (match (tc-move-after-bind
                     ctx
@@ -32012,7 +32024,13 @@
           [(AstResourceBinding name init-box _)
             (let
               [init : AstExpr (ast-node-get init-box)]
-              (match (tc-move-check-expr ctx env locals loop-carried moved init)
+              (match (tc-move-check-expr-id
+                ctx
+                env
+                locals
+                loop-carried
+                moved
+                init-box)
                 [(OkTcMove moved1)
                   (match (tc-move-after-bind
                     ctx
@@ -32029,7 +32047,7 @@
                           ctx
                           env
                           init)
-                        (tc-expr ctx env init))
+                        (tc-expr-id ctx env init-box))
                         [(OkTcType init-ty)
                           (match (tc-move-check-resource-bindings
                             ctx
@@ -32176,6 +32194,15 @@
                     [(ErrTcMove message) (ErrTcMove message)])]
                 [(ErrTcEnv message) (ErrTcMove message)]))]))]))
 
+(define (tc-move-check-expr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr-id : i64]) : TcMoveResult
+  (tc-move-check-expr ctx env locals loop-carried moved (ast-node-get expr-id)))
+
 (define (tc-move-check-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -32185,9 +32212,7 @@
   [expr : AstExpr]) : TcMoveResult
   (match expr
     [(AstExprSpanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+      (tc-move-check-expr-id ctx env locals loop-carried moved inner-box)]
     [(AstExprLiteral _) (OkTcMove moved)]
     [(AstExprVar name)
       (let
@@ -32195,13 +32220,13 @@
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-expr-id env name-text)
             [(OkTcExprId virtual-id)
-              (tc-move-check-expr
+              (tc-move-check-expr-id
                 ctx
                 env
                 locals
                 loop-carried
                 moved
-                (ast-node-get virtual-id))]
+                virtual-id)]
             [(ErrTcExprId message) (ErrTcMove message)])
           (if (tc-moved-contains? moved name-text)
             (tc-move-rich-use-conflict-result
@@ -32211,21 +32236,22 @@
               name-text)
             (OkTcMove moved))))]
     [(AstExprBinary _ left-box right-box)
-      (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved left)
-          [(OkTcMove moved1)
-            (tc-move-check-expr ctx env locals loop-carried moved1 right)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+      (match (tc-move-check-expr-id ctx env locals loop-carried moved left-box)
+        [(OkTcMove moved1)
+          (tc-move-check-expr-id ctx env locals loop-carried moved1 right-box)]
+        [(ErrTcMove message) (ErrTcMove message)])]
     [(AstExprUnary _ inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+      (tc-move-check-expr-id ctx env locals loop-carried moved inner-box)]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved func)
+        (match (tc-move-check-expr-id
+          ctx
+          env
+          locals
+          loop-carried
+          moved
+          func-box)
           [(OkTcMove moved1)
             (match (cfg
               compile-profile
@@ -32234,7 +32260,7 @@
                 ctx
                 env
                 func)
-              (tc-move-call-param-types ctx env func))
+              (tc-move-call-param-types-id ctx env func-box))
               [(OkTcTypeList params)
                 (match (tc-call-extern-abi ctx func)
                   [(TcSomeExternAbi abi)
@@ -32281,46 +32307,46 @@
     [(AstExprBracketClause items)
       (tc-move-check-exprs ctx env locals loop-carried moved items)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
-      (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved cond)
-          [(OkTcMove movedc)
-            (match (tc-move-check-expr
-              ctx
-              env
-              (tc-moved-clone locals)
-              (tc-moved-clone loop-carried)
-              (tc-moved-clone movedc)
-              then-branch)
-              [(OkTcMove movedt)
-                (match (tc-move-check-expr
-                  ctx
-                  env
-                  (tc-moved-clone locals)
-                  (tc-moved-clone loop-carried)
-                  (tc-moved-clone movedc)
-                  else-branch)
-                  [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+      (match (tc-move-check-expr-id ctx env locals loop-carried moved cond-box)
+        [(OkTcMove movedc)
+          (match (tc-move-check-expr-id
+            ctx
+            env
+            (tc-moved-clone locals)
+            (tc-moved-clone loop-carried)
+            (tc-moved-clone movedc)
+            then-branch-box)
+            [(OkTcMove movedt)
+              (match (tc-move-check-expr-id
+                ctx
+                env
+                (tc-moved-clone locals)
+                (tc-moved-clone loop-carried)
+                (tc-moved-clone movedc)
+                else-branch-box)
+                [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [(ErrTcMove message) (ErrTcMove message)])]
+        [(ErrTcMove message) (ErrTcMove message)])]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
-          (let
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-move-check-let-bindings
-              ctx
-              env
-              (tc-moved-clone locals)
-              (tc-moved-clone loop-carried)
-              moved
-              bindings)
-              [(OkTcMoveBindings env2 moved2 locals2 loop-carried2)
-                (tc-move-check-expr ctx env2 locals2 loop-carried2 moved2 body)]
-              [(ErrTcMoveBindings message) (ErrTcMove message)]))])]
+          (match (tc-move-check-let-bindings
+            ctx
+            env
+            (tc-moved-clone locals)
+            (tc-moved-clone loop-carried)
+            moved
+            bindings)
+            [(OkTcMoveBindings env2 moved2 locals2 loop-carried2)
+              (tc-move-check-expr-id
+                ctx
+                env2
+                locals2
+                loop-carried2
+                moved2
+                body-box)]
+            [(ErrTcMoveBindings message) (ErrTcMove message)])])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params _ body-box)
@@ -32329,13 +32355,13 @@
             [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
             [lambda-locals : TcMovedSet
               (tc-move-params-locals params (tc-moved-clone locals))]
-            (match (tc-move-check-expr
+            (match (tc-move-check-expr-id
               ctx
               lambda-env
               lambda-locals
               (tc-moved-empty)
               (tc-moved-clone moved)
-              body)
+              body-box)
               [(OkTcMove _)
                 (tc-move-check-lambda-owner-captures
                   ctx
@@ -32972,6 +32998,21 @@
     (tc-moved-empty)
     (tc-moved-empty)
     body)
+    [(OkTcMove _) OkTcUnit]
+    [(ErrTcMove message) (ErrTcUnit message)]))
+
+(define (tc-move-check-body-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body-id : i64]) : ResultTcUnit
+  (match (tc-move-check-expr-id
+    ctx
+    env
+    (tc-move-params-locals params (tc-moved-empty))
+    (tc-moved-empty)
+    (tc-moved-empty)
+    body-id)
     [(OkTcMove _) OkTcUnit]
     [(ErrTcMove message) (ErrTcUnit message)]))
 
@@ -34301,9 +34342,9 @@
     [(AstExprNil) (OkTcBorrowCheck borrowed)]
     [(AstExprCons head rest)
       (let
-        [head : AstExpr (ast-node-get head)]
+        [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match (tc-borrow-check-expr ctx env locals borrowed head)
+        (match (tc-borrow-check-expr-id ctx env locals borrowed head)
           [(OkTcBorrowCheck borrowed1)
             (tc-borrow-check-exprs-with-protected
               ctx
@@ -34320,7 +34361,7 @@
               borrowed
               protected
               exprs
-              head
+              head-expr
               rest
               message)]))]))
 
@@ -34332,6 +34373,21 @@
   [exprs : AstExprList]) : TcBorrowCheckResult
   (tc-borrow-check-exprs-with-protected ctx env locals borrowed borrowed exprs))
 
+(define (tc-borrow-check-expr-with-protected-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [expr-id : i64]) : TcBorrowCheckResult
+  (tc-borrow-check-expr-with-protected
+    ctx
+    env
+    locals
+    borrowed
+    protected
+    (ast-node-get expr-id)))
+
 (define (tc-borrow-check-expr-with-protected
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -34341,15 +34397,13 @@
   [expr : AstExpr]) : TcBorrowCheckResult
   (match expr
     [(AstExprSpanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr-with-protected
-          ctx
-          env
-          locals
-          borrowed
-          protected
-          inner))]
+      (tc-borrow-check-expr-with-protected-id
+        ctx
+        env
+        locals
+        borrowed
+        protected
+        inner-box)]
     [(AstExprBegin exprs)
       (tc-borrow-check-exprs-with-protected
         ctx
@@ -35122,7 +35176,7 @@
           [(AstLetBinding name maybe-ty init-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
-              (match (tc-borrow-check-expr ctx env locals borrowed init)
+              (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
                 [(OkTcBorrowCheck borrowed1)
                   (match (tc-borrow-check-after-bind
                     ctx
@@ -35175,7 +35229,7 @@
           [(AstResourceBinding name init-box _)
             (let
               [init : AstExpr (ast-node-get init-box)]
-              (match (tc-borrow-check-expr ctx env locals borrowed init)
+              (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
                 [(OkTcBorrowCheck borrowed1)
                   (match (tc-borrow-check-after-bind
                     ctx
@@ -35191,7 +35245,7 @@
                           ctx
                           env
                           init)
-                        (tc-expr ctx env init))
+                        (tc-expr-id ctx env init-box))
                         [(OkTcType init-ty)
                           (tc-borrow-check-resource-bindings
                             ctx
@@ -35226,39 +35280,37 @@
         [rest : AstMatchArmList (box-get rest)]
         (match arm
           [(AstMatchArm pattern body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                [(OkTcEnv arm-env)
-                  (match (tc-borrow-check-expr
+            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
+              [(OkTcEnv arm-env)
+                (match (tc-borrow-check-expr-id
+                  ctx
+                  arm-env
+                  (tc-borrow-check-pattern-locals
                     ctx
-                    arm-env
-                    (tc-borrow-check-pattern-locals
-                      ctx
-                      scrut-ty
-                      pattern
-                      (tc-moved-clone locals))
-                    (tc-moved-clone borrowed)
-                    body)
-                    [(OkTcBorrowCheck arm-borrowed)
-                      (let
-                        [visible-arm-borrowed : TcMovedSet
-                          (tc-borrow-check-remove-root-states
-                            arm-borrowed
-                            (tc-borrow-check-pattern-bound-names
-                              ctx
-                              scrut-ty
-                              pattern))]
-                        (tc-borrow-check-arms-join
-                          ctx
-                          env
-                          locals
-                          borrowed
-                          scrut-ty
-                          rest
-                          (tc-moved-union joined visible-arm-borrowed)))]
-                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-                [(ErrTcEnv message) (ErrTcBorrowCheck message)]))]))]))
+                    scrut-ty
+                    pattern
+                    (tc-moved-clone locals))
+                  (tc-moved-clone borrowed)
+                  body-box)
+                  [(OkTcBorrowCheck arm-borrowed)
+                    (let
+                      [visible-arm-borrowed : TcMovedSet
+                        (tc-borrow-check-remove-root-states
+                          arm-borrowed
+                          (tc-borrow-check-pattern-bound-names
+                            ctx
+                            scrut-ty
+                            pattern))]
+                      (tc-borrow-check-arms-join
+                        ctx
+                        env
+                        locals
+                        borrowed
+                        scrut-ty
+                        rest
+                        (tc-moved-union joined visible-arm-borrowed)))]
+                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+              [(ErrTcEnv message) (ErrTcBorrowCheck message)])]))]))
 
 (define (tc-borrow-check-arms
   [ctx : TcContext]
@@ -35269,6 +35321,14 @@
   [arms : AstMatchArmList]) : TcBorrowCheckResult
   (tc-borrow-check-arms-join ctx env locals borrowed scrut-ty arms borrowed))
 
+(define (tc-borrow-check-expr-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [expr-id : i64]) : TcBorrowCheckResult
+  (tc-borrow-check-expr ctx env locals borrowed (ast-node-get expr-id)))
+
 (define (tc-borrow-check-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -35277,9 +35337,7 @@
   [expr : AstExpr]) : TcBorrowCheckResult
   (match expr
     [(AstExprSpanned inner-box _)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+      (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
     [(AstExprLiteral _) (OkTcBorrowCheck borrowed)]
     [(AstExprVar name)
       (let
@@ -35287,30 +35345,20 @@
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-expr-id env name-text)
             [(OkTcExprId virtual-id)
-              (tc-borrow-check-expr
-                ctx
-                env
-                locals
-                borrowed
-                (ast-node-get virtual-id))]
+              (tc-borrow-check-expr-id ctx env locals borrowed virtual-id)]
             [(ErrTcExprId message) (ErrTcBorrowCheck message)])
           (OkTcBorrowCheck borrowed)))]
     [(AstExprBinary _ left-box right-box)
-      (let
-        [left : AstExpr (ast-node-get left-box)]
-        [right : AstExpr (ast-node-get right-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed left)
-          [(OkTcBorrowCheck borrowed1)
-            (tc-borrow-check-expr ctx env locals borrowed1 right)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+      (match (tc-borrow-check-expr-id ctx env locals borrowed left-box)
+        [(OkTcBorrowCheck borrowed1)
+          (tc-borrow-check-expr-id ctx env locals borrowed1 right-box)]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
     [(AstExprUnary _ inner-box)
-      (let
-        [inner : AstExpr (ast-node-get inner-box)]
-        (tc-borrow-check-expr ctx env locals borrowed inner))]
+      (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed func)
+        (match (tc-borrow-check-expr-id ctx env locals borrowed func-box)
           [(OkTcBorrowCheck borrowed1)
             (match (cfg
               compile-profile
@@ -35381,65 +35429,57 @@
     [(AstExprBracketClause items)
       (tc-borrow-check-exprs ctx env locals borrowed items)]
     [(AstExprIf cond-box then-branch-box else-branch-box)
-      (let
-        [cond : AstExpr (ast-node-get cond-box)]
-        [then-branch : AstExpr (ast-node-get then-branch-box)]
-        [else-branch : AstExpr (ast-node-get else-branch-box)]
-        (match (tc-borrow-check-expr ctx env locals borrowed cond)
-          [(OkTcBorrowCheck borrowedc)
-            (match (tc-borrow-check-expr
-              ctx
-              env
-              (tc-moved-clone locals)
-              (tc-moved-clone borrowedc)
-              then-branch)
-              [(OkTcBorrowCheck borrowedt)
-                (match (tc-borrow-check-expr
-                  ctx
-                  env
-                  (tc-moved-clone locals)
-                  (tc-moved-clone borrowedc)
-                  else-branch)
-                  [(OkTcBorrowCheck borrowede)
-                    (OkTcBorrowCheck (tc-moved-union borrowedt borrowede))]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+      (match (tc-borrow-check-expr-id ctx env locals borrowed cond-box)
+        [(OkTcBorrowCheck borrowedc)
+          (match (tc-borrow-check-expr-id
+            ctx
+            env
+            (tc-moved-clone locals)
+            (tc-moved-clone borrowedc)
+            then-branch-box)
+            [(OkTcBorrowCheck borrowedt)
+              (match (tc-borrow-check-expr-id
+                ctx
+                env
+                (tc-moved-clone locals)
+                (tc-moved-clone borrowedc)
+                else-branch-box)
+                [(OkTcBorrowCheck borrowede)
+                  (OkTcBorrowCheck (tc-moved-union borrowedt borrowede))]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
-          (let
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-borrow-check-let-bindings
-              ctx
-              env
-              (tc-moved-clone locals)
-              (tc-moved-clone borrowed)
-              bindings)
-              [(OkTcBorrowCheckBindings env2 locals2 borrowed2)
-                (match (tc-borrow-check-expr-with-protected
-                  ctx
-                  env2
-                  locals2
-                  borrowed2
-                  borrowed
-                  body)
-                  [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheckBindings message) (ErrTcBorrowCheck message)]))])]
+          (match (tc-borrow-check-let-bindings
+            ctx
+            env
+            (tc-moved-clone locals)
+            (tc-moved-clone borrowed)
+            bindings)
+            [(OkTcBorrowCheckBindings env2 locals2 borrowed2)
+              (match (tc-borrow-check-expr-with-protected-id
+                ctx
+                env2
+                locals2
+                borrowed2
+                borrowed
+                body-box)
+                [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+            [(ErrTcBorrowCheckBindings message) (ErrTcBorrowCheck message)])])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params _ body-box)
-          (let
-            [body : AstExpr (ast-node-get body-box)]
-            (match (tc-borrow-check-expr
-              ctx
-              (tc-bind-params ctx env params)
-              (tc-move-params-locals params (tc-moved-clone locals))
-              (tc-moved-empty)
-              body)
-              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+          (match (tc-borrow-check-expr-id
+            ctx
+            (tc-bind-params ctx env params)
+            (tc-move-params-locals params (tc-moved-clone locals))
+            (tc-moved-empty)
+            body-box)
+            [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
+            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
     [(AstExprTuple exprs)
       (match (cfg
         compile-profile
@@ -36125,6 +36165,21 @@
     (tc-moved-empty)
     (tc-moved-empty)
     body)
+    [(OkTcBorrowCheck _) OkTcUnit]
+    [(ErrTcBorrowCheck message) (ErrTcUnit message)]))
+
+(define (tc-borrow-check-body-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [body-id : i64]) : ResultTcUnit
+  (match (tc-borrow-check-expr-with-protected-id
+    ctx
+    env
+    (tc-move-params-locals params (tc-moved-empty))
+    (tc-moved-empty)
+    (tc-moved-empty)
+    body-id)
     [(OkTcBorrowCheck _) OkTcUnit]
     [(ErrTcBorrowCheck message) (ErrTcUnit message)]))
 
@@ -44998,10 +45053,10 @@
       (tc-bind-return-type
         (tc-bind-params ctx global-env params)
         (tc-resolve-type ctx ret))]
-    (match (tc-expr-with-expected-or-actual
+    (match (tc-expr-with-expected-or-actual-id
       ctx
       env
-      body
+      body-box
       (tc-resolve-type ctx ret))
       [(OkTcType got)
         (match (tc-expect
@@ -45015,8 +45070,8 @@
               got
               "return value")
               [(OkTcUnit)
-                (match (tc-move-check-body ctx env params body)
-                  [(OkTcUnit) (tc-borrow-check-body ctx env params body)]
+                (match (tc-move-check-body-id ctx env params body-box)
+                  [(OkTcUnit) (tc-borrow-check-body-id ctx env params body-box)]
                   [(ErrTcUnit message) (ErrTcUnit message)])]
               [(ErrTcUnit message)
                 (ErrTcUnit
@@ -45117,32 +45172,30 @@
     (tc-nominal-owner-cache-reset!)
     (match decl
       [(AstDeclDef _ maybe-ty expr-box)
-        (let
-          [expr : AstExpr (ast-node-get expr-box)]
-          (match maybe-ty
-            [(AstSomeType want)
-              (match (tc-expr-with-expected-or-actual
-                ctx
-                global-env
-                expr
-                (tc-resolve-type ctx want))
-                [(OkTcType got)
-                  (match (tc-expect
-                    got
-                    (tc-resolve-type ctx want)
-                    "typecheck: value definition type mismatch")
-                    [(OkTcUnit)
-                      (tc-ensure-region-value-can-flow-into
-                        global-env
-                        (tc-resolve-type ctx want)
-                        got
-                        "top-level value")]
-                    [(ErrTcUnit message) (ErrTcUnit message)])]
-                [(ErrTcType message) (ErrTcUnit message)])]
-            [(AstNoType)
-              (match (tc-expr ctx global-env expr)
-                [(OkTcType _) OkTcUnit]
-                [(ErrTcType message) (ErrTcUnit message)])]))]
+        (match maybe-ty
+          [(AstSomeType want)
+            (match (tc-expr-with-expected-or-actual-id
+              ctx
+              global-env
+              expr-box
+              (tc-resolve-type ctx want))
+              [(OkTcType got)
+                (match (tc-expect
+                  got
+                  (tc-resolve-type ctx want)
+                  "typecheck: value definition type mismatch")
+                  [(OkTcUnit)
+                    (tc-ensure-region-value-can-flow-into
+                      global-env
+                      (tc-resolve-type ctx want)
+                      got
+                      "top-level value")]
+                  [(ErrTcUnit message) (ErrTcUnit message)])]
+              [(ErrTcType message) (ErrTcUnit message)])]
+          [(AstNoType)
+            (match (tc-expr-id ctx global-env expr-box)
+              [(OkTcType _) OkTcUnit]
+              [(ErrTcType message) (ErrTcUnit message)])])]
       [(AstDeclDefFn _ params ret body-box _)
         (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
       [(AstDeclDefMacro name params ret body-box)

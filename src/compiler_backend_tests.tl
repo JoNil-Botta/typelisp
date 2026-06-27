@@ -5163,16 +5163,17 @@
             (string-eq same-home "")
             (compiler-backend-string-contains?
               cycle
-              "    movq -8(%rbp), %r11\n")
+              "    pushq -8(%rbp)\n")
             (compiler-backend-string-contains?
               cycle
-              "    movq -16(%rbp), %rax\n")
+              "    movq -16(%rbp), %")
             (compiler-backend-string-contains?
               cycle
-              "    movq %rax, -8(%rbp)\n")
+              ", -8(%rbp)\n")
             (compiler-backend-string-contains?
               cycle
-              "    movq %r11, -16(%rbp)\n"))]
+              "    popq -16(%rbp)\n")
+            (not (compiler-backend-string-contains? cycle "%rax")))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
@@ -5213,6 +5214,7 @@
           (compiler-backend-string-contains?
             cycle
             "    movsd (%rsp), %xmm3\n    addq $8, %rsp\n")
+          (not (compiler-backend-string-contains? cycle "%xmm0"))
           (not (compiler-backend-string-contains? cycle "%xmm14"))
           (not (compiler-backend-string-contains? cycle "%xmm15")))]
       [(ErrCompilerBackend _) false])

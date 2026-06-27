@@ -16049,23 +16049,41 @@
   [value : CompilerIrValue]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-typed-value-with-plan
-    assignments
-    value
-    ty
-    program-index)
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
-        (string-append
-          load
-          (compiler-backend-emit-store-typed-var-with-plan
-            assignments
-            dst
-            (if (compiler-backend-float-type? ty)
-              "%xmm0"
-              "%rax")
-            ty)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    [src-home : String
+      (if (compiler-backend-float-type? ty)
+        (compiler-backend-float-value-register assignments value)
+        (compiler-backend-value-scalar-register assignments value))]
+    [exclude : (Array String)
+      (if (string-eq src-home "")
+        (make-array String 0)
+        (compiler-backend-one-exclude src-home))]
+    [exclude-n : i64 (if (string-eq src-home "") 0 1)]
+    [reg : String
+      (if (string-eq dst-home "")
+        (if (compiler-backend-float-type? ty)
+          (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")
+          (compiler-backend-scavenge-reg dst exclude exclude-n "%r8"))
+        dst-home)]
+    (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+      assignments
+      value
+      ty
+      reg
+      program-index)
+      [(OkCompilerBackend load)
+        (OkCompilerBackend
+          (if (string-eq dst-home "")
+            (string-append
+              load
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
+                reg
+                ty))
+            load))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-phi-var-source-direct
   [assignments : CompilerRegAssignmentList]

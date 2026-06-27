@@ -7296,6 +7296,7 @@
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
     (string.string-eq name "expr-type")
+    (string.string-eq name "comptime-error")
     (string.string-eq name "module-name")
     (string.string-eq name "module-export-macro?")
     (string.string-eq name "module-hook")
@@ -28952,6 +28953,7 @@
       [(string.string-eq call-name "expr-splice") true]
       [(string.string-eq call-name "expr-if") true]
       [(string.string-eq call-name "expr-type") true]
+      [(string.string-eq call-name "comptime-error") true]
       [(ctfe-expr-inspector-name? call-name) true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-inspector-name? call-name) true]

@@ -22704,6 +22704,14 @@
                                   (string.string-append
                                     name
                                     " is compile-time only; wrap it in (comptime ...)")))))]
+                        [(string.string-eq
+                            (ctfe-comptime-helper-call-name name)
+                            "comptime-error")
+                          (ErrLowerExpr
+                            (box
+                              (lower-diagnostic-at-expr
+                                origin
+                                "lower: comptime-error is compile-time only")))]
                         [(tc-string-ref-helper-call-id?
                             ctx
                             type-env
@@ -49820,7 +49828,12 @@
       76)
     (compiler-lower-error-ok?
       "(define (main) : i64 (size-of (type i64)))"
-      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")))
+      "typecheck: size-of is compile-time only; wrap it in (comptime ...)")
+    (compiler-lower-error-ok?
+      "(import stdlib.comptime)
+(define (main) : i64
+  (comptime.comptime-error \"runtime forbidden\"))"
+      "lower: comptime-error is compile-time only")))
 
 ;; `and`/`or` short-circuit lowering (#1132 / #1165): `(and a b)` and `(or a b)`
 ;; desugar to a conditional branch, so a function whose body is a bare `and`/`or`

@@ -316,6 +316,10 @@
 (define (int->string [_value : i64]) : String
   "")
 
+;: Abort macro CTFE with a source-located diagnostic.
+(define (comptime-error [message : String]) : never
+  (comptime-error message))
+
 ;: Mark an expression for unquote-splicing during macro CTFE.
 (define (expr-splice [value : Expr]) : Expr
   (expr-splice value))

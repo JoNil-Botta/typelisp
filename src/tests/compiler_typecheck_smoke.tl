@@ -1347,6 +1347,39 @@
 (define (main) : i64
   (+ (base.answer) (+ (extra.bonus) (extra2.bonus))))")
 
+(define (compiler-typecheck-smoke-comptime-error-expression-source) : String
+  "(import stdlib.comptime)
+(defmacro (badexpr [x : Expr]) : i64
+  (comptime.comptime-error \"custom expression macro failure\"))
+(define (main) : i64
+  (badexpr 42))")
+
+(define (compiler-typecheck-smoke-comptime-error-module-source) : String
+  "(import stdlib.comptime)
+(defmacro (badmod [key : String]) : Module
+  (comptime.comptime-error \"custom module macro failure\"))
+(import (badmod \"x\") as bad)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-comptime-error-decls-source) : String
+  "(import stdlib.comptime)
+(defmacro (baddecls) : Decls
+  (comptime.comptime-error \"custom decl macro failure\"))
+(baddecls)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-smoke-comptime-error-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-comptime-error-expression-source)
+      "custom expression macro failure")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-comptime-error-module-source)
+      "custom module macro failure")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-smoke-comptime-error-decls-source)
+      "custom decl macro failure")))
+
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -2107,6 +2140,9 @@
     (unless
       (compiler-typecheck-smoke-module-macro-identity-tests-ok?)
       (io.panic "typecheck: module macro identity smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-comptime-error-tests-ok?)
+      (io.panic "typecheck: comptime-error smoke failed"))
     (unless
       (compiler-typecheck-smoke-decl-macro-body-tests-ok?)
       (io.panic "typecheck: declaration macro body smoke failed"))

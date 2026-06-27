@@ -1028,6 +1028,10 @@ macro body or generated template:
   helpers such as string equality/concatenation, string length, `int->string`,
   layout/reflection queries, and the `Expr`/`ExprList`/`ExprClause` constructor
   and inspector surface remain available.
+- Macro and generator code may call `(comptime-error message)` where `message`
+  is a compile-time `String`. It returns `never`, aborts the current CTFE
+  expansion/evaluation, reports `message` at the call expression, remains a pure
+  deterministic CTFE helper, and is rejected if it reaches runtime lowering.
 
 Scalar CTFE supports finite `f64` literals and finite `f32` values produced by
 context or explicit precision casts. The ordinary float `+`, `-`, `*`, `/`,

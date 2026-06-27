@@ -3854,6 +3854,8 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
         "expr-type"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "comptime-error")
+        "comptime-error"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-name")
         "module-name"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-macro?")
@@ -3969,6 +3971,40 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "int->string")
         "int->string"]
       [else name])))
+
+(define (ctfe-eval-comptime-error-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons message-arg rest)
+      (let
+        [message-arg : AstExpr (ctfe-ast-get env message-arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (ctfe-eval-string-arg
+              message-arg
+              expr
+              env
+              fuel
+              "comptime-error")
+              [(OkCtfeStringArg message _next-fuel)
+                (ErrCtfe (box (ctfe-diagnostic-at-expr expr message)))]
+              [(ErrCtfeStringArg d) (ErrCtfe d)])]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "comptime-error expects exactly one arg")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "comptime-error expects exactly one arg")))]))
 
 (define (ctfe-eval-expr-bool-call
   [args : AstExprList]
@@ -5221,6 +5257,8 @@
             (ctfe-eval-expr-if-call args expr env fuel)]
           [(string.string-eq call-name "expr-type")
             (ctfe-eval-expr-type-call args expr env fuel)]
+          [(string.string-eq call-name "comptime-error")
+            (ctfe-eval-comptime-error-call args expr env fuel)]
           [(string.string-eq call-name "module-name")
             (ctfe-eval-module-name-call args expr env fuel)]
           [(string.string-eq call-name "module-export-macro?")

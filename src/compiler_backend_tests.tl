@@ -9438,6 +9438,25 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-int-to-int-bitcast-home-ok?) : bool
+  (match (compiler-backend-emit-bitcast
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegSpill -16))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    (AstTyI64)
+    (AstTyU64)
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
+        (compiler-backend-string-contains? asm "    movq %r8, -16(%rbp)\n")
+        (not (compiler-backend-string-contains? asm "%rax")))]
+    [(ErrCompilerBackend _) false]))
+
 ;; A source exercising `array-ref`, used to confirm the lowerer's bounds-check
 ;; trap (#528) reaches the backend as a `call tl_oob_abort`.
 (define (compiler-backend-array-access-source) : String
@@ -13412,7 +13431,8 @@
           (compiler-backend-direct-bitcast-home-ok?)
           (compiler-backend-spill-float-to-int-bitcast-home-ok?)
           (compiler-backend-spill-int-to-float-bitcast-home-ok?)
-          (compiler-backend-spill-float-to-float-bitcast-home-ok?)))
+          (compiler-backend-spill-float-to-float-bitcast-home-ok?)
+          (compiler-backend-spill-int-to-int-bitcast-home-ok?)))
       (compiler-backend-bool-control-flow-ok?)
       (and
         (compiler-backend-stack-args-ok?)

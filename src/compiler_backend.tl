@@ -12294,21 +12294,34 @@
                           to-ty))))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
       [(and from-int to-int)
-        (match (compiler-backend-emit-load-typed-value-with-plan
-          assignments
-          src
-          from-ty
-          program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
-              (string-append
-                load
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  "%rax"
-                  to-ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        (let
+          [dst-home : String (compiler-backend-var-register-home assignments dst)]
+          [tmp-reg : String
+            (if (and
+              (not (string-eq dst-home ""))
+              (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0)))
+              dst-home
+              (compiler-backend-scavenge-reg
+                dst
+                (make-array String 0)
+                0
+                "%r8"))]
+          (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
+            assignments
+            src
+            from-ty
+            tmp-reg
+            program-index)
+            [(OkCompilerBackend load)
+              (OkCompilerBackend
+                (string-append
+                  load
+                  (compiler-backend-emit-store-typed-var-with-plan
+                    assignments
+                    dst
+                    tmp-reg
+                    to-ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
       [(and from-float to-float)
         (let
           [dst-home : String (compiler-backend-var-register-home assignments dst)]

@@ -9333,21 +9333,48 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
         CompilerRegAssignmentNil)]
-    (match (compiler-backend-emit-test-instrs
-      (compiler-ir-instr-cons
-        (IrInstrStore "g" (IrValueVar 0) (AstTyI32))
-        IrInstrNil)
-      assignments
-      2)
-      [(OkCompilerBackend asm)
-        (and
-          (compiler-backend-string-contains? asm "    movq %r12, _tl_g(%rip)\n")
-          (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n"))
-          (not
+    (and
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g" (IrValueVar 0) (AstTyI32))
+          IrInstrNil)
+        assignments
+        2)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains? asm "    movl %r12d, _tl_g(%rip)\n")
+            (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n"))
+            (not
+              (compiler-backend-string-contains?
+                asm
+                "    movq %rax, _tl_g(%rip)\n")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g" (IrValueVar 0) (AstTyI64))
+          IrInstrNil)
+        CompilerRegAssignmentNil
+        2)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains? asm "    movq -8(%rbp), %r8\n")
+            (compiler-backend-string-contains? asm "    movq %r8, _tl_g(%rip)\n")
+            (not (compiler-backend-string-contains? asm "%rax")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-test-instrs
+        (compiler-ir-instr-cons
+          (IrInstrStore "g" (IrValueVar 0) (AstTyF64))
+          IrInstrNil)
+        CompilerRegAssignmentNil
+        2)
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains? asm "    movsd -8(%rbp), %xmm2\n")
             (compiler-backend-string-contains?
               asm
-              "    movq %rax, _tl_g(%rip)\n")))]
-      [(ErrCompilerBackend _) false])))
+              "    movsd %xmm2, _tl_g(%rip)\n")
+            (not (compiler-backend-string-contains? asm "%xmm0")))]
+        [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-pack-direct-home-shape-ok?) : bool
   (let

@@ -19281,46 +19281,22 @@
                 [(ErrCompilerBackend message)
                   (ErrCompilerBackend
                     (compiler-backend-apply-instr-diagnostic message instr-diag))]))
-            (match (compiler-backend-emit-store-immediate-to-memory
-              value
-              addr
-              ty)
-              [(CompilerBackendSomeAsm store-asm) (OkCompilerBackend store-asm)]
-              [(CompilerBackendNoAsm)
-                (match (compiler-backend-emit-direct-global-store
-                  assignments
-                  name
-                  value
-                  ty)
-                  [(CompilerBackendSomeAsm store-asm)
-                    (OkCompilerBackend store-asm)]
-                  [(CompilerBackendNoAsm)
-                    (match (compiler-backend-emit-load-typed-value-with-plan
-                      assignments
-                      value
-                      ty
-                      program-index)
-                      [(OkCompilerBackend load)
-                        (OkCompilerBackend
-                          (str-cat
-                            load
-                            (if (compiler-backend-float-type? ty)
-                              (str-cat
-                                "    "
-                                (compiler-backend-float-move ty)
-                                " %xmm0, "
-                                (compiler-backend-user-symbol name)
-                                "(%rip)\n")
-                              (str-cat
-                                "    movq %rax, "
-                                (compiler-backend-user-symbol name)
-                                "(%rip)\n"
-                                ""))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend
-                          (compiler-backend-apply-instr-diagnostic
-                            message
-                            instr-diag))])])])))]
+            (let
+              [no-exclude : (Array String) (make-array String 0)]
+              (match (compiler-backend-emit-store-value-to-address
+                assignments
+                value
+                ty
+                addr
+                program-index
+                no-exclude
+                0)
+                [(OkCompilerBackend store-asm) (OkCompilerBackend store-asm)]
+                [(ErrCompilerBackend message)
+                  (ErrCompilerBackend
+                    (compiler-backend-apply-instr-diagnostic
+                      message
+                      instr-diag))])))]
       [(IrInstrJump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           source-function

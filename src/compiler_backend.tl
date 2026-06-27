@@ -8070,6 +8070,49 @@
           "\n"))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
+(define (compiler-backend-emit-float-binop-spill-direct
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [fty : AstType]) : ResultCompilerBackend
+  (let
+    [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
+    [exclude : (Array String)
+      (if (string-eq rhs-reg "")
+        (make-array String 0)
+        (compiler-backend-one-exclude rhs-reg))]
+    [exclude-n : i64 (if (string-eq rhs-reg "") 0 1)]
+    [result-reg : String
+      (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")]
+    [rhs-operand : String
+      (compiler-backend-float-direct-rhs-operand
+        assignments
+        rhs
+        fty
+        result-reg)]
+    (if (string-eq rhs-operand "")
+      (ErrCompilerBackend
+        (compiler-diagnostic-at-start "" "backend: cannot direct spilled float binop"))
+      (match (compiler-backend-emit-float-binop-direct
+        assignments
+        result-reg
+        op
+        lhs
+        rhs-operand
+        fty)
+        [(OkCompilerBackend asm)
+          (OkCompilerBackend
+            (string-append
+              asm
+              (compiler-backend-emit-store-float-var-with-plan
+                assignments
+                dst
+                result-reg
+                fty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+
 (define (compiler-backend-emit-float-compare-direct
   [assignments : CompilerRegAssignmentList]
   [dst-home : String]
@@ -8598,6 +8641,12 @@
           rhs
           fty
           dst-home)]
+      [spill-rhs-operand : String
+        (compiler-backend-float-direct-rhs-operand
+          assignments
+          rhs
+          fty
+          "")]
       [lhs-float-reg : String
         (compiler-backend-float-value-register assignments lhs)]
       (if (and
@@ -8619,17 +8668,29 @@
         (if (and
           (compiler-backend-float-type? ty)
           (and
-            (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
-            (and
-              (compiler-backend-float-arith-op? op)
-              (not (string-eq rhs-operand "")))))
-          (compiler-backend-emit-float-binop-direct
-            assignments
-            dst-home
-            op
-            lhs
-            rhs-operand
-            fty)
+            (compiler-backend-float-arith-op? op)
+            (or
+              (and
+                (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+                (not (string-eq rhs-operand "")))
+              (and
+                (string-eq dst-home "")
+                (not (string-eq spill-rhs-operand ""))))))
+          (if (string-eq dst-home "")
+            (compiler-backend-emit-float-binop-spill-direct
+              assignments
+              dst
+              op
+              lhs
+              rhs
+              fty)
+            (compiler-backend-emit-float-binop-direct
+              assignments
+              dst-home
+              op
+              lhs
+              rhs-operand
+              fty))
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             lhs
@@ -24411,6 +24472,16 @@
       (array-set! a 10 "%rbx")
       a)))
 
+(define (compiler-backend-scavenge-xmm-candidates) : (Array String)
+  (let
+    [a : (Array String) (make-array String 4)]
+    (begin
+      (array-set! a 0 "%xmm2")
+      (array-set! a 1 "%xmm3")
+      (array-set! a 2 "%xmm4")
+      (array-set! a 3 "%xmm5")
+      a)))
+
 (define (compiler-backend-callee-saved-reg? [reg : String]) : bool
   (or
     (string-eq reg "%r12")
@@ -24528,6 +24599,10 @@
                 [(string-eq fallback "%r10") "%r10"]
                 [(string-eq fallback "%r11") "%r11"]
                 [(string-eq fallback "%rax") "%rax"]
+                [(string-eq fallback "%xmm2") "%xmm2"]
+                [(string-eq fallback "%xmm3") "%xmm3"]
+                [(string-eq fallback "%xmm4") "%xmm4"]
+                [(string-eq fallback "%xmm5") "%xmm5"]
                 [else "%r8"]))
             fallback)
           (begin
@@ -24591,6 +24666,84 @@
         cands
         0
         (array-length cands)))))
+
+(define (compiler-backend-scavenge-pick-from
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [point : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]
+  [cands : (Array String)]) : String
+  (if (and
+    (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+    (compiler-backend-scavenge-free-at-point? starts ends assignments vars point fallback))
+    fallback
+    (compiler-backend-scavenge-pick-iter
+      starts
+      ends
+      assignments
+      vars
+      point
+      exclude
+      exclude-n
+      fallback
+      cands
+      0
+      (array-length cands))))
+
+(define (compiler-backend-scavenge-xmm-reg
+  [dst-var : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (let
+    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [vars : i64 compiler-backend-scavenge-ctx-vars]
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [dst-home : String
+      (if (and (>= dst-var 0) (< dst-var vars))
+        (compiler-backend-var-register-home assignments dst-var)
+        "")]
+    [ex : (Array String)
+      (if (string-eq dst-home "")
+        exclude
+        (compiler-backend-scavenge-exclude-append exclude exclude-n dst-home))]
+    [ex-n : i64
+      (if (string-eq dst-home "") exclude-n (+ exclude-n 1))]
+    [reg : String
+      (compiler-backend-scavenge-pick-from
+        starts
+        ends
+        assignments
+        vars
+        point
+        ex
+        ex-n
+        fallback
+        (compiler-backend-scavenge-xmm-candidates))]
+    (begin
+      (cfg
+        scavenge-self-check
+        (compiler-backend-scavenge-freeness-check!
+          starts
+          ends
+          assignments
+          vars
+          point
+          reg)
+        unit)
+      reg)))
 
 ;; Freeness self-check (cfg-gated): the picked register MUST be free at `point`.
 ;; If not, the pick fell through to an OCCUPIED fallback (no free register found)

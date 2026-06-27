@@ -279,6 +279,7 @@
     ;; install their active state before this and capture it again afterward.
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
+    (compiler-typecheck-reset-intern-owned-state!)
     (compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
@@ -303,6 +304,7 @@
         (compiler-load-session-reset-pools-with-pools! pools)
         (compiler-driver-state-install-pools! state)
         (compiler-load-session-reset-interns!)
+        (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-builtin-reset!)
         (compiler-typecheck-reset-file-state!)

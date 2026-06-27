@@ -3161,6 +3161,12 @@
             name
             (struct-get manifest deps)
             (compiler-driver-target-cfgs target (compiler-cfg-empty)))]
+        [_reset-after-inline-tests : unit
+          (if (= inline-test-status 0)
+            (begin
+              (compiler-driver-reset-file-state!)
+              (intern-persistent-arena-reset!))
+            unit)]
         (if (= inline-test-status 0)
           (let
             [pre-emit-doctest-status : i64
@@ -3179,7 +3185,9 @@
                 manifest-dir
                 emit-entry)]
             [_reset-after-pre-emit-doctests : unit
-              (compiler-driver-reset-file-state!)]
+              (begin
+                (compiler-driver-reset-file-state!)
+                (intern-persistent-arena-reset!))]
             (if (= pre-emit-doctest-status 0)
               (match (compiler-driver-load-package-file-with-runtime
                 entry-path

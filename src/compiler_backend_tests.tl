@@ -8667,10 +8667,10 @@
       "    leaq -16(%rbp), %rax\n")
     (compiler-backend-instr-contains?
       (IrInstrGep 3 (IrValueVar 1) (IrValueI64 2) (AstTyI32))
-      "    addq $8, %rax\n")
+      "    addq $8, %r10\n")
     (compiler-backend-instr-contains?
       (IrInstrGep 3 (IrValueVar 1) (IrValueVar 2) (AstTyI32))
-      "    leaq (%rax,%r8,4), %rax\n")
+      "    leaq (%r10,%r8,4), %r10\n")
     (compiler-backend-instr-contains?
       (IrInstrLoad 4 (IrValueVar 1) (AstTyU8))
       "    movzbq (%r10), %rax\n")

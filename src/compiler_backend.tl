@@ -11186,66 +11186,121 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
-    [(OkCompilerBackend base-asm)
-      (let
-        [scale : i64 (compiler-backend-type-size elem-ty)]
-        [scav-idx : String
-          (compiler-backend-scavenge-reg
-            dst
-            (compiler-backend-binop-scavenge-exclude-build)
-            5
-            "%r8")]
-        (match (compiler-backend-value-as-i64 offset)
-          [(CompilerBackendSomeI64 n)
-            (match (compiler-backend-gep-immediate-asm (* n scale))
-              [(CompilerBackendSomeAsm offset-asm)
-                (OkCompilerBackend
-                  (string-append
-                    base-asm
+  (let
+    [scale : i64 (compiler-backend-type-size elem-ty)]
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    (match (compiler-backend-value-as-i64 offset)
+      [(CompilerBackendSomeI64 n)
+        (let
+          [result-reg : String
+            (if (string-eq dst-home "")
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-addr-scavenge-exclude)
+                0
+                "%r10")
+              dst-home)]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            base
+            result-reg)
+            [(OkCompilerBackend base-asm)
+              (match (compiler-backend-gep-immediate-base-asm result-reg (* n scale))
+                [(CompilerBackendSomeAsm offset-asm)
+                  (OkCompilerBackend
                     (string-append
-                      offset-asm
-                      (compiler-backend-emit-store-var-with-plan
-                        assignments
-                        dst
-                        "%rax"))))]
-              [(CompilerBackendNoAsm)
-                (match (compiler-backend-emit-load-value-with-plan
-                  assignments
-                  offset
-                  scav-idx)
-                  [(OkCompilerBackend offset-asm)
-                    (OkCompilerBackend
+                      base-asm
                       (string-append
-                        base-asm
-                        (string-append
-                          offset-asm
+                        offset-asm
+                        (if (string-eq dst-home "")
+                          (compiler-backend-emit-store-var-with-plan
+                            assignments
+                            dst
+                            result-reg)
+                          ""))))]
+                [(CompilerBackendNoAsm)
+                  (let
+                    [scav-idx : String
+                      (compiler-backend-scavenge-reg
+                        dst
+                        (compiler-backend-one-exclude result-reg)
+                        1
+                        "%r8")]
+                    (match (compiler-backend-emit-load-value-with-plan
+                      assignments
+                      offset
+                      scav-idx)
+                      [(OkCompilerBackend offset-asm)
+                        (OkCompilerBackend
                           (string-append
-                            (compiler-backend-gep-index-asm scale scav-idx)
+                            base-asm
+                            (string-append
+                              offset-asm
+                              (string-append
+                                (compiler-backend-gep-index-base-asm
+                                  result-reg
+                                  scale
+                                  scav-idx)
+                                (if (string-eq dst-home "")
+                                  (compiler-backend-emit-store-var-with-plan
+                                    assignments
+                                    dst
+                                    result-reg)
+                                  "")))))]
+                      [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+      [(CompilerBackendNoI64)
+        (let
+          [offset-home : String
+            (compiler-backend-value-scalar-register assignments offset)]
+          [use-dst-home? : bool
+            (and
+              (not (string-eq dst-home ""))
+              (not (string-eq dst-home offset-home)))]
+          [result-reg : String
+            (if use-dst-home?
+              dst-home
+              (compiler-backend-scavenge-reg
+                dst
+                (if (string-eq offset-home "")
+                  (compiler-backend-addr-scavenge-exclude)
+                  (compiler-backend-one-exclude offset-home))
+                (if (string-eq offset-home "") 0 1)
+                "%r10"))]
+          [scav-idx : String
+            (compiler-backend-scavenge-reg
+              dst
+              (compiler-backend-one-exclude result-reg)
+              1
+              "%r8")]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            base
+            result-reg)
+            [(OkCompilerBackend base-asm)
+              (match (compiler-backend-emit-load-value-with-plan
+                assignments
+                offset
+                scav-idx)
+                [(OkCompilerBackend offset-asm)
+                  (OkCompilerBackend
+                    (string-append
+                      base-asm
+                      (string-append
+                        offset-asm
+                        (string-append
+                          (compiler-backend-gep-index-base-asm
+                            result-reg
+                            scale
+                            scav-idx)
+                          (if use-dst-home?
+                            ""
                             (compiler-backend-emit-store-var-with-plan
                               assignments
                               dst
-                              "%rax")))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-          [(CompilerBackendNoI64)
-            (match (compiler-backend-emit-load-value-with-plan
-              assignments
-              offset
-              scav-idx)
-              [(OkCompilerBackend offset-asm)
-                (OkCompilerBackend
-                  (string-append
-                    base-asm
-                    (string-append
-                      offset-asm
-                      (string-append
-                        (compiler-backend-gep-index-asm scale scav-idx)
-                        (compiler-backend-emit-store-var-with-plan
-                          assignments
-                          dst
-                          "%rax")))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                              result-reg))))))]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])))
 
 (define (compiler-backend-emit-load-instr
   [assignments : CompilerRegAssignmentList]

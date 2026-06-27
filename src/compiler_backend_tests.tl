@@ -6670,6 +6670,40 @@
       (string-eq asm "    vmovdqu64 %zmm6, %zmm7{%k1}\n")]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-avx512-mask-load-temp-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 0 (CompilerRegRegister "%k1"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 1 (CompilerRegRegister "%k2"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil))))
+
+(define (compiler-backend-avx512-mask-load-temp-ok?) : bool
+  (match (compiler-backend-emit-avx512-mask-load
+    (compiler-backend-avx512-mask-load-temp-assignments)
+    0
+    (IrValueVar 2)
+    (IrValueI64 0)
+    (IrValueVar 1)
+    8
+    (compiler-diagnostic-at-start "" ""))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq 0(%r12), %r8\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vmovdqu8 (%r8), %zmm6{%k2}{z}\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpxord %zmm7, %zmm7, %zmm7\n")
+        (compiler-backend-string-contains?
+          asm
+          "    vpcmpub $4, %zmm7, %zmm6, %k1\n")
+        (not (compiler-backend-string-contains? asm "%zmm14"))
+        (not (compiler-backend-string-contains? asm "%zmm15")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-avx512-map-asm-contains?
   [elem : String]
   [move : String]
@@ -7798,6 +7832,7 @@
     (compiler-backend-vector-reduce-direct-store-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
+    (compiler-backend-avx512-mask-load-temp-ok?)
     (compiler-backend-avx512-tail-mask-ok?)
     (compiler-backend-avx512-mask-not-shortens-ok?)
     (compiler-backend-avx512-mask-binop-same-registers-ok?)

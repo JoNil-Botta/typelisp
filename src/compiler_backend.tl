@@ -3218,19 +3218,53 @@
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
                   [addr : String (struct-get addr-plan addr)]
-                  (OkCompilerBackend
-                    (string-append
-                      addr-asm
-                      (str-cat
-                        "    vmovdqu8 "
-                        addr
-                        ", %zmm15{"
-                        mask-reg
-                        "}{z}\n"
-                        "    vpxord %zmm14, %zmm14, %zmm14\n"
-                        "    vpcmpub $4, %zmm14, %zmm15, "
-                        dst-reg
-                        "\n"))))]
+                  (match (compiler-backend-vector-temp-zmm
+                    assignments
+                    ""
+                    ""
+                    ""
+                    "mask load bytes")
+                    [(OkBackendReg bytes-reg)
+                      (match (compiler-backend-vector-temp-zmm
+                        assignments
+                        bytes-reg
+                        ""
+                        ""
+                        "mask load zero")
+                        [(OkBackendReg zero-reg)
+                          (OkCompilerBackend
+                            (string-append
+                              addr-asm
+                              (str-cat
+                                "    vmovdqu8 "
+                                addr
+                                ", "
+                                bytes-reg
+                                "{"
+                                mask-reg
+                                "}{z}\n"
+                                "    vpxord "
+                                zero-reg
+                                ", "
+                                zero-reg
+                                ", "
+                                zero-reg
+                                "\n"
+                                "    vpcmpub $4, "
+                                zero-reg
+                                ", "
+                                bytes-reg
+                                ", "
+                                dst-reg
+                                "\n")))]
+                        [(ErrBackendReg message)
+                          (ErrCompilerBackend
+                            (compiler-diagnostic-with-message
+                              instr-diag
+                              message))])]
+                    [(ErrBackendReg message)
+                      (ErrCompilerBackend
+                        (compiler-diagnostic-with-message instr-diag message))]))]
               [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]

@@ -13222,6 +13222,73 @@
         (not (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-indirect-tail-call-r11-callee-asm
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (let
+    [callee-ty : AstType (ast-ty-func AstTypeNil (AstTyI64))]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r11"))
+        CompilerRegAssignmentNil)]
+    [types : CompilerRegVarTypeList
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 0 callee-ty)
+        CompilerRegVarTypeNil)]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (IrInstrTailCallIndirect
+          (IrValueVar 0)
+          (IrCallArgsNil)
+          (AstTyI64))
+        IrInstrNil)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        IrBlockNil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-scavenge-install-ctx!
+          "indirect_tail_call_r11_callee_shape"
+          IrParamNil
+          (AstTyI64)
+          1
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base 1)
+        (set! compiler-backend-emit-current-count 1))]
+    (compiler-backend-emit-tail-indirect-call
+      target
+      "indirect_tail_call_r11_callee_shape"
+      blocks
+      (IrValueVar 0)
+      (IrCallArgsNil)
+      (AstTyI64)
+      assignments
+      types
+      1
+      IrFunctionNil
+      IrExternNil
+      (compiler-backend-program-index-build IrFunctionNil IrExternNil)
+      (compiler-diagnostic-at-start "" ""))))
+
+(define (compiler-backend-indirect-tail-call-r11-callee-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-indirect-tail-call-r11-callee-asm target)
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq %r11, %r10\n")
+        (compiler-backend-string-contains?
+          asm
+          (str-cat
+            "    movq 8(%r10), "
+            (match (compiler-backend-target-arg-reg target 0)
+              [(OkBackendReg reg) reg]
+              [(ErrBackendReg _) ""])
+            "\n"))
+        (compiler-backend-string-contains? asm "    jmp *(%r10)\n")
+        (not (compiler-backend-string-contains? asm "    jmp *(%r11)\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-non-direct-tail-call-extern
   [name : String]
   [symbol : String]
@@ -13411,6 +13478,10 @@
     (compiler-backend-indirect-tail-call-target-ok? (BackendTargetWindows))
     (compiler-backend-indirect-tail-call-stack-target-ok? (BackendTargetLinux))
     (compiler-backend-indirect-tail-call-stack-target-ok?
+      (BackendTargetWindows))
+    (compiler-backend-indirect-tail-call-r11-callee-target-ok?
+      (BackendTargetLinux))
+    (compiler-backend-indirect-tail-call-r11-callee-target-ok?
       (BackendTargetWindows))
     (compiler-backend-non-direct-tail-call-target-ok? (BackendTargetLinux))
     (compiler-backend-non-direct-tail-call-target-ok? (BackendTargetWindows))

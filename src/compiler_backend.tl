@@ -21699,6 +21699,14 @@
       program-index)
     0))
 
+(define (compiler-backend-scavenge-tail-call-target-reg) : String
+  ;; Tail jumps restore callee-saved homes before the final jmp. Keep the closure
+  ;; pointer in a pooled caller-saved non-arg candidate instead.
+  (compiler-backend-scavenge-reg-here
+    (compiler-backend-c-abi-stage-exclude)
+    4
+    "%r11"))
+
 (define (compiler-backend-emit-indirect-call-with-arg-assignments
   [target : CompilerBackendTarget]
   [dst : i64]
@@ -21905,51 +21913,63 @@
       program-index
       vars)
       [(OkCompilerBackend args-asm)
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          func
-          "%r11")
-          [(OkCompilerBackend func-asm)
-            (match (compiler-backend-target-arg-reg target 0)
-              [(OkBackendReg env-reg)
-                (let
-                  [descriptor-asm : String
-                    (str-cat func-asm "    movq 8(%r11), " env-reg "\n" "")]
-                  (if register-only
-                    (OkCompilerBackend
-                      (string-append
-                        args-asm
-                        (string-append
-                          descriptor-asm
-                          (compiler-backend-tail-jump-tail
-                            assignments
-                            vars
-                            "*(%r11)"))))
-                    (OkCompilerBackend
-                      (string-append
-                        (compiler-backend-emit-call-space-sub call-space)
+        (let
+          [clo-reg : String (compiler-backend-scavenge-tail-call-target-reg)]
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            func
+            clo-reg)
+            [(OkCompilerBackend func-asm)
+              (match (compiler-backend-target-arg-reg target 0)
+                [(OkBackendReg env-reg)
+                  (let
+                    [target-addr : String (str-cat "*(" clo-reg ")" "" "")]
+                    [descriptor-asm : String
+                      (str-cat
+                        func-asm
+                        "    movq 8("
+                        clo-reg
+                        "), "
+                        env-reg
+                        "\n"
+                        "")]
+                    (if register-only
+                      (OkCompilerBackend
                         (string-append
                           args-asm
                           (string-append
                             descriptor-asm
-                            (str-cat
-                              "    call *(%r11)\n"
-                              (compiler-backend-emit-call-space-add call-space)
-                              (string-append
-                                (compiler-backend-tail-call-return-normalize ty)
-                                (compiler-backend-return-tail
-                                  source-function
-                                  assignments
-                                  vars
-                                  blocks))
-                              ""
-                              "")))))))]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
-                  (compiler-diagnostic-with-message instr-diag message))])]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
-              (compiler-backend-apply-instr-diagnostic message instr-diag))])]
+                            (compiler-backend-tail-jump-tail
+                              assignments
+                              vars
+                              target-addr))))
+                      (OkCompilerBackend
+                        (string-append
+                          (compiler-backend-emit-call-space-sub call-space)
+                          (string-append
+                            args-asm
+                            (string-append
+                              descriptor-asm
+                              (str-cat
+                                "    call "
+                                target-addr
+                                "\n"
+                                (compiler-backend-emit-call-space-add call-space)
+                                (string-append
+                                  (compiler-backend-tail-call-return-normalize ty)
+                                  (compiler-backend-return-tail
+                                    source-function
+                                    assignments
+                                    vars
+                                    blocks))
+                                ""
+                                "")))))))]
+                [(ErrBackendReg message)
+                  (ErrCompilerBackend
+                    (compiler-diagnostic-with-message instr-diag message))])]
+            [(ErrCompilerBackend message)
+              (ErrCompilerBackend
+                (compiler-backend-apply-instr-diagnostic message instr-diag))]))]
       [(ErrCompilerBackend message)
         (ErrCompilerBackend
           (compiler-backend-apply-instr-diagnostic message instr-diag))])))

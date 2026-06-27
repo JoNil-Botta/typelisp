@@ -8554,7 +8554,7 @@
 ;; (active-scavenge across GEP/copy/div/c-abi/jump/indirect-call/phi-temp) and the
 ;; scavenge avoids them (superset exclude + the #23 freeness-based emergency picks
 ;; a non-pool-occupied candidate). The kind-0 clobber model forbids them across
-;; calls/syscall (covering tail-indirect-call closure %r11, c-abi return-stores,
+;; calls/syscall (covering tail-indirect closure targets, c-abi return-stores,
 ;; syscall arg-4 %r10); idiv no longer clobbers them (guard de-hardcoded).
 (define (compiler-reg-greedy-integer-pool) : CompilerRegStringList
   (compiler-reg-string-cons

@@ -6588,6 +6588,68 @@
       lhs
       (str-cat "\n    " setcc " %al\n    movzbl %al, %eax\n" ""))))
 
+(define (compiler-backend-binop-cmp-set-reg-asm
+  [ty : AstType]
+  [rhs : String]
+  [lhs : String]
+  [setcc : String]
+  [dst-reg : String]) : String
+  (string-append
+    (compiler-backend-binop-cmp-reg-asm ty rhs lhs)
+    (str-cat
+      "    "
+      setcc
+      " "
+      (compiler-backend-reg-part (string-copy dst-reg) 1)
+      "\n    movzbq "
+      (compiler-backend-reg-part (string-copy dst-reg) 1)
+      ", "
+      dst-reg
+      "\n")))
+
+(define (compiler-backend-binop-test-zero-reg-asm
+  [ty : AstType]
+  [reg : String]
+  [setcc : String]) : String
+  (let
+    [lhs : String (compiler-backend-sized-reg reg ty)]
+    (string-append
+      (compiler-backend-binop-reg-asm "test" ty lhs lhs)
+      (str-cat
+        "    "
+        setcc
+        " "
+        (compiler-backend-reg-part (string-copy reg) 1)
+        "\n    movzbq "
+        (compiler-backend-reg-part (string-copy reg) 1)
+        ", "
+        reg
+        "\n"))))
+
+(define (compiler-backend-compare-setcc
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : String
+  (match op
+    [(IrBinEq) "sete"]
+    [(IrBinNe) "setne"]
+    [(IrBinLt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "setb"
+        "setl")]
+    [(IrBinLe)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "setbe"
+        "setle")]
+    [(IrBinGt)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "seta"
+        "setg")]
+    [(IrBinGe)
+      (if (compiler-backend-unsigned-rel-ty? ty)
+        "setae"
+        "setge")]
+    [_ ""]))
+
 (define (compiler-backend-binop-cmp-reg-asm
   [ty : AstType]
   [rhs : String]
@@ -7542,6 +7604,169 @@
             imm)
           (str-cat ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
       (CompilerBackendNoAsm))))
+
+(define (compiler-backend-binop-immediate-shift-reg-asm
+  [mnemonic : String]
+  [ty : AstType]
+  [imm : String]
+  [dst-reg : String]) : CompilerBackendMaybeAsm
+  (let
+    [count : i64 (string->int (substring imm 1 (- (string-length imm) 1)))]
+    (if (compiler-backend-shift-count-valid? count ty)
+      (CompilerBackendSomeAsm
+        (string-append
+          (str-cat
+            "    "
+            mnemonic
+            (compiler-backend-int-instruction-suffix ty)
+            " "
+            imm)
+          (str-cat
+            ", "
+            (compiler-backend-sized-reg dst-reg ty)
+            "\n")))
+      (CompilerBackendNoAsm))))
+
+(define (compiler-backend-binop-immediate-direct-reg-asm
+  [mnem : String]
+  [op : CompilerIrBinOp]
+  [ty : AstType]
+  [imm : String]
+  [dst-reg : String]) : CompilerBackendMaybeAsm
+  (match op
+    [(IrBinEq)
+      (CompilerBackendSomeAsm
+        (if (string-eq imm "$0")
+          (compiler-backend-binop-test-zero-reg-asm ty dst-reg "sete")
+          (compiler-backend-binop-cmp-set-reg-asm
+            ty
+            imm
+            (compiler-backend-sized-reg dst-reg ty)
+            "sete"
+            dst-reg)))]
+    [(IrBinNe)
+      (CompilerBackendSomeAsm
+        (if (string-eq imm "$0")
+          (compiler-backend-binop-test-zero-reg-asm ty dst-reg "setne")
+          (compiler-backend-binop-cmp-set-reg-asm
+            ty
+            imm
+            (compiler-backend-sized-reg dst-reg ty)
+            "setne"
+            dst-reg)))]
+    [(IrBinLt)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-reg-asm
+          ty
+          imm
+          (compiler-backend-sized-reg dst-reg ty)
+          (compiler-backend-compare-setcc op ty)
+          dst-reg))]
+    [(IrBinLe)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-reg-asm
+          ty
+          imm
+          (compiler-backend-sized-reg dst-reg ty)
+          (compiler-backend-compare-setcc op ty)
+          dst-reg))]
+    [(IrBinGt)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-reg-asm
+          ty
+          imm
+          (compiler-backend-sized-reg dst-reg ty)
+          (compiler-backend-compare-setcc op ty)
+          dst-reg))]
+    [(IrBinGe)
+      (CompilerBackendSomeAsm
+        (compiler-backend-binop-cmp-set-reg-asm
+          ty
+          imm
+          (compiler-backend-sized-reg dst-reg ty)
+          (compiler-backend-compare-setcc op ty)
+          dst-reg))]
+    [(IrBinShl)
+      (compiler-backend-binop-immediate-shift-reg-asm "shl" ty imm dst-reg)]
+    [(IrBinShr)
+      (compiler-backend-binop-immediate-shift-reg-asm
+        (if (compiler-backend-type-signed? ty)
+          "sar"
+          "shr")
+        ty
+        imm
+        dst-reg)]
+    [(IrBinBitAnd)
+      (CompilerBackendSomeAsm
+        (if (string-eq imm "$255")
+          (str-cat
+            "    movzbq "
+            (compiler-backend-reg-part (string-copy dst-reg) 1)
+            ", "
+            dst-reg
+            "\n")
+          (if (string-eq imm "$65535")
+            (str-cat
+              "    movzwq "
+              (compiler-backend-reg-part (string-copy dst-reg) 2)
+              ", "
+              dst-reg
+              "\n")
+            (str-cat "    " mnem " " imm ", " dst-reg "\n"))))]
+    [_ (CompilerBackendSomeAsm (str-cat "    " mnem " " imm ", " dst-reg "\n"))]))
+
+(define (compiler-backend-emit-binop-direct-compare
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [dst-home : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : ResultCompilerBackend
+  (let
+    [rhs-reg : String (compiler-backend-value-scalar-register assignments rhs)]
+    [rhs-address : String (compiler-backend-value-stack-address assignments rhs)]
+    [lhs-reg : String (compiler-backend-value-scalar-register assignments lhs)]
+    [scav-rhs : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
+        7
+        "%r8")]
+    [rhs-load-needed : bool
+      (if (not (string-eq rhs-reg ""))
+        (string-eq rhs-reg dst-home)
+        (string-eq rhs-address ""))]
+    [rhs-operand : String
+      (if (not (string-eq rhs-reg ""))
+        (if (string-eq rhs-reg dst-home)
+          (compiler-backend-sized-reg scav-rhs ty)
+          (compiler-backend-sized-reg rhs-reg ty))
+        (if (string-eq rhs-address "")
+          (compiler-backend-sized-reg scav-rhs ty)
+          rhs-address))]
+    (match (if rhs-load-needed
+      (compiler-backend-emit-load-value-with-plan assignments rhs scav-rhs)
+      (OkCompilerBackend ""))
+      [(OkCompilerBackend rhs-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          lhs
+          dst-home)
+          [(OkCompilerBackend lhs-asm)
+            (OkCompilerBackend
+              (string-append
+                rhs-asm
+                (string-append
+                  lhs-asm
+                  (compiler-backend-binop-cmp-set-reg-asm
+                    ty
+                    rhs-operand
+                    (compiler-backend-sized-reg dst-home ty)
+                    (compiler-backend-compare-setcc op ty)
+                    dst-home))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-binop-immediate-reg-asm
   [mnemonic : String]

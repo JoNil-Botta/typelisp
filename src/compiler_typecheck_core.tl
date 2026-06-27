@@ -190,19 +190,14 @@
   (OkTcEnv TcTypeEnv)
   (ErrTcEnv String))
 
-(defstruct TcImportAliasDeclIndex
-  (counts hashmap.I64I64Map)
-  (names hashmap.I64I64Map))
-
 (defstruct TcImportAliasSummaryIndex
   (modules hashmap.I64I64Map)
-  (decls (Array CompilerLoadSurfaceDeclList))
-  (count i64)
-  (full-decls TcImportAliasDeclIndex))
+  (decls (Array AstDeclList))
+  (count i64))
 
 (defenum TcImportAliasSummaryLookup
   (TcImportAliasSummaryMissing)
-  (TcImportAliasSummaryFound CompilerLoadSurfaceDeclList))
+  (TcImportAliasSummaryFound AstDeclList))
 
 (defenum ResultTcUnit
   (OkTcUnit)
@@ -11968,93 +11963,50 @@
   [name-id : i64]) : ResultTcType
   (tc-lookup-id env (tc-module-name-id module name-id)))
 
-(define (tc-import-alias-summary-list-count
-  [summaries : CompilerLoadSurfaceSummaryList]) : i64
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) 0]
-    [(CompilerLoadSurfaceSummaryCons _ rest)
-      (+ 1 (tc-import-alias-summary-list-count (box-get rest)))]))
-
-(define (tc-import-alias-count-map-get [counts : hashmap.I64I64Map] [key : i64]) : i64
-  (match (hashmap.i64-i64-map-get counts key)
-    [(hashmap.I64I64MapFound count) count]
-    [(hashmap.I64I64MapMissing) 0]))
-
-(define (tc-import-alias-count-map-increment
-  [counts : hashmap.I64I64Map]
-  [key : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put
-    counts
-    key
-    (+ 1 (tc-import-alias-count-map-get counts key))))
-
-(define (tc-import-alias-decl-index-empty) : TcImportAliasDeclIndex
-  (TcImportAliasDeclIndex
-    (hashmap.i64-i64-map-with-capacity 512)
-    (hashmap.i64-i64-map-with-capacity 4096)))
-
-(define (tc-import-alias-decl-index-add
-  [index : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [name-id : i64]) : TcImportAliasDeclIndex
-  (TcImportAliasDeclIndex
-    (tc-import-alias-count-map-increment (struct-get index counts) module-id)
-    (hashmap.i64-i64-map-put
-      (struct-get index names)
-      (compiler-symbol-module-key-id-by-id module-id name-id)
-      1)))
-
-(define (tc-import-alias-decl-index-add-unsafe-ast
-  [index : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [decl : AstDecl]) : TcImportAliasDeclIndex
-  (match decl
-    [(AstDeclDefFn name _ _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclExtern name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [_ index]))
-
-(define (tc-import-alias-decl-index-add-ast
-  [index : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [decl : AstDecl]) : TcImportAliasDeclIndex
-  (match decl
-    [(AstDeclDef name _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefFn name _ _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefDispatch name _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclExtern name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefEnum name _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefEnumLifetimes name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefStruct name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclUnsafe inner-box)
-      (tc-import-alias-decl-index-add-unsafe-ast
-        index
-        module-id
-        (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
-      (tc-import-alias-decl-index-add-ast
-        index
-        module-id
-        (box-get template-box))]
-    [_ index]))
-
-(define (tc-import-alias-decl-index-build
-  [decls : AstDeclList]
-  [module : String]) : TcImportAliasDeclIndex
+(define (tc-import-alias-ast-decl-list-reverse-into
+  [items : AstDeclList]
+  [out : AstDeclList]) : AstDeclList
   (let
-    [cur : AstDeclList decls]
-    [cur-module-id : i64 (intern module)]
-    [index : TcImportAliasDeclIndex (tc-import-alias-decl-index-empty)]
+    [cursor : AstDeclList items]
+    [result : AstDeclList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclNil) (set! done true)]
+          [(AstDeclCons decl rest)
+            (begin
+              (set! result (ast-decl-cons decl result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
+  (tc-import-alias-ast-decl-list-reverse-into items AstDeclNil))
+
+(define (tc-import-alias-summary-index-reverse-slots!
+  [decls : (Array AstDeclList)]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array.array-set!
+            decls
+            index
+            (tc-import-alias-ast-decl-list-reverse
+              (array.array-ref decls index)))
+          (set! index (+ index 1))))
+      unit)))
+
+(define (tc-import-alias-summary-index-build-current [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
+  (let
+    [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
+    [decls : (Array AstDeclList) (array.make-array AstDeclList capacity)]
+    [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity capacity)]
+    [slot-count : i64 0]
+    [cur : AstDeclList all-decls]
+    [cur-module-id : i64 (intern "")]
     [ok : bool true]
     (begin
       (while ok
@@ -12069,56 +12021,36 @@
                     (set! cur-module-id next-module)
                     (set! cur next))]
                 [_
-                  (begin
-                    (set!
-                      index
-                      (tc-import-alias-decl-index-add-ast
-                        index
-                        cur-module-id
-                        decl))
-                    (set! cur next))]))]))
-      index)))
-
-(define (tc-import-alias-summary-index-fill
-  [summaries : CompilerLoadSurfaceSummaryList]
-  [modules : hashmap.I64I64Map]
-  [decls : (Array CompilerLoadSurfaceDeclList)]
-  [index : i64]) : hashmap.I64I64Map
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) modules]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (let
-        [module-id : i64 (intern (struct-get summary module-id))]
-        [next-modules : hashmap.I64I64Map
-          (match (hashmap.i64-i64-map-get modules module-id)
-            [(hashmap.I64I64MapMissing)
-              (begin
-                (array.array-set! decls index (struct-get summary decls))
-                (hashmap.i64-i64-map-put modules module-id index))]
-            [(hashmap.I64I64MapFound _)
-              (hashmap.i64-i64-map-put modules module-id -1)])]
-        (tc-import-alias-summary-index-fill
-          (box-get rest)
-          next-modules
-          decls
-          (+ index 1)))]))
+                  (let
+                    [slot : i64 0]
+                    [existing : AstDeclList AstDeclNil]
+                    (begin
+                      (match (hashmap.i64-i64-map-get modules cur-module-id)
+                        [(hashmap.I64I64MapFound found-slot)
+                          (begin
+                            (set! slot found-slot)
+                            (set! existing (array.array-ref decls slot)))]
+                        [(hashmap.I64I64MapMissing)
+                          (begin
+                            (set! slot slot-count)
+                            (set!
+                              modules
+                              (hashmap.i64-i64-map-put
+                                modules
+                                cur-module-id
+                                slot))
+                            (array.array-set! decls slot AstDeclNil)
+                            (set! slot-count (+ slot-count 1)))])
+                      (array.array-set!
+                        decls
+                        slot
+                        (ast-decl-cons decl existing))
+                      (set! cur next)))]))]))
+      (tc-import-alias-summary-index-reverse-slots! decls slot-count)
+      (TcImportAliasSummaryIndex modules decls slot-count))))
 
 (define (tc-import-alias-summary-index-build [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
-  (let
-    [summaries : CompilerLoadSurfaceSummaryList
-      (compiler-load-surface-summaries)]
-    [count : i64 (tc-import-alias-summary-list-count summaries)]
-    [decls : (Array CompilerLoadSurfaceDeclList)
-      (array.make-array CompilerLoadSurfaceDeclList count)]
-    [full-decls : TcImportAliasDeclIndex
-      (tc-import-alias-decl-index-build all-decls "")]
-    [modules : hashmap.I64I64Map
-      (tc-import-alias-summary-index-fill
-        summaries
-        (hashmap.i64-i64-map-with-capacity (+ count 1))
-        decls
-        0)]
-    (TcImportAliasSummaryIndex modules decls count full-decls)))
+  (tc-import-alias-summary-index-build-current all-decls))
 
 (define (tc-import-alias-summary-index-lookup
   [index : TcImportAliasSummaryIndex]
@@ -12132,367 +12064,6 @@
           (array.array-ref (struct-get index decls) slot))
         (TcImportAliasSummaryMissing))]
     [(hashmap.I64I64MapMissing) (TcImportAliasSummaryMissing)]))
-
-(define (tc-import-alias-surface-kind-bindable?
-  [kind : CompilerLoadSurfaceDeclKind]
-  [was-unsafe : bool]) : bool
-  (if was-unsafe
-    (match kind
-      [(CompilerLoadSurfaceFunction) true]
-      [(CompilerLoadSurfaceExtern) true]
-      [_ false])
-    (match kind
-      [(CompilerLoadSurfaceValue) true]
-      [(CompilerLoadSurfaceFunction) true]
-      [(CompilerLoadSurfaceDispatch) true]
-      [(CompilerLoadSurfaceExtern) true]
-      [(CompilerLoadSurfaceEnum) true]
-      [(CompilerLoadSurfaceStruct) true]
-      [_ false])))
-
-(define (tc-import-alias-surface-decl-bindable?
-  [decl : CompilerLoadSurfaceDecl]
-  [target-module : String]) : bool
-  (and
-    (string.string-eq (struct-get decl module) target-module)
-    (tc-import-alias-surface-kind-bindable?
-      (struct-get decl kind)
-      (struct-get decl was-unsafe))))
-
-(define (tc-import-alias-surface-decls-bindable-count
-  [decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : i64
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) 0]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (+
-        (if (tc-import-alias-surface-decl-bindable? decl target-module)
-          1
-          0)
-        (tc-import-alias-surface-decls-bindable-count
-          (box-get rest)
-          target-module))]))
-
-(define (tc-import-alias-full-decls-name?
-  [full-decls : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [name-id : i64]) : bool
-  (match (hashmap.i64-i64-map-get
-    (struct-get full-decls names)
-    (compiler-symbol-module-key-id-by-id module-id name-id))
-    [(hashmap.I64I64MapFound _) true]
-    [(hashmap.I64I64MapMissing) false]))
-
-(define (tc-import-alias-surface-decls-covered-by-full?
-  [full-decls : TcImportAliasDeclIndex]
-  [decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) true]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (not (tc-import-alias-surface-decl-bindable? decl target-module))
-        (tc-import-alias-surface-decls-covered-by-full?
-          full-decls
-          (box-get rest)
-          target-module)
-        (if (tc-import-alias-full-decls-name?
-          full-decls
-          (intern (struct-get decl module))
-          (intern (struct-get decl name)))
-          (tc-import-alias-surface-decls-covered-by-full?
-            full-decls
-            (box-get rest)
-            target-module)
-          false))]))
-
-(define (tc-import-alias-summary-covers-full?
-  [summary-index : TcImportAliasSummaryIndex]
-  [summary-decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : bool
-  (let
-    [full-decls : TcImportAliasDeclIndex (struct-get summary-index full-decls)]
-    [target-module-id : i64 (intern target-module)]
-    [summary-count : i64
-      (tc-import-alias-surface-decls-bindable-count summary-decls target-module)]
-    [full-count : i64
-      (tc-import-alias-count-map-get
-        (struct-get full-decls counts)
-        target-module-id)]
-    (and
-      (= summary-count full-count)
-      (tc-import-alias-surface-decls-covered-by-full?
-        full-decls
-        summary-decls
-        target-module))))
-
-(define (tc-bind-import-alias-value-with-flags-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [source-module : String]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : AstType]
-  [was-unsafe : bool]
-  [c-abi-fnptr : bool]) : TcTypeEnv
-  (if was-unsafe
-    (if c-abi-fnptr
-      (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty)
-      (tc-bind-import-alias-value-unsafe-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty))
-    (if c-abi-fnptr
-      (tc-bind-import-alias-value-c-abi-fnptr-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty)
-      (tc-bind-import-alias-value-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty))))
-
-(define (tc-bind-import-alias-surface-value
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [source-module : String]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [was-unsafe : bool]) : ResultTcEnv
-  (match (tc-import-alias-source-value-type env source-module name-id)
-    [(OkTcType ty)
-      (OkTcEnv
-        (tc-bind-import-alias-value-with-flags-id
-          ctx
-          env
-          alias
-          importer-module
-          source-module
-          import-unqualified
-          name-id
-          ty
-          was-unsafe
-          false))]
-    [(ErrTcType message) (ErrTcEnv message)]))
-
-(define (tc-bind-import-alias-surface-extern
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [source-module : String]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [kind : AstExternKind]
-  [was-unsafe : bool]) : ResultTcEnv
-  (let
-    [extern-ctx : TcContext (tc-context-with-module ctx source-module)]
-    (match (tc-import-alias-source-value-type env source-module name-id)
-      [(OkTcType ty)
-        (OkTcEnv
-          (tc-bind-import-alias-value-with-flags-id
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            ty
-            was-unsafe
-            (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)))]
-      [(ErrTcType message) (ErrTcEnv message)])))
-
-(define (tc-bind-import-alias-surface-decl
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [import-unqualified : bool]
-  [target-module : String]
-  [decl : CompilerLoadSurfaceDecl]) : ResultTcEnv
-  (let
-    [source-module : String (struct-get decl module)]
-    [name-str : String (struct-get decl name)]
-    [name-id : i64 (intern name-str)]
-    [was-unsafe : bool (struct-get decl was-unsafe)]
-    (if (not (tc-import-alias-surface-decl-bindable? decl target-module))
-      (OkTcEnv env)
-      (match (struct-get decl kind)
-        [(CompilerLoadSurfaceValue)
-          (tc-bind-import-alias-surface-value
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            was-unsafe)]
-        [(CompilerLoadSurfaceFunction)
-          (tc-bind-import-alias-surface-value
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            was-unsafe)]
-        [(CompilerLoadSurfaceDispatch)
-          (tc-bind-import-alias-surface-value
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            was-unsafe)]
-        [(CompilerLoadSurfaceExtern)
-          (match (struct-get decl signature)
-            [(CompilerLoadSurfaceExternSignature kind _ _)
-              (tc-bind-import-alias-surface-extern
-                ctx
-                env
-                alias
-                importer-module
-                source-module
-                import-unqualified
-                name-id
-                kind
-                was-unsafe)]
-            [_ (OkTcEnv env)])]
-        [(CompilerLoadSurfaceEnum)
-          (match (struct-get decl signature)
-            [(CompilerLoadSurfaceEnumSignature lifetimes cleanup variants)
-              (let
-                [scoped-name : String
-                  (compiler-symbol-module-key source-module name-str)]
-                [enum-ty : AstType
-                  (match lifetimes
-                    [(AstLifetimeNil) (AstTyEnum (intern scoped-name))]
-                    [_ (ast-ty-enum-args (intern scoped-name) lifetimes)])]
-                (OkTcEnv
-                  (tc-bind-enum-cleanup-import-alias
-                    ctx
-                    (tc-bind-enum-variant-aliases
-                      (tc-context-with-module ctx source-module)
-                      env
-                      alias
-                      importer-module
-                      source-module
-                      import-unqualified
-                      scoped-name
-                      lifetimes
-                      variants)
-                    alias
-                    importer-module
-                    source-module
-                    import-unqualified
-                    cleanup
-                    enum-ty)))]
-            [_ (OkTcEnv env)])]
-        [(CompilerLoadSurfaceStruct)
-          (match (struct-get decl signature)
-            [(CompilerLoadSurfaceStructSignature lifetimes _ cleanup _)
-              (let
-                [scoped-name : String
-                  (compiler-symbol-module-key source-module name-str)]
-                [struct-ty : AstType
-                  (match lifetimes
-                    [(AstLifetimeNil) (AstTyStruct (intern scoped-name))]
-                    [_ (ast-ty-struct-args (intern scoped-name) lifetimes)])]
-                (match (tc-import-alias-source-value-type
-                  env
-                  source-module
-                  name-id)
-                  [(OkTcType constructor-ty)
-                    (OkTcEnv
-                      (tc-bind-struct-cleanup-import-alias
-                        ctx
-                        (tc-bind-import-alias-value-id
-                          ctx
-                          env
-                          alias
-                          importer-module
-                          source-module
-                          import-unqualified
-                          name-id
-                          constructor-ty)
-                        alias
-                        importer-module
-                        source-module
-                        import-unqualified
-                        cleanup
-                        struct-ty))]
-                  [(ErrTcType message) (ErrTcEnv message)]))]
-            [_ (OkTcEnv env)])]
-        [_ (OkTcEnv env)]))))
-
-(define (tc-bind-import-alias-surface-decls
-  [ctx : TcContext]
-  [decls : CompilerLoadSurfaceDeclList]
-  [env : TcTypeEnv]
-  [target-module : String]
-  [alias : String]
-  [importer-module : String]
-  [import-unqualified : bool]) : ResultTcEnv
-  (let
-    [cur : CompilerLoadSurfaceDeclList decls]
-    [cur-env : TcTypeEnv env]
-    [message : String ""]
-    [ok : bool true]
-    (begin
-      (while ok
-        (match cur
-          [(CompilerLoadSurfaceDeclNil) (set! ok false)]
-          [(CompilerLoadSurfaceDeclCons decl rest)
-            (match (tc-bind-import-alias-surface-decl
-              ctx
-              cur-env
-              alias
-              importer-module
-              import-unqualified
-              target-module
-              decl)
-              [(OkTcEnv next-env)
-                (begin
-                  (set! cur-env next-env)
-                  (set! cur (box-get rest)))]
-              [(ErrTcEnv step-message)
-                (begin
-                  (set! message step-message)
-                  (set! ok false))])]))
-      (if (string.string-eq message "")
-        (OkTcEnv cur-env)
-        (ErrTcEnv message)))))
 
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
@@ -12814,37 +12385,26 @@
   [importer-module : String]
   [import-unqualified : bool]) : ResultTcEnv
   (match (tc-import-alias-summary-index-lookup summary-index target-module)
-    [(TcImportAliasSummaryFound summary-decls)
-      (if (tc-import-alias-summary-covers-full?
-        summary-index
-        summary-decls
+    [(TcImportAliasSummaryFound target-decls)
+      (match (tc-bind-import-alias-module-list
+        ctx
+        target-decls
+        env
+        target-module
+        alias
+        importer-module
+        import-unqualified
         target-module)
-        (match (tc-bind-import-alias-surface-decls
-          ctx
-          summary-decls
-          env
-          target-module
-          alias
-          importer-module
-          import-unqualified)
-          [(OkTcEnv next-env) (OkTcEnv next-env)]
-          [(ErrTcEnv _)
-            (tc-bind-import-alias-module
-              ctx
-              decls
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified)])
-        (tc-bind-import-alias-module
-          ctx
-          decls
-          env
-          target-module
-          alias
-          importer-module
-          import-unqualified))]
+        [(OkTcEnv next-env) (OkTcEnv next-env)]
+        [(ErrTcEnv _)
+          (tc-bind-import-alias-module
+            ctx
+            decls
+            env
+            target-module
+            alias
+            importer-module
+            import-unqualified)])]
     [(TcImportAliasSummaryMissing)
       (tc-bind-import-alias-module
         ctx

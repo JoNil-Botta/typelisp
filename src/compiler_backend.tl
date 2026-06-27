@@ -11757,6 +11757,8 @@
   [current-label : String]
   [dst : i64]
   [to-ty : AstType]
+  [value-reg : String]
+  [result-reg : String]
   [scratch-reg : String]) : String
   (let
     [op : String (compiler-backend-u64-to-float-cast-op to-ty)]
@@ -11767,24 +11769,55 @@
     [high-symbol : String (compiler-backend-asm-label function high-label)]
     [done-symbol : String (compiler-backend-asm-label function done-label)]
     (string-append
-      "    testq %rax, %rax\n"
+      (str-cat "    testq " value-reg ", " value-reg "\n")
       (string-append
-        (str-cat "    js " high-symbol "\n    cvtsi2" op "q %rax, %xmm0\n")
+        (str-cat
+          "    js "
+          high-symbol
+          "\n    cvtsi2"
+          op
+          "q "
+          value-reg
+          ", "
+          result-reg
+          "\n")
         (string-append
           (str-cat "    jmp " done-symbol "\n")
           (string-append
             (str-cat high-symbol ":\n" "")
             (string-append
               (string-append
-                (str-cat "    movq %rax, " scratch-reg "\n    andq $1, " scratch-reg "\n")
-                (str-cat "    shrq $1, %rax\n    orq " scratch-reg ", %rax\n"))
+                (str-cat
+                  "    movq "
+                  value-reg
+                  ", "
+                  scratch-reg
+                  "\n    andq $1, "
+                  scratch-reg
+                  "\n")
+                (str-cat
+                  "    shrq $1, "
+                  value-reg
+                  "\n    orq "
+                  scratch-reg
+                  ", "
+                  value-reg
+                  "\n"))
               (string-append
                 (str-cat
                   "    cvtsi2"
                   op
-                  "q %rax, %xmm0\n    add"
+                  "q "
+                  value-reg
+                  ", "
+                  result-reg
+                  "\n    add"
                   op
-                  " %xmm0, %xmm0\n")
+                  " "
+                  result-reg
+                  ", "
+                  result-reg
+                  "\n")
                 (str-cat done-symbol ":\n" "")))))))))
 
 (define (compiler-backend-float-to-int-cast-reg-asm
@@ -11903,35 +11936,53 @@
                     dst-tmp
                     to-ty)))]
             [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
-        (match (compiler-backend-emit-load-typed-value-with-plan
+        (let
+          [value-reg : String
+            (compiler-backend-scavenge-reg
+              dst
+              (make-array String 0)
+              0
+              "%r8")]
+          [scratch-exclude : (Array String)
+            (compiler-backend-one-exclude value-reg)]
+          [scratch-reg : String
+            (compiler-backend-scavenge-reg
+              dst
+              scratch-exclude
+              1
+              "%r11")]
+          [result-reg : String
+            (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+              dst-home
+              (compiler-backend-scavenge-xmm-reg
+                dst
+                (make-array String 0)
+                0
+                "%xmm2"))]
+        (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
           assignments
           src
           from-ty
+          value-reg
           program-index)
           [(OkCompilerBackend load)
             (OkCompilerBackend
               (str-cat
                 load
-                ;; Scavenge the odd-bit fixup scratch (was hardcoded %r11). The
-                ;; exclude-build set excludes %rax (the cast value) + %r11 (so it
-                ;; actively picks a different register); the freeness query keeps it
-                ;; off live homes. Degrades to %r11 only via emergency spill.
                 (compiler-backend-u64-to-float-cast-asm
                   function
                   current-label
                   dst
                   to-ty
-                  (compiler-backend-scavenge-reg
-                    dst
-                    (compiler-backend-binop-scavenge-exclude-build)
-                    5
-                    "%r11"))
+                  value-reg
+                  result-reg
+                  scratch-reg)
                 (compiler-backend-emit-store-float-var-with-plan
                   assignments
                   dst
-                  "%xmm0"
+                  result-reg
                   to-ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
 (define (compiler-backend-emit-float-to-int-cast
   [assignments : CompilerRegAssignmentList]

@@ -40877,7 +40877,7 @@
   (macro-vf-call name (macro-vf-expr-list2 a b)))
 
 (define (macro-vf-array-length [value : i64]) : i64
-  (macro-vf-call1 "array-length" value))
+  (macro-vf-call1 "__tl_array-length" value))
 
 (define (macro-vf-array-ty [elem-ty : AstType]) : AstType
   (ast-ty-dyn-array elem-ty))
@@ -41277,6 +41277,18 @@
     (string-eq base "unless")
     (string-eq base "cond")))
 
+(define (macro-str-cat-module? [definition-module : String]) : bool
+  (or
+    (string-eq definition-module "stdlib.str_cat")
+    (string-eq definition-module "stdlib.str-cat")))
+
+(define (macro-str-cat-fast-path?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (macro-str-cat-module? definition-module)
+    (string-eq (macro-core-fast-path-base macro-name) "str-cat")))
+
 (define (macro-core-fast-bool [value : bool]) : i64
   (ast-node-push (AstExprLiteral (AstLitBool value))))
 
@@ -41285,6 +41297,12 @@
 
 (define (macro-core-fast-var [name : String]) : i64
   (ast-node-push (AstExprVar (intern name))))
+
+(define (macro-core-fast-string [value : String]) : i64
+  (ast-node-push (AstExprLiteral (AstLitString value))))
+
+(define (macro-core-fast-int [value : i64]) : i64
+  (ast-node-push (AstExprLiteral (ast-lit-int value))))
 
 (define (macro-core-fast-and [args : AstExprList]) : i64
   (match args
@@ -41360,6 +41378,119 @@
       (OkMacroCompatCall (macro-core-fast-cond clauses))]
     [(ErrMacroClauseList diag) (ErrMacroCompatCall diag)]))
 
+(define (macro-str-cat-fast-length [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) 0]
+    [(AstExprCons _ rest) (+ 1 (macro-str-cat-fast-length (box-get rest)))]))
+
+(define (macro-str-cat-fast-call
+  [definition-module : String]
+  [name : String]
+  [args : AstExprList]) : i64
+  (ast-expr-call
+    (macro-core-fast-var
+      (tc-hygiene-global-context-name definition-module name))
+    args))
+
+(define (macro-str-cat-fast-list1 [a : i64]) : AstExprList
+  (ast-expr-cons a AstExprNil))
+
+(define (macro-str-cat-fast-list2 [a : i64] [b : i64]) : AstExprList
+  (ast-expr-cons a (macro-str-cat-fast-list1 b)))
+
+(define (macro-str-cat-fast-list3 [a : i64] [b : i64] [c : i64]) : AstExprList
+  (ast-expr-cons a (macro-str-cat-fast-list2 b c)))
+
+(define (macro-str-cat-fast-list4 [a : i64] [b : i64] [c : i64] [d : i64]) : AstExprList
+  (ast-expr-cons a (macro-str-cat-fast-list3 b c d)))
+
+(define (macro-str-cat-fast-list5
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]) : AstExprList
+  (ast-expr-cons a (macro-str-cat-fast-list4 b c d e)))
+
+(define (macro-str-cat-fast-pack
+  [definition-module : String]
+  [parts : i64]
+  [index : i64]
+  [args : AstExprList]) : i64
+  (match args
+    [(AstExprNil) parts]
+    [(AstExprCons head rest)
+      (macro-str-cat-fast-pack
+        definition-module
+        (macro-str-cat-fast-call
+          definition-module
+          "stdlib.string.string-concat-all-pack-part"
+          (macro-str-cat-fast-list3 parts (macro-core-fast-int index) head))
+        (+ index 1)
+        (box-get rest))]))
+
+(define (macro-str-cat-fast-nth [args : AstExprList] [index : i64]) : i64
+  (match args
+    [(AstExprCons head rest)
+      (if (= index 0)
+        head
+        (macro-str-cat-fast-nth (box-get rest) (- index 1)))]
+    [(AstExprNil) (macro-core-fast-string "")]))
+
+(define (macro-str-cat-fast-expand
+  [definition-module : String]
+  [args : AstExprList]) : i64
+  (let
+    [arity : i64 (macro-str-cat-fast-length args)]
+    (cond
+      [(= arity 0) (macro-core-fast-string "")]
+      [(= arity 1) (macro-str-cat-fast-nth args 0)]
+      [(= arity 2)
+        (macro-str-cat-fast-call
+          definition-module
+          "stdlib.string.string-concat3"
+          (macro-str-cat-fast-list3
+            (macro-str-cat-fast-nth args 0)
+            (macro-str-cat-fast-nth args 1)
+            (macro-core-fast-string "")))]
+      [(= arity 3)
+        (macro-str-cat-fast-call
+          definition-module
+          "stdlib.string.string-concat3"
+          (macro-str-cat-fast-list3
+            (macro-str-cat-fast-nth args 0)
+            (macro-str-cat-fast-nth args 1)
+            (macro-str-cat-fast-nth args 2)))]
+      [(= arity 4)
+        (macro-str-cat-fast-call
+          definition-module
+          "stdlib.string.string-concat4"
+          (macro-str-cat-fast-list4
+            (macro-str-cat-fast-nth args 0)
+            (macro-str-cat-fast-nth args 1)
+            (macro-str-cat-fast-nth args 2)
+            (macro-str-cat-fast-nth args 3)))]
+      [(= arity 5)
+        (macro-str-cat-fast-call
+          definition-module
+          "stdlib.string.string-concat5"
+          (macro-str-cat-fast-list5
+            (macro-str-cat-fast-nth args 0)
+            (macro-str-cat-fast-nth args 1)
+            (macro-str-cat-fast-nth args 2)
+            (macro-str-cat-fast-nth args 3)
+            (macro-str-cat-fast-nth args 4)))]
+      [else
+        (macro-str-cat-fast-call
+          definition-module
+          "stdlib.string.string-concat-all"
+          (macro-str-cat-fast-list1
+            (macro-str-cat-fast-pack
+              definition-module
+              (ast-expr-make-array (AstTyString) (macro-core-fast-int arity))
+              0
+              args)))])))
+
 (define (macro-core-fast-profile-ok
   [_macro-name : String]
   [_args : AstExprList]
@@ -41389,57 +41520,81 @@
   [args : AstExprList]
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroCompatCall
-  (if (macro-core-prelude-module? definition-module)
-    (let
-      [base : String (macro-core-fast-path-base macro-name)]
-      (if (macro-core-fast-path-base-known? base)
-        (match (macro-expand-exprs ctx type-env decls depth args)
-          [(OkMacroExprList expanded-args)
-            (begin
-              (tc-context-capture-active-pools! ctx)
-              (match (macro-bind-params
-                ctx
-                decls
-                (tc-context-module ctx)
-                type-env
-                params
+  (if (macro-str-cat-fast-path? macro-name definition-module)
+    (match (macro-expand-exprs ctx type-env decls depth args)
+      [(OkMacroExprList expanded-args)
+        (begin
+          (tc-context-capture-active-pools! ctx)
+          (match (macro-bind-params
+            ctx
+            decls
+            (tc-context-module ctx)
+            type-env
+            params
+            expanded-args
+            (tc-ctfe-env ctx)
+            (tc-string-list-contains
+              macro-expand-expr-type-macro-names
+              macro-name)
+            call-expr)
+            [(OkMacroEnv _)
+              (macro-core-fast-profile-ok
+                macro-name
                 expanded-args
-                (tc-ctfe-env ctx)
-                (tc-string-list-contains
-                  macro-expand-expr-type-macro-names
-                  macro-name)
-                call-expr)
-                [(OkMacroEnv _)
-                  (cond
-                    [(string-eq base "and")
-                      (macro-core-fast-profile-ok
-                        macro-name
-                        expanded-args
-                        (macro-core-fast-and expanded-args))]
-                    [(string-eq base "or")
-                      (macro-core-fast-profile-ok
-                        macro-name
-                        expanded-args
-                        (macro-core-fast-or expanded-args))]
-                    [(string-eq base "when")
-                      (macro-core-fast-profile-result
-                        macro-name
-                        expanded-args
-                        (macro-core-fast-guard expanded-args false call-expr))]
-                    [(string-eq base "unless")
-                      (macro-core-fast-profile-result
-                        macro-name
-                        expanded-args
-                        (macro-core-fast-guard expanded-args true call-expr))]
-                    [else
-                      (macro-core-fast-profile-result
-                        macro-name
-                        expanded-args
-                        (macro-core-fast-cond-call expanded-args))])]
-                [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
-          [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
-        (NoMacroCompatCall)))
-    (NoMacroCompatCall)))
+                (macro-str-cat-fast-expand definition-module expanded-args))]
+            [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
+      [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
+    (if (macro-core-prelude-module? definition-module)
+      (let
+        [base : String (macro-core-fast-path-base macro-name)]
+        (if (macro-core-fast-path-base-known? base)
+          (match (macro-expand-exprs ctx type-env decls depth args)
+            [(OkMacroExprList expanded-args)
+              (begin
+                (tc-context-capture-active-pools! ctx)
+                (match (macro-bind-params
+                  ctx
+                  decls
+                  (tc-context-module ctx)
+                  type-env
+                  params
+                  expanded-args
+                  (tc-ctfe-env ctx)
+                  (tc-string-list-contains
+                    macro-expand-expr-type-macro-names
+                    macro-name)
+                  call-expr)
+                  [(OkMacroEnv _)
+                    (cond
+                      [(string-eq base "and")
+                        (macro-core-fast-profile-ok
+                          macro-name
+                          expanded-args
+                          (macro-core-fast-and expanded-args))]
+                      [(string-eq base "or")
+                        (macro-core-fast-profile-ok
+                          macro-name
+                          expanded-args
+                          (macro-core-fast-or expanded-args))]
+                      [(string-eq base "when")
+                        (macro-core-fast-profile-result
+                          macro-name
+                          expanded-args
+                          (macro-core-fast-guard expanded-args false call-expr))]
+                      [(string-eq base "unless")
+                        (macro-core-fast-profile-result
+                          macro-name
+                          expanded-args
+                          (macro-core-fast-guard expanded-args true call-expr))]
+                      [else
+                        (macro-core-fast-profile-result
+                          macro-name
+                          expanded-args
+                          (macro-core-fast-cond-call expanded-args))])]
+                  [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
+            [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
+          (NoMacroCompatCall)))
+      (NoMacroCompatCall))))
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
@@ -42533,30 +42688,44 @@
                               (if (macro-vector-family-decls-macro?
                                 macro-name
                                 definition-module)
-                                (match (macro-vector-family-fast-decls
-                                  call-ctx
-                                  orig-decls
-                                  call-module
-                                  expanded-args
-                                  call-expr)
-                                  [(OkMacroParsedDecls generated)
-                                    (let
-                                      [contextual-generated : AstDeclList
-                                        (macro-generated-context-decls
-                                          generated
-                                          definition-module)]
-                                      [wrapped : AstDeclList
-                                        (macro-wrap-generated-decls-decls
-                                          contextual-generated
-                                          macro-name
-                                          (macro-decls-generated-key identity))]
-                                      (OkMacroDeclExpansion
-                                        wrapped
-                                        (macro-paths-for-decls
-                                          wrapped
-                                          decl-path)))]
-                                  [(ErrMacroParsedDecls diag)
-                                    (ErrMacroDeclExpansion diag)])
+                                (let
+                                  [fast-result : ResultMacroParsedDecls
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-macro-profile-start))
+                                      (macro-vector-family-fast-decls
+                                        call-ctx
+                                        orig-decls
+                                        call-module
+                                        expanded-args
+                                        call-expr))]
+                                  (begin
+                                    (cfg
+                                      compile-profile
+                                      (compiler-tc-macro-profile-finish
+                                        macro-name
+                                        expanded-args))
+                                    (match fast-result
+                                      [(OkMacroParsedDecls generated)
+                                        (let
+                                          [contextual-generated : AstDeclList
+                                            (macro-generated-context-decls
+                                              generated
+                                              definition-module)]
+                                          [wrapped : AstDeclList
+                                            (macro-wrap-generated-decls-decls
+                                              contextual-generated
+                                              macro-name
+                                              (macro-decls-generated-key
+                                                identity))]
+                                          (OkMacroDeclExpansion
+                                            wrapped
+                                            (macro-paths-for-decls
+                                              wrapped
+                                              decl-path)))]
+                                      [(ErrMacroParsedDecls diag)
+                                        (ErrMacroDeclExpansion diag)])))
                                 (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   orig-decls
@@ -43567,6 +43736,432 @@
     [(AstDeclTest _ _ _) true]
     [_ false]))
 
+;; After an inert Decls splice, the next arbitrary macro expansion needs a
+;; rebuilt top env so generated symbols are visible. Core prelude macros are
+;; deterministic syntax rewrites handled by `macro-core-fast-expand`; they do
+;; not inspect the top env beyond the expressions already being expanded. Let
+;; the same macro pass continue through declarations whose remaining macro work
+;; is limited to those fast-path rewrites (or legacy bare when/unless guards),
+;; while still stopping before user CTFE/Decls/Module macros.
+(define (macro-call-safe-after-inert-splice?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [func : AstExpr]
+  [call-expr : AstExpr]) : bool
+  (match (macro-call-callee-name func)
+    [(TcSomeString name)
+      (if (macro-call-name-maybe-macro? name)
+        (match (macro-call-decl ctx func decls call-expr)
+          [(OkMacroCallDecl maybe-decl)
+            (match maybe-decl
+              [(MacroSomeDecl macro-name definition-module _ ret _)
+                (and
+                  (not (tc-macro-result-decls? ret))
+                  (not (tc-macro-result-module? ret))
+                  (or
+                    (and
+                      (macro-core-prelude-module? definition-module)
+                      (macro-core-fast-path-base-known?
+                        (macro-core-fast-path-base macro-name)))
+                    (macro-str-cat-fast-path? macro-name definition-module)))]
+              [(MacroNoDecl)
+                (or (string-eq name "when") (string-eq name "unless"))])]
+          [(ErrMacroCallDecl _) false])
+        true)]
+    [(TcNoString) true]))
+
+(define (macro-expr-list-safe-after-inert-splice?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [exprs : AstExprList]) : bool
+  (match exprs
+    [(AstExprNil) true]
+    [(AstExprCons expr rest)
+      (and
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get expr))
+        (macro-expr-list-safe-after-inert-splice? ctx decls (box-get rest)))]))
+
+(define (macro-let-bindings-safe-after-inert-splice?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [bindings : AstLetBindingList]) : bool
+  (match bindings
+    [(AstLetBindingNil) true]
+    [(AstLetBindingCons binding rest)
+      (and
+        (match binding
+          [(AstLetBinding _ _ init-box)
+            (macro-expr-safe-after-inert-splice?
+              ctx
+              decls
+              (ast-node-get init-box))])
+        (macro-let-bindings-safe-after-inert-splice? ctx decls (box-get rest)))]))
+
+(define (macro-match-arms-safe-after-inert-splice?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [arms : AstMatchArmList]) : bool
+  (match arms
+    [(AstMatchArmNil) true]
+    [(AstMatchArmCons arm rest)
+      (and
+        (match arm
+          [(AstMatchArm _ body-box)
+            (macro-expr-safe-after-inert-splice?
+              ctx
+              decls
+              (ast-node-get body-box))])
+        (macro-match-arms-safe-after-inert-splice? ctx decls (box-get rest)))]))
+
+(define (macro-expr-safe-after-inert-splice?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [expr : AstExpr]) : bool
+  (if (not (macro-expr-might-fire? expr))
+    true
+    (match expr
+      [(AstExprSpanned inner-box _)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprLiteral _) true]
+      [(AstExprVar _) true]
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (and
+            (macro-call-safe-after-inert-splice? ctx decls func expr)
+            (macro-expr-safe-after-inert-splice? ctx decls func)
+            (macro-expr-list-safe-after-inert-splice? ctx decls args)))]
+      [(AstExprBracketClause items)
+        (macro-expr-list-safe-after-inert-splice? ctx decls items)]
+      [(AstExprBinary _ left-box right-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get left-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get right-box)))]
+      [(AstExprUnary _ inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprIf cond-box then-box else-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get cond-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get then-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get else-box)))]
+      [(AstExprLet let-box)
+        (match (box-get let-box)
+          [(AstLet bindings body-box)
+            (and
+              (macro-let-bindings-safe-after-inert-splice? ctx decls bindings)
+              (macro-expr-safe-after-inert-splice?
+                ctx
+                decls
+                (ast-node-get body-box)))])]
+      [(AstExprLambda lambda-box)
+        (match (box-get lambda-box)
+          [(AstLambda _ _ body-box)
+            (macro-expr-safe-after-inert-splice?
+              ctx
+              decls
+              (ast-node-get body-box))])]
+      [(AstExprTuple exprs)
+        (macro-expr-list-safe-after-inert-splice? ctx decls exprs)]
+      [(AstExprTupleRef tuple-box index-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get tuple-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get index-box)))]
+      [(AstExprArray exprs)
+        (macro-expr-list-safe-after-inert-splice? ctx decls exprs)]
+      [(AstExprMakeArray _ len-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get len-box))]
+      [(AstExprArrayRef array-box index-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get array-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get index-box)))]
+      [(AstExprArraySet array-box index-box value-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get array-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get index-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get value-box)))]
+      [(AstExprArrayPush array-box value-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get array-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get value-box)))]
+      [(AstExprStringRef str-box index-box)
+        (and
+          (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get str-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get index-box)))]
+      [(AstExprWhile cond-box body-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get cond-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get body-box)))]
+      [(AstExprBegin exprs)
+        (macro-expr-list-safe-after-inert-splice? ctx decls exprs)]
+      [(AstExprUnsafe exprs)
+        (macro-expr-list-safe-after-inert-splice? ctx decls exprs)]
+      [(AstExprSet _ value-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get value-box))]
+      [(AstExprAnn inner-box _)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprCast inner-box _)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprBorrow _ _ place-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get place-box))]
+      [(AstExprMatch match-box)
+        (match (box-get match-box)
+          [(AstMatch scrutinee-box arms)
+            (and
+              (macro-expr-safe-after-inert-splice?
+                ctx
+                decls
+                (ast-node-get scrutinee-box))
+              (macro-match-arms-safe-after-inert-splice? ctx decls arms))])]
+      [(AstExprForeach fe-box)
+        (match (box-get fe-box)
+          [(AstForeach _ _ start-box end-box body-box)
+            (and
+              (macro-expr-safe-after-inert-splice?
+                ctx
+                decls
+                (ast-node-get start-box))
+              (macro-expr-safe-after-inert-splice?
+                ctx
+                decls
+                (ast-node-get end-box))
+              (macro-expr-safe-after-inert-splice?
+                ctx
+                decls
+                (ast-node-get body-box)))])]
+      [(AstExprStructGet receiver-box _)
+        (macro-expr-safe-after-inert-splice?
+          ctx
+          decls
+          (ast-node-get receiver-box))]
+      [(AstExprStructSet receiver-box _ value-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get receiver-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get value-box)))]
+      [(AstExprWithEscape scratch-box body)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get scratch-box))
+          (macro-expr-list-safe-after-inert-splice? ctx decls body))]
+      [(AstExprWithScratch body)
+        (macro-expr-list-safe-after-inert-splice? ctx decls body)]
+      [(AstExprInArena arena-box body)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get arena-box))
+          (macro-expr-list-safe-after-inert-splice? ctx decls body))]
+      [(AstExprBox inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprBoxGet inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprBoxTake inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprBoxSet inner-box value-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get inner-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get value-box)))]
+      [(AstExprComptime inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprTry inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprReturn inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprPtrNullCheck inner-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get inner-box))]
+      [(AstExprPtrRead ptr-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get ptr-box))]
+      [(AstExprPtrWrite ptr-box value-box)
+        (and
+          (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get ptr-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get value-box)))]
+      [(AstExprPtrOffset ptr-box offset-box)
+        (and
+          (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get ptr-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get offset-box)))]
+      [(AstExprPtrCast ptr-box _)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get ptr-box))]
+      [(AstExprPtrToInt ptr-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get ptr-box))]
+      [(AstExprIntToPtr value-box _)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get value-box))]
+      [(AstExprStringData str-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get str-box))]
+      [(AstExprStringFromBytes ptr-box len-box)
+        (and
+          (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get ptr-box))
+          (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get len-box)))]
+      [(AstExprArrayData array-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get array-box))]
+      [(AstExprBinaryData _) true]
+      [(AstExprSpmdProgramIndex) true]
+      [(AstExprSpmdProgramCount) true]
+      [(AstExprCpuIdEax leaf-box subleaf-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get leaf-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get subleaf-box)))]
+      [(AstExprCpuIdEbx leaf-box subleaf-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get leaf-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get subleaf-box)))]
+      [(AstExprCpuIdEcx leaf-box subleaf-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get leaf-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get subleaf-box)))]
+      [(AstExprCpuIdEdx leaf-box subleaf-box)
+        (and
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get leaf-box))
+          (macro-expr-safe-after-inert-splice?
+            ctx
+            decls
+            (ast-node-get subleaf-box)))]
+      [(AstExprXgetbv index-box)
+        (macro-expr-safe-after-inert-splice? ctx decls (ast-node-get index-box))]
+      [(AstExprSyscall args)
+        (macro-expr-list-safe-after-inert-splice? ctx decls args)]
+      [(AstExprTypeLiteral _) true]
+      [(AstExprInit _) true]
+      [(AstExprPtrNull _) true]
+      [(AstExprPtrAddrOf _) true]
+      [(AstExprProgramArgc) true]
+      [(AstExprProgramArgv) true]
+      [(AstExprProgramEnvp) true]
+      [_ false])))
+
+(define (macro-decl-safe-after-inert-splice?
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [decl : AstDecl]
+  [can-share : bool]) : bool
+  (cond
+    [(macro-expanded-decl-inert? decl can-share) true]
+    [(not can-share) false]
+    [else
+      (let
+        [decl-ctx : TcContext (tc-context-with-module ctx module)]
+        (match decl
+          [(AstDeclDef _ _ expr-box)
+            (macro-expr-safe-after-inert-splice?
+              decl-ctx
+              decls
+              (ast-node-get expr-box))]
+          [(AstDeclDefFn _ _ _ body-box _)
+            (macro-expr-safe-after-inert-splice?
+              decl-ctx
+              decls
+              (ast-node-get body-box))]
+          [(AstDeclTest _ _ _) true]
+          [(AstDeclImport (AstImportSpec kind _ _ _ _))
+            (not (macro-import-placeholder-kind? kind))]
+          [(AstDeclUnsafe inner-box)
+            (macro-decl-safe-after-inert-splice?
+              ctx
+              decls
+              module
+              (box-get inner-box)
+              can-share)]
+          [(AstDeclComptimeDecl _ template-box)
+            (macro-decl-safe-after-inert-splice?
+              ctx
+              decls
+              module
+              (box-get template-box)
+              can-share)]
+          [_ false]))]))
+
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
 ;; and every reflection/layout builtin -- size-of/struct-field-*/enum-variant-*/
@@ -43776,13 +44371,60 @@
         (macro-expanded-decl-inert? decl can-share)
         (macro-expanded-decls-inert? (box-get rest) can-share))]))
 
-(define (macro-decls-have-import-placeholder? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
-      (or
-        (macro-decl-import-placeholder? decl)
-        (macro-decls-have-import-placeholder? (box-get rest)))]))
+(define (macro-decl-vector-family-placeholder-call?
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [call-id : i64]
+  [context : AstMaybeModuleName]) : bool
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box _)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (match (macro-call-decl-with-context
+            ctx
+            func
+            orig-decls
+            module
+            context
+            call-expr)
+            [(OkMacroCallDeclModule maybe-decl _)
+              (match maybe-decl
+                [(MacroSomeDecl macro-name definition-module _ ret _)
+                  (and
+                    (tc-macro-result-decls? ret)
+                    (macro-vector-family-decls-macro?
+                      macro-name
+                      definition-module))]
+                [(MacroNoDecl) false])]
+            [(ErrMacroCallDeclModule _) false]))]
+      [_ false])))
+
+(define (macro-decl-vector-family-placeholder?
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacroDecls call-id context)
+          (macro-decl-vector-family-placeholder-call?
+            ctx
+            orig-decls
+            module
+            call-id
+            context)]
+        [_ false])]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-vector-family-placeholder?
+        ctx
+        orig-decls
+        module
+        (box-get template-box))]
+    [_ false]))
 
 (define (macro-expand-decls
   [ctx : TcContext]
@@ -43796,8 +44438,13 @@
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String module]
+    [cur-top-env : TcTypeEnv top-env]
     [out-rev : AstDeclList AstDeclNil]
     [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    ;; After an inert generated splice, continue across inert declarations,
+    ;; vector-family splices, and core fast-path macros. Arbitrary macro work
+    ;; needs a rebuilt top env so generated symbols are visible.
+    [batched-inert-splice? : bool false]
     [result : ResultMacroDeclsWithPaths
       (ErrMacroDeclsWithPaths
         (box (tc-diag-at-start "macro: internal decl expansion walk")))]
@@ -43839,52 +44486,111 @@
                     (set! cur-paths rest-paths)
                     (set! cur-module (intern-str next-module)))]
                 [_
-                  (if (macro-decl-import-placeholder? decl)
-                    (match (macro-expand-decl-with-path
-                      ctx
-                      top-env
-                      orig-decls
-                      cur-module
-                      decl
-                      decl-path)
-                      [(OkMacroDeclExpansion expanded expanded-paths)
-                        (if (and
-                          (macro-expanded-decls-inert? expanded can-share)
-                          (not (macro-decls-have-import-placeholder? rest))
-                          (macro-expanded-decls-inert? rest can-share))
+                  (cond
+                    [(and
+                        (macro-decl-import-placeholder? decl)
+                        batched-inert-splice?
+                        (not
+                          (macro-decl-vector-family-placeholder?
+                            ctx
+                            orig-decls
+                            cur-module
+                            decl)))
+                      (begin
+                        (set!
+                          result
+                          (OkMacroDeclsWithPaths
+                            (macro-decl-list-append
+                              (macro-decl-list-reverse out-rev)
+                              cur-decls)
+                            (macro-decl-path-list-append
+                              (macro-decl-path-list-reverse out-paths-rev)
+                              cur-paths)
+                            true))
+                        (set! done true))]
+                    [(macro-decl-import-placeholder? decl)
+                      (match (macro-expand-decl-with-path
+                        ctx
+                        cur-top-env
+                        orig-decls
+                        cur-module
+                        decl
+                        decl-path)
+                        [(OkMacroDeclExpansion expanded expanded-paths)
+                          (let
+                            [next-module : String
+                              (macro-decls-final-module expanded cur-module)]
+                            (if (macro-expanded-decls-inert? expanded can-share)
+                              (match (tc-build-top-env-list-in-module
+                                ctx
+                                expanded
+                                cur-top-env
+                                cur-module)
+                                [(OkTcEnv next-top-env)
+                                  (begin
+                                    (set! cur-top-env next-top-env)
+                                    (set!
+                                      out-rev
+                                      (macro-decl-list-reverse-into
+                                        expanded
+                                        out-rev))
+                                    (set!
+                                      out-paths-rev
+                                      (macro-decl-path-list-reverse-into
+                                        expanded-paths
+                                        out-paths-rev))
+                                    (set! cur-module next-module)
+                                    (set! cur-decls rest)
+                                    (set! cur-paths rest-paths)
+                                    (set! batched-inert-splice? true))]
+                                [(ErrTcEnv message)
+                                  (begin
+                                    (set!
+                                      result
+                                      (ErrMacroDeclsWithPaths
+                                        (box (tc-diag-at-start message))))
+                                    (set! done true))])
+                              (begin
+                                (set!
+                                  result
+                                  (OkMacroDeclsWithPaths
+                                    (macro-decl-list-append
+                                      (macro-decl-list-reverse out-rev)
+                                      (macro-decl-list-append expanded rest))
+                                    (macro-decl-path-list-append
+                                      (macro-decl-path-list-reverse
+                                        out-paths-rev)
+                                      (macro-decl-path-list-append
+                                        expanded-paths
+                                        rest-paths))
+                                    true))
+                                (set! done true))))]
+                        [(ErrMacroDeclExpansion diag)
                           (begin
-                            (set!
-                              out-rev
-                              (macro-decl-list-reverse-into expanded out-rev))
-                            (set!
-                              out-paths-rev
-                              (macro-decl-path-list-reverse-into
-                                expanded-paths
-                                out-paths-rev))
-                            (set!
-                              cur-module
-                              (macro-decls-final-module expanded cur-module))
-                            (set! cur-decls rest)
-                            (set! cur-paths rest-paths))
-                          (begin
-                            (set!
-                              result
-                              (OkMacroDeclsWithPaths
-                                (macro-decl-list-append
-                                  (macro-decl-list-reverse out-rev)
-                                  (macro-decl-list-append expanded rest))
-                                (macro-decl-path-list-append
-                                  (macro-decl-path-list-reverse out-paths-rev)
-                                  (macro-decl-path-list-append
-                                    expanded-paths
-                                    rest-paths))
-                                true))
-                            (set! done true)))]
-                      [(ErrMacroDeclExpansion diag)
-                        (begin
-                          (set! result (ErrMacroDeclsWithPaths diag))
-                          (set! done true))])
-                    (if (and can-share (macro-decl-cannot-fire? decl))
+                            (set! result (ErrMacroDeclsWithPaths diag))
+                            (set! done true))])]
+                    [(and
+                        batched-inert-splice?
+                        (not
+                          (macro-decl-safe-after-inert-splice?
+                            ctx
+                            orig-decls
+                            cur-module
+                            decl
+                            can-share)))
+                      (begin
+                        (set!
+                          result
+                          (OkMacroDeclsWithPaths
+                            (macro-decl-list-append
+                              (macro-decl-list-reverse out-rev)
+                              cur-decls)
+                            (macro-decl-path-list-append
+                              (macro-decl-path-list-reverse out-paths-rev)
+                              cur-paths)
+                            true))
+                        (set! done true))]
+                    [(and can-share (macro-decl-cannot-fire? decl))
                       ;; Predict-skip: a macro-free value decl can never fire a
                       ;; macro, so share it unchanged (like the AstDeclModule
                       ;; arm) instead of copying it through the expander. This
@@ -43899,10 +44605,11 @@
                           out-paths-rev
                           (ast-decl-path-cons decl-path out-paths-rev))
                         (set! cur-decls rest)
-                        (set! cur-paths rest-paths))
+                        (set! cur-paths rest-paths))]
+                    [else
                       (match (macro-expand-decl-with-path
                         ctx
-                        top-env
+                        cur-top-env
                         orig-decls
                         cur-module
                         decl
@@ -43925,7 +44632,7 @@
                         [(ErrMacroDeclExpansion diag)
                           (begin
                             (set! result (ErrMacroDeclsWithPaths diag))
-                            (set! done true))])))]))]))
+                            (set! done true))])])]))]))
       result)))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool

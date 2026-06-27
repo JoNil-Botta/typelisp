@@ -1,4 +1,8 @@
 ;; compiler_lower_smoke.tl - Runnable smoke for compiler_lower.tl (#446).
+(import stdlib.io)
+(import stdlib.string)
+(import stdlib.text_buf)
+(import stdlib.vector)
 (import "../compiler_driver_core.tl")
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
@@ -32,16 +36,17 @@
     [root : String "target/lower_nullary_stdlib"]
     [dep : String "target/lower_nullary_stdlib/maybe_string.tl"]
     [entry : String "target/lower_nullary_entry.tl"]
-    [roots : StringVec (string-vec-push (string-vec-new) root)]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) root)]
     (begin
       (compiler-load-test-mkdir root)
-      (write-file
+      (io.write-file
         dep
         "(module stdlib.maybe_string)
 (defenum MaybeString (NoString) (SomeString String))
 (define (maybe-string-single [value : String]) : MaybeString
   (SomeString value))")
-      (write-file
+      (io.write-file
         entry
         "(import stdlib.maybe_string)
 (define (main) : i64
@@ -59,21 +64,97 @@
             (ast-program decls)
             paths)
             [(OkCompilerLower _ _) true]
-            [(ErrCompilerLower diag) (panic (compiler-diagnostic-message diag))])]
+            [(ErrCompilerLower diag)
+              (panic (compiler-diagnostic-message (box-get diag)))])]
         [(ErrCompilerLoadWithPaths diag)
-          (panic (compiler-diagnostic-message diag))]))))
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool
   (let
-    [roots : StringVec (string-vec-push (string-vec-new) "stdlib")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
       (BackendTargetLinux)
       roots
       (BackendModeScalar)
       (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
-      [(OkCompilerDriverLowered _ _ _) true]
-      [(ErrCompilerDriverLowered _) false])))
+      [(ResultCompilerDriverLowered.Ok _ _ _) true]
+      [(ResultCompilerDriverLowered.Err _) false])))
+
+(define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String
+  "(defmacro (vector-user) : Module
+  `(begin
+    (module generated.lower_vector_user_no_main)
+    (import stdlib.vector)
+    (defstruct T
+      (value i64))
+    (import (vector T) as vec)
+    (define (make [value : i64]) : T
+      (T value))
+    (define (score [first : T] [fallback : T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) first)
+          (if (= (vec.len (& items)) 1)
+            (begin
+              (vec.get (& items) 0 fallback)
+              42)
+            0))))))
+(import (vector-user) as user)")
+
+(define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?) : bool
+  (match (lower-compiler-source
+    (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
+    [(OkCompilerLower _ _) true]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?) : bool
+  (let
+    [path : String "target/lower_module_macro_vector_no_main.tl"]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    (begin
+      (io.write-file
+        path
+        (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
+      (match (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
+        path
+        (BackendTargetLinux)
+        roots
+        0
+        (BackendModeScalar)
+        (compiler-cfg-empty))
+        [(ResultCompilerDriver.Ok _) true]
+        [(ResultCompilerDriver.Err diag)
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
+
+(define (compiler-lower-smoke-direct-no-main-keeps-source-symbols?) : bool
+  (let
+    [path : String "target/lower_direct_no_main_symbols.tl"]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) "stdlib")]
+    (begin
+      (io.write-file path "(define (no-main-direct-helper) : i64 7)")
+      (lower-no-main-entry-prune-set! true)
+      (compiler-driver-reset-file-state!)
+      (match (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
+        path
+        (BackendTargetLinux)
+        true
+        roots
+        0
+        (BackendModeScalar)
+        (compiler-cfg-empty))
+        [(ResultCompilerDriverBuffer.Ok buf)
+          (let
+            [asm : String (text_buf.text-buf-render buf)]
+            [needle : String
+              "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
+            (string.string-contains (& asm) (& needle)))]
+        [(ResultCompilerDriverBuffer.Err diag)
+          (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-issue3494-ok?) : bool
   (begin
@@ -86,6 +167,15 @@
     (unless
       (compiler-lower-smoke-stdlib-args-ok?)
       (panic "lower: issue3494 stdlib args failed"))
+    (unless
+      (compiler-lower-smoke-module-macro-vector-no-main-ir-ok?)
+      (panic "lower: no-main module macro vector IR failed"))
+    (unless
+      (compiler-lower-smoke-direct-no-main-keeps-source-symbols?)
+      (panic "lower: direct no-main compile pruned source symbol"))
+    (unless
+      (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?)
+      (panic "lower: no-main module macro vector import failed"))
     true))
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
@@ -130,7 +220,8 @@
                       (if (= bare-count 1)
                         (panic "lower: module entry main uses bare helper")
                         (panic "lower: module entry main helper call missing"))))))])]
-        [(ErrCompilerLower diag) (panic (compiler-diagnostic-message diag))])]
+        [(ErrCompilerLower diag)
+          (panic (compiler-diagnostic-message (box-get diag)))])]
     [(ErrAstProgram _) (panic "lower: module entry main parse failed")]))
 
 (define (compiler-lower-smoke-self-test) : unit
@@ -161,6 +252,13 @@
         (compiler-lower-macro-arity-source)
         "macro call has too few arguments")
       (panic "lower: macro arity diagnostic smoke mismatch"))
+    (unless
+      (compiler-lower-error-ok?
+        "(import stdlib.comptime)
+(define (main) : i64
+  (comptime.comptime-error \"runtime forbidden\"))"
+        "lower: comptime-error is compile-time only")
+      (panic "lower: comptime-error runtime diagnostic smoke mismatch"))
     (unless
       (compiler-lower-error-ok?
         (compiler-lower-macro-expr-clause-to-expr-error-source)
@@ -393,6 +491,15 @@
     (unless
       (compiler-lower-module-macro-codegen-ok?)
       (panic "lower: module macro codegen smoke mismatch"))
+    (unless
+      (compiler-lower-module-macro-global-init-ok?)
+      (panic "lower: module macro global init smoke mismatch"))
+    (unless
+      (compiler-lower-module-macro-stdlib-vector-import-ok?)
+      (panic "lower: module macro stdlib vector import smoke mismatch"))
+    (unless
+      (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-ok?)
+      (panic "lower: no-main module macro stdlib vector import smoke mismatch"))
     (unless
       (compiler-lower-function-decl-count-wrapped-ok?)
       (panic "lower: function decl count smoke mismatch"))

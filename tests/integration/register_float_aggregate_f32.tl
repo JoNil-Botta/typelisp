@@ -1,5 +1,7 @@
 ;; #2855: packed f32 fields in a homogeneous SSE eightbyte are register-resident.
 ;; Mixed integer/f32 sub-word eightbytes stay memory-backed.
+(import stdlib.array)
+
 (defstruct Vec2
   (x f32)
   (y f32))
@@ -72,12 +74,12 @@
 
 (define (case-array) : bool
   (let
-    [items : (Array Vec2) (make-array Vec2 2)]
+    [items : (Array Vec2) (array.make-array Vec2 2)]
     (begin
-      (array-set! items 0 (Vec2 3.0 4.0))
-      (array-set! items 1 (Vec2 5.0 6.0))
-      (if (= (vec-sum (array-ref items 0)) 7.0)
-        (= (struct-get (array-ref items 1) y) 6.0)
+      (array.array-set! items 0 (Vec2 3.0 4.0))
+      (array.array-set! items 1 (Vec2 5.0 6.0))
+      (if (= (vec-sum (array.array-ref items 0)) 7.0)
+        (= (struct-get (array.array-ref items 1) y) 6.0)
         false))))
 
 (define (case-capture) : bool

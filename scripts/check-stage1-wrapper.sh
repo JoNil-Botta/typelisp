@@ -270,9 +270,10 @@ assert_contains "$WORKDIR/compile.stdout" "Wrote $ASM"
 CFG_SRC="$WORKDIR/cfg-feature.tl"
 CFG_ASM="$WORKDIR/cfg-feature.s"
 cat > "$CFG_SRC" <<'EOF'
+(import "stdlib/string.tl")
 (cfg feature (define marker : String "enabled-cfg-feature"))
 (cfg (not feature) (define marker : String "disabled-cfg-feature"))
-(define (main) : i64 0)
+(define (main) : i64 (string-length marker))
 EOF
 run_capture compile-cfg "$COMPILER" compile "$CFG_SRC" -o "$CFG_ASM" --cfg feature
 assert_contains "$CFG_ASM" "enabled-cfg-feature"
@@ -284,14 +285,16 @@ CFG_BATCH_ONE_ASM="$WORKDIR/cfg-batch-one.s"
 CFG_BATCH_TWO_ASM="$WORKDIR/cfg-batch-two.s"
 CFG_BATCH_LIST="$WORKDIR/cfg-batch.txt"
 cat > "$CFG_BATCH_ONE" <<'EOF'
+(import "stdlib/string.tl")
 (cfg feature (define marker : String "enabled-cfg-batch-one"))
 (cfg (not feature) (define marker : String "disabled-cfg-batch-one"))
-(define (main) : i64 0)
+(define (main) : i64 (string-length marker))
 EOF
 cat > "$CFG_BATCH_TWO" <<'EOF'
+(import "stdlib/string.tl")
 (cfg feature (define marker : String "enabled-cfg-batch-two"))
 (cfg (not feature) (define marker : String "disabled-cfg-batch-two"))
-(define (main) : i64 0)
+(define (main) : i64 (string-length marker))
 EOF
 printf '%s|%s\n%s|%s\n' \
     "$CFG_BATCH_ONE" "$CFG_BATCH_ONE_ASM" \
@@ -1105,7 +1108,7 @@ echo "[host-action-cli] lint"
 run_capture lint-help "$COMPILER" lint --help
 assert_empty "$WORKDIR/lint-help.stdout"
 assert_contains "$WORKDIR/lint-help.stderr" "Usage:"
-assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
+assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
 assert_contains "$WORKDIR/lint-help.stderr" "Summary:"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")

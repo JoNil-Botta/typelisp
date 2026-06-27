@@ -12,6 +12,7 @@
 ;# #937 roadmap and #1014 vector-mask IR target — complementing spmd_map's and
 ;# spmd_zip's uniform lane bodies. Runtime-opaque trip count and per-pass `r`
 ;# keep the result deterministic while defeating constant folding and hoisting.
+(import stdlib.array)
 (import "stdlib/io.tl")
 
 (define array-len : i64
@@ -24,13 +25,13 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
+        (array.array-set! a i (+ i 1))
         (set! i (+ i 1))))))
 
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 array-len)]
-    [out : (Array i64) (make-array i64 array-len)]
+    [a : (Array i64) (array.make-array i64 array-len)]
+    [out : (Array i64) (array.make-array i64 array-len)]
     [reps : i64 (+ base-reps (arg-count))]
     [acc : i64 0]
     [r : i64 0]
@@ -40,12 +41,12 @@
         (begin
           (foreach
             ([i : i64 0 array-len])
-            (array-set!
+            (array.array-set!
               out
               i
-              (if (= (bit-and (array-ref a i) 1) 1)
-                (+ (array-ref a i) r)
-                (- (array-ref a i) r))))
-          (set! acc (+ acc (array-ref out (bit-and r (- array-len 1)))))
+              (if (= (bit-and (array.array-ref a i) 1) 1)
+                (+ (array.array-ref a i) r)
+                (- (array.array-ref a i) r))))
+          (set! acc (+ acc (array.array-ref out (bit-and r (- array-len 1)))))
           (set! r (+ r 1))))
       (bit-and acc 255))))

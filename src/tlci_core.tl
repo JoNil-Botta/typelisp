@@ -2,21 +2,22 @@
 ;;
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.
-(import "../stdlib/string.tl")
-(import "../stdlib/str_cat.tl")
+(import stdlib.io)
+(import stdlib.string)
+(import stdlib.str_cat)
 (import "read.tl")
 
 (define (tlci-string-length [text : String]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_length text)
-    (string-length text)))
+    (string.string-length text)))
 
 (define (tlci-string-ref [text : String] [index : i64]) : char
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_ref text index)
-    (string-ref text index)))
+    (string.string-ref text index)))
 
 (defstruct TlciMetadata
   (version String)
@@ -268,9 +269,9 @@
   40)
 
 (define (tlci-host-abi-version-error [actual : i64]) : String
-  (str-cat
+  (str_cat.str-cat
     "tlci host ABI: unsupported callback ABI version "
-    (int->string actual)))
+    (string.int->string actual)))
 
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
   (cond
@@ -515,16 +516,19 @@
             [(SNil) (OkTlciString val)]
             [_
               (ErrTlciString
-                (str-cat
+                (str_cat.str-cat
                   "tlci metadata: field `"
                   fname
                   "` takes one string value"))])]
         [_
           (ErrTlciString
-            (str-cat "tlci metadata: field `" fname "` must be a string"))])]
+            (str_cat.str-cat
+              "tlci metadata: field `"
+              fname
+              "` must be a string"))])]
     [_
       (ErrTlciString
-        (str-cat "tlci metadata: field `" fname "` must be a string"))]))
+        (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-package-fields
   [fields : Sexpr]
@@ -541,9 +545,9 @@
         [(not has-version)
           (ErrTlciMetadata
             "tlci metadata: package missing required field `version`")]
-        [(string-eq name "")
+        [(string.string-eq name "")
           (ErrTlciMetadata "tlci metadata: package name must not be empty")]
-        [(string-eq version "")
+        [(string.string-eq version "")
           (ErrTlciMetadata "tlci metadata: package version must not be empty")]
         [else
           (OkTlciMetadata (TlciMetadata tlci-metadata-version name version))])]
@@ -552,7 +556,7 @@
         [(SCons fhead ftail)
           (match (box-get fhead)
             [(SSym fname)
-              (if (string-eq fname "name")
+              (if (string.string-eq fname "name")
                 (if has-name
                   (ErrTlciMetadata
                     "tlci metadata: duplicate package field `name`")
@@ -565,7 +569,7 @@
                         true
                         version
                         has-version)]))
-                (if (string-eq fname "version")
+                (if (string.string-eq fname "version")
                   (if has-version
                     (ErrTlciMetadata
                       "tlci metadata: duplicate package field `version`")
@@ -579,7 +583,10 @@
                           value
                           true)]))
                   (ErrTlciMetadata
-                    (str-cat "tlci metadata: unknown package field `" fname "`"))))]
+                    (str_cat.str-cat
+                      "tlci metadata: unknown package field `"
+                      fname
+                      "`"))))]
             [_
               (ErrTlciMetadata
                 "tlci metadata: package fields must start with a name")])]
@@ -601,9 +608,9 @@
       (cond
         [(not has-version)
           (ErrTlciMetadata "tlci metadata: missing required field `version`")]
-        [(not (string-eq version tlci-metadata-version))
+        [(not (string.string-eq version tlci-metadata-version))
           (ErrTlciMetadata
-            (str-cat "tlci metadata: unsupported version `" version "`"))]
+            (str_cat.str-cat "tlci metadata: unsupported version `" version "`"))]
         [(not has-package)
           (ErrTlciMetadata "tlci metadata: missing required field `package`")]
         [else
@@ -614,7 +621,7 @@
           (match (box-get fhead)
             [(SSym fname)
               (cond
-                [(string-eq fname "version")
+                [(string.string-eq fname "version")
                   (if has-version
                     (ErrTlciMetadata "tlci metadata: duplicate field `version`")
                     (match (tlci-field-string-value (box-get ftail) fname)
@@ -627,7 +634,7 @@
                           package-name
                           package-version
                           has-package)]))]
-                [(string-eq fname "package")
+                [(string.string-eq fname "package")
                   (if has-package
                     (ErrTlciMetadata "tlci metadata: duplicate field `package`")
                     (match (tlci-package-from-field (box-get ftail))
@@ -642,7 +649,7 @@
                           true)]))]
                 [else
                   (ErrTlciMetadata
-                    (str-cat "tlci metadata: unknown field `" fname "`"))])]
+                    (str_cat.str-cat "tlci metadata: unknown field `" fname "`"))])]
             [_
               (ErrTlciMetadata
                 "tlci metadata: fields must start with a field name")])]
@@ -654,10 +661,13 @@
     [(SCons head rest)
       (match (box-get head)
         [(SSym name)
-          (if (string-eq name "typelisp-tlci-metadata")
+          (if (string.string-eq name "typelisp-tlci-metadata")
             (tlci-metadata-fields (box-get rest) "" false "" "" false)
             (ErrTlciMetadata
-              (str-cat "expected `typelisp-tlci-metadata` form, got `" name "`")))]
+              (str_cat.str-cat
+                "expected `typelisp-tlci-metadata` form, got `"
+                name
+                "`")))]
         [_
           (ErrTlciMetadata
             "tlci metadata: form must start with `typelisp-tlci-metadata`")])]
@@ -667,7 +677,7 @@
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
   (match (read-result (lex source))
     [(ErrSexpr message)
-      (ErrTlciMetadata (string-append "tlci metadata: " message))]
+      (ErrTlciMetadata (string.string-append "tlci metadata: " message))]
     [(OkSexpr form) (tlci-metadata-from-form form)]))
 
 (define (tlci-quote-text) : String
@@ -689,20 +699,24 @@
           (let
             [code : i64 (tlci-char-code-at text i)]
             (cond
-              [(= code 34) (set! out (str-cat out slash quote))]
-              [(= code 92) (set! out (str-cat out slash slash))]
-              [(= code 10) (set! out (str-cat out slash "n"))]
-              [(= code 9) (set! out (str-cat out slash "t"))]
-              [(= code 13) (set! out (str-cat out slash "r"))]
-              [else (set! out (str-cat out (substring text i 1)))]))
+              [(= code 34) (set! out (str_cat.str-cat out slash quote))]
+              [(= code 92) (set! out (str_cat.str-cat out slash slash))]
+              [(= code 10) (set! out (str_cat.str-cat out slash "n"))]
+              [(= code 9) (set! out (str_cat.str-cat out slash "t"))]
+              [(= code 13) (set! out (str_cat.str-cat out slash "r"))]
+              [else
+                (set! out (str_cat.str-cat out (string.substring text i 1)))]))
           (set! i (+ i 1))))
       out)))
 
 (define (tlci-quote-string [text : String]) : String
-  (str-cat (tlci-quote-text) (tlci-escape-string text) (tlci-quote-text)))
+  (str_cat.str-cat
+    (tlci-quote-text)
+    (tlci-escape-string text)
+    (tlci-quote-text)))
 
 (define (tlci-metadata-emit [metadata : TlciMetadata]) : String
-  (str-cat
+  (str_cat.str-cat
     "(typelisp-tlci-metadata\n"
     "  (version "
     (tlci-quote-string (struct-get metadata version))
@@ -728,7 +742,7 @@
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond
-    [(string-eq (struct-get image compiler-build-hash) "")
+    [(string.string-eq (struct-get image compiler-build-hash) "")
       (ErrTlciBytes "tlci: compiler build hash must not be empty")]
     [(not
         (=
@@ -854,7 +868,7 @@
   (= (% len record-size) 0))
 
 (define (tlci-section-error [name : String]) : ResultTlciImage
-  (ErrTlciImage (str-cat "tlci: section `" name "` extends past end")))
+  (ErrTlciImage (str_cat.str-cat "tlci: section `" name "` extends past end")))
 
 (define (tlci-parse-image [bytes : (Array u8)]) : ResultTlciImage
   (let
@@ -900,9 +914,9 @@
           (cond
             [(not (= version tlci-format-version))
               (ErrTlciImage
-                (str-cat
+                (str_cat.str-cat
                   "tlci: unsupported format version "
-                  (int->string version)))]
+                  (string.int->string version)))]
             [(not (= host-arch tlci-host-arch-x86-64))
               (ErrTlciImage "tlci: unsupported host arch")]
             [(not (= callback-abi tlci-callback-abi-version))
@@ -981,7 +995,7 @@
                 (match (tlci-metadata-parse metadata-text)
                   [(ErrTlciMetadata message)
                     (ErrTlciImage
-                      (str-cat "tlci: malformed metadata: " message))]
+                      (str_cat.str-cat "tlci: malformed metadata: " message))]
                   [(OkTlciMetadata metadata)
                     (OkTlciImage
                       (TlciImage
@@ -1076,13 +1090,13 @@
   [result : ResultTlciHostAbi]
   [expected : String]) : bool
   (match result
-    [(ErrTlciHostAbi message) (string-eq message expected)]
+    [(ErrTlciHostAbi message) (string.string-eq message expected)]
     [(OkTlciHostAbi) false]))
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
     (= tlci-host-abi-version tlci-callback-abi-version)
-    (string-eq tlci-image-entry-symbol "tlci_image_entry")
+    (string.string-eq tlci-image-entry-symbol "tlci_image_entry")
     (= tlci-image-entry-param-count 2)
     (= tlci-image-entry-success 0)
     (= tlci-host-callback-table-header-size 48)
@@ -1317,23 +1331,23 @@
       [(ErrTlciMetadata _) false]
       [(OkTlciMetadata parsed)
         (and
-          (string-eq (struct-get parsed version) "v1")
-          (string-eq (struct-get parsed package-name) "demo")
-          (string-eq (struct-get parsed package-version) "0.1.0"))])))
+          (string.string-eq (struct-get parsed version) "v1")
+          (string.string-eq (struct-get parsed package-name) "demo")
+          (string.string-eq (struct-get parsed package-version) "0.1.0"))])))
 
 (define (tlci-test-metadata-rejects? [source : String] [expected : String]) : bool
   (match (tlci-metadata-parse source)
-    [(ErrTlciMetadata message) (string-eq message expected)]
+    [(ErrTlciMetadata message) (string.string-eq message expected)]
     [(OkTlciMetadata _) false]))
 
 (define (tlci-test-parse-rejects? [bytes : (Array u8)] [expected : String]) : bool
   (match (tlci-parse-image bytes)
-    [(ErrTlciImage message) (string-eq message expected)]
+    [(ErrTlciImage message) (string.string-eq message expected)]
     [(OkTlciImage _) false]))
 
 (define (tlci-test-emit-rejects? [image : TlciImage] [expected : String]) : bool
   (match (tlci-emit-image image)
-    [(ErrTlciBytes message) (string-eq message expected)]
+    [(ErrTlciBytes message) (string.string-eq message expected)]
     [(OkTlciBytes _) false]))
 
 (define (tlci-test-corrupt-byte
@@ -1373,21 +1387,21 @@
 (define (tlci-test-metadata-rejections-ok?) : bool
   (and
     (tlci-test-metadata-rejects?
-      (str-cat
+      (str_cat.str-cat
         "(typelisp-tlci-metadata "
         "(package (name \"demo\") (version \"0.1.0\")))")
       "tlci metadata: missing required field `version`")
     (tlci-test-metadata-rejects?
-      (str-cat "(typelisp-tlci-metadata " "(version \"v1\"))")
+      (str_cat.str-cat "(typelisp-tlci-metadata " "(version \"v1\"))")
       "tlci metadata: missing required field `package`")
     (tlci-test-metadata-rejects?
-      (str-cat
+      (str_cat.str-cat
         "(typelisp-tlci-metadata "
         "(version \"v9\") "
         "(package (name \"demo\") (version \"0.1.0\")))")
       "tlci metadata: unsupported version `v9`")
     (tlci-test-metadata-rejects?
-      (str-cat
+      (str_cat.str-cat
         "(typelisp-tlci-metadata "
         "(version \"v1\") "
         "(package (name \"demo\") (version \"0.1.0\")) "
@@ -1416,10 +1430,10 @@
 (define (tlci-core-self-test) : i64
   (if (= (tlci-core-self-test-status) 0)
     42
-    (panic "tlci-core: self-test mismatch")))
+    (io.panic "tlci-core: self-test mismatch")))
 
 (test
   tlci-core-parse-emit-round-trip
   (if (= (tlci-core-self-test-status) 0)
     unit
-    (panic "tlci-core: inline self-test mismatch")))
+    (io.panic "tlci-core: inline self-test mismatch")))

@@ -4,12 +4,13 @@
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
-(import "../stdlib/io.tl")
+(import stdlib.array)
+(import stdlib.io)
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
 (import "read.tl")
 (import "sym_i64_env.tl")
-(import "../stdlib/string.tl")
+(import stdlib.string)
 
 (defenum ResultAstType
   (OkAstType AstType)
@@ -210,6 +211,14 @@
   (OkAstDeclList AstDeclList)
   (ErrAstDeclList String))
 
+(defenum ResultParseAstDeclVec
+  (OkParseAstDeclVec)
+  (ErrParseAstDeclVec String))
+
+(defenum ResultParseAstDeclVecDiagnostic
+  (OkParseAstDeclVecDiagnostic)
+  (ErrParseAstDeclVecDiagnostic (Box CompilerDiagnostic)))
+
 (defenum ResultAstMaybeExpr
   (OkAstNoExpr)
   (OkAstSomeExpr i64)
@@ -233,19 +242,19 @@
 
 (defenum ResultAstDeclListDiagnostic
   (OkAstDeclListDiagnostic AstDeclList)
-  (ErrAstDeclListDiagnostic CompilerDiagnostic))
+  (ErrAstDeclListDiagnostic (Box CompilerDiagnostic)))
 
 (defenum ResultAstProgramDiagnostic
   (OkAstProgramDiagnostic AstProgram)
-  (ErrAstProgramDiagnostic CompilerDiagnostic))
+  (ErrAstProgramDiagnostic (Box CompilerDiagnostic)))
 
 (define (sexpr-colon? [s : Sexpr]) : bool
   (match s
-    [(SSym text) (string-eq text ":")]
+    [(SSym text) (string.string-eq text ":")]
     [_ false]))
 
 (define (compiler-cfg-key [name : String]) : String
-  (string-append "cfg:" name))
+  (string.string-append "cfg:" name))
 
 (define (compiler-cfg-private-dynamic-buffer-key) : String
   "cfg:feature-compiler-private-dynamic-buffer")
@@ -322,11 +331,11 @@
       (match (sp-node-get head)
         [(SpSSym op _)
           (cond
-            [(string-eq op "all")
+            [(string.string-eq op "all")
               (compiler-cfg-eval-list-all dispatch (sp-node-get predicates))]
-            [(string-eq op "any")
+            [(string.string-eq op "any")
               (compiler-cfg-eval-list-any dispatch (sp-node-get predicates))]
-            [(string-eq op "not")
+            [(string.string-eq op "not")
               (compiler-cfg-eval-not dispatch (sp-node-get predicates))]
             [else
               (ErrCompilerCfg
@@ -339,34 +348,34 @@
 
 (define (compiler-parse-generic-type-policy-message [name : String]) : String
   (cond
-    [(string-eq name "varying")
+    [(string.string-eq name "varying")
       "parse: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
-    [(string-eq name "Varying")
+    [(string.string-eq name "Varying")
       "parse: public SPMD varying source types are deferred; varying is inferred inside foreach (#2764)"]
-    [(string-eq name "Vector")
+    [(string.string-eq name "Vector")
       "parse: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
-    [(string-eq name "vector")
+    [(string.string-eq name "vector")
       "parse: public SPMD vector source types are deferred; vector values remain compiler-internal (#2764)"]
-    [(string-eq name "Mask")
+    [(string.string-eq name "Mask")
       "parse: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
-    [(string-eq name "mask")
+    [(string.string-eq name "mask")
       "parse: public SPMD mask source types are deferred; masks remain compiler-internal (#2764)"]
     [else
-      (string-append
+      (string.string-append
         "parse: unknown type constructor "
-        (string-append
+        (string.string-append
           name
           "; TypeLisp has no source-level generic type constructors; use comptime-decl and comptime-generated concrete declarations instead (#893/#913/#970/#902)"))]))
 
 (define (compiler-parse-policy-form? [name : String]) : bool
   (cond
-    [(string-eq name "defgeneric") true]
-    [(string-eq name "generic") true]
-    [(string-eq name "deftrait") true]
-    [(string-eq name "trait") true]
-    [(string-eq name "interface") true]
-    [(string-eq name "impl") true]
-    [else (string-eq name "where")]))
+    [(string.string-eq name "defgeneric") true]
+    [(string.string-eq name "generic") true]
+    [(string.string-eq name "deftrait") true]
+    [(string.string-eq name "trait") true]
+    [(string.string-eq name "interface") true]
+    [(string.string-eq name "impl") true]
+    [else (string.string-eq name "where")]))
 
 (define (ast-source-span-from-source-span [span : SourceSpan]) : AstSourceSpan
   (AstSourceSpan
@@ -1326,9 +1335,13 @@
             [rest : Sexpr (box-get rest-box)]
             [tag : i64 (compiler-parse-dispatch-tag dispatch head)]
             (cond
-              [(string-eq head (parse-internal-resolved-struct-type-marker))
+              [(string.string-eq
+                  head
+                  (parse-internal-resolved-struct-type-marker))
                 (parse-ast-resolved-nominal-type dispatch pools rest true)]
-              [(string-eq head (parse-internal-resolved-enum-type-marker))
+              [(string.string-eq
+                  head
+                  (parse-internal-resolved-enum-type-marker))
                 (parse-ast-resolved-nominal-type dispatch pools rest false)]
               [(= tag (compiler-parse-tag-ty-func))
                 (match (parse-ast-func-type-parts dispatch pools rest)
@@ -1475,7 +1488,7 @@
     [(SCons first rest)
       (match (box-get first)
         [(SSym first-name)
-          (if (string-eq first-name "comptime")
+          (if (string.string-eq first-name "comptime")
             (match (box-get rest)
               [(SCons name-node after-name)
                 (match (box-get name-node)
@@ -1545,7 +1558,7 @@
     [(SCons name-node rest)
       (match (box-get name-node)
         [(SSym name)
-          (if (string-eq name "comptime")
+          (if (string.string-eq name "comptime")
             (ErrAstMacroParam
               "parse: defmacro operands are already compile-time")
             (match (box-get rest)
@@ -1565,7 +1578,7 @@
                             [(SNil)
                               (match (box-get dots)
                                 [(SSym dots-name)
-                                  (if (string-eq dots-name "...")
+                                  (if (string.string-eq dots-name "...")
                                     (match (parse-ast-type
                                       dispatch
                                       pools
@@ -1637,7 +1650,7 @@
       (match (box-get key-node)
         [(SSym key)
           (cond
-            [(string-eq key ":cleanup")
+            [(string.string-eq key ":cleanup")
               (match (box-get tail)
                 [(SCons cleanup-node end)
                   (match (box-get end)
@@ -1654,14 +1667,14 @@
                 [_
                   (ErrAstFieldCleanup
                     "parse: malformed field :cleanup metadata")])]
-            [(string-eq key ":owned")
+            [(string.string-eq key ":owned")
               (match (box-get tail)
                 [(SNil) (OkAstFieldCleanup (AstFieldOwnedCleanup))]
                 [_
                   (ErrAstFieldCleanup "parse: malformed field :owned metadata")])]
             [(compiler-parse-metadata-key? key)
               (ErrAstFieldCleanup
-                (string-append "parse: unknown field metadata " key))]
+                (string.string-append "parse: unknown field metadata " key))]
             [else
               (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
         [_ (ErrAstFieldCleanup "parse: malformed field cleanup metadata")])]
@@ -1673,7 +1686,7 @@
       (match (box-get key-node)
         [(SSym key)
           (cond
-            [(string-eq key ":cleanup")
+            [(string.string-eq key ":cleanup")
               (match (box-get tail)
                 [(SCons cleanup-node end)
                   (match (box-get end)
@@ -1691,7 +1704,7 @@
                 [_
                   (ErrAstVariantPayloadCleanup
                     "parse: malformed enum payload :cleanup metadata")])]
-            [(string-eq key ":owned")
+            [(string.string-eq key ":owned")
               (match (box-get tail)
                 [(SNil)
                   (OkAstVariantPayloadCleanup (AstVariantPayloadOwnedCleanup))]
@@ -1700,7 +1713,9 @@
                     "parse: malformed enum payload :owned metadata")])]
             [(compiler-parse-metadata-key? key)
               (ErrAstVariantPayloadCleanup
-                (string-append "parse: unknown enum payload metadata " key))]
+                (string.string-append
+                  "parse: unknown enum payload metadata "
+                  key))]
             [else
               (ErrAstVariantPayloadCleanup
                 "parse: malformed enum payload cleanup metadata")])]
@@ -1774,7 +1789,7 @@
     [_ (ErrAstFieldDefList "parse: malformed field list")]))
 
 (define (compiler-parse-metadata-key? [name : String]) : bool
-  (and (> (string-length name) 0) (= (string-ref name 0) ':')))
+  (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':')))
 
 (define (parse-ast-aggregate-lifetimes-tail
   [dispatch : SymI64Env]
@@ -1793,12 +1808,12 @@
         [(SNil)
           (match (box-get name-node)
             [(SSym name)
-              (if (string-eq name "c")
+              (if (string.string-eq name "c")
                 (OkAstStructRepr (AstStructReprC))
-                (if (string-eq name "packed")
+                (if (string.string-eq name "packed")
                   (ErrAstStructRepr "parse: packed repr is reserved")
                   (ErrAstStructRepr
-                    (string-append "parse: unknown struct repr " name))))]
+                    (string.string-append "parse: unknown struct repr " name))))]
             [_ (ErrAstStructRepr "parse: malformed :repr metadata")])]
         [_ (ErrAstStructRepr "parse: malformed :repr metadata")])]
     [_ (ErrAstStructRepr "parse: malformed :repr metadata")]))
@@ -1889,7 +1904,7 @@
           (match (box-get key-node)
             [(SSym key)
               (cond
-                [(string-eq key ":lifetimes")
+                [(string.string-eq key ":lifetimes")
                   (if seen-field
                     (ErrAstStructDefParts
                       "parse: defstruct metadata must appear before fields")
@@ -1914,7 +1929,7 @@
                             false)]
                         [(ErrAstLifetimeList message)
                           (ErrAstStructDefParts message)])))]
-                [(string-eq key ":repr")
+                [(string.string-eq key ":repr")
                   (if seen-field
                     (ErrAstStructDefParts
                       "parse: defstruct metadata must appear before fields")
@@ -1941,7 +1956,7 @@
                               false))]
                         [(ErrAstStructRepr message)
                           (ErrAstStructDefParts message)])))]
-                [(string-eq key ":cleanup")
+                [(string.string-eq key ":cleanup")
                   (if seen-field
                     (ErrAstStructDefParts
                       "parse: defstruct metadata must appear before fields")
@@ -1971,10 +1986,12 @@
                   (if seen-field
                     (ErrAstStructDefParts
                       "parse: defstruct metadata must appear before fields")
-                    (if (string-eq key ":packed")
+                    (if (string.string-eq key ":packed")
                       (ErrAstStructDefParts "parse: packed repr is reserved")
                       (ErrAstStructDefParts
-                        (string-append "parse: unknown defstruct metadata " key))))]
+                        (string.string-append
+                          "parse: unknown defstruct metadata "
+                          key))))]
                 [else
                   (parse-ast-defstruct-field-item
                     dispatch
@@ -2120,11 +2137,11 @@
       (match (box-get name-node)
         [(SSym name)
           (if (compiler-parse-metadata-key? name)
-            (if (string-eq name ":cleanup")
+            (if (string.string-eq name ":cleanup")
               (ErrAstVariantDef
                 "parse: defenum metadata must appear before variants")
               (ErrAstVariantDef
-                (string-append "parse: unknown defenum metadata " name)))
+                (string.string-append "parse: unknown defenum metadata " name)))
             (match (parse-ast-variant-payload-parts
               dispatch
               pools
@@ -2161,11 +2178,12 @@
 
 (define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
   (cond
-    [(string-eq name "scalar") (OkAstDispatchIsa (AstDispatchScalar))]
-    [(string-eq name "avx2") (OkAstDispatchIsa (AstDispatchAvx2))]
-    [(string-eq name "avx512") (OkAstDispatchIsa (AstDispatchAvx512))]
+    [(string.string-eq name "scalar") (OkAstDispatchIsa (AstDispatchScalar))]
+    [(string.string-eq name "avx2") (OkAstDispatchIsa (AstDispatchAvx2))]
+    [(string.string-eq name "avx512") (OkAstDispatchIsa (AstDispatchAvx512))]
     [else
-      (ErrAstDispatchIsa (string-append "parse: unknown defdispatch ISA " name))]))
+      (ErrAstDispatchIsa
+        (string.string-append "parse: unknown defdispatch ISA " name))]))
 
 (define (parse-ast-dispatch-variant [s : SpannedSexpr]) : ResultAstDispatchVariant
   (match s
@@ -2270,7 +2288,7 @@
                 [seen-variant
                   (ErrAstEnumDefParts
                     "parse: defenum metadata must appear before variants")]
-                [(string-eq key ":lifetimes")
+                [(string.string-eq key ":lifetimes")
                   (if seen-lifetimes
                     (ErrAstEnumDefParts
                       "parse: duplicate defenum :lifetimes metadata")
@@ -2290,7 +2308,7 @@
                           false)]
                       [(ErrAstLifetimeList message)
                         (ErrAstEnumDefParts message)]))]
-                [(string-eq key ":cleanup")
+                [(string.string-eq key ":cleanup")
                   (if seen-cleanup
                     (ErrAstEnumDefParts
                       "parse: duplicate defenum :cleanup metadata")
@@ -2308,7 +2326,9 @@
                       [(ErrAstEnumCleanup message) (ErrAstEnumDefParts message)]))]
                 [else
                   (ErrAstEnumDefParts
-                    (string-append "parse: unknown defenum metadata " key))])]
+                    (string.string-append
+                      "parse: unknown defenum metadata "
+                      key))])]
             [_
               (parse-ast-defenum-variant-item
                 dispatch
@@ -2446,7 +2466,7 @@
         [(SpSCons op-node cfg-rest _)
           (match (sp-node-get op-node)
             [(SpSSym op _)
-              (if (string-eq op "cfg")
+              (if (string.string-eq op "cfg")
                 (match (parse-ast-cfg-expr-maybe
                   dispatch
                   pools
@@ -2526,7 +2546,7 @@
     [(SpSCons op-node cfg-rest _)
       (match (sp-node-get op-node)
         [(SpSSym op _)
-          (if (string-eq op "cfg")
+          (if (string.string-eq op "cfg")
             (parse-ast-cfg-expr-maybe dispatch pools (sp-node-get cfg-rest))
             (match (parse-ast-expr-with-pools dispatch pools head)
               [(OkAstExpr parsed) (OkAstSomeExpr parsed)]
@@ -2719,6 +2739,13 @@
                                 (ast-expr-box-set-with-pools
                                   pools
                                   receiver-box
+                                  parsed-value))]
+                            [(AstExprUnquote _)
+                              (OkAstExpr
+                                (ast-expr-struct-set-id-with-pools
+                                  pools
+                                  parsed-target
+                                  (ast-expr-unquote-set-target-field-id)
                                   parsed-value))]
                             [_
                               (ErrAstExpr
@@ -3280,29 +3307,33 @@
 
 (define (parse-ast-reduce-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
-    [(string-eq name "min") (OkAstReduceOp (AstReduceMin))]
-    [(string-eq name "max") (OkAstReduceOp (AstReduceMax))]
-    [(string-eq name "all") (OkAstReduceOp (AstReduceAll))]
-    [(string-eq name "any") (OkAstReduceOp (AstReduceAny))]
+    [(string.string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
+    [(string.string-eq name "min") (OkAstReduceOp (AstReduceMin))]
+    [(string.string-eq name "max") (OkAstReduceOp (AstReduceMax))]
+    [(string.string-eq name "all") (OkAstReduceOp (AstReduceAll))]
+    [(string.string-eq name "any") (OkAstReduceOp (AstReduceAny))]
     [else
       (ErrAstReduceOp
-        (string-append
+        (string.string-append
           "parse: unsupported spmd-reduce operator `"
-          (string-append name "`; expected one of sum, min, max, all, any")))]))
+          (string.string-append
+            name
+            "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-scan-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
-    [(string-eq name "min") (OkAstReduceOp (AstReduceMin))]
-    [(string-eq name "max") (OkAstReduceOp (AstReduceMax))]
-    [(string-eq name "all") (OkAstReduceOp (AstReduceAll))]
-    [(string-eq name "any") (OkAstReduceOp (AstReduceAny))]
+    [(string.string-eq name "sum") (OkAstReduceOp (AstReduceSum))]
+    [(string.string-eq name "min") (OkAstReduceOp (AstReduceMin))]
+    [(string.string-eq name "max") (OkAstReduceOp (AstReduceMax))]
+    [(string.string-eq name "all") (OkAstReduceOp (AstReduceAll))]
+    [(string.string-eq name "any") (OkAstReduceOp (AstReduceAny))]
     [else
       (ErrAstReduceOp
-        (string-append
+        (string.string-append
           "parse: unsupported spmd-scan operator `"
-          (string-append name "`; expected one of sum, min, max, all, any")))]))
+          (string.string-append
+            name
+            "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-spmd-reduce-binding
   [dispatch : SymI64Env]
@@ -4002,14 +4033,14 @@
           (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))]
         [_
           (ErrAstExpr
-            (string-append
+            (string.string-append
               "parse: "
-              (string-append name " expects exactly one expression")))])]
+              (string.string-append name " expects exactly one expression")))])]
     [_
       (ErrAstExpr
-        (string-append
+        (string.string-append
           "parse: "
-          (string-append name " expects exactly one expression")))]))
+          (string.string-append name " expects exactly one expression")))]))
 
 (define (parse-ast-two-exprs
   [dispatch : SymI64Env]
@@ -4037,19 +4068,19 @@
                 [(ErrAstExpr message) (ErrAstExprPair message)])]
             [_
               (ErrAstExprPair
-                (string-append
+                (string.string-append
                   "parse: "
-                  (string-append name " expects exactly two expressions")))])]
+                  (string.string-append name " expects exactly two expressions")))])]
         [_
           (ErrAstExprPair
-            (string-append
+            (string.string-append
               "parse: "
-              (string-append name " expects exactly two expressions")))])]
+              (string.string-append name " expects exactly two expressions")))])]
     [_
       (ErrAstExprPair
-        (string-append
+        (string.string-append
           "parse: "
-          (string-append name " expects exactly two expressions")))]))
+          (string.string-append name " expects exactly two expressions")))]))
 
 (define (parse-ast-string-data
   [dispatch : SymI64Env]
@@ -4088,7 +4119,9 @@
     [(SpSNil _) (OkAstExpr expr)]
     [_
       (ErrAstExpr
-        (string-append "parse: " (string-append name " expects no arguments")))]))
+        (string.string-append
+          "parse: "
+          (string.string-append name " expects no arguments")))]))
 
 (define (parse-ast-cpuid-like
   [dispatch : SymI64Env]
@@ -4157,9 +4190,11 @@
               (match (sp-node-get body)
                 [(SpSNil _)
                   (ErrAstExpr
-                    (string-append
+                    (string.string-append
                       "parse: with-arena '"
-                      (string-append region "' requires a non-empty body")))]
+                      (string.string-append
+                        region
+                        "' requires a non-empty body")))]
                 [_
                   (match (parse-ast-expr-list dispatch pools (sp-node-get body))
                     [(OkAstExprList exprs)
@@ -4723,7 +4758,7 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (match head
     [(SpSSym op _)
-      (if (string-eq op "init")
+      (if (string.string-eq op "init")
         (match rest
           [(SpSCons first _ _)
             (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
@@ -4835,7 +4870,7 @@
     [(SpSCons head rest _)
       (match (sp-node-get head)
         [(SpSSym op _)
-          (if (string-eq op "cfg")
+          (if (string.string-eq op "cfg")
             (match (parse-ast-cfg-expr dispatch pools (sp-node-get rest))
               [(OkAstExpr parsed)
                 (OkAstExpr (ast-expr-wrap-span pools parsed s))]
@@ -4915,7 +4950,7 @@
         [(SNil)
           (match (box-get value-node)
             [(SStr value)
-              (if (> (string-length value) 0)
+              (if (> (string.string-length value) 0)
                 (OkAstFnExport (ast-fn-export value))
                 (ErrAstFnExport
                   "parse: define :export-symbol must not be empty"))]
@@ -4990,7 +5025,7 @@
             [(SCons key-node after-key)
               (match (box-get key-node)
                 [(SSym key)
-                  (if (string-eq key ":export-symbol")
+                  (if (string.string-eq key ":export-symbol")
                     (if seen-export
                       (ErrAstDecl
                         "parse: duplicate define :export-symbol metadata")
@@ -5008,7 +5043,9 @@
                         [(ErrAstFnExport message) (ErrAstDecl message)]))
                     (if (compiler-parse-metadata-key? key)
                       (ErrAstDecl
-                        (string-append "parse: unknown define metadata " key))
+                        (string.string-append
+                          "parse: unknown define metadata "
+                          key))
                       (ErrAstDecl
                         "parse: malformed define :export-symbol metadata")))]
                 [_ (ErrAstDecl "parse: malformed function definition")])]
@@ -5128,8 +5165,8 @@
     [_ (ErrAstDecl "parse: malformed defmacro")]))
 
 (define (parse-ast-extern-varargs-typed-name? [name : String]) : bool
-  (if (> (string-length name) 3)
-    (string-eq (substring name 0 3) "...")
+  (if (> (string.string-length name) 3)
+    (string.string-eq (string.substring name 0 3) "...")
     false))
 
 (define (parse-ast-extern-varargs-tail-type
@@ -5140,7 +5177,7 @@
     (parse-ast-type
       dispatch
       pools
-      (SSym (substring name 3 (- (string-length name) 3))))
+      (SSym (string.substring name 3 (- (string.string-length name) 3))))
     (ErrAstType "parse: expected typed extern varargs tail")))
 
 (define (parse-ast-extern-head-fixed-param
@@ -5172,7 +5209,7 @@
                   (if (sexpr-colon? (spanned-sexpr-form (sp-node-get colon)))
                     (match (sp-node-get ty-node)
                       [(SpSSym ty-name _)
-                        (if (string-eq ty-name "...")
+                        (if (string.string-eq ty-name "...")
                           (ErrAstExternHeadItem
                             "parse: extern typed varargs tail needs a type")
                           (if (parse-ast-extern-varargs-typed-name? ty-name)
@@ -5203,7 +5240,7 @@
   [item : SpannedSexpr]) : ResultAstExternHeadItem
   (match item
     [(SpSSym name _)
-      (if (string-eq name "...")
+      (if (string.string-eq name "...")
         (OkAstExternHeadItem (AstExternHeadVarargsOpen))
         (if (parse-ast-extern-varargs-typed-name? name)
           (ErrAstExternHeadItem
@@ -5286,22 +5323,24 @@
         [(SSym name)
           (match (box-get rest)
             [(SNil)
-              (if (string-eq name "c")
+              (if (string.string-eq name "c")
                 (OkAstExternAbi (AstExternAbiC))
-                (if (string-eq name "c-varargs")
+                (if (string.string-eq name "c-varargs")
                   (ErrAstExternAbi (parse-ast-extern-c-varargs-legacy-message))
                   (ErrAstExternAbi
-                    (string-append "parse: unknown extern ABI " name))))]
+                    (string.string-append "parse: unknown extern ABI " name))))]
             [(SCons fixed-node end)
               (match (box-get end)
                 [(SNil)
                   (match (box-get fixed-node)
                     [(SInt _ _)
-                      (if (string-eq name "c-varargs")
+                      (if (string.string-eq name "c-varargs")
                         (ErrAstExternAbi
                           (parse-ast-extern-c-varargs-legacy-message))
                         (ErrAstExternAbi
-                          (string-append "parse: unknown extern ABI " name)))]
+                          (string.string-append
+                            "parse: unknown extern ABI "
+                            name)))]
                     [_
                       (ErrAstExternAbi "parse: malformed extern :abi metadata")])]
                 [_ (ErrAstExternAbi "parse: malformed extern :abi metadata")])]
@@ -5316,27 +5355,27 @@
         [(SNil)
           (match (box-get value-node)
             [(SStr value)
-              (if (> (string-length value) 0)
+              (if (> (string.string-length value) 0)
                 (OkAstExternSymbol value)
                 (ErrAstExternSymbol
-                  (string-append
+                  (string.string-append
                     "parse: extern "
-                    (string-append key " must not be empty"))))]
+                    (string.string-append key " must not be empty"))))]
             [_
               (ErrAstExternSymbol
-                (string-append
+                (string.string-append
                   "parse: malformed extern "
-                  (string-append key " metadata")))])]
+                  (string.string-append key " metadata")))])]
         [_
           (ErrAstExternSymbol
-            (string-append
+            (string.string-append
               "parse: malformed extern "
-              (string-append key " metadata")))])]
+              (string.string-append key " metadata")))])]
     [_
       (ErrAstExternSymbol
-        (string-append
+        (string.string-append
           "parse: malformed extern "
-          (string-append key " metadata")))]))
+          (string.string-append key " metadata")))]))
 
 (define (parse-ast-extern-symbol-tail [tail : Sexpr]) : ResultAstExternSymbol
   (parse-ast-extern-string-tail ":symbol" tail))
@@ -5384,7 +5423,7 @@
             (match (box-get key-node)
               [(SSym key)
                 (cond
-                  [(string-eq key ":abi")
+                  [(string.string-eq key ":abi")
                     (if seen-abi
                       (ErrAstExternParts
                         "parse: duplicate extern :abi metadata")
@@ -5400,7 +5439,7 @@
                             true
                             seen-symbol)]
                         [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
-                  [(string-eq key ":symbol")
+                  [(string.string-eq key ":symbol")
                     (if seen-symbol
                       (ErrAstExternParts
                         "parse: duplicate extern :symbol metadata")
@@ -5417,7 +5456,7 @@
                             true)]
                         [(ErrAstExternSymbol message)
                           (ErrAstExternParts message)]))]
-                  [(string-eq key ":link-lib")
+                  [(string.string-eq key ":link-lib")
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
@@ -5434,7 +5473,7 @@
                           seen-abi
                           seen-symbol)]
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string-eq key ":link-search")
+                  [(string.string-eq key ":link-search")
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
@@ -5451,7 +5490,7 @@
                           seen-abi
                           seen-symbol)]
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string-eq key ":link-arg")
+                  [(string.string-eq key ":link-arg")
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
@@ -5470,7 +5509,9 @@
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(compiler-parse-metadata-key? key)
                     (ErrAstExternParts
-                      (string-append "parse: unknown extern metadata " key))]
+                      (string.string-append
+                        "parse: unknown extern metadata "
+                        key))]
                   [else (ErrAstExternParts "parse: expected ':' in extern")])]
               [_ (ErrAstExternParts "parse: expected ':' in extern")])]
           [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
@@ -5515,7 +5556,7 @@
           (match (box-get key-node)
             [(SSym key)
               (cond
-                [(string-eq key ":abi")
+                [(string.string-eq key ":abi")
                   (if seen-abi
                     (ErrAstExternParts "parse: duplicate extern :abi metadata")
                     (match (parse-ast-extern-abi-tail (box-get after-key))
@@ -5536,7 +5577,7 @@
                           [(ErrAstExternAbi message)
                             (ErrAstExternParts message)])]
                       [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
-                [(string-eq key ":symbol")
+                [(string.string-eq key ":symbol")
                   (if seen-symbol
                     (ErrAstExternParts
                       "parse: duplicate extern :symbol metadata")
@@ -5554,7 +5595,7 @@
                           param-types
                           ret)]
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)]))]
-                [(string-eq key ":link-lib")
+                [(string.string-eq key ":link-lib")
                   (match (parse-ast-extern-string-tail
                     ":link-lib"
                     (box-get after-key))
@@ -5573,7 +5614,7 @@
                         param-types
                         ret)]
                     [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                [(string-eq key ":link-search")
+                [(string.string-eq key ":link-search")
                   (match (parse-ast-extern-string-tail
                     ":link-search"
                     (box-get after-key))
@@ -5592,7 +5633,7 @@
                         param-types
                         ret)]
                     [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                [(string-eq key ":link-arg")
+                [(string.string-eq key ":link-arg")
                   (match (parse-ast-extern-string-tail
                     ":link-arg"
                     (box-get after-key))
@@ -5613,7 +5654,7 @@
                     [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                 [(compiler-parse-metadata-key? key)
                   (ErrAstExternParts
-                    (string-append "parse: unknown extern metadata " key))]
+                    (string.string-append "parse: unknown extern metadata " key))]
                 [else (ErrAstExternParts "parse: malformed extern")])]
             [_ (ErrAstExternParts "parse: malformed extern")])]
         [_ (ErrAstExternParts "parse: malformed extern")])]
@@ -5674,7 +5715,7 @@
             (match (box-get key-node)
               [(SSym key)
                 (cond
-                  [(string-eq key ":abi")
+                  [(string.string-eq key ":abi")
                     (if seen-abi
                       (ErrAstExternParts
                         "parse: duplicate extern :abi metadata")
@@ -5695,7 +5736,7 @@
                             [(ErrAstExternAbi message)
                               (ErrAstExternParts message)])]
                         [(ErrAstExternAbi message) (ErrAstExternParts message)]))]
-                  [(string-eq key ":symbol")
+                  [(string.string-eq key ":symbol")
                     (if seen-symbol
                       (ErrAstExternParts
                         "parse: duplicate extern :symbol metadata")
@@ -5713,7 +5754,7 @@
                             param-types)]
                         [(ErrAstExternSymbol message)
                           (ErrAstExternParts message)]))]
-                  [(string-eq key ":link-lib")
+                  [(string.string-eq key ":link-lib")
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
@@ -5731,7 +5772,7 @@
                           seen-symbol
                           param-types)]
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string-eq key ":link-search")
+                  [(string.string-eq key ":link-search")
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
@@ -5749,7 +5790,7 @@
                           seen-symbol
                           param-types)]
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
-                  [(string-eq key ":link-arg")
+                  [(string.string-eq key ":link-arg")
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
@@ -5769,7 +5810,9 @@
                       [(ErrAstExternSymbol message) (ErrAstExternParts message)])]
                   [(compiler-parse-metadata-key? key)
                     (ErrAstExternParts
-                      (string-append "parse: unknown extern metadata " key))]
+                      (string.string-append
+                        "parse: unknown extern metadata "
+                        key))]
                   [else (ErrAstExternParts "parse: expected ':' in extern")])]
               [_ (ErrAstExternParts "parse: expected ':' in extern")])]
           [_ (ErrAstExternParts "parse: expected ':' in extern")]))]
@@ -5954,8 +5997,8 @@
                   (match (sp-node-get alias-node)
                     [(SpSSym alias _)
                       (if (or
-                        (string-eq as-name "as")
-                        (string-eq as-name ":as"))
+                        (string.string-eq as-name "as")
+                        (string.string-eq as-name ":as"))
                         (parse-ast-import-spec
                           kind
                           path
@@ -6010,14 +6053,14 @@
     [(SpSCons head-node after-head _)
       (match (sp-node-get head-node)
         [(SpSSym head _)
-          (if (string-eq head "as")
+          (if (string.string-eq head "as")
             (parse-ast-import-alias
               (AstImportPath)
               path
               AstNoModuleName
               tail
               span)
-            (if (string-eq head "module")
+            (if (string.string-eq head "module")
               (parse-ast-import-module-tail path (sp-node-get after-head) span)
               (ErrAstDecl "parse: malformed import")))]
         [_ (ErrAstDecl "parse: malformed import")])]
@@ -6046,7 +6089,9 @@
             [(SpSCons head-node _ _)
               (match (sp-node-get head-node)
                 [(SpSSym head _)
-                  (if (or (string-eq head "as") (string-eq head ":as"))
+                  (if (or
+                    (string.string-eq head "as")
+                    (string.string-eq head ":as"))
                     (parse-ast-import-alias
                       (AstImportMacro call-expr AstNoModuleName)
                       ""
@@ -6061,14 +6106,14 @@
 
 (define (parse-ast-dotted-import-tl-suffix? [name : String]) : bool
   (let
-    [n : i64 (string-length name)]
+    [n : i64 (string.string-length name)]
     (if (< n 3)
       false
-      (string-eq (substring name (- n 3) 3) ".tl"))))
+      (string.string-eq (string.substring name (- n 3) 3) ".tl"))))
 
 (define (parse-ast-dotted-import-name-valid? [name : String]) : bool
   (let
-    [n : i64 (string-length name)]
+    [n : i64 (string.string-length name)]
     [i : i64 0]
     [ok : bool (and (> n 0) (not (parse-ast-dotted-import-tl-suffix? name)))]
     [last-was-dot : bool true]
@@ -6076,10 +6121,13 @@
       (while ok
         (if (< i n)
           (let
-            [c : char (string-ref name i)]
-            (if (or (char-eq c '/') (char-eq c '\\') (char-eq c ':'))
+            [c : char (string.string-ref name i)]
+            (if (or
+              (string.char-eq c '/')
+              (string.char-eq c '\\')
+              (string.char-eq c ':'))
               (set! ok false)
-              (if (char-eq c '.')
+              (if (string.char-eq c '.')
                 (if last-was-dot
                   (set! ok false)
                   (begin
@@ -6093,17 +6141,17 @@
 
 (define (parse-ast-dotted-import-default-alias [name : String]) : String
   (let
-    [n : i64 (string-length name)]
+    [n : i64 (string.string-length name)]
     [i : i64 0]
     [start : i64 0]
     (begin
       (while (< i n)
         (begin
-          (if (char-eq (string-ref name i) '.')
+          (if (string.char-eq (string.string-ref name i) '.')
             (set! start (+ i 1))
             unit)
           (set! i (+ i 1))))
-      (substring name start (- n start)))))
+      (string.substring name start (- n start)))))
 
 (define (parse-ast-dotted-import-tail
   [module-name : String]
@@ -6123,7 +6171,7 @@
       [(SpSCons head-node _ _)
         (match (sp-node-get head-node)
           [(SpSSym head _)
-            (if (or (string-eq head "as") (string-eq head ":as"))
+            (if (or (string.string-eq head "as") (string.string-eq head ":as"))
               (parse-ast-import-alias
                 (AstImportModule)
                 module-name
@@ -6250,7 +6298,7 @@
     [(SpSCons head-node meta-rest _)
       (match (sp-node-get head-node)
         [(SpSSym head _)
-          (if (string-eq head ":generated")
+          (if (string.string-eq head ":generated")
             (match (sp-node-get meta-rest)
               [(SpSCons generator-node item-tail _)
                 (match (sp-node-get generator-node)
@@ -6462,7 +6510,7 @@
     [(SpSCons head-node rest _)
       (match (sp-node-get head-node)
         [(SpSSym head _)
-          (if (string-eq head "cfg")
+          (if (string.string-eq head "cfg")
             (match (sp-node-get rest)
               [(SpSCons pred decl-tail _)
                 (match (sp-node-get decl-tail)
@@ -6509,19 +6557,112 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (parse-ast-decl-list-append [front : AstDeclList] [back : AstDeclList]) : AstDeclList
-  (match front
-    [(AstDeclNil) back]
-    [(AstDeclCons head rest)
-      (ast-decl-cons head (parse-ast-decl-list-append (box-get rest) back))]))
+(defstruct ParseAstDeclVec
+  (slots (Array AstDecl))
+  (len i64))
 
-(define (parse-ast-program-forms
+(define (parse-ast-decl-vec-fallback) : AstDecl
+  (AstDeclModule (intern "<parse-ast-decl-vec-fallback>")))
+
+(define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (ParseAstDeclVec (array.make-array AstDecl cap) 0)))
+
+(define (parse-ast-decl-vec-new) : ParseAstDeclVec
+  (parse-ast-decl-vec-with-capacity 16))
+
+(define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
+  (struct-get v len))
+
+(define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
+  (array.array-length (struct-get v slots)))
+
+(define (parse-ast-decl-vec-get
+  [v : (& v ParseAstDeclVec)]
+  [index : i64]
+  [fallback : AstDecl]) : AstDecl
+  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
+    (array.array-ref (struct-get v slots) index)
+    fallback))
+
+(define (parse-ast-decl-vec-copy-range
+  [dst : (&mut dst (Array AstDecl))]
+  [src : (& src (Array AstDecl))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array.array-set! dst index (array.array-ref src index))
+      (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
+
+(define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
+  (let
+    [n : i64 (struct-get v len)]
+    [old-cap : i64 (array.array-length (struct-get v slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array AstDecl) (array.make-array AstDecl new-cap)]
+    (begin
+      (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+      (set! (struct-get v slots) bigger))))
+
+(define (parse-ast-decl-vec-push
+  [v : (&mut v ParseAstDeclVec)]
+  [value : AstDecl]) : unit
+  (begin
+    (if (< (struct-get v len) (array.array-length (struct-get v slots)))
+      unit
+      (parse-ast-decl-vec-grow v))
+    (let
+      [index : i64 (struct-get v len)]
+      (begin
+        (array.array-set! (struct-get v slots) index value)
+        (set! (struct-get v len) (+ index 1))))))
+
+(define (parse-ast-decl-vec-push-list!
+  [out : (&mut out ParseAstDeclVec)]
+  [decls : AstDeclList]) : unit
+  (match decls
+    [(AstDeclNil) unit]
+    [(AstDeclCons head rest)
+      (begin
+        (parse-ast-decl-vec-push out head)
+        (parse-ast-decl-vec-push-list! out (box-get rest)))]))
+
+(define (parse-ast-decl-vec-to-list-from
+  [items : (& items ParseAstDeclVec)]
+  [index : i64]
+  [tail : AstDeclList]) : AstDeclList
+  (if (< index 0)
+    tail
+    (parse-ast-decl-vec-to-list-from
+      items
+      (- index 1)
+      (ast-decl-cons
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))
+        tail))))
+
+(define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
+  (parse-ast-decl-vec-to-list-from
+    items
+    (- (parse-ast-decl-vec-len items) 1)
+    AstDeclNil))
+
+(define (parse-ast-program-forms-into-vec
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array SpannedToken)]
-  [cur : (Array i64)]) : ResultAstDeclList
+  [cur : (Array i64)]
+  [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
   (if (= (peek-spanned-tag toks cur) (tag-end))
-    (OkAstDeclList AstDeclNil)
+    (OkParseAstDeclVec)
     (let
       ;; The spanned tree for one top-level form is dead once its AstDecl is
       ;; built (the decl carries AST-pool ids + spans by value, no sp ids), so
@@ -6534,23 +6675,32 @@
             [(OkAstSomeDecl decl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms dispatch pools toks cur)
-                  [(OkAstDeclList rest)
-                    (OkAstDeclList (ast-decl-cons decl rest))]
-                  [(ErrAstDeclList message) (ErrAstDeclList message)]))]
+                (parse-ast-decl-vec-push out decl)
+                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
             [(OkAstDecls decls)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms dispatch pools toks cur)
-                  [(OkAstDeclList rest)
-                    (OkAstDeclList (parse-ast-decl-list-append decls rest))]
-                  [(ErrAstDeclList message) (ErrAstDeclList message)]))]
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
             [(OkAstNoDecl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms dispatch pools toks cur))]
-            [(ErrAstMaybeDecl message) (ErrAstDeclList message)])]
-        [(ErrSpannedSexpr err) (ErrAstDeclList (source-error-message err))]))))
+                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
+            [(ErrAstMaybeDecl message) (ErrParseAstDeclVec message)])]
+        [(ErrSpannedSexpr err) (ErrParseAstDeclVec (source-error-message err))]))))
+
+(define (parse-ast-program-forms
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultAstDeclList
+  (let
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [result : ResultParseAstDeclVec
+      (parse-ast-program-forms-into-vec dispatch pools toks cur (&mut out))]
+    (match result
+      [(OkParseAstDeclVec) (OkAstDeclList (parse-ast-decl-vec-to-list (& out)))]
+      [(ErrParseAstDeclVec message) (ErrAstDeclList message)])))
 
 (define (parse-ast-program-dispatch) : SymI64Env
   (compiler-parse-dispatch-env))
@@ -6565,11 +6715,11 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (Array i64) (array.make-array i64 1)]
     [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
-      (array-set! cur 0 0)
+      (array.array-set! cur 0 0)
       (match (parse-ast-program-forms dispatch pools toks cur)
         [(OkAstDeclList decls) (OkAstProgram (ast-program decls))]
         [(ErrAstDeclList message) (ErrAstProgram message)]))))
@@ -6618,7 +6768,7 @@
           (AstNoModuleName)
           (AstNoImportAlias)
           _))
-      (string-eq path "")]
+      (string.string-eq path "")]
     [_ false]))
 
 (define (parse-ast-repl-expr-item
@@ -6635,11 +6785,11 @@
   (match (lex-spanned-result src)
     [(OkSpannedTokens toks)
       (let
-        [cur : (Array i64) (make-array i64 1)]
+        [cur : (Array i64) (array.make-array i64 1)]
         [dispatch : SymI64Env (parse-ast-program-dispatch)]
         (begin
           (sp-node-pool-reset!)
-          (array-set! cur 0 0)
+          (array.array-set! cur 0 0)
           (if (= (peek-spanned-tag toks cur) (tag-end))
             (ErrAstReplItem "parse: expected REPL input")
             (match (read-form-spanned-result toks cur)
@@ -6670,14 +6820,15 @@
     (compiler-diagnostic-with-code diag (compiler-diagnostic-code-parse))
     "parse"))
 
-(define (parse-ast-program-forms-diagnostic
+(define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array SpannedToken)]
-  [cur : (Array i64)]) : ResultAstDeclListDiagnostic
+  [cur : (Array i64)]
+  [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVecDiagnostic
   (if (= (peek-spanned-tag toks cur) (tag-end))
-    (OkAstDeclListDiagnostic AstDeclNil)
+    (OkParseAstDeclVecDiagnostic)
     (let
       ;; Bound the spanned pool to a single top-level form (see
       ;; parse-ast-program-forms): the decl carries no sp ids, so truncate back
@@ -6689,50 +6840,69 @@
             [(OkAstSomeDecl decl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms-diagnostic
+                (parse-ast-decl-vec-push out decl)
+                (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
                   pools
                   toks
-                  cur)
-                  [(OkAstDeclListDiagnostic rest)
-                    (OkAstDeclListDiagnostic (ast-decl-cons decl rest))]
-                  [(ErrAstDeclListDiagnostic diag)
-                    (ErrAstDeclListDiagnostic diag)]))]
+                  cur
+                  out))]
             [(OkAstDecls decls)
               (begin
                 (sp-node-pool-truncate! mark)
-                (match (parse-ast-program-forms-diagnostic
+                (parse-ast-decl-vec-push-list! out decls)
+                (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
                   pools
                   toks
-                  cur)
-                  [(OkAstDeclListDiagnostic rest)
-                    (OkAstDeclListDiagnostic
-                      (parse-ast-decl-list-append decls rest))]
-                  [(ErrAstDeclListDiagnostic diag)
-                    (ErrAstDeclListDiagnostic diag)]))]
+                  cur
+                  out))]
             [(OkAstNoDecl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms-diagnostic
+                (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
                   pools
                   toks
-                  cur))]
+                  cur
+                  out))]
             [(ErrAstMaybeDecl message)
-              (ErrAstDeclListDiagnostic
-                (parse-ast-canonical-diagnostic
-                  (compiler-diagnostic-from-span
-                    path
-                    (spanned-sexpr-span spanned-form)
-                    message)))])]
+              (ErrParseAstDeclVecDiagnostic
+                (box
+                  (parse-ast-canonical-diagnostic
+                    (compiler-diagnostic-from-span
+                      path
+                      (spanned-sexpr-span spanned-form)
+                      message))))])]
         [(ErrSpannedSexpr err)
-          (ErrAstDeclListDiagnostic
-            (parse-ast-canonical-diagnostic
-              (compiler-diagnostic-from-source-error path err)))]))))
+          (ErrParseAstDeclVecDiagnostic
+            (box
+              (parse-ast-canonical-diagnostic
+                (compiler-diagnostic-from-source-error path err))))]))))
+
+(define (parse-ast-program-forms-diagnostic
+  [path : String]
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [toks : (Array SpannedToken)]
+  [cur : (Array i64)]) : ResultAstDeclListDiagnostic
+  (let
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [result : ResultParseAstDeclVecDiagnostic
+      (parse-ast-program-forms-diagnostic-into-vec
+        path
+        dispatch
+        pools
+        toks
+        cur
+        (&mut out))]
+    (match result
+      [(OkParseAstDeclVecDiagnostic)
+        (OkAstDeclListDiagnostic (parse-ast-decl-vec-to-list (& out)))]
+      [(ErrParseAstDeclVecDiagnostic diag) (ErrAstDeclListDiagnostic diag)])))
 
 (define (parse-ast-program-diagnostic
   [path : String]
@@ -6745,11 +6915,11 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (Array i64) (array.make-array i64 1)]
     [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
-      (array-set! cur 0 0)
+      (array.array-set! cur 0 0)
       (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
         [(OkAstDeclListDiagnostic decls)
           (OkAstProgramDiagnostic (ast-program decls))]
@@ -6780,8 +6950,9 @@
       (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
     [(ErrSpannedTokens err)
       (ErrAstProgramDiagnostic
-        (parse-ast-canonical-diagnostic
-          (compiler-diagnostic-from-source-error path err)))]))
+        (box
+          (parse-ast-canonical-diagnostic
+            (compiler-diagnostic-from-source-error path err))))]))
 
 (define (parse-ast-source-diagnostic-with-cfg
   [path : String]
@@ -6830,7 +7001,7 @@
         (and
           (= (compiler-parse-expr-list-count args) want-args)
           (match (ast-expr-unspan head-expr)
-            [(AstExprVar found) (string-eq (intern-str found) name)]
+            [(AstExprVar found) (string.string-eq (intern-str found) name)]
             [_ false])))]
     [_ false]))
 
@@ -6846,19 +7017,19 @@
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclCons (AstDeclImport (AstImportSpec (AstImportPath) path _ _ _)) _)
-      (string-eq path "stdlib/test.tl")]
+      (string.string-eq path "stdlib/test.tl")]
     [_ false]))
 
 (define (ast-first-include-str-ok? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclCons (AstDeclIncludeStr name path) _)
-      (and (string-eq name "payload") (string-eq path "data.txt"))]
+      (and (string.string-eq name "payload") (string.string-eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclCons (AstDeclIncludeBin name path) _)
-      (and (string-eq name "payload") (string-eq path "data.bin"))]
+      (and (string.string-eq name "payload") (string.string-eq path "data.bin"))]
     [_ false]))
 
 (define (compiler-parse-module-decl-ok?) : bool
@@ -6877,7 +7048,7 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-import-metadata-ok?) : bool
-  (match (parse-ast-source "(import \"stdlib/io.tl\" module std.io :as io)")
+  (match (parse-ast-source "(import \"stdlib/tl\" module std.io :as io)")
     [(OkAstProgram (AstProgram decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
@@ -6896,9 +7067,9 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq path "stdlib/io.tl")
-                    (string-eq module-name "std.io")
-                    (string-eq alias "io"))]
+                    (string.string-eq path "stdlib/tl")
+                    (string.string-eq module-name "std.io")
+                    (string.string-eq alias "io"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6923,9 +7094,9 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq module-path "stdlib.core_macros")
-                    (string-eq module-name "stdlib.core_macros")
-                    (string-eq alias "core"))]
+                    (string.string-eq module-path "stdlib.core_macros")
+                    (string.string-eq module-name "stdlib.core_macros")
+                    (string.string-eq alias "core"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6950,9 +7121,9 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq module-path "stdlib.core_macros")
-                    (string-eq module-name "stdlib.core_macros")
-                    (string-eq alias "core_macros"))]
+                    (string.string-eq module-path "stdlib.core_macros")
+                    (string.string-eq module-name "stdlib.core_macros")
+                    (string.string-eq alias "core_macros"))]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -6982,7 +7153,7 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq path "")
+                    (string.string-eq path "")
                     (compiler-parse-macro-call-node-ok? call-expr "point-vec" 1))]
                 [_ false]))]
           [_ false]))]
@@ -7008,8 +7179,8 @@
               (match rest
                 [(AstDeclNil)
                   (and
-                    (string-eq path "")
-                    (string-eq alias "svec")
+                    (string.string-eq path "")
+                    (string.string-eq alias "svec")
                     (compiler-parse-macro-call-node-ok? call-expr "vector" 1))]
                 [_ false]))]
           [_ false]))]
@@ -7111,9 +7282,9 @@
                     (match rest2
                       [(AstDispatchVariantNil)
                         (and
-                          (string-eq scalar-name "dot-scalar")
-                          (string-eq avx2-name "dot-avx2")
-                          (string-eq avx512-name "dot-avx512"))]
+                          (string.string-eq scalar-name "dot-scalar")
+                          (string.string-eq avx2-name "dot-avx2")
+                          (string.string-eq avx512-name "dot-avx512"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -7160,7 +7331,7 @@
                             (box-get variant-rest)]
                           (match variant-rest
                             [(AstDispatchVariantNil)
-                              (string-eq scalar-name "id-scalar")]
+                              (string.string-eq scalar-name "id-scalar")]
                             [_ false]))]
                       [_ false]))]
                 [_ false]))]
@@ -7251,14 +7422,15 @@
     [src : String "(define)"]
     (and
       (match (parse-ast-source src)
-        [(ErrAstProgram message) (string-eq message "parse: malformed define")]
+        [(ErrAstProgram message)
+          (string.string-eq message "parse: malformed define")]
         [_ false])
       (match (lex-spanned-result src)
         [(OkSpannedTokens toks)
           (let
-            [cur : (Array i64) (make-array i64 1)]
+            [cur : (Array i64) (array.make-array i64 1)]
             (begin
-              (array-set! cur 0 0)
+              (array.array-set! cur 0 0)
               (match (read-form-spanned-result toks cur)
                 [(OkSpannedSexpr form)
                   (let
@@ -7278,10 +7450,10 @@
   (match (parse-ast-source-diagnostic path src)
     [(ErrAstProgramDiagnostic diag)
       (and
-        (string-eq (compiler-diagnostic-path diag) path)
-        (= (compiler-diagnostic-line diag) line)
-        (= (compiler-diagnostic-col diag) col)
-        (string-eq (compiler-diagnostic-message diag) want))]
+        (string.string-eq (compiler-diagnostic-path (box-get diag)) path)
+        (= (compiler-diagnostic-line (box-get diag)) line)
+        (= (compiler-diagnostic-col (box-get diag)) col)
+        (string.string-eq (compiler-diagnostic-message (box-get diag)) want))]
     [(OkAstProgramDiagnostic _) false]))
 
 (define (compiler-parse-reader-delimiter-diagnostics-ok?) : bool
@@ -7323,7 +7495,8 @@
               (and
                 (= name (intern "main"))
                 (match (ast-expr-unspan body)
-                  [(AstExprLiteral (AstLitFloat text)) (string-eq text "1.5")]
+                  [(AstExprLiteral (AstLitFloat text))
+                    (string.string-eq text "1.5")]
                   [_ false])))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7332,7 +7505,7 @@
   "(import \"stdlib/test.tl\")
 (defstruct Point (x i64) (y i64))
 (defenum Maybe (None) (Some i64))
-(extern (print-string [arg0 : String]) : unit)
+(extern (io.print-string [arg0 : String]) : unit)
 (define answer : i64 42)
 (define (main [argc : i64] [name : String]) : i64
   (let
@@ -7365,7 +7538,7 @@
 ;; messages so a regression that drops or relabels an error is caught (#655).
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parse-ast-source src)
-    [(ErrAstProgram message) (string-eq message want)]
+    [(ErrAstProgram message) (string.string-eq message want)]
     [(OkAstProgram _) false]))
 
 (define (compiler-parse-error-ok-with-cfg?
@@ -7373,7 +7546,7 @@
   [cfgs : SymI64Env]
   [want : String]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
-    [(ErrAstProgram message) (string-eq message want)]
+    [(ErrAstProgram message) (string.string-eq message want)]
     [(OkAstProgram _) false]))
 
 (define (compiler-parse-diagnostic-code-ok?) : bool
@@ -7381,13 +7554,13 @@
     "parse-code.tl"
     (compiler-parse-malformed-binary-source))
     [(ErrAstProgramDiagnostic diag)
-      (match (compiler-diagnostic-code diag)
+      (match (compiler-diagnostic-code (box-get diag))
         [(CompilerDiagnosticSomeString code)
           (and
-            (string-eq code (compiler-diagnostic-code-parse))
-            (match (compiler-diagnostic-category diag)
+            (string.string-eq code (compiler-diagnostic-code-parse))
+            (match (compiler-diagnostic-category (box-get diag))
               [(CompilerDiagnosticSomeString category)
-                (string-eq category "parse")]
+                (string.string-eq category "parse")]
               [CompilerDiagnosticNoString false]))]
         [CompilerDiagnosticNoString false])]
     [(OkAstProgramDiagnostic _) false]))
@@ -7445,7 +7618,7 @@
               (and
                 (= name (intern "main"))
                 (match (ast-expr-unspan body)
-                  [(AstExprWithRegion region _) (string-eq region "r")]
+                  [(AstExprWithRegion region _) (string.string-eq region "r")]
                   [_ false])))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -7486,7 +7659,7 @@
   (match ty
     [(AstTyRef actual inner)
       (and
-        (string-eq actual region)
+        (string.string-eq actual region)
         (match (ty-node-get inner)
           [(AstTyString) true]
           [_ false]))]
@@ -7496,7 +7669,7 @@
   (match ty
     [(AstTyRef actual inner)
       (and
-        (string-eq actual region)
+        (string.string-eq actual region)
         (match (ty-node-get inner)
           [(AstTyStr) true]
           [_ false]))]
@@ -7508,7 +7681,7 @@
   (match ty
     [(AstTyMutRef actual inner)
       (and
-        (string-eq actual region)
+        (string.string-eq actual region)
         (match (ty-node-get inner)
           [(AstTyDynArray elem)
             (match (ty-node-get elem)
@@ -7599,9 +7772,9 @@
                     (match rest2
                       [(AstExternLinkInputNil)
                         (and
-                          (string-eq lib "m")
-                          (string-eq dir "native/lib")
-                          (string-eq arg-value "-Wl,--as-needed"))]
+                          (string.string-eq lib "m")
+                          (string.string-eq dir "native/lib")
+                          (string.string-eq arg-value "-Wl,--as-needed"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -7620,7 +7793,7 @@
                 [(AstDeclNil)
                   (and
                     (= name (intern "local-call"))
-                    (string-eq
+                    (string.string-eq
                       (ast-extern-metadata-symbol metadata)
                       "foreign_exact")
                     (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
@@ -7764,7 +7937,9 @@
     [(AstDeclExtern name _ metadata ty)
       (and
         (= name (intern "local-add"))
-        (string-eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
+        (string.string-eq
+          (ast-extern-metadata-symbol metadata)
+          "foreign_add_exact")
         (match ty
           [(AstTyFunc args ret)
             (and
@@ -7938,7 +8113,8 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name) (string-eq (intern-str place-name) name)]
+          [(AstExprVar place-name)
+            (string.string-eq (intern-str place-name) name)]
           [_ false]))]
     [_ false]))
 
@@ -7950,7 +8126,8 @@
       (let
         [place : AstExpr (ast-node-get place-box)]
         (match (ast-expr-unspan place)
-          [(AstExprVar place-name) (string-eq (intern-str place-name) name)]
+          [(AstExprVar place-name)
+            (string.string-eq (intern-str place-name) name)]
           [_ false]))]
     [_ false]))
 
@@ -7965,8 +8142,8 @@
         (match (ast-expr-unspan place)
           [(AstExprVar place-name)
             (and
-              (string-eq actual-lifetime lifetime)
-              (string-eq (intern-str place-name) name))]
+              (string.string-eq actual-lifetime lifetime)
+              (string.string-eq (intern-str place-name) name))]
           [_ false]))]
     [_ false]))
 
@@ -8003,7 +8180,7 @@
                                           (ast-node-get first-place-box)]
                                         (match (ast-expr-unspan first-place)
                                           [(AstExprVar first-name)
-                                            (if (string-eq
+                                            (if (string.string-eq
                                               (intern-str first-name)
                                               "x")
                                               (match (ast-expr-unspan second)
@@ -8020,10 +8197,10 @@
                                                       second-place)
                                                       [(AstExprVar second-name)
                                                         (and
-                                                          (string-eq
+                                                          (string.string-eq
                                                             lifetime
                                                             "x")
-                                                          (string-eq
+                                                          (string.string-eq
                                                             (intern-str
                                                               second-name)
                                                             "x"))]
@@ -8040,9 +8217,7 @@
     [(ErrAstProgram _) false]))
 
 (define (compiler-parse-try-source) : String
-  "(defenum ResultI64 (OkI64 i64) (ErrI64 String))
-(define (read) : ResultI64 (OkI64 42))
-(define (main) : ResultI64 (OkI64 (try (read))))")
+  "(define (main) : i64 (wrap (try (read))))")
 
 (define (compiler-parse-try-ok?) : bool
   (match (parse-ast-source (compiler-parse-try-source))
@@ -8050,37 +8225,27 @@
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match decls
-          [(AstDeclCons _ rest0)
+          [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest)
             (let
-              [rest0 : AstDeclList (box-get rest0)]
-              (match rest0
-                [(AstDeclCons _ rest1)
-                  (let
-                    [rest1 : AstDeclList (box-get rest1)]
-                    (match rest1
-                      [(AstDeclCons (AstDeclDefFn _ _ _ body-box _) rest2)
-                        (let
-                          [body : AstExpr (ast-node-get body-box)]
-                          [rest2 : AstDeclList (box-get rest2)]
-                          (match rest2
-                            [(AstDeclNil)
-                              (match (ast-expr-unspan body)
-                                [(AstExprCall _ args)
-                                  (match args
-                                    [(AstExprCons arg rest)
-                                      (let
-                                        [arg : AstExpr (ast-node-get arg)]
-                                        [rest : AstExprList (box-get rest)]
-                                        (match rest
-                                          [(AstExprNil)
-                                            (match (ast-expr-unspan arg)
-                                              [(AstExprTry _) true]
-                                              [_ false])]
-                                          [_ false]))]
-                                    [_ false])]
-                                [_ false])]
-                            [_ false]))]
-                      [_ false]))]
+              [body : AstExpr (ast-node-get body-box)]
+              [rest : AstDeclList (box-get rest)]
+              (match rest
+                [(AstDeclNil)
+                  (match (ast-expr-unspan body)
+                    [(AstExprCall _ args)
+                      (match args
+                        [(AstExprCons arg rest-args)
+                          (let
+                            [arg : AstExpr (ast-node-get arg)]
+                            [rest-args : AstExprList (box-get rest-args)]
+                            (match rest-args
+                              [(AstExprNil)
+                                (match (ast-expr-unspan arg)
+                                  [(AstExprTry _) true]
+                                  [_ false])]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false])]
                 [_ false]))]
           [_ false]))]
     [(ErrAstProgram _) false]))
@@ -8144,7 +8309,7 @@
 
 (define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExprVar found) (string-eq (intern-str found) name)]
+    [(AstExprVar found) (string.string-eq (intern-str found) name)]
     [_ false]))
 
 (define (compiler-parse-return-expr? [expr : AstExpr]) : bool
@@ -8294,8 +8459,8 @@
   (match meta
     [(AstSomeGeneratedDeclMeta generator-name item-name arg-keys _)
       (and
-        (string-eq generator-name want-generator)
-        (string-eq item-name want-item)
+        (string.string-eq generator-name want-generator)
+        (string.string-eq item-name want-item)
         (= (compiler-parse-expr-list-count arg-keys) want-arg-count))]
     [_ false]))
 
@@ -8741,7 +8906,7 @@
   "(module)")
 
 (define (compiler-parse-malformed-import-source) : String
-  "(import \"stdlib/io.tl\" as)")
+  "(import \"stdlib/tl\" as)")
 
 (define (compiler-parse-defgeneric-policy-source) : String
   "(defgeneric Box [T] (value T))")
@@ -9212,7 +9377,7 @@
     (compiler-parse-ok? "(extern (puts [arg0 : String]) : unit)")
     (compiler-parse-ok? "(defenum Maybe (Some i64) (None))")
     (compiler-parse-ok? "(defstruct Point (x i64) (y i64))")
-    (compiler-parse-ok? "(import \"stdlib/io.tl\")")
+    (compiler-parse-ok? "(import \"stdlib/tl\")")
     (compiler-parse-include-str-ok?)
     (compiler-parse-include-str-errors-ok?)
     (compiler-parse-include-bin-ok?)
@@ -9415,7 +9580,7 @@
 
 (define (compiler-parse-with-escape-shape-ok?) : bool
   (match (parse-ast-source
-    "(define (main) : String (with-escape (arena-make) (int->string 42)))")
+    "(define (main) : String (with-escape (arena-make) (string.int->string 42)))")
     [(OkAstProgram (AstProgram decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
@@ -9437,7 +9602,9 @@
                               (match (ast-expr-unspan callee)
                                 [(AstExprVar name)
                                   (and
-                                    (string-eq (intern-str name) "arena-make")
+                                    (string.string-eq
+                                      (intern-str name)
+                                      "arena-make")
                                     (match body-exprs
                                       [(AstExprCons _ tail)
                                         (let
@@ -9467,7 +9634,7 @@
 
 (define (compiler-parse-with-scratch-shape-ok?) : bool
   (match (parse-ast-source
-    "(define (main) : String (with-scratch (int->string 41) (int->string 42)))")
+    "(define (main) : String (with-scratch (string.int->string 41) (string.int->string 42)))")
     [(OkAstProgram (AstProgram decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
@@ -9524,7 +9691,7 @@
                         (match (ast-expr-unspan arena)
                           [(AstExprVar name)
                             (and
-                              (string-eq (intern-str name) "arena")
+                              (string.string-eq (intern-str name) "arena")
                               (match body-exprs
                                 [(AstExprCons _ tail)
                                   (let
@@ -9667,7 +9834,8 @@
                 [(AstDeclNil)
                   (and
                     (match ret-ty
-                      [(AstTyVar name) (string-eq (intern-str name) "Expr")]
+                      [(AstTyVar name)
+                        (string.string-eq (intern-str name) "Expr")]
                       [_ false])
                     (match (ast-expr-unspan body)
                       [(AstExprQuasiquote template-box)
@@ -9684,7 +9852,9 @@
                                         (ast-node-get unquoted-box)]
                                       (match (ast-expr-unspan unquoted)
                                         [(AstExprVar name)
-                                          (string-eq (intern-str name) "e")]
+                                          (string.string-eq
+                                            (intern-str name)
+                                            "e")]
                                         [_ false]))]
                                   [_ false]))]
                             [_ false]))]
@@ -9698,6 +9868,8 @@
     (compiler-parse-quote-syntax-shape-ok?)
     (compiler-parse-ok? "(define x : Expr '(+ 1 2))")
     (compiler-parse-ok? "(define x : Expr `(begin ,@xs))")
+    (compiler-parse-ok?
+      "(define (mk [target : Expr]) : Expr `(set! ,target 1))")
     (compiler-parse-error-ok?
       "(define x : Expr (quote))"
       "parse: quote form expects exactly one expression")))
@@ -9725,7 +9897,7 @@
 (define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
   (match (parse-ast-repl-source src)
     [(OkAstReplItem _) false]
-    [(ErrAstReplItem message) (string-eq message expected)]))
+    [(ErrAstReplItem message) (string.string-eq message expected)]))
 
 (define (compiler-parse-repl-tests-ok?) : bool
   (and
@@ -9868,80 +10040,80 @@
   (begin
     (if (compiler-parse-shape-tests-front-ok? program)
       unit
-      (panic "parse: compiler AST front shape tests failed"))
+      (io.panic "parse: compiler AST front shape tests failed"))
     (if (compiler-parse-shape-tests-middle-ok?)
       unit
-      (panic "parse: compiler AST middle shape tests failed"))
+      (io.panic "parse: compiler AST middle shape tests failed"))
     (if (compiler-parse-repr-c-ok?)
       unit
-      (panic "parse: repr c shape test failed"))
+      (io.panic "parse: repr c shape test failed"))
     (if (compiler-parse-cleanup-metadata-ok?)
       unit
-      (panic "parse: cleanup metadata shape test failed"))
+      (io.panic "parse: cleanup metadata shape test failed"))
     (if (compiler-parse-raw-pointer-ok?)
       unit
-      (panic "parse: raw pointer shape test failed"))
+      (io.panic "parse: raw pointer shape test failed"))
     (if (compiler-parse-extern-metadata-ok?)
       unit
-      (panic "parse: extern metadata shape test failed"))
+      (io.panic "parse: extern metadata shape test failed"))
     (if (compiler-parse-extern-varargs-metadata-rejected-ok?)
       unit
-      (panic "parse: extern c-varargs metadata retirement test failed"))
+      (io.panic "parse: extern c-varargs metadata retirement test failed"))
     (if (compiler-parse-extern-function-head-varargs-ok?)
       unit
-      (panic "parse: extern function-head varargs shape test failed"))
+      (io.panic "parse: extern function-head varargs shape test failed"))
     (if (compiler-parse-define-export-symbol-ok?)
       unit
-      (panic "parse: define export-symbol shape test failed"))
+      (io.panic "parse: define export-symbol shape test failed"))
     (if (compiler-parse-raw-pointer-ops-ok?)
       unit
-      (panic "parse: raw pointer ops shape test failed"))
+      (io.panic "parse: raw pointer ops shape test failed"))
     (if (compiler-parse-init-ok?)
       unit
-      (panic "parse: init shape test failed"))
+      (io.panic "parse: init shape test failed"))
     (if (compiler-parse-contextual-init-ok?)
       unit
-      (panic "parse: contextual init shape test failed"))
+      (io.panic "parse: contextual init shape test failed"))
     (if (compiler-parse-init-call-name-ok?)
       unit
-      (panic "parse: init call name compatibility test failed"))
+      (io.panic "parse: init call name compatibility test failed"))
     (if (compiler-parse-box-ok?)
       unit
-      (panic "parse: box shape test failed"))
+      (io.panic "parse: box shape test failed"))
     (if (compiler-parse-reference-ok?)
       unit
-      (panic "parse: reference shape test failed"))
+      (io.panic "parse: reference shape test failed"))
     (if (compiler-parse-borrow-ok?)
       unit
-      (panic "parse: borrow shape test failed"))
+      (io.panic "parse: borrow shape test failed"))
     (if (compiler-parse-resource-with-shape-ok?)
       unit
-      (panic "parse: resource with shape test failed"))
+      (io.panic "parse: resource with shape test failed"))
     (if (compiler-parse-with-escape-shape-ok?)
       unit
-      (panic "parse: with-escape shape test failed"))
+      (io.panic "parse: with-escape shape test failed"))
     (if (compiler-parse-with-scratch-shape-ok?)
       unit
-      (panic "parse: with-scratch shape test failed"))
+      (io.panic "parse: with-scratch shape test failed"))
     (if (compiler-parse-in-arena-shape-ok?)
       unit
-      (panic "parse: in-arena shape test failed"))
+      (io.panic "parse: in-arena shape test failed"))
     (if (compiler-parse-quote-syntax-shape-ok?)
       unit
-      (panic "parse: quote syntax shape test failed"))
+      (io.panic "parse: quote syntax shape test failed"))
     unit))
 
 (define (compiler-parse-smoke-errors) : unit
   (begin
     (if (compiler-parse-error-suite-front-ok?)
       unit
-      (panic "parse: front error-path self-tests failed"))
+      (io.panic "parse: front error-path self-tests failed"))
     (if (compiler-parse-error-suite-middle-ok?)
       unit
-      (panic "parse: middle error-path self-tests failed"))
+      (io.panic "parse: middle error-path self-tests failed"))
     (if (compiler-parse-error-suite-back-ok?)
       unit
-      (panic "parse: back error-path self-tests failed"))
+      (io.panic "parse: back error-path self-tests failed"))
     unit))
 
 (define (compiler-parse-smoke) : i64
@@ -10003,6 +10175,6 @@
           (compiler-parse-dotted-import-errors-ok?)
           (compiler-parse-cfg-tests-ok?))
           42
-          (panic "parse: error-path self-tests failed"))
-        (panic "parse: compiler AST smoke score mismatch"))]
-    [(ErrAstProgram message) (panic message)]))
+          (io.panic "parse: error-path self-tests failed"))
+        (io.panic "parse: compiler AST smoke score mismatch"))]
+    [(ErrAstProgram message) (io.panic message)]))

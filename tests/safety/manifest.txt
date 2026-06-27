@@ -15,6 +15,7 @@ shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|tl: shift count o
 
 # Array/string/generated collection bounds trap rather than reading invalid memory.
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|tl: array index out of bounds
+array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|tl: array index out of bounds
 string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|tl: array index out of bounds
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
@@ -46,6 +47,7 @@ unimported_string_length_reject|check-fail|tests/safety/unimported_string_length
 unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_reject.tl|-|unbound name string-ref
 unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|unbound name string-eq
 unimported_string_to_int_reject|check-fail|tests/safety/unimported_string_to_int_reject.tl|-|unbound name string->int
+result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
 region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
 mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot read mutably borrowed place `items.#array.0`
 mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot read mutably borrowed place `bags.left`
@@ -128,6 +130,9 @@ spmd_shuffle_scan_value_reject|check-fail|tests/safety/spmd_shuffle_scan_value_r
 spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_reject.tl|-|spmd-shuffle lane must have type i64
 spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
 spmd_shuffle_masked_if_reject|check-fail|tests/safety/spmd_shuffle_masked_if_reject.tl|-|SPMD masked if does not support spmd-shuffle inside masked branches
+
+# SPMD v1 private-call ABI policy: public vector/mask/varying source types
+# stay rejected, and function-value calls remain outside the direct helper ABI.
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
 spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
 spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred
@@ -139,8 +144,9 @@ spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typec
 spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|return inside foreach is not supported
 spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|try inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array-set! destination indexes
-spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support varying while
+spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support uniform while
 spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String
+spmd_varying_match_enum_string_payload_reject|check-fail|tests/safety/spmd_varying_match_enum_string_payload_reject.tl|-|foreach varying match pattern binding type is not supported: String
 spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls
 spmd_masked_if_scatter_index_reject|check-fail|tests/safety/spmd_masked_if_scatter_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
 spmd_masked_if_gather_read_reject|check-fail|tests/safety/spmd_masked_if_gather_read_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
@@ -170,7 +176,7 @@ import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.
 sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape
-sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type stdlib.sync/MutexI64Guard without :owned
+sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type stdlib.sync.mutex.generated.i64/Guard without :owned
 sync_channel_i64_pair_use_after_send_reject|check-fail|tests/safety/sync_channel_i64_pair_use_after_send_reject.tl|-|use of moved value `msg`
 sync_channel_send_raw_pointer_reject|check-fail|tests/safety/sync_channel_send_raw_pointer_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
 sync_channel_string_atomic_send_ok|check-ok|tests/safety/sync_channel_string_atomic_send_ok.tl|-|-

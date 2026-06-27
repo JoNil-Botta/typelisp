@@ -1,11 +1,13 @@
+(import stdlib.array)
+
 (include-bin payload "include_bin_payload.bin")
 
 (define (byte-at [items : (Array u8)] [idx : i64]) : i64
-  (cast (array-ref items idx) : i64))
+  (cast (array.array-ref items idx) : i64))
 
 (define (main) : i64
   (if (and
-    (= (array-length payload) 6)
+    (= (array.array-length payload) 6)
     (= (byte-at payload 0) 0)
     (= (byte-at payload 1) 65)
     (= (byte-at payload 2) 127)

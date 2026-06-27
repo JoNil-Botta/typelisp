@@ -1,16 +1,18 @@
 ;; Scalar lane identity semantics for foreach and spmd-reduce (#2761).
+(import stdlib.array)
+
 (define (foreach-checksum [n : i64]) : i64
   (let
-    [out : (Array i64) (make-array i64 n)]
+    [out : (Array i64) (array.make-array i64 n)]
     [i : i64 0]
     [acc : i64 0]
     (begin
       (foreach
         ([lane : i64 0 n])
-        (array-set! out lane (+ (* (program-count) 10) (program-index))))
+        (array.array-set! out lane (+ (* (program-count) 10) (program-index))))
       (while (< i n)
         (begin
-          (set! acc (+ acc (array-ref out i)))
+          (set! acc (+ acc (array.array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 

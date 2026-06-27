@@ -33,7 +33,9 @@
 ;; `token.tl` token model, so this single import transitively pulls in BOTH
 ;; the `lex` entry and the `Token` enum + token accessors/tag constants.
 ;; Resolved relative to this file, so it finds the co-located `lex.tl`.
-(import "../stdlib/io.tl")
+(import stdlib.array)
+(import stdlib.io)
+(import stdlib.string)
 (import "lex.tl")
 
 ;; --------------------------------------------------------------------------
@@ -87,7 +89,7 @@
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),
 ;; so the pool is reset per program parse (see compiler_parse_core.tl).
 (define sp-node-pool-slots : (Array SpannedSexpr)
-  (make-array SpannedSexpr 262144))
+  (array.make-array SpannedSexpr 262144))
 (define sp-node-pool-count : i64
   0)
 
@@ -103,35 +105,35 @@
 (define (sp-node-pool-grow!) : unit
   (let
     [old-slots : (Array SpannedSexpr) sp-node-pool-slots]
-    [old-cap : i64 (array-length old-slots)]
+    [old-cap : i64 (array.array-length old-slots)]
     [new-cap : i64
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
-    [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
+    [new-slots : (Array SpannedSexpr) (array.make-array SpannedSexpr new-cap)]
     [len : i64 sp-node-pool-count]
     [i : i64 0]
     (begin
       (while (< i len)
         (begin
-          (array-set! new-slots i (array-ref old-slots i))
+          (array.array-set! new-slots i (array.array-ref old-slots i))
           (set! i (+ i 1))))
       (set! sp-node-pool-slots new-slots))))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
   (begin
-    (if (>= sp-node-pool-count (array-length sp-node-pool-slots))
+    (if (>= sp-node-pool-count (array.array-length sp-node-pool-slots))
       (sp-node-pool-grow!)
       unit)
     (let
       [id : i64 sp-node-pool-count]
       (begin
-        (array-set! sp-node-pool-slots id node)
+        (array.array-set! sp-node-pool-slots id node)
         (set! sp-node-pool-count (+ id 1))
         id))))
 
 (define (sp-node-get [id : i64]) : SpannedSexpr
-  (array-ref sp-node-pool-slots id))
+  (array.array-ref sp-node-pool-slots id))
 
 (define (sp-node-pool-truncate! [mark : i64]) : unit
   (set! sp-node-pool-count mark))
@@ -186,27 +188,27 @@
 ;; is visible to the caller across the recursive `read-form` / `read-list` calls.
 ;; Current cursor position (index of the token under the cursor).
 (define (cur-pos [cur : (Array i64)]) : i64
-  (array-ref cur 0))
+  (array.array-ref cur 0))
 
 ;; Kind tag of the token under the cursor, via the imported `token-tag`. This is
 ;; the load-bearing cross-import call: the reader classifies a `Token` produced
 ;; by the imported `lex` using the accessor defined in the imported token model.
 (define (peek-tag [toks : (Array Token)] [cur : (Array i64)]) : i64
-  (token-tag (array-ref toks (cur-pos cur))))
+  (token-tag (array.array-ref toks (cur-pos cur))))
 
 ;; The `Token` value under the cursor (for projecting its int/symbol payload).
 (define (peek-tok [toks : (Array Token)] [cur : (Array i64)]) : Token
-  (array-ref toks (cur-pos cur)))
+  (array.array-ref toks (cur-pos cur)))
 
 (define (peek-spanned-token [toks : (Array SpannedToken)] [cur : (Array i64)]) : SpannedToken
-  (array-ref toks (cur-pos cur)))
+  (array.array-ref toks (cur-pos cur)))
 
 (define (peek-spanned-tag [toks : (Array SpannedToken)] [cur : (Array i64)]) : i64
   (token-tag (spanned-token-token (peek-spanned-token toks cur))))
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (Array i64)]) : unit
-  (array-set! cur 0 (+ (cur-pos cur) 1)))
+  (array.array-set! cur 0 (+ (cur-pos cur) 1)))
 
 (define (read-prefix-tag? [t : i64]) : bool
   (or
@@ -245,7 +247,9 @@
       "?")))
 
 (define (read-quoted-close-delimiter [tag : i64]) : String
-  (string-append "'" (string-append (read-close-delimiter-text tag) "'")))
+  (string.string-append
+    "'"
+    (string.string-append (read-close-delimiter-text tag) "'")))
 
 (define (read-opposite-close-delimiter? [tag : i64] [expected : i64]) : bool
   (if (= expected (tag-rparen))
@@ -255,12 +259,12 @@
       false)))
 
 (define (read-span-location [span : SourceSpan]) : String
-  (string-append
-    (int->string (span-start-line span))
-    (string-append ":" (int->string (span-start-col span)))))
+  (string.string-append
+    (string.int->string (span-start-line span))
+    (string.string-append ":" (string.int->string (span-start-col span)))))
 
 (define (read-unterminated-list-message [expected : i64]) : String
-  (string-append
+  (string.string-append
     "reader: unterminated list: reached end of input before "
     (read-quoted-close-delimiter expected)))
 
@@ -268,15 +272,15 @@
   [expected : i64]
   [actual : i64]
   [actual-span : SourceSpan]) : String
-  (string-append
+  (string.string-append
     "reader: mismatched delimiter: expected "
-    (string-append
+    (string.string-append
       (read-quoted-close-delimiter expected)
-      (string-append
+      (string.string-append
         " but found "
-        (string-append
+        (string.string-append
           (read-quoted-close-delimiter actual)
-          (string-append " at " (read-span-location actual-span)))))))
+          (string.string-append " at " (read-span-location actual-span)))))))
 
 ;; --------------------------------------------------------------------------
 ;; The reader proper: `read-form` and `read-list`, mutually recursive.
@@ -518,12 +522,12 @@
 (define (read-form [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-form-result toks cur)
     [(OkSexpr form) form]
-    [(ErrSexpr message) (panic message)]))
+    [(ErrSexpr message) (io.panic message)]))
 
 (define (read-list [toks : (Array Token)] [cur : (Array i64)]) : Sexpr
   (match (read-list-result toks cur)
     [(OkSexpr list) list]
-    [(ErrSexpr message) (panic message)]))
+    [(ErrSexpr message) (io.panic message)]))
 
 ;; read: the public entry point. Read a single top-level form from the front of
 ;; `toks` (a cursor starting at index 0) and return its `Sexpr` tree. (Trailing
@@ -531,24 +535,24 @@
 ;; one datum at a time.)
 (define (read-result [toks : (Array Token)]) : ResultSexpr
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (Array i64) (array.make-array i64 1)]
     (begin
-      (array-set! cur 0 0)
+      (array.array-set! cur 0 0)
       (read-form-result toks cur))))
 
 (define (read-spanned-result [toks : (Array SpannedToken)]) : ResultSpannedSexpr
   (let
-    [cur : (Array i64) (make-array i64 1)]
+    [cur : (Array i64) (array.make-array i64 1)]
     (begin
-      (array-set! cur 0 0)
+      (array.array-set! cur 0 0)
       (read-form-spanned-result toks cur))))
 
 (define (read-spanned [toks : (Array SpannedToken)]) : SpannedSexpr
   (match (read-spanned-result toks)
     [(OkSpannedSexpr form) form]
-    [(ErrSpannedSexpr err) (panic (source-error-message err))]))
+    [(ErrSpannedSexpr err) (io.panic (source-error-message err))]))
 
 (define (read [toks : (Array Token)]) : Sexpr
   (match (read-result toks)
     [(OkSexpr form) form]
-    [(ErrSexpr message) (panic message)]))
+    [(ErrSexpr message) (io.panic message)]))

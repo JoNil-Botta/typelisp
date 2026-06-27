@@ -17,9 +17,36 @@
 (defmacro (stdlib-comptime-arg-count [args : comptime.Expr ...]) : i64
   (comptime.expr-int (comptime.expr-list-length args)))
 
+(cfg
+  feature-comptime-public-fields
+  (defmacro (stdlib-comptime-public-field-count [args : comptime.Expr ...]) : i64
+    (comptime.expr-int (struct-get args len))))
+
+(cfg
+  feature-comptime-public-fields
+  (defmacro (stdlib-comptime-public-field-second [args : comptime.Expr ...]) : i64
+    (if (> (struct-get args len) 1)
+      (array-ref (struct-get args items) 1)
+      (comptime.expr-int 0))))
+
 (defmacro (stdlib-comptime-clause-count [arms : comptime.ExprClause ...]) : i64
   (comptime.expr-int
     (comptime.expr-list-length (comptime.expr-clause-list->expr-list arms))))
+
+(cfg
+  feature-comptime-public-fields
+  (defmacro (stdlib-comptime-public-clause-count
+    [arms : comptime.ExprClause ...]) : i64
+    (comptime.expr-int (struct-get arms len))))
+
+(cfg
+  feature-comptime-public-fields
+  (defmacro (stdlib-comptime-public-clause-first-result
+    [arms : comptime.ExprClause ...]) : i64
+    (if (> (struct-get arms len) 0)
+      (match (array-ref (struct-get arms items) 0)
+        [(ExprClause _ result) result])
+      (comptime.expr-int 0))))
 
 (defmacro (stdlib-comptime-clause-else-value [arm : comptime.ExprClause]) : i64
   (match arm
@@ -31,6 +58,19 @@
             (comptime.expr-int 0))]
         [_ (comptime.expr-int 0)])]))
 
+(cfg
+  feature-comptime-public-fields
+  (defmacro (stdlib-comptime-public-binding-init
+    [bindings : comptime.ExprBindingClause ...]) : i64
+    (if (> (struct-get bindings len) 0)
+      (let
+        [first : comptime.ExprBindingClause
+          (array-ref (struct-get bindings items) 0)]
+        (if (string.string-eq (struct-get first name) "value")
+          (struct-get first init)
+          (comptime.expr-int 0)))
+      (comptime.expr-int 0))))
+
 (defmacro (stdlib-comptime-derived-name [prefix : comptime.Expr]) : i64
   (match prefix
     [(comptime.ExprVar base)
@@ -39,6 +79,12 @@
           (comptime.string-append base (comptime.int->string 0))
           "-value"))]
     [_ (comptime.expr-int 0)]))
+
+(defmacro (stdlib-comptime-derived-string [prefix : comptime.Expr]) : String
+  (match prefix
+    [(comptime.ExprVar base)
+      (comptime.expr-string (comptime.string-append base "-literal"))]
+    [_ (comptime.expr-string "")]))
 
 (defmacro (stdlib-comptime-string-helper-total [prefix : comptime.Expr]) : i64
   (match prefix
@@ -61,6 +107,11 @@
                 0)))))]
     [_ (comptime.expr-int 0)]))
 
+(defmacro (stdlib-comptime-error-unreached [x : comptime.Expr]) : i64
+  (if false
+    (comptime.comptime-error "unreached stdlib comptime error")
+    x))
+
 (define (stdlib-comptime-qualified-import-shape) : i64
   (+
     (stdlib-comptime-id 14)
@@ -73,6 +124,25 @@
     (stdlib-comptime-arg-count 1 2 3)
     (+ (stdlib-comptime-clause-count [false 0] [true 0] [false 0]) 36)))
 
+(cfg
+  feature-comptime-public-fields
+  (define (stdlib-comptime-public-field-shape) : i64
+    (+
+      (stdlib-comptime-public-field-count 1 2 3)
+      (+ (stdlib-comptime-public-field-second 1 20) 19))))
+
+(cfg
+  feature-comptime-public-fields
+  (define (stdlib-comptime-public-clause-field-shape) : i64
+    (+
+      (stdlib-comptime-public-clause-count [false 40] [true 0])
+      (stdlib-comptime-public-clause-first-result [false 40] [true 0]))))
+
+(cfg
+  feature-comptime-public-fields
+  (define (stdlib-comptime-public-binding-field-shape) : i64
+    (stdlib-comptime-public-binding-init [value 42])))
+
 (define (stdlib-comptime-clause-match-shape) : i64
   (+ (stdlib-comptime-clause-else-value [else 6]) 36))
 
@@ -83,8 +153,16 @@
       stdlib-comptime-derived0-value
       (stdlib-comptime-derived-name stdlib-comptime-derived))))
 
+(define (stdlib-comptime-derived-string-shape) : bool
+  (string.string-eq
+    (stdlib-comptime-derived-string stdlib-comptime-derived)
+    "stdlib-comptime-derived-literal"))
+
 (define (stdlib-comptime-legacy-string-helper-shape) : i64
   (stdlib-comptime-string-helper-total stdlib-comptime-derived))
+
+(define (stdlib-comptime-error-branch-shape) : i64
+  (stdlib-comptime-error-unreached 42))
 
 (test
   comptime-qualified-import-shape
@@ -101,6 +179,36 @@
     (begin
       (/ 1 0)
       unit)))
+
+(cfg
+  feature-comptime-public-fields
+  (test
+    comptime-public-field-shape
+    (if (= (stdlib-comptime-public-field-shape) 42)
+      unit
+      (begin
+        (/ 1 0)
+        unit))))
+
+(cfg
+  feature-comptime-public-fields
+  (test
+    comptime-public-clause-field-shape
+    (if (= (stdlib-comptime-public-clause-field-shape) 42)
+      unit
+      (begin
+        (/ 1 0)
+        unit))))
+
+(cfg
+  feature-comptime-public-fields
+  (test
+    comptime-public-binding-field-shape
+    (if (= (stdlib-comptime-public-binding-field-shape) 42)
+      unit
+      (begin
+        (/ 1 0)
+        unit))))
 
 (test
   comptime-clause-match-shape
@@ -119,8 +227,24 @@
       unit)))
 
 (test
+  comptime-derived-string-shape
+  (if (stdlib-comptime-derived-string-shape)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
   comptime-legacy-string-helper-shape
   (if (= (stdlib-comptime-legacy-string-helper-shape) 54)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-error-branch-shape
+  (if (= (stdlib-comptime-error-branch-shape) 42)
     unit
     (begin
       (/ 1 0)

@@ -1,22 +1,22 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
-(import "../stdlib/string.tl")
+(import stdlib.string)
 (import "compiler_object.tl")
 
 (define (compiler-object-elf-string-length [text : String]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_length text)
-    (string-length text)))
+    (string.string-length text)))
 
 (define (compiler-object-elf-string-ref [text : String] [index : i64]) : char
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_ref text index)
-    (string-ref text index)))
+    (string.string-ref text index)))
 
 (defenum ResultCompilerObjectElf
-  (OkCompilerObjectElf String)
-  (ErrCompilerObjectElf String))
+  (Ok String)
+  (Err String))
 
 (define compiler-object-elf-header-size : i64
   64)
@@ -422,7 +422,7 @@
         (match (compiler-object-symbol-list-ref symbols slot)
           [(ObjectSymbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
-              (if (string-eq found name)
+              (if (string.string-eq found name)
                 (begin
                   (set! result cur-index)
                   (set! done true))
@@ -448,7 +448,7 @@
           [(ObjectSymbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (set! slot (+ slot 1))
-              (if (string-eq found name)
+              (if (string.string-eq found name)
                 (begin
                   (set! result cur-index)
                   (set! done true))
@@ -487,7 +487,7 @@
             (compiler-object-data-record-list-ref records index)]
           (match record
             [(ObjectDataLabel found)
-              (if (string-eq found label)
+              (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -517,7 +517,7 @@
             (compiler-object-instr-list-ref instrs index)]
           (match instr
             [(ObjectX64Label found)
-              (if (string-eq found label)
+              (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -1405,7 +1405,7 @@
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
           [(ObjectSymbol found _ _ _)
-            (if (string-eq found name)
+            (if (string.string-eq found name)
               (begin
                 (set! result cur-offset)
                 (set! done true))
@@ -1785,8 +1785,8 @@
         (compiler-object-elf-render-symbol-table! out image)
         (compiler-object-elf-render-string-tables! out image)
         (compiler-object-elf-push-section-headers! out image)
-        (OkCompilerObjectElf (compiler-object-elf-bytes-string out))))
-    (ErrCompilerObjectElf
+        (ResultCompilerObjectElf.Ok (compiler-object-elf-bytes-string out))))
+    (ResultCompilerObjectElf.Err
       "elf: object image contains unsupported text instructions or relocation records")))
 
 (define (compiler-object-elf-u16-at [text : String] [offset : i64]) : i64
@@ -2143,7 +2143,7 @@
 
 (define (compiler-object-elf-smoke-ok?) : bool
   (match (compiler-object-elf-render (compiler-object-elf-smoke-image))
-    [(OkCompilerObjectElf obj)
+    [(ResultCompilerObjectElf.Ok obj)
       (and
         (=
           (compiler-object-elf-string-length obj)
@@ -2166,13 +2166,13 @@
         (compiler-object-elf-contains? obj ".note.GNU-stack")
         (compiler-object-elf-contains? obj "_tl_message")
         (compiler-object-elf-contains? obj "foreign_exact"))]
-    [(ErrCompilerObjectElf _) false]))
+    [(ResultCompilerObjectElf.Err _) false]))
 
 (define (compiler-object-elf-text-smoke-ok?) : bool
   (let
     [image : CompilerObjectImage (compiler-object-elf-text-smoke-image)]
     (match (compiler-object-elf-render image)
-      [(OkCompilerObjectElf obj)
+      [(ResultCompilerObjectElf.Ok obj)
         (let
           [text-offset : i64 (compiler-object-elf-text-offset image)]
           [rela-offset : i64 (compiler-object-elf-rela-text-offset image)]
@@ -2210,4 +2210,4 @@
             (compiler-object-elf-rela-addend-rel32? obj rela-offset 5)
             (compiler-object-elf-contains? obj "_tl_cell")
             (compiler-object-elf-contains? obj "foreign_exact")))]
-      [(ErrCompilerObjectElf _) false])))
+      [(ResultCompilerObjectElf.Err _) false])))

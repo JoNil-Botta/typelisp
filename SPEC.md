@@ -830,6 +830,13 @@ not resolved before macro expansion. These operands are distinct from
 `ExprClause`: `[x : i64 1]` is accepted only for `ExprBindingClause`, while
 `ExprClause` remains exactly `[expr expr]`.
 
+A fixed slot declared `Module` is a by-name module strategy operand. The
+operand must be an imported module alias visible at the call site or a visible
+dotted module identity; unresolved names and legacy slash-qualified names are
+diagnostics at the operand span. The macro body receives the resolved canonical
+module identity as a compile-time `String`. `Module` operands are not runtime
+values, are not first-class macro values, and cannot be variadic.
+
 A final slot may be variadic, written `T ...`. For ordinary `T`, the macro body
 receives the remaining operands as an `ExprList`; for `Expr ...`, they are
 captured without per-operand produced-type checks. For `ExprClause ...`, every
@@ -837,6 +844,11 @@ remaining operand must be a two-expression bracket clause and the macro body
 receives an `ExprClauseList`. For `ExprBindingClause ...`, every remaining
 operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
+
+Macro bodies can build expression literals with `expr-bool`, `expr-int`,
+`expr-string`, and `expr-var`; `expr-struct-get` builds a field access whose
+field token is computed during macro CTFE, and `expr-struct-set` builds the
+matching field assignment expression.
 
 Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
 `expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
@@ -853,6 +865,14 @@ They can inspect binding-clause captures with `expr-binding-clause-name`,
 `expr-binding-clause-list-tail`, and `expr-binding-clause-list-nth`.
 `expr-binding-clause-list->expr-list` converts a binding-clause list back into
 bracket-clause operand syntax for explicit splicing into macro calls.
+
+Macro bodies can inspect module strategy operands with `module-name` and
+`module-export-macro?`. `module-hook` validates that the strategy module exports
+the named hook macro and builds an `Expr` that calls that hook by its canonical
+module identity; a missing hook is diagnosed as
+`typecheck: strategy module <module> does not export hook <name>`. This is
+by-name hook dispatch for generated code, not a macro value that can be stored
+or called indirectly.
 
 `Expr`, `ExprList`, `ExprClause`, `ExprClauseList`, `ExprBindingClause`, and
 `ExprBindingClauseList` are compile-time-only types. They are valid in macro
@@ -905,6 +925,7 @@ bool)`, `(macro (bool bool ...) bool)`, and
 body's compile-time parameters and their call-site produced types. Fixed
 ordinary operands bind as `Expr`, fixed `ExprClause` operands bind as
 `ExprClause`, fixed `ExprBindingClause` operands bind as `ExprBindingClause`,
+fixed `Module` operands bind as canonical module identity `String` values,
 variadic ordinary operands bind as `ExprList`, variadic `ExprClause` operands
 bind as `ExprClauseList`, and variadic `ExprBindingClause` operands bind as
 `ExprBindingClauseList`. The macro body must typecheck as `Expr`, and the
@@ -938,6 +959,11 @@ categories:
   import. The generated module participates in ordinary
   dot-qualified lookup, typechecking, lowering, tests, docs,
   and diagnostics after expansion.
+  When generated module or declaration output itself contains a module-macro
+  import, operands whose callee parameter is `: type` may name a captured outer
+  `: type` macro operand by its generated template name. Expansion substitutes
+  the captured concrete type before resolving that nested import; this does not
+  introduce source-level type parameters.
 - `: Decls` means the macro body produces a declaration list. A call at module
   scope, for example `(point-vec i64)`, is replaced by those declarations at
   that exact location. One returned declaration is inserted directly; multiple
@@ -973,10 +999,13 @@ hand-written imports. The diagnostic should name both generated module identitie
 qualified access through an explicit alias.
 
 Generated module identity and deduplication are keyed by the canonical macro
-module identity, macro name, and evaluated argument-key strings. Repeating the
-same macro call with the same keys reuses the generated module when the emitted
-module is structurally identical; incompatible output for the same identity is a
-compiler diagnostic.
+module identity, macro name, and evaluated argument-key strings. Type operands
+key by resolved type identity; `Module` operands key by the resolved canonical
+strategy module identity, so an alias and the corresponding visible full module
+path deduplicate to the same generated module. Repeating the same macro call
+with the same keys reuses the generated module when the emitted module is
+structurally identical; incompatible output for the same identity is a compiler
+diagnostic.
 
 #### 3.7.2.1 Comptime purity for macros and generated declarations
 
@@ -1004,6 +1033,10 @@ macro body or generated template:
   helpers such as string equality/concatenation, string length, `int->string`,
   layout/reflection queries, and the `Expr`/`ExprList`/`ExprClause` constructor
   and inspector surface remain available.
+- Macro and generator code may call `(comptime-error message)` where `message`
+  is a compile-time `String`. It returns `never`, aborts the current CTFE
+  expansion/evaluation, reports `message` at the call expression, remains a pure
+  deterministic CTFE helper, and is rejected if it reaches runtime lowering.
 
 Scalar CTFE supports finite `f64` literals and finite `f32` values produced by
 context or explicit precision casts. The ordinary float `+`, `-`, `*`, `/`,
@@ -1368,8 +1401,10 @@ places whose owner/provenance is statically known:
 - Local bindings and function parameters.
 - Aggregate field and element projections rooted in a borrowable place. In a
   borrow expression, forms such as `(struct-get p field)`, local dotted field
-  sugar `p.field`, `(tuple-ref t 0)`, and `(array-ref items i)` are treated as
-  projections, not by-value reads.
+  sugar `p.field`, `(tuple-ref t 0)`, and the transitional `(array-ref items i)`
+  compatibility form are treated as projections, not by-value reads. Qualified
+  `stdlib.array` macro calls become borrow places in the #3772 alias-removal
+  slice.
 - Arena-owned aggregate handles: `String`, compatibility dynamic-array,
   struct, enum, and tuple handles allocated in the active arena. Handles with
   type `(in phase T)` infer lifetime `phase`; untagged heap handles allocated
@@ -2603,16 +2638,23 @@ Declares a source-owned inline test. The name is an identifier. The body must
 contain one or more expressions; multiple expressions are sequenced like
 `begin`.
 
-Normal production commands (`check`, `compile`, `build`, and `run`) ignore
-`test` items. `typelisp test <file.tl>` loads the import graph, lowers inline
-tests owned by the requested source into private unit-returning functions, skips
-any production `main`, generates a test-owned `main`, and runs the resulting
-executable. Imported files provide runtime declarations but do not contribute
-their own inline tests to that source's harness. The test loader enables the
-`test` cfg predicate, allowing source-local fixture declarations to be written as
-`(cfg test ...)` so normal production commands skip them. `typelisp test --check
-<file.tl>` type-checks the generated harness without assembling or linking. The
-current runner is intended for unit-returning test bodies; assertion helpers in
+Normal production commands (`check`, `compile`, `build`, and `run`) type-check
+inline tests owned by the explicitly named source, or by the package's own
+discovered source files when operating on a package, before ordinary production
+emission. That preflight enables the `test` cfg predicate, allowing source-local
+fixture declarations to be written as `(cfg test ...)`; ordinary production
+loading still leaves those declarations inactive. `test` items and test-only
+helper declarations are dropped before production lowering and codegen, so
+valid inline tests cannot change emitted assembly. Imported stdlib files,
+dependency package files, and other imports provide runtime declarations but do
+not have their inline tests checked merely because they were imported.
+`typelisp test <file.tl>` loads the import graph, lowers inline tests owned by
+the requested source into private unit-returning functions, skips any production
+`main`, generates a test-owned `main`, and runs the resulting executable.
+Imported files provide runtime declarations but do not contribute their own
+inline tests to that source's harness. `typelisp test --check <file.tl>`
+type-checks the generated harness without assembling or linking. The current
+runner is intended for unit-returning test bodies; assertion helpers in
 `stdlib/test.tl` panic on failure.
 
 Example:
@@ -2735,6 +2777,12 @@ Example:
   that reachable closure. Source files outside the closure are intentionally not
   package-check/build inputs; validate them through explicit file checks,
   `typelisp doc --test <file>`, or package test coverage.
+- Package `typelisp lint` checks every discovered package source. For package
+  dead-code lint, `staticlib`/`lib` packages treat every top-level declaration
+  as an external API root. `bin` packages use the declared `main`, top-level
+  test bodies, macro-import calls, and generated-declaration metadata as roots;
+  top-level declarations unreachable from those roots are lint findings unless
+  suppressed with `;; lint-allow: dead-code`.
 - Package builds accept `--profile dev|release` and `--release`. The default
   profile is `release`; `--release` is an alias for `--profile release`.
   `--opt-level 0|1|2` overrides the profile's optimizer level. Without an
@@ -3531,6 +3579,8 @@ They require explicit constructors until a cleanup-aware default policy is
 specified.
 
 ```lisp test=ignore name=init-expression-examples reason="illustrates source surface"
+(import stdlib.array)
+
 (defstruct Point (x i64) (y i64))
 (defenum MaybeI64 (None) (Some i64))
 
@@ -3540,8 +3590,8 @@ specified.
   (let
     [p : Point (init)]                 ; (Point 0 0)
     [m : MaybeI64 (init : MaybeI64)]   ; first variant, None
-    [xs : (Array i64) (make-array i64 4)]
-    (+ zero (+ (struct-get p x) (array-ref xs 0)))))
+    [xs : (Array i64) (array.make-array i64 4)]
+    (+ zero (+ (struct-get p x) (array.array-ref xs 0)))))
 ```
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -3642,12 +3692,14 @@ and is separate from the safe task-threading APIs specified in section 6.5.
 Initial syntax:
 
 ```lisp test=ignore name=spmd-foreach-map reason="illustrative function; integration tests cover executable foreach programs"
+(import stdlib.array)
+
 (define (add-arrays [a : (Array i64)]
                     [b : (Array i64)]
                     [out : (Array i64)]
                     [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 ```
 
 Semantics:
@@ -3728,12 +3780,13 @@ Uniform and varying rules:
 - `let` bindings inside the `foreach` body may be uniform or varying by
   inference. `set!` to a binding declared outside the `foreach` is rejected;
   reductions must use `spmd-reduce`, and other cross-lane updates are deferred.
-- Non-inlineable calls with varying arguments or varying returns are rejected
-  until an out-of-line SPMD function ABI is designed (#2852). The implemented
-  exceptions are the explicit `stdlib/atomic.tl` integer element helpers,
-  direct source-known non-dispatch helper calls that can be inlined within the
-  current SPMD-safe expression subset, and built-in arithmetic/comparison
-  operators and array operations over supported lane types.
+- Direct source-known TypeLisp helper calls in SPMD may be handled by inlining
+  today when their body fits the current SPMD-safe expression subset. The v1
+  private out-of-line SPMD call ABI below specifies the non-inlined target for
+  the same class of helpers (#2852). Function values/indirect calls, extern
+  calls, `defdispatch` logical calls, recursive call cycles, and
+  cross-package/tlci SPMD-callable metadata remain deferred and must diagnose
+  instead of silently scalarizing.
 - `while` conditions must be uniform. Varying `if` is admitted with the
   restrictions below.
 
@@ -3772,13 +3825,15 @@ Lane identity forms:
   SIMD backend modes.
 
 ```lisp test=check name=spmd-program-index-foreach
+(import stdlib.array)
+
 (define (write-lane-ids [idxs : (Array i64)]
                         [counts : (Array i64)]
                         [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (begin
-      (array-set! idxs i (program-index))
-      (array-set! counts i (program-count)))))
+      (array.array-set! idxs i (program-index))
+      (array.array-set! counts i (program-count)))))
 ```
 
 In scalar backend modes, `write-lane-ids` stores `0` in every `idxs` element and
@@ -3787,15 +3842,19 @@ full gang stores indexes `0` through `W - 1` and count `W`; a non-divisible tail
 stores only the active prefix of those lane indexes.
 
 ```lisp test=check name=spmd-program-index-empty-range
+(import stdlib.array)
+
 (define (empty-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 0])
-    (array-set! out i (+ (program-index) (program-count)))))
+    (array.array-set! out i (+ (program-index) (program-count)))))
 ```
 
 ```lisp test=check name=spmd-program-index-tail
+(import stdlib.array)
+
 (define (write-tail-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 13])
-    (array-set! out i (+ (* (program-count) 100) (program-index)))))
+    (array.array-set! out i (+ (* (program-count) 100) (program-index)))))
 ```
 
 ```lisp test=check name=spmd-program-index-reduce
@@ -3814,7 +3873,51 @@ Tail behavior:
 - Inactive tail lanes must not perform bounds checks, loads, stores, calls, or
   other side effects.
 
-Masked varying `if` (v2):
+Private out-of-line SPMD call ABI (v1):
+
+- This ABI is compiler-private. It introduces no public `(varying T)`, vector,
+  or mask source types and no user-denotable helper symbols. Source functions
+  keep their ordinary scalar signature outside SPMD contexts.
+- A compiler may use the ABI for a direct call to a source-known,
+  non-dispatch, non-extern TypeLisp helper whose body is available in the same
+  whole-program compile. It may also inline the helper instead; the observable
+  behavior must match the scalar reference semantics either way.
+- Hidden helper variants are specialized by backend mode, lane count, source
+  callee identity, call-site argument SPMD classes, lane element types, and
+  result SPMD class. Implementations may create one hidden variant per call
+  site or reuse equivalent variants when those specialization keys match.
+- Every hidden helper receives an active-mask argument representing the current
+  tail mask, enclosing SPMD region mask, and any masked-branch condition masks.
+  Scalar implementation targets use a lane count of 1 and call the helper only
+  for the active logical iteration. AVX-512 implementation targets pass the
+  mask through private opmask/vector lowering. AVX2 keeps an explicit
+  diagnostic for out-of-line varying calls until an AVX2 private mask ABI is
+  specified and implemented.
+- Inactive lanes inside the hidden helper must not perform source-visible
+  effects, traps, bounds checks, loads, stores, atomics, or nested calls. This
+  rule applies to inactive tail lanes and to lanes disabled by nested masked
+  control flow.
+- Uniform arguments use the ordinary scalar ABI value representation. Varying
+  scalar arguments use private vector or mask values for the supported lane
+  element types `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`,
+  `f64`, and `bool`; `bool` lanes may be represented as a private mask.
+- Return passing supports `unit`, uniform scalar results using the ordinary
+  scalar result representation, and varying scalar lane results for the same
+  supported element type set. Aggregate, string, array, function, public vector,
+  and public mask returns remain rejected.
+- The helper body is typechecked/lowered as an SPMD body under the hidden active
+  mask. It may use the same SPMD-safe expression surface as the containing
+  `foreach` or masked branch. Unsupported constructs must report targeted SPMD
+  call diagnostics rather than falling back to a broader scalar-only surface.
+- Function values and indirect calls, extern calls, `defdispatch` logical
+  calls, recursion and mutual recursion through SPMD-callable helpers,
+  cross-package/tlci calls, and exported/imported SPMD-callable metadata remain
+  deferred. Diagnostics for these cases should name the specific boundary, for
+  example "SPMD out-of-line calls require a direct source-known TypeLisp
+  helper", "SPMD out-of-line calls do not support extern callees", or "SPMD
+  out-of-line calls do not support recursion".
+
+Masked varying control flow (v2/v3):
 
 - V2 includes varying `if` before gather/scatter, public lane-index builtins,
   public vector types, or public mask types. Lane identity is not required to
@@ -3850,29 +3953,44 @@ Masked varying `if` (v2):
   This includes `set!` to bindings declared outside the `foreach`, `print*`,
   file/process I/O, `panic`/`error`, allocation whose result escapes the branch,
   nested `foreach`, nested `spmd-reduce`, and user-defined calls with varying
-  arguments or varying returns.
-- `match` on a varying scalar lane scrutinee is supported for literal patterns,
-  wildcard arms, and catch-all bindings whose bound type is a supported lane
-  value. A varying `match` creates one masked arm region per arm; each logical
-  lane evaluates exactly the first matching arm, and arm bodies follow the same
-  masked branch restrictions as varying `if`. Aggregate, string, borrowed,
-  enum payload, and other non-lane-value pattern bindings remain deferred.
-- Varying `while`, function-local early exits (`return` and `try`
-  propagation), future `break`/`continue` forms, public mask values, gather
-  reads and scatter writes through index arrays inside masked branches,
-  overlapping ordinary writes, general atomics, and user-defined SPMD calls
-  remain deferred.
+  arguments or varying returns unless they satisfy the v1 private out-of-line
+  SPMD call ABI above.
+- `match` on a varying scalar lane or enum scrutinee is supported for literal
+  patterns, enum tag arms, wildcard arms, and catch-all or enum payload bindings
+  whose bound type is a supported lane value. A varying `match` creates one
+  masked arm region per arm; each logical lane evaluates exactly the first
+  matching arm, and arm bodies follow the same masked branch restrictions as
+  varying `if`. Aggregate, string, borrowed, function, array, public vector,
+  public mask, and other non-lane-value pattern bindings remain deferred.
+- A `while` condition inside `foreach` may be varying when it has type `bool`.
+  Each loop carries an internal active mask. The first condition evaluation uses
+  the parent active mask; each later condition evaluation uses only lanes whose
+  previous loop condition was true. The body executes under the intersection of
+  the parent, tail, loop-carried, and current-condition masks. A lane exits the
+  loop permanently once its condition is false, and the whole loop exits once no
+  lane remains active.
+- Varying `while` bodies follow the same masked branch restrictions as varying
+  `if`: local `let`/`begin`, nested varying `if`, varying `match`, nested
+  varying `while`, supported arithmetic/comparison/boolean operations,
+  contiguous `array-ref`/`array-set!`, and accepted source-known SPMD helper
+  calls. Uniform `while` loops inside masked branches, function-local early
+  exits (`return` and `try` propagation), future `break`/`continue` forms,
+  public mask values, gather reads and scatter writes through index arrays
+  inside masked branches, overlapping ordinary writes, general atomics, and
+  user-defined SPMD calls outside the accepted helper subset remain deferred.
 - Diagnostics must reject unsupported constructs in masked branches at
   type-check/lowering time and name the SPMD masked-control-flow restriction.
   Scalar backend modes must not silently accept a broader source surface than
   SIMD backend modes, and SIMD backend modes must not silently scalarize an
   unsupported masked branch.
 - Current implementation status: scalar lowering accepts the checked masked-if
-  and varying-match surface as the reference path. AVX-512 supports unit-result
-  masked branches, nested branch-mask composition, scalar-lane literal
-  varying-match arms, contiguous predicated array reads/writes over the covered
-  lane types, and value-producing selects over the covered scalar lane result
-  types. AVX2 emits staged masked-if and varying-match diagnostics.
+  varying-match, and varying-while surface as the reference path. AVX-512
+  supports unit-result masked branches, nested branch-mask composition,
+  scalar-lane literal varying-match arms, enum tag/payload varying matches
+  through scalar reference lowering, loop-carried varying-while masks,
+  contiguous predicated array reads/writes over the covered lane types, and
+  value-producing selects over the covered scalar lane result types. AVX2 emits
+  staged masked-if, varying-match, and varying-while diagnostics.
 
 Explicit SPMD atomic scatter:
 
@@ -3898,53 +4016,73 @@ Explicit SPMD atomic scatter:
   there along with other function calls and side effects.
 
 ```lisp test=check name=spmd-masked-if-scalar-fallback
+(import stdlib.array)
+
 (define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (if (< (array-ref xs i) 0)
-        (array-set! out i 0)
-        (array-set! out i (array-ref xs i)))))
+    (if (< (array.array-ref xs i) 0)
+        (array.array-set! out i 0)
+        (array.array-set! out i (array.array-ref xs i)))))
 ```
 
 ```lisp test=check name=spmd-masked-if-tail
+(import stdlib.array)
+
 (define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (% i 2) 0)
-        (array-set! out i (array-ref xs i))
-        (array-set! out i 0))))
+        (array.array-set! out i (array.array-ref xs i))
+        (array.array-set! out i 0))))
 ```
 
 ```lisp test=check name=spmd-masked-if-nested
+(import stdlib.array)
+
 (define (classify [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
-      [x : i64 (array-ref xs i)]
+      [x : i64 (array.array-ref xs i)]
       (if (< x 0)
-          (array-set! out i -1)
+          (array.array-set! out i -1)
           (if (= x 0)
-              (array-set! out i 0)
-              (array-set! out i 1))))))
+              (array.array-set! out i 0)
+              (array.array-set! out i 1))))))
 ```
 
 SPMD reductions and scans:
 
 The first reduction surface is an explicit expression form:
 
+Compatibility note for the in-progress array helper migration: SPMD
+reduction/scan value operands and direct scan body writes still use the bare
+array helper aliases until #3772 teaches the purity checker to recognize
+qualified `stdlib.array` macro calls as compiler array ASTs. Ordinary SPMD reads
+and writes outside those positions use the `stdlib.array` macro surface.
+
 ```lisp test=check name=spmd-reduce-sum-i64
+(import stdlib.array)
+
 (define (sum-i64 [xs : (Array i64)] [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=check name=spmd-reduce-any-bool
+(import stdlib.array)
+
 (define (contains-zero [xs : (Array i64)] [n : i64]) : bool
   (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))
 ```
 
 ```lisp test=check name=spmd-reduce-max-seeded
+(import stdlib.array)
+
 (define (max-i64-seeded [xs : (Array i64)] [n : i64] [seed : i64]) : i64
   (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
 ```lisp test=check name=spmd-scan-sum-i64
+(import stdlib.array)
+
 (define (scan-prefix-sum [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (spmd-scan
     sum
@@ -4086,26 +4224,28 @@ name is the callable API; each variant names an ordinary top-level function
 compiled for one backend mode.
 
 ```lisp test=ignore name=simd-dispatch-declaration reason="runtime SIMD dispatch declarations are specified before parser/lowerer implementation"
+(import stdlib.array)
+
 (define (add-arrays-scalar [a : (Array i64)]
                            [b : (Array i64)]
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (add-arrays-avx2 [a : (Array i64)]
                          [b : (Array i64)]
                          [out : (Array i64)]
                          [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (add-arrays-avx512 [a : (Array i64)]
                            [b : (Array i64)]
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (defdispatch add-arrays
   (scalar add-arrays-scalar)
@@ -4172,64 +4312,81 @@ Unsupported in the current SPMD implementation:
 - Scans, general shuffles, general atomics beyond the explicit integer element
   helpers, and overlapping writes.
 - Reduction-by-mutation through `set!` to an outer accumulator.
-- Varying `while`, enum/payload varying `match`, early exits, `break`, and
-  `continue`.
+- Early exits, `break`, and `continue`.
 - Non-inlineable user-defined function calls with varying arguments or varying
-  returns. Direct source-known, non-dispatch helper calls may be inlined when
-  their varying scalar arguments and result are `i8`, `u8`, `i32`, `i64`,
-  `f32`, `f64`, or `bool`, and the helper body uses only the same SPMD-safe
-  expression surface as the containing `foreach`/masked branch.
+  returns remain rejected until the v1 private out-of-line SPMD call ABI above
+  is implemented. Direct source-known, non-dispatch helper calls may be inlined
+  when their varying scalar arguments and result are supported SPMD scalar lane
+  values and the helper body uses only the same SPMD-safe expression surface as
+  the containing `foreach`/masked branch. Function values/indirect calls,
+  extern calls, `defdispatch` logical calls, recursive call cycles,
+  cross-package/tlci calls, and aggregate/string/array/function returns stay
+  rejected with named diagnostics.
 - Struct, enum, tuple, string, function, and nested array lane values.
 - Task parallelism, multicore scheduling, and public AVX-specific intrinsics.
 
 Negative examples for later parser/typechecker tests:
 
-```lisp test=ignore name=spmd-reject-varying-while reason="varying while remains deferred after masked varying if"
+```lisp test=ignore name=spmd-reject-uniform-masked-while reason="uniform while inside masked branches remains deferred"
+(import stdlib.array)
+
 (define (clear-prefix [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (while (< (array-ref xs i) 0)
-      (array-set! out i 0))))
+    (if (< (array.array-ref xs i) 0)
+      (while (> n 0)
+        (array.array-set! out i 0))
+      unit)))
 ```
 
 ```lisp test=ignore name=spmd-reject-non-atomic-scatter reason="scatter writes remain deferred after masked varying if"
+(import stdlib.array)
+
 (define (permute [xs : (Array i64)]
                  [index : (Array i64)]
                  [out : (Array i64)]
                  [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
-      [j : i64 (array-ref index i)]
-      (array-set! out j (array-ref xs j)))))
+      [j : i64 (array.array-ref index i)]
+      (array.array-set! out j (array.array-ref xs j)))))
 ```
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
+(import stdlib.array)
+
 (define (sum-array [xs : (Array i64)] [n : i64]) : i64
   (let
     [sum : i64 0]
     (begin
       (foreach ([i : i64 0 n])
-        (set! sum (+ sum (array-ref xs i))))
+        (set! sum (+ sum (array.array-ref xs i))))
       sum)))
 ```
 
 ```lisp test=ignore name=spmd-reject-f64-min reason="covered by tests/safety/spmd_reduce_f64_min_reject.tl"
+(import stdlib.array)
+
 (define (min-f64 [xs : (Array f64)] [n : i64] [seed : f64]) : f64
   (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-shuffle reason="rejected by the parser; the spec example harness only asserts positive check/compile/run"
+(import stdlib.array)
+
 (define (bad-cross-lane [xs : (Array i64)] [n : i64]) : i64
   (spmd-reduce shuffle ([i : i64 0 n]) 0 (array-ref xs i)))
 ```
 
 ```lisp test=ignore name=spmd-reject-indirect-varying-call reason="covered by tests/safety/spmd_varying_call_reject.tl"
+(import stdlib.array)
+
 (define (inc [x : i64]) : i64 (+ x 1))
 
 (define (map-inc [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (let
     [f : (-> i64 i64) inc]
     (foreach ([i : i64 0 n])
-      (array-set! out i (f (array-ref xs i))))))
+      (array.array-set! out i (f (array.array-ref xs i))))))
 ```
 
 ```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="covered by tests/safety/spmd_program_index_outside_reject.tl"
@@ -4260,7 +4417,8 @@ nesting `with-arena` forms.
 `(in r T)` (see §3.9). The typechecker rejects any attempt to let a
 region-tagged value escape its scope:
 
-- As the result of the `with-arena` form (`(with-arena r (make-array i64 5))`).
+- As the result of the `with-arena` form after importing `stdlib.array`
+  (`(with-arena r (array.make-array i64 5))`).
 - Stored into an outer `let`, `set!`, or global binding.
 - Captured by a lambda whose closure outlives the region.
 - Returned from an enclosing function.
@@ -4377,6 +4535,8 @@ V1 primitive names and signatures are fixed as follows:
 | `(array-element-type type-expr)` | `type` | Requires fixed or compatibility dynamic array. |
 | `(array-length type-expr)` | `i64` | Requires fixed array. Compatibility dynamic arrays reject this. |
 | `(array-dynamic? type-expr)` | `bool` | True for `(Array T)`, false for `(Array T n)`. |
+| `(tuple-element-count type-expr)` | `i64` | Requires tuple type. |
+| `(tuple-element-type type-expr index-expr)` | `type` | Zero-based tuple element type. |
 | `(function-param-count type-expr)` | `i64` | Requires function type. |
 | `(function-param-type type-expr index-expr)` | `type` | Zero-based parameter type. |
 | `(function-return-type type-expr)` | `type` | Function return type. |
@@ -4402,9 +4562,9 @@ diagnostic should name the primitive and the expected kind, for example
 
 V1 reflection may classify reserved/partial shapes with `type-kind` and
 `type-key`, but detailed pointer/reference/region reflection is deferred to the
-raw-pointer and reference owning issues. Tuple element introspection is also
-deferred; tuple types can be keyed and classified but are not a generator target
-for v1.
+raw-pointer and reference owning issues. Tuple types can be keyed, classified,
+and inspected by arity and zero-based element type; tuple reflection exposes no
+runtime tuple descriptor.
 
 Nominal identity is two-part:
 
@@ -4657,6 +4817,10 @@ operations; IDs `100` and above mirror the current exported
 | 141 | `expr-binding-clause-list-tail` |
 | 142 | `expr-binding-clause-list-nth` |
 | 143 | `expr-binding-clause-list->expr-list` |
+| 144 | `module-name` |
+| 145 | `module-hook` |
+| 146 | `expr-string` |
+| 147 | `expr-struct-set` |
 
 The operation catalog deliberately does not assign `TypeInfo` constructor or
 reflection helper operations yet. `TypeInfo` value shapes are public, but the
@@ -5040,16 +5204,19 @@ names directly. `length` remains a transitional compatibility builtin for
 arrays and string handles.
 
 User-facing fixed-arity string concatenation is the stdlib macro
-`stdlib/str_cat.tl`'s `(str-cat ...)`; incremental builders should use
-`stdlib/text_buf.tl`. `str-cat` uses direct one-allocation helpers for two to
-five operands and expands longer calls to an internal `string-concat-all` call
-over a packed `(Array String)`, so long calls no longer allocate chunk
-intermediates. `string-append`, `string-concat`, and the fixed-arity
+`stdlib.str_cat`'s `(str_cat.str-cat ...)`; incremental builders should use
+`stdlib.text_buf`. Legacy path imports can still call unqualified `str-cat`.
+`str-cat` uses direct one-allocation helpers for two to five operands and
+expands longer calls to an internal `string-concat-all` call over a packed
+`(Array String)`, so long calls no longer allocate chunk intermediates.
+`string-append`, `string-concat`, and the fixed-arity
 `string-concat3`/`string-concat4`/`string-concat5` helpers remain accepted as
 deprecated low-level compatibility plumbing for legacy code, but they are not
 the documented public concatenation surface. The staged lint rule is enabled
 explicitly with `typelisp lint --deprecated-string-concat` until the remaining
 in-tree migrations are complete.
+`typelisp lint --redundant-function-name` similarly stages detection of local
+functions and macros whose names repeat their module prefix.
 
 - `make-array` checks the runtime length before allocation. Negative lengths and
   `length * sizeof(type)` overflow call the same `tl_oob_abort` runtime trap
@@ -5105,7 +5272,7 @@ codegen:
 | Symbol(s) | Disposition |
 |-----------|-------------|
 | `tl_alloc`, `tl_region_mark`, `tl_region_reset`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_current`, `tl_arena_set`, `tl_arena_destroy`, `tl_arena_poison_enable`, `tl_thread_init`, `tl_thread_entry_ptr` | Core allocator/arena/TLS substrate. Current-arena TLS reads/writes can be expressed from TypeLisp with the `tls-current-arena` intrinsics described below; page ownership, region reset, arena creation/destruction, thread entry, and public raw helper compatibility remain backend-owned. |
-| `tl_memcpy` | Core overlap-safe block-copy primitive; it is the primitive that source code and lowering use for bulk copies. |
+| `tl_memcpy`, `tl_memchr` | Core byte-copy/search primitives; `tl_memcpy` is the overlap-safe primitive that source code and lowering use for bulk copies, and `tl_memchr` is the allocation-free primitive for borrowed byte searches. |
 | `__chkstk` | Windows/MSVC ABI helper required for large stack frames. |
 | `tl_setup_argv`, `_tl_start` | Windows freestanding entry bootstrap: build argv from `GetCommandLineA`, clear the current-arena TEB slot, call `main`, and exit through `ExitProcess`. |
 | `tl_profile_alloc_total`, `tl_profile_alloc_live`, `tl_profile_alloc_peak`, `tl_profile_alloc_reset_peak` | Stdlib profile accessors backed by counters maintained inside the allocator core. |
@@ -5596,13 +5763,15 @@ preferred v1 surface for long-running tools that want deterministic, safe
 reclamation between phases.
 
 ```lisp test=check name=with-arena-example
+(import stdlib.array)
+
 (define (process-phase [input : String]) : i64
   (with-arena phase
     (let
-      [buf : (Array i64) (make-array i64 100)]
+      [buf : (Array i64) (array.make-array i64 100)]
       (begin
-        (array-set! buf 0 42)
-        (array-ref buf 0)))))
+        (array.array-set! buf 0 42)
+        (array.array-ref buf 0)))))
 ```
 
 This example uses the current compatibility dynamic-buffer surface. The
@@ -5968,14 +6137,16 @@ not the future safe reference/borrow model (#182), not a replacement for
   values, and named aggregate shapes containing non-cloneable fields.
 
 ```lisp test=ignore name=dynamic-array-aliasing reason="current compatibility aliasing behavior; future move checker rejects copied array handles"
+(import stdlib.array)
+
 (define (main) : i64
   (let
-    [a : (Array i64) (make-array i64 1)]
+    [a : (Array i64) (array.make-array i64 1)]
     (let
       [b : (Array i64) a]
       (begin
-        (array-set! a 0 42)
-        (array-ref b 0)))))
+        (array.array-set! a 0 42)
+        (array.array-ref b 0)))))
 ```
 
 ---
@@ -6043,8 +6214,8 @@ not the future safe reference/borrow model (#182), not a replacement for
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
-| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if` and scalar-lane varying `match` subset are implemented, including value-producing scalar lane selects |
-| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if/match subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked scalar-lane `if`/`match`, enum/payload varying match, and out-of-line varying calls remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
+| SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if`, scalar-lane varying `match`, and enum tag/payload varying `match` subset are implemented, including value-producing scalar lane selects |
+| Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if/match subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked scalar-lane `if`/`match`, vectorized enum payload gather/match lowering beyond the scalar reference path, and implementation of the specified v1 private out-of-line SPMD call ABI remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |
 | Runtime SIMD dispatch (`defdispatch`) | Implemented for scalar/AVX2/AVX-512 variants with cached runtime selection and end-to-end selection verification |
 | Windows region helpers | Implemented for `tl_region_mark`/`tl_region_reset` and `with-arena` scoped reclamation |
 | Complete source locations for all semantic errors | Partial |
@@ -6117,28 +6288,28 @@ Recoverable failures are represented with ordinary concrete enums. TypeLisp
 does not expose generic `Option<T>` / `Result<T,E>` type syntax, generic
 functions, traits, trait objects, vtables, or runtime type-erased dispatch for
 recoverable errors. Reuse comes from module-emitting stdlib macros and
-remaining comptime-generated concrete result declarations: the generator emits
-nominal enum types and helper functions for the requested payload/error type
-keys.
+hand-written monomorphic concrete enums. The stdlib macros emit nominal enum
+types and helper functions for the requested payload/error type keys.
 
 The generated-family identity is a stable key, not a runtime type object:
 
 - Absence-only family key: `stdlib.option.generated.<payload-type-key>`.
 - Recoverable-error family key:
-  `result:<success-type-key>:<error-type-key>`.
-- Module-macro generated option keys include the macro identity and
-  `type-key`, so repeated imports of `(option T)` reuse the same concrete
-  module and type.
+  `stdlib.result.generated.<success-type-key>.<error-type-key>`.
+- Module-macro generated option/result keys include the macro identity and
+  `type-key` arguments, so repeated imports of `(option T)` or `(result T E)`
+  reuse the same concrete module and type.
 - Display names are deterministic ASCII identifiers derived from those keys.
   Options expose module-relative names such as `option_i64.Option`,
   `option_i64.some`, `option_i64.none`, `option_i64.is-some?`,
-  `option_i64.value-or`, and `option_i64.map`; result-family compatibility
-  declarations keep names such as `Result_String_IoError`,
-  `Ok_String_IoError`, and `Err_String_IoError`.
+  `option_i64.value-or`, and `option_i64.map`. Results expose module-relative
+  names such as `result_i64_string.Result`, `result_i64_string.ok`,
+  `result_i64_string.err`, `result_i64_string.is-ok?`,
+  `result_i64_string.value-or`, and `result_i64_string.map`.
 
-Where no stdlib module macro or generated result family is available,
-hand-written monomorphic enums are the source equivalent. Use `Maybe*` or
-`Option*` names for absence-only APIs and `Result*` names for APIs that
+Where no stdlib module macro is available, hand-written monomorphic enums are
+the source equivalent. Use `Maybe*` or `Option*` names for absence-only APIs
+and `Result*` names for APIs that
 distinguish success from an error value. Matches must be exhaustive; omitted
 variants are rejected by the type checker.
 
@@ -6316,7 +6487,7 @@ Selected Command Forms:
   typelisp inspect <file.tlci>
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name]
   typelisp test [<file.tl>] [--check]
 ```
 
@@ -6331,9 +6502,15 @@ an explicit package manifest. `build --locked` requires a matching
 pins and rewrites `typelisp.lock`. These lock-policy flags are valid only for
 package builds. `fmt --check` reports files that would change
 without writing them, while `lint --check` exits non-zero when lint findings are
-present. `lint --deprecated-string-concat` enables the staged deprecation rule
-for user-facing concat primitives. Without explicit files, `fmt` and `lint`
-default to the nearest `typelisp.pkg` upward. `test --check` type-checks generated inline test
+present. Package lint discovers sources from the nearest manifest when no
+explicit file is supplied; dead-code lint keeps all library top-level
+declarations as API roots and reports unreachable binary-package declarations
+from entry/test/generated roots. `lint --deprecated-string-concat` enables the
+staged deprecation rule for user-facing concat primitives, and
+`lint --redundant-function-name` enables the staged module-prefix name rule.
+Without explicit files, `fmt` and `lint` default to the nearest
+`typelisp.pkg` upward.
+`test --check` type-checks generated inline test
 harnesses without assembling or running them; `test` defaults to the host target
 unless `--target <target>` is supplied.
 
@@ -6477,13 +6654,15 @@ storage. Target C ABI call/return lowering is a separate backend contract.
 ### Compatibility dynamic array
 
 ```lisp test=run name=dynamic-array exit=30 stdout=""
+(import stdlib.array)
+
 (define (main) : i64
   (let
-    [arr : (Array i64) (make-array i64 5)]
+    [arr : (Array i64) (array.make-array i64 5)]
     (begin
-      (array-set! arr 0 10)
-      (array-set! arr 1 20)
-      (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
+      (array.array-set! arr 0 10)
+      (array.array-set! arr 1 20)
+      (+ (array.array-ref arr 0) (array.array-ref arr 1)))))  ; returns 30
 ```
 
 This remains a runnable compatibility example for today's compiler. New public

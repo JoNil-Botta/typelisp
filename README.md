@@ -205,10 +205,11 @@ struct/enum fields, and (optionally) `let` bindings.
 (cast 300 : u8)
 
 ;; Zero/identity initialization
+(import stdlib.array)
 (let ([n : i64 (init)]
       [text : String (init : String)]
       [items : (Array i64 4) (init : (Array i64 4))])
-  (+ n (array-ref items 0)))
+  (+ n (array.array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,
@@ -481,6 +482,11 @@ commands. Orphan modules, alternate entries, and other out-of-closure files are
 checked by explicit `typelisp check <file>`, `typelisp doc --test <file>`, or
 package `typelisp test` coverage when they are intended to stand alone.
 
+Package `lint` checks every discovered package source. Dead-code lint treats
+every top-level declaration in `staticlib`/`lib` packages as an external API
+root, while `bin` packages report declarations unreachable from the entry,
+top-level tests, macro-import calls, or generated-declaration metadata.
+
 Package builds load local dependency manifests into a normalized DAG keyed by
 manifest path before code generation. Transitive dependencies are built once per
 package build invocation, diamond graphs share the common archive build,
@@ -538,14 +544,16 @@ documentation and are ignored by the doctest scanner. `;#` and `;:` are the
 only public documentation comment syntaxes.
 
 Inline tests can live next to source declarations as `(test name body...)`
-items. Normal `check`, `compile`, `build`, and `run` ignore them. `typelisp
-test <file.tl>` loads the import graph, turns inline tests owned by the
-requested source into private unit-returning functions, generates a test-owned
-`main`, and runs the resulting executable. Imported files provide runtime
-declarations but do not contribute their own inline tests to that harness. With
-`typelisp test`, the loader enables the `test` cfg predicate, so source-local
-fixture declarations may be gated with `(cfg test ...)` and skipped by normal
-production commands. With
+items. Normal `check`, `compile`, `build`, and `run` type-check inline tests
+owned by the explicitly named source or the package's own discovered sources,
+with `test` cfg helpers enabled for that preflight, then drop `test` items
+before production lowering and codegen. Imported stdlib and dependency files
+provide runtime declarations only; their inline tests are not checked merely
+because they were imported. `typelisp test <file.tl>` loads the import graph,
+turns inline tests owned by the requested source into private unit-returning
+functions, generates a test-owned `main`, and runs the resulting executable.
+Imported files provide runtime declarations but do not contribute their own
+inline tests to that harness. With
 no file, `typelisp test` discovers the nearest package and runs package sources
 that contain top-level inline tests, plus package-local `tests/**/*.tl`
 integration test files; stdlib and dependency imports provide runtime
@@ -649,12 +657,14 @@ argv, filesystem, and richer printing helpers live in `stdlib/io.tl` and
 Import `stdlib/string.tl` for public string inspection and parsing helpers:
 `string-length`, `string-ref`/`char-at`, `string-eq`/`string=?`, and
 `string->int`.
-For user-facing string concatenation, import `stdlib/str_cat.tl` and use
-`str-cat` for fixed-arity joins; use `stdlib/text_buf.tl` for incremental
-builders. `string-append`/`string-concat` are deprecated low-level
-compatibility primitives kept for legacy code. The
-staged lint rule is available with `typelisp lint --deprecated-string-concat`
-while the remaining in-tree migrations land.
+For user-facing string concatenation, import `stdlib.str_cat` and use
+`str_cat.str-cat` for fixed-arity joins; use `stdlib.text_buf` for incremental
+builders. Legacy path imports can still use unqualified `str-cat`.
+`string-append`/`string-concat` are deprecated low-level compatibility
+primitives kept for legacy code. The staged lint rule is available with
+`typelisp lint --deprecated-string-concat` while the remaining in-tree
+migrations land. `typelisp lint --redundant-function-name` enables the staged
+rule for functions or macros that repeat their module prefix in the local name.
 
 ### Memory and aliasing
 
@@ -755,8 +765,9 @@ views, scoped regions, ordinary first-class arenas, raw pointer ownership
 claims, live mutable aliases, and guards do not cross safe task-thread
 boundaries. Aggregate results that leave a worker must live in a spanning
 owner, or in a wrapper that explicitly copies them into one. `stdlib/sync.tl`
-provides the first concrete synchronized surfaces: `ChannelI64`,
-`ChannelI64PairChannel`, `ChannelString`, and `MutexI64`.
+provides the first concrete synchronized surfaces: generated `(channel i64)`
+modules, generated `(mutex i64)` modules, `ChannelI64PairChannel`, and
+`ChannelString`.
 
 Task threading is separate from SPMD `foreach`. SPMD is data-parallel lowering
 inside one task; task threading creates independently scheduled workers with

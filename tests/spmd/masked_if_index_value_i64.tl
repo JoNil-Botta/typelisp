@@ -1,20 +1,22 @@
 ;; SPMD masked-if corpus (#2205): AVX-512 masked branches whose condition and
 ;; stored values use the foreach index as a varying lane value, not only as an
 ;; array address. The n = 13 length exercises a non-multiple-of-8 tail.
+(import stdlib.array)
+
 (define (init-out [out : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i -99)
+        (array.array-set! out i -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (if (< i 6)
-      (array-set! out i i)
-      (array-set! out i (+ i 1)))))
+      (array.array-set! out i i)
+      (array.array-set! out i (+ i 1)))))
 
 (define (fill-scalar [out : (Array i64)] [n : i64]) : unit
   (let
@@ -22,8 +24,8 @@
     (while (< i n)
       (begin
         (if (< i 6)
-          (array-set! out i i)
-          (array-set! out i (+ i 1)))
+          (array.array-set! out i i)
+          (array.array-set! out i (+ i 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -33,7 +35,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -42,8 +44,8 @@
 (define (main) : i64
   (let
     [n : i64 13]
-    [got : (Array i64) (make-array i64 n)]
-    [want : (Array i64) (make-array i64 n)]
+    [got : (Array i64) (array.make-array i64 n)]
+    [want : (Array i64) (array.make-array i64 n)]
     (begin
       (init-out got n)
       (init-out want n)

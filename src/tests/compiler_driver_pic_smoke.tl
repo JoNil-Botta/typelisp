@@ -1,12 +1,15 @@
 ;; compiler_driver_pic_smoke.tl - Driver-level smoke for no-entry PIC images.
-(import "../../stdlib/string.tl")
+(import stdlib.string)
+(import stdlib.vector)
 (import "../compiler_driver_core.tl")
 
-(define (compiler-driver-pic-smoke-roots) : StringVec
-  (string-vec-push (string-vec-push (string-vec-new) "stdlib") "../stdlib"))
+(define (compiler-driver-pic-smoke-roots) : vector.StringVec
+  (vector.string-vec-push
+    (vector.string-vec-push (vector.string-vec-new) "stdlib")
+    "../stdlib"))
 
 (define (compiler-driver-pic-smoke-contains? [text : String] [needle : String]) : bool
-  (string-contains (& text) (& needle)))
+  (string.string-contains (& text) (& needle)))
 
 (define (compiler-driver-pic-smoke-paths-contain?
   [paths : AstDeclPathList]
@@ -24,7 +27,7 @@
     [asm : String (struct-get output asm)]
     [fixups : String (struct-get output fixups)]
     (and
-      (> (string-length asm) 0)
+      (> (string.string-length asm) 0)
       (compiler-driver-pic-smoke-contains? asm ".L_tl_pic_image_base:\n")
       (not (compiler-driver-pic-smoke-contains? asm "_tl_start"))
       (not (compiler-driver-pic-smoke-contains? asm "main:"))
@@ -43,8 +46,9 @@
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty))
-    [(OkCompilerDriverPic output) (compiler-driver-pic-smoke-output-ok? output)]
-    [(ErrCompilerDriverPic _) false]))
+    [(ResultCompilerDriverPic.Ok output)
+      (compiler-driver-pic-smoke-output-ok? output)]
+    [(ResultCompilerDriverPic.Err _) false]))
 
 (define (compiler-driver-pic-smoke-core-macros-ok?
   [target : CompilerBackendTarget]) : bool
@@ -86,10 +90,10 @@
     (compiler-optimize-default-level)
     (BackendModeScalar)
     (compiler-cfg-empty))
-    [(OkCompilerDriverPic _) false]
-    [(ErrCompilerDriverPic diag)
+    [(ResultCompilerDriverPic.Ok _) false]
+    [(ResultCompilerDriverPic.Err diag)
       (compiler-driver-pic-smoke-contains?
-        (compiler-diagnostic-render diag)
+        (compiler-diagnostic-render (box-get diag))
         "backend: --pic supports only internal references")]))
 
 (define (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?) : bool

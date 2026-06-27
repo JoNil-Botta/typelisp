@@ -1,11 +1,12 @@
 ;; windows_param_preassign_backend.tl - backend smoke for #3493's Win64
 ;; incoming scalar parameter homes.
+(import stdlib.io)
 (import "../../src/compiler_backend.tl")
 
 (define (win-param-preassign-assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
-    (panic message)))
+    (io.panic message)))
 
 (define (win-param-preassign-globals) : CompilerIrGlobalList
   (compiler-ir-global-cons

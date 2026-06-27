@@ -39,8 +39,14 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
 - `io_stdio_bytes.tl` covers fixed-byte stdin wrappers, short reads at EOF, and
   zero-byte reads preserving the sticky EOF state.
 - `byte_buf_api.tl` covers the standalone import/build/run path for the owned
-  `ByteBuf` core, including array and string append/copy boundaries, binary
-  NUL/high-byte storage, snapshot independence, and clear/reuse behavior.
+  `ByteBuf` core, including construction and capacity clamping, growth and
+  reserve, push, set/ref/get, array/string/borrowed-bytes append and copy
+  boundaries, borrowed and mutable byte views, binary NUL/high-byte storage,
+  snapshot independence, string round trips, and clear/reuse behavior.
+- `byte_buf_core_api.tl` covers the narrow append-only builder import path used
+  by hot compiler/runtime modules, including reserve, push, array and string
+  append, binary NUL/high-byte preservation, and explicit array/string finish
+  boundaries.
 - `io_stdio_pipe_short_read.tl` is typechecked like the other witnesses and is
   also run by `scripts/verify-stdlib.sh` through a native pipe to ensure
   positive short pipe reads do not report EOF before all bytes arrive.
@@ -52,7 +58,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   `hashmap_mut_borrow_insert_or_update_live.tl` fixture verifies that a live
   map-level mutable borrow rejects insert-or-update. The
   `hashmap_mut_entry_*_live.tl` fixtures verify that live mutable entries reject
-  aliasing entries, value borrows, puts, and resizes.
+  aliasing entries, value borrows, puts, and resizes. The
+  `hashmap_macro_*_live.tl` fixtures verify the generated module wrappers keep
+  the same borrowed-value and mutable-entry aliasing policy.
 - `stdlib/set.tl` inline tests cover generated `(set String)` and `(set i64)`
   modules, borrowed string-key contains/remove wrappers, duplicate insert,
   collision chains, tombstone reuse, growth/rehash, missing remove,
@@ -60,8 +68,8 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   identity.
 - `sync_api.tl` keeps the standalone native synchronization runtime coverage:
   blocking send/recv success paths in a single thread, FIFO wraparound, raw
-  handle packing, atomic-arena string transfer, resource close, `MutexI64`
-  guard locking, guarded get/set/add, close rejection while a guard is live,
+  handle packing, atomic-arena string transfer, resource close, generated
+  `mutex_i64.Mutex` guard locking, guarded get/set/add, close rejection while a guard is live,
   and fail-closed double close. Pure invalid-capacity checks now live inline in
   `stdlib/sync.tl`.
 - `process_api.tl` remains a runnable fixture for command-validation paths that
@@ -101,10 +109,6 @@ Inline stdlib coverage:
   end-of-options handling, missing-value and unknown-option diagnostics,
   repeated short/long options, and the intentionally unsupported
   `--name=value` spelling.
-- `byte_buf.tl` owns inline tests for the owned mutable byte-buffer core:
-  construction and capacity clamping, growth and reserve, push, set/ref/get,
-  append from arrays and strings, live range copy, clear/reuse, copy-out
-  snapshots, string round trips, and NUL/high-byte binary storage.
 - `comptime_api.tl` owns inline tests for expression macro operand values,
   variadic `Expr` lists, syntax matching, and generated expression results
   while preserving the explicit `stdlib.comptime` module-alias import shape.
@@ -197,8 +201,9 @@ Inline stdlib coverage:
   accessors, vector-backed env override construction, validation,
   duplicate-name order, list conversion, and result/error predicates.
 - `sync.tl` owns inline tests for invalid bounded channel capacities and raw
-  handle field-count constants. Native blocking send/recv and mutex behavior
-  remains in `sync_api.tl`.
+  handle field-count constants. Native blocking send/recv, generated
+  `(channel i64)` module use, duplicate module identity, and mutex behavior
+  remain in `sync_api.tl`.
 - `thread.tl` owns inline tests for worker-count shape, deterministic affinity
   helper math, and invalid semaphore creation. Native spawn/join behavior
   remains in `thread_api.tl`.

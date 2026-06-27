@@ -321,6 +321,10 @@ if grep -q "typelisp inspect" "$USAGE_ERR"; then
 else
     HAS_INSPECT_COMMAND=0
 fi
+run_cmd version "$COMPILER" --version
+assert_success
+assert_stderr_empty
+assert_contains "$out" "typelisp "
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
     printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"
@@ -403,6 +407,23 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     assert_contains "$out" "Wrote "
 fi
 assert_contains "$WORKDIR/hello.s" "main:"
+
+EMIT_IR_MACRO_SRC="$WORKDIR/emit-ir-core-macro.tl"
+EMIT_IR_MACRO_OUT="$WORKDIR/emit-ir-core-macro.ir"
+cat > "$EMIT_IR_MACRO_SRC" <<'EOF'
+(define (main) : i64
+  (if (and true true)
+    42
+    1))
+EOF
+run_cmd compile-emit-ir-core-macro "$COMPILER" compile "$EMIT_IR_MACRO_SRC" --emit-ir --target "$HOST_TARGET" --opt-level 2 -o "$EMIT_IR_MACRO_OUT" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+assert_success
+assert_stderr_empty
+if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+    assert_contains "$out" "Wrote "
+fi
+[ -s "$EMIT_IR_MACRO_OUT" ] || fail "compile --emit-ir did not write IR summary"
+assert_contains "$EMIT_IR_MACRO_OUT" "score"
 
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
 echo "[public-tools] clean source artifacts"
@@ -606,6 +627,168 @@ run_cmd normal-doctest-package-build "$COMPILER" build --manifest-path "$DOCTEST
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"
+
+echo "[public-tools] normal command inline test typechecking"
+INLINE_NORMAL="$WORKDIR/normal-inline-tests"
+mkdir -p "$INLINE_NORMAL"
+
+INLINE_BAD="$INLINE_NORMAL/bad-inline.tl"
+cat > "$INLINE_BAD" <<'EOF'
+(define (main) : i64 0)
+(test bad-inline
+  (+ true 1))
+EOF
+INLINE_BAD_DIAG=$(native_arg_path "$INLINE_BAD")
+
+run_cmd normal-inline-check "$COMPILER" check "$INLINE_BAD"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
+INLINE_BAD_ASM="$INLINE_NORMAL/bad-inline.s"
+run_cmd normal-inline-compile "$COMPILER" compile "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_ASM"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+[ ! -f "$INLINE_BAD_ASM" ] || fail "normal-inline-compile wrote assembly despite inline test failure"
+
+INLINE_BAD_BATCH_ASM="$INLINE_NORMAL/bad-inline-batch.s"
+INLINE_BAD_BATCH_LIST="$INLINE_NORMAL/bad-inline-batch.txt"
+INLINE_BAD_BATCH_INPUT=$(native_arg_path "$INLINE_BAD")
+INLINE_BAD_BATCH_ASM_ARG=$(native_arg_path "$INLINE_BAD_BATCH_ASM")
+printf '%s|%s\n' "$INLINE_BAD_BATCH_INPUT" "$INLINE_BAD_BATCH_ASM_ARG" > "$INLINE_BAD_BATCH_LIST"
+run_cmd normal-inline-compile-batch "$COMPILER" compile --batch "$INLINE_BAD_BATCH_LIST" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+assert_contains "$err" "compile: batch source failed: $INLINE_BAD_BATCH_INPUT"
+[ ! -f "$INLINE_BAD_BATCH_ASM" ] || fail "normal-inline-compile-batch wrote assembly despite inline test failure"
+
+INLINE_BAD_EXE="$INLINE_NORMAL/bad-inline$HOST_EXE_SUFFIX"
+run_cmd normal-inline-build "$COMPILER" build "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_EXE"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+[ ! -f "$INLINE_BAD_EXE" ] || fail "normal-inline-build wrote an executable despite inline test failure"
+
+run_cmd normal-inline-run "$COMPILER" run "$INLINE_BAD" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_BAD_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
+INLINE_CFG_PROD="$INLINE_NORMAL/cfg-helper-production-use.tl"
+cat > "$INLINE_CFG_PROD" <<'EOF'
+(cfg test
+  (define (inline-helper) : i64 41))
+
+(define (main) : i64
+  (inline-helper))
+
+(test helper-visible-to-tests
+  (let [_ : i64 (+ (inline-helper) 1)] unit))
+EOF
+INLINE_CFG_PROD_DIAG=$(native_arg_path "$INLINE_CFG_PROD")
+run_cmd normal-inline-cfg-helper-production-use "$COMPILER" check "$INLINE_CFG_PROD"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_CFG_PROD_DIAG:5:"
+assert_contains "$err" "typecheck: unbound name inline-helper"
+
+INLINE_SAME="$INLINE_NORMAL/same-path.tl"
+INLINE_BACKENDS="$INLINE_NORMAL/backends.txt"
+cat > "$INLINE_BACKENDS" <<'EOF'
+scalar
+avx2
+avx512
+EOF
+
+while IFS= read -r mode || [ -n "$mode" ]; do
+    [ -n "$mode" ] || continue
+    opt=0
+    while [ "$opt" -le 2 ]; do
+        case_base="normal-inline-codegen-$mode-opt$opt"
+        with_asm="$INLINE_NORMAL/$case_base.with-tests.s"
+        without_asm="$INLINE_NORMAL/$case_base.without-tests.s"
+
+        cat > "$INLINE_SAME" <<'EOF'
+(define (main) : i64 42)
+
+(cfg test
+  (define (inline-helper) : i64 41))
+
+(test helper-visible
+  (let [_ : i64 (+ (inline-helper) 1)] unit))
+EOF
+        run_cmd "$case_base-with-tests" "$COMPILER" compile "$INLINE_SAME" --target "$HOST_TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$with_asm"
+        if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$mode" != scalar ]; then
+            assert_failure
+            assert_stdout_empty
+            assert_contains "$err" "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)"
+            opt=$((opt + 1))
+            continue
+        fi
+        if [ "$HOST_ACTION_ENABLED" -eq 0 ] && [ "$mode" != scalar ]; then
+            if grep -F -- "compile: --backend-mode $mode requires the Rust compile driver until selfhost SIMD support (#1014)" "$err" > /dev/null; then
+                assert_failure
+                assert_stdout_empty
+                opt=$((opt + 1))
+                continue
+            fi
+        fi
+        assert_success
+        assert_stderr_empty
+
+        cat > "$INLINE_SAME" <<'EOF'
+(define (main) : i64 42)
+EOF
+        run_cmd "$case_base-without-tests" "$COMPILER" compile "$INLINE_SAME" --target "$HOST_TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$without_asm"
+        assert_success
+        assert_stderr_empty
+
+        if ! cmp -s "$with_asm" "$without_asm"; then
+            fail "$case_base emitted different assembly with inline tests present"
+        fi
+
+        opt=$((opt + 1))
+    done
+done < "$INLINE_BACKENDS"
+
+INLINE_PKG="$INLINE_NORMAL/package-source-enumeration"
+mkdir -p "$INLINE_PKG/src"
+cat > "$INLINE_PKG/typelisp.pkg" <<'EOF'
+(package
+  (name "inline-owned")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+maybe_strip_manifest_kind "$INLINE_PKG/typelisp.pkg"
+cat > "$INLINE_PKG/src/main.tl" <<'EOF'
+(define (main) : i64 0)
+EOF
+cat > "$INLINE_PKG/src/orphan.tl" <<'EOF'
+(define (orphan) : i64 1)
+(test orphan-bad
+  (+ true 1))
+EOF
+INLINE_PKG_ORPHAN_DIAG="inline-owned/src/orphan.tl"
+
+run_cmd normal-inline-package-check "$COMPILER" check --manifest-path "$INLINE_PKG/typelisp.pkg"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_PKG_ORPHAN_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
+
+run_cmd normal-inline-package-build "$COMPILER" build --manifest-path "$INLINE_PKG/typelisp.pkg" --target "$HOST_TARGET"
+assert_failure
+assert_stdout_empty
+assert_contains "$err" "$INLINE_PKG_ORPHAN_DIAG:3:"
+assert_contains "$err" "typecheck: integer operator expects matching integer operands"
 
 UNSAFE_REACH="$WORKDIR/unsafe-import-reach"
 mkdir -p "$UNSAFE_REACH"
@@ -1794,6 +1977,64 @@ EOF
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "cannot combine input paths with --manifest-path"
+
+    LINT_PKG_BIN="$WORKDIR/lint-pkg-bin"
+    mkdir -p "$LINT_PKG_BIN/src"
+    cat > "$LINT_PKG_BIN/typelisp.pkg" <<'EOF'
+(package
+  (name "lint_pkg_bin")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl"))
+EOF
+    maybe_strip_manifest_kind "$LINT_PKG_BIN/typelisp.pkg"
+    cat > "$LINT_PKG_BIN/src/main.tl" <<'EOF'
+(define (main) : i64
+  (used))
+
+(define (used) : i64
+  42)
+
+(define (dead-bin) : i64
+  7)
+
+;; lint-allow: dead-code
+(define (suppressed-bin) : i64
+  8)
+EOF
+    run_cmd lint-package-bin "$COMPILER" lint --check --manifest-path "$LINT_PKG_BIN/typelisp.pkg"
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "dead-bin"
+    assert_contains "$out" "unreachable from package entry/test roots"
+    assert_contains "$out" "lint: 1 finding(s)"
+    assert_not_contains "$out" "suppressed-bin"
+
+    LINT_PKG_LIB="$WORKDIR/lint-pkg-lib"
+    mkdir -p "$LINT_PKG_LIB/src"
+    cat > "$LINT_PKG_LIB/typelisp.pkg" <<'EOF'
+(package
+  (name "lint_pkg_lib")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/main.tl"))
+EOF
+    maybe_strip_manifest_kind "$LINT_PKG_LIB/typelisp.pkg"
+    cat > "$LINT_PKG_LIB/src/main.tl" <<'EOF'
+(define (main) : i64
+  (used))
+
+(define (used) : i64
+  42)
+
+(define (dead-lib) : i64
+  7)
+EOF
+    run_cmd lint-package-lib "$COMPILER" lint --check --manifest-path "$LINT_PKG_LIB/typelisp.pkg"
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+    assert_not_contains "$out" "dead-lib"
 
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
     run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint

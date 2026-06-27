@@ -1,7 +1,4 @@
 .data
-.globl _tl_stdlib_runtime_stdlib_runtime_runtime_str_view_arena
-_tl_stdlib_runtime_stdlib_runtime_runtime_str_view_arena:
-    .quad 0
 .globl _tl_shared_shared
 _tl_shared_shared:
     .quad 2
@@ -367,6 +364,22 @@ tl_memcpy:
     movq %r11, %rcx
     andq $7, %rcx
     rep movsb
+    ret
+    .globl tl_memchr
+tl_memchr:
+    testq %rsi, %rsi
+    jle .Ltl_memchr_not_found
+    movzbl %dl, %edx
+    xorq %rax, %rax
+.Ltl_memchr_loop:
+    cmpb %dl, (%rdi,%rax)
+    je .Ltl_memchr_found
+    incq %rax
+    cmpq %rsi, %rax
+    jl .Ltl_memchr_loop
+.Ltl_memchr_not_found:
+    movq $-1, %rax
+.Ltl_memchr_found:
     ret
     .globl tl_thread_init
 tl_thread_init:

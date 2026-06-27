@@ -1,4 +1,6 @@
-;: SPEC SPMD contract: masked-if branches reject indirect varying calls.
+;: SPEC SPMD v1 private-call ABI: masked branches reject function-value calls.
+(import stdlib.array)
+
 (define (bump [x : i64]) : i64
   (+ x 1))
 
@@ -7,6 +9,6 @@
     [f : (-> i64 i64) bump]
     (foreach
       ([i : i64 0 n])
-      (if (> (array-ref xs i) 0)
-        (array-set! out i (f (array-ref xs i)))
-        (array-set! out i 0)))))
+      (if (> (array.array-ref xs i) 0)
+        (array.array-set! out i (f (array.array-ref xs i)))
+        (array.array-set! out i 0)))))

@@ -6,6 +6,18 @@
 (import stdlib.string)
 (import "format_render_buf.tl")
 
+(define (fmt-len [text : String]) : i64
+  (string.string-length text))
+
+(define (fmt-eq? [left : String] [right : String]) : bool
+  (string.string-eq left right))
+
+(define (fmt-cat [left : String] [right : String]) : String
+  (string.string-append left right))
+
+(define (fmt-cat3 [left : String] [middle : String] [right : String]) : String
+  (string.string-concat3 left middle right))
+
 (defenum Doc
   (DEmpty)
   (DText String)
@@ -52,7 +64,7 @@
 (define (flat-width [doc : Doc]) : i64
   (match doc
     [(DEmpty) 0]
-    [(DText text) (string.string-length text)]
+    [(DText text) (fmt-len text)]
     [(DSoftLine) 1]
     [(DHardLine) 1000000]
     [(DConcat left right)
@@ -73,7 +85,7 @@
     acc
     (match doc
       [(DEmpty) acc]
-      [(DText text) (+ acc (string.string-length text))]
+      [(DText text) (+ acc (fmt-len text))]
       [(DSoftLine) (+ acc 1)]
       [(DHardLine) (+ acc 1000000)]
       [(DConcat left right)
@@ -96,7 +108,7 @@
     [(Rendered _ col) col]))
 
 (define (render-newline [indent : i64]) : RenderedDoc
-  (Rendered (string.string-append "\n" (spaces indent)) indent))
+  (Rendered (fmt-cat "\n" (spaces indent)) indent))
 
 ;; Render `doc` by appending into `buf` in place, returning the resulting column.
 ;; The buffer is owned by `render-doc-width` and threaded by reference, so the
@@ -113,7 +125,7 @@
     [(DEmpty) col]
     [(DText text)
       (let
-        [text-width : i64 (string.string-length text)]
+        [text-width : i64 (fmt-len text)]
         (begin
           (fmt-render-buf-append buf text)
           (+ col text-width)))]
@@ -149,7 +161,7 @@
   [flat : bool]) : RenderedDoc
   (match doc
     [(DEmpty) (Rendered "" col)]
-    [(DText text) (Rendered text (+ col (string.string-length text)))]
+    [(DText text) (Rendered text (+ col (fmt-len text)))]
     [(DSoftLine)
       (if flat
         (Rendered " " (+ col 1))
@@ -160,7 +172,7 @@
         [(Rendered left-text left-col)
           (match (render-doc-in (box-get right) width indent left-col flat)
             [(Rendered right-text right-col)
-              (Rendered (string.string-append left-text right-text) right-col)])])]
+              (Rendered (fmt-cat left-text right-text) right-col)])])]
     [(DNest extra inner)
       (render-doc-in (box-get inner) width (+ indent extra) col flat)]
     [(DGroup inner)
@@ -206,8 +218,8 @@
     [flat : String (render-doc-width doc 80)]
     [broken : String (render-doc-width doc 4)]
     (and
-      (string.string-eq flat "a b c")
-      (string.string-eq broken "a\n    b\n    c")
+      (fmt-eq? flat "a b c")
+      (fmt-eq? broken "a\n    b\n    c")
       (= (flat-width doc) 5))))
 
 (define (format-doc-repeat-text [count : i64]) : Doc
@@ -252,7 +264,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string.string-concat3 out " x" ""))
+          (set! out (fmt-cat3 out " x" ""))
           (set! i (+ i 1))))
       out)))
 
@@ -263,7 +275,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string.string-concat3 out "\n  x" ""))
+          (set! out (fmt-cat3 out "\n  x" ""))
           (set! i (+ i 1))))
       out)))
 
@@ -277,14 +289,13 @@
     [right-doc : Doc (format-doc-repeat-soft-right 16)]
     [right-flow : Doc (doc-group (doc-nest 2 right-doc))]
     [right-broken-flow : String (render-doc-width right-flow 3)]
-    [plain-ok : bool
-      (and (= (string.string-length rendered) 64) (= (flat-width doc) 64))]
+    [plain-ok : bool (and (= (fmt-len rendered) 64) (= (flat-width doc) 64))]
     [flow-ok : bool
       (and
-        (string.string-eq flat-flow (format-doc-repeat-soft-flat 16))
-        (string.string-eq broken-flow (format-doc-repeat-soft-broken 16)))]
+        (fmt-eq? flat-flow (format-doc-repeat-soft-flat 16))
+        (fmt-eq? broken-flow (format-doc-repeat-soft-broken 16)))]
     [right-ok : bool
-      (string.string-eq right-broken-flow (format-doc-repeat-soft-broken 16))]
+      (fmt-eq? right-broken-flow (format-doc-repeat-soft-broken 16))]
     (and plain-ok flow-ok right-ok)))
 
 (define (format-doc-seq-branching-ok?) : bool
@@ -297,11 +308,11 @@
     [with-a : Doc (doc-append (doc-text "a") tail)]
     [with-z : Doc (doc-append (doc-text "z") tail)]
     (and
-      (string.string-eq (render-doc-width base 80) "ab")
-      (string.string-eq (render-doc-width with-c 80) "abc")
-      (string.string-eq (render-doc-width with-d 80) "abd")
-      (string.string-eq (render-doc-width with-a 80) "abcd")
-      (string.string-eq (render-doc-width with-z 80) "zbcd"))))
+      (fmt-eq? (render-doc-width base 80) "ab")
+      (fmt-eq? (render-doc-width with-c 80) "abc")
+      (fmt-eq? (render-doc-width with-d 80) "abd")
+      (fmt-eq? (render-doc-width with-a 80) "abcd")
+      (fmt-eq? (render-doc-width with-z 80) "zbcd"))))
 
 (define (format-doc-self-test) : i64
   (let
@@ -310,10 +321,10 @@
     [hard : String (render-doc-width (sample-hard-line-doc) 80)]
     [empty : String (render-doc (doc-append (doc-empty) (doc-text "x")))]
     (begin
-      (unless (string.string-eq flat "alpha beta") (return 1))
-      (unless (string.string-eq broken "alpha\n  beta") (return 2))
-      (unless (string.string-eq hard "a\nb") (return 3))
-      (unless (string.string-eq empty "x") (return 4))
+      (unless (fmt-eq? flat "alpha beta") (return 1))
+      (unless (fmt-eq? broken "alpha\n  beta") (return 2))
+      (unless (fmt-eq? hard "a\nb") (return 3))
+      (unless (fmt-eq? empty "x") (return 4))
       (unless (format-doc-boxed-algebra-ok?) (return 5))
       (unless (format-doc-long-sequence-ok?) (return 6))
       (unless (format-doc-seq-branching-ok?) (return 7))

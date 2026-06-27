@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/arena.tl")
 (import "stdlib/sync.tl")
 (import "stdlib/thread.tl")
@@ -95,12 +96,13 @@
   [count : i64]) : unit
   (begin
     (channel-string-store-raw! channel ctx 0)
-    (array-set! ctx channel-string-raw-field-count count)))
+    (array.array-set! ctx channel-string-raw-field-count count)))
 
 (define (sync-string-integration-run [channel : ChannelString]) : i64
   (let
     [owner : Arena (arena-make-atomic)]
-    [ctx : (Array i64) (make-array i64 (+ channel-string-raw-field-count 1))]
+    [ctx : (Array i64)
+      (array.make-array i64 (+ channel-string-raw-field-count 1))]
     [expected : i64
       (sync-string-integration-expected-sum sync-string-integration-count)]
     [sent : i64 0]

@@ -71,6 +71,10 @@ reject_diag() {
             printf 'typecheck: cannot read mutably borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_entry_value_borrow_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `m.slots`' ;;
+        stdlib/tests/hashmap_macro_value_borrow_insert_live.tl)
+            printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
+        stdlib/tests/hashmap_macro_mut_entry_insert_live.tl)
+            printf 'typecheck: cannot read mutably borrowed place `m`' ;;
         stdlib/tests/process_borrowed_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/string_caller_result_escape.tl)

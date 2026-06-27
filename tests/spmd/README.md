@@ -65,9 +65,17 @@ falling back to scalar code.
 - `masked_if_match_i64.tl` - AVX-512-only varying `match` nested inside a
   masked varying `if` branch, covering branch-mask composition with match arm
   masks. Exit 42.
+- `varying_while_i64.tl` - AVX-512-only varying `while` over `n = 13` i64
+  lanes, covering per-lane loop convergence and a masked tail. Exit 42.
+- `masked_if_varying_while_i64.tl` - AVX-512-only varying `while` nested under
+  a masked varying `if`, covering parent branch masks plus loop-carried masks.
+  Exit 42.
 - `varying_match_i64.tl` - AVX-512-only value-producing varying `match` over
   scalar i64 literal patterns, wildcard fallback, and catch-all lane binding.
   Exit 42.
+- `varying_match_enum_payload.tl` - AVX-512/scalar reference varying `match`
+  over enum tag arms and supported i64 payload bindings, including mixed arms
+  and a tail. AVX2 reports the staged varying-match diagnostic. Exit 42.
 - `i8_mul_reject.tl` - scalar `foreach` byte multiplication fixture that
   compiles and exits 42 in scalar mode; explicit SIMD modes reject it with the
   documented 8-bit lane multiplication diagnostic.
@@ -124,11 +132,19 @@ Coverage map:
   `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and
   `masked_if_i16_u16.tl`.
 - AVX-512 scalar-lane varying `match` coverage lives in
-  `varying_match_i64.tl` and `masked_if_match_i64.tl`; AVX2 keeps explicit
-  staged diagnostics for these shapes.
+  `varying_match_i64.tl` and `masked_if_match_i64.tl`; enum tag/payload
+  varying-match coverage lives in `varying_match_enum_payload.tl` through the
+  scalar reference path. AVX2 keeps explicit staged diagnostics for these
+  shapes.
+- AVX-512 varying `while` coverage lives in `varying_while_i64.tl` and
+  `masked_if_varying_while_i64.tl`; AVX2 keeps an explicit staged diagnostic
+  for these shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
-  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`.
+  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The specified
+  v1 private out-of-line SPMD call ABI is feature-pending under #2852; the
+  current corpus keeps function-value/indirect varying calls rejected by the
+  safety fixtures.
 - `spmd-reduce` and `spmd-scan` scalar coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`.
@@ -147,8 +163,8 @@ Coverage map:
   scalar/SIMD comparison for the same reduction fixture.
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
   including outer mutation, unsupported `f64` min reduction, unsupported
-  floating-point scans, nested scan bodies, and indirect calls with varying
-  arguments.
+  floating-point scans, nested scan bodies, and function-value/indirect varying
+  calls that are outside the v1 private out-of-line call ABI.
 ## Running
 
 ```sh

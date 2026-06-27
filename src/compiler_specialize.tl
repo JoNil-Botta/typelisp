@@ -1,15 +1,14 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
-(import "../stdlib/io.tl")
-(import "../stdlib/text_buf.tl")
+(import stdlib.text_buf)
 (import "compiler_ctfe.tl")
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
 (import "compiler_parse_core.tl")
-(import "../stdlib/string.tl")
-(import "../stdlib/hashmap.tl")
+(import stdlib.string)
+(import stdlib.hashmap)
 
 (defstruct GenRegistry
-  (index StringI64Map)
+  (index hashmap.StringI64Map)
   (decls (Array AstDecl))
   (len i64))
 
@@ -29,15 +28,15 @@
   (SpecSomeTemplate SpecTemplate))
 
 (defstruct SpecTemplateEnv
-  (index StringI64Map)
+  (index hashmap.StringI64Map)
   (values (Array SpecMaybeTemplate))
   (shadowed SpecTemplateShadowList))
 
 ;; #2613: the specialization cache (key -> generated function name) is a
-;; generated StringStringMap; the former SpecCache linked list made every
+;; generated hashmap.StringStringMap; the former SpecCache linked list made every
 ;; lookup a linear scan.
 (defenum SpecState
-  (SpecState AstDeclList StringStringMap CtfeEnv AstNodePoolContext))
+  (SpecState AstDeclList hashmap.StringStringMap CtfeEnv AstNodePoolContext))
 
 (defenum SpecValueList
   (SpecValueNil)
@@ -79,67 +78,67 @@
 
 (defenum ResultSpecProgram
   (OkSpecProgram AstProgram)
-  (ErrSpecProgram CompilerDiagnostic))
+  (ErrSpecProgram (Box CompilerDiagnostic)))
 
 (defenum ResultSpecProgramWithPaths
   (OkSpecProgramWithPaths AstProgram AstDeclPathList)
-  (ErrSpecProgramWithPaths CompilerDiagnostic))
+  (ErrSpecProgramWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDecls
   (OkSpecDecls AstDeclList SpecState)
-  (ErrSpecDecls CompilerDiagnostic))
+  (ErrSpecDecls (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDeclsWithPaths
   (OkSpecDeclsWithPaths AstDeclList AstDeclPathList SpecState)
-  (ErrSpecDeclsWithPaths CompilerDiagnostic))
+  (ErrSpecDeclsWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDecl
   (OkSpecDecl SpecMaybeDecl SpecState)
-  (ErrSpecDecl CompilerDiagnostic))
+  (ErrSpecDecl (Box CompilerDiagnostic)))
 
 (defenum ResultSpecExpr
   (OkSpecExpr i64 SpecState)
-  (ErrSpecExpr CompilerDiagnostic))
+  (ErrSpecExpr (Box CompilerDiagnostic)))
 
 (defenum ResultSpecExprList
   (OkSpecExprList AstExprList SpecState)
-  (ErrSpecExprList CompilerDiagnostic))
+  (ErrSpecExprList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecLetBindingList
   (OkSpecLetBindingList AstLetBindingList SpecState)
-  (ErrSpecLetBindingList CompilerDiagnostic))
+  (ErrSpecLetBindingList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecMatchArmList
   (OkSpecMatchArmList AstMatchArmList SpecState)
-  (ErrSpecMatchArmList CompilerDiagnostic))
+  (ErrSpecMatchArmList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecArgs
   (OkSpecArgs SpecValueList AstExprList SpecState)
-  (ErrSpecArgs CompilerDiagnostic))
+  (ErrSpecArgs (Box CompilerDiagnostic)))
 
 (defenum ResultSpecEnsure
   (OkSpecEnsure String SpecState)
-  (ErrSpecEnsure CompilerDiagnostic))
+  (ErrSpecEnsure (Box CompilerDiagnostic)))
 
 (defenum ResultSpecBuild
   (OkSpecBuild AstParamList SpecValueSubst SpecTypeSubst)
-  (ErrSpecBuild CompilerDiagnostic))
+  (ErrSpecBuild (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExpr
   (OkSpecSubExpr i64)
-  (ErrSpecSubExpr CompilerDiagnostic))
+  (ErrSpecSubExpr (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExprList
   (OkSpecSubExprList AstExprList)
-  (ErrSpecSubExprList CompilerDiagnostic))
+  (ErrSpecSubExprList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubLetBindingList
   (OkSpecSubLetBindingList AstLetBindingList)
-  (ErrSpecSubLetBindingList CompilerDiagnostic))
+  (ErrSpecSubLetBindingList (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubMatchArmList
   (OkSpecSubMatchArmList AstMatchArmList)
-  (ErrSpecSubMatchArmList CompilerDiagnostic))
+  (ErrSpecSubMatchArmList (Box CompilerDiagnostic)))
 
 (defenum GenMaybeEntry
   (GenNoEntry)
@@ -147,27 +146,27 @@
 
 (defenum ResultGenKey
   (OkGenKey String i64)
-  (ErrGenKey CompilerDiagnostic))
+  (ErrGenKey (Box CompilerDiagnostic)))
 
 (defenum ResultGenDecl
   (OkGenDecl AstDeclList GenRegistry String)
-  (ErrGenDecl CompilerDiagnostic))
+  (ErrGenDecl (Box CompilerDiagnostic)))
 
 (defenum ResultGenDecls
   (OkGenDecls AstDeclList GenRegistry String)
-  (ErrGenDecls CompilerDiagnostic))
+  (ErrGenDecls (Box CompilerDiagnostic)))
 
 (defenum ResultGenProgram
   (OkGenProgram AstProgram)
-  (ErrGenProgram CompilerDiagnostic))
+  (ErrGenProgram (Box CompilerDiagnostic)))
 
 (defenum ResultGenDeclsWithPaths
   (OkGenDeclsWithPaths AstDeclList AstDeclPathList GenRegistry String)
-  (ErrGenDeclsWithPaths CompilerDiagnostic))
+  (ErrGenDeclsWithPaths (Box CompilerDiagnostic)))
 
 (defenum ResultGenProgramWithPaths
   (OkGenProgramWithPaths AstProgram AstDeclPathList)
-  (ErrGenProgramWithPaths CompilerDiagnostic))
+  (ErrGenProgramWithPaths (Box CompilerDiagnostic)))
 
 (define (spec-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
@@ -230,7 +229,7 @@
   (match shadowed
     [(SpecTemplateShadowNil) false]
     [(SpecTemplateShadowCons shadow-name rest)
-      (if (string-eq shadow-name name)
+      (if (string.string-eq shadow-name name)
         true
         (spec-template-shadow-contains? (box-get rest) name))]))
 
@@ -251,21 +250,21 @@
 
 (define (spec-template-index-build
   [templates : SpecTemplateList]
-  [index : StringI64Map]
+  [index : hashmap.StringI64Map]
   [values : (Array SpecMaybeTemplate)]
-  [slot : i64]) : StringI64Map
+  [slot : i64]) : hashmap.StringI64Map
   (match templates
     [(SpecTemplateNil) index]
     [(SpecTemplateCons template rest)
       (match template
         [(SpecTemplate name _ _ _)
-          (if (string-i64-map-contains? index name)
+          (if (hashmap.string-i64-map-contains? index name)
             (spec-template-index-build (box-get rest) index values slot)
             (begin
               (array-set! values slot (SpecSomeTemplate template))
               (spec-template-index-build
                 (box-get rest)
-                (string-i64-map-put index name slot)
+                (hashmap.string-i64-map-put index name slot)
                 values
                 (+ slot 1))))])]))
 
@@ -278,7 +277,7 @@
       (SpecTemplateEnv
         (spec-template-index-build
           templates
-          (string-i64-map-with-capacity (+ (* count 2) 16))
+          (hashmap.string-i64-map-with-capacity (+ (* count 2) 16))
           values
           0)
         values
@@ -287,9 +286,10 @@
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name : String]) : SpecMaybeTemplate
   (if (spec-template-shadow-contains? (struct-get templates shadowed) name)
     (SpecNoTemplate)
-    (match (string-i64-map-get (struct-get templates index) name)
-      [(StringI64MapFound slot) (array-ref (struct-get templates values) slot)]
-      [(StringI64MapMissing) (SpecNoTemplate)])))
+    (match (hashmap.string-i64-map-get (struct-get templates index) name)
+      [(hashmap.StringI64MapFound slot)
+        (array-ref (struct-get templates values) slot)]
+      [(hashmap.StringI64MapMissing) (SpecNoTemplate)])))
 
 (define (spec-template-env-shadow-name
   [templates : SpecTemplateEnv]
@@ -387,10 +387,10 @@
                 (spec-collect-templates rest)))]
           [_ (spec-collect-templates rest)]))]))
 
-(define (spec-cache-lookup [cache : StringStringMap] [key : String]) : SpecMaybeString
-  (match (string-string-map-get cache key)
-    [(StringStringMapFound name) (SpecSomeString name)]
-    [(StringStringMapMissing) (SpecNoString)]))
+(define (spec-cache-lookup [cache : hashmap.StringStringMap] [key : String]) : SpecMaybeString
+  (match (hashmap.string-string-map-get cache key)
+    [(hashmap.StringStringMapFound name) (SpecSomeString name)]
+    [(hashmap.StringStringMapMissing) (SpecNoString)]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
@@ -423,24 +423,26 @@
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
-    (string-append "m" (int->string (- 0 n)))
-    (int->string n)))
+    (string.string-append "m" (string.int->string (- 0 n)))
+    (string.int->string n)))
 
 (define (spec-string-key-from [text : String] [idx : i64] [n : i64]) : String
   (if (>= idx n)
     ""
-    (string-append
+    (string.string-append
       "_"
-      (string-append
-        (int->string (cast (string-ref text idx) : i64))
+      (string.string-append
+        (string.int->string (cast (string.string-ref text idx) : i64))
         (spec-string-key-from text (+ idx 1) n)))))
 
 (define (spec-string-key [text : String]) : String
   (let
-    [n : i64 (string-length text)]
-    (string-append
+    [n : i64 (string.string-length text)]
+    (string.string-append
       "string_"
-      (string-append (int->string n) (spec-string-key-from text 0 n)))))
+      (string.string-append
+        (string.int->string n)
+        (spec-string-key-from text 0 n)))))
 
 (define (spec-type-list-key [types : AstTypeList]) : String
   (match types
@@ -449,9 +451,9 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string-append
+        (string.string-append
           (spec-type-key head)
-          (string-append "_" (spec-type-list-key rest))))]))
+          (string.string-append "_" (spec-type-list-key rest))))]))
 
 (define (spec-lifetime-list-key [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -459,7 +461,9 @@
     [(AstLifetimeCons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string-append head (string-append "_" (spec-lifetime-list-key rest))))]))
+        (string.string-append
+          head
+          (string.string-append "_" (spec-lifetime-list-key rest))))]))
 
 (define (spec-type-key [ty : AstType]) : String
   (match ty
@@ -483,72 +487,82 @@
     [(AstTyExpr) "Expr"]
     [(AstTyExprList) "ExprList"]
     [(AstTyFunc args ret)
-      (string-append
+      (string.string-append
         "fn_"
-        (string-append
+        (string.string-append
           (spec-type-list-key (box-get args))
-          (string-append "_to_" (spec-type-key (ty-node-get ret)))))]
+          (string.string-append "_to_" (spec-type-key (ty-node-get ret)))))]
     [(AstTyTuple elems)
-      (string-append "tuple_" (spec-type-list-key (box-get elems)))]
+      (string.string-append "tuple_" (spec-type-list-key (box-get elems)))]
     [(AstTyArray elem count)
-      (string-append
+      (string.string-append
         "array_"
-        (string-append
+        (string.string-append
           (spec-type-key (ty-node-get elem))
-          (string-append "_" (spec-int-key count))))]
+          (string.string-append "_" (spec-int-key count))))]
     [(AstTyDynArray elem)
-      (string-append "dynarray_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyBox elem) (string-append "box_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyPtr elem) (string-append "ptr_" (spec-type-key (ty-node-get elem)))]
+      (string.string-append "dynarray_" (spec-type-key (ty-node-get elem)))]
+    [(AstTyBox elem)
+      (string.string-append "box_" (spec-type-key (ty-node-get elem)))]
+    [(AstTyPtr elem)
+      (string.string-append "ptr_" (spec-type-key (ty-node-get elem)))]
     [(AstTyMutPtr elem)
-      (string-append "mutptr_" (spec-type-key (ty-node-get elem)))]
+      (string.string-append "mutptr_" (spec-type-key (ty-node-get elem)))]
     [(AstTyRef region inner)
-      (string-append
+      (string.string-append
         "ref_"
-        (string-append
+        (string.string-append
           region
-          (string-append "_" (spec-type-key (ty-node-get inner)))))]
+          (string.string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyMutRef region inner)
-      (string-append
+      (string.string-append
         "mutref_"
-        (string-append
+        (string.string-append
           region
-          (string-append "_" (spec-type-key (ty-node-get inner)))))]
+          (string.string-append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstTyRegion region inner)
-      (string-append
+      (string.string-append
         "region_"
-        (string-append
+        (string.string-append
           region
-          (string-append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstTyEnum name) (string-append "enum_" (intern-str name))]
+          (string.string-append "_" (spec-type-key (ty-node-get inner)))))]
+    [(AstTyEnum name) (string.string-append "enum_" (intern-str name))]
     [(AstTyEnumArgs name lifetimes)
-      (string-append
+      (string.string-append
         "enumargs_"
-        (string-append
+        (string.string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
-    [(AstTyStruct name) (string-append "struct_" (intern-str name))]
+          (string.string-append
+            "_"
+            (spec-lifetime-list-key (box-get lifetimes)))))]
+    [(AstTyStruct name) (string.string-append "struct_" (intern-str name))]
     [(AstTyStructArgs name lifetimes)
-      (string-append
+      (string.string-append
         "structargs_"
-        (string-append
+        (string.string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
-    [(AstTyVar name) (string-append "var_" (intern-str name))]
+          (string.string-append
+            "_"
+            (spec-lifetime-list-key (box-get lifetimes)))))]
+    [(AstTyVar name) (string.string-append "var_" (intern-str name))]
     [(AstTyVarArgs name lifetimes)
-      (string-append
+      (string.string-append
         "varargs_"
-        (string-append
+        (string.string-append
           (intern-str name)
-          (string-append "_" (spec-lifetime-list-key (box-get lifetimes)))))]))
+          (string.string-append
+            "_"
+            (spec-lifetime-list-key (box-get lifetimes)))))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
-    [(CtfeI64 n) (string-append "i64_" (spec-int-key n))]
+    [(CtfeI64 n) (string.string-append "i64_" (spec-int-key n))]
     [(CtfeF64 n)
-      (string-append "f64_" (spec-string-key (compiler-float-format-f64 n)))]
+      (string.string-append
+        "f64_"
+        (spec-string-key (compiler-float-format-f64 n)))]
     [(CtfeF32 n)
-      (string-append
+      (string.string-append
         "f32_"
         (spec-string-key
           (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n))))]
@@ -556,10 +570,11 @@
       (if b
         "bool_1"
         "bool_0")]
-    [(CtfeChar c) (string-append "char_" (int->string (cast c : i64)))]
+    [(CtfeChar c)
+      (string.string-append "char_" (string.int->string (cast c : i64)))]
     [(CtfeString text) (spec-string-key text)]
     [(CtfeUnit) "unit"]
-    [(CtfeType ty) (string-append "type_" (spec-type-key ty))]
+    [(CtfeType ty) (string.string-append "type_" (spec-type-key ty))]
     [(CtfeExpr _ _) "Expr"]
     [(CtfeExprList _) "expr-list"]
     [(CtfeExprClause _) "expr-clause"]
@@ -571,29 +586,33 @@
   (match values
     [(SpecValueNil) "none"]
     [(SpecValueCons head rest)
-      (string-append
+      (string.string-append
         (spec-value-key head)
-        (string-append "_" (spec-values-key (box-get rest))))]))
+        (string.string-append "_" (spec-values-key (box-get rest))))]))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
-  (string-append name (string-append ":" (spec-values-key values))))
+  (string.string-append
+    name
+    (string.string-append ":" (spec-values-key values))))
 
 (define (spec-specialized-name [name : String] [values : SpecValueList]) : String
-  (string-append
+  (string.string-append
     "__tl_specialized_"
-    (string-append name (string-append "_" (spec-values-key values)))))
+    (string.string-append
+      name
+      (string.string-append "_" (spec-values-key values)))))
 
 (define (gen-registry-empty) : GenRegistry
   (let
     [capacity : i64 64]
     [decls : (Array AstDecl) (make-array AstDecl capacity)]
-    (GenRegistry (string-i64-map-with-capacity capacity) decls 0)))
+    (GenRegistry (hashmap.string-i64-map-with-capacity capacity) decls 0)))
 
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
-  (match (string-i64-map-get (struct-get registry index) key)
-    [(StringI64MapFound slot)
+  (match (hashmap.string-i64-map-get (struct-get registry index) key)
+    [(hashmap.StringI64MapFound slot)
       (GenSomeEntry (array-ref (struct-get registry decls) slot))]
-    [(StringI64MapMissing) (GenNoEntry)]))
+    [(hashmap.StringI64MapMissing) (GenNoEntry)]))
 
 (define (gen-registry-copy-decls
   [src : (Array AstDecl)]
@@ -608,7 +627,7 @@
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
   (let
-    [old-index : StringI64Map (struct-get registry index)]
+    [old-index : hashmap.StringI64Map (struct-get registry index)]
     [old-decls : (Array AstDecl) (struct-get registry decls)]
     [old-len : i64 (struct-get registry len)]
     [old-capacity : i64 (array-length old-decls)]
@@ -634,10 +653,10 @@
         registry)]
     [slot : i64 (struct-get ready len)]
     [decls : (Array AstDecl) (struct-get ready decls)]
-    [index : StringI64Map (struct-get ready index)]
+    [index : hashmap.StringI64Map (struct-get ready index)]
     (begin
       (array-set! decls slot decl)
-      (GenRegistry (string-i64-map-put index key slot) decls (+ slot 1)))))
+      (GenRegistry (hashmap.string-i64-map-put index key slot) decls (+ slot 1)))))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
@@ -909,7 +928,7 @@
         [_ false])]
     [(AstSomeModuleName a-name)
       (match b
-        [(AstSomeModuleName b-name) (string-eq a-name b-name)]
+        [(AstSomeModuleName b-name) (string.string-eq a-name b-name)]
         [_ false])]))
 
 (define (gen-maybe-import-alias-eq?
@@ -922,7 +941,7 @@
         [_ false])]
     [(AstSomeImportAlias a-name)
       (match b
-        [(AstSomeImportAlias b-name) (string-eq a-name b-name)]
+        [(AstSomeImportAlias b-name) (string.string-eq a-name b-name)]
         [_ false])]))
 
 (define (gen-import-spec-eq? [a : AstImportSpec] [b : AstImportSpec]) : bool
@@ -932,7 +951,7 @@
         [(AstImportSpec b-kind b-path b-module b-alias _)
           (and
             (gen-import-kind-eq? a-kind b-kind)
-            (string-eq a-path b-path)
+            (string.string-eq a-path b-path)
             (gen-maybe-module-name-eq? a-module b-module)
             (gen-maybe-import-alias-eq? a-alias b-alias))])]))
 
@@ -1025,12 +1044,16 @@
     [(AstDeclIncludeStr a-name a-path)
       (match b
         [(AstDeclIncludeStr b-name b-path)
-          (and (string-eq a-name b-name) (string-eq a-path b-path))]
+          (and
+            (string.string-eq a-name b-name)
+            (string.string-eq a-path b-path))]
         [_ false])]
     [(AstDeclIncludeBin a-name a-path)
       (match b
         [(AstDeclIncludeBin b-name b-path)
-          (and (string-eq a-name b-name) (string-eq a-path b-path))]
+          (and
+            (string.string-eq a-name b-name)
+            (string.string-eq a-path b-path))]
         [_ false])]
     [(AstDeclTest a-name a-body-box _)
       (let
@@ -1074,16 +1097,17 @@
                 (match (gen-key-exprs (box-get rest) env head-fuel)
                   [(OkGenKey tail tail-fuel)
                     (OkGenKey
-                      (string-append
+                      (string.string-append
                         (spec-string-key text)
-                        (string-append "_" tail))
+                        (string.string-append "_" tail))
                       tail-fuel)]
                   [(ErrGenKey diag) (ErrGenKey diag)])]
               [_
                 (ErrGenKey
-                  (spec-diagnostic-at-expr
-                    head-expr
-                    "generated-decl: key expression must evaluate to String"))])]
+                  (box
+                    (spec-diagnostic-at-expr
+                      head-expr
+                      "generated-decl: key expression must evaluate to String")))])]
           [(ErrCtfe diag) (ErrGenKey diag)]))]))
 
 (define (gen-full-key
@@ -1091,24 +1115,26 @@
   [generator : String]
   [item : String]
   [arg-key : String]) : String
-  (string-append
+  (string.string-append
     "generated:"
-    (string-append
+    (string.string-append
       (spec-string-key module)
-      (string-append
+      (string.string-append
         ":"
-        (string-append
+        (string.string-append
           (spec-string-key generator)
-          (string-append
+          (string.string-append
             ":"
-            (string-append (spec-string-key item) (string-append ":" arg-key))))))))
+            (string.string-append
+              (spec-string-key item)
+              (string.string-append ":" arg-key))))))))
 
 (define (gen-key-prefix? [key : String] [prefix : String]) : bool
   (let
-    [prefix-len : i64 (string-length prefix)]
-    (if (< (string-length key) prefix-len)
+    [prefix-len : i64 (string.string-length prefix)]
+    (if (< (string.string-length key) prefix-len)
       false
-      (string-eq (substring key 0 prefix-len) prefix))))
+      (string.string-eq (string.substring key 0 prefix-len) prefix))))
 
 (define (gen-full-key? [key : String]) : bool
   (gen-key-prefix? key "generated:"))
@@ -1117,7 +1143,7 @@
   (gen-key-prefix? key "decls:"))
 
 (define (gen-metadata-key-normalizable? [key : String]) : bool
-  (or (string-eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
+  (or (string.string-eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
 
 (define (gen-registration-key
   [module : String]
@@ -1131,101 +1157,92 @@
 (define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start
     ""
-    (string-append
+    (string.string-append
       "generated-decl: metadata item "
-      (string-append expected (string-append " does not match payload " actual)))))
+      (string.string-append
+        expected
+        (string.string-append " does not match payload " actual)))))
 
 (define (gen-incompatible-diag [item : String] [key : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-note
     (compiler-diagnostic-with-note
       (compiler-diagnostic-at-start
         ""
-        (string-append
+        (string.string-append
           "generated-decl: duplicate generated key for "
-          (string-append item " has incompatible payload")))
-      (string-append "conflicting generated item: " item))
-    (string-append "generated identity: " key)))
+          (string.string-append item " has incompatible payload")))
+      (string.string-append "conflicting generated item: " item))
+    (string.string-append "generated identity: " key)))
 
 (defenum GenHashmapTypeInfo
   (GenHashmapTypeInfo String String String))
 
 (defenum ResultGenHashmapTypeInfo
   (OkGenHashmapTypeInfo GenHashmapTypeInfo)
-  (ErrGenHashmapTypeInfo CompilerDiagnostic))
+  (ErrGenHashmapTypeInfo (Box CompilerDiagnostic)))
 
 (defenum ResultGenHashmapType
   (OkGenHashmapType AstType)
-  (ErrGenHashmapType CompilerDiagnostic))
+  (ErrGenHashmapType (Box CompilerDiagnostic)))
 
 (defenum GenHashmapArgs
   (GenHashmapArgs String String String))
 
 (defenum ResultGenHashmapArgs
   (OkGenHashmapArgs GenHashmapArgs)
-  (ErrGenHashmapArgs CompilerDiagnostic))
+  (ErrGenHashmapArgs (Box CompilerDiagnostic)))
 
 (defenum ResultGenHashmapSource
   (OkGenHashmapSource String)
-  (ErrGenHashmapSource CompilerDiagnostic))
+  (ErrGenHashmapSource (Box CompilerDiagnostic)))
 
-(defenum ResultGenJsonType
-  (OkGenJsonType AstType)
-  (ErrGenJsonType CompilerDiagnostic))
+(define (gen-tb2 [buf : text_buf.TextBuf] [a : String] [b : String]) : text_buf.TextBuf
+  (text_buf.text-buf-append (text_buf.text-buf-append buf a) b))
 
-(defenum GenJsonDeriveArgs
-  (GenJsonDeriveArgs AstType))
-
-(defenum ResultGenJsonDeriveArgs
-  (OkGenJsonDeriveArgs GenJsonDeriveArgs)
-  (ErrGenJsonDeriveArgs CompilerDiagnostic))
-
-(defenum ResultGenJsonSource
-  (OkGenJsonSource String)
-  (ErrGenJsonSource CompilerDiagnostic))
-
-(define (gen-tb2 [buf : TextBuf] [a : String] [b : String]) : TextBuf
-  (text-buf-append (text-buf-append buf a) b))
-
-(define (gen-tb3 [buf : TextBuf] [a : String] [b : String] [c : String]) : TextBuf
-  (text-buf-append (gen-tb2 buf a b) c))
+(define (gen-tb3
+  [buf : text_buf.TextBuf]
+  [a : String]
+  [b : String]
+  [c : String]) : text_buf.TextBuf
+  (text_buf.text-buf-append (gen-tb2 buf a b) c))
 
 (define (gen-tb4
-  [buf : TextBuf]
+  [buf : text_buf.TextBuf]
   [a : String]
   [b : String]
   [c : String]
-  [d : String]) : TextBuf
-  (text-buf-append (gen-tb3 buf a b c) d))
+  [d : String]) : text_buf.TextBuf
+  (text_buf.text-buf-append (gen-tb3 buf a b c) d))
 
 (define (gen-tb5
-  [buf : TextBuf]
+  [buf : text_buf.TextBuf]
   [a : String]
   [b : String]
   [c : String]
   [d : String]
-  [e : String]) : TextBuf
-  (text-buf-append (gen-tb4 buf a b c d) e))
+  [e : String]) : text_buf.TextBuf
+  (text_buf.text-buf-append (gen-tb4 buf a b c d) e))
 
 (define (gen-tb6
-  [buf : TextBuf]
+  [buf : text_buf.TextBuf]
   [a : String]
   [b : String]
   [c : String]
   [d : String]
   [e : String]
-  [f : String]) : TextBuf
-  (text-buf-append (gen-tb5 buf a b c d e) f))
+  [f : String]) : text_buf.TextBuf
+  (text_buf.text-buf-append (gen-tb5 buf a b c d e) f))
 
 (define (gen-tb7
-  [buf : TextBuf]
+  [buf : text_buf.TextBuf]
   [a : String]
   [b : String]
   [c : String]
   [d : String]
   [e : String]
   [f : String]
-  [g : String]) : TextBuf
-  (text-buf-append (gen-tb6 buf a b c d e f) g))
+  [g : String]) : text_buf.TextBuf
+  (text_buf.text-buf-append (gen-tb6 buf a b c d e f) g))
 
 (define (gen-hashmap-diag [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
@@ -1237,9 +1254,10 @@
         [(CtfeString text) (OkGenKey text fuel)]
         [_
           (ErrGenKey
-            (spec-diagnostic-at-expr
-              expr
-              "hashmap-family: argument must evaluate to String"))])]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                "hashmap-family: argument must evaluate to String")))])]
     [(ErrCtfe diag) (ErrGenKey diag)]))
 
 (define (gen-hashmap-args [args : AstExprList] [env : CtfeEnv]) : ResultGenHashmapArgs
@@ -1272,75 +1290,24 @@
                       [(ErrGenKey diag) (ErrGenHashmapArgs diag)]))]
                 [_
                   (ErrGenHashmapArgs
-                    (gen-hashmap-diag
-                      "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+                    (box
+                      (gen-hashmap-diag
+                        "hashmap-family: expected key type, value type, and key descriptor arguments")))])]
             [_
               (ErrGenHashmapArgs
-                (gen-hashmap-diag
-                  "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+                (box
+                  (gen-hashmap-diag
+                    "hashmap-family: expected key type, value type, and key descriptor arguments")))])]
         [_
           (ErrGenHashmapArgs
-            (gen-hashmap-diag
-              "hashmap-family: expected key type, value type, and key descriptor arguments"))])]
+            (box
+              (gen-hashmap-diag
+                "hashmap-family: expected key type, value type, and key descriptor arguments")))])]
     [_
       (ErrGenHashmapArgs
-        (gen-hashmap-diag
-          "hashmap-family: expected key type, value type, and key descriptor arguments"))]))
-
-(define (gen-json-diag [message : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start "" message))
-
-(define (gen-json-type-from-key [type-key : String]) : ResultGenJsonType
-  (cond
-    [(string-eq type-key "i64") (OkGenJsonType AstTyI64)]
-    [(string-eq type-key "i32") (OkGenJsonType AstTyI32)]
-    [(string-eq type-key "i16") (OkGenJsonType AstTyI16)]
-    [(string-eq type-key "i8") (OkGenJsonType AstTyI8)]
-    [(string-eq type-key "u64") (OkGenJsonType AstTyU64)]
-    [(string-eq type-key "u32") (OkGenJsonType AstTyU32)]
-    [(string-eq type-key "u16") (OkGenJsonType AstTyU16)]
-    [(string-eq type-key "u8") (OkGenJsonType AstTyU8)]
-    [(string-eq type-key "bool") (OkGenJsonType AstTyBool)]
-    [(string-eq type-key "String") (OkGenJsonType AstTyString)]
-    [else
-      (match (gen-hashmap-nominal-name type-key "struct_")
-        [(SpecSomeString name) (OkGenJsonType (AstTyStruct (intern name)))]
-        [(SpecNoString)
-          (ErrGenJsonType
-            (gen-json-diag
-              (string-append "json-derive: unsupported type-key " type-key)))])]))
-
-(define (gen-json-eval-type [expr : AstExpr] [env : CtfeEnv]) : ResultGenJsonType
-  (match (compiler-ctfe-eval expr env (ctfe-fuel-limit))
-    [(OkCtfe value _)
-      (match value
-        [(CtfeType ty)
-          (OkGenJsonType
-            (ctfe-reflect-resolve-type (ctfe-env-reflections env) ty))]
-        [(CtfeString type-key) (gen-json-type-from-key type-key)]
-        [_
-          (ErrGenJsonType
-            (spec-diagnostic-at-expr
-              expr
-              "json-derive: argument must evaluate to a type or type-key String"))])]
-    [(ErrCtfe diag) (ErrGenJsonType diag)]))
-
-(define (gen-json-args [args : AstExprList] [env : CtfeEnv]) : ResultGenJsonDeriveArgs
-  (match args
-    [(AstExprCons type-expr-box rest-box)
-      (match (box-get rest-box)
-        [(AstExprNil)
-          (let
-            [type-expr : AstExpr (ast-node-get type-expr-box)]
-            (match (gen-json-eval-type type-expr env)
-              [(OkGenJsonType ty) (OkGenJsonDeriveArgs (GenJsonDeriveArgs ty))]
-              [(ErrGenJsonType diag) (ErrGenJsonDeriveArgs diag)]))]
-        [_
-          (ErrGenJsonDeriveArgs
-            (gen-json-diag "json-derive: expected one struct type argument"))])]
-    [_
-      (ErrGenJsonDeriveArgs
-        (gen-json-diag "json-derive: expected one struct type argument"))]))
+        (box
+          (gen-hashmap-diag
+            "hashmap-family: expected key type, value type, and key descriptor arguments")))]))
 
 (define (gen-hashmap-one-byte-string [code : i64]) : String
   (let
@@ -1352,10 +1319,10 @@
 
 (define (gen-hashmap-name-prefix-char [name : String] [index : i64]) : String
   (let
-    [c : char (string-ref name index)]
+    [c : char (string.string-ref name index)]
     [code : i64 (cast c : i64)]
     (if (and (>= code 65) (<= code 90))
-      (string-concat3
+      (string.string-concat3
         (if (> index 0)
           "-"
           "")
@@ -1363,39 +1330,42 @@
         "")
       (if (= code 95)
         "-"
-        (substring name index 1)))))
+        (string.substring name index 1)))))
 
 (define (gen-hashmap-name-prefix-from [name : String] [index : i64] [n : i64]) : String
   (if (>= index n)
     ""
-    (string-append
+    (string.string-append
       (gen-hashmap-name-prefix-char name index)
       (gen-hashmap-name-prefix-from name (+ index 1) n))))
 
 (define (gen-hashmap-name-prefix [name : String]) : String
-  (gen-hashmap-name-prefix-from name 0 (string-length name)))
+  (gen-hashmap-name-prefix-from name 0 (string.string-length name)))
 
 (define (gen-hashmap-nominal-name [type-key : String] [prefix : String]) : SpecMaybeString
   (let
-    [prefix-len : i64 (string-length prefix)]
-    [type-key-len : i64 (string-length type-key)]
+    [prefix-len : i64 (string.string-length prefix)]
+    [type-key-len : i64 (string.string-length type-key)]
     (if (and
       (> type-key-len prefix-len)
-      (is-string-prefix-at (& type-key) (& prefix) 0))
+      (string.is-string-prefix-at (& type-key) (& prefix) 0))
       (SpecSomeString
-        (substring type-key prefix-len (- type-key-len prefix-len)))
+        (string.substring type-key prefix-len (- type-key-len prefix-len)))
       (SpecNoString))))
 
 (define (gen-hashmap-scalar-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
-  (if (string-eq type-key "String")
+  (if (string.string-eq type-key "String")
     (OkGenHashmapTypeInfo (GenHashmapTypeInfo "String" "String" "string"))
-    (if (string-eq type-key "i64")
+    (if (string.string-eq type-key "i64")
       (OkGenHashmapTypeInfo (GenHashmapTypeInfo "i64" "I64" "i64"))
       (ErrGenHashmapTypeInfo
-        (gen-hashmap-diag
-          (string-append
-            "hashmap-family: unsupported "
-            (string-append role (string-append " type " type-key))))))))
+        (box
+          (gen-hashmap-diag
+            (string.string-append
+              "hashmap-family: unsupported "
+              (string.string-append
+                role
+                (string.string-append " type " type-key)))))))))
 
 (define (gen-hashmap-value-type-info [type-key : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-scalar-type-info type-key "value")
@@ -1412,10 +1382,11 @@
                 (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
             [(SpecNoString)
               (ErrGenHashmapTypeInfo
-                (gen-hashmap-diag
-                  (string-append
-                    "hashmap-family: unsupported value type "
-                    type-key)))])])]))
+                (box
+                  (gen-hashmap-diag
+                    (string.string-append
+                      "hashmap-family: unsupported value type "
+                      type-key))))])])]))
 
 (define (gen-hashmap-nominal-type-info [type-key : String] [role : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-nominal-name type-key "struct_")
@@ -1429,27 +1400,31 @@
             (GenHashmapTypeInfo name name (gen-hashmap-name-prefix name)))]
         [(SpecNoString)
           (ErrGenHashmapTypeInfo
-            (gen-hashmap-diag
-              (string-append
-                "hashmap-family: unsupported "
-                (string-append role (string-append " type " type-key)))))])]))
+            (box
+              (gen-hashmap-diag
+                (string.string-append
+                  "hashmap-family: unsupported "
+                  (string.string-append
+                    role
+                    (string.string-append " type " type-key))))))])]))
 
 (define (gen-hashmap-key-type-info [type-key : String] [descriptor : String]) : ResultGenHashmapTypeInfo
   (match (gen-hashmap-scalar-type-info type-key "key")
     [(OkGenHashmapTypeInfo info) (OkGenHashmapTypeInfo info)]
     [(ErrGenHashmapTypeInfo _)
-      (if (string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
+      (if (string.string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
         (gen-hashmap-nominal-type-info type-key "key")
         (ErrGenHashmapTypeInfo
-          (gen-hashmap-diag
-            (string-append
-              "hashmap-family: unsupported key descriptor "
-              (string-append
-                descriptor
-                (string-append " for key type " type-key))))))]))
+          (box
+            (gen-hashmap-diag
+              (string.string-append
+                "hashmap-family: unsupported key descriptor "
+                (string.string-append
+                  descriptor
+                  (string.string-append " for key type " type-key)))))))]))
 
 (define (gen-hashmap-borrowed-value-type [value-type : String]) : String
-  (if (string-eq value-type "String")
+  (if (string.string-eq value-type "String")
     "str"
     value-type))
 
@@ -1459,7 +1434,7 @@
       (match field
         [(AstFieldDef name ty cleanup)
           (and
-            (string-eq (intern-str name) "__hashmap_family_request")
+            (string.string-eq (intern-str name) "__hashmap_family_request")
             (ctfe-type-eq ty (AstTyI64))
             (match cleanup
               [(AstFieldNoCleanup) true]
@@ -1483,80 +1458,50 @@
         [_ (SpecNoString)])]
     [_ (SpecNoString)]))
 
-(define (gen-json-derive-marker-fields? [fields : AstFieldDefList]) : bool
-  (match fields
-    [(AstFieldDefCons field rest-box)
-      (match field
-        [(AstFieldDef name ty cleanup)
-          (and
-            (string-eq (intern-str name) "__json_derive_request")
-            (ctfe-type-eq ty (AstTyI64))
-            (match cleanup
-              [(AstFieldNoCleanup) true]
-              [_ false])
-            (match (box-get rest-box)
-              [(AstFieldDefNil) true]
-              [_ false]))])]
-    [_ false]))
-
-(define (gen-json-derive-marker-name [decl : AstDecl]) : SpecMaybeString
-  (match decl
-    [(AstDeclDefStruct name repr cleanup fields)
-      (match repr
-        [(AstStructReprDefault)
-          (match cleanup
-            [(AstStructNoCleanup)
-              (if (gen-json-derive-marker-fields? fields)
-                (SpecSomeString (intern-str name))
-                (SpecNoString))]
-            [_ (SpecNoString)])]
-        [_ (SpecNoString)])]
-    [_ (SpecNoString)]))
-
 (define (gen-hashmap-source-string-key
   [map-name : String]
   [prefix : String]
   [value-type : String]) : String
   (let
-    [slot : String (string-append map-name "Slot")]
-    [empty : String (string-append map-name "Empty")]
-    [tombstone : String (string-append map-name "Tombstone")]
-    [occupied : String (string-append map-name "Occupied")]
-    [probe : String (string-append map-name "Probe")]
-    [probe-found : String (string-append map-name "ProbeFound")]
-    [probe-absent : String (string-append map-name "ProbeAbsent")]
-    [probe-full : String (string-append map-name "ProbeFull")]
-    [lookup : String (string-append map-name "Lookup")]
-    [missing : String (string-append map-name "Missing")]
-    [found : String (string-append map-name "Found")]
+    [slot : String (string.string-append map-name "Slot")]
+    [empty : String (string.string-append map-name "Empty")]
+    [tombstone : String (string.string-append map-name "Tombstone")]
+    [occupied : String (string.string-append map-name "Occupied")]
+    [probe : String (string.string-append map-name "Probe")]
+    [probe-found : String (string.string-append map-name "ProbeFound")]
+    [probe-absent : String (string.string-append map-name "ProbeAbsent")]
+    [probe-full : String (string.string-append map-name "ProbeFull")]
+    [lookup : String (string.string-append map-name "Lookup")]
+    [missing : String (string.string-append map-name "Missing")]
+    [found : String (string.string-append map-name "Found")]
     [borrowed-value-lookup : String
-      (string-append map-name "BorrowedValueLookup")]
+      (string.string-append map-name "BorrowedValueLookup")]
     [borrowed-value-missing : String
-      (string-append map-name "BorrowedValueMissing")]
+      (string.string-append map-name "BorrowedValueMissing")]
     [borrowed-value-found : String
-      (string-append map-name "BorrowedValueFound")]
+      (string.string-append map-name "BorrowedValueFound")]
     [borrowed-value-type : String (gen-hashmap-borrowed-value-type value-type)]
-    [insert-result : String (string-append map-name "InsertResult")]
-    [insert-ok : String (string-append map-name "InsertOk")]
-    [insert-full : String (string-append map-name "InsertFull")]
-    [remove-result : String (string-append map-name "RemoveResult")]
-    [remove-ok : String (string-append map-name "RemoveOk")]
-    [remove-missing : String (string-append map-name "RemoveMissing")]
-    [update-result : String (string-append map-name "UpdateResult")]
-    [update-ok : String (string-append map-name "UpdateOk")]
-    [update-missing : String (string-append map-name "UpdateMissing")]
+    [insert-result : String (string.string-append map-name "InsertResult")]
+    [insert-ok : String (string.string-append map-name "InsertOk")]
+    [insert-full : String (string.string-append map-name "InsertFull")]
+    [remove-result : String (string.string-append map-name "RemoveResult")]
+    [remove-ok : String (string.string-append map-name "RemoveOk")]
+    [remove-missing : String (string.string-append map-name "RemoveMissing")]
+    [update-result : String (string.string-append map-name "UpdateResult")]
+    [update-ok : String (string.string-append map-name "UpdateOk")]
+    [update-missing : String (string.string-append map-name "UpdateMissing")]
     [entry-or-insert-result : String
-      (string-append map-name "EntryOrInsertResult")]
+      (string.string-append map-name "EntryOrInsertResult")]
     [entry-or-insert-found : String
-      (string-append map-name "EntryOrInsertFound")]
+      (string.string-append map-name "EntryOrInsertFound")]
     [entry-or-insert-inserted : String
-      (string-append map-name "EntryOrInsertInserted")]
-    [mut-entry-info : String (string-append map-name "MutEntryInfo")]
-    [mut-entry : String (string-append map-name "MutEntry")]
-    [entry : String (string-append map-name "Entry")]
-    [entry-none : String (string-append map-name "EntryNone")]
-    [entry-some : String (string-append map-name "EntrySome")]
-    [buf : TextBuf (text-buf-empty)]
+      (string.string-append map-name "EntryOrInsertInserted")]
+    [mut-entry-info : String (string.string-append map-name "MutEntryInfo")]
+    [mut-entry : String (string.string-append map-name "MutEntry")]
+    [entry : String (string.string-append map-name "Entry")]
+    [entry-none : String (string.string-append map-name "EntryNone")]
+    [entry-some : String (string.string-append map-name "EntrySome")]
+    [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
     (begin
       (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
       (set! buf (gen-tb5 buf tombstone ")\n  (" occupied " String " value-type))
@@ -2855,58 +2800,71 @@
           ") ("
           entry-none
           ")])))\n"))
-      (text-buf-render buf))))
+      (text_buf.text-buf-render buf))))
 
 (define (gen-hashmap-source-owned-key
   [map-name : String]
   [prefix : String]
   [key-type : String]
+  [key-hash-param-type : String]
+  [key-hash-call-source : String]
   [key-hash-source : String]
   [key-support-source : String]
+  [key-eq-left-param-type : String]
+  [key-eq-right-param-type : String]
   [key-eq-source : String]
+  [key-probe-eq-call-source : String]
   [key-eq-call-source : String]
   [key-init : String]
   [value-type : String]) : String
   (let
-    [slot : String (string-append map-name "Slot")]
-    [empty : String (string-append map-name "Empty")]
-    [tombstone : String (string-append map-name "Tombstone")]
-    [occupied : String (string-append map-name "Occupied")]
-    [probe : String (string-append map-name "Probe")]
-    [probe-found : String (string-append map-name "ProbeFound")]
-    [probe-absent : String (string-append map-name "ProbeAbsent")]
-    [probe-full : String (string-append map-name "ProbeFull")]
-    [lookup : String (string-append map-name "Lookup")]
-    [missing : String (string-append map-name "Missing")]
-    [found : String (string-append map-name "Found")]
+    [slot : String (string.string-append map-name "Slot")]
+    [empty : String (string.string-append map-name "Empty")]
+    [tombstone : String (string.string-append map-name "Tombstone")]
+    [occupied : String (string.string-append map-name "Occupied")]
+    [probe : String (string.string-append map-name "Probe")]
+    [probe-found : String (string.string-append map-name "ProbeFound")]
+    [probe-absent : String (string.string-append map-name "ProbeAbsent")]
+    [probe-full : String (string.string-append map-name "ProbeFull")]
+    [lookup : String (string.string-append map-name "Lookup")]
+    [missing : String (string.string-append map-name "Missing")]
+    [found : String (string.string-append map-name "Found")]
     [borrowed-value-lookup : String
-      (string-append map-name "BorrowedValueLookup")]
+      (string.string-append map-name "BorrowedValueLookup")]
     [borrowed-value-missing : String
-      (string-append map-name "BorrowedValueMissing")]
+      (string.string-append map-name "BorrowedValueMissing")]
     [borrowed-value-found : String
-      (string-append map-name "BorrowedValueFound")]
+      (string.string-append map-name "BorrowedValueFound")]
     [borrowed-value-type : String (gen-hashmap-borrowed-value-type value-type)]
-    [insert-result : String (string-append map-name "InsertResult")]
-    [insert-ok : String (string-append map-name "InsertOk")]
-    [insert-full : String (string-append map-name "InsertFull")]
-    [remove-result : String (string-append map-name "RemoveResult")]
-    [remove-ok : String (string-append map-name "RemoveOk")]
-    [remove-missing : String (string-append map-name "RemoveMissing")]
-    [update-result : String (string-append map-name "UpdateResult")]
-    [update-ok : String (string-append map-name "UpdateOk")]
-    [update-missing : String (string-append map-name "UpdateMissing")]
+    [insert-result : String (string.string-append map-name "InsertResult")]
+    [insert-ok : String (string.string-append map-name "InsertOk")]
+    [insert-full : String (string.string-append map-name "InsertFull")]
+    [remove-result : String (string.string-append map-name "RemoveResult")]
+    [remove-ok : String (string.string-append map-name "RemoveOk")]
+    [remove-missing : String (string.string-append map-name "RemoveMissing")]
+    [update-result : String (string.string-append map-name "UpdateResult")]
+    [update-ok : String (string.string-append map-name "UpdateOk")]
+    [update-missing : String (string.string-append map-name "UpdateMissing")]
     [entry-or-insert-result : String
-      (string-append map-name "EntryOrInsertResult")]
+      (string.string-append map-name "EntryOrInsertResult")]
     [entry-or-insert-found : String
-      (string-append map-name "EntryOrInsertFound")]
+      (string.string-append map-name "EntryOrInsertFound")]
     [entry-or-insert-inserted : String
-      (string-append map-name "EntryOrInsertInserted")]
-    [mut-entry-info : String (string-append map-name "MutEntryInfo")]
-    [mut-entry : String (string-append map-name "MutEntry")]
-    [entry : String (string-append map-name "Entry")]
-    [entry-none : String (string-append map-name "EntryNone")]
-    [entry-some : String (string-append map-name "EntrySome")]
-    [buf : TextBuf (text-buf-empty)]
+      (string.string-append map-name "EntryOrInsertInserted")]
+    [mut-entry-info : String (string.string-append map-name "MutEntryInfo")]
+    [mut-entry : String (string.string-append map-name "MutEntry")]
+    [entry : String (string.string-append map-name "Entry")]
+    [entry-none : String (string.string-append map-name "EntryNone")]
+    [entry-some : String (string.string-append map-name "EntrySome")]
+    [key-hash-call-expr : String
+      (string.string-append
+        "("
+        (string.string-append
+          prefix
+          (string.string-append
+            "-hash-key "
+            (string.string-append key-hash-call-source ")"))))]
+    [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
     (begin
       (set! buf (gen-tb5 buf "(defenum " slot "\n  (" empty ")\n  ("))
       (set!
@@ -2923,10 +2881,10 @@
           buf
           "-hash-normalize [value : i64]) : i64\n  (let\n    [m : i64 2147483647]\n    [raw : i64 (% value 2147483647)]\n    (if (< raw 0)\n      (+ raw m)\n      raw)))\n"
           ""))
-      (set! buf (text-buf-append buf key-support-source))
+      (set! buf (text_buf.text-buf-append buf key-support-source))
       (set! buf (gen-tb3 buf "(define (" prefix "-hash-key [key : "))
-      (set! buf (gen-tb3 buf key-type "]) : i64\n" key-hash-source))
-      (if (string-eq key-eq-source "")
+      (set! buf (gen-tb3 buf key-hash-param-type "]) : i64\n" key-hash-source))
+      (if (string.string-eq key-eq-source "")
         unit
         (begin
           (set! buf (gen-tb3 buf "(define (" prefix "-key-eq? [left : "))
@@ -2934,9 +2892,9 @@
             buf
             (gen-tb5
               buf
-              key-type
+              key-eq-left-param-type
               "] [right : "
-              key-type
+              key-eq-right-param-type
               "]) : bool\n"
               key-eq-source))))
       (set!
@@ -3018,7 +2976,7 @@
         (gen-tb3
           buf
           "  [key : "
-          key-type
+          key-hash-param-type
           "]\n  [hash : i64]\n  [index : i64]\n  [steps : i64]\n  [first-tombstone : i64]) : "))
       (set!
         buf
@@ -3052,7 +3010,7 @@
           buf
           occupied
           " slot-key _ slot-hash)\n            (if (if (= slot-hash hash)\n              ("))
-      (set! buf (gen-tb3 buf key-eq-call-source "\n" ""))
+      (set! buf (gen-tb3 buf key-probe-eq-call-source "\n" ""))
       (set!
         buf
         (gen-tb5
@@ -3067,7 +3025,9 @@
       (set!
         buf
         (gen-tb3 buf "  [slots : (Array " slot ")]\n  [capacity : i64]\n"))
-      (set! buf (gen-tb3 buf "  [key : " key-type "]\n  [hash : i64]) : "))
+      (set!
+        buf
+        (gen-tb3 buf "  [key : " key-hash-param-type "]\n  [hash : i64]) : "))
       (set! buf (gen-tb2 buf probe "\n  (if (<= capacity 0)\n"))
       (set!
         buf
@@ -3235,7 +3195,7 @@
       (set! buf (gen-tb3 buf "(define (" prefix "-get [map : "))
       (set! buf (gen-tb3 buf map-name "] [key : " key-type))
       (set! buf (gen-tb3 buf "]) : " lookup "\n  (let\n    [slots : (Array "))
-      (set! buf (text-buf-append buf slot))
+      (set! buf (text_buf.text-buf-append buf slot))
       (set!
         buf
         (gen-tb5
@@ -3247,12 +3207,14 @@
           "-probe slots ("))
       (set!
         buf
-        (gen-tb4
+        (gen-tb6
           buf
           prefix
-          "-capacity map) key ("
-          prefix
-          "-hash-key key))\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " "
+          key-hash-call-expr
+          ")\n      [("))
       (set!
         buf
         (gen-tb4
@@ -3305,9 +3267,9 @@
         buf
         (gen-tb3
           buf
-          "      (let\n        [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "      (let\n        [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
         (gen-tb3
@@ -3332,7 +3294,7 @@
           occupied))
       (set!
         buf
-        (text-buf-append
+        (text_buf.text-buf-append
           buf
           " slot-key _ slot-hash)\n                (if (if (= slot-hash hash)\n                  ("))
       (set!
@@ -3407,18 +3369,20 @@
           buf
           ") ("
           prefix
-          "-slots map)]\n    [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "-slots map)]\n    [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb7
           buf
           "    (match ("
           prefix
           "-probe slots ("
           prefix
-          "-capacity map) key hash)\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " hash)\n      [("))
       (set!
         buf
         (gen-tb3
@@ -3489,12 +3453,14 @@
           "-probe slots ("))
       (set!
         buf
-        (gen-tb4
+        (gen-tb6
           buf
           prefix
-          "-capacity map) key ("
-          prefix
-          "-hash-key key))\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " "
+          key-hash-call-expr
+          ")\n      [("))
       (set!
         buf
         (gen-tb3
@@ -3532,27 +3498,29 @@
         (gen-tb5 buf "      [(" probe-full ") (" remove-missing " map)])))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-update-if-present\n"))
       (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
-      (set! buf (text-buf-append buf "  [key : "))
+      (set! buf (text_buf.text-buf-append buf "  [key : "))
       (set! buf (gen-tb4 buf key-type "]\n  [value : " value-type "]) : "))
-      (set! buf (text-buf-append buf update-result))
+      (set! buf (text_buf.text-buf-append buf update-result))
       (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
       (set!
         buf
         (gen-tb4
           buf
           prefix
-          "-slots map)]\n    [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "-slots map)]\n    [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb7
           buf
           "    (match ("
           prefix
           "-probe slots ("
           prefix
-          "-capacity map) key hash)\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " hash)\n      [("))
       (set!
         buf
         (gen-tb4
@@ -3790,29 +3758,31 @@
       (set! buf (gen-tb3 buf "\n  (" prefix "-put map key value))\n"))
       (set! buf (gen-tb3 buf "(define (" prefix "-entry-or-insert\n"))
       (set! buf (gen-tb3 buf "  [map : " map-name "]\n"))
-      (set! buf (text-buf-append buf "  [key : "))
+      (set! buf (text_buf.text-buf-append buf "  [key : "))
       (set!
         buf
         (gen-tb4 buf key-type "]\n  [default-value : " value-type "]) : "))
-      (set! buf (text-buf-append buf entry-or-insert-result))
+      (set! buf (text_buf.text-buf-append buf entry-or-insert-result))
       (set! buf (gen-tb3 buf "\n  (let\n    [slots : (Array " slot ") ("))
       (set!
         buf
         (gen-tb4
           buf
           prefix
-          "-slots map)]\n    [hash : i64 ("
-          prefix
-          "-hash-key key)]\n"))
+          "-slots map)]\n    [hash : i64 "
+          key-hash-call-expr
+          "]\n"))
       (set!
         buf
-        (gen-tb5
+        (gen-tb7
           buf
           "    (match ("
           prefix
           "-probe slots ("
           prefix
-          "-capacity map) key hash)\n      [("))
+          "-capacity map) "
+          key-hash-call-source
+          " hash)\n      [("))
       (set!
         buf
         (gen-tb4
@@ -3917,7 +3887,7 @@
       (set! buf (gen-tb2 buf " 0)\n" ""))
       (set!
         buf
-        (gen-tb3 buf "    (let\n      [hash : i64 (" prefix "-hash-key key)]\n"))
+        (gen-tb3 buf "    (let\n      [hash : i64 " key-hash-call-expr "]\n"))
       (set!
         buf
         (gen-tb3
@@ -4133,11 +4103,11 @@
           ") ("
           entry-none
           ")])))\n"))
-      (text-buf-render buf))))
+      (text_buf.text-buf-render buf))))
 
 (define (gen-hashmap-source-aggregate-key-support [prefix : String]) : String
   (let
-    [buf : TextBuf (text-buf-empty)]
+    [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
     (begin
       (set! buf (gen-tb3 buf "(define (" prefix "-hash-combine\n"))
       (set!
@@ -4174,7 +4144,7 @@
           prefix
           "-string-key-eq? [left : (& left str)] [right : (& right str)]) : bool\n"))
       (set! buf (gen-tb2 buf "  (__tl_string_eq left right))\n" ""))
-      (text-buf-render buf))))
+      (text_buf.text-buf-render buf))))
 
 (define (gen-hashmap-source-i64-key
   [map-name : String]
@@ -4184,6 +4154,8 @@
     map-name
     prefix
     "i64"
+    "i64"
+    "key"
     ;; Scramble the key before the Mersenne reduce. The raw i64 keys here are
     ;; structured (sequential intern ids, and positional composite keys like
     ;; `stride*(left+1)+right`), so `hash-normalize key` (~identity for keys
@@ -4192,11 +4164,16 @@
     ;; symbol-table lookups were ~66% of the opt2 self-compile). Multiplying by a
     ;; large odd constant first spreads every key bit across the reduced range,
     ;; so the low bits the mask consumes are uniform.
-    (string-append
+    (string.string-append
       "  ("
-      (string-append prefix "-hash-normalize (* key 6364136223846793005)))\n"))
+      (string.string-append
+        prefix
+        "-hash-normalize (* key 6364136223846793005)))\n"))
     ""
+    "i64"
+    "i64"
     ""
+    "= slot-key key)"
     "= slot-key key)"
     "0"
     value-type))
@@ -4209,60 +4186,69 @@
         [(SpecSomeString name) (OkGenHashmapType (AstTyEnum (intern name)))]
         [(SpecNoString)
           (ErrGenHashmapType
-            (gen-hashmap-diag
-              (string-append
-                "hashmap-family: aggregate key descriptor requires nominal aggregate key type, got "
-                type-key)))])]))
+            (box
+              (gen-hashmap-diag
+                (string.string-append
+                  "hashmap-family: aggregate key descriptor requires nominal aggregate key type, got "
+                  type-key))))])]))
 
 (define (gen-hashmap-aggregate-unsupported
   [aggregate-name : String]
   [member-name : String]
   [type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
-    (gen-hashmap-diag
-      (string-append
-        "hashmap-family: unsupported aggregate key member "
-        (string-append
-          aggregate-name
-          (string-append
-            "."
-            (string-append member-name (string-append " type " type-key))))))))
+    (box
+      (gen-hashmap-diag
+        (string.string-append
+          "hashmap-family: unsupported aggregate key member "
+          (string.string-append
+            aggregate-name
+            (string.string-append
+              "."
+              (string.string-append
+                member-name
+                (string.string-append " type " type-key)))))))))
 
 (define (gen-hashmap-aggregate-no-reflection [type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
-    (gen-hashmap-diag
-      (string-append
-        "hashmap-family: no reflection metadata for aggregate key "
-        type-key))))
+    (box
+      (gen-hashmap-diag
+        (string.string-append
+          "hashmap-family: no reflection metadata for aggregate key "
+          type-key)))))
 
 (define (gen-hashmap-aggregate-field-expr [base : String] [field-name : String]) : String
-  (string-append
+  (string.string-append
     "(struct-get "
-    (string-append base (string-append " " (string-append field-name ")")))))
+    (string.string-append
+      base
+      (string.string-append " " (string.string-append field-name ")")))))
 
 (define (gen-hashmap-aggregate-combine-expr
   [prefix : String]
   [seed : String]
   [component : String]) : String
-  (string-append
+  (string.string-append
     "("
-    (string-append
+    (string.string-append
       prefix
-      (string-append
+      (string.string-append
         "-hash-combine "
-        (string-append seed (string-append " " (string-append component ")")))))))
+        (string.string-append
+          seed
+          (string.string-append " " (string.string-append component ")")))))))
 
 (define (gen-hashmap-aggregate-payload-name
   [prefix : String]
   [variant-index : i64]
   [payload-index : i64]) : String
-  (string-append
+  (string.string-append
     prefix
-    (string-append
+    (string.string-append
       "-"
-      (string-append
-        (int->string variant-index)
-        (string-append "-" (int->string payload-index))))))
+      (string.string-append
+        (string.int->string variant-index)
+        (string.string-append "-" (string.int->string payload-index))))))
 
 (define (gen-hashmap-aggregate-payload-pattern-from
   [prefix : String]
@@ -4271,9 +4257,9 @@
   [payload-count : i64]) : String
   (if (>= payload-index payload-count)
     ""
-    (string-append
+    (string.string-append
       " "
-      (string-append
+      (string.string-append
         (gen-hashmap-aggregate-payload-name prefix variant-index payload-index)
         (gen-hashmap-aggregate-payload-pattern-from
           prefix
@@ -4304,27 +4290,32 @@
     (match resolved
       [(AstTyI64)
         (OkGenHashmapSource
-          (string-append
+          (string.string-append
             "("
-            (string-append
+            (string.string-append
               prefix
-              (string-append "-hash-normalize " (string-append expr ")")))))]
+              (string.string-append
+                "-hash-normalize "
+                (string.string-append expr ")")))))]
       [(AstTyBool)
-        (OkGenHashmapSource (string-append "(if " (string-append expr " 1 0)")))]
+        (OkGenHashmapSource
+          (string.string-append "(if " (string.string-append expr " 1 0)")))]
       [(AstTyChar)
         (OkGenHashmapSource
-          (string-append
-            (string-append "(" prefix)
-            (string-append
+          (string.string-append
+            (string.string-append "(" prefix)
+            (string.string-append
               "-hash-normalize (cast "
-              (string-append expr " : i64))"))))]
+              (string.string-append expr " : i64))"))))]
       [(AstTyString)
         (OkGenHashmapSource
-          (string-append
+          (string.string-append
             "("
-            (string-append
+            (string.string-append
               prefix
-              (string-append "-string-hash (& " (string-append expr "))")))))]
+              (string.string-append
+                "-string-hash (& "
+                (string.string-append expr "))")))))]
       [(AstTyStruct name)
         (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
           [(CtfeSomeReflectInfo info)
@@ -4417,9 +4408,9 @@
               variant-index
               payload-index)]
           [member-name : String
-            (string-append
+            (string.string-append
               variant-name
-              (string-append "#" (int->string payload-index)))]
+              (string.string-append "#" (string.int->string payload-index)))]
           (match (gen-hashmap-aggregate-hash-expr
             prefix
             aggregate-name
@@ -4439,7 +4430,7 @@
                 (+ payload-index 1)
                 (gen-hashmap-aggregate-combine-expr prefix seed payload-hash))]))]
       [(ErrCtfeTypeLookup message)
-        (ErrGenHashmapSource (gen-hashmap-diag message))])))
+        (ErrGenHashmapSource (box (gen-hashmap-diag message)))])))
 
 (define (gen-hashmap-aggregate-enum-hash-arms
   [variants : CtfeReflectVariantList]
@@ -4462,13 +4453,13 @@
             (gen-hashmap-aggregate-combine-expr
               prefix
               "0"
-              (string-append
+              (string.string-append
                 "("
-                (string-append
+                (string.string-append
                   prefix
-                  (string-append
+                  (string.string-append
                     "-hash-normalize "
-                    (string-append (int->string index) ")")))))]
+                    (string.string-append (string.int->string index) ")")))))]
           (match (gen-hashmap-aggregate-payload-hash-from
             payloads
             prefix
@@ -4489,12 +4480,12 @@
                 [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
                 [(OkGenHashmapSource rest-source)
                   (let
-                    [buf : TextBuf (text-buf-empty)]
+                    [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
                     (begin
                       (set! buf (gen-tb3 buf "    [(" variant-name pattern))
                       (set! buf (gen-tb3 buf ") " body-source "]\n"))
-                      (set! buf (text-buf-append buf rest-source))
-                      (OkGenHashmapSource (text-buf-render buf))))])]))])))
+                      (set! buf (text_buf.text-buf-append buf rest-source))
+                      (OkGenHashmapSource (text_buf.text-buf-render buf))))])]))])))
 
 (define (gen-hashmap-aggregate-enum-hash-expr
   [variants : CtfeReflectVariantList]
@@ -4511,12 +4502,12 @@
     [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
     [(OkGenHashmapSource arms-source)
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
         (begin
           (set! buf (gen-tb3 buf "(match " expr "\n"))
-          (set! buf (text-buf-append buf arms-source))
-          (set! buf (text-buf-append buf "  )"))
-          (OkGenHashmapSource (text-buf-render buf))))]))
+          (set! buf (text_buf.text-buf-append buf arms-source))
+          (set! buf (text_buf.text-buf-append buf "  )"))
+          (OkGenHashmapSource (text_buf.text-buf-render buf))))]))
 
 (define (gen-hashmap-aggregate-eq-expr
   [prefix : String]
@@ -4532,40 +4523,46 @@
     (match resolved
       [(AstTyI64)
         (OkGenHashmapSource
-          (string-append
+          (string.string-append
             "(= "
-            (string-append
+            (string.string-append
               left-expr
-              (string-append " " (string-append right-expr ")")))))]
+              (string.string-append " " (string.string-append right-expr ")")))))]
       [(AstTyBool)
         (OkGenHashmapSource
-          (string-append
+          (string.string-append
             "(= "
-            (string-append
+            (string.string-append
               left-expr
-              (string-append " " (string-append right-expr ")")))))]
+              (string.string-append " " (string.string-append right-expr ")")))))]
       [(AstTyChar)
         (OkGenHashmapSource
-          (string-append
+          (string.string-append
             "(= "
-            (string-append
-              (string-append "(cast " (string-append left-expr " : i64)"))
-              (string-append
+            (string.string-append
+              (string.string-append
+                "(cast "
+                (string.string-append left-expr " : i64)"))
+              (string.string-append
                 " "
-                (string-append
-                  (string-append "(cast " (string-append right-expr " : i64)"))
+                (string.string-append
+                  (string.string-append
+                    "(cast "
+                    (string.string-append right-expr " : i64)"))
                   ")")))))]
       [(AstTyString)
         (OkGenHashmapSource
-          (string-append
+          (string.string-append
             "("
-            (string-append
+            (string.string-append
               prefix
-              (string-append
+              (string.string-append
                 "-string-key-eq? (& "
-                (string-append
+                (string.string-append
                   left-expr
-                  (string-append ") (& " (string-append right-expr "))")))))))]
+                  (string.string-append
+                    ") (& "
+                    (string.string-append right-expr "))")))))))]
       [(AstTyStruct name)
         (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key resolved))
           [(CtfeSomeReflectInfo info)
@@ -4607,9 +4604,11 @@
         (gen-hashmap-aggregate-unsupported aggregate-name member-name type-key)])))
 
 (define (gen-hashmap-aggregate-and-expr [left : String] [right : String]) : String
-  (string-append
+  (string.string-append
     "(if "
-    (string-append left (string-append " " (string-append right " false)")))))
+    (string.string-append
+      left
+      (string.string-append " " (string.string-append right " false)")))))
 
 (define (gen-hashmap-aggregate-struct-eq-from
   [fields : CtfeReflectFieldList]
@@ -4675,9 +4674,9 @@
               variant-index
               payload-index)]
           [member-name : String
-            (string-append
+            (string.string-append
               variant-name
-              (string-append "#" (int->string payload-index)))]
+              (string.string-append "#" (string.int->string payload-index)))]
           (match (gen-hashmap-aggregate-eq-expr
             prefix
             aggregate-name
@@ -4701,7 +4700,7 @@
                   (OkGenHashmapSource
                     (gen-hashmap-aggregate-and-expr head-source rest-source))])]))]
       [(ErrCtfeTypeLookup message)
-        (ErrGenHashmapSource (gen-hashmap-diag message))])))
+        (ErrGenHashmapSource (box (gen-hashmap-diag message)))])))
 
 (define (gen-hashmap-aggregate-enum-eq-arms
   [variants : CtfeReflectVariantList]
@@ -4746,7 +4745,7 @@
                 [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
                 [(OkGenHashmapSource rest-source)
                   (let
-                    [buf : TextBuf (text-buf-empty)]
+                    [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
                     (begin
                       (set!
                         buf
@@ -4758,9 +4757,11 @@
                         buf
                         (gen-tb3 buf "        [(" variant-name right-pattern))
                       (set! buf (gen-tb3 buf ") " body-source "]\n"))
-                      (set! buf (text-buf-append buf "        [_ false])]\n"))
-                      (set! buf (text-buf-append buf rest-source))
-                      (OkGenHashmapSource (text-buf-render buf))))])]))])))
+                      (set!
+                        buf
+                        (text_buf.text-buf-append buf "        [_ false])]\n"))
+                      (set! buf (text_buf.text-buf-append buf rest-source))
+                      (OkGenHashmapSource (text_buf.text-buf-render buf))))])]))])))
 
 (define (gen-hashmap-aggregate-enum-eq-expr
   [variants : CtfeReflectVariantList]
@@ -4779,12 +4780,12 @@
     [(ErrGenHashmapSource diag) (ErrGenHashmapSource diag)]
     [(OkGenHashmapSource arms-source)
       (let
-        [buf : TextBuf (text-buf-empty)]
+        [buf : text_buf.TextBuf (text_buf.text-buf-empty)]
         (begin
           (set! buf (gen-tb3 buf "(match " left-expr "\n"))
-          (set! buf (text-buf-append buf arms-source))
-          (set! buf (text-buf-append buf "  )"))
-          (OkGenHashmapSource (text-buf-render buf))))]))
+          (set! buf (text_buf.text-buf-append buf arms-source))
+          (set! buf (text_buf.text-buf-append buf "  )"))
+          (OkGenHashmapSource (text_buf.text-buf-render buf))))]))
 
 (define (gen-hashmap-source-aggregate-key
   [map-name : String]
@@ -4802,6 +4803,12 @@
       (let
         [key-type : String (gen-hashmap-type-info-source key-info)]
         [key-name : String (gen-hashmap-type-info-name key-info)]
+        [key-hash-param-type : String
+          (string.string-append "(& key " (string.string-append key-type ")"))]
+        [key-eq-left-param-type : String
+          (string.string-append "(& left " (string.string-append key-type ")"))]
+        [key-eq-right-param-type : String
+          (string.string-append "(& right " (string.string-append key-type ")"))]
         (match (gen-hashmap-aggregate-hash-expr
           prefix
           key-name
@@ -4826,23 +4833,39 @@
                     map-name
                     prefix
                     key-type
-                    (string-append "  " (string-append hash-expr ")\n"))
+                    key-hash-param-type
+                    "(& key)"
+                    (string.string-append
+                      "  "
+                      (string.string-append hash-expr ")\n"))
                     (gen-hashmap-source-aggregate-key-support prefix)
-                    (string-append "  " (string-append eq-expr ")\n"))
-                    (string-append prefix "-key-eq? slot-key key)")
-                    (string-append "(init : " (string-append key-type ")"))
+                    key-eq-left-param-type
+                    key-eq-right-param-type
+                    (string.string-append
+                      "  "
+                      (string.string-append eq-expr ")\n"))
+                    (string.string-append
+                      prefix
+                      "-key-eq? (& slot-key) (& key))")
+                    (string.string-append
+                      prefix
+                      "-key-eq? (& slot-key) (& key))")
+                    (string.string-append
+                      "(init : "
+                      (string.string-append key-type ")"))
                     value-type))])]))]))
 
 (define (gen-hashmap-descriptor-mismatch
   [descriptor : String]
   [key-type-key : String]) : ResultGenHashmapSource
   (ErrGenHashmapSource
-    (gen-hashmap-diag
-      (string-append
-        "hashmap-family: descriptor "
-        (string-append
-          descriptor
-          (string-append " does not support key type " key-type-key))))))
+    (box
+      (gen-hashmap-diag
+        (string.string-append
+          "hashmap-family: descriptor "
+          (string.string-append
+            descriptor
+            (string.string-append " does not support key type " key-type-key)))))))
 
 (define (gen-hashmap-type-info-source [info : GenHashmapTypeInfo]) : String
   (match info
@@ -4871,31 +4894,34 @@
     [value-name : String (gen-hashmap-type-info-name value-info)]
     [value-prefix : String (gen-hashmap-type-info-prefix value-info)]
     [expected-map : String
-      (string-append key-name (string-append value-name "Map"))]
+      (string.string-append key-name (string.string-append value-name "Map"))]
     [prefix : String
-      (string-append
+      (string.string-append
         key-prefix
-        (string-append "-" (string-append value-prefix "-map")))]
+        (string.string-append "-" (string.string-append value-prefix "-map")))]
     (cond
-      [(not (string-eq map-name expected-map))
+      [(not (string.string-eq map-name expected-map))
         (ErrGenHashmapSource
-          (gen-hashmap-diag
-            (string-append
-              "hashmap-family: marker item "
-              (string-append
-                map-name
-                (string-append " does not match generated map " expected-map)))))]
-      [(string-eq descriptor "stdlib/hashmap/string-key-v1")
-        (if (string-eq key-type-key "String")
+          (box
+            (gen-hashmap-diag
+              (string.string-append
+                "hashmap-family: marker item "
+                (string.string-append
+                  map-name
+                  (string.string-append
+                    " does not match generated map "
+                    expected-map))))))]
+      [(string.string-eq descriptor "stdlib/hashmap/string-key-v1")
+        (if (string.string-eq key-type-key "String")
           (OkGenHashmapSource
             (gen-hashmap-source-string-key map-name prefix value-type))
           (gen-hashmap-descriptor-mismatch descriptor key-type-key))]
-      [(string-eq descriptor "stdlib/hashmap/i64-key-v1")
-        (if (string-eq key-type-key "i64")
+      [(string.string-eq descriptor "stdlib/hashmap/i64-key-v1")
+        (if (string.string-eq key-type-key "i64")
           (OkGenHashmapSource
             (gen-hashmap-source-i64-key map-name prefix value-type))
           (gen-hashmap-descriptor-mismatch descriptor key-type-key))]
-      [(string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
+      [(string.string-eq descriptor "stdlib/hashmap/aggregate-key-v1")
         (gen-hashmap-source-aggregate-key
           map-name
           prefix
@@ -4905,10 +4931,11 @@
           infos)]
       [else
         (ErrGenHashmapSource
-          (gen-hashmap-diag
-            (string-append
-              "hashmap-family: unsupported key descriptor "
-              descriptor)))])))
+          (box
+            (gen-hashmap-diag
+              (string.string-append
+                "hashmap-family: unsupported key descriptor "
+                descriptor))))])))
 
 (define (gen-hashmap-source-for
   [map-name : String]
@@ -4930,641 +4957,6 @@
             (ctfe-env-reflections env))]
         [(ErrGenHashmapTypeInfo diag) (ErrGenHashmapSource diag)])]
     [(ErrGenHashmapTypeInfo diag) (ErrGenHashmapSource diag)]))
-
-(define (gen-json-result-name [type-name : String]) : String
-  (string-append type-name "JsonResult"))
-
-(define (gen-json-ok-name [type-name : String]) : String
-  (string-append "Ok" (string-append type-name "Json")))
-
-(define (gen-json-err-name [type-name : String]) : String
-  (string-append "Err" (string-append type-name "Json")))
-
-(define (gen-json-to-name [type-name : String]) : String
-  (string-append (gen-hashmap-name-prefix type-name) "-to-json"))
-
-(define (gen-json-from-name [type-name : String]) : String
-  (string-append (gen-hashmap-name-prefix type-name) "-from-json"))
-
-(define (gen-json-supported-int? [type-key : String]) : bool
-  (or
-    (string-eq type-key "i64")
-    (string-eq type-key "i32")
-    (string-eq type-key "i16")
-    (string-eq type-key "i8")
-    (string-eq type-key "u32")
-    (string-eq type-key "u16")
-    (string-eq type-key "u8")))
-
-(define (gen-json-field-unsupported [field-name : String] [type-key : String]) : ResultGenJsonSource
-  (ErrGenJsonSource
-    (gen-json-diag
-      (string-append
-        "json-derive: unsupported field "
-        (string-append field-name (string-append " type " type-key))))))
-
-(define (gen-json-field-type-source
-  [field-name : String]
-  [infos : CtfeReflectInfoList]
-  [ty : AstType]) : ResultGenJsonSource
-  (let
-    [resolved : AstType (ctfe-reflect-resolve-type infos ty)]
-    [type-key : String (ctfe-type-key-with-reflections infos resolved)]
-    (match resolved
-      [(AstTyBool) (OkGenJsonSource "bool")]
-      [(AstTyString) (OkGenJsonSource "String")]
-      [(AstTyI64) (OkGenJsonSource "i64")]
-      [(AstTyI32) (OkGenJsonSource "i32")]
-      [(AstTyI16) (OkGenJsonSource "i16")]
-      [(AstTyI8) (OkGenJsonSource "i8")]
-      [(AstTyU32) (OkGenJsonSource "u32")]
-      [(AstTyU16) (OkGenJsonSource "u16")]
-      [(AstTyU8) (OkGenJsonSource "u8")]
-      [(AstTyStruct name) (OkGenJsonSource (intern-str name))]
-      [_ (gen-json-field-unsupported field-name type-key)])))
-
-(define (gen-json-field-init-source
-  [field-name : String]
-  [infos : CtfeReflectInfoList]
-  [ty : AstType]) : ResultGenJsonSource
-  (match (gen-json-field-type-source field-name infos ty)
-    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-    [(OkGenJsonSource type-source)
-      (let
-        [type-key : String (ctfe-type-key-with-reflections infos ty)]
-        (cond
-          [(string-eq type-source "bool") (OkGenJsonSource "false")]
-          [(string-eq type-source "String") (OkGenJsonSource "\"\"")]
-          [(string-eq type-source "i64") (OkGenJsonSource "0")]
-          [(gen-json-supported-int? type-key)
-            (OkGenJsonSource
-              (string-append "(cast 0 : " (string-append type-source ")")))]
-          [else
-            (OkGenJsonSource
-              (string-append "(init : " (string-append type-source ")")))]))]))
-
-(define (gen-json-field-access [field-name : String]) : String
-  (string-append "(struct-get value " (string-append field-name ")")))
-
-(define (gen-json-field-to-json-source
-  [field-name : String]
-  [infos : CtfeReflectInfoList]
-  [ty : AstType]) : ResultGenJsonSource
-  (match (gen-json-field-type-source field-name infos ty)
-    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-    [(OkGenJsonSource type-source)
-      (let
-        [type-key : String (ctfe-type-key-with-reflections infos ty)]
-        [field-access : String (gen-json-field-access field-name)]
-        (cond
-          [(string-eq type-source "bool")
-            (OkGenJsonSource
-              (string-append "(JsonBool " (string-append field-access ")")))]
-          [(string-eq type-source "String")
-            (OkGenJsonSource
-              (string-append "(JsonString " (string-append field-access ")")))]
-          [(gen-json-supported-int? type-key)
-            (OkGenJsonSource
-              (if (string-eq type-key "i64")
-                (string-append
-                  "(json-i64->number "
-                  (string-append field-access ")"))
-                (string-append
-                  "(json-i64->number (cast "
-                  (string-append field-access " : i64))"))))]
-          [else
-            (match (gen-hashmap-nominal-name type-key "struct_")
-              [(SpecSomeString name)
-                (OkGenJsonSource
-                  (string-append
-                    "("
-                    (string-append
-                      (gen-json-to-name name)
-                      (string-append " " (string-append field-access ")")))))]
-              [(SpecNoString) (gen-json-field-unsupported field-name type-key)])]))]))
-
-(define (gen-json-to-members-source-from
-  [fields : CtfeReflectFieldList]
-  [infos : CtfeReflectInfoList]
-  [index : i64]) : ResultGenJsonSource
-  (if (>= index (ctfe-reflect-field-list-count fields))
-    (OkGenJsonSource "JsonMemberListNil")
-    (match (ctfe-reflect-field-list-ref fields index)
-      [(CtfeReflectField field-name ty)
-        (match (gen-json-field-to-json-source field-name infos ty)
-          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-          [(OkGenJsonSource value-source)
-            (match (gen-json-to-members-source-from fields infos (+ index 1))
-              [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-              [(OkGenJsonSource rest-source)
-                (let
-                  [buf : TextBuf (text-buf-empty)]
-                  (begin
-                    (set!
-                      buf
-                      (gen-tb5
-                        buf
-                        "(JsonMemberListCons \""
-                        field-name
-                        "\" "
-                        value-source
-                        " (box "))
-                    (set! buf (text-buf-append buf rest-source))
-                    (set! buf (text-buf-append buf "))"))
-                    (OkGenJsonSource (text-buf-render buf))))])])])))
-
-(define (gen-json-to-members-source
-  [fields : CtfeReflectFieldList]
-  [infos : CtfeReflectInfoList]) : ResultGenJsonSource
-  (gen-json-to-members-source-from fields infos 0))
-
-(define (gen-json-local-name [index : i64]) : String
-  (string-append "json-field-" (int->string index)))
-
-(define (gen-json-key-name [index : i64]) : String
-  (string-append "json-key-" (int->string index)))
-
-(define (gen-json-value-name [index : i64]) : String
-  (string-append "json-value-" (int->string index)))
-
-(define (gen-json-let-bindings-source
-  [fields : CtfeReflectFieldList]
-  [infos : CtfeReflectInfoList]
-  [index : i64]) : ResultGenJsonSource
-  (if (>= index (ctfe-reflect-field-list-count fields))
-    (OkGenJsonSource "")
-    (match (ctfe-reflect-field-list-ref fields index)
-      [(CtfeReflectField field-name ty)
-        (match (gen-json-field-type-source field-name infos ty)
-          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-          [(OkGenJsonSource type-source)
-            (match (gen-json-field-init-source field-name infos ty)
-              [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-              [(OkGenJsonSource init-source)
-                (match (gen-json-let-bindings-source fields infos (+ index 1))
-                  [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-                  [(OkGenJsonSource rest-source)
-                    (let
-                      [buf : TextBuf (text-buf-empty)]
-                      (begin
-                        (set!
-                          buf
-                          (gen-tb7
-                            buf
-                            "        ["
-                            (gen-json-local-name index)
-                            " : "
-                            type-source
-                            " "
-                            init-source
-                            "]\n"))
-                        (set! buf (text-buf-append buf rest-source))
-                        (OkGenJsonSource (text-buf-render buf))))])])])])))
-
-(define (gen-json-kind-error-source
-  [err-name : String]
-  [field-name : String]
-  [expected : String]) : String
-  (text-buf-render
-    (gen-tb7
-      (text-buf-empty)
-      "(return ("
-      err-name
-      " \"json-derive: field "
-      field-name
-      " expected "
-      expected
-      "\"))")))
-
-(define (gen-json-int-min-expr [type-key : String]) : String
-  (cond
-    [(string-eq type-key "i32") "(- 0 2147483648)"]
-    [(string-eq type-key "i16") "(- 0 32768)"]
-    [(string-eq type-key "i8") "(- 0 128)"]
-    [else "0"]))
-
-(define (gen-json-int-max-expr [type-key : String]) : String
-  (cond
-    [(string-eq type-key "i32") "2147483647"]
-    [(string-eq type-key "i16") "32767"]
-    [(string-eq type-key "i8") "127"]
-    [(string-eq type-key "u32") "4294967295"]
-    [(string-eq type-key "u16") "65535"]
-    [(string-eq type-key "u8") "255"]
-    [else "9223372036854775807"]))
-
-(define (gen-json-int-set-source
-  [local-name : String]
-  [field-name : String]
-  [type-source : String]
-  [type-key : String]
-  [err-name : String]) : String
-  (if (string-eq type-key "i64")
-    (string-append "(set! " (string-append local-name " parsed)"))
-    (let
-      [min-expr : String (gen-json-int-min-expr type-key)]
-      [max-expr : String (gen-json-int-max-expr type-key)]
-      [buf : TextBuf (text-buf-empty)]
-      (begin
-        (set!
-          buf
-          (gen-tb5
-            buf
-            "(if (if (< parsed "
-            min-expr
-            ") true (> parsed "
-            max-expr
-            "))\n        "))
-        (set!
-          buf
-          (gen-tb7
-            buf
-            "(return ("
-            err-name
-            " \"json-derive: field "
-            field-name
-            " outside "
-            type-source
-            " range\"))\n        "))
-        (set!
-          buf
-          (gen-tb5 buf "(set! " local-name " (cast parsed : " type-source ")))"))
-        (text-buf-render buf)))))
-
-(define (gen-json-field-invalid-source
-  [err-name : String]
-  [field-name : String]
-  [type-source : String]) : String
-  (text-buf-render
-    (gen-tb7
-      (text-buf-empty)
-      "(return ("
-      err-name
-      " (string-append \"json-derive: field "
-      field-name
-      " invalid "
-      type-source
-      ": \" err)))")))
-
-(define (gen-json-from-value-source
-  [field-name : String]
-  [infos : CtfeReflectInfoList]
-  [ty : AstType]
-  [local-name : String]
-  [value-name : String]
-  [err-name : String]) : ResultGenJsonSource
-  (match (gen-json-field-type-source field-name infos ty)
-    [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-    [(OkGenJsonSource type-source)
-      (let
-        [type-key : String (ctfe-type-key-with-reflections infos ty)]
-        (cond
-          [(string-eq type-source "bool")
-            (OkGenJsonSource
-              (string-append
-                "(match "
-                (string-append
-                  value-name
-                  (string-append
-                    "\n        [(JsonBool parsed) (set! "
-                    (string-append
-                      local-name
-                      (string-append
-                        " parsed)]\n        [_ "
-                        (string-append
-                          (gen-json-kind-error-source
-                            err-name
-                            field-name
-                            "bool")
-                          "])")))))))]
-          [(string-eq type-source "String")
-            (OkGenJsonSource
-              (string-append
-                "(match "
-                (string-append
-                  value-name
-                  (string-append
-                    "\n        [(JsonString parsed) (set! "
-                    (string-append
-                      local-name
-                      (string-append
-                        " parsed)]\n        [_ "
-                        (string-append
-                          (gen-json-kind-error-source
-                            err-name
-                            field-name
-                            "String")
-                          "])")))))))]
-          [(gen-json-supported-int? type-key)
-            (let
-              [set-source : String
-                (gen-json-int-set-source
-                  local-name
-                  field-name
-                  type-source
-                  type-key
-                  err-name)]
-              [buf : TextBuf (text-buf-empty)]
-              (begin
-                (set! buf (gen-tb3 buf "(match " value-name "\n"))
-                (set!
-                  buf
-                  (text-buf-append
-                    buf
-                    "        [(JsonNumber text)\n          (match (json-number-owned->i64 text)\n            [(OkJsonNumberI64 parsed) "))
-                (set! buf (text-buf-append buf set-source))
-                (set!
-                  buf
-                  (text-buf-append
-                    buf
-                    "]\n            [(ErrJsonNumberI64 err) "))
-                (set!
-                  buf
-                  (text-buf-append
-                    buf
-                    (gen-json-field-invalid-source
-                      err-name
-                      field-name
-                      type-source)))
-                (set! buf (text-buf-append buf "])]\n        [_ "))
-                (set!
-                  buf
-                  (text-buf-append
-                    buf
-                    (gen-json-kind-error-source err-name field-name type-source)))
-                (set! buf (text-buf-append buf "])"))
-                (OkGenJsonSource (text-buf-render buf))))]
-          [else
-            (match (gen-hashmap-nominal-name type-key "struct_")
-              [(SpecSomeString nested-name)
-                (let
-                  [nested-from : String (gen-json-from-name nested-name)]
-                  [nested-ok : String (gen-json-ok-name nested-name)]
-                  [nested-err : String (gen-json-err-name nested-name)]
-                  [buf : TextBuf (text-buf-empty)]
-                  (begin
-                    (set!
-                      buf
-                      (gen-tb5
-                        buf
-                        "(match ("
-                        nested-from
-                        " "
-                        value-name
-                        ")\n        [("))
-                    (set!
-                      buf
-                      (gen-tb6
-                        buf
-                        nested-ok
-                        " parsed) (set! "
-                        local-name
-                        " parsed)]\n        [("
-                        nested-err
-                        " err) "))
-                    (set!
-                      buf
-                      (text-buf-append
-                        buf
-                        (gen-json-field-invalid-source
-                          err-name
-                          field-name
-                          type-source)))
-                    (set! buf (text-buf-append buf "])"))
-                    (OkGenJsonSource (text-buf-render buf))))]
-              [(SpecNoString) (gen-json-field-unsupported field-name type-key)])]))]))
-
-(define (gen-json-from-field-statement-source
-  [field-name : String]
-  [infos : CtfeReflectInfoList]
-  [ty : AstType]
-  [index : i64]
-  [err-name : String]) : ResultGenJsonSource
-  (let
-    [local-name : String (gen-json-local-name index)]
-    [key-name : String (gen-json-key-name index)]
-    [value-name : String (gen-json-value-name index)]
-    (match (gen-json-from-value-source
-      field-name
-      infos
-      ty
-      local-name
-      value-name
-      err-name)
-      [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-      [(OkGenJsonSource value-source)
-        (let
-          [buf : TextBuf (text-buf-empty)]
-          (begin
-            (set!
-              buf
-              (gen-tb6
-                buf
-                "          (let\n            ["
-                key-name
-                " : String \""
-                field-name
-                "\"]\n            (match (json-object-get-owned value "
-                key-name))
-            (set!
-              buf
-              (gen-tb3
-                buf
-                ")\n              [(JsonFound "
-                value-name
-                ")\n                "))
-            (set! buf (text-buf-append buf value-source))
-            (set!
-              buf
-              (gen-tb7
-                buf
-                "]\n              [(JsonMissing) (return ("
-                err-name
-                " \"json-derive: missing field "
-                field-name
-                "\"))]))\n"
-                ""
-                ""))
-            (OkGenJsonSource (text-buf-render buf))))])))
-
-(define (gen-json-from-statements-source
-  [fields : CtfeReflectFieldList]
-  [infos : CtfeReflectInfoList]
-  [index : i64]
-  [err-name : String]) : ResultGenJsonSource
-  (if (>= index (ctfe-reflect-field-list-count fields))
-    (OkGenJsonSource "")
-    (match (ctfe-reflect-field-list-ref fields index)
-      [(CtfeReflectField field-name ty)
-        (match (gen-json-from-field-statement-source
-          field-name
-          infos
-          ty
-          index
-          err-name)
-          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-          [(OkGenJsonSource head-source)
-            (match (gen-json-from-statements-source
-              fields
-              infos
-              (+ index 1)
-              err-name)
-              [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-              [(OkGenJsonSource rest-source)
-                (OkGenJsonSource (string-append head-source rest-source))])])])))
-
-(define (gen-json-constructor-args-from [index : i64] [count : i64]) : String
-  (if (>= index count)
-    ""
-    (string-append
-      " "
-      (string-append
-        (gen-json-local-name index)
-        (gen-json-constructor-args-from (+ index 1) count)))))
-
-(define (gen-json-from-body-source
-  [type-name : String]
-  [fields : CtfeReflectFieldList]
-  [infos : CtfeReflectInfoList]) : ResultGenJsonSource
-  (let
-    [field-count : i64 (ctfe-reflect-field-list-count fields)]
-    [ok-name : String (gen-json-ok-name type-name)]
-    [err-name : String (gen-json-err-name type-name)]
-    [args : String (gen-json-constructor-args-from 0 field-count)]
-    (if (= field-count 0)
-      (OkGenJsonSource
-        (string-append
-          "("
-          (string-append
-            ok-name
-            (string-append " (" (string-append type-name "))")))))
-      (match (gen-json-let-bindings-source fields infos 0)
-        [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-        [(OkGenJsonSource bindings-source)
-          (match (gen-json-from-statements-source fields infos 0 err-name)
-            [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-            [(OkGenJsonSource statements-source)
-              (let
-                [buf : TextBuf (text-buf-empty)]
-                (begin
-                  (set! buf (text-buf-append buf "(let\n"))
-                  (set! buf (text-buf-append buf bindings-source))
-                  (set! buf (text-buf-append buf "        (begin\n"))
-                  (set! buf (text-buf-append buf statements-source))
-                  (set!
-                    buf
-                    (gen-tb7
-                      buf
-                      "          ("
-                      ok-name
-                      " ("
-                      type-name
-                      args
-                      "))))"
-                      ""))
-                  (OkGenJsonSource (text-buf-render buf))))])]))))
-
-(define (gen-json-source-for-fields
-  [type-name : String]
-  [fields : CtfeReflectFieldList]
-  [infos : CtfeReflectInfoList]) : ResultGenJsonSource
-  (let
-    [result-name : String (gen-json-result-name type-name)]
-    [ok-name : String (gen-json-ok-name type-name)]
-    [err-name : String (gen-json-err-name type-name)]
-    [to-name : String (gen-json-to-name type-name)]
-    [from-name : String (gen-json-from-name type-name)]
-    (match (gen-json-to-members-source fields infos)
-      [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-      [(OkGenJsonSource members-source)
-        (match (gen-json-from-body-source type-name fields infos)
-          [(ErrGenJsonSource diag) (ErrGenJsonSource diag)]
-          [(OkGenJsonSource from-body)
-            (let
-              [buf : TextBuf (text-buf-empty)]
-              (begin
-                (set!
-                  buf
-                  (gen-tb7
-                    buf
-                    "(defenum "
-                    result-name
-                    "\n  ("
-                    ok-name
-                    " "
-                    type-name
-                    ")\n  ("))
-                (set!
-                  buf
-                  (gen-tb6
-                    buf
-                    err-name
-                    " String))\n(define ("
-                    to-name
-                    " [value : "
-                    type-name
-                    "]) : Json\n  "))
-                (set! buf (text-buf-append buf "(JsonObject\n    (box\n      "))
-                (set! buf (text-buf-append buf members-source))
-                (set! buf (text-buf-append buf ")))\n(define ("))
-                (set! buf (text-buf-append buf from-name))
-                (set! buf (text-buf-append buf " [value : Json]) : "))
-                (set! buf (text-buf-append buf result-name))
-                (set!
-                  buf
-                  (text-buf-append
-                    buf
-                    "\n  (match value\n    [(JsonObject _)\n      "))
-                (set! buf (text-buf-append buf from-body))
-                (set!
-                  buf
-                  (gen-tb5
-                    buf
-                    "]\n    [_ ("
-                    err-name
-                    " \"json-derive: expected object for "
-                    type-name
-                    "\")]))\n"))
-                (OkGenJsonSource (text-buf-render buf))))])])))
-
-(define (gen-json-source-for
-  [request-name : String]
-  [ty : AstType]
-  [env : CtfeEnv]) : ResultGenJsonSource
-  (let
-    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    [resolved : AstType (ctfe-reflect-resolve-type infos ty)]
-    [type-key : String (ctfe-type-key-with-reflections infos resolved)]
-    (match resolved
-      [(AstTyStruct name)
-        (let
-          [type-name : String (intern-str name)]
-          [expected-request : String (string-append type-name "Json")]
-          (if (not (string-eq request-name expected-request))
-            (ErrGenJsonSource
-              (gen-json-diag
-                (string-append
-                  "json-derive: marker item "
-                  (string-append
-                    request-name
-                    (string-append
-                      " does not match generated request "
-                      expected-request)))))
-            (match (ctfe-reflect-info-lookup
-              infos
-              (ctfe-type-nominal-key resolved))
-              [(CtfeSomeReflectInfo info)
-                (match info
-                  [(CtfeReflectStruct _ _ _ fields)
-                    (gen-json-source-for-fields type-name fields infos)]
-                  [_ (gen-json-field-unsupported request-name type-key)])]
-              [(CtfeNoReflectInfo)
-                (ErrGenJsonSource
-                  (gen-json-diag
-                    (string-append
-                      "json-derive: no reflection metadata for "
-                      type-key)))])))]
-      [_ (gen-json-field-unsupported request-name type-key)])))
 
 (define (gen-register-generated-decl
   [template : AstDecl]
@@ -5588,7 +4980,7 @@
       [(GenSomeEntry existing)
         (if (gen-decl-eq? existing template)
           (OkGenDecl AstDeclNil registry module)
-          (ErrGenDecl (gen-incompatible-diag item key)))])))
+          (ErrGenDecl (box (gen-incompatible-diag item key))))])))
 
 (define (gen-register-generated-decls
   [decls : AstDeclList]
@@ -5619,8 +5011,9 @@
                 [(ErrGenDecl diag) (ErrGenDecl diag)])]
             [_
               (ErrGenDecl
-                (gen-hashmap-diag
-                  "hashmap-family: generated payload must declare a visible item"))])]
+                (box
+                  (gen-hashmap-diag
+                    "hashmap-family: generated payload must declare a visible item")))])]
         [(SpecSomeString item)
           (match (gen-register-generated-decl
             decl
@@ -5646,86 +5039,11 @@
                 [(ErrGenDecl diag) (ErrGenDecl diag)])]
             [(ErrGenDecl diag) (ErrGenDecl diag)])])]))
 
-(define (gen-register-generated-decl-raw
-  [template : AstDecl]
-  [module : String]
-  [generator : String]
-  [item : String]
-  [arg-key : String]
-  [registry : GenRegistry]) : ResultGenDecl
-  (let
-    [key : String (gen-registration-key module generator item arg-key)]
-    (match (gen-registry-lookup registry key)
-      [(GenNoEntry)
-        (OkGenDecl
-          (gen-single-decl-list template)
-          (gen-registry-insert registry key template)
-          module)]
-      [(GenSomeEntry existing)
-        (if (gen-decl-eq? existing template)
-          (OkGenDecl AstDeclNil registry module)
-          (ErrGenDecl (gen-incompatible-diag item key)))])))
-
-;; JSON derive emits runtime helpers that call imported stdlib functions. Keep
-;; the registry key for dedup, but leave declarations raw so the run pipeline
-;; resolves them like ordinary request-site declarations.
-(define (gen-register-generated-decls-raw
-  [decls : AstDeclList]
-  [module : String]
-  [generator : String]
-  [arg-key : String]
-  [registry : GenRegistry]) : ResultGenDecl
-  (match decls
-    [(AstDeclNil) (OkGenDecl AstDeclNil registry module)]
-    [(AstDeclCons decl rest-box)
-      (match (gen-decl-visible-name decl)
-        [(SpecNoString)
-          (match decl
-            [(AstDeclImport _)
-              (match (gen-register-generated-decls-raw
-                (box-get rest-box)
-                module
-                generator
-                arg-key
-                registry)
-                [(OkGenDecl rewritten-rest rest-registry rest-module)
-                  (OkGenDecl
-                    (ast-decl-cons decl rewritten-rest)
-                    rest-registry
-                    rest-module)]
-                [(ErrGenDecl diag) (ErrGenDecl diag)])]
-            [_
-              (ErrGenDecl
-                (gen-json-diag
-                  "json-derive: generated payload must declare a visible item"))])]
-        [(SpecSomeString item)
-          (match (gen-register-generated-decl-raw
-            decl
-            module
-            generator
-            item
-            arg-key
-            registry)
-            [(OkGenDecl rewritten-head head-registry _)
-              (match (gen-register-generated-decls-raw
-                (box-get rest-box)
-                module
-                generator
-                arg-key
-                head-registry)
-                [(OkGenDecl rewritten-rest rest-registry rest-module)
-                  (OkGenDecl
-                    (spec-decl-list-append rewritten-head rewritten-rest)
-                    rest-registry
-                    rest-module)]
-                [(ErrGenDecl diag) (ErrGenDecl diag)])]
-            [(ErrGenDecl diag) (ErrGenDecl diag)])])]))
-
 (define (gen-metadata-arg-key
   [meta-key : String]
   [args : AstExprList]
   [env : CtfeEnv]) : ResultGenKey
-  (if (> (string-length meta-key) 0)
+  (if (> (string.string-length meta-key) 0)
     (OkGenKey meta-key (ctfe-fuel-limit))
     (gen-key-exprs args env (ctfe-fuel-limit))))
 
@@ -5759,43 +5077,13 @@
                     registry)]
                 [(ErrAstProgram message)
                   (ErrGenDecl
-                    (gen-hashmap-diag
-                      (string-append
-                        "hashmap-family: generated source did not parse: "
-                        message)))])]
+                    (box
+                      (gen-hashmap-diag
+                        (string.string-append
+                          "hashmap-family: generated source did not parse: "
+                          message))))])]
             [(ErrGenHashmapSource diag) (ErrGenDecl diag)])])]
     [(ErrGenHashmapArgs diag) (ErrGenDecl diag)]))
-
-(define (gen-json-expand-family
-  [request-name : String]
-  [module : String]
-  [generator : String]
-  [args : AstExprList]
-  [arg-key : String]
-  [registry : GenRegistry]
-  [env : CtfeEnv]) : ResultGenDecl
-  (match (gen-json-args args env)
-    [(OkGenJsonDeriveArgs parsed-args)
-      (match parsed-args
-        [(GenJsonDeriveArgs ty)
-          (match (gen-json-source-for request-name ty env)
-            [(OkGenJsonSource source)
-              (match (parse-ast-source source)
-                [(OkAstProgram (AstProgram decls-box))
-                  (gen-register-generated-decls-raw
-                    (box-get decls-box)
-                    module
-                    generator
-                    arg-key
-                    registry)]
-                [(ErrAstProgram message)
-                  (ErrGenDecl
-                    (gen-json-diag
-                      (string-append
-                        "json-derive: generated source did not parse: "
-                        message)))])]
-            [(ErrGenJsonSource diag) (ErrGenDecl diag)])])]
-    [(ErrGenJsonDeriveArgs diag) (ErrGenDecl diag)]))
 
 (define (gen-rewrite-decl
   [decl : AstDecl]
@@ -5817,40 +5105,21 @@
               (match (gen-decl-visible-name template)
                 [(SpecNoString)
                   (ErrGenDecl
-                    (compiler-diagnostic-at-start
-                      ""
-                      "generated-decl: generated payload must declare a visible item"))]
+                    (box
+                      (compiler-diagnostic-at-start
+                        ""
+                        "generated-decl: generated payload must declare a visible item")))]
                 [(SpecSomeString actual)
-                  (if (not (string-eq item actual))
-                    (ErrGenDecl (gen-item-mismatch-diag item actual))
+                  (if (not (string.string-eq item actual))
+                    (ErrGenDecl (box (gen-item-mismatch-diag item actual)))
                     (match (gen-metadata-arg-key meta-key args env)
                       [(OkGenKey arg-key _)
                         (cond
-                          [(string-eq generator "stdlib/hashmap-family")
+                          [(string.string-eq generator "stdlib/hashmap-family")
                             (match (gen-hashmap-family-marker-name template)
                               [(SpecSomeString map-name)
                                 (gen-hashmap-expand-family
                                   map-name
-                                  module
-                                  generator
-                                  args
-                                  arg-key
-                                  registry
-                                  env)]
-                              [(SpecNoString)
-                                (gen-register-generated-decl
-                                  template
-                                  module
-                                  generator
-                                  item
-                                  args
-                                  arg-key
-                                  registry)])]
-                          [(string-eq generator "stdlib/json-derive")
-                            (match (gen-json-derive-marker-name template)
-                              [(SpecSomeString request-name)
-                                (gen-json-expand-family
-                                  request-name
                                   module
                                   generator
                                   args
@@ -6112,7 +5381,7 @@
   (match subs
     [(SpecTypeSubstNil) (SpecNoString)]
     [(SpecTypeSubstCons key _ rest)
-      (if (string-eq key name)
+      (if (string.string-eq key name)
         (SpecSomeString key)
         (spec-type-subst-lookup (box-get rest) name))]))
 
@@ -6120,7 +5389,7 @@
   (match subs
     [(SpecTypeSubstNil) (AstTyVar (intern name))]
     [(SpecTypeSubstCons key ty rest)
-      (if (string-eq key name)
+      (if (string.string-eq key name)
         ty
         (spec-type-subst-type (box-get rest) name))]))
 
@@ -6128,7 +5397,7 @@
   (match subs
     [(SpecValueSubstNil) (SpecNoString)]
     [(SpecValueSubstCons key _ rest)
-      (if (string-eq key name)
+      (if (string.string-eq key name)
         (SpecSomeString key)
         (spec-value-subst-lookup (box-get rest) name))]))
 
@@ -6136,7 +5405,7 @@
   (match subs
     [(SpecValueSubstNil) (CtfeUnit)]
     [(SpecValueSubstCons key value rest)
-      (if (string-eq key name)
+      (if (string.string-eq key name)
         value
         (spec-value-subst-value (box-get rest) name))]))
 
@@ -6144,7 +5413,7 @@
   (match subs
     [(SpecValueSubstNil) SpecValueSubstNil]
     [(SpecValueSubstCons key value rest)
-      (if (string-eq key name)
+      (if (string.string-eq key name)
         (spec-value-subst-remove-name (box-get rest) name)
         (spec-value-subst-cons
           key
@@ -6211,7 +5480,7 @@
   (match subs
     [(SpecTypeSubstNil) SpecTypeSubstNil]
     [(SpecTypeSubstCons key ty rest)
-      (if (string-eq key name)
+      (if (string.string-eq key name)
         (spec-type-subst-remove-name (box-get rest) name)
         (spec-type-subst-cons
           key
@@ -6363,47 +5632,57 @@
       (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitChar c))))]
     [(CtfeString _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time String value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time String value into runtime expression")))]
     [(CtfeUnit) (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitUnit))))]
     [(CtfeType ty)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          (string-append
-            "cannot substitute compile-time type value "
-            (string-append (spec-type-key ty) " into runtime expression"))))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            (string.string-append
+              "cannot substitute compile-time type value "
+              (string.string-append
+                (spec-type-key ty)
+                " into runtime expression")))))]
     [(CtfeExpr _ _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time Expr value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time Expr value into runtime expression")))]
     [(CtfeExprList _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprList value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprList value into runtime expression")))]
     [(CtfeExprClause _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprClause value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprClause value into runtime expression")))]
     [(CtfeExprClauseList _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprClauseList value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprClauseList value into runtime expression")))]
     [(CtfeExprBindingClause _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprBindingClause value into runtime expression"))]
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprBindingClause value into runtime expression")))]
     [(CtfeExprBindingClauseList _)
       (ErrSpecSubExpr
-        (spec-diagnostic-at-expr
-          origin
-          "cannot substitute compile-time ExprBindingClauseList value into runtime expression"))]))
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)
@@ -6523,7 +5802,7 @@
         [(AstExprNil) (OkSpecArgs SpecValueNil AstExprNil state)]
         [_
           (ErrSpecArgs
-            (compiler-diagnostic-at-start "" "specialize: arity mismatch"))])]
+            (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))])]
     [(AstParamCons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
@@ -6557,17 +5836,18 @@
                                 [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
                             [_
                               (ErrSpecArgs
-                                (spec-diagnostic-at-expr
-                                  arg
-                                  (string-append
-                                    "comptime argument '"
-                                    (string-append
-                                      (intern-str param-name)
-                                      (string-append
-                                        "' for function '"
-                                        (string-append
-                                          fn-name
-                                          "' must be a type value such as `(type i64)`"))))))])
+                                (box
+                                  (spec-diagnostic-at-expr
+                                    arg
+                                    (string.string-append
+                                      "comptime argument '"
+                                      (string.string-append
+                                        (intern-str param-name)
+                                        (string.string-append
+                                          "' for function '"
+                                          (string.string-append
+                                            fn-name
+                                            "' must be a type value such as `(type i64)`")))))))])
                           (if (spec-value-runtime-type-matches? value param-ty)
                             (match (spec-rewrite-specialized-args
                               rest-params
@@ -6582,23 +5862,24 @@
                                   rest-state)]
                               [(ErrSpecArgs diag) (ErrSpecArgs diag)])
                             (ErrSpecArgs
-                              (spec-diagnostic-at-expr
-                                arg
-                                (string-append
-                                  "comptime argument '"
-                                  (string-append
-                                    (intern-str param-name)
-                                    (string-append
-                                      "' for function '"
-                                      (string-append
-                                        fn-name
-                                        (string-append
-                                          "' has type "
-                                          (string-append
-                                            (spec-value-type-label value)
-                                            (string-append
-                                              ", expected "
-                                              (spec-type-key param-ty))))))))))))]
+                              (box
+                                (spec-diagnostic-at-expr
+                                  arg
+                                  (string.string-append
+                                    "comptime argument '"
+                                    (string.string-append
+                                      (intern-str param-name)
+                                      (string.string-append
+                                        "' for function '"
+                                        (string.string-append
+                                          fn-name
+                                          (string.string-append
+                                            "' has type "
+                                            (string.string-append
+                                              (spec-value-type-label value)
+                                              (string.string-append
+                                                ", expected "
+                                                (spec-type-key param-ty)))))))))))))]
                       [(ErrCtfe diag) (ErrSpecArgs diag)])
                     (match (spec-rewrite-expr arg templates state)
                       [(OkSpecExpr rewritten-arg arg-state)
@@ -6617,7 +5898,8 @@
                       [(ErrSpecExpr diag) (ErrSpecArgs diag)]))]))]
           [_
             (ErrSpecArgs
-              (compiler-diagnostic-at-start "" "specialize: arity mismatch"))]))]))
+              (box
+                (compiler-diagnostic-at-start "" "specialize: arity mismatch")))]))]))
 
 (define (spec-build-specialization
   [params : AstParamList]
@@ -6629,7 +5911,7 @@
           (OkSpecBuild AstParamNil SpecValueSubstNil SpecTypeSubstNil)]
         [_
           (ErrSpecBuild
-            (compiler-diagnostic-at-start "" "specialize: value mismatch"))])]
+            (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])]
     [(AstParamCons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
@@ -6654,9 +5936,10 @@
                                 type-subs))]
                           [_
                             (ErrSpecBuild
-                              (compiler-diagnostic-at-start
-                                ""
-                                "specialize: expected type value"))])
+                              (box
+                                (compiler-diagnostic-at-start
+                                  ""
+                                  "specialize: expected type value")))])
                         (OkSpecBuild
                           runtime
                           (spec-value-subst-cons
@@ -6667,9 +5950,10 @@
                     [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
                 [_
                   (ErrSpecBuild
-                    (compiler-diagnostic-at-start
-                      ""
-                      "specialize: value mismatch"))])
+                    (box
+                      (compiler-diagnostic-at-start
+                        ""
+                        "specialize: value mismatch")))])
               (match (spec-build-specialization rest-params values)
                 [(OkSpecBuild runtime value-subs type-subs)
                   (OkSpecBuild
@@ -6707,7 +5991,7 @@
                                 [cached-state : SpecState
                                   (SpecState
                                     generated
-                                    (string-string-map-put
+                                    (hashmap.string-string-map-put
                                       cache
                                       key
                                       generated-name)
@@ -7675,11 +6959,12 @@
         (match (spec-value-subst-lookup subs (intern-str name))
           [(SpecSomeString _)
             (ErrSpecSubExpr
-              (spec-diagnostic-at-expr
-                expr
-                (string-append
-                  "cannot assign to comptime parameter '"
-                  (string-append (intern-str name) "'"))))]
+              (box
+                (spec-diagnostic-at-expr
+                  expr
+                  (string.string-append
+                    "cannot assign to comptime parameter '"
+                    (string.string-append (intern-str name) "'")))))]
           [(SpecNoString)
             (match (spec-substitute-values-expr value subs)
               [(OkSpecSubExpr rewritten)
@@ -7966,11 +7251,12 @@
       (match (spec-value-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string-append
-                "cannot take address of comptime value parameter '"
-                (string-append (intern-str name) "'"))))]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                (string.string-append
+                  "cannot take address of comptime value parameter '"
+                  (string.string-append (intern-str name) "'")))))]
         [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
@@ -8234,13 +7520,14 @@
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string-append
-                "type-valued comptime parameter '"
-                (string-append
-                  (intern-str name)
-                  "' cannot be used as a runtime value"))))]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                (string.string-append
+                  "type-valued comptime parameter '"
+                  (string.string-append
+                    (intern-str name)
+                    "' cannot be used as a runtime value")))))]
         [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
     [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
     [(AstExprTypeLiteral ty)
@@ -8579,11 +7866,14 @@
         (match (spec-type-subst-lookup subs (intern-str name))
           [(SpecSomeString _)
             (ErrSpecSubExpr
-              (spec-diagnostic-at-expr
-                expr
-                (string-append
-                  "type-valued comptime parameter '"
-                  (string-append (intern-str name) "' cannot be assigned"))))]
+              (box
+                (spec-diagnostic-at-expr
+                  expr
+                  (string.string-append
+                    "type-valued comptime parameter '"
+                    (string.string-append
+                      (intern-str name)
+                      "' cannot be assigned")))))]
           [(SpecNoString)
             (match (spec-substitute-types-expr value subs)
               [(OkSpecSubExpr rewritten)
@@ -8728,13 +8018,14 @@
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecSomeString _)
           (ErrSpecSubExpr
-            (spec-diagnostic-at-expr
-              expr
-              (string-append
-                "type-valued comptime parameter '"
-                (string-append
-                  (intern-str name)
-                  "' cannot be used as a runtime value"))))]
+            (box
+              (spec-diagnostic-at-expr
+                expr
+                (string.string-append
+                  "type-valued comptime parameter '"
+                  (string.string-append
+                    (intern-str name)
+                    "' cannot be used as a runtime value")))))]
         [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
@@ -9102,7 +8393,7 @@
           [(ErrSpecDecl diag) (ErrSpecDeclsWithPaths diag)]))]))
 
 (define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList
-  (if (string-eq fallback-path "")
+  (if (string.string-eq fallback-path "")
     AstDeclPathNil
     (gen-path-list-for-decls decls fallback-path AstDeclPathNil)))
 
@@ -9122,7 +8413,7 @@
                   (spec-template-env-from-list templates)
                   (SpecState
                     AstDeclNil
-                    (string-string-map-with-capacity 64)
+                    (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
                     (ast-node-pool-context-capture-active)))
@@ -9157,7 +8448,7 @@
                   (spec-template-env-from-list templates)
                   (SpecState
                     AstDeclNil
-                    (string-string-map-with-capacity 64)
+                    (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
                     (ast-node-pool-context-capture-active)))
@@ -9258,7 +8549,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string.string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [(AstDeclComptimeDecl _ template-box)
@@ -9266,13 +8557,13 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDeclDefFn fn-name _ _ _ _)
-                        (if (string-eq (intern-str fn-name) name)
+                        (if (string.string-eq (intern-str fn-name) name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [(AstDeclDefFn fn-name _ _ _ _)
-            (if (string-eq (intern-str fn-name) name)
+            (if (string.string-eq (intern-str fn-name) name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
           [(AstDeclComptimeDecl _ template-box)
@@ -9280,7 +8571,7 @@
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string.string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
@@ -9382,8 +8673,8 @@
     [subs : SpecTypeSubst
       (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
-      (string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
-      (string-eq
+      (string.string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
+      (string.string-eq
         (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
         "mutptr_ptr_u8")
       (ctfe-type-eq
@@ -9409,24 +8700,24 @@
     [vals-string : SpecValueList
       (spec-value-cons (CtfeString "a b") (SpecValueNil))]
     (and
-      (string-eq
+      (string.string-eq
         (spec-specialized-name "alloc" vals-i64)
         "__tl_specialized_alloc_type_i64_none")
-      (string-eq
+      (string.string-eq
         (spec-specialized-name "alloc" vals-i64)
         (spec-specialized-name "alloc" vals-i64))
-      (string-eq
+      (string.string-eq
         (spec-specialization-key "alloc" vals-i64)
         "alloc:type_i64_none")
       (not
-        (string-eq
+        (string.string-eq
           (spec-specialized-name "alloc" vals-i64)
           (spec-specialized-name "alloc" vals-bool)))
-      (string-eq
+      (string.string-eq
         (spec-specialized-name "pair" vals-multi)
         "__tl_specialized_pair_type_i64_i64_5_none")
-      (string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
-      (string-eq
+      (string.string-eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
+      (string.string-eq
         (spec-specialized-name "name" vals-string)
         "__tl_specialized_name_string_3_97_32_98_none"))))
 
@@ -9446,7 +8737,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string.string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [(AstDeclComptimeDecl _ template-box)
@@ -9454,7 +8745,7 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDeclDefFn fn-name _ _ _ _)
-                        (if (string-eq (intern-str fn-name) name)
+                        (if (string.string-eq (intern-str fn-name) name)
                           (+
                             1
                             (compiler-specialize-decl-list-count-defs rest name))
@@ -9462,7 +8753,7 @@
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [(AstDeclDefFn fn-name _ _ _ _)
-            (if (string-eq (intern-str fn-name) name)
+            (if (string.string-eq (intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
           [(AstDeclComptimeDecl _ inner-box)
@@ -9470,7 +8761,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDeclDefFn fn-name _ _ _ _)
-                  (if (string-eq (intern-str fn-name) name)
+                  (if (string.string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
@@ -9488,7 +8779,7 @@
           (compiler-specialize-decl-list-count-visible rest name)]
         (match (gen-decl-visible-name decl)
           [(SpecSomeString found)
-            (if (string-eq found name)
+            (if (string.string-eq found name)
               (+ 1 tail-count)
               tail-count)]
           [(SpecNoString) tail-count]))]))
@@ -9534,18 +8825,18 @@
     [subs : SpecTypeSubst
       (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
     (and
-      (string-eq
+      (string.string-eq
         (spec-type-key (spec-substitute-type (AstTyVar (intern "T")) subs))
         "i64")
-      (string-eq
+      (string.string-eq
         (spec-type-key
           (spec-substitute-type (ast-ty-ptr (AstTyVar (intern "T"))) subs))
         "ptr_i64")
-      (string-eq
+      (string.string-eq
         (spec-type-key
           (spec-substitute-type (ast-ty-dyn-array (AstTyVar (intern "T"))) subs))
         "dynarray_i64")
-      (string-eq
+      (string.string-eq
         (spec-type-key
           (spec-substitute-type
             (ast-ty-func
@@ -9553,7 +8844,7 @@
               (AstTyVar (intern "T")))
             subs))
         "fn_i64_nil_to_i64")
-      (string-eq
+      (string.string-eq
         (spec-type-key (spec-substitute-type (AstTyVar (intern "U")) subs))
         "var_U"))))
 
@@ -9580,7 +8871,7 @@
       (match (spec-substitute-values-expr (AstExprVar (intern "y")) subs)
         [(OkSpecSubExpr e)
           (match (ast-node-get e)
-            [(AstExprVar name) (string-eq (intern-str name) "y")]
+            [(AstExprVar name) (string.string-eq (intern-str name) "y")]
             [_ false])]
         [(ErrSpecSubExpr _) false])
       ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
@@ -9604,7 +8895,7 @@
                         [_ false])]
                     [_ false])
                   (match else-branch
-                    [(AstExprVar name) (string-eq (intern-str name) "y")]
+                    [(AstExprVar name) (string.string-eq (intern-str name) "y")]
                     [_ false])))]
             [_ false])]
         [(ErrSpecSubExpr _) false]))))
@@ -9626,10 +8917,10 @@
             (AstExprLiteral (AstLitBool true)))
           SpecTemplateNil))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
-    [cache : StringStringMap
-      (string-string-map-put
-        (string-string-map-put
-          (string-string-map-with-capacity 8)
+    [cache : hashmap.StringStringMap
+      (hashmap.string-string-map-put
+        (hashmap.string-string-map-put
+          (hashmap.string-string-map-with-capacity 8)
           "two"
           "generated-two")
         "one"
@@ -9652,12 +8943,12 @@
       (match (spec-template-lookup template-env "second")
         [(SpecSomeTemplate template)
           (match template
-            [(SpecTemplate name _ _ _) (string-eq name "second")])]
+            [(SpecTemplate name _ _ _) (string.string-eq name "second")])]
         [(SpecNoTemplate) false])
       (match (spec-cache-lookup cache "two")
-        [(SpecSomeString name) (string-eq name "generated-two")]
+        [(SpecSomeString name) (string.string-eq name "generated-two")]
         [(SpecNoString) false])
-      (string-eq (spec-values-key values) "i64_1_bool_1_none")
+      (string.string-eq (spec-values-key values) "i64_1_bool_1_none")
       (match (spec-value-subst-value value-subs "flag")
         [(CtfeBool flag) flag]
         [_ false])
@@ -9715,35 +9006,12 @@
 (comptime-decl (:generated sample-family Box_String \"Bytes\")
   (defstruct Box_String (value String)))")
 
-(define (compiler-generated-result-family-source) : String
-  "(defstruct Payload (value i64))
-(defenum Status (StatusOk) (StatusBad i64))
-(comptime-decl (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key (type String)))
-  (defenum Result_I64_String
-    (Ok_I64_String i64)
-    (Err_I64_String String)))
-(comptime-decl (:generated stdlib/result-family Result_I64_String (type-key (type i64)) (type-key (type String)))
-  (defenum Result_I64_String
-    (Ok_I64_String i64)
-    (Err_I64_String String)))
-(comptime-decl (:generated stdlib/result-family result-i64-string-value-or (type-key (type i64)) (type-key (type String)))
-  (define (result-i64-string-value-or [value : Result_I64_String] [fallback : i64]) : i64
-    (match value
-      [(Ok_I64_String n) n]
-      [(Err_I64_String _) fallback])))
-(comptime-decl (:generated stdlib/result-family Result_Payload_Status (type-key (type Payload)) (type-key (type Status)))
-  (defenum Result_Payload_Status
-    (Ok_Payload_Status Payload)
-    (Err_Payload_Status Status)))
-(define (main) : i64
-  (result-i64-string-value-or (Ok_I64_String 41) 0))")
-
 (define (compiler-generated-decl-expected-string-key) : String
   (gen-full-key
     ""
     "sample-family"
     "Box_String"
-    (string-append (spec-string-key "String") "_none")))
+    (string.string-append (spec-string-key "String") "_none")))
 
 (define (compiler-generated-decl-cross-module-reuse-source) : String
   "(module sample.family)
@@ -9774,14 +9042,6 @@
 (defstruct HashPoint (x i64) (enabled bool) (label String) (code char))
 (defenum HashTag (HashTagNone) (HashTagNumber i64) (HashTagOtherNumber i64) (HashTagText bool String char))
 (defstruct HashNestedKey (point HashPoint) (tag HashTag))
-(comptime-decl (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
-  (defstruct StringStringMap (__hashmap_family_request i64)))
-(comptime-decl (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
-  (defstruct I64I64Map (__hashmap_family_request i64)))
-(comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
-  (defstruct I64StringMap (__hashmap_family_request i64)))
-(comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
-  (defstruct I64StringMap (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family StringPayloadMap (type-key (type String)) (type-key (type Payload)) \"stdlib/hashmap/string-key-v1\")
   (defstruct StringPayloadMap (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family I64StatusMap (type-key (type i64)) (type-key (type Status)) \"stdlib/hashmap/i64-key-v1\")
@@ -9789,7 +9049,16 @@
 (comptime-decl (:generated stdlib/hashmap-family HashNestedKeyI64Map (type-key (type HashNestedKey)) (type-key (type i64)) \"stdlib/hashmap/aggregate-key-v1\")
   (defstruct HashNestedKeyI64Map (__hashmap_family_request i64)))
 (comptime-decl (:generated stdlib/hashmap-family StringPayloadMap (type-key (type String)) (type-key (type Payload)) \"stdlib/hashmap/string-key-v1\")
-  (defstruct StringPayloadMap (__hashmap_family_request i64)))")
+  (defstruct StringPayloadMap (__hashmap_family_request i64)))
+(module hashmap)
+(comptime-decl (:generated stdlib/hashmap-family StringStringMap (type-key (type String)) (type-key (type String)) \"stdlib/hashmap/string-key-v1\")
+  (defstruct StringStringMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64I64Map (type-key (type i64)) (type-key (type i64)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64I64Map (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64StringMap (__hashmap_family_request i64)))
+(comptime-decl (:generated stdlib/hashmap-family I64StringMap (type-key (type i64)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
+  (defstruct I64StringMap (__hashmap_family_request i64)))")
 
 (define (compiler-generated-hashmap-family-unsupported-key-source) : String
   "(comptime-decl (:generated stdlib/hashmap-family BoolStringMap (type-key (type bool)) (type-key (type String)) \"stdlib/hashmap/i64-key-v1\")
@@ -9803,21 +9072,6 @@
   "(defstruct BadAggregateKey (score f64))
 (comptime-decl (:generated stdlib/hashmap-family BadAggregateKeyI64Map (type-key (type BadAggregateKey)) (type-key (type i64)) \"stdlib/hashmap/aggregate-key-v1\")
   (defstruct BadAggregateKeyI64Map (__hashmap_family_request i64)))")
-
-(define (compiler-generated-json-derive-bundle-source) : String
-  "(defstruct Address (zip i64) (city String))
-(comptime-decl (:generated stdlib/json-derive AddressJson (type-key (type Address)))
-  (defstruct AddressJson (__json_derive_request i64)))
-(defstruct Person (name String) (age i32) (active bool) (home Address))
-(comptime-decl (:generated stdlib/json-derive PersonJson (type-key (type Person)))
-  (defstruct PersonJson (__json_derive_request i64)))
-(comptime-decl (:generated stdlib/json-derive PersonJson (type-key (type Person)))
-  (defstruct PersonJson (__json_derive_request i64)))")
-
-(define (compiler-generated-json-derive-unsupported-source) : String
-  "(defstruct BadPayload (score f64))
-(comptime-decl (:generated stdlib/json-derive BadPayloadJson (type-key (type BadPayload)))
-  (defstruct BadPayloadJson (__json_derive_request i64)))")
 
 (define (compiler-generated-decl-visible-count
   [source : String]
@@ -9884,11 +9138,11 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (match (compiler-diagnostic-notes diag)
+          (match (compiler-diagnostic-notes (box-get diag))
             [(CompilerDiagnosticNoteCons note _)
-              (string-eq
+              (string.string-eq
                 note
-                (string-append
+                (string.string-append
                   "generated identity: "
                   (compiler-generated-decl-expected-string-key)))]
             [(CompilerDiagnosticNoteNil) false])])]
@@ -9927,34 +9181,6 @@
         [(ErrSpecProgram _) false])]
     [(ErrAstProgram _) false]))
 
-(define (compiler-generated-result-family-ok?) : bool
-  (match (parse-ast-source (compiler-generated-result-family-source))
-    [(OkAstProgram program)
-      (match (compiler-specialize-program program)
-        [(OkSpecProgram normalized)
-          (match normalized
-            [(AstProgram decls-box)
-              (let
-                [decls : AstDeclList (box-get decls-box)]
-                [result-count : i64
-                  (compiler-specialize-decl-list-count-visible
-                    decls
-                    "Result_I64_String")]
-                [result-helper-count : i64
-                  (compiler-specialize-decl-list-count-defs
-                    decls
-                    "result-i64-string-value-or")]
-                [nominal-result-count : i64
-                  (compiler-specialize-decl-list-count-visible
-                    decls
-                    "Result_Payload_Status")]
-                (and
-                  (= result-count 1)
-                  (= result-helper-count 1)
-                  (= nominal-result-count 1)))])]
-        [(ErrSpecProgram _) false])]
-    [(ErrAstProgram _) false]))
-
 (define (compiler-generated-decl-cross-module-reuse-ok?) : bool
   (=
     (compiler-generated-decl-visible-count
@@ -9980,19 +9206,19 @@
   (let
     [string-source : String
       (gen-hashmap-source-string-key
-        "StringStringMap"
+        "hashmap.StringStringMap"
         "string-string-map"
         "String")]
     [i64-source : String
-      (gen-hashmap-source-i64-key "I64I64Map" "i64-i64-map" "i64")]
+      (gen-hashmap-source-i64-key "hashmap.I64I64Map" "i64-i64-map" "i64")]
     [string-round-needle : String "string-string-map-round-capacity"]
     [i64-round-needle : String "i64-i64-map-round-capacity"]
     [mask-needle : String "(bit-and hash (- capacity 1))"]
     [modulo-needle : String "(% hash capacity)"]
-    [string-mut-entry-needle : String "StringStringMapMutEntry"]
+    [string-mut-entry-needle : String "hashmap.StringStringMapMutEntry"]
     [string-mut-entry-macro-needle : String
       "string-string-map-get-mut-entry-borrowed"]
-    [i64-mut-entry-needle : String "I64I64MapMutEntry"]
+    [i64-mut-entry-needle : String "hashmap.I64I64MapMutEntry"]
     [i64-mut-entry-macro-needle : String "i64-i64-map-get-mut-entry"]
     [metadata-len-mutation-needle : String
       "(set!\n              (struct-get map len)"]
@@ -10000,22 +9226,32 @@
     [metadata-slots-mutation-needle : String
       "(set! (struct-get map slots) dst)"]
     (and
-      (string-contains (& string-source) (& string-round-needle))
-      (string-contains (& i64-source) (& i64-round-needle))
-      (string-contains (& string-source) (& mask-needle))
-      (string-contains (& i64-source) (& mask-needle))
-      (not (string-contains (& string-source) (& modulo-needle)))
-      (not (string-contains (& i64-source) (& modulo-needle)))
-      (string-contains (& string-source) (& string-mut-entry-needle))
-      (string-contains (& string-source) (& string-mut-entry-macro-needle))
-      (string-contains (& i64-source) (& i64-mut-entry-needle))
-      (string-contains (& i64-source) (& i64-mut-entry-macro-needle))
-      (string-contains (& string-source) (& metadata-len-mutation-needle))
-      (string-contains (& i64-source) (& metadata-len-mutation-needle))
-      (string-contains (& string-source) (& metadata-deleted-mutation-needle))
-      (string-contains (& i64-source) (& metadata-deleted-mutation-needle))
-      (string-contains (& string-source) (& metadata-slots-mutation-needle))
-      (string-contains (& i64-source) (& metadata-slots-mutation-needle)))))
+      (string.string-contains (& string-source) (& string-round-needle))
+      (string.string-contains (& i64-source) (& i64-round-needle))
+      (string.string-contains (& string-source) (& mask-needle))
+      (string.string-contains (& i64-source) (& mask-needle))
+      (not (string.string-contains (& string-source) (& modulo-needle)))
+      (not (string.string-contains (& i64-source) (& modulo-needle)))
+      (string.string-contains (& string-source) (& string-mut-entry-needle))
+      (string.string-contains
+        (& string-source)
+        (& string-mut-entry-macro-needle))
+      (string.string-contains (& i64-source) (& i64-mut-entry-needle))
+      (string.string-contains (& i64-source) (& i64-mut-entry-macro-needle))
+      (string.string-contains
+        (& string-source)
+        (& metadata-len-mutation-needle))
+      (string.string-contains (& i64-source) (& metadata-len-mutation-needle))
+      (string.string-contains
+        (& string-source)
+        (& metadata-deleted-mutation-needle))
+      (string.string-contains
+        (& i64-source)
+        (& metadata-deleted-mutation-needle))
+      (string.string-contains
+        (& string-source)
+        (& metadata-slots-mutation-needle))
+      (string.string-contains (& i64-source) (& metadata-slots-mutation-needle)))))
 
 (define (compiler-generated-hashmap-family-bundle-ok?) : bool
   (match (parse-ast-source (compiler-generated-hashmap-family-bundle-source))
@@ -10307,8 +9543,8 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
-            (compiler-diagnostic-message diag)
+          (string.string-eq
+            (compiler-diagnostic-message (box-get diag))
             "hashmap-family: unsupported key descriptor stdlib/hashmap/i64-key-v1 for key type bool")])]
     [(ErrAstProgram _) false]))
 
@@ -10319,8 +9555,8 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
-            (compiler-diagnostic-message diag)
+          (string.string-eq
+            (compiler-diagnostic-message (box-get diag))
             "hashmap-family: unsupported value type bool")])]
     [(ErrAstProgram _) false]))
 
@@ -10331,65 +9567,9 @@
       (match (compiler-specialize-program program)
         [(OkSpecProgram _) false]
         [(ErrSpecProgram diag)
-          (string-eq
-            (compiler-diagnostic-message diag)
+          (string.string-eq
+            (compiler-diagnostic-message (box-get diag))
             "hashmap-family: unsupported aggregate key member BadAggregateKey.score type f64")])]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-generated-json-derive-bundle-ok?) : bool
-  (match (parse-ast-source (compiler-generated-json-derive-bundle-source))
-    [(OkAstProgram program)
-      (and
-        (compiler-specialize-needed? program)
-        (match (compiler-specialize-program program)
-          [(OkSpecProgram normalized)
-            (match normalized
-              [(AstProgram decls-box)
-                (let
-                  [decls : AstDeclList (box-get decls-box)]
-                  (and
-                    (=
-                      (compiler-specialize-decl-list-count-visible
-                        decls
-                        "AddressJsonResult")
-                      1)
-                    (=
-                      (compiler-specialize-decl-list-count-defs
-                        decls
-                        "address-to-json")
-                      1)
-                    (=
-                      (compiler-specialize-decl-list-count-defs
-                        decls
-                        "address-from-json")
-                      1)
-                    (=
-                      (compiler-specialize-decl-list-count-visible
-                        decls
-                        "PersonJsonResult")
-                      1)
-                    (=
-                      (compiler-specialize-decl-list-count-defs
-                        decls
-                        "person-to-json")
-                      1)
-                    (=
-                      (compiler-specialize-decl-list-count-defs
-                        decls
-                        "person-from-json")
-                      1)))])]
-          [(ErrSpecProgram _) false]))]
-    [(ErrAstProgram _) false]))
-
-(define (compiler-generated-json-derive-unsupported-rejected?) : bool
-  (match (parse-ast-source (compiler-generated-json-derive-unsupported-source))
-    [(OkAstProgram program)
-      (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram diag)
-          (string-eq
-            (compiler-diagnostic-message diag)
-            "json-derive: unsupported field score type f64")])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
@@ -10407,15 +9587,15 @@
                         (match meta
                           [(AstSomeGeneratedDeclMeta generator item _ key)
                             (and
-                              (string-eq generator "sample-family")
-                              (string-eq item "Box_String")
-                              (string-eq
+                              (string.string-eq generator "sample-family")
+                              (string.string-eq item "Box_String")
+                              (string.string-eq
                                 key
                                 (compiler-generated-decl-expected-string-key)))]
                           [(AstNoGeneratedDeclMeta) false])
                         (match (box-get template-box)
                           [(AstDeclDefStruct name _ _ _)
-                            (string-eq (intern-str name) "Box_String")]
+                            (string.string-eq (intern-str name) "Box_String")]
                           [_ false]))]
                     [_ false])]
                 [(AstDeclNil) false])])]
@@ -10459,7 +9639,6 @@
     (unless
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)
       (return 0))
-    (unless (compiler-generated-result-family-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-cross-module-distinct-ok?) (return 0))
     (unless (compiler-generated-hashmap-descriptor-distinct-ok?) (return 0))
@@ -10474,8 +9653,6 @@
     (unless
       (compiler-generated-hashmap-family-unsupported-aggregate-key-rejected?)
       (return 0))
-    (unless (compiler-generated-json-derive-bundle-ok?) (return 0))
-    (unless (compiler-generated-json-derive-unsupported-rejected?) (return 0))
     (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
     (unless (compiler-generated-registry-map-ok?) (return 0))
     1))

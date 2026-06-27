@@ -1,17 +1,17 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers (#723).
-(import "../stdlib/io.tl")
-(import "../stdlib/string.tl")
-(cfg compile-profile (import "../stdlib/profile.tl"))
+(import stdlib.io)
+(import stdlib.string)
+(cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
 
 (defenum ResultCompilerCheck
-  (OkCompilerCheck CompilerTypecheckSummary)
-  (ErrCompilerCheck CompilerDiagnostic))
+  (Ok CompilerTypecheckSummary)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerCheckWithPaths
-  (OkCompilerCheckWithPaths CompilerTypecheckSummary AstDeclPathList)
-  (ErrCompilerCheckWithPaths CompilerDiagnostic))
+  (Ok CompilerTypecheckSummary AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
 
 (cfg
   compile-profile
@@ -21,20 +21,21 @@
 (cfg
   compile-profile
   (define (compiler-check-profile-start) : unit
-    (set! compiler-check-profile-start-ms (profile-now-ms))))
+    (set! compiler-check-profile-start-ms (profile.profile-now-ms))))
 
 (cfg
   compile-profile
   (define (compiler-check-profile-finish [phase : String]) : unit
-    (print-error
-      (string-append
+    (io.print-error
+      (string.string-append
         "compile-profile|check."
-        (string-append
+        (string.string-append
           phase
-          (string-append
+          (string.string-append
             "|"
-            (string-append
-              (int->string (- (profile-now-ms) compiler-check-profile-start-ms))
+            (string.string-append
+              (string.int->string
+                (- (profile.profile-now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : SymI64Env
@@ -43,17 +44,21 @@
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
-            (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-            "feature-str-view")
-          "feature-private-string-intrinsics")
-        "feature-compiler-private-string-intrinsics")
-      "array-helper-intrinsics")
-    "feature-plain-comptime-well-known"))
+            (compiler-cfg-enable
+              (compiler-cfg-enable
+                (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
+                "feature-str-view")
+              "feature-private-string-intrinsics")
+            "feature-compiler-private-string-intrinsics")
+          "array-helper-intrinsics")
+        "feature-tl-memchr")
+      "feature-plain-comptime-well-known")
+    "feature-comptime-public-fields"))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
-  (if (string-eq (compiler-diagnostic-path diag) "")
+  (if (string.string-eq (compiler-diagnostic-path diag) "")
     (compiler-diagnostic-with-path diag path)
     diag))
 
@@ -64,7 +69,7 @@
   [path : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [cache-scope : String]) : ResultCompilerCheck
   (begin
     (cfg compile-profile (compiler-check-profile-start))
@@ -76,12 +81,13 @@
       [(OkCompilerTypecheck summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (OkCompilerCheck summary))]
+          (ResultCompilerCheck.Ok summary))]
       [(ErrCompilerTypecheck diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
-          (ErrCompilerCheck
-            (compiler-check-diagnostic-with-fallback-path diag path)))])))
+          (ResultCompilerCheck.Err
+            (box
+              (compiler-check-diagnostic-with-fallback-path (box-get diag) path))))])))
 
 (define (compiler-check-program-with-paths
   [path : String]
@@ -91,7 +97,7 @@
     path
     decls
     paths
-    (string-vec-new)
+    (vector.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
@@ -102,7 +108,7 @@
   [prelude-decls : AstDeclList]
   [prelude-paths : AstDeclPathList]
   [loaded : ResultCompilerLoadWithPaths]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [cache-scope : String]) : ResultCompilerCheck
   (match loaded
     [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
@@ -117,12 +123,12 @@
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheck diag))]))
+        (ResultCompilerCheck.Err diag))]))
 
 (define (compiler-check-loaded-cache-with-paths
   [path : String]
   [loaded : ResultCompilerLoadWithPaths]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [cache-scope : String]) : ResultCompilerCheckWithPaths
   (match loaded
     [(OkCompilerLoadWithPaths decls paths _ _)
@@ -134,12 +140,14 @@
           paths
           stdlib-roots
           cache-scope)
-          [(OkCompilerCheck summary) (OkCompilerCheckWithPaths summary paths)]
-          [(ErrCompilerCheck diag) (ErrCompilerCheckWithPaths diag)]))]
+          [(ResultCompilerCheck.Ok summary)
+            (ResultCompilerCheckWithPaths.Ok summary paths)]
+          [(ResultCompilerCheck.Err diag)
+            (ResultCompilerCheckWithPaths.Err diag)]))]
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheckWithPaths diag))]))
+        (ResultCompilerCheckWithPaths.Err diag))]))
 
 (define (compiler-check-loaded-with-prelude
   [path : String]
@@ -151,12 +159,12 @@
     prelude-decls
     prelude-paths
     loaded
-    (string-vec-new)
+    (vector.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-file-loaded-with-prelude
   [path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
   (match prelude
     [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
@@ -177,7 +185,7 @@
     [(ErrCompilerLoadWithPaths diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
-        (ErrCompilerCheck diag))]))
+        (ResultCompilerCheck.Err diag))]))
 
 (define (compiler-check-file [path : String]) : ResultCompilerCheck
   (begin
@@ -185,15 +193,15 @@
     (cfg compile-profile (compiler-check-profile-start))
     (compiler-check-file-loaded-with-prelude
       path
-      (string-vec-new)
+      (vector.string-vec-new)
       (compiler-load-core-macro-prelude-with-roots-cfg
         (sym-i64-empty)
-        (string-vec-new)
+        (vector.string-vec-new)
         (compiler-check-language-cfgs)))))
 
 (define (compiler-check-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]) : ResultCompilerCheck
+  [stdlib-roots : vector.StringVec]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -207,7 +215,7 @@
 
 (define (compiler-check-package-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -239,12 +247,12 @@
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-package-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerCheck
   (begin
@@ -283,15 +291,15 @@
           [(ErrAstProgramDiagnostic diag)
             (begin
               (cfg compile-profile (compiler-check-profile-finish "load"))
-              (ErrCompilerCheck diag))])]
+              (ResultCompilerCheck.Err diag))])]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-package-entry-file-with-roots
   [path : String]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]) : ResultCompilerCheckWithPaths
@@ -319,7 +327,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym-i64-empty)
-      (string-vec-new)
+      (vector.string-vec-new)
       (compiler-check-language-cfgs))
       [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
         (compiler-check-loaded-with-prelude-cache
@@ -330,22 +338,22 @@
             path
             source
             prelude-seen
-            (string-vec-new)
+            (vector.string-vec-new)
             (compiler-check-language-cfgs))
-          (string-vec-new)
+          (vector.string-vec-new)
           (compiler-typecheck-prefix-cache-scope
             "typecheck-prefix-check"
-            (string-vec-new)
+            (vector.string-vec-new)
             (compiler-check-language-cfgs)))]
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : StringVec]) : ResultCompilerCheck
+  [stdlib-roots : vector.StringVec]) : ResultCompilerCheck
   (begin
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
@@ -372,21 +380,21 @@
       [(ErrCompilerLoadWithPaths diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
-          (ErrCompilerCheck diag))])))
+          (ResultCompilerCheck.Err diag))])))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-source path source)
-    [(OkCompilerCheck _) true]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok _) true]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-source-error-ok?
   [path : String]
   [source : String]
   [want : String]) : bool
   (match (compiler-check-source path source)
-    [(OkCompilerCheck _) false]
-    [(ErrCompilerCheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]))
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diag)
+      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")
@@ -415,26 +423,26 @@
               path
               (box-get decls-box)
               AstDeclPathNil
-              (string-vec-new)
+              (vector.string-vec-new)
               (compiler-typecheck-prefix-cache-scope
                 "typecheck-prefix-check"
-                (string-vec-new)
+                (vector.string-vec-new)
                 (compiler-check-language-cfgs)))])]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerCheck diag)])))
+      [(ErrAstProgramDiagnostic diag) (ResultCompilerCheck.Err diag)])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
-    [(OkCompilerCheck _) true]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok _) true]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-direct-source-error-ok?
   [path : String]
   [source : String]
   [want : String]) : bool
   (match (compiler-check-direct-source path source)
-    [(OkCompilerCheck _) false]
-    [(ErrCompilerCheck diag)
-      (string-eq (compiler-diagnostic-message diag) want)]))
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diag)
+      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
@@ -466,37 +474,40 @@
         (+ (arr.array-ref items 0) (arr.array-ref items 1))))))")
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
-  "(import \"stdlib/io.tl\")
+  "(import stdlib.io)
+(import stdlib.string)
 (define (main [path : String]) : i64
   (begin
-    (print-string \"\")
-    (flush-stdout)
-    (+ (string-length (read-file path))
-       (file-open-status path 0))))")
+    (io.print-string \"\")
+    (io.flush-stdout)
+    (+ (string.string-length (io.read-file path))
+       (io.file-open-status path 0))))")
 
 (define (compiler-check-runtime-stdlib-boundary-env-source) : String
-  "(import \"stdlib/env.tl\")
+  "(import stdlib.env)
+(import stdlib.string)
 (define (main [name : String]) : i64
-  (+ (if (env-var-exists? name) 1 0)
-     (+ (string-length (env-var-value name))
-        (string-length (env-path-separator)))))")
+  (+ (if (env.env-var-exists? name) 1 0)
+     (+ (string.string-length (env.env-var-value name))
+        (string.string-length (env.env-path-separator)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-fs-source) : String
-  "(import \"stdlib/fs.tl\")
+  "(import stdlib.fs)
+(import stdlib.string)
 (define (main [path : String]) : i64
-  (+ (fs-process-id)
-     (+ (fs-current-dir-status)
-        (+ (string-length (fs-current-dir))
-           (fs-file-size-status path)))))")
+  (+ (fs.fs-process-id)
+     (+ (fs.fs-current-dir-status)
+        (+ (string.string-length (fs.fs-current-dir))
+           (fs.fs-file-size-status path)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-profile-source) : String
-  "(import \"stdlib/profile.tl\")
+  "(import stdlib.profile)
 (define (main) : i64
   (begin
-    (profile-alloc-reset-peak)
-    (+ (profile-now-ms)
-       (+ (profile-alloc-total)
-          (+ (profile-alloc-live) (profile-alloc-peak))))))")
+    (profile.profile-alloc-reset-peak)
+    (+ (profile.profile-now-ms)
+       (+ (profile.profile-alloc-total)
+          (+ (profile.profile-alloc-live) (profile.profile-alloc-peak))))))")
 
 (define (compiler-check-private-dynamic-buffer-vector-source) : String
   "(import stdlib.vector)
@@ -509,6 +520,8 @@
       (i64vec.push (&mut items) 1)
       (i64vec.len (& items)))))")
 
+;; Compatibility alias fixture for #3772. The qualified stdlib.array path is
+;; covered by compiler-check-implicit-core-prelude-source above.
 (define (compiler-check-private-dynamic-buffer-public-source) : String
   "(define (main) : i64
   (let
@@ -519,8 +532,9 @@
   (match (compiler-check-source
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source))
-    [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok summary)
+      (> (compiler-typecheck-summary-score summary) 0)]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-inline-layout-name-ok?
   [ctx : TcContext]
@@ -566,8 +580,9 @@
   (match (compiler-check-source
     "src/export_entry.tl"
     (compiler-check-export-source))
-    [(OkCompilerCheck summary) (> (compiler-typecheck-summary-score summary) 0)]
-    [(ErrCompilerCheck _) false]))
+    [(ResultCompilerCheck.Ok summary)
+      (> (compiler-typecheck-summary-score summary) 0)]
+    [(ResultCompilerCheck.Err _) false]))
 
 (define (compiler-check-qualified-export-cache-reset-ok?) : bool
   (and
@@ -584,14 +599,14 @@
   (match (compiler-check-source
     "docs/examples/bad_type.tl"
     "(define (main) : i64 true)")
-    [(OkCompilerCheck _) false]
-    [(ErrCompilerCheck diag)
-      (if (string-eq
-        (compiler-diagnostic-path diag)
+    [(ResultCompilerCheck.Ok _) false]
+    [(ResultCompilerCheck.Err diag)
+      (if (string.string-eq
+        (compiler-diagnostic-path (box-get diag))
         "docs/examples/bad_type.tl")
-        (if (= (compiler-diagnostic-line diag) 1)
-          (string-eq
-            (compiler-diagnostic-message diag)
+        (if (= (compiler-diagnostic-line (box-get diag)) 1)
+          (string.string-eq
+            (compiler-diagnostic-message (box-get diag))
             "typecheck: return type mismatch")
           false)
         false)]))
@@ -601,15 +616,15 @@
     [ok : bool true]
     (begin
       (if (compiler-check-source-error-ok?
-        "tests/runtime_boundary_no_io.tl"
+        "tests/runtime_boundary_no_tl"
         "(define (main) : i64 (begin (flush-stdout) 0))"
         "typecheck: unbound name flush-stdout")
         unit
         (set! ok false))
       (if (compiler-check-source-error-ok?
         "tests/runtime_boundary_no_file.tl"
-        "(define (main [path : String]) : String (read-file path))"
-        "typecheck: unbound name read-file")
+        "(define (main [path : String]) : String (io.read-file path))"
+        "typecheck: unknown qualified name io.read-file; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-check-source-error-ok?
@@ -637,7 +652,7 @@
     [ok : bool true]
     (begin
       (if (compiler-check-source-ok?
-        "tests/runtime_boundary_io.tl"
+        "tests/runtime_boundary_tl"
         (compiler-check-runtime-stdlib-boundary-io-source))
         unit
         (set! ok false))
@@ -696,57 +711,60 @@
     (begin
       (ty-node-pool-reset!)
       (match (compiler-check-source "tests/pool_reset_a.tl" source)
-        [(OkCompilerCheck _)
+        [(ResultCompilerCheck.Ok _)
           (let
             [first-len : i64 (ty-node-pool-len)]
             (match (compiler-check-source "tests/pool_reset_b.tl" source)
-              [(OkCompilerCheck _)
+              [(ResultCompilerCheck.Ok _)
                 (let
                   [second-len : i64 (ty-node-pool-len)]
                   (and (> first-len 0) (= first-len second-len)))]
-              [(ErrCompilerCheck _) false]))]
-        [(ErrCompilerCheck _) false]))))
+              [(ResultCompilerCheck.Err _) false]))]
+        [(ResultCompilerCheck.Err _) false]))))
 
 (define (compiler-check-self-test) : i64
   (begin
     (unless
       (= (compiler-load-self-test) 42)
-      (return (panic "compiler-check: loader smoke mismatch")))
+      (return (io.panic "compiler-check: loader smoke mismatch")))
     (unless
       (compiler-check-virtual-import-ok?)
-      (return (panic "compiler-check: virtual import smoke mismatch")))
+      (return (io.panic "compiler-check: virtual import smoke mismatch")))
     (unless
       (compiler-check-virtual-import-inline-layout-ok?)
       (return
-        (panic "compiler-check: virtual import inline layout smoke mismatch")))
+        (io.panic "compiler-check: virtual import inline layout smoke mismatch")))
     (unless
       (compiler-check-export-ok?)
-      (return (panic "compiler-check: export smoke mismatch")))
+      (return (io.panic "compiler-check: export smoke mismatch")))
     (unless
       (compiler-check-qualified-export-cache-reset-ok?)
       (return
-        (panic "compiler-check: qualified export cache reset smoke mismatch")))
+        (io.panic "compiler-check: qualified export cache reset smoke mismatch")))
     (unless
       (compiler-check-virtual-error-ok?)
-      (return (panic "compiler-check: virtual diagnostic smoke mismatch")))
+      (return (io.panic "compiler-check: virtual diagnostic smoke mismatch")))
     (unless
       (compiler-check-runtime-stdlib-boundary-ok?)
-      (return (panic "compiler-check: runtime stdlib boundary smoke mismatch")))
+      (return
+        (io.panic "compiler-check: runtime stdlib boundary smoke mismatch")))
     (unless
       (compiler-check-private-dynamic-buffer-vector-ok?)
       (return
-        (panic "compiler-check: private dynamic-buffer vector smoke mismatch")))
+        (io.panic
+          "compiler-check: private dynamic-buffer vector smoke mismatch")))
     (unless
       (compiler-check-private-dynamic-buffer-public-rejected-ok?)
       (return
-        (panic "compiler-check: private dynamic-buffer public smoke mismatch")))
+        (io.panic
+          "compiler-check: private dynamic-buffer public smoke mismatch")))
     (unless
       (compiler-check-implicit-core-prelude-ok?)
-      (return (panic "compiler-check: implicit core prelude smoke mismatch")))
+      (return (io.panic "compiler-check: implicit core prelude smoke mismatch")))
     (unless
       (compiler-check-seen-root-ok?)
-      (return (panic "compiler-check: seen root smoke mismatch")))
+      (return (io.panic "compiler-check: seen root smoke mismatch")))
     (unless
       (compiler-check-pool-reset-ok?)
-      (return (panic "compiler-check: pool reset smoke mismatch")))
+      (return (io.panic "compiler-check: pool reset smoke mismatch")))
     42))

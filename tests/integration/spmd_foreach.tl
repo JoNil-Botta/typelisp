@@ -1,10 +1,12 @@
+(import stdlib.array)
+
 (define (init-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (+ i 1))
-        (array-set! b i (* i 2))
+        (array.array-set! a i (+ i 1))
+        (array.array-set! b i (* i 2))
         (set! i (+ i 1))))))
 
 (define (fill-i64-foreach
@@ -14,7 +16,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (fill-i64-scalar
   [a : (Array i64)]
@@ -25,7 +27,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-i64 [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -35,7 +37,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -43,10 +45,10 @@
 
 (define (case-i64 [n : i64]) : bool
   (let
-    [a : (Array i64) (make-array i64 n)]
-    [b : (Array i64) (make-array i64 n)]
-    [got : (Array i64) (make-array i64 n)]
-    [want : (Array i64) (make-array i64 n)]
+    [a : (Array i64) (array.make-array i64 n)]
+    [b : (Array i64) (array.make-array i64 n)]
+    [got : (Array i64) (array.make-array i64 n)]
+    [want : (Array i64) (array.make-array i64 n)]
     (begin
       (init-i64 a b n)
       (fill-i64-foreach a b got n)
@@ -58,8 +60,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : i32))
-        (array-set! b i (cast (* i 2) : i32))
+        (array.array-set! a i (cast (+ i 1) : i32))
+        (array.array-set! b i (cast (* i 2) : i32))
         (set! i (+ i 1))))))
 
 (define (fill-i32-foreach
@@ -69,7 +71,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (fill-i32-scalar
   [a : (Array i32)]
@@ -80,7 +82,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-i32 [a : (Array i32)] [b : (Array i32)] [n : i64]) : bool
@@ -90,7 +92,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -98,10 +100,10 @@
 
 (define (case-i32 [n : i64]) : bool
   (let
-    [a : (Array i32) (make-array i32 n)]
-    [b : (Array i32) (make-array i32 n)]
-    [got : (Array i32) (make-array i32 n)]
-    [want : (Array i32) (make-array i32 n)]
+    [a : (Array i32) (array.make-array i32 n)]
+    [b : (Array i32) (array.make-array i32 n)]
+    [got : (Array i32) (array.make-array i32 n)]
+    [want : (Array i32) (array.make-array i32 n)]
     (begin
       (init-i32 a b n)
       (fill-i32-foreach a b got n)
@@ -113,8 +115,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 17) 5) : u64))
-        (array-set! b i (cast (+ (* i 3) 11) : u64))
+        (array.array-set! a i (cast (+ (* i 17) 5) : u64))
+        (array.array-set! b i (cast (+ (* i 3) 11) : u64))
         (set! i (+ i 1))))))
 
 (define (fill-u64-foreach
@@ -125,10 +127,12 @@
   [factor : u64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
+    (array.array-set!
       out
       i
-      (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64)))))
+      (+
+        (+ (array.array-ref a i) (* (array.array-ref b i) factor))
+        (cast 7 : u64)))))
 
 (define (fill-u64-scalar
   [a : (Array u64)]
@@ -140,10 +144,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
+        (array.array-set!
           out
           i
-          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 7 : u64)))
+          (+
+            (+ (array.array-ref a i) (* (array.array-ref b i) factor))
+            (cast 7 : u64)))
         (set! i (+ i 1))))))
 
 (define (eq-u64 [a : (Array u64)] [b : (Array u64)] [n : i64]) : bool
@@ -153,7 +159,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -161,10 +167,10 @@
 
 (define (case-u64 [n : i64]) : bool
   (let
-    [a : (Array u64) (make-array u64 n)]
-    [b : (Array u64) (make-array u64 n)]
-    [got : (Array u64) (make-array u64 n)]
-    [want : (Array u64) (make-array u64 n)]
+    [a : (Array u64) (array.make-array u64 n)]
+    [b : (Array u64) (array.make-array u64 n)]
+    [got : (Array u64) (array.make-array u64 n)]
+    [want : (Array u64) (array.make-array u64 n)]
     [factor : u64 (cast 13 : u64)]
     (begin
       (init-u64 a b n)
@@ -177,8 +183,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 19) 7) : u32))
-        (array-set! b i (cast (+ (* i 5) 23) : u32))
+        (array.array-set! a i (cast (+ (* i 19) 7) : u32))
+        (array.array-set! b i (cast (+ (* i 5) 23) : u32))
         (set! i (+ i 1))))))
 
 (define (fill-u32-foreach
@@ -189,10 +195,12 @@
   [factor : u32]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set!
+    (array.array-set!
       out
       i
-      (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32)))))
+      (+
+        (+ (array.array-ref a i) (* (array.array-ref b i) factor))
+        (cast 9 : u32)))))
 
 (define (fill-u32-scalar
   [a : (Array u32)]
@@ -204,10 +212,12 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set!
+        (array.array-set!
           out
           i
-          (+ (+ (array-ref a i) (* (array-ref b i) factor)) (cast 9 : u32)))
+          (+
+            (+ (array.array-ref a i) (* (array.array-ref b i) factor))
+            (cast 9 : u32)))
         (set! i (+ i 1))))))
 
 (define (eq-u32 [a : (Array u32)] [b : (Array u32)] [n : i64]) : bool
@@ -217,7 +227,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -225,10 +235,10 @@
 
 (define (case-u32 [n : i64]) : bool
   (let
-    [a : (Array u32) (make-array u32 n)]
-    [b : (Array u32) (make-array u32 n)]
-    [got : (Array u32) (make-array u32 n)]
-    [want : (Array u32) (make-array u32 n)]
+    [a : (Array u32) (array.make-array u32 n)]
+    [b : (Array u32) (array.make-array u32 n)]
+    [got : (Array u32) (array.make-array u32 n)]
+    [want : (Array u32) (array.make-array u32 n)]
     [factor : u32 (cast 17 : u32)]
     (begin
       (init-u32 a b n)
@@ -241,8 +251,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : i8))
-        (array-set! b i (cast (+ (* i 2) 3) : i8))
+        (array.array-set! a i (cast (+ i 1) : i8))
+        (array.array-set! b i (cast (+ (* i 2) 3) : i8))
         (set! i (+ i 1))))))
 
 (define (fill-i8-foreach
@@ -252,7 +262,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (fill-i8-scalar
   [a : (Array i8)]
@@ -263,7 +273,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-i8 [a : (Array i8)] [b : (Array i8)] [n : i64]) : bool
@@ -273,7 +283,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -281,10 +291,10 @@
 
 (define (case-i8 [n : i64]) : bool
   (let
-    [a : (Array i8) (make-array i8 n)]
-    [b : (Array i8) (make-array i8 n)]
-    [got : (Array i8) (make-array i8 n)]
-    [want : (Array i8) (make-array i8 n)]
+    [a : (Array i8) (array.make-array i8 n)]
+    [b : (Array i8) (array.make-array i8 n)]
+    [got : (Array i8) (array.make-array i8 n)]
+    [want : (Array i8) (array.make-array i8 n)]
     (begin
       (init-i8 a b n)
       (fill-i8-foreach a b got n)
@@ -296,8 +306,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ i 1) : u8))
-        (array-set! b i (cast (+ (* i 2) 3) : u8))
+        (array.array-set! a i (cast (+ i 1) : u8))
+        (array.array-set! b i (cast (+ (* i 2) 3) : u8))
         (set! i (+ i 1))))))
 
 (define (fill-u8-foreach
@@ -307,7 +317,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (fill-u8-scalar
   [a : (Array u8)]
@@ -318,7 +328,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-u8 [a : (Array u8)] [b : (Array u8)] [n : i64]) : bool
@@ -328,7 +338,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -336,10 +346,10 @@
 
 (define (case-u8 [n : i64]) : bool
   (let
-    [a : (Array u8) (make-array u8 n)]
-    [b : (Array u8) (make-array u8 n)]
-    [got : (Array u8) (make-array u8 n)]
-    [want : (Array u8) (make-array u8 n)]
+    [a : (Array u8) (array.make-array u8 n)]
+    [b : (Array u8) (array.make-array u8 n)]
+    [got : (Array u8) (array.make-array u8 n)]
+    [want : (Array u8) (array.make-array u8 n)]
     (begin
       (init-u8 a b n)
       (fill-u8-foreach a b got n)
@@ -351,8 +361,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 257) 12000) : i16))
-        (array-set! b i (cast (+ (* i 13) 300) : i16))
+        (array.array-set! a i (cast (+ (* i 257) 12000) : i16))
+        (array.array-set! b i (cast (+ (* i 13) 300) : i16))
         (set! i (+ i 1))))))
 
 (define (fill-i16-foreach
@@ -363,7 +373,10 @@
   [factor : i16]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))))
+    (array.array-set!
+      out
+      i
+      (+ (array.array-ref a i) (* (array.array-ref b i) factor)))))
 
 (define (fill-i16-scalar
   [a : (Array i16)]
@@ -375,7 +388,10 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))
+        (array.array-set!
+          out
+          i
+          (+ (array.array-ref a i) (* (array.array-ref b i) factor)))
         (set! i (+ i 1))))))
 
 (define (eq-i16 [a : (Array i16)] [b : (Array i16)] [n : i64]) : bool
@@ -385,7 +401,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -393,10 +409,10 @@
 
 (define (case-i16 [n : i64]) : bool
   (let
-    [a : (Array i16) (make-array i16 n)]
-    [b : (Array i16) (make-array i16 n)]
-    [got : (Array i16) (make-array i16 n)]
-    [want : (Array i16) (make-array i16 n)]
+    [a : (Array i16) (array.make-array i16 n)]
+    [b : (Array i16) (array.make-array i16 n)]
+    [got : (Array i16) (array.make-array i16 n)]
+    [want : (Array i16) (array.make-array i16 n)]
     [factor : i16 (cast 7 : i16)]
     (begin
       (init-i16 a b n)
@@ -409,8 +425,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i (cast (+ (* i 257) 65000) : u16))
-        (array-set! b i (cast (+ (* i 37) 500) : u16))
+        (array.array-set! a i (cast (+ (* i 257) 65000) : u16))
+        (array.array-set! b i (cast (+ (* i 37) 500) : u16))
         (set! i (+ i 1))))))
 
 (define (fill-u16-foreach
@@ -421,7 +437,10 @@
   [factor : u16]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))))
+    (array.array-set!
+      out
+      i
+      (+ (array.array-ref a i) (* (array.array-ref b i) factor)))))
 
 (define (fill-u16-scalar
   [a : (Array u16)]
@@ -433,7 +452,10 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (* (array-ref b i) factor)))
+        (array.array-set!
+          out
+          i
+          (+ (array.array-ref a i) (* (array.array-ref b i) factor)))
         (set! i (+ i 1))))))
 
 (define (eq-u16 [a : (Array u16)] [b : (Array u16)] [n : i64]) : bool
@@ -443,7 +465,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -451,10 +473,10 @@
 
 (define (case-u16 [n : i64]) : bool
   (let
-    [a : (Array u16) (make-array u16 n)]
-    [b : (Array u16) (make-array u16 n)]
-    [got : (Array u16) (make-array u16 n)]
-    [want : (Array u16) (make-array u16 n)]
+    [a : (Array u16) (array.make-array u16 n)]
+    [b : (Array u16) (array.make-array u16 n)]
+    [got : (Array u16) (array.make-array u16 n)]
+    [want : (Array u16) (array.make-array u16 n)]
     [factor : u16 (cast 19 : u16)]
     (begin
       (init-u16 a b n)
@@ -467,8 +489,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i 1.5)
-        (array-set! b i 2.25)
+        (array.array-set! a i 1.5)
+        (array.array-set! b i 2.25)
         (set! i (+ i 1))))))
 
 (define (fill-f64-foreach
@@ -478,7 +500,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (fill-f64-scalar
   [a : (Array f64)]
@@ -489,7 +511,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-f64 [a : (Array f64)] [b : (Array f64)] [n : i64]) : bool
@@ -499,7 +521,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -507,10 +529,10 @@
 
 (define (case-f64 [n : i64]) : bool
   (let
-    [a : (Array f64) (make-array f64 n)]
-    [b : (Array f64) (make-array f64 n)]
-    [got : (Array f64) (make-array f64 n)]
-    [want : (Array f64) (make-array f64 n)]
+    [a : (Array f64) (array.make-array f64 n)]
+    [b : (Array f64) (array.make-array f64 n)]
+    [got : (Array f64) (array.make-array f64 n)]
+    [want : (Array f64) (array.make-array f64 n)]
     (begin
       (init-f64 a b n)
       (fill-f64-foreach a b got n)
@@ -522,8 +544,8 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! a i 1.5)
-        (array-set! b i 2.25)
+        (array.array-set! a i 1.5)
+        (array.array-set! b i 2.25)
         (set! i (+ i 1))))))
 
 (define (fill-f32-foreach
@@ -533,7 +555,7 @@
   [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
+    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
 
 (define (fill-f32-scalar
   [a : (Array f32)]
@@ -544,7 +566,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array-set! out i (+ (array-ref a i) (array-ref b i)))
+        (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))
         (set! i (+ i 1))))))
 
 (define (eq-f32 [a : (Array f32)] [b : (Array f32)] [n : i64]) : bool
@@ -554,7 +576,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array-ref a i) (array-ref b i))
+          (if (!= (array.array-ref a i) (array.array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))
@@ -562,10 +584,10 @@
 
 (define (case-f32 [n : i64]) : bool
   (let
-    [a : (Array f32) (make-array f32 n)]
-    [b : (Array f32) (make-array f32 n)]
-    [got : (Array f32) (make-array f32 n)]
-    [want : (Array f32) (make-array f32 n)]
+    [a : (Array f32) (array.make-array f32 n)]
+    [b : (Array f32) (array.make-array f32 n)]
+    [got : (Array f32) (array.make-array f32 n)]
+    [want : (Array f32) (array.make-array f32 n)]
     (begin
       (init-f32 a b n)
       (fill-f32-foreach a b got n)
@@ -574,19 +596,19 @@
 
 (define (case-end-bound-evaluated-once) : bool
   (let
-    [bounds : (Array i64) (make-array i64 1)]
-    [out : (Array i64) (make-array i64 3)]
+    [bounds : (Array i64) (array.make-array i64 1)]
+    [out : (Array i64) (array.make-array i64 3)]
     (begin
-      (array-set! bounds 0 3)
-      (array-set! out 0 0)
-      (array-set! out 1 0)
-      (array-set! out 2 0)
+      (array.array-set! bounds 0 3)
+      (array.array-set! out 0 0)
+      (array.array-set! out 1 0)
+      (array.array-set! out 2 0)
       (foreach
-        ([i : i64 0 (array-ref bounds 0)])
+        ([i : i64 0 (array.array-ref bounds 0)])
         (begin
-          (array-set! bounds 0 0)
-          (array-set! out i (+ i 1))))
-      (= (array-ref out 2) 3))))
+          (array.array-set! bounds 0 0)
+          (array.array-set! out i (+ i 1))))
+      (= (array.array-ref out 2) 3))))
 
 (define (case-index-binding-is-scoped) : bool
   (=

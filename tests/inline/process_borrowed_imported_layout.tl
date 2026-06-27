@@ -3,6 +3,7 @@
 ;; returns through stdlib.process.
 (import stdlib.process)
 (import stdlib.process_borrowed)
+(import stdlib.string)
 (import stdlib.test)
 
 (define (process-borrowed-imported-layout-score [text : String]) : i64
@@ -14,10 +15,11 @@
     (+
       (match borrowed
         [(process_borrowed.ProcessBorrowedNoString) 0]
-        [(process_borrowed.ProcessBorrowedSomeString view) (string-length view)])
+        [(process_borrowed.ProcessBorrowedSomeString view)
+          (string.string-length view)])
       (match owned
         [(process.ProcessNoString) 0]
-        [(process.ProcessSomeString value) (string-length value)]))))
+        [(process.ProcessSomeString value) (string.string-length value)]))))
 
 (test
   process-borrowed-imported-layout

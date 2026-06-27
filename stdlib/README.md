@@ -39,6 +39,10 @@ use.
   range reads/writes, clear/reuse, copy-out to arrays or strings, and borrowed
   immutable/mutable `bytes` views over strings, buffers, and byte sub-slices.
   Import it with `(import "stdlib/byte_buf.tl")`.
+- `byte_buf_core.tl`: lightweight append-only binary byte builder for compiler
+  and runtime hot paths that need construction, push, append, reserve, length,
+  and explicit finish/copy boundaries without importing the full borrowed
+  `bytes` view surface. Import it with `(import "stdlib/byte_buf_core.tl")`.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `TypeInfo`, and dense sequence wrappers), plus exported compile-time helper
@@ -52,6 +56,9 @@ use.
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
   over backend runtime symbols. Import it with `(import "stdlib/io.tl")`.
+- `io_core.tl`: private backing module for `io.tl` file-handle table storage.
+  User programs should import `io.tl`; this module exists to keep raw handle
+  internals out of the public `stdlib.io` surface.
 - `io_caller_result.tl`: lifetime-preserving `read-file-or-result` surface that
   can return a borrow of the caller fallback or owned file contents. Import it
   with `(import "stdlib/io_caller_result.tl")`; it remains separate from
@@ -113,9 +120,10 @@ use.
   future collections. Import it with `(import "stdlib/hash.tl")`.
 - `hashmap.tl`: generated concrete hashmap family (collections v1, #817) over
   open-addressed linear-probing slot arrays. `StringI64Map` remains the
-  compatibility `String -> i64` map, while generated `StringStringMap` and
-  `I64I64Map` add `String -> String` and `i64 -> i64` instantiations with the
-  same API shape: `*-map-with-capacity` / `-insert` / `-put` / `-get` /
+  compatibility `String -> i64` map, while generated `StringStringMap`,
+  `I64I64Map`, and `I64StringMap` add `String -> String`, `i64 -> i64`,
+  and `i64 -> String` instantiations with the same API shape:
+  `*-map-with-capacity` / `-insert` / `-put` / `-get` /
   `-contains?` / `-remove` / `-update-if-present` / `-insert-or-update` /
   `-entry-or-insert` / mutable-entry helpers / `-len` / `-capacity`,
   tombstone accounting,
@@ -134,7 +142,9 @@ use.
   still unsupported. Use these stdlib maps for ordinary program data and keep
   compiler-specialized symbol tables where their value domain or lifecycle is
   deliberately narrower. Import it with
-  `(import "stdlib/hashmap.tl")`.
+  `(import "stdlib/hashmap.tl")`. Module imports such as
+  `(import (hashmap String String) as map)` expose the same scalar families
+  with `Map`, `&` readers, and `&mut` in-place mutators.
 - `set.tl`: module-emitting `(set T)` macro over the same open-addressing
   storage model as `hashmap.tl`. Generated modules currently support `i64` and
   `String` keys and expose `Set`, `with-capacity`, `new`, immutable-ref
@@ -152,18 +162,25 @@ use.
   exposes borrowed and owned string less-than helpers. Import it with
   `(import "stdlib/sort.tl")`.
 - `sync.tl`: semaphore-backed synchronization helpers over `thread.tl`.
-  `ChannelI64` is a concrete bounded channel whose queued scalar messages live
-  in runtime-owned OS memory; `ChannelI64PairChannel` moves two-field
-  `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned string
-  messages through the same bounded channel surface; `MutexI64` protects a
-  shared scalar through a cleanup-owned lexical guard and rejects close while
-  guards or lock attempts are live. It also exposes raw `i64` pointer atomic
-  load/store/add/fetch-add/CAS wrappers for synchronization internals. Import it
-  with `(import "stdlib/sync.tl")`.
+  `(channel i64)` emits a bounded `channel_i64.Channel` module whose queued
+  scalar messages live in runtime-owned OS memory. `ChannelI64PairChannel` moves
+  two-field `ChannelI64Pair` messages; `ChannelString` moves atomic-arena-owned
+  string messages through the same bounded channel surface; `(mutex i64)` emits
+  a `mutex_i64.Mutex` module that protects a shared scalar through a
+  cleanup-owned lexical guard and rejects close while guards or lock attempts
+  are live. It also exposes raw `i64` pointer atomic load/store/add/fetch-add/CAS
+  wrappers for synchronization internals. Import it with `(import stdlib.sync)`
+  and instantiate with `(import (sync.channel i64) as channel_i64)` or
+  `(import (sync.mutex i64) as mutex_i64)`. Generated modules expose
+  `raw-field-count` as a zero-argument accessor; channels also expose
+  `max-capacity`.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON
   number conversion helpers. Import it with `(import "stdlib/json.tl")`.
+- `json_derive.tl`: module-emitting JSON encode/decode helpers for structs.
+  Import it with `(import stdlib.json_derive)` and instantiate with an alias
+  such as `(import (json_derive.json-derive Person) as person_json)`.
 - `math.tl`: pure scalar math helpers with no imports or platform externs:
   absolute value, min, max, clamp, and sign predicates for `i64` and `f64`.
   Transcendental/libm-style functions such as `sqrt`, trigonometry,
@@ -176,6 +193,18 @@ use.
   exposes `Option`, `some`, `none`, borrowed predicates `is-some?` /
   `is-none?`, consuming `value-or`, and same-payload `map`; duplicate imports
   for the same payload type share the generated module/type.
+- `result.tl`: module-emitting `(result T E)` macro for recoverable-error
+  results with success payload `T` and error payload `E`. Import it with
+  `(import "stdlib/result.tl")` and instantiate with a module alias such as
+  `(import (result i64 String) as result_i64_string)`. Each generated module
+  exposes `Result`, `ok`, `err`, borrowed predicates `is-ok?` / `is-err?`,
+  consuming `value-or`, and same-payload `map`; duplicate imports for the same
+  success/error pair share the generated module/type.
+- `result_family.tl`: lightweight enum-only `(result T E)` macro for generated
+  recoverable-error modules that should expose only `Result`, `Ok`, and `Err`.
+  Import it with `(import "stdlib/result_family.tl")` when a compiler-internal
+  module needs generated result variants without the public helper API from
+  `result.tl`.
 - `process.tl`: process command/output/error data model and the public
   `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and
@@ -220,7 +249,8 @@ use.
 - `str_cat.tl`: the variadic `str-cat` concatenation macro, which expands to a
   single-allocation copy regardless of arity. Kept separate from
   `core_macros.tl` so importing it does not shadow core guard/boolean macro
-  forms. Import it with `(import "stdlib/str_cat.tl")`.
+  forms. Prefer `(import stdlib.str_cat)` and call `str_cat.str-cat`; legacy
+  path imports can still call unqualified `str-cat`.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it
@@ -328,9 +358,11 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   #3290 provides an allocation-free TLS access design.
 - **Core ABI / entry / primitive helpers:** `tl_memcpy` is the backend block-copy
   primitive itself and remains core until source code can express an equal or
-  better overlap-safe copy primitive. Windows `__chkstk` is required by the
-  MSVC ABI for large stack frames. Windows `tl_setup_argv` and `_tl_start` are
-  the freestanding entry bootstrap: they build the initial argv block from
+  better overlap-safe copy primitive. `tl_memchr` is the allocation-free byte
+  search primitive used by borrowed string/byte scans until source code can
+  express equally efficient raw byte search. Windows `__chkstk` is required by
+  the MSVC ABI for large stack frames. Windows `tl_setup_argv` and `_tl_start`
+  are the freestanding entry bootstrap: they build the initial argv block from
   `GetCommandLineA`, clear the TEB current-arena slot, call `main`, and exit via
   `ExitProcess`.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
@@ -410,9 +442,10 @@ v1 `String`/`str` contract in `SPEC.md` classifies which future signatures
 should take borrowed text and which should return owned active-arena strings.
 `SPEC.md` also reserves the binary-storage family: `stdlib/byte_buf.tl` exposes
 owned `ByteBuf` helpers for mutable binary data plus borrowed `bytes` views over
-strings, buffers, and byte sub-slices. `TextBuf` remains an append/render text
-builder, and `vector_slice.tl` remains a generated typed collection-slice
-precedent; neither is the raw byte-slice contract.
+strings, buffers, and byte sub-slices, while `stdlib/byte_buf_core.tl` keeps a
+narrow append-builder surface for hot internal code. `TextBuf` remains an
+append/render text builder, and `vector_slice.tl` remains a generated typed
+collection-slice precedent; neither is the raw byte-slice contract.
 The `string_caller_result.tl`, `io_caller_result.tl`, and
 `process_borrowed.tl` companion modules expose lifetime-preserving shapes.
 Borrowed process runtime wrappers copy at the owned boundary, while ordinary
@@ -420,7 +453,7 @@ owned stdlib imports keep the compatibility wrappers.
 
 | Functions | Allocation behavior |
 |-----------|---------------------|
-| `is-char-whitespace`, `char-eq`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
+| `is-char-whitespace`, `char-eq`, `string-index-of-byte`, `string-contains`, `string-contains-char`, `is-string-prefix-at` | Non-allocating string/char inspection; text parameters are borrowed `str` inputs. |
 | `string-append`, `string-concat`, `string-copy`, `substring`, `string-slice`, `string-concat-all` | Copying string helpers allocate fresh active-arena `String` storage and copy bytes from borrowed `str` inputs. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string-concat-all` is the packed-array target for long `str-cat` expansions and still consumes an owned `(Array String)` pack. |
 | `int->string` | Allocates fresh active-arena `String` storage, writes decimal bytes directly, and returns the zero, positive, negative, and signed edge-case spelling without calling the legacy runtime helper. Project callers should import the stdlib helper instead of relying on an unimported compiler default. |
 | `string-trim-left`, `string-trim-right`, `string-trim` | Borrow the input text and return fresh `String` storage from `substring`, allocated in the active arena. |
@@ -444,15 +477,16 @@ owned stdlib imports keep the compatibility wrappers.
 | `hash-*` helpers | Deterministic, non-cryptographic hash and key equality helpers are non-allocating; string hash/equality helpers borrow text inputs. Hashes are stable bucket hints only; collection users must still compare colliding candidate keys with the matching equality predicate. |
 | `math-*` helpers | Pure scalar arithmetic/comparison helpers are non-allocating and import no runtime or platform externs. V1 intentionally excludes `sqrt`, trigonometry, `log`, `pow`, and other libm-style functions until a freestanding or explicit platform-extern policy is chosen. |
 | `array.tl` helper macros | Macro wrappers add no allocation by themselves. `make-array` allocates and initializes dynamic-array storage under the same rules as the compiler intrinsic; `array-length` and `array-ref` inspect existing storage, `array-set!` mutates existing storage, and `array-push!` may grow dynamic-array backing storage. |
-| `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*` helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; `put` may allocate a larger array before inserting. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` returns a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path. |
+| `string-i64-map-*`, `string-string-map-*`, `i64-i64-map-*`, `i64-string-map-*`, and scalar `(hashmap K V)` module helpers in `hashmap.tl` | Map constructors, growth, resize, and rehash allocate backing slot arrays in the active arena. Flat legacy `insert`, `put`, and `remove` mutate the backing array in place and return the threaded map value; generated-module mutators take `&mut` and update `Map` in place. Lookup, containment, len/capacity/deleted accessors, and bucket-order cursor helpers are non-allocating aside from caller-provided owned keys or fallback values. String-key borrowed lookup/removal variants inspect borrowed key text without copying it. `*-get-value-borrowed` and module `get-value-borrowed` return a lifetime-parameterized lookup whose found branch borrows the map-owned value; mutating/removing/resizing the map while that result is live is rejected by the checker. Mutable-entry helpers such as `string-i64-map-get-mut-entry-borrowed`, module `get-mut-entry*`, `*-mut-entry-present?`, `*-mut-entry-value-or`, and `*-mut-entry-set!` borrow the backing table uniquely and update existing entries in place; another mutable entry, a value borrow, resize, put, or remove is rejected while the entry is live. Missing mutable entries are explicit no-ops, and insertion/growth remains the threaded `*-entry-or-insert`/`*-put` path for flat helpers or `entry-or-insert`/`insert` for modules. |
 | `(set T)` generated modules in `set.tl` | Set constructors, insert, remove, growth, resize, and rehash allocate/mutate the backing open-addressed table through the same active-arena policy as `hashmap.tl`. Mutators take `&mut` and update the stored set in place. Duplicate inserts keep `len` unchanged. Lookup, containment, len/capacity accessors, and bucket-order cursor helpers take `&` and are non-allocating aside from caller-provided owned keys. String-key borrowed contains/remove variants inspect borrowed key text without copying it. |
 | `i64-vec-*`, `string-vec-*` helpers in `vector.tl` | Vector constructors, growth, push, `from-array`, `extend`, `to-array`, and `i64-vec-map*` allocate backing arrays in the active arena. `i64-vec-map*` traverses owned `I64Vec` handles and returns fresh owned vectors; borrowed slice traversal remains separate in `vector_slice.tl`. `set!` and `reverse!` mutate the existing backing array and return the threaded vector value; `get`, `last`, `len`, `capacity`, `is-empty?`, `contains?`, `sum`, and `i64-vec-fold*` are non-allocating aside from caller-provided fallback/value/function storage. |
 | `(sort-vec T)` generated `sort!` helpers and `string-less*` comparators in `sort.tl` | Stable insertion sort helpers extend the matching generated `(vector T)` module, mutate the existing vector backing array in place through a mutable reference, and do not allocate. Scalar instantiations compare values directly with `<`; String and aggregate instantiations use the caller-supplied less-than function and shift only strictly-less values, preserving the relative order of equal elements. |
 | `range`, `range-inclusive`, and `i64-range-*` helpers in `iterator.tl` | `range` constructs a half-open scalar iterable over `[start, end)`, and `range-inclusive` constructs an inclusive scalar iterable over `[start, end]` without computing `end + 1`. `i64-range-iterator` constructs non-allocating iterator state from that range value. `i64-range-next` mutates only the iterator state and returns an `I64RangeNext` option-like value; exhaustion and repeated exhaustion do not allocate. The future scalar `for` macro should discover the flat compatibility constructor/step pair as `i64-range-iterator` and `i64-range-next` for `I64Range` until the final module-level protocol reflection replaces these names. |
-| `ChannelI64`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel-i64-close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |
-| `MutexI64` helpers in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex-i64-lock` blocks on the semaphore and returns a cleanup-owned `MutexI64Guard`; guarded get/set/add do not allocate and `mutex-i64-unlock` releases the semaphore automatically when the `with` scope exits. `mutex-i64-close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
+| `(channel i64)`, `ChannelI64PairChannel`, and `ChannelString` helpers in `sync.tl` | Channel creation allocates runtime-owned OS memory for the fixed ring buffer and head/tail state, plus three OS semaphore handles. Send/recv do not allocate TypeLisp heap storage; they block through the semaphore substrate and move one scalar `i64` message, one two-`i64` `ChannelI64Pair` aggregate, or one atomic-arena-owned `String` handle through the synchronized queue. `channel_i64.close`, `channel-i64-pair-close`, and `channel-string-close` release the OS memory and semaphore handles after all users are done. |
+| `(mutex i64)` generated module in `sync.tl` | Mutex creation allocates one runtime-owned scalar slot, one small close-state/live-user control cell, and one OS semaphore handle. `mutex_i64.lock` blocks on the semaphore and returns a cleanup-owned `mutex_i64.Guard`; guarded `get`/`set!`/`add!` do not allocate and `mutex_i64.unlock` releases the semaphore automatically when the `with` scope exits. `mutex_i64.close` returns `false` while guards or lock attempts are live and releases the protected scalar storage and semaphore only when it can permanently mark the mutex closed. The control cell is retained after successful close so copied handles fail closed instead of touching freed storage. |
 | `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
+| `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from arrays or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing array. The module intentionally omits borrowed `bytes` views and in-place indexed mutation for hot append-only import sites. |
 | `arena-*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` wrappers around raw runtime handles. `arena-make` creates an independent ordinary arena, `arena-make-atomic` creates an independent atomic arena, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |

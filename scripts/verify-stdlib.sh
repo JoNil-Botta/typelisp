@@ -175,8 +175,10 @@ atomic.tl
 args.tl
 array.tl
 byte_buf.tl
+byte_buf_core.tl
 comptime.tl
 core_macros.tl
+io_core.tl
 io.tl
 io_caller_result.tl
 iterator.tl
@@ -187,6 +189,7 @@ ffi.tl
 hash.tl
 hashmap.tl
 json.tl
+json_derive.tl
 math.tl
 msvc.tl
 option.tl
@@ -196,6 +199,8 @@ process_runtime.tl
 profile.tl
 queue.tl
 random.tl
+result.tl
+result_family.tl
 runtime.tl
 set.tl
 sort.tl
@@ -231,6 +236,7 @@ stdlib_test_manifest() {
 stdlib/tests/arena_atomic_api.tl|42|-|-|-|requires-stage0-symbol:tl_arena_make_atomic
 stdlib/tests/arena_patterns.tl|42|-|-|-|requires-stage0-symbol:with-escape
 stdlib/tests/byte_buf_api.tl|42|-|-
+stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-|requires-stage0-symbol:tl_process_start,tl_process_wait
@@ -280,6 +286,8 @@ stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot read mutabl
 stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m.slots`
+stdlib/tests/hashmap_macro_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_slice_escape.tl|fail|typecheck: reference value would escape lexical scope

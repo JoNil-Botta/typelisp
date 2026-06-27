@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import "stdlib/io.tl")
 (define (sum-bce [xs : (Array i64)]) : i64
   (let [i : i64 0] [acc : i64 0] [n : i64 (array-length xs)]

@@ -1,41 +1,308 @@
 ;# stdlib/sync.tl - Safe synchronization helpers over the raw thread substrate.
 ;#
 ;# Provides first concrete synchronization surfaces for native threads:
-;# `ChannelI64` for copyable scalar ownership transfer, `ChannelI64PairChannel`
-;# for a move-based two-field aggregate channel, `ChannelString` for atomic
-;# arena-owned text messages, and `MutexI64` for shared scalar mutation through a
-;# lexical cleanup guard. Handles are small copyable values; shared state lives
-;# in runtime-owned OS memory and is serialized with semaphore-backed
-;# synchronization.
+;# `(channel i64)` for copyable scalar ownership transfer,
+;# `ChannelI64PairChannel` for a move-based two-field aggregate channel,
+;# `ChannelString` for atomic arena-owned text messages, and `(mutex i64)` for
+;# shared scalar mutation through a lexical cleanup guard. Handles are small
+;# copyable values; shared state lives in runtime-owned OS memory and is
+;# serialized with semaphore-backed synchronization.
 ;#
 ;# `ChannelString` accepts heap-backed messages only when their storage is owned
-;# by a spanning atomic arena. `MutexI64` makes the protected scalar race-free
+;# by a spanning atomic arena. `(mutex i64)` makes the protected scalar race-free
 ;# only while mutation goes through its lexical guard; atomic arena allocation
 ;# alone does not protect ordinary mutable storage.
 ;#
 ;# Usage: `(import stdlib.sync)`
+;# Generated `max-capacity` and `raw-field-count` are zero-argument accessors.
 ;#
 ;# ```typelisp
 ;# (import stdlib.sync)
+;# (import (sync.channel i64) as channel_i64)
 ;#
 ;# (define ok : bool
-;#   (match (sync.channel-i64-create 2)
-;#     [(sync.ChannelI64CreateErr _) false]
-;#     [(sync.ChannelI64CreateOk ch)
+;#   (match (channel_i64.create 2)
+;#     [(channel_i64.CreateErr _) false]
+;#     [(channel_i64.CreateOk ch)
 ;#       (begin
-;#         (sync.channel-i64-close ch)
+;#         (channel_i64.close ch)
 ;#         true)]))
 ;# ```
 (module stdlib.sync)
 
 (import stdlib.thread)
 
+;: Emit a generated bounded channel module for copyable scalar messages.
+;:
+;: The first generated surface supports `i64` and uses the same seven-field
+;: runtime handle, allocation, semaphore, and ring-buffer protocol as the raw
+;: `SyncI64Channel` substrate.
+(defmacro (channel [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append "stdlib.sync.channel.generated." (type-key T)))]
+    (match (type-key T)
+      ["i64"
+        `(begin
+          (module ,module-name)
+          (import stdlib.sync as sync)
+          (defstruct Channel
+            (slots-addr i64)
+            (state-addr i64)
+            (capacity i64)
+            (slots-bytes i64)
+            (mutex-handle i64)
+            (items-handle i64)
+            (spaces-handle i64))
+          (defenum CreateResult
+            (CreateOk Channel)
+            (CreateErr i64))
+          (defenum SendResult
+            (SendOk)
+            (SendErr i64))
+          (defenum RecvResult
+            (RecvOk i64)
+            (RecvErr i64))
+          (define (max-capacity) : i64
+            1048576)
+          (define (raw-field-count) : i64
+            7)
+          (define (empty-raw) : sync.SyncI64Channel
+            (sync.SyncI64Channel 0 0 0 0 0 0 0))
+          (define (to-raw [channel : Channel]) : sync.SyncI64Channel
+            (sync.SyncI64Channel
+              (struct-get channel slots-addr)
+              (struct-get channel state-addr)
+              (struct-get channel capacity)
+              (struct-get channel slots-bytes)
+              (struct-get channel mutex-handle)
+              (struct-get channel items-handle)
+              (struct-get channel spaces-handle)))
+          (define (create-capacity-ok? [capacity : i64]) : bool
+            (sync.sync-i64-channel-create-capacity-ok? capacity))
+          (define (create [capacity : i64]) : CreateResult
+            (if (not (create-capacity-ok? capacity))
+              (CreateErr 1)
+              (let
+                [raw : sync.SyncI64Channel
+                  (sync.sync-i64-channel-create-capacity-or
+                    capacity
+                    (empty-raw))]
+                (if (= (struct-get raw spaces-handle) 0)
+                  (CreateErr 1)
+                  (CreateOk
+                    (Channel
+                      (struct-get raw slots-addr)
+                      (struct-get raw state-addr)
+                      (struct-get raw capacity)
+                      (struct-get raw slots-bytes)
+                      (struct-get raw mutex-handle)
+                      (struct-get raw items-handle)
+                      (struct-get raw spaces-handle)))))))
+          (define (create-capacity-or [capacity : i64] [fallback : Channel]) : Channel
+            (match (create capacity)
+              [(CreateOk channel) channel]
+              [(CreateErr _) fallback]))
+          (define (send [channel : Channel] [value : i64]) : SendResult
+            (match (sync.sync-i64-channel-send (to-raw channel) value)
+              [(sync.SyncI64ChannelSendOk) (SendOk)]
+              [(sync.SyncI64ChannelSendErr code) (SendErr code)]))
+          (define (send-value-ok? [channel : Channel] [value : i64]) : bool
+            (match (send channel value)
+              [(SendOk) true]
+              [(SendErr _) false]))
+          (define (recv [channel : Channel]) : RecvResult
+            (match (sync.sync-i64-channel-recv (to-raw channel))
+              [(sync.SyncI64ChannelRecvOk value) (RecvOk value)]
+              [(sync.SyncI64ChannelRecvErr code) (RecvErr code)]))
+          (define (recv-or [channel : Channel] [fallback : i64]) : i64
+            (match (recv channel)
+              [(RecvOk value) value]
+              [(RecvErr _) fallback]))
+          (define (close [channel : Channel]) : bool
+            (sync.sync-i64-channel-close (to-raw channel)))
+          (define (store-raw!
+            [channel : Channel]
+            [dst : (Array i64)]
+            [offset : i64]) : unit
+            (begin
+              (array-set! dst offset (struct-get channel slots-addr))
+              (array-set! dst (+ offset 1) (struct-get channel state-addr))
+              (array-set! dst (+ offset 2) (struct-get channel capacity))
+              (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
+              (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
+              (array-set! dst (+ offset 5) (struct-get channel items-handle))
+              (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+          (define (load-raw [src : (Array i64)] [offset : i64]) : Channel
+            (Channel
+              (array-ref src offset)
+              (array-ref src (+ offset 1))
+              (array-ref src (+ offset 2))
+              (array-ref src (+ offset 3))
+              (array-ref src (+ offset 4))
+              (array-ref src (+ offset 5))
+              (array-ref src (+ offset 6)))))]
+      [_
+        `(begin
+          (module ,module-name))])))
+
+;: Emit a generated mutex module for protected scalar values.
+;:
+;: The first generated surface supports `i64` and wraps the three-field
+;: `SyncI64Mutex` runtime handle plus its close-safe control protocol.
+(defmacro (mutex [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append "stdlib.sync.mutex.generated." (type-key T)))]
+    [set-name : Expr (expr-var "set!")]
+    (match (type-key T)
+      ["i64"
+        `(begin
+          (module ,module-name)
+          (import stdlib.sync as sync)
+          (defstruct Mutex
+            (value-addr i64)
+            (mutex-handle i64)
+            (control-addr i64))
+          (define (unlock-handle [handle : i64]) : unit
+            (sync.sync-i64-mutex-unlock-handle handle))
+          (define (untrack-user [control-addr : i64]) : unit
+            (sync.sync-i64-mutex-untrack-user control-addr))
+          (defstruct Guard
+            (:cleanup unlock)
+            (control-addr i64 (:cleanup untrack-user))
+            (mutex-handle i64 (:cleanup unlock-handle))
+            (value-addr i64))
+          (defenum CreateResult
+            (CreateOk Mutex)
+            (CreateErr i64))
+          (define (raw-field-count) : i64
+            sync.sync-i64-mutex-raw-field-count)
+          (define (empty-raw) : sync.SyncI64Mutex
+            (sync.SyncI64Mutex 0 0 0))
+          (define (empty) : Mutex
+            (Mutex 0 0 0))
+          (define (to-raw [mutex : Mutex]) : sync.SyncI64Mutex
+            (sync.SyncI64Mutex
+              (struct-get mutex value-addr)
+              (struct-get mutex mutex-handle)
+              (struct-get mutex control-addr)))
+          (define (from-raw [raw : sync.SyncI64Mutex]) : Mutex
+            (Mutex
+              (struct-get raw value-addr)
+              (struct-get raw mutex-handle)
+              (struct-get raw control-addr)))
+          (define (create [initial : i64]) : CreateResult
+            (let
+              [raw : sync.SyncI64Mutex
+                (sync.sync-i64-mutex-create-initial-or initial (empty-raw))]
+              (if (= (struct-get raw mutex-handle) 0)
+                (CreateErr 1)
+                (CreateOk (from-raw raw)))))
+          (define (create-initial-or [initial : i64] [fallback : Mutex]) : Mutex
+            (from-raw
+              (sync.sync-i64-mutex-create-initial-or initial (to-raw fallback))))
+          (define (create-initial-ok? [initial : i64]) : bool
+            (match (create initial)
+              [(CreateErr _) false]
+              [(CreateOk mutex)
+                (begin
+                  (close mutex)
+                  true)]))
+          (define (lock [mutex : Mutex]) : Guard
+            (let
+              [control-addr : i64 (struct-get mutex control-addr)]
+              [mutex-handle : i64 (struct-get mutex mutex-handle)]
+              [value-addr : i64 (struct-get mutex value-addr)]
+              (if (sync.sync-i64-mutex-closed? control-addr)
+                (sync.sync-abort 134)
+                (let
+                  [previous-users : i64
+                    (sync.sync-i64-mutex-track-user control-addr)]
+                  (if (< previous-users 0)
+                    (begin
+                      (sync.sync-i64-mutex-untrack-user control-addr)
+                      (lock mutex))
+                    (if (sync.sync-semaphore-wait mutex-handle)
+                      (Guard control-addr mutex-handle value-addr)
+                      (sync.sync-i64-mutex-lock-abort control-addr)))))))
+          (define (guard-control-addr [guard : (& guard Guard)]) : i64
+            (struct-get guard control-addr))
+          (define (guard-mutex-handle [guard : (& guard Guard)]) : i64
+            (struct-get guard mutex-handle))
+          (define (guard-value-addr [guard : (& guard Guard)]) : i64
+            (struct-get guard value-addr))
+          (define (get [guard : (& guard Guard)]) : i64
+            (sync.sync-read-i64 (struct-get guard value-addr) 0))
+          (define (,set-name [guard : (& guard Guard)] [value : i64]) : unit
+            (sync.sync-write-i64! (struct-get guard value-addr) 0 value))
+          (define (add! [guard : (& guard Guard)] [delta : i64]) : i64
+            (let
+              [next : i64 (+ (get guard) delta)]
+              (begin
+                (sync.sync-write-i64! (struct-get guard value-addr) 0 next)
+                next)))
+          (define (close [mutex : Mutex]) : bool
+            (let
+              [control-addr : i64 (struct-get mutex control-addr)]
+              (if (sync.sync-i64-mutex-closed? control-addr)
+                false
+                (if (=
+                  (sync.sync-atomic-i64-fetch-add!
+                    control-addr
+                    sync.sync-i64-mutex-control-users-slot
+                    sync.sync-i64-mutex-users-closing-delta)
+                  0)
+                  (let
+                    [ok : bool true]
+                    (begin
+                      (sync.sync-atomic-i64-store!
+                        control-addr
+                        sync.sync-i64-mutex-control-closed-slot
+                        1)
+                      (set!
+                        ok
+                        (if (sync.sync-semaphore-close
+                          (struct-get mutex mutex-handle))
+                          ok
+                          false))
+                      (set!
+                        ok
+                        (if (sync.sync-runtime-free
+                          (struct-get mutex value-addr)
+                          8)
+                          ok
+                          false))
+                      ok))
+                  (begin
+                    (sync.sync-atomic-i64-fetch-add!
+                      control-addr
+                      sync.sync-i64-mutex-control-users-slot
+                      sync.sync-i64-mutex-users-closing-undo)
+                    false)))))
+          (define (store-raw!
+            [mutex : Mutex]
+            [dst : (Array i64)]
+            [offset : i64]) : unit
+            (begin
+              (array-set! dst offset (struct-get mutex value-addr))
+              (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
+              (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
+          (define (load-raw [src : (Array i64)] [offset : i64]) : Mutex
+            (Mutex
+              (array-ref src offset)
+              (array-ref src (+ offset 1))
+              (array-ref src (+ offset 2)))))]
+      [_
+        `(begin
+          (module ,module-name))])))
+
 ;: Maximum supported channel capacity for this first concrete channel surface.
-(define channel-i64-max-capacity : i64
+(define sync-channel-max-capacity : i64
   1048576)
 
-;: Number of raw `i64` fields needed to serialize a `ChannelI64` handle.
-(define channel-i64-raw-field-count : i64
+;: Number of raw `i64` fields needed to serialize a `SyncI64Channel` handle.
+(define sync-i64-channel-raw-field-count : i64
   7)
 
 ;: Number of raw `i64` fields needed to serialize a `ChannelI64PairChannel`.
@@ -46,38 +313,38 @@
 (define channel-string-raw-field-count : i64
   7)
 
-;: Number of raw `i64` fields needed to serialize a `MutexI64` handle.
-(define mutex-i64-raw-field-count : i64
+;: Number of raw `i64` fields needed to serialize a `SyncI64Mutex` handle.
+(define sync-i64-mutex-raw-field-count : i64
   3)
 
 ;: Runtime-owned bytes for the close-state/live-user control cell.
-(define mutex-i64-control-byte-count : i64
+(define sync-i64-mutex-control-byte-count : i64
   16)
 
 ;: Control slot set to nonzero after a mutex has been permanently closed.
-(define mutex-i64-control-closed-slot : i64
+(define sync-i64-mutex-control-closed-slot : i64
   0)
 
 ;: Control slot tracking live lock attempts and cleanup-owned guards.
-(define mutex-i64-control-users-slot : i64
+(define sync-i64-mutex-control-users-slot : i64
   1)
 
 ;: Negative live-user delta used to claim close without a compare-exchange.
-(define mutex-i64-users-closing-delta : i64
+(define sync-i64-mutex-users-closing-delta : i64
   -1073741824)
 
-;: Positive inverse of `mutex-i64-users-closing-delta`.
-(define mutex-i64-users-closing-undo : i64
+;: Positive inverse of `sync-i64-mutex-users-closing-delta`.
+(define sync-i64-mutex-users-closing-undo : i64
   1073741824)
 
 ;: Runtime-owned mutex-protected `i64` slot.
-(defstruct MutexI64
+(defstruct SyncI64Mutex
   (value-addr i64)
   (mutex-handle i64)
   (control-addr i64))
 
 ;: Runtime-owned bounded channel handle for `i64` messages.
-(defstruct ChannelI64
+(defstruct SyncI64Channel
   (slots-addr i64)
   (state-addr i64)
   (capacity i64)
@@ -111,10 +378,10 @@
   (items-handle i64)
   (spaces-handle i64))
 
-;: Result returned by `channel-i64-create`.
-(defenum ChannelI64CreateResult
-  (ChannelI64CreateOk ChannelI64)
-  (ChannelI64CreateErr i64))
+;: Result returned by `sync-i64-channel-create`.
+(defenum SyncI64ChannelCreateResult
+  (SyncI64ChannelCreateOk SyncI64Channel)
+  (SyncI64ChannelCreateErr i64))
 
 ;: Result returned by `channel-i64-pair-create`.
 (defenum ChannelI64PairCreateResult
@@ -126,15 +393,15 @@
   (ChannelStringCreateOk ChannelString)
   (ChannelStringCreateErr i64))
 
-;: Result returned by `mutex-i64-create`.
-(defenum MutexI64CreateResult
-  (MutexI64CreateOk MutexI64)
-  (MutexI64CreateErr i64))
+;: Result returned by `sync-i64-mutex-create`.
+(defenum SyncI64MutexCreateResult
+  (SyncI64MutexCreateOk SyncI64Mutex)
+  (SyncI64MutexCreateErr i64))
 
-;: Result returned by `channel-i64-send`.
-(defenum ChannelI64SendResult
-  (ChannelI64SendOk)
-  (ChannelI64SendErr i64))
+;: Result returned by `sync-i64-channel-send`.
+(defenum SyncI64ChannelSendResult
+  (SyncI64ChannelSendOk)
+  (SyncI64ChannelSendErr i64))
 
 ;: Result returned by `channel-i64-pair-send`.
 (defenum ChannelI64PairSendResult
@@ -146,10 +413,10 @@
   (ChannelStringSendOk)
   (ChannelStringSendErr i64))
 
-;: Result returned by `channel-i64-recv`.
-(defenum ChannelI64RecvResult
-  (ChannelI64RecvOk i64)
-  (ChannelI64RecvErr i64))
+;: Result returned by `sync-i64-channel-recv`.
+(defenum SyncI64ChannelRecvResult
+  (SyncI64ChannelRecvOk i64)
+  (SyncI64ChannelRecvErr i64))
 
 ;: Result returned by `channel-i64-pair-recv`.
 (defenum ChannelI64PairRecvResult
@@ -161,13 +428,13 @@
   (ChannelStringRecvOk String)
   (ChannelStringRecvErr i64))
 
-;: Construct a successful `channel-i64-send` result.
-(define (channel-i64-send-ok-result) : ChannelI64SendResult
-  ChannelI64SendOk)
+;: Construct a successful `sync-i64-channel-send` result.
+(define (sync-i64-channel-send-ok-result) : SyncI64ChannelSendResult
+  SyncI64ChannelSendOk)
 
-;: Construct a failed `channel-i64-send` result.
-(define (channel-i64-send-err-result [_message : String]) : ChannelI64SendResult
-  (ChannelI64SendErr 1))
+;: Construct a failed `sync-i64-channel-send` result.
+(define (sync-i64-channel-send-err-result [_message : String]) : SyncI64ChannelSendResult
+  (SyncI64ChannelSendErr 1))
 
 ;: Construct a successful `channel-i64-pair-send` result.
 (define (channel-i64-pair-send-ok-result) : ChannelI64PairSendResult
@@ -185,13 +452,13 @@
 (define (channel-string-send-err-result [_message : String]) : ChannelStringSendResult
   (ChannelStringSendErr 1))
 
-;: Construct a successful `channel-i64-recv` result.
-(define (channel-i64-recv-ok-result [value : i64]) : ChannelI64RecvResult
-  (ChannelI64RecvOk value))
+;: Construct a successful `sync-i64-channel-recv` result.
+(define (sync-i64-channel-recv-ok-result [value : i64]) : SyncI64ChannelRecvResult
+  (SyncI64ChannelRecvOk value))
 
-;: Construct a failed `channel-i64-recv` result.
-(define (channel-i64-recv-err-result [_message : String]) : ChannelI64RecvResult
-  (ChannelI64RecvErr 1))
+;: Construct a failed `sync-i64-channel-recv` result.
+(define (sync-i64-channel-recv-err-result [_message : String]) : SyncI64ChannelRecvResult
+  (SyncI64ChannelRecvErr 1))
 
 ;: Construct a successful `channel-i64-pair-recv` result.
 (define (channel-i64-pair-recv-ok-result [value : ChannelI64Pair]) : ChannelI64PairRecvResult
@@ -205,13 +472,13 @@
 (define (channel-string-recv-err-result [_message : String]) : ChannelStringRecvResult
   (ChannelStringRecvErr 1))
 
-;: Construct a successful `channel-i64-create` result.
-(define (channel-i64-create-ok-result [value : ChannelI64]) : ChannelI64CreateResult
-  (ChannelI64CreateOk value))
+;: Construct a successful `sync-i64-channel-create` result.
+(define (sync-i64-channel-create-ok-result [value : SyncI64Channel]) : SyncI64ChannelCreateResult
+  (SyncI64ChannelCreateOk value))
 
-;: Construct a failed `channel-i64-create` result.
-(define (channel-i64-create-err-result [_message : String]) : ChannelI64CreateResult
-  (ChannelI64CreateErr 1))
+;: Construct a failed `sync-i64-channel-create` result.
+(define (sync-i64-channel-create-err-result [_message : String]) : SyncI64ChannelCreateResult
+  (SyncI64ChannelCreateErr 1))
 
 ;: Construct a successful `channel-i64-pair-create` result.
 (define (channel-i64-pair-create-ok-result [value : ChannelI64PairChannel]) : ChannelI64PairCreateResult
@@ -229,13 +496,13 @@
 (define (channel-string-create-err-result [_message : String]) : ChannelStringCreateResult
   (ChannelStringCreateErr 1))
 
-;: Construct a successful `mutex-i64-create` result.
-(define (mutex-i64-create-ok-result [value : MutexI64]) : MutexI64CreateResult
-  (MutexI64CreateOk value))
+;: Construct a successful `sync-i64-mutex-create` result.
+(define (sync-i64-mutex-create-ok-result [value : SyncI64Mutex]) : SyncI64MutexCreateResult
+  (SyncI64MutexCreateOk value))
 
-;: Construct a failed `mutex-i64-create` result.
-(define (mutex-i64-create-err-result [_message : String]) : MutexI64CreateResult
-  (MutexI64CreateErr 1))
+;: Construct a failed `sync-i64-mutex-create` result.
+(define (sync-i64-mutex-create-err-result [_message : String]) : SyncI64MutexCreateResult
+  (SyncI64MutexCreateErr 1))
 
 ;: Windows kernel32 `VirtualAlloc` for runtime-owned channel storage.
 (cfg
@@ -403,136 +670,149 @@
   (thread.thread-semaphore-close (sync-semaphore handle)))
 
 ;: Unlock a mutex guard field during cleanup.
-(define (mutex-i64-unlock-handle [handle : i64]) : unit
+(define (sync-i64-mutex-unlock-handle [handle : i64]) : unit
   (begin
     (sync-semaphore-post handle)
     unit))
 
 ;: Stop tracking one live lock attempt or guard during cleanup.
-(define (mutex-i64-untrack-user [control-addr : i64]) : unit
+(define (sync-i64-mutex-untrack-user [control-addr : i64]) : unit
   (begin
-    (sync-atomic-i64-fetch-add! control-addr mutex-i64-control-users-slot -1)
+    (sync-atomic-i64-fetch-add!
+      control-addr
+      sync-i64-mutex-control-users-slot
+      -1)
     unit))
 
 ;: Track one live lock attempt before touching the semaphore/value fields.
-(define (mutex-i64-track-user [control-addr : i64]) : i64
-  (sync-atomic-i64-fetch-add! control-addr mutex-i64-control-users-slot 1))
+(define (sync-i64-mutex-track-user [control-addr : i64]) : i64
+  (sync-atomic-i64-fetch-add! control-addr sync-i64-mutex-control-users-slot 1))
 
 ;: Return true once `mutex` has permanently closed its semaphore/value fields.
-(define (mutex-i64-closed? [control-addr : i64]) : bool
-  (not (= (sync-atomic-i64-load control-addr mutex-i64-control-closed-slot) 0)))
+(define (sync-i64-mutex-closed? [control-addr : i64]) : bool
+  (not
+    (= (sync-atomic-i64-load control-addr sync-i64-mutex-control-closed-slot) 0)))
 
 ;: Abort a failed lock attempt after removing its live-user claim.
-(define (mutex-i64-lock-abort [control-addr : i64]) : never
+(define (sync-i64-mutex-lock-abort [control-addr : i64]) : never
   (begin
-    (mutex-i64-untrack-user control-addr)
+    (sync-i64-mutex-untrack-user control-addr)
     (sync-abort 134)))
 
-;: Lexical guard returned by `mutex-i64-lock`.
-(defstruct MutexI64Guard
-  (:cleanup mutex-i64-unlock)
+;: Lexical guard returned by `sync-i64-mutex-lock`.
+(defstruct SyncI64MutexGuard
+  (:cleanup sync-i64-mutex-unlock)
   ; Field cleanups run in reverse declaration order, so post before untrack.
-  (control-addr i64 (:cleanup mutex-i64-untrack-user))
-  (mutex-handle i64 (:cleanup mutex-i64-unlock-handle))
+  (control-addr i64 (:cleanup sync-i64-mutex-untrack-user))
+  (mutex-handle i64 (:cleanup sync-i64-mutex-unlock-handle))
   (value-addr i64))
 
 ;: Finish mutex creation after storage allocation.
-(define (mutex-i64-create-semaphore [value-addr : i64] [control-addr : i64]) : MutexI64CreateResult
+(define (sync-i64-mutex-create-semaphore
+  [value-addr : i64]
+  [control-addr : i64]) : SyncI64MutexCreateResult
   (let
     [mutex-handle : i64 (thread.thread-semaphore-create-handle-or 1 -1)]
     (if (= mutex-handle -1)
       (begin
         (sync-runtime-free value-addr 8)
-        (sync-runtime-free control-addr mutex-i64-control-byte-count)
-        (mutex-i64-create-err-result "sync: semaphore create failed"))
-      (mutex-i64-create-ok-result
-        (MutexI64 value-addr mutex-handle control-addr)))))
+        (sync-runtime-free control-addr sync-i64-mutex-control-byte-count)
+        (sync-i64-mutex-create-err-result "sync: semaphore create failed"))
+      (sync-i64-mutex-create-ok-result
+        (SyncI64Mutex value-addr mutex-handle control-addr)))))
 
 ;: Create a mutex-protected `i64` initialized to `initial`.
-(define (mutex-i64-create [initial : i64]) : MutexI64CreateResult
+(define (sync-i64-mutex-create [initial : i64]) : SyncI64MutexCreateResult
   (let
     [value-addr : i64 (sync-runtime-alloc 8)]
     (if (= value-addr 0)
-      (mutex-i64-create-err-result "sync: mutex allocation failed")
+      (sync-i64-mutex-create-err-result "sync: mutex allocation failed")
       (let
-        [control-addr : i64 (sync-runtime-alloc mutex-i64-control-byte-count)]
+        [control-addr : i64
+          (sync-runtime-alloc sync-i64-mutex-control-byte-count)]
         (if (= control-addr 0)
           (begin
             (sync-runtime-free value-addr 8)
-            (mutex-i64-create-err-result "sync: mutex allocation failed"))
+            (sync-i64-mutex-create-err-result "sync: mutex allocation failed"))
           (begin
             (sync-write-i64! value-addr 0 initial)
-            (sync-write-i64! control-addr mutex-i64-control-closed-slot 0)
-            (sync-write-i64! control-addr mutex-i64-control-users-slot 0)
-            (mutex-i64-create-semaphore value-addr control-addr)))))))
+            (sync-write-i64! control-addr sync-i64-mutex-control-closed-slot 0)
+            (sync-write-i64! control-addr sync-i64-mutex-control-users-slot 0)
+            (sync-i64-mutex-create-semaphore value-addr control-addr)))))))
 
 ;: Lock `mutex`, blocking until the protected value is available.
-(define (mutex-i64-lock [mutex : MutexI64]) : MutexI64Guard
+(define (sync-i64-mutex-lock [mutex : SyncI64Mutex]) : SyncI64MutexGuard
   (let
     [control-addr : i64 (struct-get mutex control-addr)]
     [mutex-handle : i64 (struct-get mutex mutex-handle)]
     [value-addr : i64 (struct-get mutex value-addr)]
-    (if (mutex-i64-closed? control-addr)
+    (if (sync-i64-mutex-closed? control-addr)
       (sync-abort 134)
       (let
-        [previous-users : i64 (mutex-i64-track-user control-addr)]
+        [previous-users : i64 (sync-i64-mutex-track-user control-addr)]
         (if (< previous-users 0)
           (begin
-            (mutex-i64-untrack-user control-addr)
-            (mutex-i64-lock mutex))
+            (sync-i64-mutex-untrack-user control-addr)
+            (sync-i64-mutex-lock mutex))
           (if (sync-semaphore-wait mutex-handle)
-            (MutexI64Guard control-addr mutex-handle value-addr)
-            (mutex-i64-lock-abort control-addr)))))))
+            (SyncI64MutexGuard control-addr mutex-handle value-addr)
+            (sync-i64-mutex-lock-abort control-addr)))))))
 
 ;: Return the control cell address from a mutex guard.
-(define (mutex-i64-guard-control-addr [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-guard-control-addr
+  [guard : (& guard SyncI64MutexGuard)]) : i64
   (struct-get guard control-addr))
 
 ;: Return the semaphore handle from a mutex guard.
-(define (mutex-i64-guard-mutex-handle [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-guard-mutex-handle
+  [guard : (& guard SyncI64MutexGuard)]) : i64
   (struct-get guard mutex-handle))
 
 ;: Return the protected value address from a mutex guard.
-(define (mutex-i64-guard-value-addr [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-guard-value-addr [guard : (& guard SyncI64MutexGuard)]) : i64
   (struct-get guard value-addr))
 
 ;: Read the protected value while holding `guard`.
-(define (mutex-i64-get [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-get [guard : (& guard SyncI64MutexGuard)]) : i64
   (sync-read-i64 (struct-get guard value-addr) 0))
 
 ;: Write the protected value while holding `guard`.
-(define (mutex-i64-set! [guard : (& guard MutexI64Guard)] [value : i64]) : unit
+(define (sync-i64-mutex-set!
+  [guard : (& guard SyncI64MutexGuard)]
+  [value : i64]) : unit
   (sync-write-i64! (struct-get guard value-addr) 0 value))
 
 ;: Add `delta` to the protected value and return the new value.
-(define (mutex-i64-add! [guard : (& guard MutexI64Guard)] [delta : i64]) : i64
+(define (sync-i64-mutex-add!
+  [guard : (& guard SyncI64MutexGuard)]
+  [delta : i64]) : i64
   (let
-    [next : i64 (+ (mutex-i64-get guard) delta)]
+    [next : i64 (+ (sync-i64-mutex-get guard) delta)]
     (begin
-      (mutex-i64-set! guard next)
+      (sync-i64-mutex-set! guard next)
       next)))
 
 ;: Close mutex resources if no users or guards are live.
 ;:
 ;: The small control cell is retained so copied handles can fail closed instead
 ;: of touching freed semaphore/value storage after a successful close.
-(define (mutex-i64-close [mutex : MutexI64]) : bool
+(define (sync-i64-mutex-close [mutex : SyncI64Mutex]) : bool
   (let
     [control-addr : i64 (struct-get mutex control-addr)]
-    (if (mutex-i64-closed? control-addr)
+    (if (sync-i64-mutex-closed? control-addr)
       false
       (if (=
         (sync-atomic-i64-fetch-add!
           control-addr
-          mutex-i64-control-users-slot
-          mutex-i64-users-closing-delta)
+          sync-i64-mutex-control-users-slot
+          sync-i64-mutex-users-closing-delta)
         0)
         (let
           [ok : bool true]
           (begin
             (sync-atomic-i64-store!
               control-addr
-              mutex-i64-control-closed-slot
+              sync-i64-mutex-control-closed-slot
               1)
             (set!
               ok
@@ -548,13 +828,13 @@
         (begin
           (sync-atomic-i64-fetch-add!
             control-addr
-            mutex-i64-control-users-slot
-            mutex-i64-users-closing-undo)
+            sync-i64-mutex-control-users-slot
+            sync-i64-mutex-users-closing-undo)
           false)))))
 
 ;: Store a mutex handle into a raw `i64` array at `offset`.
-(define (mutex-i64-store-raw!
-  [mutex : MutexI64]
+(define (sync-i64-mutex-store-raw!
+  [mutex : SyncI64Mutex]
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
@@ -563,14 +843,14 @@
     (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
 
 ;: Rebuild a mutex handle from a raw `i64` array at `offset`.
-(define (mutex-i64-load-raw [src : (Array i64)] [offset : i64]) : MutexI64
-  (MutexI64
+(define (sync-i64-mutex-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Mutex
+  (SyncI64Mutex
     (array-ref src offset)
     (array-ref src (+ offset 1))
     (array-ref src (+ offset 2))))
 
 ;: Return the next ring index for a channel with `capacity`.
-(define (channel-i64-next-index [capacity : i64] [index : i64]) : i64
+(define (sync-i64-channel-next-index [capacity : i64] [index : i64]) : i64
   (let
     [next : i64 (+ index 1)]
     (if (>= next capacity)
@@ -578,15 +858,15 @@
       next)))
 
 ;: Build a channel handle from allocated storage and semaphore handles.
-(define (channel-i64-handle
+(define (sync-i64-channel-handle
   [slots-addr : i64]
   [state-addr : i64]
   [capacity : i64]
   [slots-bytes : i64]
   [mutex : thread.ThreadSemaphore]
   [items : thread.ThreadSemaphore]
-  [spaces : thread.ThreadSemaphore]) : ChannelI64
-  (ChannelI64
+  [spaces : thread.ThreadSemaphore]) : SyncI64Channel
+  (SyncI64Channel
     slots-addr
     state-addr
     capacity
@@ -596,18 +876,18 @@
     (struct-get spaces handle)))
 
 ;: Finish channel creation after storage allocation.
-(define (channel-i64-create-semaphores
+(define (sync-i64-channel-create-semaphores
   [slots-addr : i64]
   [state-addr : i64]
   [capacity : i64]
-  [slots-bytes : i64]) : ChannelI64CreateResult
+  [slots-bytes : i64]) : SyncI64ChannelCreateResult
   (let
     [mutex-handle : i64 (thread.thread-semaphore-create-handle-or 1 -1)]
     (if (= mutex-handle -1)
       (begin
         (sync-runtime-free slots-addr slots-bytes)
         (sync-runtime-free state-addr 16)
-        (channel-i64-create-err-result "sync: semaphore create failed"))
+        (sync-i64-channel-create-err-result "sync: semaphore create failed"))
       (let
         [items-handle : i64 (thread.thread-semaphore-create-handle-or 0 -1)]
         (if (= items-handle -1)
@@ -615,7 +895,7 @@
             (sync-semaphore-close mutex-handle)
             (sync-runtime-free slots-addr slots-bytes)
             (sync-runtime-free state-addr 16)
-            (channel-i64-create-err-result "sync: semaphore create failed"))
+            (sync-i64-channel-create-err-result "sync: semaphore create failed"))
           (let
             [spaces-handle : i64
               (thread.thread-semaphore-create-handle-or capacity -1)]
@@ -625,12 +905,13 @@
                 (sync-semaphore-close items-handle)
                 (sync-runtime-free slots-addr slots-bytes)
                 (sync-runtime-free state-addr 16)
-                (channel-i64-create-err-result "sync: semaphore create failed"))
+                (sync-i64-channel-create-err-result
+                  "sync: semaphore create failed"))
               (begin
                 (sync-write-i64! state-addr 0 0)
                 (sync-write-i64! state-addr 1 0)
-                (channel-i64-create-ok-result
-                  (ChannelI64
+                (sync-i64-channel-create-ok-result
+                  (SyncI64Channel
                     slots-addr
                     state-addr
                     capacity
@@ -640,37 +921,39 @@
                     spaces-handle))))))))))
 
 ;: Create a bounded `i64` channel with `capacity` queued messages.
-(define (channel-i64-create [capacity : i64]) : ChannelI64CreateResult
+(define (sync-i64-channel-create [capacity : i64]) : SyncI64ChannelCreateResult
   (if (<= capacity 0)
-    (channel-i64-create-err-result "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
-      (channel-i64-create-err-result "sync: channel capacity exceeds maximum")
+    (sync-i64-channel-create-err-result
+      "sync: channel capacity must be positive")
+    (if (> capacity sync-channel-max-capacity)
+      (sync-i64-channel-create-err-result
+        "sync: channel capacity exceeds maximum")
       (let
         [slots-bytes : i64 (* capacity 8)]
         [slots-addr : i64 (sync-runtime-alloc slots-bytes)]
         (if (= slots-addr 0)
-          (channel-i64-create-err-result "sync: channel allocation failed")
+          (sync-i64-channel-create-err-result "sync: channel allocation failed")
           (let
             [state-addr : i64 (sync-runtime-alloc 16)]
             (if (= state-addr 0)
               (begin
                 (sync-runtime-free slots-addr slots-bytes)
-                (channel-i64-create-err-result
+                (sync-i64-channel-create-err-result
                   "sync: channel allocation failed"))
-              (channel-i64-create-semaphores
+              (sync-i64-channel-create-semaphores
                 slots-addr
                 state-addr
                 capacity
                 slots-bytes))))))))
 
 ;: Send `value`, blocking until one slot is available.
-(define (channel-i64-send [channel : ChannelI64] [value : i64]) : ChannelI64SendResult
+(define (sync-i64-channel-send [channel : SyncI64Channel] [value : i64]) : SyncI64ChannelSendResult
   (if (not (sync-semaphore-wait (struct-get channel spaces-handle)))
-    (channel-i64-send-err-result "sync: channel send wait failed")
+    (sync-i64-channel-send-err-result "sync: channel send wait failed")
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
       (begin
         (sync-semaphore-post (struct-get channel spaces-handle))
-        (channel-i64-send-err-result "sync: channel lock failed"))
+        (sync-i64-channel-send-err-result "sync: channel lock failed"))
       (let
         [tail : i64 (sync-read-i64 (struct-get channel state-addr) 1)]
         (begin
@@ -678,21 +961,22 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             1
-            (channel-i64-next-index (struct-get channel capacity) tail))
+            (sync-i64-channel-next-index (struct-get channel capacity) tail))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
-            (channel-i64-send-err-result "sync: channel unlock failed")
+            (sync-i64-channel-send-err-result "sync: channel unlock failed")
             (if (sync-semaphore-post (struct-get channel items-handle))
-              (channel-i64-send-ok-result)
-              (channel-i64-send-err-result "sync: channel send signal failed"))))))))
+              (sync-i64-channel-send-ok-result)
+              (sync-i64-channel-send-err-result
+                "sync: channel send signal failed"))))))))
 
 ;: Receive one value, blocking until one queued message is available.
-(define (channel-i64-recv [channel : ChannelI64]) : ChannelI64RecvResult
+(define (sync-i64-channel-recv [channel : SyncI64Channel]) : SyncI64ChannelRecvResult
   (if (not (sync-semaphore-wait (struct-get channel items-handle)))
-    (channel-i64-recv-err-result "sync: channel recv wait failed")
+    (sync-i64-channel-recv-err-result "sync: channel recv wait failed")
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
       (begin
         (sync-semaphore-post (struct-get channel items-handle))
-        (channel-i64-recv-err-result "sync: channel lock failed"))
+        (sync-i64-channel-recv-err-result "sync: channel lock failed"))
       (let
         [head : i64 (sync-read-i64 (struct-get channel state-addr) 0)]
         [value : i64 (sync-read-i64 (struct-get channel slots-addr) head)]
@@ -700,15 +984,16 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             0
-            (channel-i64-next-index (struct-get channel capacity) head))
+            (sync-i64-channel-next-index (struct-get channel capacity) head))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
-            (channel-i64-recv-err-result "sync: channel unlock failed")
+            (sync-i64-channel-recv-err-result "sync: channel unlock failed")
             (if (sync-semaphore-post (struct-get channel spaces-handle))
-              (channel-i64-recv-ok-result value)
-              (channel-i64-recv-err-result "sync: channel recv signal failed"))))))))
+              (sync-i64-channel-recv-ok-result value)
+              (sync-i64-channel-recv-err-result
+                "sync: channel recv signal failed"))))))))
 
 ;: Close channel resources after all senders/receivers are done.
-(define (channel-i64-close [channel : ChannelI64]) : bool
+(define (sync-i64-channel-close [channel : SyncI64Channel]) : bool
   (let
     [ok : bool true]
     (begin
@@ -742,8 +1027,8 @@
       ok)))
 
 ;: Store a channel handle into a raw `i64` array at `offset`.
-(define (channel-i64-store-raw!
-  [channel : ChannelI64]
+(define (sync-i64-channel-store-raw!
+  [channel : SyncI64Channel]
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
@@ -756,8 +1041,8 @@
     (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
-(define (channel-i64-load-raw [src : (Array i64)] [offset : i64]) : ChannelI64
-  (ChannelI64
+(define (sync-i64-channel-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Channel
+  (SyncI64Channel
     (array-ref src offset)
     (array-ref src (+ offset 1))
     (array-ref src (+ offset 2))
@@ -844,7 +1129,7 @@
   (if (<= capacity 0)
     (channel-i64-pair-create-err-result
       "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
+    (if (> capacity sync-channel-max-capacity)
       (channel-i64-pair-create-err-result
         "sync: channel capacity exceeds maximum")
       (let
@@ -1057,7 +1342,7 @@
 (define (channel-string-create [capacity : i64]) : ChannelStringCreateResult
   (if (<= capacity 0)
     (channel-string-create-err-result "sync: channel capacity must be positive")
-    (if (> capacity channel-i64-max-capacity)
+    (if (> capacity sync-channel-max-capacity)
       (channel-string-create-err-result
         "sync: channel capacity exceeds maximum")
       (let
@@ -1184,16 +1469,16 @@
     (array-ref src (+ offset 6))))
 
 ;: Return true when creating an i64 channel with `capacity` succeeds.
-(define (channel-i64-create-capacity-ok? [capacity : i64]) : bool
+(define (sync-i64-channel-create-capacity-ok? [capacity : i64]) : bool
   (if (> capacity 0)
-    (<= capacity channel-i64-max-capacity)
+    (<= capacity sync-channel-max-capacity)
     false))
 
 ;: Create an i64 channel with `capacity`, or return `fallback` on error.
-(define (channel-i64-create-capacity-or
+(define (sync-i64-channel-create-capacity-or
   [capacity : i64]
-  [fallback : ChannelI64]) : ChannelI64
-  (if (not (channel-i64-create-capacity-ok? capacity))
+  [fallback : SyncI64Channel]) : SyncI64Channel
+  (if (not (sync-i64-channel-create-capacity-ok? capacity))
     fallback
     (let
       [slots-bytes : i64 (* capacity 8)]
@@ -1236,7 +1521,7 @@
                         (begin
                           (sync-write-i64! state-addr 0 0)
                           (sync-write-i64! state-addr 1 0)
-                          (ChannelI64
+                          (SyncI64Channel
                             slots-addr
                             state-addr
                             capacity
@@ -1246,7 +1531,9 @@
                             spaces-handle))))))))))))))
 
 ;: Send one i64 value and return whether the send succeeded.
-(define (channel-i64-send-value-ok? [channel : ChannelI64] [value : i64]) : bool
+(define (sync-i64-channel-send-value-ok?
+  [channel : SyncI64Channel]
+  [value : i64]) : bool
   (if (not (sync-semaphore-wait (struct-get channel spaces-handle)))
     false
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
@@ -1260,13 +1547,13 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             1
-            (channel-i64-next-index (struct-get channel capacity) tail))
+            (sync-i64-channel-next-index (struct-get channel capacity) tail))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
             false
             (sync-semaphore-post (struct-get channel items-handle))))))))
 
 ;: Receive one i64 value, or return `fallback` on error.
-(define (channel-i64-recv-or [channel : ChannelI64] [fallback : i64]) : i64
+(define (sync-i64-channel-recv-or [channel : SyncI64Channel] [fallback : i64]) : i64
   (if (not (sync-semaphore-wait (struct-get channel items-handle)))
     fallback
     (if (not (sync-semaphore-wait (struct-get channel mutex-handle)))
@@ -1280,7 +1567,7 @@
           (sync-write-i64!
             (struct-get channel state-addr)
             0
-            (channel-i64-next-index (struct-get channel capacity) head))
+            (sync-i64-channel-next-index (struct-get channel capacity) head))
           (if (not (sync-semaphore-post (struct-get channel mutex-handle)))
             fallback
             (if (sync-semaphore-post (struct-get channel spaces-handle))
@@ -1290,7 +1577,7 @@
 ;: Return true when creating a pair channel with `capacity` succeeds.
 (define (channel-i64-pair-create-capacity-ok? [capacity : i64]) : bool
   (if (> capacity 0)
-    (<= capacity channel-i64-max-capacity)
+    (<= capacity sync-channel-max-capacity)
     false))
 
 ;: Create a pair channel with `capacity`, or return `fallback` on error.
@@ -1408,7 +1695,7 @@
 ;: Return true when creating a string channel with `capacity` succeeds.
 (define (channel-string-create-capacity-ok? [capacity : i64]) : bool
   (if (> capacity 0)
-    (<= capacity channel-i64-max-capacity)
+    (<= capacity sync-channel-max-capacity)
     false))
 
 ;: Create a string channel with `capacity`, or return `fallback` on error.
@@ -1512,26 +1799,30 @@
               fallback)))))))
 
 ;: Return true when creating a mutex with `initial` succeeds.
-(define (mutex-i64-create-initial-ok? [initial : i64]) : bool
+(define (sync-i64-mutex-create-initial-ok? [initial : i64]) : bool
   (let
-    [mutex : MutexI64 (mutex-i64-create-initial-or initial (MutexI64 0 0 0))]
+    [mutex : SyncI64Mutex
+      (sync-i64-mutex-create-initial-or initial (SyncI64Mutex 0 0 0))]
     [ok : bool (not (= (struct-get mutex mutex-handle) 0))]
     (begin
       (if ok
         (begin
-          (mutex-i64-close mutex)
+          (sync-i64-mutex-close mutex)
           unit)
         unit)
       ok)))
 
 ;: Create a mutex with `initial`, or return `fallback` on error.
-(define (mutex-i64-create-initial-or [initial : i64] [fallback : MutexI64]) : MutexI64
+(define (sync-i64-mutex-create-initial-or
+  [initial : i64]
+  [fallback : SyncI64Mutex]) : SyncI64Mutex
   (let
     [value-addr : i64 (sync-runtime-alloc 8)]
     (if (= value-addr 0)
       fallback
       (let
-        [control-addr : i64 (sync-runtime-alloc mutex-i64-control-byte-count)]
+        [control-addr : i64
+          (sync-runtime-alloc sync-i64-mutex-control-byte-count)]
         (if (= control-addr 0)
           (begin
             (sync-runtime-free value-addr 8)
@@ -1541,13 +1832,21 @@
             (if (= mutex-handle -1)
               (begin
                 (sync-runtime-free value-addr 8)
-                (sync-runtime-free control-addr mutex-i64-control-byte-count)
+                (sync-runtime-free
+                  control-addr
+                  sync-i64-mutex-control-byte-count)
                 fallback)
               (begin
                 (sync-write-i64! value-addr 0 initial)
-                (sync-write-i64! control-addr mutex-i64-control-closed-slot 0)
-                (sync-write-i64! control-addr mutex-i64-control-users-slot 0)
-                (MutexI64 value-addr mutex-handle control-addr)))))))))
+                (sync-write-i64!
+                  control-addr
+                  sync-i64-mutex-control-closed-slot
+                  0)
+                (sync-write-i64!
+                  control-addr
+                  sync-i64-mutex-control-users-slot
+                  0)
+                (SyncI64Mutex value-addr mutex-handle control-addr)))))))))
 
 ;: Inline test failure helper.
 (define (sync-test-fail) : unit
@@ -1564,17 +1863,18 @@
 (test
   sync-api
   (begin
-    (sync-test-assert (= channel-i64-raw-field-count 7))
+    (sync-test-assert (= sync-i64-channel-raw-field-count 7))
     (sync-test-assert (= channel-i64-pair-raw-field-count 7))
     (sync-test-assert (= channel-string-raw-field-count 7))
-    (sync-test-assert (= mutex-i64-raw-field-count 3))
-    (sync-test-assert (not (channel-i64-create-capacity-ok? 0)))
+    (sync-test-assert (= sync-i64-mutex-raw-field-count 3))
+    (sync-test-assert (not (sync-i64-channel-create-capacity-ok? 0)))
     (sync-test-assert
-      (not (channel-i64-create-capacity-ok? (+ channel-i64-max-capacity 1))))
+      (not
+        (sync-i64-channel-create-capacity-ok? (+ sync-channel-max-capacity 1))))
     (sync-test-assert (not (channel-i64-pair-create-capacity-ok? 0)))
     (sync-test-assert
       (not
-        (channel-i64-pair-create-capacity-ok? (+ channel-i64-max-capacity 1))))
+        (channel-i64-pair-create-capacity-ok? (+ sync-channel-max-capacity 1))))
     (sync-test-assert (not (channel-string-create-capacity-ok? 0)))
     (sync-test-assert
-      (not (channel-string-create-capacity-ok? (+ channel-i64-max-capacity 1))))))
+      (not (channel-string-create-capacity-ok? (+ sync-channel-max-capacity 1))))))

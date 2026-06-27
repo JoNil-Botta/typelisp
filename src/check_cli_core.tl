@@ -3,30 +3,31 @@
 ;; Factored out of `check.tl` so the unified `cli.tl` dispatcher and the
 ;; retained check compatibility/coverage driver share the command without a
 ;; duplicate `main`.
-(import "../stdlib/io.tl")
-(import "../stdlib/vector.tl")
+(import stdlib.io)
+(import stdlib.vector)
 (import "compiler_check_core.tl")
 (import "doc_test.tl")
 (import "package_source_core.tl")
-(import "../stdlib/string.tl")
+(import "test_cli_core.tl")
+(import stdlib.string)
 
 (defenum SelfhostCheckConfig
-  (SelfhostCheckFileConfig String StringVec)
-  (SelfhostCheckPackageConfig String bool StringVec))
+  (SelfhostCheckFileConfig String vector.StringVec)
+  (SelfhostCheckPackageConfig String bool vector.StringVec))
 
 (defenum ResultSelfhostCheckConfig
   (OkSelfhostCheckConfig SelfhostCheckConfig)
   (ErrSelfhostCheckConfig String))
 
 (define (selfhost-check-flag? [value : String]) : bool
-  (and (> (string-length value) 0) (= (string-ref value 0) '-')))
+  (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
 (define (selfhost-check-config-finish
   [input-path : String]
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : vector.StringVec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
       (ErrSelfhostCheckConfig
@@ -42,7 +43,7 @@
   [has-input : bool]
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : ResultSelfhostCheckConfig
+  [stdlib-roots : vector.StringVec]) : ResultSelfhostCheckConfig
   (if (>= idx count)
     (selfhost-check-config-finish
       input-path
@@ -51,9 +52,9 @@
       has-manifest
       stdlib-roots)
     (let
-      [current : String (arg idx)]
+      [current : String (io.arg idx)]
       (cond
-        [(string-eq current "--stdlib-root")
+        [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ErrSelfhostCheckConfig
               "selfhost-check: --stdlib-root requires a value")
@@ -64,8 +65,8 @@
               has-input
               manifest-path
               has-manifest
-              (string-vec-push stdlib-roots (arg (+ idx 1)))))]
-        [(string-eq current "--manifest-path")
+              (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
+        [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ErrSelfhostCheckConfig
               "selfhost-check: --manifest-path requires a value")
@@ -77,15 +78,17 @@
                 count
                 input-path
                 has-input
-                (arg (+ idx 1))
+                (io.arg (+ idx 1))
                 true
                 stdlib-roots)))]
         [(selfhost-check-flag? current)
           (ErrSelfhostCheckConfig
-            (string-append "selfhost-check: unknown flag " current))]
+            (string.string-append "selfhost-check: unknown flag " current))]
         [has-input
           (ErrSelfhostCheckConfig
-            (string-append "selfhost-check: unexpected argument " current))]
+            (string.string-append
+              "selfhost-check: unexpected argument "
+              current))]
         [else
           (selfhost-check-parse-args
             (+ idx 1)
@@ -99,24 +102,31 @@
 ;; Parse the `check` config from arguments starting at `start`. `count` is
 ;; `(arg-count)`.
 (define (selfhost-check-config-from [start : i64] [count : i64]) : ResultSelfhostCheckConfig
-  (selfhost-check-parse-args start count "" false "" false (string-vec-new)))
+  (selfhost-check-parse-args
+    start
+    count
+    ""
+    false
+    ""
+    false
+    (vector.string-vec-new)))
 
 (define (selfhost-check-doctest-report [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
     0
     (begin
-      (print-error (doc-test-run-report-render report))
+      (io.print-error (doc-test-run-report-render report))
       1)))
 
 (define (selfhost-check-file-doctests
   [input-path : String]
-  [stdlib-roots : StringVec]) : i64
+  [stdlib-roots : vector.StringVec]) : i64
   (selfhost-check-doctest-report
     (doc-test-typecheck-file-with-roots input-path stdlib-roots)))
 
 (define (selfhost-check-package-doctests
   [paths : AstDeclPathList]
-  [stdlib-roots : StringVec]
+  [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : i64
   (selfhost-check-doctest-report
@@ -126,20 +136,31 @@
       manifest-dir
       deps)))
 
-(define (selfhost-check-file [input-path : String] [stdlib-roots : StringVec]) : i64
+(define (selfhost-check-file
+  [input-path : String]
+  [stdlib-roots : vector.StringVec]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
-    [(OkCompilerCheck _)
+    [(ResultCompilerCheck.Ok _)
       (let
-        [doctest-status : i64
-          (selfhost-check-file-doctests input-path stdlib-roots)]
-        (if (= doctest-status 0)
-          (begin
-            (print-string "Type checking passed!\n")
-            0)
-          doctest-status))]
-    [(ErrCompilerCheck diag)
+        [inline-test-status : i64
+          (tltest-inline-typecheck-file-with-cfg
+            input-path
+            stdlib-roots
+            (compiler-check-language-cfgs)
+            "typecheck-prefix-inline-check")]
+        (if (= inline-test-status 0)
+          (let
+            [doctest-status : i64
+              (selfhost-check-file-doctests input-path stdlib-roots)]
+            (if (= doctest-status 0)
+              (begin
+                (io.print-string "Type checking passed!\n")
+                0)
+              doctest-status))
+          inline-test-status))]
+    [(ResultCompilerCheck.Err diag)
       (begin
-        (print-error (compiler-diagnostic-render diag))
+        (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
 
 (define (selfhost-check-package-kind-entry? [kind : CompilerPkgKind]) : bool
@@ -156,40 +177,55 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : StringVec]) : i64
-  (match (package-source-resolve-manifest "check" manifest-path has-manifest)
+  [stdlib-roots : vector.StringVec]) : i64
+  (match (package-source-discover-for "check" manifest-path has-manifest)
     [(ErrPackageSourceSet message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]
     [(OkPackageSourceSet source-set)
       (let
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [manifest-dir : String (struct-get source-set manifest-dir)]
+        [name : String (struct-get manifest name)]
         [entry-path : String
           (selfhost-check-package-entry-path manifest-dir manifest)]
+        [emit-entry : bool
+          (selfhost-check-package-kind-entry? (struct-get manifest kind))]
         (match (compiler-check-package-entry-file-with-roots
           entry-path
           stdlib-roots
           manifest-dir
           (struct-get manifest deps)
-          (selfhost-check-package-kind-entry? (struct-get manifest kind)))
-          [(OkCompilerCheckWithPaths _ paths)
+          emit-entry)
+          [(ResultCompilerCheckWithPaths.Ok _ paths)
             (let
-              [doctest-status : i64
-                (selfhost-check-package-doctests
-                  paths
+              [inline-test-status : i64
+                (tltest-inline-typecheck-package-sources-with-cfg
+                  (struct-get source-set sources)
                   stdlib-roots
                   manifest-dir
-                  (struct-get manifest deps))]
-              (if (= doctest-status 0)
-                (begin
-                  (print-string "Type checking passed!\n")
-                  0)
-                doctest-status))]
-          [(ErrCompilerCheckWithPaths diag)
+                  name
+                  (struct-get manifest deps)
+                  (compiler-check-language-cfgs)
+                  "typecheck-prefix-inline-check-package")]
+              (if (= inline-test-status 0)
+                (let
+                  [doctest-status : i64
+                    (selfhost-check-package-doctests
+                      paths
+                      stdlib-roots
+                      manifest-dir
+                      (struct-get manifest deps))]
+                  (if (= doctest-status 0)
+                    (begin
+                      (io.print-string "Type checking passed!\n")
+                      0)
+                    doctest-status))
+                inline-test-status))]
+          [(ResultCompilerCheckWithPaths.Err diag)
             (begin
-              (print-error (compiler-diagnostic-render diag))
+              (io.print-error (compiler-diagnostic-render (box-get diag)))
               1)]))]))
 
 ;; Run the `check` command over arguments starting at `start`.
@@ -203,5 +239,5 @@
           (selfhost-check-package manifest-path has-manifest stdlib-roots)])]
     [(ErrSelfhostCheckConfig message)
       (begin
-        (print-error message)
+        (io.print-error message)
         1)]))

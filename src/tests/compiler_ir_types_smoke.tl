@@ -1,5 +1,5 @@
 ;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke (#1043).
-(import "../../stdlib/string.tl")
+(import stdlib.string)
 (import "../compiler_ir_types.tl")
 
 (define (compiler-ir-smoke-function-list-first-name?
@@ -8,7 +8,7 @@
   (match (compiler-ir-function-list-force-cons functions)
     [(IrFunctionCons func _)
       (match func
-        [(IrFunction name _ _ _ _) (string-eq name want)])]
+        [(IrFunction name _ _ _ _) (string.string-eq name want)])]
     [(IrFunctionNil) false]
     [(IrFunctionArray _) false]))
 

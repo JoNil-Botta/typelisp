@@ -1,22 +1,22 @@
 ;; compiler_object_coff.tl - COFF object-file serialization for object images.
-(import "../stdlib/string.tl")
+(import stdlib.string)
 (import "compiler_object.tl")
 
 (define (compiler-object-coff-string-length [text : String]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_length text)
-    (string-length text)))
+    (string.string-length text)))
 
 (define (compiler-object-coff-string-ref [text : String] [index : i64]) : char
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_ref text index)
-    (string-ref text index)))
+    (string.string-ref text index)))
 
 (defenum ResultCompilerObjectCoff
-  (OkCompilerObjectCoff String)
-  (ErrCompilerObjectCoff String))
+  (Ok String)
+  (Err String))
 
 (define compiler-object-coff-machine-amd64 : i64
   0x8664)
@@ -454,7 +454,7 @@
       (while (and (not done) (< slot count))
         (match (compiler-object-symbol-list-ref symbols slot)
           [(ObjectSymbol found _ _ _)
-            (if (string-eq found name)
+            (if (string.string-eq found name)
               (begin
                 (set! result cur-index)
                 (set! done true))
@@ -485,7 +485,7 @@
             (compiler-object-data-record-list-ref records index)]
           (match record
             [(ObjectDataLabel found)
-              (if (string-eq found label)
+              (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -517,7 +517,7 @@
             (compiler-object-instr-list-ref instrs index)]
           (match instr
             [(ObjectX64Label found)
-              (if (string-eq found label)
+              (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -1453,7 +1453,7 @@
         (match (compiler-object-symbol-list-ref symbols index)
           [(ObjectSymbol found _ _ _)
             (if (compiler-object-coff-symbol-name-long? found)
-              (if (string-eq found name)
+              (if (string.string-eq found name)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -1631,8 +1631,8 @@
           image
           (struct-get image symbols))
         (compiler-object-coff-render-string-table! out image)
-        (OkCompilerObjectCoff (compiler-object-coff-bytes-string out))))
-    (ErrCompilerObjectCoff
+        (ResultCompilerObjectCoff.Ok (compiler-object-coff-bytes-string out))))
+    (ResultCompilerObjectCoff.Err
       "coff: object image contains unsupported text, f64, or relocation records")))
 
 (define (compiler-object-coff-u16-at [text : String] [offset : i64]) : i64
@@ -1771,7 +1771,7 @@
 
 (define (compiler-object-coff-smoke-ok?) : bool
   (match (compiler-object-coff-render (compiler-object-coff-smoke-image))
-    [(OkCompilerObjectCoff obj)
+    [(ResultCompilerObjectCoff.Ok obj)
       (and
         (=
           (compiler-object-coff-u16-at obj 0)
@@ -1786,7 +1786,7 @@
         (compiler-object-coff-contains? obj ".rdata")
         (compiler-object-coff-contains? obj "foreign_exact")
         (compiler-object-coff-contains? obj "long_rodata_label_name"))]
-    [(ErrCompilerObjectCoff _) false]))
+    [(ResultCompilerObjectCoff.Err _) false]))
 
 (define (compiler-object-coff-text-smoke-instrs) : CompilerObjectX64InstrList
   (compiler-object-instr-cons
@@ -2038,7 +2038,7 @@
   (let
     [image : CompilerObjectImage (compiler-object-coff-text-smoke-image)]
     (match (compiler-object-coff-render image)
-      [(OkCompilerObjectCoff obj)
+      [(ResultCompilerObjectCoff.Ok obj)
         (let
           [text-header : i64
             (compiler-object-coff-section-header-offset (ObjectSectionText))]
@@ -2053,4 +2053,4 @@
             (= reloc-count 8)
             (compiler-object-coff-text-smoke-bytes-ok? obj text-ptr)
             (compiler-object-coff-text-smoke-relocs-ok? image obj reloc-ptr)))]
-      [(ErrCompilerObjectCoff _) false])))
+      [(ResultCompilerObjectCoff.Err _) false])))

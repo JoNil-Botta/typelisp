@@ -296,6 +296,10 @@
 (define (expr-int [value : i64]) : Expr
   (expr-int value))
 
+;: Build a string literal expression during macro CTFE.
+(define (expr-string [value : String]) : Expr
+  (expr-string value))
+
 ;: Build a variable-reference expression during macro CTFE.
 (define (expr-var [name : String]) : Expr
   (expr-var name))
@@ -303,6 +307,10 @@
 ;: Build a struct field access expression during macro CTFE.
 (define (expr-struct-get [target : Expr] [field : String]) : Expr
   (expr-struct-get target field))
+
+;: Build a struct field assignment expression during macro CTFE.
+(define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
+  (expr-struct-set target field value))
 
 ;: Concatenate two strings during macro CTFE.
 (define (string-concat [left : String] [_right : String]) : String
@@ -316,6 +324,10 @@
 (define (int->string [_value : i64]) : String
   "")
 
+;: Abort macro CTFE with a source-located diagnostic.
+(define (comptime-error [message : String]) : never
+  (comptime-error message))
+
 ;: Mark an expression for unquote-splicing during macro CTFE.
 (define (expr-splice [value : Expr]) : Expr
   (expr-splice value))
@@ -327,6 +339,18 @@
 ;: Return the produced type of a captured expression during macro CTFE.
 (define (expr-type [value : Expr]) : Expr
   value)
+
+;: Return the canonical identity string for a module strategy operand.
+(define (module-name [module : String]) : String
+  module)
+
+;: Return true when a module strategy exports a macro hook with `name`.
+(define (module-export-macro? [_module : String] [_name : String]) : bool
+  false)
+
+;: Build an expression that calls a macro hook exported by a module strategy.
+(define (module-hook [module : String] [name : String]) : Expr
+  (expr-var (string-concat (string-concat module ".") name)))
 
 ;: Return true when an expression is a bool literal.
 (define (expr-bool? [value : Expr]) : bool

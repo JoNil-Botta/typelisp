@@ -190,19 +190,14 @@
   (OkTcEnv TcTypeEnv)
   (ErrTcEnv String))
 
-(defstruct TcImportAliasDeclIndex
-  (counts hashmap.I64I64Map)
-  (names hashmap.I64I64Map))
-
 (defstruct TcImportAliasSummaryIndex
   (modules hashmap.I64I64Map)
-  (decls (Array CompilerLoadSurfaceDeclList))
-  (count i64)
-  (full-decls TcImportAliasDeclIndex))
+  (decls (Array AstDeclList))
+  (count i64))
 
 (defenum TcImportAliasSummaryLookup
   (TcImportAliasSummaryMissing)
-  (TcImportAliasSummaryFound CompilerLoadSurfaceDeclList))
+  (TcImportAliasSummaryFound AstDeclList))
 
 (defenum ResultTcUnit
   (OkTcUnit)
@@ -7404,6 +7399,8 @@
   0)
 (define tc-lazy-import-summary-backed-count : i64
   0)
+(define tc-lazy-import-summary-macro-force-record-count : i64
+  0)
 
 (define (tc-lazy-import-stubs-reset!) : unit
   (begin
@@ -7417,6 +7414,14 @@
 
 (define (tc-lazy-import-summary-backed-stub-count) : i64
   tc-lazy-import-summary-backed-count)
+
+(define (tc-lazy-import-summary-macro-force-count) : i64
+  tc-lazy-import-summary-macro-force-record-count)
+
+(define (tc-lazy-import-summary-macro-force-record!) : unit
+  (set!
+    tc-lazy-import-summary-macro-force-record-count
+    (+ tc-lazy-import-summary-macro-force-record-count 1)))
 
 (define (tc-lazy-import-stub-record!
   [importer-module-id : i64]
@@ -12077,93 +12082,50 @@
   [name-id : i64]) : ResultTcType
   (tc-lookup-id env (tc-module-name-id module name-id)))
 
-(define (tc-import-alias-summary-list-count
-  [summaries : CompilerLoadSurfaceSummaryList]) : i64
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) 0]
-    [(CompilerLoadSurfaceSummaryCons _ rest)
-      (+ 1 (tc-import-alias-summary-list-count (box-get rest)))]))
-
-(define (tc-import-alias-count-map-get [counts : hashmap.I64I64Map] [key : i64]) : i64
-  (match (hashmap.i64-i64-map-get counts key)
-    [(hashmap.I64I64MapFound count) count]
-    [(hashmap.I64I64MapMissing) 0]))
-
-(define (tc-import-alias-count-map-increment
-  [counts : hashmap.I64I64Map]
-  [key : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put
-    counts
-    key
-    (+ 1 (tc-import-alias-count-map-get counts key))))
-
-(define (tc-import-alias-decl-index-empty) : TcImportAliasDeclIndex
-  (TcImportAliasDeclIndex
-    (hashmap.i64-i64-map-with-capacity 512)
-    (hashmap.i64-i64-map-with-capacity 4096)))
-
-(define (tc-import-alias-decl-index-add
-  [index : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [name-id : i64]) : TcImportAliasDeclIndex
-  (TcImportAliasDeclIndex
-    (tc-import-alias-count-map-increment (struct-get index counts) module-id)
-    (hashmap.i64-i64-map-put
-      (struct-get index names)
-      (compiler-symbol-module-key-id-by-id module-id name-id)
-      1)))
-
-(define (tc-import-alias-decl-index-add-unsafe-ast
-  [index : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [decl : AstDecl]) : TcImportAliasDeclIndex
-  (match decl
-    [(AstDeclDefFn name _ _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclExtern name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [_ index]))
-
-(define (tc-import-alias-decl-index-add-ast
-  [index : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [decl : AstDecl]) : TcImportAliasDeclIndex
-  (match decl
-    [(AstDeclDef name _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefFn name _ _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefDispatch name _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclExtern name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefEnum name _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefEnumLifetimes name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefStruct name _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
-      (tc-import-alias-decl-index-add index module-id name)]
-    [(AstDeclUnsafe inner-box)
-      (tc-import-alias-decl-index-add-unsafe-ast
-        index
-        module-id
-        (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
-      (tc-import-alias-decl-index-add-ast
-        index
-        module-id
-        (box-get template-box))]
-    [_ index]))
-
-(define (tc-import-alias-decl-index-build
-  [decls : AstDeclList]
-  [module : String]) : TcImportAliasDeclIndex
+(define (tc-import-alias-ast-decl-list-reverse-into
+  [items : AstDeclList]
+  [out : AstDeclList]) : AstDeclList
   (let
-    [cur : AstDeclList decls]
-    [cur-module-id : i64 (intern module)]
-    [index : TcImportAliasDeclIndex (tc-import-alias-decl-index-empty)]
+    [cursor : AstDeclList items]
+    [result : AstDeclList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclNil) (set! done true)]
+          [(AstDeclCons decl rest)
+            (begin
+              (set! result (ast-decl-cons decl result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
+  (tc-import-alias-ast-decl-list-reverse-into items AstDeclNil))
+
+(define (tc-import-alias-summary-index-reverse-slots!
+  [decls : (Array AstDeclList)]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array.array-set!
+            decls
+            index
+            (tc-import-alias-ast-decl-list-reverse
+              (array.array-ref decls index)))
+          (set! index (+ index 1))))
+      unit)))
+
+(define (tc-import-alias-summary-index-build-current [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
+  (let
+    [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
+    [decls : (Array AstDeclList) (array.make-array AstDeclList capacity)]
+    [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity capacity)]
+    [slot-count : i64 0]
+    [cur : AstDeclList all-decls]
+    [cur-module-id : i64 (intern "")]
     [ok : bool true]
     (begin
       (while ok
@@ -12178,56 +12140,36 @@
                     (set! cur-module-id next-module)
                     (set! cur next))]
                 [_
-                  (begin
-                    (set!
-                      index
-                      (tc-import-alias-decl-index-add-ast
-                        index
-                        cur-module-id
-                        decl))
-                    (set! cur next))]))]))
-      index)))
-
-(define (tc-import-alias-summary-index-fill
-  [summaries : CompilerLoadSurfaceSummaryList]
-  [modules : hashmap.I64I64Map]
-  [decls : (Array CompilerLoadSurfaceDeclList)]
-  [index : i64]) : hashmap.I64I64Map
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) modules]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (let
-        [module-id : i64 (intern (struct-get summary module-id))]
-        [next-modules : hashmap.I64I64Map
-          (match (hashmap.i64-i64-map-get modules module-id)
-            [(hashmap.I64I64MapMissing)
-              (begin
-                (array.array-set! decls index (struct-get summary decls))
-                (hashmap.i64-i64-map-put modules module-id index))]
-            [(hashmap.I64I64MapFound _)
-              (hashmap.i64-i64-map-put modules module-id -1)])]
-        (tc-import-alias-summary-index-fill
-          (box-get rest)
-          next-modules
-          decls
-          (+ index 1)))]))
+                  (let
+                    [slot : i64 0]
+                    [existing : AstDeclList AstDeclNil]
+                    (begin
+                      (match (hashmap.i64-i64-map-get modules cur-module-id)
+                        [(hashmap.I64I64MapFound found-slot)
+                          (begin
+                            (set! slot found-slot)
+                            (set! existing (array.array-ref decls slot)))]
+                        [(hashmap.I64I64MapMissing)
+                          (begin
+                            (set! slot slot-count)
+                            (set!
+                              modules
+                              (hashmap.i64-i64-map-put
+                                modules
+                                cur-module-id
+                                slot))
+                            (array.array-set! decls slot AstDeclNil)
+                            (set! slot-count (+ slot-count 1)))])
+                      (array.array-set!
+                        decls
+                        slot
+                        (ast-decl-cons decl existing))
+                      (set! cur next)))]))]))
+      (tc-import-alias-summary-index-reverse-slots! decls slot-count)
+      (TcImportAliasSummaryIndex modules decls slot-count))))
 
 (define (tc-import-alias-summary-index-build [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
-  (let
-    [summaries : CompilerLoadSurfaceSummaryList
-      (compiler-load-surface-summaries)]
-    [count : i64 (tc-import-alias-summary-list-count summaries)]
-    [decls : (Array CompilerLoadSurfaceDeclList)
-      (array.make-array CompilerLoadSurfaceDeclList count)]
-    [full-decls : TcImportAliasDeclIndex
-      (tc-import-alias-decl-index-build all-decls "")]
-    [modules : hashmap.I64I64Map
-      (tc-import-alias-summary-index-fill
-        summaries
-        (hashmap.i64-i64-map-with-capacity (+ count 1))
-        decls
-        0)]
-    (TcImportAliasSummaryIndex modules decls count full-decls)))
+  (tc-import-alias-summary-index-build-current all-decls))
 
 (define (tc-import-alias-summary-index-lookup
   [index : TcImportAliasSummaryIndex]
@@ -12241,367 +12183,6 @@
           (array.array-ref (struct-get index decls) slot))
         (TcImportAliasSummaryMissing))]
     [(hashmap.I64I64MapMissing) (TcImportAliasSummaryMissing)]))
-
-(define (tc-import-alias-surface-kind-bindable?
-  [kind : CompilerLoadSurfaceDeclKind]
-  [was-unsafe : bool]) : bool
-  (if was-unsafe
-    (match kind
-      [(CompilerLoadSurfaceFunction) true]
-      [(CompilerLoadSurfaceExtern) true]
-      [_ false])
-    (match kind
-      [(CompilerLoadSurfaceValue) true]
-      [(CompilerLoadSurfaceFunction) true]
-      [(CompilerLoadSurfaceDispatch) true]
-      [(CompilerLoadSurfaceExtern) true]
-      [(CompilerLoadSurfaceEnum) true]
-      [(CompilerLoadSurfaceStruct) true]
-      [_ false])))
-
-(define (tc-import-alias-surface-decl-bindable?
-  [decl : CompilerLoadSurfaceDecl]
-  [target-module : String]) : bool
-  (and
-    (string.string-eq (struct-get decl module) target-module)
-    (tc-import-alias-surface-kind-bindable?
-      (struct-get decl kind)
-      (struct-get decl was-unsafe))))
-
-(define (tc-import-alias-surface-decls-bindable-count
-  [decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : i64
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) 0]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (+
-        (if (tc-import-alias-surface-decl-bindable? decl target-module)
-          1
-          0)
-        (tc-import-alias-surface-decls-bindable-count
-          (box-get rest)
-          target-module))]))
-
-(define (tc-import-alias-full-decls-name?
-  [full-decls : TcImportAliasDeclIndex]
-  [module-id : i64]
-  [name-id : i64]) : bool
-  (match (hashmap.i64-i64-map-get
-    (struct-get full-decls names)
-    (compiler-symbol-module-key-id-by-id module-id name-id))
-    [(hashmap.I64I64MapFound _) true]
-    [(hashmap.I64I64MapMissing) false]))
-
-(define (tc-import-alias-surface-decls-covered-by-full?
-  [full-decls : TcImportAliasDeclIndex]
-  [decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : bool
-  (match decls
-    [(CompilerLoadSurfaceDeclNil) true]
-    [(CompilerLoadSurfaceDeclCons decl rest)
-      (if (not (tc-import-alias-surface-decl-bindable? decl target-module))
-        (tc-import-alias-surface-decls-covered-by-full?
-          full-decls
-          (box-get rest)
-          target-module)
-        (if (tc-import-alias-full-decls-name?
-          full-decls
-          (intern (struct-get decl module))
-          (intern (struct-get decl name)))
-          (tc-import-alias-surface-decls-covered-by-full?
-            full-decls
-            (box-get rest)
-            target-module)
-          false))]))
-
-(define (tc-import-alias-summary-covers-full?
-  [summary-index : TcImportAliasSummaryIndex]
-  [summary-decls : CompilerLoadSurfaceDeclList]
-  [target-module : String]) : bool
-  (let
-    [full-decls : TcImportAliasDeclIndex (struct-get summary-index full-decls)]
-    [target-module-id : i64 (intern target-module)]
-    [summary-count : i64
-      (tc-import-alias-surface-decls-bindable-count summary-decls target-module)]
-    [full-count : i64
-      (tc-import-alias-count-map-get
-        (struct-get full-decls counts)
-        target-module-id)]
-    (and
-      (= summary-count full-count)
-      (tc-import-alias-surface-decls-covered-by-full?
-        full-decls
-        summary-decls
-        target-module))))
-
-(define (tc-bind-import-alias-value-with-flags-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [source-module : String]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [ty : AstType]
-  [was-unsafe : bool]
-  [c-abi-fnptr : bool]) : TcTypeEnv
-  (if was-unsafe
-    (if c-abi-fnptr
-      (tc-bind-import-alias-value-unsafe-c-abi-fnptr-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty)
-      (tc-bind-import-alias-value-unsafe-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty))
-    (if c-abi-fnptr
-      (tc-bind-import-alias-value-c-abi-fnptr-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty)
-      (tc-bind-import-alias-value-id
-        ctx
-        env
-        alias
-        importer-module
-        source-module
-        import-unqualified
-        name-id
-        ty))))
-
-(define (tc-bind-import-alias-surface-value
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [source-module : String]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [was-unsafe : bool]) : ResultTcEnv
-  (match (tc-import-alias-source-value-type env source-module name-id)
-    [(OkTcType ty)
-      (OkTcEnv
-        (tc-bind-import-alias-value-with-flags-id
-          ctx
-          env
-          alias
-          importer-module
-          source-module
-          import-unqualified
-          name-id
-          ty
-          was-unsafe
-          false))]
-    [(ErrTcType message) (ErrTcEnv message)]))
-
-(define (tc-bind-import-alias-surface-extern
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [source-module : String]
-  [import-unqualified : bool]
-  [name-id : i64]
-  [kind : AstExternKind]
-  [was-unsafe : bool]) : ResultTcEnv
-  (let
-    [extern-ctx : TcContext (tc-context-with-module ctx source-module)]
-    (match (tc-import-alias-source-value-type env source-module name-id)
-      [(OkTcType ty)
-        (OkTcEnv
-          (tc-bind-import-alias-value-with-flags-id
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            ty
-            was-unsafe
-            (tc-extern-value-c-abi-fnptr? extern-ctx kind ty)))]
-      [(ErrTcType message) (ErrTcEnv message)])))
-
-(define (tc-bind-import-alias-surface-decl
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [alias : String]
-  [importer-module : String]
-  [import-unqualified : bool]
-  [target-module : String]
-  [decl : CompilerLoadSurfaceDecl]) : ResultTcEnv
-  (let
-    [source-module : String (struct-get decl module)]
-    [name-str : String (struct-get decl name)]
-    [name-id : i64 (intern name-str)]
-    [was-unsafe : bool (struct-get decl was-unsafe)]
-    (if (not (tc-import-alias-surface-decl-bindable? decl target-module))
-      (OkTcEnv env)
-      (match (struct-get decl kind)
-        [(CompilerLoadSurfaceValue)
-          (tc-bind-import-alias-surface-value
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            was-unsafe)]
-        [(CompilerLoadSurfaceFunction)
-          (tc-bind-import-alias-surface-value
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            was-unsafe)]
-        [(CompilerLoadSurfaceDispatch)
-          (tc-bind-import-alias-surface-value
-            ctx
-            env
-            alias
-            importer-module
-            source-module
-            import-unqualified
-            name-id
-            was-unsafe)]
-        [(CompilerLoadSurfaceExtern)
-          (match (struct-get decl signature)
-            [(CompilerLoadSurfaceExternSignature kind _ _)
-              (tc-bind-import-alias-surface-extern
-                ctx
-                env
-                alias
-                importer-module
-                source-module
-                import-unqualified
-                name-id
-                kind
-                was-unsafe)]
-            [_ (OkTcEnv env)])]
-        [(CompilerLoadSurfaceEnum)
-          (match (struct-get decl signature)
-            [(CompilerLoadSurfaceEnumSignature lifetimes cleanup variants)
-              (let
-                [scoped-name : String
-                  (compiler-symbol-module-key source-module name-str)]
-                [enum-ty : AstType
-                  (match lifetimes
-                    [(AstLifetimeNil) (AstTyEnum (intern scoped-name))]
-                    [_ (ast-ty-enum-args (intern scoped-name) lifetimes)])]
-                (OkTcEnv
-                  (tc-bind-enum-cleanup-import-alias
-                    ctx
-                    (tc-bind-enum-variant-aliases
-                      (tc-context-with-module ctx source-module)
-                      env
-                      alias
-                      importer-module
-                      source-module
-                      import-unqualified
-                      scoped-name
-                      lifetimes
-                      variants)
-                    alias
-                    importer-module
-                    source-module
-                    import-unqualified
-                    cleanup
-                    enum-ty)))]
-            [_ (OkTcEnv env)])]
-        [(CompilerLoadSurfaceStruct)
-          (match (struct-get decl signature)
-            [(CompilerLoadSurfaceStructSignature lifetimes _ cleanup _)
-              (let
-                [scoped-name : String
-                  (compiler-symbol-module-key source-module name-str)]
-                [struct-ty : AstType
-                  (match lifetimes
-                    [(AstLifetimeNil) (AstTyStruct (intern scoped-name))]
-                    [_ (ast-ty-struct-args (intern scoped-name) lifetimes)])]
-                (match (tc-import-alias-source-value-type
-                  env
-                  source-module
-                  name-id)
-                  [(OkTcType constructor-ty)
-                    (OkTcEnv
-                      (tc-bind-struct-cleanup-import-alias
-                        ctx
-                        (tc-bind-import-alias-value-id
-                          ctx
-                          env
-                          alias
-                          importer-module
-                          source-module
-                          import-unqualified
-                          name-id
-                          constructor-ty)
-                        alias
-                        importer-module
-                        source-module
-                        import-unqualified
-                        cleanup
-                        struct-ty))]
-                  [(ErrTcType message) (ErrTcEnv message)]))]
-            [_ (OkTcEnv env)])]
-        [_ (OkTcEnv env)]))))
-
-(define (tc-bind-import-alias-surface-decls
-  [ctx : TcContext]
-  [decls : CompilerLoadSurfaceDeclList]
-  [env : TcTypeEnv]
-  [target-module : String]
-  [alias : String]
-  [importer-module : String]
-  [import-unqualified : bool]) : ResultTcEnv
-  (let
-    [cur : CompilerLoadSurfaceDeclList decls]
-    [cur-env : TcTypeEnv env]
-    [message : String ""]
-    [ok : bool true]
-    (begin
-      (while ok
-        (match cur
-          [(CompilerLoadSurfaceDeclNil) (set! ok false)]
-          [(CompilerLoadSurfaceDeclCons decl rest)
-            (match (tc-bind-import-alias-surface-decl
-              ctx
-              cur-env
-              alias
-              importer-module
-              import-unqualified
-              target-module
-              decl)
-              [(OkTcEnv next-env)
-                (begin
-                  (set! cur-env next-env)
-                  (set! cur (box-get rest)))]
-              [(ErrTcEnv step-message)
-                (begin
-                  (set! message step-message)
-                  (set! ok false))])]))
-      (if (string.string-eq message "")
-        (OkTcEnv cur-env)
-        (ErrTcEnv message)))))
 
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
@@ -12923,37 +12504,26 @@
   [importer-module : String]
   [import-unqualified : bool]) : ResultTcEnv
   (match (tc-import-alias-summary-index-lookup summary-index target-module)
-    [(TcImportAliasSummaryFound summary-decls)
-      (if (tc-import-alias-summary-covers-full?
-        summary-index
-        summary-decls
+    [(TcImportAliasSummaryFound target-decls)
+      (match (tc-bind-import-alias-module-list
+        ctx
+        target-decls
+        env
+        target-module
+        alias
+        importer-module
+        import-unqualified
         target-module)
-        (match (tc-bind-import-alias-surface-decls
-          ctx
-          summary-decls
-          env
-          target-module
-          alias
-          importer-module
-          import-unqualified)
-          [(OkTcEnv next-env) (OkTcEnv next-env)]
-          [(ErrTcEnv _)
-            (tc-bind-import-alias-module
-              ctx
-              decls
-              env
-              target-module
-              alias
-              importer-module
-              import-unqualified)])
-        (tc-bind-import-alias-module
-          ctx
-          decls
-          env
-          target-module
-          alias
-          importer-module
-          import-unqualified))]
+        [(OkTcEnv next-env) (OkTcEnv next-env)]
+        [(ErrTcEnv _)
+          (tc-bind-import-alias-module
+            ctx
+            decls
+            env
+            target-module
+            alias
+            importer-module
+            import-unqualified)])]
     [(TcImportAliasSummaryMissing)
       (tc-bind-import-alias-module
         ctx
@@ -38167,6 +37737,259 @@
     target-module
     base))
 
+(define (macro-surface-decls-module-has-macro?
+  [decls : CompilerLoadSurfaceDeclList]
+  [target-module : String]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (or
+        (and
+          (string.string-eq (struct-get decl module) target-module)
+          (match (struct-get decl kind)
+            [(CompilerLoadSurfaceMacro) true]
+            [_ false]))
+        (macro-surface-decls-module-has-macro? (box-get rest) target-module))]))
+
+(define (macro-surface-summaries-module-has-macro?
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]) : bool
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) false]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (or
+        (macro-surface-decls-module-has-macro?
+          (struct-get summary decls)
+          target-module)
+        (macro-surface-summaries-module-has-macro? (box-get rest) target-module))]))
+
+(define (macro-surface-module-has-macro? [target-module : String]) : bool
+  (macro-surface-summaries-module-has-macro?
+    (compiler-load-surface-summaries)
+    target-module))
+
+(defenum MacroSurfaceCallDeclCacheLookup
+  (MacroSurfaceCallDeclCacheMiss)
+  (MacroSurfaceCallDeclCacheHit MacroMaybeDecl))
+
+(define macro-surface-call-decl-cache-capacity : i64
+  8192)
+(define macro-surface-call-decl-cache-module-keys : (Array i64)
+  (array.make-array i64 8192))
+(define macro-surface-call-decl-cache-base-keys : (Array i64)
+  (array.make-array i64 8192))
+(define macro-surface-call-decl-cache-values : (Array MacroMaybeDecl)
+  (array.make-array MacroMaybeDecl 8192))
+(define macro-surface-call-decl-cache-count : i64
+  0)
+(define macro-surface-call-decl-cache-generation : i64
+  -1)
+(define macro-surface-call-decl-cache-ready : bool
+  false)
+
+(define (macro-surface-call-decl-cache-reset!) : unit
+  (set! macro-surface-call-decl-cache-ready false))
+
+(define (macro-surface-call-decl-cache-ensure!) : unit
+  (if (if macro-surface-call-decl-cache-ready
+    (= macro-surface-call-decl-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i macro-surface-call-decl-cache-capacity)
+          (begin
+            (array.array-set! macro-surface-call-decl-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! macro-surface-call-decl-cache-count 0)
+        (set! macro-surface-call-decl-cache-generation (intern-generation))
+        (set! macro-surface-call-decl-cache-ready true)))))
+
+(define (macro-surface-call-decl-cache-bucket [module-id : i64] [base-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2654435761) (* base-id 40503))
+    (- macro-surface-call-decl-cache-capacity 1)))
+
+(define (macro-surface-call-decl-cache-get [module-id : i64] [base-id : i64]) : MacroSurfaceCallDeclCacheLookup
+  (let
+    [cursor : i64 (macro-surface-call-decl-cache-bucket module-id base-id)]
+    [module-key : i64 (+ module-id 1)]
+    [base-key : i64 (+ base-id 1)]
+    [steps : i64 0]
+    [out : MacroSurfaceCallDeclCacheLookup (MacroSurfaceCallDeclCacheMiss)]
+    [done : bool false]
+    (begin
+      (while (if done
+        false
+        (< steps macro-surface-call-decl-cache-capacity))
+        (let
+          [slot : i64
+            (array.array-ref macro-surface-call-decl-cache-module-keys cursor)]
+          (if (= slot 0)
+            (set! done true)
+            (if (and
+              (= slot module-key)
+              (=
+                (array.array-ref macro-surface-call-decl-cache-base-keys cursor)
+                base-key))
+              (begin
+                (set!
+                  out
+                  (MacroSurfaceCallDeclCacheHit
+                    (array.array-ref
+                      macro-surface-call-decl-cache-values
+                      cursor)))
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-surface-call-decl-cache-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (macro-surface-call-decl-cache-put!
+  [module-id : i64]
+  [base-id : i64]
+  [value : MacroMaybeDecl]) : unit
+  (if (>=
+    (* macro-surface-call-decl-cache-count 2)
+    macro-surface-call-decl-cache-capacity)
+    unit
+    (let
+      [cursor : i64 (macro-surface-call-decl-cache-bucket module-id base-id)]
+      [module-key : i64 (+ module-id 1)]
+      [base-key : i64 (+ base-id 1)]
+      [steps : i64 0]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps macro-surface-call-decl-cache-capacity))
+          (let
+            [slot : i64
+              (array.array-ref macro-surface-call-decl-cache-module-keys cursor)]
+            (if (= slot 0)
+              (begin
+                (array.array-set!
+                  macro-surface-call-decl-cache-module-keys
+                  cursor
+                  module-key)
+                (array.array-set!
+                  macro-surface-call-decl-cache-base-keys
+                  cursor
+                  base-key)
+                (array.array-set!
+                  macro-surface-call-decl-cache-values
+                  cursor
+                  value)
+                (set!
+                  macro-surface-call-decl-cache-count
+                  (+ macro-surface-call-decl-cache-count 1))
+                (set! done true))
+              (if (and
+                (= slot module-key)
+                (=
+                  (array.array-ref
+                    macro-surface-call-decl-cache-base-keys
+                    cursor)
+                  base-key))
+                (begin
+                  (array.array-set!
+                    macro-surface-call-decl-cache-values
+                    cursor
+                    value)
+                  (set! done true))
+                (begin
+                  (set!
+                    cursor
+                    (bit-and
+                      (+ cursor 1)
+                      (- macro-surface-call-decl-cache-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
+
+(define (macro-surface-decl-call-decl-in-module
+  [decl : CompilerLoadSurfaceDecl]
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (if (and
+    (string.string-eq (struct-get decl module) target-module)
+    (string.string-eq (struct-get decl name) base)
+    (match (struct-get decl kind)
+      [(CompilerLoadSurfaceMacro) true]
+      [_ false]))
+    (match (struct-get decl signature)
+      [(CompilerLoadSurfaceMacroSignature params ret body-box)
+        (begin
+          (tc-lazy-import-summary-macro-force-record!)
+          (MacroSomeDecl
+            (compiler-symbol-module-key target-module base)
+            target-module
+            params
+            ret
+            (ast-node-get body-box)))]
+      [_ (MacroNoDecl)])
+    (MacroNoDecl)))
+
+(define (macro-surface-decls-call-decl-in-module
+  [decls : CompilerLoadSurfaceDeclList]
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) (MacroNoDecl)]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (match (macro-surface-decl-call-decl-in-module decl target-module base)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (MacroSomeDecl macro-name def-module params ret body)]
+        [(MacroNoDecl)
+          (macro-surface-decls-call-decl-in-module
+            (box-get rest)
+            target-module
+            base)])]))
+
+(define (macro-surface-summaries-call-decl-in-module
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) (MacroNoDecl)]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (match (macro-surface-decls-call-decl-in-module
+        (struct-get summary decls)
+        target-module
+        base)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (MacroSomeDecl macro-name def-module params ret body)]
+        [(MacroNoDecl)
+          (macro-surface-summaries-call-decl-in-module
+            (box-get rest)
+            target-module
+            base)])]))
+
+(define (macro-surface-call-decl-in-module
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (let
+    [module-id : i64 (intern target-module)]
+    [base-id : i64 (intern base)]
+    (begin
+      (macro-surface-call-decl-cache-ensure!)
+      (match (macro-surface-call-decl-cache-get module-id base-id)
+        [(MacroSurfaceCallDeclCacheHit cached) cached]
+        [(MacroSurfaceCallDeclCacheMiss)
+          (let
+            [result : MacroMaybeDecl
+              (macro-surface-summaries-call-decl-in-module
+                (compiler-load-surface-summaries)
+                target-module
+                base)]
+            (begin
+              (macro-surface-call-decl-cache-put! module-id base-id result)
+              result))]))))
+
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
     (tc-expr-uses-free-name? expr "expr-type" TcStringNil)
@@ -39129,6 +38952,7 @@
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
+    (macro-surface-call-decl-cache-reset!)
     (tc-lazy-import-stubs-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
@@ -39638,17 +39462,22 @@
                 call-expr
                 (macro-missing-macro-message name))))])]
     [(NoneI64)
-      (match (compiler-symbols-lookup-value-in-module-id
-        (tc-context-symbols ctx)
-        (intern target-module)
-        (intern base))
-        [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
-        [(NoneI64)
-          (ErrMacroCallDecl
-            (box
-              (ctfe-diagnostic-at-expr
-                call-expr
-                (macro-missing-macro-message name))))])]))
+      (match (macro-surface-call-decl-in-module target-module base)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl)
+          (match (compiler-symbols-lookup-value-in-module-id
+            (tc-context-symbols ctx)
+            (intern target-module)
+            (intern base))
+            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
+            [(NoneI64)
+              (ErrMacroCallDecl
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    (macro-missing-macro-message name))))])])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -39739,7 +39568,12 @@
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
+    [(NoneI64)
+      (match (macro-surface-call-decl-in-module target-module lookup-name)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]))
 
 (define (macro-unqualified-imported-call-target
   [ctx : TcContext]
@@ -39876,22 +39710,27 @@
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64)
-      (match (macro-unqualified-imported-call-decl
-        ctx
-        decls
-        module
-        lookup-name
-        call-expr)
-        [(OkMacroCallDecl imported-decl)
-          (match imported-decl
-            [(MacroNoDecl)
-              (macro-prelude-call-decl
-                (tc-context-with-module ctx module)
-                decls
-                lookup-name
-                call-expr)]
-            [_ (OkMacroCallDecl imported-decl)])]
-        [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)])]))
+      (match (macro-surface-call-decl-in-module module lookup-name)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl)
+          (match (macro-unqualified-imported-call-decl
+            ctx
+            decls
+            module
+            lookup-name
+            call-expr)
+            [(OkMacroCallDecl imported-decl)
+              (match imported-decl
+                [(MacroNoDecl)
+                  (macro-prelude-call-decl
+                    (tc-context-with-module ctx module)
+                    decls
+                    lookup-name
+                    call-expr)]
+                [_ (OkMacroCallDecl imported-decl)])]
+            [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)])])]))
 
 (define (macro-call-decl-from-name
   [ctx : TcContext]
@@ -44012,23 +43851,20 @@
 ;; `macro-decl-uses-macro?` walk (which resolves candidate calls via
 ;; `macro-call-decl`).
 ;;
-;; SAFE BY CONSTRUCTION (must guarantee: `macro-expr-uses-macro? = true` =>
-;; `macro-expr-might-fire? = true`, i.e. we never share what the expander would
-;; expand). This is achieved by mirroring `macro-expr-uses-macro?` EXACTLY:
-;;   - It handles the SAME arms with the SAME child recursion. Modelling on the
-;;     authoritative expansion gate (not the slightly different
-;;     `tc-expr-uses-free-name?` walk) is what makes the implication hold for
-;;     every arm.
+;; SAFE BY CONSTRUCTION (must guarantee: if the expander could rewrite a child
+;; expression, `macro-expr-might-fire? = true`, i.e. we never share what the
+;; expander would expand). This is achieved by following child expressions that
+;; can syntactically contain calls, with explicit false leaves for non-call
+;; forms.
 ;;   - At `AstExprCall` it uses `macro-call-callee-maybe-macro?` -- the registry
 ;;     gate the expander itself checks before attempting expansion -- which is a
 ;;     superset of `macro-call-is-expandable?` (it skips the `macro-call-decl`
 ;;     resolution and treats any registry-name callee as a possible fire). So at
 ;;     every call mine flags at least whatever the precise walk flags.
-;;   - Every arm `macro-expr-uses-macro?` leaves to its `[_ true]` catch-all
-;;     (WithRegion/WithResource/Spmd reduce-scan-broadcast-shuffle/quote family,
-;;     etc.) is ALSO left to the `[_ true]` here -- handling one of those with a
-;;     `false` result would be the one way to wrongly share, so they are
-;;     deliberately not handled.
+;;   - Scoped/container forms (for example WithRegion, WithResource, and SPMD)
+;;     recurse into their child expressions here as well, so ordinary
+;;     scoped/resource/vector code without macro calls does not force the full
+;;     macro setup path.
 ;; A bare `AstExprVar`/`AstExprSet` target/`AstExprPtrAddrOf` is never a call ->
 ;; false (matching the gate). This walk covers expr/compat macros only; the call
 ;; site additionally gates on `has-expr-type-macros` being false (type macros
@@ -44069,6 +43905,23 @@
               (or
                 (macro-expr-might-fire? body)
                 (macro-match-arms-might-fire? rest)))]))]))
+
+(define (macro-resource-binding-list-might-fire?
+  [bindings : AstResourceBindingList]) : bool
+  (match bindings
+    [(AstResourceBindingNil) false]
+    [(AstResourceBindingCons binding rest)
+      (let
+        [rest : AstResourceBindingList (box-get rest)]
+        (match binding
+          [(AstResourceBinding _ init-box cleanup-box)
+            (let
+              [init : AstExpr (ast-node-get init-box)]
+              [cleanup : AstExpr (ast-node-get cleanup-box)]
+              (or
+                (macro-expr-might-fire? init)
+                (macro-expr-might-fire? cleanup)
+                (macro-resource-binding-list-might-fire? rest)))]))]))
 
 (define (macro-expr-might-fire? [expr : AstExpr]) : bool
   (match expr
@@ -44195,6 +44048,44 @@
               (macro-expr-might-fire? start)
               (macro-expr-might-fire? end)
               (macro-expr-might-fire? body)))])]
+    [(AstExprSpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            (or
+              (macro-expr-might-fire? start)
+              (macro-expr-might-fire? end)
+              (macro-expr-might-fire? init)
+              (macro-expr-might-fire? value)))])]
+    [(AstExprSpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+          (let
+            [start : AstExpr (ast-node-get start-box)]
+            [end : AstExpr (ast-node-get end-box)]
+            [init : AstExpr (ast-node-get init-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (or
+              (macro-expr-might-fire? start)
+              (macro-expr-might-fire? end)
+              (macro-expr-might-fire? init)
+              (macro-expr-might-fire? value)
+              (macro-expr-might-fire? body)))])]
+    [(AstExprSpmdBroadcast value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (or (macro-expr-might-fire? value) (macro-expr-might-fire? lane)))]
+    [(AstExprSpmdShuffle value-box lane-box)
+      (let
+        [value : AstExpr (ast-node-get value-box)]
+        [lane : AstExpr (ast-node-get lane-box)]
+        (or (macro-expr-might-fire? value) (macro-expr-might-fire? lane)))]
     [(AstExprStructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -44204,6 +44095,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (or (macro-expr-might-fire? receiver) (macro-expr-might-fire? value)))]
+    [(AstExprWithRegion _ body) (macro-expr-list-might-fire? body)]
     [(AstExprWithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
@@ -44213,6 +44105,12 @@
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (or (macro-expr-might-fire? arena) (macro-expr-list-might-fire? body)))]
+    [(AstExprWithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource bindings body)
+          (or
+            (macro-resource-binding-list-might-fire? bindings)
+            (macro-expr-list-might-fire? body))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -45304,6 +45202,59 @@
         [rest : AstDeclList (box-get rest)]
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
+(define (macro-decl-might-fire-expression-macro? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef _ _ expr-box) (macro-expr-might-fire? (ast-node-get expr-box))]
+    [(AstDeclDefFn _ _ _ body-box _)
+      (macro-expr-might-fire? (ast-node-get body-box))]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-might-fire-expression-macro? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-might-fire-expression-macro? (box-get template-box))]
+    [_ false]))
+
+(define (macro-program-might-fire-expression-macro? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-might-fire-expression-macro? decl)
+        (macro-program-might-fire-expression-macro? (box-get rest)))]))
+
+(define (macro-import-kind-summary-backed? [kind : AstImportKind]) : bool
+  (match kind
+    [(AstImportPath) true]
+    [(AstImportModule) true]
+    [_ false]))
+
+(define (macro-import-target-has-summary-macro?
+  [kind : AstImportKind]
+  [target : AstMaybeModuleName]) : bool
+  (if (macro-import-kind-summary-backed? kind)
+    (match target
+      [(AstSomeModuleName target-module)
+        (macro-surface-module-has-macro? target-module)]
+      [(AstNoModuleName) false])
+    false))
+
+(define (macro-decl-has-summary-macro-import? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ target _ _))
+      (macro-import-target-has-summary-macro? kind target)]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-has-summary-macro-import? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-has-summary-macro-import? (box-get template-box))]
+    [_ false]))
+
+(define (macro-program-has-summary-macro-import? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-has-summary-macro-import? decl)
+        (macro-program-has-summary-macro-import? (box-get rest)))]))
+
 (define (macro-decl-has-module-placeholder? [decl : AstDecl]) : bool
   (match decl
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
@@ -45369,6 +45320,23 @@
             (match expr-type-macro-names
               [(TcStringNil) false]
               [_ true])]
+          [program-needs-expansion : bool
+            (macro-program-needs-expansion? decls)]
+          [has-summary-macro-import : bool
+            (and
+              (not has-defmacro)
+              (not program-needs-expansion)
+              (macro-program-has-summary-macro-import? decls))]
+          [prescan-macro-names : TcStringList
+            (if has-summary-macro-import
+              (macro-collect-visible-macro-names decls)
+              TcStringNil)]
+          [has-visible-macro-call : bool
+            (if has-summary-macro-import
+              (begin
+                (set! macro-expand-macro-names prescan-macro-names)
+                (macro-program-might-fire-expression-macro? decls))
+              false)]
           (begin
             ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
             ;; (or the next program in a multi-program process) never reuses a stale
@@ -45395,9 +45363,10 @@
               ctfe-needs-metadata
               (or
                 has-defmacro
+                has-visible-macro-call
                 (ctfe-program-has-type-literal? decls)
                 has-expr-type-macros))
-            (if (or has-defmacro (macro-program-needs-expansion? decls))
+            (if (or has-defmacro has-visible-macro-call program-needs-expansion)
               (begin
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (build-compiler-symbols-with-paths program paths)
@@ -47337,5 +47306,6 @@
     (set! macro-expand-expr-type-macro-names (TcStringNil))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))
+    (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
     (set! ctfe-needs-metadata true)))

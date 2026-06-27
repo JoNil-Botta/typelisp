@@ -41943,6 +41943,97 @@
     [items : (Array String) (make-array String n)]
     (array-length items)))")
 
+(define (compiler-lower-private-array-length-source) : String
+  "(define (dyn-len [a : (Array i64)]) : i64 (__tl_array-length a))
+(define (main) : i64 0)")
+
+(define (compiler-lower-qualified-array-length-source) : String
+  "(import stdlib.array)
+(define (dyn-len [a : (Array i64)]) : i64 (array.array-length a))
+(define (main) : i64 0)")
+
+(define (compiler-lower-private-array-access-source) : String
+  "(define (get [a : (Array i64)] [i : i64]) : i64 (__tl_array-ref a i))
+(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (__tl_array-set! a i v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-qualified-array-access-source) : String
+  "(import stdlib.array)
+(define (get [a : (Array i64)] [i : i64]) : i64 (array.array-ref a i))
+(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array.array-set! a i v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-private-fixed-array-access-source) : String
+  "(define (get [a : (Array i64 3)] [i : i64]) : i64 (__tl_array-ref a i))
+(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (__tl_array-set! a i v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-qualified-fixed-array-access-source) : String
+  "(import stdlib.array)
+(define (get [a : (Array i64 3)] [i : i64]) : i64 (array.array-ref a i))
+(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array.array-set! a i v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-private-mut-ref-array-access-source) : String
+  "(define (len [a : (& a (Array i64))]) : i64 (__tl_array-length a))
+(define (get [a : (& a (Array i64))] [i : i64]) : i64 (__tl_array-ref a i))
+(define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
+  (__tl_array-set! a i v))
+(define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
+  (__tl_array-push! a v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-qualified-mut-ref-array-access-source) : String
+  "(import stdlib.array)
+(define (len [a : (& a (Array i64))]) : i64 (array.array-length a))
+(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array.array-ref a i))
+(define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
+  (array.array-set! a i v))
+(define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
+  (array.array-push! a v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-private-array-push-source) : String
+  "(define (grow [a : (Array i64)] [v : i64]) : unit (__tl_array-push! a v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-qualified-array-push-source) : String
+  "(import stdlib.array)
+(define (grow [a : (Array i64)] [v : i64]) : unit (array.array-push! a v))
+(define (main) : i64 0)")
+
+(define (compiler-lower-private-make-array-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [a : (Array i64) (__tl_make-array i64 n)]
+    (begin
+      (__tl_array-set! a 0 40)
+      (__tl_array-set! a 1 2)
+      (+ (__tl_array-length a) (+ (__tl_array-ref a 0) (__tl_array-ref a 1))))))")
+
+(define (compiler-lower-qualified-make-array-source) : String
+  "(import stdlib.array)
+(define (main [n : i64]) : i64
+  (let
+    [a : (Array i64) (array.make-array i64 n)]
+    (begin
+      (array.array-set! a 0 40)
+      (array.array-set! a 1 2)
+      (+ (array.array-length a) (+ (array.array-ref a 0) (array.array-ref a 1))))))")
+
+(define (compiler-lower-private-make-array-init-source) : String
+  "(define (main [n : i64]) : i64
+  (let
+    [items : (Array String) (__tl_make-array String n)]
+    (__tl_array-length items)))")
+
+(define (compiler-lower-qualified-make-array-init-source) : String
+  "(import stdlib.array)
+(define (main [n : i64]) : i64
+  (let
+    [items : (Array String) (array.make-array String n)]
+    (array.array-length items)))")
+
 (define (compiler-lower-make-array-register-resident-fill8-source) : String
   "(defstruct OneWord (value i64))
 (define (main [n : i64]) : i64
@@ -45209,6 +45300,22 @@
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
+(define (lower-test-function-instruction-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]) : i64
+  (match funcs
+    [(IrFunctionNil) (- 0 1)]
+    [(IrFunctionCons func rest)
+      (match func
+        [(IrFunction fname _ _ _ _)
+          (if (string.string-eq fname name)
+            (compiler-ir-function-instruction-count func)
+            (lower-test-function-instruction-count (box-get rest) name))])]
+    [(IrFunctionArray seq)
+      (lower-test-function-instruction-count
+        (compiler-ir-function-seq-to-list seq)
+        name)]))
+
 (define (lower-test-function-load-count
   [funcs : CompilerIrFunctionList]
   [name : String]) : i64
@@ -47769,6 +47876,150 @@
             (>= (lower-test-function-store-ptr-count functions "main") 2)
             (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
     [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-array-function-counts-match?
+  [private-funcs : CompilerIrFunctionList]
+  [qualified-funcs : CompilerIrFunctionList]
+  [private-name : String]
+  [qualified-name : String]) : bool
+  (and
+    (lower-test-function-defined? private-funcs private-name)
+    (lower-test-function-defined? qualified-funcs qualified-name)
+    (=
+      (lower-test-function-instruction-count private-funcs private-name)
+      (lower-test-function-instruction-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-alloc-count private-funcs private-name)
+      (lower-test-function-alloc-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-load-count private-funcs private-name)
+      (lower-test-function-load-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-store-ptr-count private-funcs private-name)
+      (lower-test-function-store-ptr-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-bounds-count private-funcs private-name)
+      (lower-test-function-bounds-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-binop-count private-funcs private-name)
+      (lower-test-function-binop-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-branch-count private-funcs private-name)
+      (lower-test-function-branch-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-copy-bytes-count private-funcs private-name)
+      (lower-test-function-copy-bytes-count qualified-funcs qualified-name))
+    (=
+      (lower-test-function-call-count private-funcs private-name "tl_alloc")
+      (lower-test-function-call-count qualified-funcs qualified-name "tl_alloc"))
+    (=
+      (lower-test-function-call-count private-funcs private-name "tl_oob_abort")
+      (lower-test-function-call-count
+        qualified-funcs
+        qualified-name
+        "tl_oob_abort"))
+    (=
+      (lower-test-function-call-count
+        private-funcs
+        private-name
+        "tl_array_zero")
+      (lower-test-function-call-count
+        qualified-funcs
+        qualified-name
+        "tl_array_zero"))
+    (=
+      (lower-test-function-call-count
+        private-funcs
+        private-name
+        "tl_array_fill8")
+      (lower-test-function-call-count
+        qualified-funcs
+        qualified-name
+        "tl_array_fill8"))))
+
+(define (compiler-lower-array-function-parity-ok?
+  [private-src : String]
+  [qualified-src : String]
+  [private-name : String]
+  [qualified-name : String]) : bool
+  (match (lower-compiler-source private-src)
+    [(OkCompilerLower private-program _)
+      (match (lower-compiler-source qualified-src)
+        [(OkCompilerLower qualified-program _)
+          (match private-program
+            [(IrProgram _ private-funcs _)
+              (match qualified-program
+                [(IrProgram _ qualified-funcs _)
+                  (compiler-lower-array-function-counts-match?
+                    private-funcs
+                    qualified-funcs
+                    private-name
+                    qualified-name)])])]
+        [(ErrCompilerLower _) false])]
+    [(ErrCompilerLower _) false]))
+
+(define (compiler-lower-qualified-array-parity-ok?) : bool
+  (and
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-array-length-source)
+      (compiler-lower-qualified-array-length-source)
+      "dyn-len"
+      ".::dyn-len")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-array-access-source)
+      (compiler-lower-qualified-array-access-source)
+      "get"
+      ".::get")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-array-access-source)
+      (compiler-lower-qualified-array-access-source)
+      "put"
+      ".::put")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-fixed-array-access-source)
+      (compiler-lower-qualified-fixed-array-access-source)
+      "get"
+      ".::get")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-fixed-array-access-source)
+      (compiler-lower-qualified-fixed-array-access-source)
+      "put"
+      ".::put")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-mut-ref-array-access-source)
+      (compiler-lower-qualified-mut-ref-array-access-source)
+      "len"
+      ".::len")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-mut-ref-array-access-source)
+      (compiler-lower-qualified-mut-ref-array-access-source)
+      "get"
+      ".::get")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-mut-ref-array-access-source)
+      (compiler-lower-qualified-mut-ref-array-access-source)
+      "put"
+      ".::put")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-mut-ref-array-access-source)
+      (compiler-lower-qualified-mut-ref-array-access-source)
+      "grow"
+      ".::grow")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-array-push-source)
+      (compiler-lower-qualified-array-push-source)
+      "grow"
+      ".::grow")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-make-array-source)
+      (compiler-lower-qualified-make-array-source)
+      "main"
+      ".::main")
+    (compiler-lower-array-function-parity-ok?
+      (compiler-lower-private-make-array-init-source)
+      (compiler-lower-qualified-make-array-init-source)
+      "main"
+      ".::main")))
 
 (define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
@@ -50923,6 +51174,9 @@
         (set! ok false))
       (if (compiler-lower-make-array-init-shape-ok?
         (compiler-lower-make-array-init-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-qualified-array-parity-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-make-array-register-resident-fill8-shape-ok?)

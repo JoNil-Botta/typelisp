@@ -22,6 +22,7 @@
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.text_buf)
+(import stdlib.vector)
 
 ;: Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json
@@ -42,215 +43,42 @@
   (JsonMemberListNil)
   (JsonMemberListCons String Json (Box JsonMemberList)))
 
-;: Internal parser-builder object member stored in `JsonMemberVec`.
+;: Internal parser-builder object member stored in the generated member vector.
 (defstruct JsonMember
   (key String)
   (value Json))
 
-;: Internal vector-backed parser builder for JSON array elements.
-(comptime-decl
-  (:generated vector-family JsonVec "Json")
-  (defstruct JsonVec
-    (slots (Array Json))
-    (len i64)))
-
-;: Return the backing slots for an internal JSON element builder.
-(comptime-decl
-  (:generated vector-family json-vec-slots "Json")
-  (define (json-vec-slots [v : JsonVec]) : (Array Json)
-    (struct-get v slots)))
-
-;: Return the number of live elements in an internal JSON element builder.
-(comptime-decl
-  (:generated vector-family json-vec-len "Json")
-  (define (json-vec-len [v : JsonVec]) : i64
-    (struct-get v len)))
-
-;: Return the backing-slot count for an internal JSON element builder.
-(comptime-decl
-  (:generated vector-family json-vec-capacity "Json")
-  (define (json-vec-capacity [v : JsonVec]) : i64
-    (array-length (struct-get v slots))))
-
-;: Create an empty internal JSON element builder with `capacity` slots.
-(comptime-decl
-  (:generated vector-family json-vec-with-capacity "Json")
-  (define (json-vec-with-capacity [capacity : i64]) : JsonVec
-    (let
-      [cap : i64
-        (if (< capacity 0)
-          0
-          capacity)]
-      (JsonVec (make-array Json cap) 0))))
-
-;: Create an empty internal JSON element builder.
-(comptime-decl
-  (:generated vector-family json-vec-new "Json")
-  (define (json-vec-new) : JsonVec
-    (json-vec-with-capacity 4)))
-
-;: Copy live JSON elements from `src` into `dst` over `[index, count)`.
-(comptime-decl
-  (:generated vector-family json-vec-copy-range "Json")
-  (define (json-vec-copy-range
-    [dst : (Array Json)]
-    [src : (Array Json)]
-    [index : i64]
-    [count : i64]) : unit
-    (if (>= index count)
-      unit
-      (begin
-        (array-set! dst index (array-ref src index))
-        (json-vec-copy-range dst src (+ index 1) count)))))
-
-;: Grow an internal JSON element builder, preserving its live prefix.
-(comptime-decl
-  (:generated vector-family json-vec-grow "Json")
-  (define (json-vec-grow [v : JsonVec]) : JsonVec
-    (let
-      [n : i64 (json-vec-len v)]
-      [cap : i64 (json-vec-capacity v)]
-      [bigger : (Array Json)
-        (make-array
-          Json
-          (if (< cap 1)
-            4
-            (* cap 2)))]
-      (begin
-        (json-vec-copy-range bigger (json-vec-slots v) 0 n)
-        (set! (struct-get v slots) bigger)
-        v))))
-
-;: Append `value` to an internal JSON element builder.
-(comptime-decl
-  (:generated vector-family json-vec-push "Json")
-  (define (json-vec-push [v : JsonVec] [value : Json]) : JsonVec
-    (if (< (json-vec-len v) (json-vec-capacity v))
-      (let
-        [slots : (Array Json) (json-vec-slots v)]
-        [index : i64 (json-vec-len v)]
-        (begin
-          (array-set! slots index value)
-          (set! (struct-get v len) (+ index 1))
-          v))
-      (json-vec-push (json-vec-grow v) value))))
+(import (vector.vector Json) as jvec)
+(import (vector.vector JsonMember) as jmvec)
 
 ;: Convert builder elements `[0, index]` into a public JSON list.
-(define (json-vec-to-list-from [items : JsonVec] [index : i64] [acc : JsonList]) : JsonList
+(define (json-vec-to-list-from
+  [items : (& items jvec.Vec)]
+  [index : i64]
+  [acc : JsonList]) : JsonList
   (if (< index 0)
     acc
     (stdlib.json.json-vec-to-list-from
       items
       (- index 1)
-      (JsonListCons
-        (array-ref (stdlib.json.json-vec-slots items) index)
-        (box acc)))))
+      (JsonListCons (jvec.get items index JsonNull) (box acc)))))
 
 ;: Convert an internal JSON element builder into the public list model.
-(define (json-vec-to-list [items : JsonVec]) : JsonList
+(define (json-vec-to-list [items : jvec.Vec]) : JsonList
   (stdlib.json.json-vec-to-list-from
-    items
-    (- (stdlib.json.json-vec-len items) 1)
+    (& items)
+    (- (jvec.len (& items)) 1)
     JsonListNil))
-
-;: Internal vector-backed parser builder for JSON object members.
-(comptime-decl
-  (:generated vector-family JsonMemberVec "JsonMember")
-  (defstruct JsonMemberVec
-    (slots (Array JsonMember))
-    (len i64)))
-
-;: Return the backing slots for an internal JSON member builder.
-(comptime-decl
-  (:generated vector-family json-member-vec-slots "JsonMember")
-  (define (json-member-vec-slots [v : JsonMemberVec]) : (Array JsonMember)
-    (struct-get v slots)))
-
-;: Return the number of live members in an internal JSON member builder.
-(comptime-decl
-  (:generated vector-family json-member-vec-len "JsonMember")
-  (define (json-member-vec-len [v : JsonMemberVec]) : i64
-    (struct-get v len)))
-
-;: Return the backing-slot count for an internal JSON member builder.
-(comptime-decl
-  (:generated vector-family json-member-vec-capacity "JsonMember")
-  (define (json-member-vec-capacity [v : JsonMemberVec]) : i64
-    (array-length (struct-get v slots))))
-
-;: Create an empty internal JSON member builder with `capacity` slots.
-(comptime-decl
-  (:generated vector-family json-member-vec-with-capacity "JsonMember")
-  (define (json-member-vec-with-capacity [capacity : i64]) : JsonMemberVec
-    (let
-      [cap : i64
-        (if (< capacity 0)
-          0
-          capacity)]
-      (JsonMemberVec (make-array JsonMember cap) 0))))
-
-;: Create an empty internal JSON member builder.
-(comptime-decl
-  (:generated vector-family json-member-vec-new "JsonMember")
-  (define (json-member-vec-new) : JsonMemberVec
-    (json-member-vec-with-capacity 4)))
-
-;: Copy live JSON object members from `src` into `dst` over `[index, count)`.
-(comptime-decl
-  (:generated vector-family json-member-vec-copy-range "JsonMember")
-  (define (json-member-vec-copy-range
-    [dst : (Array JsonMember)]
-    [src : (Array JsonMember)]
-    [index : i64]
-    [count : i64]) : unit
-    (if (>= index count)
-      unit
-      (begin
-        (array-set! dst index (array-ref src index))
-        (json-member-vec-copy-range dst src (+ index 1) count)))))
-
-;: Grow an internal JSON member builder, preserving its live prefix.
-(comptime-decl
-  (:generated vector-family json-member-vec-grow "JsonMember")
-  (define (json-member-vec-grow [v : JsonMemberVec]) : JsonMemberVec
-    (let
-      [n : i64 (json-member-vec-len v)]
-      [cap : i64 (json-member-vec-capacity v)]
-      [bigger : (Array JsonMember)
-        (make-array
-          JsonMember
-          (if (< cap 1)
-            4
-            (* cap 2)))]
-      (begin
-        (json-member-vec-copy-range bigger (json-member-vec-slots v) 0 n)
-        (set! (struct-get v slots) bigger)
-        v))))
-
-;: Append `value` to an internal JSON member builder.
-(comptime-decl
-  (:generated vector-family json-member-vec-push "JsonMember")
-  (define (json-member-vec-push [v : JsonMemberVec] [value : JsonMember]) : JsonMemberVec
-    (if (< (json-member-vec-len v) (json-member-vec-capacity v))
-      (let
-        [slots : (Array JsonMember) (json-member-vec-slots v)]
-        [index : i64 (json-member-vec-len v)]
-        (begin
-          (array-set! slots index value)
-          (set! (struct-get v len) (+ index 1))
-          v))
-      (json-member-vec-push (json-member-vec-grow v) value))))
 
 ;: Convert builder members `[0, index]` into a public JSON member list.
 (define (json-member-vec-to-list-from
-  [items : JsonMemberVec]
+  [items : (& items jmvec.Vec)]
   [index : i64]
   [acc : JsonMemberList]) : JsonMemberList
   (if (< index 0)
     acc
     (let
-      [member : JsonMember
-        (array-ref (stdlib.json.json-member-vec-slots items) index)]
+      [member : JsonMember (jmvec.get items index (JsonMember "" JsonNull))]
       (stdlib.json.json-member-vec-to-list-from
         items
         (- index 1)
@@ -260,10 +88,10 @@
           (box acc))))))
 
 ;: Convert an internal JSON member builder into the public list model.
-(define (json-member-vec-to-list [items : JsonMemberVec]) : JsonMemberList
+(define (json-member-vec-to-list [items : jmvec.Vec]) : JsonMemberList
   (stdlib.json.json-member-vec-to-list-from
-    items
-    (- (stdlib.json.json-member-vec-len items) 1)
+    (& items)
+    (- (jmvec.len (& items)) 1)
     JsonMemberListNil))
 
 ;: Recoverable top-level parse result.
@@ -1232,9 +1060,8 @@
 (define (json-parse-array [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (stdlib.json.json-skip-ws text (+ pos 1))]
-    [items : JsonVec
-      (stdlib.json.json-vec-with-capacity
-        (stdlib.json.json-composite-item-count text pos 93))]
+    [items : jvec.Vec
+      (jvec.with-capacity (stdlib.json.json-composite-item-count text pos 93))]
     [ok : bool true]
     [done : bool false]
     [message : String ""]
@@ -1248,7 +1075,7 @@
         (match (stdlib.json.json-parse-value text i)
           [(OkJsonParseValue value next)
             (begin
-              (set! items (stdlib.json.json-vec-push items value))
+              (jvec.push (&mut items) value)
               (set! i (stdlib.json.json-skip-ws text next))
               (if (stdlib.json.json-char-code-eq-at text i 93)
                 (begin
@@ -1276,9 +1103,8 @@
 (define (json-parse-object [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [i : i64 (stdlib.json.json-skip-ws text (+ pos 1))]
-    [members : JsonMemberVec
-      (stdlib.json.json-member-vec-with-capacity
-        (stdlib.json.json-composite-item-count text pos 125))]
+    [members : jmvec.Vec
+      (jmvec.with-capacity (stdlib.json.json-composite-item-count text pos 125))]
     [ok : bool true]
     [done : bool false]
     [message : String ""]
@@ -1297,11 +1123,7 @@
                 (match (stdlib.json.json-parse-value text (+ colon-pos 1))
                   [(OkJsonParseValue value next)
                     (begin
-                      (set!
-                        members
-                        (stdlib.json.json-member-vec-push
-                          members
-                          (JsonMember key value)))
+                      (jmvec.push (&mut members) (JsonMember key value))
                       (set! i (stdlib.json.json-skip-ws text next))
                       (if (stdlib.json.json-char-code-eq-at text i 125)
                         (begin
@@ -1895,12 +1717,12 @@
       "stdlib.json.json-list-reverse")
     (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
       (stdlib.json.json-stringify-list
-        (stdlib.json.json-vec-to-list
-          (stdlib.json.json-vec-push
-            (stdlib.json.json-vec-push
-              (stdlib.json.json-vec-new)
-              (JsonNumber "1"))
-            (JsonNumber "2"))))
+        (let
+          [items : jvec.Vec (jvec.new)]
+          (begin
+            (jvec.push (&mut items) (JsonNumber "1"))
+            (jvec.push (&mut items) (JsonNumber "2"))
+            (stdlib.json.json-vec-to-list items))))
       "1,2"
       "stdlib.json.json-vec-to-list")
     (stdlib.json.json-stdlib-inline-test-assert-i64-eq
@@ -1948,12 +1770,12 @@
       "stdlib.json.json-member-list-reverse")
     (stdlib.json.json-stdlib-inline-test-assert-found-number
       (stdlib.json.json-member-list-get-owned
-        (stdlib.json.json-member-vec-to-list
-          (stdlib.json.json-member-vec-push
-            (stdlib.json.json-member-vec-push
-              (stdlib.json.json-member-vec-new)
-              (JsonMember "dup" (JsonNumber "1")))
-            (JsonMember "dup" (JsonNumber "2"))))
+        (let
+          [members : jmvec.Vec (jmvec.new)]
+          (begin
+            (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "1")))
+            (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "2")))
+            (stdlib.json.json-member-vec-to-list members)))
         "dup")
       "1"
       "stdlib.json.json-member-vec-to-list duplicate first")

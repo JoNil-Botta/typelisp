@@ -4864,6 +4864,59 @@
     [(IrValueF64 bits) (str-cat (compiler-backend-float-label ty bits) "(%rip)")]
     [_ ""]))
 
+(define (compiler-backend-float-bits-gp-reg
+  [reg : String]
+  [ty : AstType]) : String
+  (if (= (compiler-backend-type-size ty) 8)
+    reg
+    (compiler-backend-reg-part reg 4)))
+
+(define (compiler-backend-float-bits-load-mnemonic [ty : AstType]) : String
+  (if (= (compiler-backend-type-size ty) 8)
+    "movq"
+    "movl"))
+
+(define (compiler-backend-float-bits-xmm-mnemonic [ty : AstType]) : String
+  (if (= (compiler-backend-type-size ty) 8)
+    "movq"
+    "movd"))
+
+(define (compiler-backend-emit-load-float-bits-to-gp
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]
+  [ty : AstType]
+  [gp-reg : String]) : ResultCompilerBackend
+  (let
+    [xmm-reg : String (compiler-backend-float-value-register assignments value)]
+    [gp-part : String (compiler-backend-float-bits-gp-reg gp-reg ty)]
+    (if (not (string-eq xmm-reg ""))
+      (OkCompilerBackend
+        (str-cat
+          "    "
+          (compiler-backend-float-bits-xmm-mnemonic ty)
+          " "
+          xmm-reg
+          ", "
+          gp-part
+          "\n"))
+      (let
+        [mem : String
+          (compiler-backend-float-value-memory-operand assignments value ty)]
+        (if (not (string-eq mem ""))
+          (OkCompilerBackend
+            (str-cat
+              "    "
+              (compiler-backend-float-bits-load-mnemonic ty)
+              " "
+              mem
+              ", "
+              gp-part
+              "\n"))
+          (ErrCompilerBackend
+            (compiler-diagnostic-at-start
+              ""
+              "backend: unsupported float stack argument value")))))))
+
 (define (compiler-backend-float-direct-rhs-operand
   [assignments : CompilerRegAssignmentList]
   [rhs : CompilerIrValue]
@@ -14866,20 +14919,29 @@
         "(%rsp)\n"
         "")]
     (if is-float
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        value
-        arg-ty
-        "%xmm15")
+      (let
+        [scav : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-c-abi-stage-exclude)
+            4
+            "%r11")]
+        [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
+        (match (compiler-backend-emit-load-float-bits-to-gp
+          assignments
+          value
+          arg-ty
+          scav)
         [(OkCompilerBackend head)
           (OkCompilerBackend
             (str-cat
               head
               "    "
-              (compiler-backend-float-move arg-ty)
-              " %xmm15, "
+              (compiler-backend-float-bits-load-mnemonic arg-ty)
+              " "
+              gp-part
+              ", "
               slot))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (match (compiler-backend-immediate-operand value)
         [(CompilerBackendSomeImmediate imm)
           (OkCompilerBackend (str-cat "    movq " imm ", " slot))]
@@ -15220,20 +15282,29 @@
   (let
     [slot : String (compiler-backend-tail-final-stack-slot target stack-idx)]
     (if is-float
-      (match (compiler-backend-emit-load-float-value-with-plan
-        assignments
-        value
-        arg-ty
-        "%xmm15")
+      (let
+        [scav : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-c-abi-stage-exclude)
+            4
+            "%r11")]
+        [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
+        (match (compiler-backend-emit-load-float-bits-to-gp
+          assignments
+          value
+          arg-ty
+          scav)
         [(OkCompilerBackend head)
           (OkCompilerBackend
             (str-cat
               head
               "    "
-              (compiler-backend-float-move arg-ty)
-              " %xmm15, "
+              (compiler-backend-float-bits-load-mnemonic arg-ty)
+              " "
+              gp-part
+              ", "
               (string-append slot "\n")))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
       (match (compiler-backend-immediate-operand value)
         [(CompilerBackendSomeImmediate imm)
           (OkCompilerBackend (str-cat "    movq " imm ", " slot "\n"))]

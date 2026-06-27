@@ -11989,8 +11989,8 @@
           (compiler-backend-string-contains? asm "    subq $96, %rsp\n")
           (compiler-backend-string-contains?
             asm
-            "    movsd -48(%rbp), %xmm15\n")
-          (compiler-backend-string-contains? asm "    movsd %xmm15, 32(%rsp)\n")
+            "    movq -48(%rbp), %r11\n")
+          (compiler-backend-string-contains? asm "    movq %r11, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm0\n"))
         (or
           (compiler-backend-string-contains? asm "    call _tl_f")
@@ -12122,16 +12122,16 @@
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
-;; stack through %xmm15; the callee reads them back via movsd from the incoming
-;; stack slots.
+;; stack through a scavenged GP bit-copy; the callee reads them back via movsd
+;; from the incoming stack slots.
 (define (compiler-backend-stack-f64-args-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-stack-f64-args-source))
     [(OkCompilerBackend asm)
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
         (compiler-backend-string-contains? asm "    subq $16, %rsp\n")
-        (compiler-backend-string-contains? asm "    movsd %xmm15, 0(%rsp)\n")
-        (compiler-backend-string-contains? asm "    movsd %xmm15, 8(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movq %r11, 8(%rsp)\n")
         (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n")
         (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm0\n"))]
     [(ErrCompilerBackend _) false]))
@@ -12146,7 +12146,7 @@
       (and
         (not (compiler-backend-string-contains? asm "too many call args"))
         (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")
-        (compiler-backend-string-contains? asm "    movsd %xmm15, 8(%rsp)\n")
+        (compiler-backend-string-contains? asm "    movq %r11, 8(%rsp)\n")
         (compiler-backend-stack-mix-call-ok? asm))]
     [(ErrCompilerBackend _) false]))
 
@@ -12220,12 +12220,33 @@
         (not (compiler-backend-string-contains? asm "    movq %r11, 0(%rsp)\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-stack-f32-arg-bits-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+        CompilerRegAssignmentNil)]
+    (match (compiler-backend-emit-scalar-stack-call-arg
+      (BackendTargetLinux)
+      assignments
+      (IrValueVar 0)
+      (AstTyF32)
+      true
+      0)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movd %xmm3, %r11d\n")
+          (compiler-backend-string-contains? asm "    movl %r11d, 0(%rsp)\n")
+          (not (compiler-backend-string-contains? asm "%xmm15")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-stack-args-ok?) : bool
   (and
     (compiler-backend-stack-int-args-ok?)
     (compiler-backend-stack-f64-args-ok?)
     (compiler-backend-stack-mixed-args-ok?)
     (compiler-backend-stack-windows-args-ok?)
+    (compiler-backend-stack-f32-arg-bits-ok?)
     (compiler-backend-immediate-stack-call-args-ok?)))
 
 (define (compiler-backend-asm-function-body [asm : String] [symbol : String]) : String
@@ -12385,8 +12406,8 @@
 (define (compiler-backend-direct-tail-call-mixed-slot
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
-    "    movsd %xmm15, 136(%rbp)\n"
-    "    movsd %xmm15, 24(%rbp)\n"))
+    "    movq %r11, 136(%rbp)\n"
+    "    movq %r11, 24(%rbp)\n"))
 
 (define (compiler-backend-direct-tail-call-mixed-target-ok?
   [target : CompilerBackendTarget]) : bool

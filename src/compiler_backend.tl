@@ -12147,26 +12147,61 @@
   [src : CompilerIrValue]
   [ty : AstType]
   [addr : String]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [exclude : (Array String)]
+  [exclude-n : i64]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-immediate-to-memory src addr ty)
     [(CompilerBackendSomeAsm store-asm) (OkCompilerBackend store-asm)]
     [(CompilerBackendNoAsm)
-      (match (compiler-backend-emit-load-typed-value-with-plan
-        assignments
-        src
-        ty
-        program-index)
-        [(OkCompilerBackend src-asm)
-          (OkCompilerBackend
-            (str-cat
-              src-asm
-              (if (compiler-backend-float-type? ty)
-                (compiler-backend-emit-store-xmm-to-memory
-                  (string-copy addr)
-                  "%xmm0"
-                  ty)
-                (compiler-backend-emit-store-rax-to-memory addr ty))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+      (if (compiler-backend-float-type? ty)
+        (let
+          [src-home : String
+            (compiler-backend-float-value-register assignments src)]
+          [store-reg : String
+            (if (string-eq src-home "")
+              (compiler-backend-scavenge-xmm-reg -1 exclude exclude-n "%xmm2")
+              src-home)]
+          (match (if (string-eq src-home "")
+            (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              assignments
+              src
+              ty
+              store-reg
+              program-index)
+            (OkCompilerBackend ""))
+            [(OkCompilerBackend src-asm)
+              (OkCompilerBackend
+                (str-cat
+                  src-asm
+                  (compiler-backend-emit-store-xmm-to-memory
+                    (string-copy addr)
+                    store-reg
+                    ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        (let
+          [src-home : String
+            (compiler-backend-value-scalar-register assignments src)]
+          [store-reg : String
+            (if (string-eq src-home "")
+              (compiler-backend-scavenge-reg-here exclude exclude-n "%r8")
+              src-home)]
+          (match (if (string-eq src-home "")
+            (compiler-backend-emit-load-typed-value-to-reg-with-plan
+              assignments
+              src
+              ty
+              store-reg
+              program-index)
+            (OkCompilerBackend ""))
+            [(OkCompilerBackend src-asm)
+              (OkCompilerBackend
+                (str-cat
+                  src-asm
+                  (compiler-backend-emit-store-reg-to-memory
+                    addr
+                    store-reg
+                    ty)))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
 
 (define (compiler-backend-emit-store-ptr
   [assignments : CompilerRegAssignmentList]
@@ -12190,7 +12225,9 @@
           src
           ty
           addr
-          program-index)
+          program-index
+          (compiler-backend-one-exclude (struct-get base reg))
+          1)
           [(OkCompilerBackend store-asm)
             (OkCompilerBackend (string-append ptr-asm store-asm))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
@@ -12224,7 +12261,9 @@
                 value
                 store-ty
                 addr
-                program-index)
+                program-index
+                (compiler-backend-one-exclude (struct-get base-plan reg))
+                1)
                 [(OkCompilerBackend store-asm)
                   (OkCompilerBackend (string-append base-asm store-asm))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
@@ -12276,12 +12315,20 @@
                     (if (string-eq addr "")
                       (compiler-backend-base-deref scav-fold)
                       addr)]
+                  [store-exclude : (Array String)
+                    (if (string-eq addr "")
+                      (compiler-backend-one-exclude scav-fold)
+                      (compiler-backend-two-exclude base-reg scav-idx))]
+                  [store-exclude-n : i64
+                    (if (string-eq addr "") 1 2)]
                   (match (compiler-backend-emit-store-value-to-address
                     assignments
                     value
                     store-ty
                     store-addr
-                    program-index)
+                    program-index
+                    store-exclude
+                    store-exclude-n)
                     [(OkCompilerBackend store-asm)
                       (OkCompilerBackend
                         (string-append
@@ -12320,14 +12367,18 @@
           value0
           ty0
           addr0
-          program-index)
+          program-index
+          (compiler-backend-one-exclude base-reg)
+          1)
           [(OkCompilerBackend store0)
             (match (compiler-backend-emit-store-value-to-address
               assignments
               value1
               ty1
               addr1
-              program-index)
+              program-index
+              (compiler-backend-one-exclude base-reg)
+              1)
               [(OkCompilerBackend store1)
                 (OkCompilerBackend
                   (string-append base-asm (string-append store0 store1)))]

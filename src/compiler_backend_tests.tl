@@ -9125,6 +9125,63 @@
           (compiler-backend-string-contains? asm "    movq -24(%rbp), %r10\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-store-value-scratch-shape-ok?) : bool
+  (and
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrStorePtr (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+        IrInstrNil)
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil)
+      3)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq %r12, (%r10)\n")
+          (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrStorePtr (IrValueVar 0) (IrValueVar 1) (AstTyI64))
+        IrInstrNil)
+      CompilerRegAssignmentNil
+      3)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq -16(%rbp), %r8\n")
+          (compiler-backend-string-contains? asm "    movq %r8, (%r10)\n")
+          (not (compiler-backend-string-contains? asm "%rax")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrStorePtr (IrValueVar 0) (IrValueVar 1) (AstTyF64))
+        IrInstrNil)
+      CompilerRegAssignmentNil
+      3)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm2\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, (%r10)\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-test-instrs
+      (compiler-ir-instr-cons
+        (IrInstrGep 3 (IrValueVar 0) (IrValueVar 2) (AstTyU64))
+        (compiler-ir-instr-cons
+          (IrInstrStorePtr (IrValueVar 3) (IrValueVar 1) (AstTyI64))
+          IrInstrNil))
+      CompilerRegAssignmentNil
+      5)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %r9, (%r10,%r8,8)\n")
+          (not
+            (compiler-backend-string-contains? asm "    movq -16(%rbp), %rax\n")))]
+      [(ErrCompilerBackend _) false])))
+
 (define (compiler-backend-store-home-base-shape-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -9318,6 +9375,7 @@
       (compiler-backend-load-load-pointer-chase-shape-ok?)
       (compiler-backend-load-load-float-pointer-chase-shape-ok?)
       (compiler-backend-store-ptr-pair-shape-ok?)
+      (compiler-backend-store-value-scratch-shape-ok?)
       (compiler-backend-store-home-base-shape-ok?))
     (compiler-backend-gep-load-compare-priority-shape-ok?)))
 

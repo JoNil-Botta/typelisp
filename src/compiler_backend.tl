@@ -8145,6 +8145,39 @@
           dst-home
           "\n")))))
 
+(define (compiler-backend-emit-float-compare-spill-direct
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [fty : AstType]
+  [result-ty : AstType]) : ResultCompilerBackend
+  (let
+    [result-reg : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%r8")]
+    (match (compiler-backend-emit-float-compare-direct
+      assignments
+      result-reg
+      op
+      lhs
+      rhs
+      fty)
+      [(OkCompilerBackend asm)
+        (OkCompilerBackend
+          (string-append
+            asm
+            (compiler-backend-emit-store-typed-var-with-plan
+              assignments
+              dst
+              result-reg
+              result-ty)))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
 ;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
 ;; are in %xmm0 (lhs) and %xmm1 (rhs); arithmetic leaves the result in %xmm0,
@@ -8652,19 +8685,32 @@
       (if (and
         (compiler-backend-compare-op? op)
         (and
-          (not (string-eq dst-home ""))
-          (and
-            (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0))
+          (not (string-eq lhs-float-reg ""))
+          (or
             (and
-              (not (string-eq lhs-float-reg ""))
-              (not (string-eq rhs-operand ""))))))
-        (compiler-backend-emit-float-compare-direct
-          assignments
-          dst-home
-          op
-          lhs
-          rhs
-          fty)
+              (not (string-eq dst-home ""))
+              (and
+                (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0))
+                (not (string-eq rhs-operand ""))))
+            (and
+              (string-eq dst-home "")
+              (not (string-eq spill-rhs-operand ""))))))
+        (if (string-eq dst-home "")
+          (compiler-backend-emit-float-compare-spill-direct
+            assignments
+            dst
+            op
+            lhs
+            rhs
+            fty
+            ty)
+          (compiler-backend-emit-float-compare-direct
+            assignments
+            dst-home
+            op
+            lhs
+            rhs
+            fty))
         (if (and
           (compiler-backend-float-type? ty)
           (and

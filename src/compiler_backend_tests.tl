@@ -10219,6 +10219,62 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-spill-float-compare-asm
+  [ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 ty)
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 ty)
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType 2 (AstTyBool))
+          CompilerRegVarTypeNil)))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%xmm4"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 2 (CompilerRegSpill -16))
+          CompilerRegAssignmentNil)))
+    2
+    (IrBinLt)
+    (IrValueVar 0)
+    (IrValueVar 1)
+    (AstTyBool)))
+
+(define (compiler-backend-spill-float-compare-home-ok?) : bool
+  (match (compiler-backend-spill-float-compare-asm (AstTyF64))
+    [(OkCompilerBackend f64-asm)
+      (match (compiler-backend-spill-float-compare-asm (AstTyF32))
+        [(OkCompilerBackend f32-asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains?
+                f64-asm
+                "    ucomisd %xmm4, %xmm3\n")
+              (compiler-backend-string-contains? f64-asm "    setb %r8b\n")
+              (compiler-backend-string-contains?
+                f64-asm
+                "    movzbq %r8b, %r8\n")
+              (compiler-backend-string-contains?
+                f32-asm
+                "    ucomiss %xmm4, %xmm3\n")
+              (compiler-backend-string-contains? f32-asm "    setb %r8b\n")
+              (compiler-backend-string-contains?
+                f32-asm
+                "    movzbq %r8b, %r8\n")
+              (compiler-backend-string-contains? f64-asm "    movq %r8, -16(%rbp)\n")
+              (compiler-backend-string-contains? f32-asm "    movq %r8, -16(%rbp)\n"))
+            (not (compiler-backend-string-contains? f64-asm "%rax"))
+            (not (compiler-backend-string-contains? f32-asm "%rax"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm1"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm1")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend-owned replacement for the Rust bool logic codegen checks (#1044):
 ;; `and`/`or` arrive from the lowerer as branches, not eager bytewise ops, and
 ;; bool equality still uses the comparison/setcc path.
@@ -12883,6 +12939,7 @@
         (compiler-backend-direct-float-arith-home-ok?)
         (compiler-backend-spill-float-arith-home-ok?)
         (compiler-backend-direct-float-compare-home-ok?)
+        (compiler-backend-spill-float-compare-home-ok?)
         (and
           (compiler-backend-bitcast-shape-ok?)
           (compiler-backend-direct-bitcast-home-ok?)))

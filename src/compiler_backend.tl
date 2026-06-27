@@ -3304,19 +3304,57 @@
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
                   [addr : String (struct-get addr-plan addr)]
-                  (OkCompilerBackend
-                    (string-append
-                      addr-asm
-                      (str-cat
-                        "    vpxord %zmm15, %zmm15, %zmm15\n"
-                        "    movl $1, %edx\n    vmovd %edx, %xmm14\n"
-                        "    vpbroadcastb %xmm14, %zmm14\n    vmovdqu8 %zmm14, %zmm15{"
-                        value-reg
-                        "}\n    vmovdqu8 %zmm15, "
-                        addr
-                        "{"
-                        mask-reg
-                        "}\n"))))]
+                  (match (compiler-backend-vector-temp-zmm
+                    assignments
+                    ""
+                    ""
+                    ""
+                    "mask store bytes")
+                    [(OkBackendReg bytes-reg)
+                      (match (compiler-backend-vector-temp-zmm
+                        assignments
+                        bytes-reg
+                        ""
+                        ""
+                        "mask store ones")
+                        [(OkBackendReg ones-reg)
+                          (OkCompilerBackend
+                            (string-append
+                              addr-asm
+                              (str-cat
+                                "    vpxord "
+                                bytes-reg
+                                ", "
+                                bytes-reg
+                                ", "
+                                bytes-reg
+                                "\n"
+                                "    pushq $1\n"
+                                "    vpbroadcastb (%rsp), "
+                                ones-reg
+                                "\n"
+                                "    addq $8, %rsp\n"
+                                "    vmovdqu8 "
+                                ones-reg
+                                ", "
+                                bytes-reg
+                                "{"
+                                value-reg
+                                "}\n    vmovdqu8 "
+                                bytes-reg
+                                ", "
+                                addr
+                                "{"
+                                mask-reg
+                                "}\n")))]
+                        [(ErrBackendReg message)
+                          (ErrCompilerBackend
+                            (compiler-diagnostic-with-message
+                              instr-diag
+                              message))])]
+                    [(ErrBackendReg message)
+                      (ErrCompilerBackend
+                        (compiler-diagnostic-with-message instr-diag message))]))]
               [(ErrCompilerBackendSimdIndexedAddress message)
                 (ErrCompilerBackend
                   (compiler-backend-apply-instr-diagnostic message instr-diag))])]

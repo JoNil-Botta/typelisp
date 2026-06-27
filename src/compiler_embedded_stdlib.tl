@@ -22,6 +22,7 @@
 (include-str compiler-embedded-stdlib-fs "stdlib/fs.tl")
 (include-str compiler-embedded-stdlib-hash "stdlib/hash.tl")
 (include-str compiler-embedded-stdlib-hashmap "stdlib/hashmap.tl")
+(include-str compiler-embedded-stdlib-io-core "stdlib/io_core.tl")
 (include-str compiler-embedded-stdlib-io "stdlib/io.tl")
 (include-str compiler-embedded-stdlib-iterator "stdlib/iterator.tl")
 (include-str compiler-embedded-stdlib-json "stdlib/json.tl")
@@ -108,6 +109,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hash)]
     [(embedded-eq? suffix "hashmap.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hashmap)]
+    [(embedded-eq? suffix "io_core.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io-core)]
     [(embedded-eq? suffix "io.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-io)]
     [(embedded-eq? suffix "iterator.tl")

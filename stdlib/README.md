@@ -56,6 +56,9 @@ use.
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
   over backend runtime symbols. Import it with `(import "stdlib/io.tl")`.
+- `io_core.tl`: private backing module for `io.tl` file-handle table storage.
+  User programs should import `io.tl`; this module exists to keep raw handle
+  internals out of the public `stdlib.io` surface.
 - `io_caller_result.tl`: lifetime-preserving `read-file-or-result` surface that
   can return a borrow of the caller fallback or owned file contents. Import it
   with `(import "stdlib/io_caller_result.tl")`; it remains separate from

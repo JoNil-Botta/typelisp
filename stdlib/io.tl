@@ -35,6 +35,7 @@
 ;# ```
 (module stdlib.io)
 
+(import stdlib.io_core)
 (import stdlib.string)
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
@@ -233,235 +234,6 @@
   windows
   (define (io-windows-exit [code : i32]) : never
     (io-win-exit-process code)))
-
-;: Runtime allocator binding used to allocate raw handle tables.
-(extern (io-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
-
-;: Runtime binding to create a fresh independent arena for the handle tables.
-(extern (io-arena-make) : i64 (:symbol "tl_arena_make"))
-
-;: Runtime binding for the current active arena handle.
-(extern (io-arena-current) : i64 (:symbol "tl_arena_current"))
-
-;: Runtime binding to switch the active arena.
-(extern (io-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set"))
-
-;: Maximum number of stdlib file handles tracked by the raw handle table.
-(define io-file-handle-cap : i64
-  1024)
-
-;: Next stdlib file handle id to allocate.
-(define io-file-handle-next : i64
-  1)
-
-;: Integer address of the file descriptor table, initialized lazily.
-(define io-file-fds-addr : u64
-  (cast 0 : u64))
-
-;: Integer address of the file mode table, initialized lazily.
-(define io-file-modes-addr : u64
-  (cast 0 : u64))
-
-;: Integer address of the file handle state table, initialized lazily.
-(define io-file-states-addr : u64
-  (cast 0 : u64))
-
-;: Integer address of the file EOF state table, initialized lazily.
-(define io-file-eofs-addr : u64
-  (cast 0 : u64))
-
-;: Integer address of the cached-read readiness table, initialized lazily.
-(define io-file-last-ready-addr : u64
-  (cast 0 : u64))
-
-;: Integer address of the cached-read byte table, initialized lazily.
-(define io-file-last-bytes-addr : u64
-  (cast 0 : u64))
-
-;: Return the raw file descriptor table pointer.
-(define (io-file-fds-ptr) : (MutPtr i64)
-  (unsafe
-    (int->ptr io-file-fds-addr : (MutPtr i64))))
-
-;: Return the raw file mode table pointer.
-(define (io-file-modes-ptr) : (MutPtr i64)
-  (unsafe
-    (int->ptr io-file-modes-addr : (MutPtr i64))))
-
-;: Return the raw file handle state table pointer.
-(define (io-file-states-ptr) : (MutPtr i64)
-  (unsafe
-    (int->ptr io-file-states-addr : (MutPtr i64))))
-
-;: Return the raw file EOF state table pointer.
-(define (io-file-eofs-ptr) : (MutPtr bool)
-  (unsafe
-    (int->ptr io-file-eofs-addr : (MutPtr bool))))
-
-;: Return the raw cached-read readiness table pointer.
-(define (io-file-last-ready-ptr) : (MutPtr bool)
-  (unsafe
-    (int->ptr io-file-last-ready-addr : (MutPtr bool))))
-
-;: Return the raw cached-read byte table pointer.
-(define (io-file-last-bytes-ptr) : (MutPtr String)
-  (unsafe
-    (int->ptr io-file-last-bytes-addr : (MutPtr String))))
-
-;: Convert a mutable byte pointer into an integer address for global storage.
-(define (io-file-ptr-addr [ptr : (MutPtr u8)]) : u64
-  (unsafe
-    (ptr->int (ptr-cast ptr : (Ptr u8)))))
-
-;: Read an i64 from a raw table at `index`.
-(define (io-file-i64-ref [items : (MutPtr i64)] [index : i64]) : i64
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr i64)))))
-
-;: Write an i64 to a raw table at `index`.
-(define (io-file-i64-set! [items : (MutPtr i64)] [index : i64] [value : i64]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset items index) value)))
-
-;: Read a bool from a raw table at `index`.
-(define (io-file-bool-ref [items : (MutPtr bool)] [index : i64]) : bool
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr bool)))))
-
-;: Write a bool to a raw table at `index`.
-(define (io-file-bool-set! [items : (MutPtr bool)] [index : i64] [value : bool]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset items index) value)))
-
-;: Read a String from a raw table at `index`.
-(define (io-file-string-ref [items : (MutPtr String)] [index : i64]) : String
-  (unsafe
-    (ptr-read (ptr-cast (ptr-offset items index) : (Ptr String)))))
-
-;: Write a String to a raw table at `index`.
-(define (io-file-string-set!
-  [items : (MutPtr String)]
-  [index : i64]
-  [value : String]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset items index) value)))
-
-;: Clear all per-handle table state for a closed or reusable handle slot.
-(define (io-file-handle-clear! [handle : i64]) : unit
-  (begin
-    (io-file-i64-set! (io-file-fds-ptr) handle 0)
-    (io-file-i64-set! (io-file-modes-ptr) handle 0)
-    (io-file-i64-set! (io-file-states-ptr) handle 0)
-    (io-file-bool-set! (io-file-eofs-ptr) handle false)
-    (io-file-bool-set! (io-file-last-ready-ptr) handle false)
-    (io-file-string-set! (io-file-last-bytes-ptr) handle "")
-    unit))
-
-;: Return the first currently closed file-handle slot at or after `start`.
-(define (io-file-find-free-handle-from [start : i64]) : i64
-  (let
-    [i : i64 start]
-    (begin
-      (while (< i io-file-handle-cap)
-        (begin
-          (when
-            (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-states-ptr) i) 0)
-            (return i))
-          (set! i (+ i 1))))
-      -1)))
-
-;: Reserve a stdlib file-handle slot, reusing closed slots before failing.
-(define (io-file-alloc-handle!) : i64
-  (begin
-    (io-file-table-init!)
-    (let
-      [handle : i64 (io-file-find-free-handle-from io-file-handle-next)]
-      [fallback : i64
-        (if (< handle 0)
-          (io-file-find-free-handle-from 1)
-          handle)]
-      (if (< fallback 0)
-        -1
-        (begin
-          (set! io-file-handle-next (+ fallback 1))
-          (if (>= io-file-handle-next io-file-handle-cap)
-            (set! io-file-handle-next 1)
-            unit)
-          fallback)))))
-
-;; #2357: the table pointers are stored as raw integer addresses the region
-;; checker cannot see, and this init can fire inside a (with-arena ...) region
-;; (the batch compile driver scopes each entry). Allocate the tables in a
-;; dedicated persistent arena so a region reset cannot reclaim them; the
-;; active arena is restored before returning.
-;: Lazily allocate and zero the raw file-handle tables in a persistent arena.
-(define (io-file-table-init!) : unit
-  (if (= io-file-fds-addr (cast 0 : u64))
-    (let
-      [table-arena : i64 (io-arena-make)]
-      [prev-arena : i64 (io-arena-current)]
-      [_switched : unit (io-arena-set table-arena)]
-      [fds : (MutPtr i64)
-        (unsafe
-          (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
-      [modes : (MutPtr i64)
-        (unsafe
-          (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
-      [states : (MutPtr i64)
-        (unsafe
-          (ptr-cast (io-runtime-alloc 8192) : (MutPtr i64)))]
-      [eofs : (MutPtr bool)
-        (unsafe
-          (ptr-cast (io-runtime-alloc 1024) : (MutPtr bool)))]
-      [last-ready : (MutPtr bool)
-        (unsafe
-          (ptr-cast (io-runtime-alloc 1024) : (MutPtr bool)))]
-      [last-bytes : (MutPtr String)
-        (unsafe
-          (ptr-cast (io-runtime-alloc 16384) : (MutPtr String)))]
-      [_restored : unit (io-arena-set prev-arena)]
-      [i : i64 0]
-      (begin
-        (set!
-          io-file-fds-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast fds : (MutPtr u8)))))
-        (set!
-          io-file-modes-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast modes : (MutPtr u8)))))
-        (set!
-          io-file-states-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast states : (MutPtr u8)))))
-        (set!
-          io-file-eofs-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast eofs : (MutPtr u8)))))
-        (set!
-          io-file-last-ready-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast last-ready : (MutPtr u8)))))
-        (set!
-          io-file-last-bytes-addr
-          (io-file-ptr-addr
-            (unsafe
-              (ptr-cast last-bytes : (MutPtr u8)))))
-        (while (< i io-file-handle-cap)
-          (begin
-            (io-file-i64-set! (io-file-fds-ptr) i 0)
-            (io-file-i64-set! (io-file-modes-ptr) i 0)
-            (io-file-i64-set! (io-file-states-ptr) i 0)
-            (io-file-bool-set! (io-file-eofs-ptr) i false)
-            (io-file-bool-set! (io-file-last-ready-ptr) i false)
-            (set! i (+ i 1))))
-        unit))
-    unit))
 
 ;: Sticky EOF state for stdin chunk reads.
 (define io-stdin-eof-state : bool
@@ -1667,18 +1439,12 @@
 
 ;: Return true when `raw` names an open stdlib file handle.
 (define (io-valid-handle? [raw : i64]) : bool
-  (begin
-    (stdlib.io.io-file-table-init!)
-    (if (> raw 0)
-      (if (< raw stdlib.io.io-file-handle-cap)
-        (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-states-ptr) raw) 1)
-        false)
-      false)))
+  (io_core.io-file-valid-handle? raw))
 
 ;: Return a stdlib file handle id or negative status for opening `path`.
 (define (file-open-status [path : String] [mode : i64]) : i64
   (begin
-    (stdlib.io.io-file-table-init!)
+    (io_core.io-file-table-init!)
     (let
       [path-bytes : (Array u8) (stdlib.io.io-c-string path)]
       [fd : i64
@@ -1689,27 +1455,21 @@
       (if (< fd 0)
         (stdlib.io.io-neg-status (stdlib.io.io-last-error-code))
         (let
-          [handle : i64 (stdlib.io.io-file-alloc-handle!)]
+          [handle : i64 (io_core.io-file-alloc-handle!)]
           (if (< handle 0)
             (begin
               (stdlib.io.io-platform-close fd)
               (stdlib.io.io-neg-status 38))
             (begin
-              (stdlib.io.io-file-i64-set! (stdlib.io.io-file-fds-ptr) handle fd)
-              (stdlib.io.io-file-i64-set!
-                (stdlib.io.io-file-modes-ptr)
-                handle
-                mode)
-              (stdlib.io.io-file-i64-set!
-                (stdlib.io.io-file-states-ptr)
-                handle
-                1)
-              (stdlib.io.io-file-bool-set!
-                (stdlib.io.io-file-eofs-ptr)
+              (io_core.io-file-i64-set! (io_core.io-file-fds-ptr) handle fd)
+              (io_core.io-file-i64-set! (io_core.io-file-modes-ptr) handle mode)
+              (io_core.io-file-i64-set! (io_core.io-file-states-ptr) handle 1)
+              (io_core.io-file-bool-set!
+                (io_core.io-file-eofs-ptr)
                 handle
                 false)
-              (stdlib.io.io-file-bool-set!
-                (stdlib.io.io-file-last-ready-ptr)
+              (io_core.io-file-bool-set!
+                (io_core.io-file-last-ready-ptr)
                 handle
                 false)
               handle)))))))
@@ -1718,13 +1478,10 @@
 (define (file-close-status [raw : i64]) : i64
   (if (stdlib.io.io-valid-handle? raw)
     (let
-      [fd : i64 (stdlib.io.io-file-i64-ref (stdlib.io.io-file-fds-ptr) raw)]
+      [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
       [status : i64 (stdlib.io.io-platform-close fd)]
       (begin
-        (stdlib.io.io-file-handle-clear! raw)
-        (if (< raw io-file-handle-next)
-          (set! io-file-handle-next raw)
-          unit)
+        (io_core.io-file-release-handle! raw)
         (if (< status 0)
           (stdlib.io.io-last-error-code)
           0)))
@@ -1734,47 +1491,34 @@
 (define (file-read-chunk-status [raw : i64] [count : i64]) : i64
   (cond
     [(not (stdlib.io.io-valid-handle? raw)) 38]
-    [(not (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-modes-ptr) raw) 0))
-      38]
+    [(not (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)) 38]
     [(< count 0) 22]
     [(= count 0)
       (begin
-        (stdlib.io.io-file-string-set!
-          (stdlib.io.io-file-last-bytes-ptr)
-          raw
-          "")
-        (stdlib.io.io-file-bool-set!
-          (stdlib.io.io-file-last-ready-ptr)
-          raw
-          true)
+        (io_core.io-file-string-set! (io_core.io-file-last-bytes-ptr) raw "")
+        (io_core.io-file-bool-set! (io_core.io-file-last-ready-ptr) raw true)
         0)]
     [else
       (let
         [buf : (Array u8) (make-array u8 count)]
-        [fd : i64 (stdlib.io.io-file-i64-ref (stdlib.io.io-file-fds-ptr) raw)]
+        [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
         [read-count : i64
           (stdlib.io.io-platform-read fd (stdlib.io.io-array-ptr buf) count)]
         (if (< read-count 0)
           (stdlib.io.io-last-error-code)
           (begin
             (if (= read-count 0)
-              (stdlib.io.io-file-bool-set!
-                (stdlib.io.io-file-eofs-ptr)
-                raw
-                true)
-              (stdlib.io.io-file-bool-set!
-                (stdlib.io.io-file-eofs-ptr)
-                raw
-                false))
-            (stdlib.io.io-file-string-set!
-              (stdlib.io.io-file-last-bytes-ptr)
+              (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw true)
+              (io_core.io-file-bool-set! (io_core.io-file-eofs-ptr) raw false))
+            (io_core.io-file-string-set!
+              (io_core.io-file-last-bytes-ptr)
               raw
               (unsafe
                 (string-from-bytes
                   (stdlib.io.io-array-const-ptr buf)
                   read-count)))
-            (stdlib.io.io-file-bool-set!
-              (stdlib.io.io-file-last-ready-ptr)
+            (io_core.io-file-bool-set!
+              (io_core.io-file-last-ready-ptr)
               raw
               true)
             0)))]))
@@ -1783,32 +1527,32 @@
 (define (file-write-status [raw : i64] [contents : String]) : i64
   (if (not (stdlib.io.io-valid-handle? raw))
     38
-    (if (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-modes-ptr) raw) 0)
+    (if (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)
       38
       (stdlib.io.io-write-string-fd-status
-        (stdlib.io.io-file-i64-ref (stdlib.io.io-file-fds-ptr) raw)
+        (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)
         contents))))
 
 ;: Return the host status code for flushing a stdlib handle.
 (define (file-flush-status [raw : i64]) : i64
   (if (not (stdlib.io.io-valid-handle? raw))
     38
-    (if (= (stdlib.io.io-file-i64-ref (stdlib.io.io-file-modes-ptr) raw) 0)
+    (if (= (io_core.io-file-i64-ref (io_core.io-file-modes-ptr) raw) 0)
       38
       0)))
 
 ;: Return bytes from the last successful stdlib file chunk read.
 (define (file-read-chunk-bytes [raw : i64]) : String
   (if (if (stdlib.io.io-valid-handle? raw)
-    (stdlib.io.io-file-bool-ref (stdlib.io.io-file-last-ready-ptr) raw)
+    (io_core.io-file-bool-ref (io_core.io-file-last-ready-ptr) raw)
     false)
-    (stdlib.io.io-file-string-ref (stdlib.io.io-file-last-bytes-ptr) raw)
+    (io_core.io-file-string-ref (io_core.io-file-last-bytes-ptr) raw)
     ""))
 
 ;: Return the sticky EOF bit from the last successful stdlib file chunk read.
 (define (file-read-chunk-eof? [raw : i64]) : bool
   (if (stdlib.io.io-valid-handle? raw)
-    (stdlib.io.io-file-bool-ref (stdlib.io.io-file-eofs-ptr) raw)
+    (io_core.io-file-bool-ref (io_core.io-file-eofs-ptr) raw)
     true))
 
 ;: Read up to `count` bytes from stdin, continuing across positive short reads.

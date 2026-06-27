@@ -7334,6 +7334,8 @@
   0)
 (define tc-lazy-import-summary-backed-count : i64
   0)
+(define tc-lazy-import-summary-macro-force-record-count : i64
+  0)
 
 (define (tc-lazy-import-stubs-reset!) : unit
   (begin
@@ -7347,6 +7349,14 @@
 
 (define (tc-lazy-import-summary-backed-stub-count) : i64
   tc-lazy-import-summary-backed-count)
+
+(define (tc-lazy-import-summary-macro-force-count) : i64
+  tc-lazy-import-summary-macro-force-record-count)
+
+(define (tc-lazy-import-summary-macro-force-record!) : unit
+  (set!
+    tc-lazy-import-summary-macro-force-record-count
+    (+ tc-lazy-import-summary-macro-force-record-count 1)))
 
 (define (tc-lazy-import-stub-record!
   [importer-module-id : i64]
@@ -37950,6 +37960,72 @@
     target-module
     base))
 
+(define (macro-surface-decl-call-decl-in-module
+  [decl : CompilerLoadSurfaceDecl]
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (if (and
+    (string.string-eq (struct-get decl module) target-module)
+    (string.string-eq (struct-get decl name) base)
+    (match (struct-get decl kind)
+      [(CompilerLoadSurfaceMacro) true]
+      [_ false]))
+    (match (struct-get decl signature)
+      [(CompilerLoadSurfaceMacroSignature params ret body-box)
+        (begin
+          (tc-lazy-import-summary-macro-force-record!)
+          (MacroSomeDecl
+            (compiler-symbol-module-key target-module base)
+            target-module
+            params
+            ret
+            (ast-node-get body-box)))]
+      [_ (MacroNoDecl)])
+    (MacroNoDecl)))
+
+(define (macro-surface-decls-call-decl-in-module
+  [decls : CompilerLoadSurfaceDeclList]
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) (MacroNoDecl)]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (match (macro-surface-decl-call-decl-in-module decl target-module base)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (MacroSomeDecl macro-name def-module params ret body)]
+        [(MacroNoDecl)
+          (macro-surface-decls-call-decl-in-module
+            (box-get rest)
+            target-module
+            base)])]))
+
+(define (macro-surface-summaries-call-decl-in-module
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) (MacroNoDecl)]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (match (macro-surface-decls-call-decl-in-module
+        (struct-get summary decls)
+        target-module
+        base)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (MacroSomeDecl macro-name def-module params ret body)]
+        [(MacroNoDecl)
+          (macro-surface-summaries-call-decl-in-module
+            (box-get rest)
+            target-module
+            base)])]))
+
+(define (macro-surface-call-decl-in-module
+  [target-module : String]
+  [base : String]) : MacroMaybeDecl
+  (macro-surface-summaries-call-decl-in-module
+    (compiler-load-surface-summaries)
+    target-module
+    base))
+
 (define (macro-expr-uses-expr-type? [expr : AstExpr]) : bool
   (or
     (tc-expr-uses-free-name? expr "expr-type" TcStringNil)
@@ -39421,17 +39497,22 @@
                 call-expr
                 (macro-missing-macro-message name))))])]
     [(NoneI64)
-      (match (compiler-symbols-lookup-value-in-module-id
-        (tc-context-symbols ctx)
-        (intern target-module)
-        (intern base))
-        [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
-        [(NoneI64)
-          (ErrMacroCallDecl
-            (box
-              (ctfe-diagnostic-at-expr
-                call-expr
-                (macro-missing-macro-message name))))])]))
+      (match (macro-surface-call-decl-in-module target-module base)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl)
+          (match (compiler-symbols-lookup-value-in-module-id
+            (tc-context-symbols ctx)
+            (intern target-module)
+            (intern base))
+            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
+            [(NoneI64)
+              (ErrMacroCallDecl
+                (box
+                  (ctfe-diagnostic-at-expr
+                    call-expr
+                    (macro-missing-macro-message name))))])])]))
 
 (define (macro-qualified-call-decl
   [ctx : TcContext]
@@ -39522,7 +39603,12 @@
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
+    [(NoneI64)
+      (match (macro-surface-call-decl-in-module target-module lookup-name)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]))
 
 (define (macro-unqualified-imported-call-target
   [ctx : TcContext]
@@ -39659,22 +39745,27 @@
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
     [(NoneI64)
-      (match (macro-unqualified-imported-call-decl
-        ctx
-        decls
-        module
-        lookup-name
-        call-expr)
-        [(OkMacroCallDecl imported-decl)
-          (match imported-decl
-            [(MacroNoDecl)
-              (macro-prelude-call-decl
-                (tc-context-with-module ctx module)
-                decls
-                lookup-name
-                call-expr)]
-            [_ (OkMacroCallDecl imported-decl)])]
-        [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)])]))
+      (match (macro-surface-call-decl-in-module module lookup-name)
+        [(MacroSomeDecl macro-name def-module params ret body)
+          (OkMacroCallDecl
+            (MacroSomeDecl macro-name def-module params ret body))]
+        [(MacroNoDecl)
+          (match (macro-unqualified-imported-call-decl
+            ctx
+            decls
+            module
+            lookup-name
+            call-expr)
+            [(OkMacroCallDecl imported-decl)
+              (match imported-decl
+                [(MacroNoDecl)
+                  (macro-prelude-call-decl
+                    (tc-context-with-module ctx module)
+                    decls
+                    lookup-name
+                    call-expr)]
+                [_ (OkMacroCallDecl imported-decl)])]
+            [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)])])]))
 
 (define (macro-call-decl-from-name
   [ctx : TcContext]
@@ -44699,6 +44790,25 @@
         [rest : AstDeclList (box-get rest)]
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
+(define (macro-decl-might-fire-expression-macro? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclDef _ _ expr-box) (macro-expr-might-fire? (ast-node-get expr-box))]
+    [(AstDeclDefFn _ _ _ body-box _)
+      (macro-expr-might-fire? (ast-node-get body-box))]
+    [(AstDeclUnsafe inner-box)
+      (macro-decl-might-fire-expression-macro? (box-get inner-box))]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-decl-might-fire-expression-macro? (box-get template-box))]
+    [_ false]))
+
+(define (macro-program-might-fire-expression-macro? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-might-fire-expression-macro? decl)
+        (macro-program-might-fire-expression-macro? (box-get rest)))]))
+
 (define (macro-decl-has-module-placeholder? [decl : AstDecl]) : bool
   (match decl
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
@@ -44764,6 +44874,12 @@
             (match expr-type-macro-names
               [(TcStringNil) false]
               [_ true])]
+          [prescan-macro-names : TcStringList
+            (macro-collect-visible-macro-names decls)]
+          [has-visible-macro-call : bool
+            (begin
+              (set! macro-expand-macro-names prescan-macro-names)
+              (macro-program-might-fire-expression-macro? decls))]
           (begin
             ;; Reset the per-compile CTFE-env cache so a later comptime evaluation
             ;; (or the next program in a multi-program process) never reuses a stale
@@ -44790,9 +44906,13 @@
               ctfe-needs-metadata
               (or
                 has-defmacro
+                has-visible-macro-call
                 (ctfe-program-has-type-literal? decls)
                 has-expr-type-macros))
-            (if (or has-defmacro (macro-program-needs-expansion? decls))
+            (if (or
+              has-defmacro
+              has-visible-macro-call
+              (macro-program-needs-expansion? decls))
               (begin
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (build-compiler-symbols-with-paths program paths)
@@ -46728,5 +46848,6 @@
     (set! macro-expand-expr-type-macro-names (TcStringNil))
     (set! macro-expand-ctfe-env-ready false)
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))
+    (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
     (set! ctfe-needs-metadata true)))

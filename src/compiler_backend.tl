@@ -13181,7 +13181,7 @@
           slow-label
           "\n    movq 16("
           scav
-          "), %rax\n    movq %rax, "
+          "), "
           next-reg
           "\n"))
       (string-append

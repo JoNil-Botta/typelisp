@@ -13643,6 +13643,17 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-fast-alloc-next-load-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-box-source))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movq 16(%r8), %rcx\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq 16(%r8), %rax\n    movq %rax, %rcx\n")))]
+    [(ErrCompilerBackend _) false]))
+
 ;; Backend emit-shape coverage for local tuple construction/ref (#1414).
 ;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
 ;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
@@ -14300,6 +14311,7 @@
         (compiler-backend-atomic-intrinsic-shape-ok?))
       (and
         (compiler-backend-box-ok?)
+        (compiler-backend-fast-alloc-next-load-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)
     (compiler-backend-export-symbol-tests-ok?)

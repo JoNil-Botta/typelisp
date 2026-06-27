@@ -8476,6 +8476,62 @@
                 "backend: unsupported immediate spill binop"))])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+(define (compiler-backend-binop-spill-source-operand
+  [assignments : CompilerRegAssignmentList]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : String
+  (let
+    [rhs-reg : String (compiler-backend-value-scalar-register assignments rhs)]
+    (if (not (string-eq rhs-reg ""))
+      (compiler-backend-sized-reg rhs-reg ty)
+      (compiler-backend-value-stack-address assignments rhs))))
+
+(define (compiler-backend-emit-binop-spill-direct-source
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [mnem : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [operand-ty : AstType]
+  [result-ty : AstType]) : ResultCompilerBackend
+  (let
+    [rhs-reg : String (compiler-backend-value-scalar-register assignments rhs)]
+    [rhs-operand : String
+      (compiler-backend-binop-spill-source-operand assignments rhs operand-ty)]
+    [exclude : (Array String)
+      (if (string-eq rhs-reg "")
+        (compiler-backend-binop-scavenge-exclude-for-op op)
+        (compiler-backend-scavenge-exclude-with rhs-reg))]
+    [exclude-n : i64 (if (string-eq rhs-reg "") 5 6)]
+    [result-reg : String
+      (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")]
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      lhs
+      result-reg)
+      [(OkCompilerBackend lhs-asm)
+        (let
+          [op-asm : String
+            (if (compiler-backend-compare-op? op)
+              (compiler-backend-binop-cmp-set-reg-asm
+                operand-ty
+                rhs-operand
+                (compiler-backend-sized-reg result-reg operand-ty)
+                (compiler-backend-compare-setcc op operand-ty)
+                result-reg)
+              (str-cat "    " mnem " " rhs-operand ", " result-reg "\n"))]
+          (OkCompilerBackend
+            (str-cat
+              lhs-asm
+              op-asm
+              (compiler-backend-emit-store-typed-var-with-plan
+                assignments
+                dst
+                result-reg
+                result-ty))))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -8571,7 +8627,20 @@
             (if (= (compiler-backend-type-size operand-ty) 8)
               (compiler-backend-binop-direct-immediate-ok? mnem op rhs operand-ty)
               false)]
-          [(CompilerBackendNoImmediate) false])
+          [(CompilerBackendNoImmediate)
+            (if (= (compiler-backend-type-size operand-ty) 8)
+              (and
+                (or
+                  (compiler-backend-compare-op? op)
+                  (not (string-eq mnem "")))
+                (not
+                  (string-eq
+                    (compiler-backend-binop-spill-source-operand
+                      assignments
+                      rhs
+                      operand-ty)
+                    "")))
+              false)])
         (or
           (compiler-backend-compare-op? op)
           (if (= (compiler-backend-type-size operand-ty) 8)
@@ -8614,7 +8683,17 @@
                 operand-ty
                 imm))]
           [(CompilerBackendNoImmediate)
-            (if (compiler-backend-compare-op? op)
+            (if (string-eq dst-home "")
+              (compiler-backend-emit-binop-spill-direct-source
+                assignments
+                dst
+                mnem
+                op
+                lhs
+                rhs
+                operand-ty
+                ty)
+              (if (compiler-backend-compare-op? op)
               (compiler-backend-emit-binop-direct-compare
                 assignments
                 dst

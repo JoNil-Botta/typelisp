@@ -202,6 +202,7 @@ random.tl
 result.tl
 result_family.tl
 runtime.tl
+serialize.tl
 set.tl
 sort.tl
 sync.tl

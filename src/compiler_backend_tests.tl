@@ -2593,11 +2593,13 @@
     (compiler-backend-indirect-c-call-reg-assignments "%rcx"))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %rcx, %r12\n")
-        (compiler-backend-string-contains? asm "    call *%r12\n")
+        (compiler-backend-string-contains? asm "    movq %rcx, %r10\n")
+        (compiler-backend-string-contains? asm "    call *%r10\n")
         (not (compiler-backend-string-contains? asm "    movq %rcx, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq %rcx, %r12\n"))
         (not (compiler-backend-string-contains? asm "    movq %rcx, %r11\n"))
         (not (compiler-backend-string-contains? asm "    call *%rax\n"))
+        (not (compiler-backend-string-contains? asm "    call *%r12\n"))
         (not (compiler-backend-string-contains? asm "    call *%r11\n"))
         (not (compiler-backend-string-contains? asm "    call *%rcx\n")))]
     [(ErrCompilerBackend _) false]))
@@ -2614,13 +2616,16 @@
         CompilerRegAssignmentNil)))
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq 16(%rbp), %r12\n")
-        (compiler-backend-string-contains? asm "    call *%r12\n")
+        (compiler-backend-string-contains? asm "    movq 16(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    call *%r10\n")
         (not
           (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n"))
         (not
+          (compiler-backend-string-contains? asm "    movq 16(%rbp), %r12\n"))
+        (not
           (compiler-backend-string-contains? asm "    movq 16(%rbp), %r11\n"))
         (not (compiler-backend-string-contains? asm "    call *%rax\n"))
+        (not (compiler-backend-string-contains? asm "    call *%r12\n"))
         (not (compiler-backend-string-contains? asm "    call *%r11\n")))]
     [(ErrCompilerBackend _) false]))
 
@@ -2699,9 +2704,11 @@
   (match (compiler-backend-indirect-c-abi-store-result-call-shape-asm target)
     [(OkCompilerBackend asm)
       (and
-        (compiler-backend-string-contains? asm "    movq %rcx, %r13\n")
-        (compiler-backend-string-contains? asm "    call *%r13\n")
+        (compiler-backend-string-contains? asm "    movq %rcx, %r10\n")
+        (compiler-backend-string-contains? asm "    call *%r10\n")
         (not (compiler-backend-string-contains? asm "    movq %rcx, %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq %rcx, %r13\n"))
+        (not (compiler-backend-string-contains? asm "    call *%r13\n"))
         (not (compiler-backend-string-contains? asm "    call *%rax\n")))]
     [(ErrCompilerBackend _) false]))
 
@@ -3198,10 +3205,11 @@
           (compiler-backend-string-contains?
             asm
             "    leaq .L_tl_fn_desc___tl_lambda_main_0(%rip), ")
-          (compiler-backend-call-or-jmp-ok? asm "*(%r11)")
+          (compiler-backend-call-or-jmp-ok? asm "*(%r10)")
           (not
-            (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))
-        (compiler-backend-string-contains? asm "    movq 8(%r11), %rdi\n")
+            (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")))
+        (compiler-backend-string-contains? asm "    movq 8(%r10), %rdi\n")
+        (not (compiler-backend-call-or-jmp-ok? asm "*(%r11)"))
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -3213,7 +3221,7 @@
       (backend-and4
         (compiler-backend-string-contains? asm "_tl_f")
         (compiler-backend-string-contains? asm "    call _tl_f")
-        (compiler-backend-call-or-jmp-ok? asm "*(%r11)")
+        (compiler-backend-call-or-jmp-ok? asm "*(%r10)")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ErrCompilerBackend _) false]))
@@ -3272,11 +3280,17 @@
           (>= (compiler-backend-alloc-call-count asm) 1)
           (>=
             (+
-              (compiler-backend-string-count asm "    call *(%r11)\n")
-              (compiler-backend-string-count asm "    jmp *(%r11)\n"))
+              (compiler-backend-string-count asm "    call *(%r10)\n")
+              (compiler-backend-string-count asm "    jmp *(%r10)\n"))
             4)
-          (not
-            (compiler-backend-string-contains? asm "    movq (%r11), %rax\n"))
+          (and
+            (not
+              (compiler-backend-string-contains? asm "    movq (%r10), %rax\n"))
+            (=
+              (+
+                (compiler-backend-string-count asm "    call *(%r11)\n")
+                (compiler-backend-string-count asm "    jmp *(%r11)\n"))
+              0))
           (not
             (compiler-backend-string-contains?
               asm
@@ -13621,10 +13635,14 @@
     (compiler-backend-indirect-tail-call-source)
     target)
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "    jmp *(%r11)\n")
-        (not (compiler-backend-string-contains? asm "    jmp *%rax\n"))
-        (not (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))]
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_step")]
+        (and
+          (compiler-backend-string-contains? body "    jmp *(%r10)\n")
+          (not (compiler-backend-string-contains? body "    jmp *%rax\n"))
+          (not (compiler-backend-string-contains? body "    jmp *(%r11)\n"))
+          (not
+            (compiler-backend-string-contains? body "    movq (%r10), %rax\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-indirect-tail-call-stack-target-ok?
@@ -13633,11 +13651,15 @@
     (compiler-backend-indirect-tail-call-stack-source)
     target)
     [(OkCompilerBackend asm)
-      (and
-        (compiler-backend-string-contains? asm "    call *(%r11)\n")
-        (not (compiler-backend-string-contains? asm "    jmp *(%r11)\n"))
-        (not (compiler-backend-string-contains? asm "    call *%rax\n"))
-        (not (compiler-backend-string-contains? asm "    movq (%r11), %rax\n")))]
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_step6")]
+        (and
+          (compiler-backend-string-contains? body "    call *(%r10)\n")
+          (not (compiler-backend-string-contains? body "    jmp *(%r10)\n"))
+          (not (compiler-backend-string-contains? body "    call *%rax\n"))
+          (not (compiler-backend-string-contains? body "    call *(%r11)\n"))
+          (not
+            (compiler-backend-string-contains? body "    movq (%r10), %rax\n"))))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-indirect-tail-call-r11-callee-asm
@@ -14026,14 +14048,15 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains?
-          asm
-          (str-cat
-            "    movq 8(%r11), "
-            (match (compiler-backend-target-arg-reg target 0)
-              [(OkBackendReg reg) reg]
-              [(ErrBackendReg _) ""])
-            "\n"))
-        (compiler-backend-string-contains? asm "    call *(%r11)\n"))]
+            asm
+            (str-cat
+              "    movq 8(%r10), "
+              (match (compiler-backend-target-arg-reg target 0)
+                [(OkBackendReg reg) reg]
+                [(ErrBackendReg _) ""])
+              "\n"))
+        (compiler-backend-string-contains? asm "    call *(%r10)\n")
+        (not (compiler-backend-string-contains? asm "    call *(%r11)\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-known-function-indirect-call-ok?) : bool
@@ -14453,7 +14476,7 @@
           (compiler-backend-string-contains? asm "__tl_dispatch_variant_avx512")
           (compiler-backend-string-contains? asm "    cpuid\n")
           (compiler-backend-string-contains? asm "    xgetbv\n")
-          (compiler-backend-string-contains? asm "    call *(%r11)\n")
+          (compiler-backend-string-contains? asm "    call *(%r10)\n")
           (compiler-backend-string-contains? asm "    vzeroupper\n")
           (compiler-backend-string-contains? asm "main:\n"))
         (not

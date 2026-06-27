@@ -21883,9 +21883,9 @@
   ;; Tail jumps restore callee-saved homes before the final jmp. Keep the closure
   ;; pointer in a pooled caller-saved non-arg candidate instead.
   (compiler-backend-scavenge-reg-here
-    (compiler-backend-c-abi-stage-exclude)
-    4
-    "%r11"))
+    (compiler-backend-c-abi-stage-exclude-with "%r11")
+    5
+    "%r10"))
 
 (define (compiler-backend-emit-indirect-call-with-arg-assignments
   [target : CompilerBackendTarget]
@@ -21961,21 +21961,12 @@
                                 result-store)
                               "")))))]
                   [_
-                    ;; Active-scavenge the closure pointer (was hardcoded %r11).
-                    ;; The closure is loaded AFTER arg marshalling and read at
-                    ;; `movq 8(clo),env` + `call *(clo)`, so it must dodge the
-                    ;; in-flight arg registers among the candidates (rdx/rcx/r8/r9)
-                    ;; -- env-reg is %rdi, not a candidate. Exclude
-                    ;; {rax,rdx,rcx,r8,r9,r10,r11}; remaining candidates are the
-                    ;; plan-saved callee-saved (free per the query, dead after the
-                    ;; call). Falls back to %r11 via the emergency tier (which
-                    ;; wraps the whole call instruction -> save/restore is sound).
+                    ;; Active-scavenge the closure pointer after arg marshalling.
+                    ;; It must dodge in-flight arg registers, but it can use the
+                    ;; pooled caller-saved non-arg target register.
                     (let
                       [scav-clo : String
-                        (compiler-backend-scavenge-reg-here
-                          (compiler-backend-scavenge-exclude-with-r8 "%r9")
-                          7
-                          "%r11")]
+                        (compiler-backend-scavenge-call-target-reg)]
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
                         func
@@ -22178,11 +22169,12 @@
 
 (define (compiler-backend-scavenge-call-target-reg) : String
   ;; Indirect call targets are materialized after argument marshalling. Do not
-  ;; reuse pooled caller-arg candidates that may already hold in-flight args.
+  ;; reuse pooled caller-arg candidates that may already hold in-flight args, and
+  ;; keep %r11 available for ABI/runtime clobber semantics instead of staging.
   (compiler-backend-scavenge-reg-here
-    (compiler-backend-scavenge-exclude-with-r8 "%r9")
-    7
-    "%r12"))
+    (compiler-backend-c-abi-stage-exclude-with "%r11")
+    5
+    "%r10"))
 
 (define (compiler-backend-emit-indirect-c-call
   [target : CompilerBackendTarget]

@@ -8179,7 +8179,9 @@
   (string-append
     (compiler-backend-shift-guard-asm ty count-reg)
     (string-append
-      (str-cat "    movq " count-reg ", %rcx\n")
+      (if (string-eq count-reg "%rcx")
+        ""
+        (str-cat "    movq " count-reg ", %rcx\n"))
       (str-cat
         "    "
         mnemonic
@@ -8494,6 +8496,71 @@
             " %cl, "
             (compiler-backend-sized-reg dst-home ty)
             "\n"))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+(define (compiler-backend-binop-shift-mnemonic
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : String
+  (match op
+    [(IrBinShl) "shl"]
+    [(IrBinShr)
+      (if (compiler-backend-type-signed? ty)
+        "sar"
+        "shr")]
+    [_ ""]))
+
+(define (compiler-backend-emit-binop-spill-direct-shift
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [operand-ty : AstType]
+  [result-ty : AstType]) : ResultCompilerBackend
+  (let
+    [lhs-home : String (compiler-backend-value-scalar-register assignments lhs)]
+    [rhs-home : String (compiler-backend-value-scalar-register assignments rhs)]
+    [rhs-in-rcx? : bool (string-eq rhs-home "%rcx")]
+    [count-reg : String
+      (if rhs-in-rcx?
+        "%rcx"
+        (compiler-backend-scavenge-reg
+          dst
+          (compiler-backend-two-exclude "%rcx" lhs-home)
+          2
+          "%r8"))]
+    [result-reg : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-two-exclude "%rcx" count-reg)
+        2
+        "%r8")]
+    (match (if rhs-in-rcx?
+      (OkCompilerBackend "")
+      (compiler-backend-emit-load-value-with-plan assignments rhs count-reg))
+      [(OkCompilerBackend rhs-asm)
+        (match (compiler-backend-emit-load-value-with-plan
+          assignments
+          lhs
+          result-reg)
+          [(OkCompilerBackend lhs-asm)
+            (OkCompilerBackend
+              (string-append
+                rhs-asm
+                (string-append
+                  lhs-asm
+                  (string-append
+                    (compiler-backend-binop-shift-asm
+                      (compiler-backend-binop-shift-mnemonic op operand-ty)
+                      operand-ty
+                      (compiler-backend-sized-reg result-reg operand-ty)
+                      count-reg)
+                    (compiler-backend-emit-store-typed-var-with-plan
+                      assignments
+                      dst
+                      result-reg
+                      result-ty)))))]
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-binop-immediate-reg-asm
@@ -9452,7 +9519,9 @@
               (and
                 (or
                   (compiler-backend-compare-op? op)
-                  (not (string-eq mnem "")))
+                  (or
+                    (not (string-eq mnem ""))
+                    (compiler-backend-binop-shift-op? op)))
                 (not
                   (string-eq
                     (compiler-backend-binop-spill-source-operand
@@ -9503,15 +9572,24 @@
                 imm))]
           [(CompilerBackendNoImmediate)
             (if (string-eq dst-home "")
-              (compiler-backend-emit-binop-spill-direct-source
-                assignments
-                dst
-                mnem
-                op
-                lhs
-                rhs
-                operand-ty
-                ty)
+              (if (compiler-backend-binop-shift-op? op)
+                (compiler-backend-emit-binop-spill-direct-shift
+                  assignments
+                  dst
+                  op
+                  lhs
+                  rhs
+                  operand-ty
+                  ty)
+                (compiler-backend-emit-binop-spill-direct-source
+                  assignments
+                  dst
+                  mnem
+                  op
+                  lhs
+                  rhs
+                  operand-ty
+                  ty))
               (if (compiler-backend-compare-op? op)
                 (compiler-backend-emit-binop-direct-compare
                   assignments

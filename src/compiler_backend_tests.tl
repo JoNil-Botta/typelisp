@@ -13176,23 +13176,23 @@
           (AstTyI8)
           (AstTyU8)
           (AstTyI8)
-          "    movq %r8, %rcx\n    sarb %cl, %al\n"
-          "    sarq %cl, %rax\n")
+          "    movq %r8, %rcx\n    sarb %cl, %r9b\n"
+          "%rax")
         (compiler-backend-narrow-binop-shape?
           (IrBinShr)
           (AstTyU8)
           (AstTyU8)
           (AstTyU8)
-          "    movq %r8, %rcx\n    shrb %cl, %al\n"
-          "    sarb %cl, %al\n"))
+          "    movq %r8, %rcx\n    shrb %cl, %r9b\n"
+          "%rax"))
       (and
         (compiler-backend-narrow-binop-shape?
           (IrBinShl)
           (AstTyU8)
           (AstTyU8)
           (AstTyU8)
-          "    movq %r8, %rcx\n    shlb %cl, %al\n"
-          "    shlq %cl, %rax\n")
+          "    movq %r8, %rcx\n    shlb %cl, %r9b\n"
+          "%rax")
         (compiler-backend-narrow-binop-shape?
           (IrBinLt)
           (AstTyU8)

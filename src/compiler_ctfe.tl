@@ -3846,9 +3846,13 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool")
         "expr-bool"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-int") "expr-int"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-string")
+        "expr-string"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-var") "expr-var"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-struct-get")
         "expr-struct-get"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-struct-set")
+        "expr-struct-set"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-splice")
         "expr-splice"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
@@ -4115,6 +4119,46 @@
       (ErrCtfe
         (box (ctfe-diagnostic-at-expr expr "expr-int expects exactly one arg")))]))
 
+;; `(expr-string text)` builds a String literal Expr from a comptime string.
+(define (ctfe-eval-expr-string-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ctfe-ast-get env arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (match value
+                  [(CtfeString text)
+                    (OkCtfe
+                      (CtfeExpr
+                        (ctfe-ast-push env (AstExprLiteral (AstLitString text)))
+                        (AstTyString))
+                      arg-fuel)]
+                  [_
+                    (ErrCtfe
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "expr-string expects String")))])]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-string expects exactly one arg")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr expr "expr-string expects exactly one arg")))]))
+
 ;; `(expr-var name)` builds a variable-reference Expr from a comptime string.
 (define (ctfe-eval-expr-var-call
   [args : AstExprList]
@@ -4379,6 +4423,104 @@
           (ctfe-diagnostic-at-expr
             expr
             "expr-struct-get expects exactly two args")))]))
+
+;; `(expr-struct-set target field value)` builds a struct field assignment whose
+;; field name is computed at macro CTFE. The expanded program typechecks the
+;; assignment target and value.
+(define (ctfe-eval-expr-struct-set-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons target-arg tail0)
+      (let
+        [target-arg : AstExpr (ctfe-ast-get env target-arg)]
+        [tail0 : AstExprList (box-get tail0)]
+        (match tail0
+          [(AstExprCons field-arg tail1)
+            (let
+              [field-arg : AstExpr (ctfe-ast-get env field-arg)]
+              [tail1 : AstExprList (box-get tail1)]
+              (match tail1
+                [(AstExprCons value-arg rest)
+                  (let
+                    [value-arg : AstExpr (ctfe-ast-get env value-arg)]
+                    [rest : AstExprList (box-get rest)]
+                    (match rest
+                      [(AstExprNil)
+                        (match (compiler-ctfe-eval target-arg env fuel)
+                          [(OkCtfe target-val target-fuel)
+                            (match target-val
+                              [(CtfeExpr target-node _)
+                                (match (compiler-ctfe-eval
+                                  field-arg
+                                  env
+                                  target-fuel)
+                                  [(OkCtfe field-val field-fuel)
+                                    (match field-val
+                                      [(CtfeString field)
+                                        (match (compiler-ctfe-eval
+                                          value-arg
+                                          env
+                                          field-fuel)
+                                          [(OkCtfe value-val value-fuel)
+                                            (match value-val
+                                              [(CtfeExpr value-node _)
+                                                (OkCtfe
+                                                  (CtfeExpr
+                                                    (ast-expr-struct-set-with-pools
+                                                      (ctfe-env-pools env)
+                                                      target-node
+                                                      field
+                                                      value-node)
+                                                    (AstTyUnit))
+                                                  value-fuel)]
+                                              [_
+                                                (ErrCtfe
+                                                  (box
+                                                    (ctfe-diagnostic-at-expr
+                                                      expr
+                                                      "expr-struct-set value expects Expr")))])]
+                                          [(ErrCtfe diag) (ErrCtfe diag)])]
+                                      [_
+                                        (ErrCtfe
+                                          (box
+                                            (ctfe-diagnostic-at-expr
+                                              expr
+                                              "expr-struct-set field expects String")))])]
+                                  [(ErrCtfe diag) (ErrCtfe diag)])]
+                              [_
+                                (ErrCtfe
+                                  (box
+                                    (ctfe-diagnostic-at-expr
+                                      expr
+                                      "expr-struct-set target expects Expr")))])]
+                          [(ErrCtfe diag) (ErrCtfe diag)])]
+                      [_
+                        (ErrCtfe
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-struct-set expects exactly three args")))]))]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "expr-struct-set expects exactly three args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-struct-set expects exactly three args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "expr-struct-set expects exactly three args")))]))
 
 (define (ctfe-expr-inspector-name? [name : String]) : bool
   (or
@@ -5247,10 +5389,14 @@
             (ctfe-eval-expr-bool-call args expr env fuel)]
           [(string.string-eq call-name "expr-int")
             (ctfe-eval-expr-int-call args expr env fuel)]
+          [(string.string-eq call-name "expr-string")
+            (ctfe-eval-expr-string-call args expr env fuel)]
           [(string.string-eq call-name "expr-var")
             (ctfe-eval-expr-var-call args expr env fuel)]
           [(string.string-eq call-name "expr-struct-get")
             (ctfe-eval-expr-struct-get-call args expr env fuel)]
+          [(string.string-eq call-name "expr-struct-set")
+            (ctfe-eval-expr-struct-set-call args expr env fuel)]
           [(string.string-eq call-name "expr-splice")
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(string.string-eq call-name "expr-if")
@@ -7207,20 +7353,77 @@
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         [value : AstExpr (ctfe-ast-get env value-box)]
-        (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-inner _ inner-fuel)
-            (match (ctfe-quote-expr value env inner-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                (OkCtfeQuoteExpr
-                  (ast-expr-struct-set-id-with-pools
-                    (ctfe-env-pools env)
-                    quoted-inner
-                    field
-                    quoted-value)
-                  (AstTyExpr)
-                  value-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+        (if (= field (ast-expr-unquote-set-target-field-id))
+          (match (ctfe-expr-unspan env inner)
+            [(AstExprUnquote target-box)
+              (if quasiquote
+                (let
+                  [target : AstExpr (ctfe-ast-get env target-box)]
+                  (match (ctfe-eval-unquote-expr target inner env fuel)
+                    [(OkCtfeQuoteExpr quoted-target _ target-fuel)
+                      (match (ctfe-quote-expr value env target-fuel quasiquote)
+                        [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                          (match (ctfe-expr-unspan
+                            env
+                            (ctfe-ast-get env quoted-target))
+                            [(AstExprVar name)
+                              (OkCtfeQuoteExpr
+                                (ast-expr-set-id-with-pools
+                                  (ctfe-env-pools env)
+                                  name
+                                  quoted-value)
+                                (AstTyExpr)
+                                value-fuel)]
+                            [(AstExprStructGet receiver-box target-field)
+                              (OkCtfeQuoteExpr
+                                (ast-expr-struct-set-id-with-pools
+                                  (ctfe-env-pools env)
+                                  receiver-box
+                                  target-field
+                                  quoted-value)
+                                (AstTyExpr)
+                                value-fuel)]
+                            [(AstExprBoxGet receiver-box)
+                              (OkCtfeQuoteExpr
+                                (ast-expr-box-set-with-pools
+                                  (ctfe-env-pools env)
+                                  receiver-box
+                                  quoted-value)
+                                (AstTyExpr)
+                                value-fuel)]
+                            [_
+                              (ErrCtfeQuoteExpr
+                                (box
+                                  (ctfe-diagnostic-at-expr
+                                    inner
+                                    "quasiquote set! target must evaluate to a name, struct field place, or box place")))])]
+                        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+                    [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))
+                (ErrCtfeQuoteExpr
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      inner
+                      "unquote set! target is only valid inside quasiquote"))))]
+            [_
+              (ErrCtfeQuoteExpr
+                (box
+                  (ctfe-diagnostic-at-expr
+                    inner
+                    "internal unquote set! target must be an unquote form")))])
+          (match (ctfe-quote-expr inner env fuel quasiquote)
+            [(OkCtfeQuoteExpr quoted-inner _ inner-fuel)
+              (match (ctfe-quote-expr value env inner-fuel quasiquote)
+                [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                  (OkCtfeQuoteExpr
+                    (ast-expr-struct-set-id-with-pools
+                      (ctfe-env-pools env)
+                      quoted-inner
+                      field
+                      quoted-value)
+                    (AstTyExpr)
+                    value-fuel)]
+                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
+            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])))]
     [(AstExprTupleRef tuple-expr-box index)
       (let
         [tuple-expr : AstExpr (ctfe-ast-get env tuple-expr-box)]
@@ -10442,6 +10645,10 @@
       (ctfe-ast-push env (AstExprLiteral (AstLitString "point")))]
     [field-name-lit : i64
       (ctfe-ast-push env (AstExprLiteral (AstLitString "x")))]
+    [name-lit : i64 (ctfe-ast-push env (AstExprLiteral (AstLitString "Ada")))]
+    [name-expr : i64 (compiler-ctfe-call1-in-env env "expr-string" name-lit)]
+    [expected-name : i64
+      (ctfe-ast-push env (AstExprLiteral (AstLitString "Ada")))]
     [point-expr : i64
       (compiler-ctfe-call1-in-env env "expr-var" point-name-lit)]
     [field-expr : i64
@@ -10450,11 +10657,24 @@
         "expr-struct-get"
         point-expr
         field-name-lit)]
+    [field-set-expr : i64
+      (compiler-ctfe-call3-in-env
+        env
+        "expr-struct-set"
+        point-expr
+        field-name-lit
+        true-expr)]
     [expected-field : i64
       (ast-expr-struct-get-with-pools
         (ctfe-env-pools env)
         (ctfe-ast-push env (AstExprVar (intern "point")))
         "x")]
+    [expected-field-set : i64
+      (ast-expr-struct-set-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (AstExprVar (intern "point")))
+        "x"
+        true-lit)]
     (and
       (match (compiler-ctfe-eval
         (ctfe-ast-get env if-expr)
@@ -10469,6 +10689,18 @@
             [_ false])]
         [(ErrCtfe _) false])
       (match (compiler-ctfe-eval
+        (ctfe-ast-get env name-expr)
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyString))
+                (ctfe-test-expr-eq-in-env env node expected-name))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
         (ctfe-ast-get env field-expr)
         env
         (ctfe-fuel-limit))
@@ -10478,6 +10710,18 @@
               (and
                 (ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-field))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env field-set-expr)
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyUnit))
+                (ctfe-test-expr-eq-in-env env node expected-field-set))]
             [_ false])]
         [(ErrCtfe _) false]))))
 
@@ -10590,9 +10834,32 @@
             (ast-expr-cons
               (ast-expr-unquote-splicing-with-pools (ctfe-env-pools env) xs-var)
               AstExprNil))))]
+    [record-var : i64 (ctfe-ast-push env (AstExprVar (intern "record")))]
+    [field-place : i64
+      (ast-expr-struct-get-id-with-pools
+        (ctfe-env-pools env)
+        record-var
+        (intern "field"))]
+    [set-target-var : i64 (ctfe-ast-push env (AstExprVar (intern "target")))]
+    [set-env : CtfeEnv
+      (ctfe-env-extend env "target" (CtfeExpr field-place (AstTyExpr)))]
+    [qq-set : i64
+      (ast-expr-quasiquote-with-pools
+        (ctfe-env-pools set-env)
+        (ast-expr-struct-set-id-with-pools
+          (ctfe-env-pools set-env)
+          (ast-expr-unquote-with-pools (ctfe-env-pools set-env) set-target-var)
+          (ast-expr-unquote-set-target-field-id)
+          true-lit))]
     [expected-if : i64
       (ast-expr-if-with-pools (ctfe-env-pools env) flag-var true-lit false-lit)]
     [expected-begin : i64 (ctfe-ast-push env (AstExprBegin spliced))]
+    [expected-set : i64
+      (ast-expr-struct-set-id-with-pools
+        (ctfe-env-pools set-env)
+        record-var
+        (intern "field")
+        true-lit)]
     (and
       (match (compiler-ctfe-eval
         (ctfe-ast-get env quoted-bool)
@@ -10623,6 +10890,16 @@
           (match value
             [(CtfeExpr node _)
               (ctfe-test-expr-eq-in-env env node expected-begin)]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get set-env qq-set)
+        set-env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node _)
+              (ctfe-test-expr-eq-in-env set-env node expected-set)]
             [_ false])]
         [(ErrCtfe _) false]))))
 

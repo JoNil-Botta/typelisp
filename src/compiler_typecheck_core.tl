@@ -4838,10 +4838,14 @@
       (set! out (tc-bind out "int->string" (tc-fn1 (AstTyI64) (AstTyString))))
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
+      (set! out (tc-bind out "expr-string" (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
       (set!
         out
         (tc-bind out "expr-struct-get" (tc-fn2 expr (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind out "expr-struct-set" (tc-fn3 expr (AstTyString) expr expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
@@ -7566,8 +7570,10 @@
   (or
     (string.string-eq name "expr-bool")
     (string.string-eq name "expr-int")
+    (string.string-eq name "expr-string")
     (string.string-eq name "expr-var")
     (string.string-eq name "expr-struct-get")
+    (string.string-eq name "expr-struct-set")
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
     (string.string-eq name "expr-type")
@@ -7805,6 +7811,15 @@
       (if (tc-current-module-enum? ctx name)
         (ast-ty-enum-args (intern name) lifetimes)
         (tc-resolved-nominal-type-with-args name handle lifetimes))]))
+
+(define (tc-qualified-lookup-owner-name
+  [lookup-name : String]
+  [owner-name : String]) : String
+  (if (and
+    (or (tc-name-qualified? lookup-name) (>= (tc-name-first-dot lookup-name) 0))
+    (not (tc-name-qualified? owner-name)))
+    lookup-name
+    owner-name))
 
 (define tc-nominal-owner-cache-handle : i64
   0)
@@ -8121,6 +8136,28 @@
                 handle
                 (compiler-symbol-handle-index handle))])])]))
 
+(define (tc-nominal-owner-name-at-index [ctx : TcContext] [index : i64]) : ResultTcString
+  (match (compiler-symbols-owner-name-at-index (tc-context-symbols ctx) index)
+    [(CompilerSomeString name) (OkTcString name)]
+    [(CompilerNoString)
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box)
+          (tc-nominal-owner-name-list (box-get decls-box) index 0 "")])]))
+
+(define (tc-context-with-owner-name-module
+  [ctx : TcContext]
+  [owner-name : String]) : TcContext
+  (if (tc-name-qualified? owner-name)
+    (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+    (tc-context-with-module ctx "")))
+
+(define (tc-context-with-nominal-owner-index-module
+  [ctx : TcContext]
+  [index : i64]) : TcContext
+  (match (tc-nominal-owner-name-at-index ctx index)
+    [(OkTcString owner-name) (tc-context-with-owner-name-module ctx owner-name)]
+    [(ErrTcString _) ctx]))
+
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
     [(TcContext _ symbols _ module _)
@@ -8152,7 +8189,11 @@
                   (match (tc-stdlib-comptime-syntax-type canonical-name)
                     [(AstSomeType syntax-ty) syntax-ty]
                     [(AstNoType)
-                      (tc-resolved-nominal-type canonical-name handle)])]
+                      (tc-resolved-nominal-type
+                        (tc-qualified-lookup-owner-name
+                          lookup-name
+                          canonical-name)
+                        handle)])]
                 [(ErrTcString _)
                   (match (tc-stdlib-comptime-syntax-type lookup-name)
                     [(AstSomeType syntax-ty) syntax-ty]
@@ -8238,7 +8279,9 @@
                     [(AstSomeType syntax-ty) syntax-ty]
                     [(AstNoType)
                       (tc-resolved-nominal-type-with-args
-                        canonical-name
+                        (tc-qualified-lookup-owner-name
+                          lookup-name
+                          canonical-name)
                         handle
                         lifetimes)])]
                 [(ErrTcString _)
@@ -24251,11 +24294,16 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type-indexed
-        (tc-context-symbols ctx)
-        handle)
-        [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
-        [(ErrAstType message) (ErrTcType message)])]
+      (let
+        [field-ctx : TcContext
+          (tc-context-with-nominal-owner-index-module
+            ctx
+            (compiler-registry-handle-owner-index handle))]
+        (match (compiler-registries-struct-field-type-indexed
+          (tc-context-symbols ctx)
+          handle)
+          [(OkAstType ty) (OkTcType (tc-resolve-type field-ctx ty))]
+          [(ErrAstType message) (ErrTcType message)]))]
     [(NoneI64)
       (ErrTcType
         (string.string-append
@@ -24281,15 +24329,24 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type
-        (tc-context-program ctx)
-        handle)
-        [(OkAstType ty)
-          (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
-            [(OkTcLifetimeSubst subst)
-              (OkTcType (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
-            [(ErrTcLifetimeSubst message) (ErrTcType message)])]
-        [(ErrAstType message) (ErrTcType message)])]
+      (let
+        [field-ctx : TcContext
+          (tc-context-with-nominal-owner-index-module
+            ctx
+            (compiler-registry-handle-owner-index handle))]
+        (match (compiler-registries-struct-field-type
+          (tc-context-program ctx)
+          handle)
+          [(OkAstType ty)
+            (match (tc-lifetime-subst-from-nominal-args
+              field-ctx
+              struct-name
+              lifetimes)
+              [(OkTcLifetimeSubst subst)
+                (OkTcType
+                  (tc-resolve-type field-ctx (tc-lifetime-subst-type subst ty)))]
+              [(ErrTcLifetimeSubst message) (ErrTcType message)])]
+          [(ErrAstType message) (ErrTcType message)]))]
     [(NoneI64)
       (ErrTcType
         (string.string-append
@@ -24786,6 +24843,35 @@
                 [(ErrTcEnv message) (ErrTcEnv message)]))]
           [(AstTypeNil) (ErrTcEnv "typecheck: pattern arity mismatch")]))]))
 
+(define (tc-nominal-owner-context [ctx : TcContext] [owner-name : String]) : TcContext
+  (if (tc-name-qualified? owner-name)
+    (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+    ctx))
+
+(defenum ResultTcVariantPayloadTypes
+  (OkTcVariantPayloadTypes AstTypeList)
+  (ErrTcVariantPayloadTypes String))
+
+(define (tc-variant-pattern-payload-types
+  [ctx : TcContext]
+  [enum-name : String]
+  [enum-lifetimes : AstLifetimeList]
+  [fields : AstTypeList]) : ResultTcVariantPayloadTypes
+  (let
+    [field-ctx : TcContext (tc-nominal-owner-context ctx enum-name)]
+    [resolved-fields : AstTypeList (tc-resolve-type-list field-ctx fields)]
+    (match enum-lifetimes
+      [(AstLifetimeNil) (OkTcVariantPayloadTypes resolved-fields)]
+      [_
+        (match (tc-lifetime-subst-from-nominal-args
+          field-ctx
+          enum-name
+          enum-lifetimes)
+          [(OkTcLifetimeSubst subst)
+            (OkTcVariantPayloadTypes
+              (tc-lifetime-subst-type-list subst resolved-fields))]
+          [(ErrTcLifetimeSubst message) (ErrTcVariantPayloadTypes message)])])))
+
 (define (tc-bind-variant-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -24808,34 +24894,21 @@
                 (tc-context-symbols ctx)
                 handle)
                 [(OkAstTypeList fields)
-                  (match enum-lifetimes
-                    [(AstLifetimeNil)
+                  (match (tc-variant-pattern-payload-types
+                    ctx
+                    enum-name
+                    enum-lifetimes
+                    fields)
+                    [(OkTcVariantPayloadTypes payload-fields)
                       (tc-bind-sub-pattern-list
                         ctx
                         env
                         args
                         (match payload-region
                           [(TcSomeString region)
-                            (tc-tag-type-list-region region fields)]
-                          [(TcNoString) fields]))]
-                    [_
-                      (match (tc-lifetime-subst-from-nominal-args
-                        ctx
-                        enum-name
-                        enum-lifetimes)
-                        [(OkTcLifetimeSubst subst)
-                          (let
-                            [subst-fields : AstTypeList
-                              (tc-lifetime-subst-type-list subst fields)]
-                            (tc-bind-sub-pattern-list
-                              ctx
-                              env
-                              args
-                              (match payload-region
-                                [(TcSomeString region)
-                                  (tc-tag-type-list-region region subst-fields)]
-                                [(TcNoString) subst-fields])))]
-                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                            (tc-tag-type-list-region region payload-fields)]
+                          [(TcNoString) payload-fields]))]
+                    [(ErrTcVariantPayloadTypes message) (ErrTcEnv message)])]
                 [(ErrAstTypeList message) (ErrTcEnv message)])
               (ErrTcEnv
                 (string.string-append
@@ -25206,29 +25279,19 @@
                 (tc-context-symbols ctx)
                 handle)
                 [(OkAstTypeList fields)
-                  (match enum-lifetimes
-                    [(AstLifetimeNil)
+                  (match (tc-variant-pattern-payload-types
+                    ctx
+                    enum-name
+                    enum-lifetimes
+                    fields)
+                    [(OkTcVariantPayloadTypes payload-fields)
                       (tc-bind-borrowed-sub-pattern-list
                         ctx
                         env
                         lifetime
                         args
-                        (tc-resolve-type-list ctx fields))]
-                    [_
-                      (match (tc-lifetime-subst-from-nominal-args
-                        ctx
-                        enum-name
-                        enum-lifetimes)
-                        [(OkTcLifetimeSubst subst)
-                          (tc-bind-borrowed-sub-pattern-list
-                            ctx
-                            env
-                            lifetime
-                            args
-                            (tc-resolve-type-list
-                              ctx
-                              (tc-lifetime-subst-type-list subst fields)))]
-                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                        payload-fields)]
+                    [(ErrTcVariantPayloadTypes message) (ErrTcEnv message)])]
                 [(ErrAstTypeList message) (ErrTcEnv message)])
               (ErrTcEnv
                 (string.string-append
@@ -27065,7 +27128,8 @@
   [struct-ty : AstType]
   [fields : AstFieldDefList]) : AstTypeList
   (let
-    [field-types : AstTypeList (tc-field-type-list ctx fields)]
+    [field-types : AstTypeList
+      (tc-resolve-type-list ctx (tc-field-type-list ctx fields))]
     (match struct-ty
       [(AstTyStructArgs _ lifetimes)
         (match (tc-lifetime-subst-from-nominal-args
@@ -27090,22 +27154,26 @@
   [enum-name : String]
   [enum-ty : AstType]
   [fields : AstTypeList]) : AstTypeList
-  (match enum-ty
-    [(AstTyEnumArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args
-        ctx
-        enum-name
-        (box-get lifetimes))
-        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
-        [(ErrTcLifetimeSubst _) fields])]
-    [(AstTyVarArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args
-        ctx
-        enum-name
-        (box-get lifetimes))
-        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
-        [(ErrTcLifetimeSubst _) fields])]
-    [_ fields]))
+  (let
+    [field-types : AstTypeList (tc-resolve-type-list ctx fields)]
+    (match enum-ty
+      [(AstTyEnumArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          enum-name
+          (box-get lifetimes))
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [(AstTyVarArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          enum-name
+          (box-get lifetimes))
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [_ field-types])))
 
 (define (tc-context-with-nominal-owner-module
   [ctx : TcContext]
@@ -27113,6 +27181,23 @@
   (if (tc-name-qualified? nominal-name)
     (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
     ctx))
+
+(define (tc-context-with-nominal-owner-handle-module
+  [ctx : TcContext]
+  [handle : i64]) : TcContext
+  (match (tc-nominal-owner-name ctx handle)
+    [(OkTcString owner-name)
+      (if (tc-name-qualified? owner-name)
+        (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+        (tc-context-with-module ctx ""))]
+    [(ErrTcString _) ctx]))
+
+(define (tc-init-nominal-field-context
+  [ctx : TcContext]
+  [nominal-name : String]) : TcContext
+  (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
+    [(SomeI64 handle) (tc-context-with-nominal-owner-handle-module ctx handle)]
+    [(NoneI64) (tc-context-with-nominal-owner-module ctx nominal-name)]))
 
 (define (tc-init-struct-supported
   [ctx : TcContext]
@@ -27125,7 +27210,7 @@
         [(TcStructDecl repr cleanup fields)
           (let
             [field-ctx : TcContext
-              (tc-context-with-nominal-owner-module ctx struct-name)]
+              (tc-init-nominal-field-context ctx struct-name)]
             (if (ast-struct-repr-c? repr)
               (ErrTcUnit "typecheck: init supports only default-layout structs")
               (if (ast-struct-cleanup? cleanup)
@@ -27149,7 +27234,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultTcUnit
   (let
-    [field-ctx : TcContext (tc-context-with-nominal-owner-module ctx enum-name)]
+    [field-ctx : TcContext (tc-init-nominal-field-context ctx enum-name)]
     (match (tc-enum-decl ctx enum-name)
       [(OkTcEnumDecl decl)
         (match decl
@@ -28822,8 +28907,10 @@
       [(string.string-eq call-name "int->string") true]
       [(string.string-eq call-name "expr-bool") true]
       [(string.string-eq call-name "expr-int") true]
+      [(string.string-eq call-name "expr-string") true]
       [(string.string-eq call-name "expr-var") true]
       [(string.string-eq call-name "expr-struct-get") true]
+      [(string.string-eq call-name "expr-struct-set") true]
       [(string.string-eq call-name "expr-splice") true]
       [(string.string-eq call-name "expr-if") true]
       [(string.string-eq call-name "expr-type") true]
@@ -35949,6 +36036,16 @@
     (tc-hygiene-template-base name)
     name))
 
+(define (macro-output-source-name [name : String]) : String
+  (let
+    [source-name : String
+      (if (tc-hygiene-template-name? name)
+        (tc-hygiene-template-base name)
+        (tc-hygiene-global-symbol-name name))]
+    (if (tc-source-slash-qualified? source-name)
+      (tc-name-slashes-to-dots source-name)
+      source-name)))
+
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
     [cursor : AstDeclList items]
@@ -36035,12 +36132,14 @@
     [(OkCtfe value next-fuel)
       (match value
         [(CtfeString text) (OkGenKey (spec-string-key text) next-fuel)]
+        [(CtfeI64 n)
+          (OkGenKey (str_cat.str-cat "i64:" (string.int->string n)) next-fuel)]
         [_
           (ErrGenKey
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                "typecheck: Module macro identity key expression must evaluate to String")))])]
+                "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
     [(ErrCtfe diag) (ErrGenKey diag)]))
 
 (define (macro-identity-key-string-exprs
@@ -36484,6 +36583,40 @@
                 (macro-decl-list-structural-eq? a-rest b-rest)))]
           [_ false]))]))
 
+(define (macro-generated-key-body-for-compare
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [decl-path : String]
+  [identity : String]
+  [body : AstDeclList]
+  [fuel : i64]) : AstDeclList
+  (if (<= fuel 0)
+    (macro-decls-filter-generated-key body identity)
+    (match (macro-expand-decls
+      ctx
+      top-env
+      orig-decls
+      body
+      (macro-paths-for-decls body decl-path)
+      target-module
+      false)
+      [(OkMacroDeclsWithPaths expanded _ needs-followup?)
+        (if needs-followup?
+          (macro-generated-key-body-for-compare
+            ctx
+            top-env
+            orig-decls
+            target-module
+            decl-path
+            identity
+            expanded
+            (- fuel 1))
+          (macro-decls-filter-generated-key expanded identity))]
+      [(ErrMacroDeclsWithPaths _)
+        (macro-decls-filter-generated-key body identity)])))
+
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
     [(AstDeclNil) false]
@@ -36741,7 +36874,8 @@
           (intern-str name)
           AstLifetimeNil
           span))]
-    [(AstTyVar name) (OkMacroSexpr (SpSSym (intern-str name) span))]
+    [(AstTyVar name)
+      (OkMacroSexpr (SpSSym (macro-output-source-name (intern-str name)) span))]
     [(AstTyStructArgs name lifetimes)
       (OkMacroSexpr
         (macro-resolved-nominal-type-sexpr
@@ -36757,7 +36891,10 @@
           (box-get lifetimes)
           span))]
     [(AstTyVarArgs name lifetimes)
-      (macro-type-named-args-sexpr (intern-str name) (box-get lifetimes) span)]
+      (macro-type-named-args-sexpr
+        (macro-output-source-name (intern-str name))
+        (box-get lifetimes)
+        span)]
     [(AstTyRef region inner)
       (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
         [(OkMacroSexpr sinner)
@@ -40434,7 +40571,7 @@
         (ast-expr-spanned (macro-generated-type-param-expr env inner) span))]
     [(AstExprVar name)
       (let
-        [lookup-name : String (macro-output-syntax-name (intern-str name))]
+        [lookup-name : String (macro-output-source-name (intern-str name))]
         (match (ctfe-env-lookup env lookup-name)
           [(CtfeSomeValue value)
             (match value
@@ -40448,7 +40585,7 @@
 (define (macro-generated-call-func-for-lookup [expr : AstExpr]) : AstExpr
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (AstExprVar (intern (macro-output-syntax-name (intern-str name))))]
+      (AstExprVar (intern (macro-output-source-name (intern-str name))))]
     [_ expr]))
 
 (define (macro-generated-import-type-arg
@@ -42590,46 +42727,49 @@
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [decl : AstDecl]) : ResultMacroDecl
-  (let
-    [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
-    (match decl
-      [(AstDeclDef name maybe-ty expr-box)
-        (let
-          [expr : AstExpr (ast-node-get expr-box)]
-          (match (macro-expand-expr ctx global-env decls 0 expr)
-            [(OkMacroExpr nexpr)
-              (OkMacroDecl (ast-decl-def-id name maybe-ty nexpr))]
-            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclDefFn name params ret body-box export)
-        (let
-          [body : AstExpr (ast-node-get body-box)]
-          (match (macro-expand-expr
-            ctx
-            (tc-bind-return-type
-              (tc-bind-params ctx global-env params)
-              (tc-resolve-type ctx ret))
-            decls
-            0
-            body)
-            [(OkMacroExpr nbody)
-              (OkMacroDecl
-                (ast-decl-def-fn-export-id name params ret nbody export))]
-            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclTest _ _ _) (OkMacroDecl decl)]
-      [(AstDeclImport (AstImportSpec kind _ _ _ _))
-        (match kind
-          [(AstImportMacro call-id _)
-            (macro-expand-module-call-position ctx decls call-id true)]
-          [(AstImportMacroDecls call-id _)
-            (macro-expand-module-call-position ctx decls call-id false)]
-          [_ (OkMacroDecl decl)])]
-      [(AstDeclUnsafe inner-box)
-        (let
-          [inner : AstDecl (box-get inner-box)]
-          (match (macro-expand-decl ctx top-env decls inner)
-            [(OkMacroDecl ninner) (OkMacroDecl (ast-decl-unsafe ninner))]
-            [(ErrMacroDecl diag) (ErrMacroDecl diag)]))]
-      [_ (OkMacroDecl decl)])))
+  (match (tc-hygiene-definition-env ctx (tc-context-module ctx))
+    [(OkTcEnv definition-env)
+      (let
+        [global-env : TcTypeEnv (tc-hygiene-global-env definition-env)]
+        (match decl
+          [(AstDeclDef name maybe-ty expr-box)
+            (let
+              [expr : AstExpr (ast-node-get expr-box)]
+              (match (macro-expand-expr ctx global-env decls 0 expr)
+                [(OkMacroExpr nexpr)
+                  (OkMacroDecl (ast-decl-def-id name maybe-ty nexpr))]
+                [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+          [(AstDeclDefFn name params ret body-box export)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              (match (macro-expand-expr
+                ctx
+                (tc-bind-return-type
+                  (tc-bind-params ctx global-env params)
+                  (tc-resolve-type ctx ret))
+                decls
+                0
+                body)
+                [(OkMacroExpr nbody)
+                  (OkMacroDecl
+                    (ast-decl-def-fn-export-id name params ret nbody export))]
+                [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+          [(AstDeclTest _ _ _) (OkMacroDecl decl)]
+          [(AstDeclImport (AstImportSpec kind _ _ _ _))
+            (match kind
+              [(AstImportMacro call-id _)
+                (macro-expand-module-call-position ctx decls call-id true)]
+              [(AstImportMacroDecls call-id _)
+                (macro-expand-module-call-position ctx decls call-id false)]
+              [_ (OkMacroDecl decl)])]
+          [(AstDeclUnsafe inner-box)
+            (let
+              [inner : AstDecl (box-get inner-box)]
+              (match (macro-expand-decl ctx top-env decls inner)
+                [(OkMacroDecl ninner) (OkMacroDecl (ast-decl-unsafe ninner))]
+                [(ErrMacroDecl diag) (ErrMacroDecl diag)]))]
+          [_ (OkMacroDecl decl)]))]
+    [(ErrTcEnv message) (ErrMacroDecl (box (tc-diag-at-start message)))]))
 
 (define (macro-single-decl-expansion [decl : AstDecl] [path : String]) : ResultMacroDeclExpansion
   (OkMacroDeclExpansion
@@ -42683,6 +42823,8 @@
       " has incompatible payload")))
 
 (define (macro-expand-module-materialized
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [module : String]
   [target-module : String]
@@ -42709,10 +42851,34 @@
             ;: generated identity. Other identities may share the same module.
             [generated-key-body : AstDeclList
               (macro-decls-filter-generated-key generated-body identity)]
-            [same-body? : bool
-              (macro-decl-list-structural-eq?
+            [compare-existing-body : AstDeclList
+              (macro-generated-key-body-for-compare
+                ctx
+                top-env
+                orig-decls
+                target-module
+                decl-path
+                identity
                 same-identity-body
-                generated-key-body)]
+                (macro-expand-fixed-point-limit))]
+            [compare-generated-body : AstDeclList
+              (macro-generated-key-body-for-compare
+                ctx
+                top-env
+                orig-decls
+                target-module
+                decl-path
+                identity
+                generated-key-body
+                (macro-expand-fixed-point-limit))]
+            [same-body? : bool
+              (or
+                (macro-decl-list-structural-eq?
+                  same-identity-body
+                  generated-key-body)
+                (macro-decl-list-structural-eq?
+                  compare-existing-body
+                  compare-generated-body))]
             (if same-body?
               (match (macro-check-generated-import-collisions
                 orig-decls
@@ -42781,6 +42947,8 @@
               (box (macro-generated-import-diag span message)))])])))
 
 (define (macro-expand-module-generated-decls
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [module : String]
   [alias : AstMaybeImportAlias]
@@ -42809,6 +42977,8 @@
             (match first
               [(AstDeclModule target-module-id)
                 (macro-expand-module-materialized
+                  ctx
+                  top-env
                   orig-decls
                   module
                   (intern-str target-module-id)
@@ -43065,6 +43235,8 @@
                                       parse-dispatch)
                                       [(OkMacroParsedDecls generated)
                                         (macro-expand-module-generated-decls
+                                          ctx
+                                          top-env
                                           orig-decls
                                           module
                                           alias

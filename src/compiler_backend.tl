@@ -23030,21 +23030,29 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
-  (with-scratch
-    (compiler-backend-emit-function
-      target
-      mode
-      func
-      all-functions
-      globals
-      global-types
-      externs
-      plan
-      program-index
-      spans
-      span-index
-      emit-entry
-      crt-entry)))
+  (let
+    ;; The symbol cache stores generated strings. Per-function emission runs in
+    ;; a scratch arena, so cached values must not survive across functions.
+    [_cache-before : unit (compiler-backend-user-symbol-cache-reset!)]
+    [result : ResultCompilerBackend
+      (with-scratch
+        (compiler-backend-emit-function
+          target
+          mode
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry))]
+    (begin
+      (compiler-backend-user-symbol-cache-reset!)
+      result)))
 
 ;; Keep the direct path available for A/B experiments by raising
 ;; `compiler-backend-direct-emit-instr-limit`; normal builds route emitted

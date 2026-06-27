@@ -7978,8 +7978,8 @@
 
 ;; 64-bit accumulate-in-place mnemonic for the arithmetic/bitwise binops whose
 ;; result can be computed directly in the destination register (dst = lhs <op>
-;; rhs via "<op>q src, dst"). Comparisons, div/mod and shifts are excluded (they
-;; need %rax/%rdx/%rcx or setcc) and return "".
+;; rhs via "<op>q src, dst"). Comparisons, div/mod and variable shifts are
+;; excluded (they need %rax/%rdx/%rcx or setcc) and return "".
 (define (compiler-backend-binop-direct-mnemonic [op : CompilerIrBinOp]) : String
   (match op
     [(IrBinAdd) "addq"]
@@ -7991,6 +7991,25 @@
     [(IrBinBitOr) "orq"]
     [(IrBinBitXor) "xorq"]
     [_ ""]))
+
+(define (compiler-backend-binop-shift-op? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinShl) true]
+    [(IrBinShr) true]
+    [_ false]))
+
+(define (compiler-backend-binop-valid-immediate-shift?
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
+  (if (compiler-backend-binop-shift-op? op)
+    (match (compiler-backend-immediate-operand rhs)
+      [(CompilerBackendSomeImmediate imm)
+        (compiler-backend-shift-count-valid?
+          (string->int (substring imm 1 (- (string-length imm) 1)))
+          ty)]
+      [(CompilerBackendNoImmediate) false])
+    false))
 
 ;; #2386 (roadmap #1): the scalar register home of a value if it is a var the
 ;; allocator placed in a single GP register, else "". Used by the direct binop
@@ -8255,7 +8274,9 @@
         (or
           (compiler-backend-compare-op? op)
           (if (= (compiler-backend-type-size operand-ty) 8)
-            (not (string-eq mnem ""))
+            (or
+              (not (string-eq mnem ""))
+              (compiler-backend-binop-valid-immediate-shift? op rhs operand-ty))
             false)))
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
         ;; #2386 (roadmap #1): if rhs already lives in a register distinct from

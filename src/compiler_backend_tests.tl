@@ -10095,6 +10095,53 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-immediate-shift-asm
+  [op : CompilerIrBinOp]
+  [ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 ty)
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 ty)
+        CompilerRegVarTypeNil))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r15"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r12"))
+        CompilerRegAssignmentNil))
+    1
+    op
+    (IrValueVar 0)
+    (IrValueI64 3)
+    ty))
+
+(define (compiler-backend-direct-immediate-shift-home-ok?) : bool
+  (match (compiler-backend-direct-immediate-shift-asm
+    (IrBinShl)
+    (AstTyI64))
+    [(OkCompilerBackend shl-asm)
+      (match (compiler-backend-direct-immediate-shift-asm
+        (IrBinShr)
+        (AstTyI64))
+        [(OkCompilerBackend shr-asm)
+          (and
+            (backend-and4
+              (compiler-backend-string-contains?
+                shl-asm
+                "    movq %r15, %r12\n")
+              (compiler-backend-string-contains? shl-asm "    shlq $3, %r12\n")
+              (compiler-backend-string-contains?
+                shr-asm
+                "    movq %r15, %r12\n")
+              (compiler-backend-string-contains? shr-asm "    sarq $3, %r12\n"))
+            (not (compiler-backend-string-contains? shl-asm "%rax"))
+            (not (compiler-backend-string-contains? shr-asm "%rax"))
+            (not (compiler-backend-string-contains? shl-asm "%rcx"))
+            (not (compiler-backend-string-contains? shr-asm "%rcx")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -12333,7 +12380,8 @@
         (compiler-backend-scalar-wide-ops-ok?)
         (compiler-backend-bit-and-low-mask-immediate-ok?)
         (compiler-backend-bit-and-low-mask-direct-ok?)
-        (compiler-backend-direct-compare-home-ok?))
+        (compiler-backend-direct-compare-home-ok?)
+        (compiler-backend-direct-immediate-shift-home-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

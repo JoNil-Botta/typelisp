@@ -12034,13 +12034,11 @@
         [addr : String (compiler-backend-base-address disp base-reg)]
         (OkCompilerBackend
           (if (compiler-backend-float-type? load-ty)
-            (string-append
-              (compiler-backend-emit-load-float-memory addr "%xmm0" load-ty)
-              (compiler-backend-emit-store-float-var-with-plan
-                assignments
-                dst
-                "%xmm0"
-                load-ty))
+            (compiler-backend-emit-load-float-address-to-var
+              assignments
+              dst
+              addr
+              load-ty)
             (let
               [dst-home : String
                 (compiler-backend-var-register-home assignments dst)]

@@ -8865,6 +8865,29 @@
           (compiler-backend-string-contains? asm "    movq -40(%rbp), %r10\n")))]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-gep-float-load-r10-reuse-shape-ok?) : bool
+  (match (compiler-backend-emit-test-instrs
+    (compiler-ir-instr-cons
+      (IrInstrGep 2 (IrValueVar 0) (IrValueI64 0) (AstTyU64))
+      (compiler-ir-instr-cons
+        (IrInstrLoad 3 (IrValueVar 2) (AstTyF64))
+        (compiler-ir-instr-cons
+          (IrInstrGep 4 (IrValueVar 0) (IrValueI64 1) (AstTyU64))
+          (compiler-ir-instr-cons
+            (IrInstrLoad 5 (IrValueVar 4) (AstTyF64))
+            IrInstrNil))))
+    CompilerRegAssignmentNil
+    7)
+    [(OkCompilerBackend asm)
+      (and
+        (= (compiler-backend-string-count asm "    movq -8(%rbp), %r10\n") 1)
+        (compiler-backend-string-contains? asm "    movsd (%r10), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movsd 8(%r10), %xmm2\n")
+        (not (compiler-backend-string-contains? asm "%xmm0"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -40(%rbp), %r10\n")))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-gep-load-compare-priority-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
     (compiler-ir-instr-cons
@@ -9125,6 +9148,7 @@
       (compiler-backend-gep-copy-bytes-const-shape-ok?)
       (compiler-backend-gep-copy-bytes-index-shape-ok?)
       (compiler-backend-gep-load-r10-reuse-shape-ok?)
+      (compiler-backend-gep-float-load-r10-reuse-shape-ok?)
       (compiler-backend-load-load-pointer-chase-shape-ok?)
       (compiler-backend-store-ptr-pair-shape-ok?)
       (compiler-backend-store-home-base-shape-ok?))

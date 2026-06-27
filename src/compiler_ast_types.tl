@@ -2237,6 +2237,9 @@
 (define (ast-expr-struct-set-id [target : i64] [field : i64] [value : i64]) : i64
   (ast-node-push (AstExprStructSet target field value)))
 
+(define (ast-expr-unquote-set-target-field-id) : i64
+  (intern "__tl_unquote_set_target"))
+
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExprWithEscape escape body)))
 

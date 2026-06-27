@@ -80,6 +80,12 @@
           "-value"))]
     [_ (comptime.expr-int 0)]))
 
+(defmacro (stdlib-comptime-derived-string [prefix : comptime.Expr]) : String
+  (match prefix
+    [(comptime.ExprVar base)
+      (comptime.expr-string (comptime.string-append base "-literal"))]
+    [_ (comptime.expr-string "")]))
+
 (defmacro (stdlib-comptime-string-helper-total [prefix : comptime.Expr]) : i64
   (match prefix
     [(ExprVar base)
@@ -147,6 +153,11 @@
       stdlib-comptime-derived0-value
       (stdlib-comptime-derived-name stdlib-comptime-derived))))
 
+(define (stdlib-comptime-derived-string-shape) : bool
+  (string.string-eq
+    (stdlib-comptime-derived-string stdlib-comptime-derived)
+    "stdlib-comptime-derived-literal"))
+
 (define (stdlib-comptime-legacy-string-helper-shape) : i64
   (stdlib-comptime-string-helper-total stdlib-comptime-derived))
 
@@ -210,6 +221,14 @@
 (test
   comptime-qualified-string-helper-shape
   (if (= (stdlib-comptime-qualified-string-helper-shape) 84)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-derived-string-shape
+  (if (stdlib-comptime-derived-string-shape)
     unit
     (begin
       (/ 1 0)

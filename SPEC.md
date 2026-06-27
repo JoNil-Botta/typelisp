@@ -845,6 +845,11 @@ receives an `ExprClauseList`. For `ExprBindingClause ...`, every remaining
 operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
 
+Macro bodies can build expression literals with `expr-bool`, `expr-int`,
+`expr-string`, and `expr-var`; `expr-struct-get` builds a field access whose
+field token is computed during macro CTFE, and `expr-struct-set` builds the
+matching field assignment expression.
+
 Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
 `expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
 They can inspect clause captures with `expr-clause-first`,
@@ -4814,6 +4819,8 @@ operations; IDs `100` and above mirror the current exported
 | 143 | `expr-binding-clause-list->expr-list` |
 | 144 | `module-name` |
 | 145 | `module-hook` |
+| 146 | `expr-string` |
+| 147 | `expr-struct-set` |
 
 The operation catalog deliberately does not assign `TypeInfo` constructor or
 reflection helper operations yet. `TypeInfo` value shapes are public, but the

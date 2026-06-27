@@ -2740,6 +2740,13 @@
                                   pools
                                   receiver-box
                                   parsed-value))]
+                            [(AstExprUnquote _)
+                              (OkAstExpr
+                                (ast-expr-struct-set-id-with-pools
+                                  pools
+                                  parsed-target
+                                  (ast-expr-unquote-set-target-field-id)
+                                  parsed-value))]
                             [_
                               (ErrAstExpr
                                 "parse: set! target must be a name, struct field place, or box place")])]
@@ -9861,6 +9868,8 @@
     (compiler-parse-quote-syntax-shape-ok?)
     (compiler-parse-ok? "(define x : Expr '(+ 1 2))")
     (compiler-parse-ok? "(define x : Expr `(begin ,@xs))")
+    (compiler-parse-ok?
+      "(define (mk [target : Expr]) : Expr `(set! ,target 1))")
     (compiler-parse-error-ok?
       "(define x : Expr (quote))"
       "parse: quote form expects exactly one expression")))

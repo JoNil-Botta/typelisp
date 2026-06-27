@@ -12084,6 +12084,18 @@
           (string.string-eq wrapper-symbol path-symbol-first)
           (= count-after-wrapper count-after-main-second))))))
 
+(define (compiler-backend-user-symbol-cache-scratch-source) : String
+  "(define (shared [x : i64]) : i64 (+ x 1))
+(define (first [x : i64]) : i64 (shared x))
+(define (second [x : i64]) : i64 (shared x))
+(define (main) : i64 (+ (first 1) (second 2)))")
+
+(define (compiler-backend-user-symbol-cache-scratch-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-user-symbol-cache-scratch-source))
+    [(OkCompilerBackend _) true]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-program-index-id-maps-ok?) : bool
   (let
     [fn-name : String "pkg/really-long-backend-index-function"]
@@ -12385,6 +12397,7 @@
         (compiler-backend-simd-vector-ok?)
         (compiler-backend-dispatch-variant-mode-ok?)
         (compiler-backend-user-symbol-cache-ok?)
+        (compiler-backend-user-symbol-cache-scratch-ok?)
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-interns-bound-names-ok?))))
     42

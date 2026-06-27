@@ -178,6 +178,9 @@ use.
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON
   number conversion helpers. Import it with `(import "stdlib/json.tl")`.
+- `json_derive.tl`: module-emitting JSON encode/decode helpers for structs.
+  Import it with `(import stdlib.json_derive)` and instantiate with an alias
+  such as `(import (json_derive.json-derive Person) as person_json)`.
 - `math.tl`: pure scalar math helpers with no imports or platform externs:
   absolute value, min, max, clamp, and sign predicates for `i64` and `f64`.
   Transcendental/libm-style functions such as `sqrt`, trigonometry,

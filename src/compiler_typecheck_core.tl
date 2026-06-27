@@ -423,6 +423,10 @@
   (if (= tc-prefix-snapshot-cache-arena 0)
     unit
     (begin
+      (if (= (tl_arena_current) tc-prefix-snapshot-cache-arena)
+        (unsafe
+          (tl_arena_set node-pool-base-arena))
+        unit)
       (unsafe
         (tl_arena_destroy tc-prefix-snapshot-cache-arena))
       (set! tc-prefix-snapshot-cache-arena 0))))
@@ -556,22 +560,25 @@
   [summary : CompilerTypecheckSummary]) : bool
   (let
     [prev-arena : i64 (tl_arena_current)]
-    [stored : bool
-      (begin
-        (unsafe
-          (tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
-        (let
-          [persistent-key : String (string.string-copy (& key))]
-          [persistent-module : String (string.string-copy (& module))]
-          (begin
-            (unsafe
-              (tl_arena_set prev-arena))
-            (tc-prefix-snapshot-cache-store
-              persistent-key
-              count
-              persistent-module
-              summary))))]
-    stored))
+    (begin
+      (tc-prefix-snapshot-cache-ensure!)
+      (unsafe
+        (tl_arena_set (tc-prefix-snapshot-cache-arena-handle)))
+      (let
+        [persistent-key : String (string.string-copy (& key))]
+        [persistent-module : String (string.string-copy (& module))]
+        [stored : bool
+          (tc-prefix-snapshot-cache-store
+            persistent-key
+            count
+            persistent-module
+            summary)]
+        [cache-head : i64 (tl_arena_current)]
+        (begin
+          (set! tc-prefix-snapshot-cache-arena cache-head)
+          (unsafe
+            (tl_arena_set prev-arena))
+          stored)))))
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
@@ -2298,6 +2305,51 @@
 (define (tc-name-id [name : String]) : i64
   (intern name))
 
+(define tc-marker-name-id-arena : i64
+  0)
+
+(define (tc-marker-name-id-arena-handle) : i64
+  (begin
+    (if (= tc-marker-name-id-arena 0)
+      (set! tc-marker-name-id-arena (tl_arena_make))
+      unit)
+    tc-marker-name-id-arena))
+
+(define (tc-marker-name-id-arena-reset!) : unit
+  (if (= tc-marker-name-id-arena 0)
+    unit
+    (begin
+      (if (= (tl_arena_current) tc-marker-name-id-arena)
+        (unsafe
+          (tl_arena_set node-pool-base-arena))
+        unit)
+      (unsafe
+        (tl_arena_destroy tc-marker-name-id-arena))
+      (set! tc-marker-name-id-arena 0))))
+
+(define (tc-marker-name-id [name : String]) : i64
+  (let
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    [prev-arena : i64 (tl_arena_current)]
+    [id : i64
+      (begin
+        (if prev-persist
+          (intern-persistent-storage-disable!)
+          unit)
+        (unsafe
+          (tl_arena_set (tc-marker-name-id-arena-handle)))
+        (let
+          [stable-name : String (string.string-copy (& name))]
+          [stable-id : i64 (tc-name-id stable-name)]
+          (begin
+            (unsafe
+              (tl_arena_set prev-arena))
+            (if prev-persist
+              (intern-persistent-storage-enable!)
+              unit)
+            stable-id)))]
+    id))
+
 (define (tc-builtin-name-id [name : String]) : i64
   (begin
     (compiler-builtin-refresh!)
@@ -2423,8 +2475,48 @@
 (define (tc-bind-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (tc-env-compact-local-if-threshold (tc-bind-raw-id env name-id ty)))
 
+(define (tc-marker-name-matches?
+  [text : String]
+  [prefix : String]
+  [name : String]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [prefix-len : i64 (string.string-length prefix)]
+    [name-len : i64 (string.string-length name)]
+    (if (not (= text-len (+ prefix-len name-len)))
+      false
+      (let
+        [ok : bool true]
+        [i : i64 0]
+        (begin
+          (while (and ok (< i prefix-len))
+            (begin
+              (if (= (string.string-ref text i) (string.string-ref prefix i))
+                unit
+                (set! ok false))
+              (set! i (+ i 1))))
+          (set! i 0)
+          (while (and ok (< i name-len))
+            (begin
+              (if (=
+                (string.string-ref text (+ prefix-len i))
+                (string.string-ref name i))
+                unit
+                (set! ok false))
+              (set! i (+ i 1))))
+          ok)))))
+
+(define (tc-unsafe-decl-marker-prefix) : String
+  " __tl_unsafe_decl:")
+
 (define (tc-unsafe-decl-marker-name [name : String]) : String
-  (string.string-append " __tl_unsafe_decl:" name))
+  (string.string-append (tc-unsafe-decl-marker-prefix) name))
+
+(define (tc-unsafe-decl-marker-key-id? [key : i64] [name-id : i64]) : bool
+  (tc-marker-name-matches?
+    (intern-str key)
+    (tc-unsafe-decl-marker-prefix)
+    (intern-str name-id)))
 
 ;; --- marker name-id memos -----------------------------------------------------
 ;; The Superluminal stage2 self-compile profile shows ~25% of CPU re-interning
@@ -2444,7 +2536,7 @@
   (array.make-array i64 262144))
 
 (define (tc-unsafe-decl-marker-id-uncached [name-id : i64]) : i64
-  (tc-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
+  (tc-marker-name-id (tc-unsafe-decl-marker-name (intern-str name-id))))
 
 (define (tc-unsafe-decl-marker-id [name-id : i64]) : i64
   (if (>= name-id 262144)
@@ -2470,8 +2562,17 @@
       name-id
       ty)))
 
+(define (tc-c-abi-fnptr-marker-prefix) : String
+  " __tl_c_abi_fnptr:")
+
 (define (tc-c-abi-fnptr-marker-name [name : String]) : String
-  (string.string-append " __tl_c_abi_fnptr:" name))
+  (string.string-append (tc-c-abi-fnptr-marker-prefix) name))
+
+(define (tc-c-abi-fnptr-marker-key-id? [key : i64] [name-id : i64]) : bool
+  (tc-marker-name-matches?
+    (intern-str key)
+    (tc-c-abi-fnptr-marker-prefix)
+    (intern-str name-id)))
 
 (define tc-c-abi-fnptr-marker-id-cache : (Array i64)
   (array.make-array i64 262144))
@@ -2479,7 +2580,7 @@
   (array.make-array i64 262144))
 
 (define (tc-c-abi-fnptr-marker-id-uncached [name-id : i64]) : i64
-  (tc-name-id (tc-c-abi-fnptr-marker-name (intern-str name-id))))
+  (tc-marker-name-id (tc-c-abi-fnptr-marker-name (intern-str name-id))))
 
 (define (tc-c-abi-fnptr-marker-id [name-id : i64]) : i64
   (if (>= name-id 262144)
@@ -2532,7 +2633,7 @@
       [(TcTypeCache _ _ _ _ _ _ _ rest _)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
       [(TcTypeBind key _ rest)
-        (if (= key (tc-c-abi-fnptr-marker-id name-id))
+        (if (tc-c-abi-fnptr-marker-key-id? key name-id)
           true
           (if (= key name-id)
             false
@@ -2562,7 +2663,7 @@
 
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
-    [(TcTypeBind key _ _) (= key (tc-unsafe-decl-marker-id name-id))]
+    [(TcTypeBind key _ _) (tc-unsafe-decl-marker-key-id? key name-id)]
     [_ false]))
 
 (define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
@@ -4838,10 +4939,14 @@
       (set! out (tc-bind out "int->string" (tc-fn1 (AstTyI64) (AstTyString))))
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
+      (set! out (tc-bind out "expr-string" (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
       (set!
         out
         (tc-bind out "expr-struct-get" (tc-fn2 expr (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind out "expr-struct-set" (tc-fn3 expr (AstTyString) expr expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
@@ -5274,16 +5379,22 @@
           module
           tc-hygiene-module-env-cache)
           [(OkTcModuleLocalEnv def-env next-cache)
-            (begin
-              (set! tc-hygiene-module-env-cache next-cache)
-              (unsafe
-                (tl_arena_set prev-arena))
-              (OkTcEnv def-env))]
+            (let
+              [cache-head : i64 (tl_arena_current)]
+              (begin
+                (set! tc-hygiene-module-env-cache-arena cache-head)
+                (set! tc-hygiene-module-env-cache next-cache)
+                (unsafe
+                  (tl_arena_set prev-arena))
+                (OkTcEnv def-env)))]
           [(ErrTcModuleLocalEnv message)
-            (begin
-              (unsafe
-                (tl_arena_set prev-arena))
-              (ErrTcEnv message))])))
+            (let
+              [cache-head : i64 (tl_arena_current)]
+              (begin
+                (set! tc-hygiene-module-env-cache-arena cache-head)
+                (unsafe
+                  (tl_arena_set prev-arena))
+                (ErrTcEnv message)))])))
     (ErrTcEnv "typecheck: macro hygiene definition context unavailable")))
 
 (define (tc-lookup-hygiene-context-global-visible-id
@@ -7566,8 +7677,10 @@
   (or
     (string.string-eq name "expr-bool")
     (string.string-eq name "expr-int")
+    (string.string-eq name "expr-string")
     (string.string-eq name "expr-var")
     (string.string-eq name "expr-struct-get")
+    (string.string-eq name "expr-struct-set")
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
     (string.string-eq name "expr-type")
@@ -7805,6 +7918,15 @@
       (if (tc-current-module-enum? ctx name)
         (ast-ty-enum-args (intern name) lifetimes)
         (tc-resolved-nominal-type-with-args name handle lifetimes))]))
+
+(define (tc-qualified-lookup-owner-name
+  [lookup-name : String]
+  [owner-name : String]) : String
+  (if (and
+    (or (tc-name-qualified? lookup-name) (>= (tc-name-first-dot lookup-name) 0))
+    (not (tc-name-qualified? owner-name)))
+    lookup-name
+    owner-name))
 
 (define tc-nominal-owner-cache-handle : i64
   0)
@@ -8121,6 +8243,28 @@
                 handle
                 (compiler-symbol-handle-index handle))])])]))
 
+(define (tc-nominal-owner-name-at-index [ctx : TcContext] [index : i64]) : ResultTcString
+  (match (compiler-symbols-owner-name-at-index (tc-context-symbols ctx) index)
+    [(CompilerSomeString name) (OkTcString name)]
+    [(CompilerNoString)
+      (match (tc-context-program ctx)
+        [(AstProgram decls-box)
+          (tc-nominal-owner-name-list (box-get decls-box) index 0 "")])]))
+
+(define (tc-context-with-owner-name-module
+  [ctx : TcContext]
+  [owner-name : String]) : TcContext
+  (if (tc-name-qualified? owner-name)
+    (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+    (tc-context-with-module ctx "")))
+
+(define (tc-context-with-nominal-owner-index-module
+  [ctx : TcContext]
+  [index : i64]) : TcContext
+  (match (tc-nominal-owner-name-at-index ctx index)
+    [(OkTcString owner-name) (tc-context-with-owner-name-module ctx owner-name)]
+    [(ErrTcString _) ctx]))
+
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
     [(TcContext _ symbols _ module _)
@@ -8152,7 +8296,11 @@
                   (match (tc-stdlib-comptime-syntax-type canonical-name)
                     [(AstSomeType syntax-ty) syntax-ty]
                     [(AstNoType)
-                      (tc-resolved-nominal-type canonical-name handle)])]
+                      (tc-resolved-nominal-type
+                        (tc-qualified-lookup-owner-name
+                          lookup-name
+                          canonical-name)
+                        handle)])]
                 [(ErrTcString _)
                   (match (tc-stdlib-comptime-syntax-type lookup-name)
                     [(AstSomeType syntax-ty) syntax-ty]
@@ -8238,7 +8386,9 @@
                     [(AstSomeType syntax-ty) syntax-ty]
                     [(AstNoType)
                       (tc-resolved-nominal-type-with-args
-                        canonical-name
+                        (tc-qualified-lookup-owner-name
+                          lookup-name
+                          canonical-name)
                         handle
                         lifetimes)])]
                 [(ErrTcString _)
@@ -12075,6 +12225,31 @@
         (TcImportAliasSummaryMissing))]
     [(hashmap.I64I64MapMissing) (TcImportAliasSummaryMissing)]))
 
+(define (tc-import-alias-surface-summary-backed-in?
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [target-module : String]) : bool
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) false]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (or
+        (string.string-eq (struct-get summary module-id) target-module)
+        (tc-import-alias-surface-summary-backed-in?
+          (box-get rest)
+          target-module))]))
+
+(define (tc-import-alias-surface-summary-backed? [target-module : String]) : bool
+  (tc-import-alias-surface-summary-backed-in?
+    (compiler-load-surface-summaries)
+    target-module))
+
+(define (tc-import-alias-summary-backed?
+  [index : TcImportAliasSummaryIndex]
+  [target-module : String]) : bool
+  (match (tc-import-alias-summary-index-lookup index target-module)
+    [(TcImportAliasSummaryFound _) true]
+    [(TcImportAliasSummaryMissing)
+      (tc-import-alias-surface-summary-backed? target-module)]))
+
 (define (tc-bind-import-alias-decl-in-module
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12506,11 +12681,9 @@
                               cur-module-id
                               alias-key
                               target-module
-                              (match (tc-import-alias-summary-index-lookup
+                              (tc-import-alias-summary-backed?
                                 summary-index
-                                target-module)
-                                [(TcImportAliasSummaryFound _) true]
-                                [(TcImportAliasSummaryMissing) false]))
+                                target-module))
                             (set! cur rest))))))]
                 [_ (set! cur rest)]))]))
       (if (string.string-eq message "")
@@ -24251,11 +24424,16 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type-indexed
-        (tc-context-symbols ctx)
-        handle)
-        [(OkAstType ty) (OkTcType (tc-resolve-type ctx ty))]
-        [(ErrAstType message) (ErrTcType message)])]
+      (let
+        [field-ctx : TcContext
+          (tc-context-with-nominal-owner-index-module
+            ctx
+            (compiler-registry-handle-owner-index handle))]
+        (match (compiler-registries-struct-field-type-indexed
+          (tc-context-symbols ctx)
+          handle)
+          [(OkAstType ty) (OkTcType (tc-resolve-type field-ctx ty))]
+          [(ErrAstType message) (ErrTcType message)]))]
     [(NoneI64)
       (ErrTcType
         (string.string-append
@@ -24281,15 +24459,24 @@
     struct-name
     field)
     [(SomeI64 handle)
-      (match (compiler-registries-struct-field-type
-        (tc-context-program ctx)
-        handle)
-        [(OkAstType ty)
-          (match (tc-lifetime-subst-from-nominal-args ctx struct-name lifetimes)
-            [(OkTcLifetimeSubst subst)
-              (OkTcType (tc-resolve-type ctx (tc-lifetime-subst-type subst ty)))]
-            [(ErrTcLifetimeSubst message) (ErrTcType message)])]
-        [(ErrAstType message) (ErrTcType message)])]
+      (let
+        [field-ctx : TcContext
+          (tc-context-with-nominal-owner-index-module
+            ctx
+            (compiler-registry-handle-owner-index handle))]
+        (match (compiler-registries-struct-field-type
+          (tc-context-program ctx)
+          handle)
+          [(OkAstType ty)
+            (match (tc-lifetime-subst-from-nominal-args
+              field-ctx
+              struct-name
+              lifetimes)
+              [(OkTcLifetimeSubst subst)
+                (OkTcType
+                  (tc-resolve-type field-ctx (tc-lifetime-subst-type subst ty)))]
+              [(ErrTcLifetimeSubst message) (ErrTcType message)])]
+          [(ErrAstType message) (ErrTcType message)]))]
     [(NoneI64)
       (ErrTcType
         (string.string-append
@@ -24786,6 +24973,35 @@
                 [(ErrTcEnv message) (ErrTcEnv message)]))]
           [(AstTypeNil) (ErrTcEnv "typecheck: pattern arity mismatch")]))]))
 
+(define (tc-nominal-owner-context [ctx : TcContext] [owner-name : String]) : TcContext
+  (if (tc-name-qualified? owner-name)
+    (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+    ctx))
+
+(defenum ResultTcVariantPayloadTypes
+  (OkTcVariantPayloadTypes AstTypeList)
+  (ErrTcVariantPayloadTypes String))
+
+(define (tc-variant-pattern-payload-types
+  [ctx : TcContext]
+  [enum-name : String]
+  [enum-lifetimes : AstLifetimeList]
+  [fields : AstTypeList]) : ResultTcVariantPayloadTypes
+  (let
+    [field-ctx : TcContext (tc-nominal-owner-context ctx enum-name)]
+    [resolved-fields : AstTypeList (tc-resolve-type-list field-ctx fields)]
+    (match enum-lifetimes
+      [(AstLifetimeNil) (OkTcVariantPayloadTypes resolved-fields)]
+      [_
+        (match (tc-lifetime-subst-from-nominal-args
+          field-ctx
+          enum-name
+          enum-lifetimes)
+          [(OkTcLifetimeSubst subst)
+            (OkTcVariantPayloadTypes
+              (tc-lifetime-subst-type-list subst resolved-fields))]
+          [(ErrTcLifetimeSubst message) (ErrTcVariantPayloadTypes message)])])))
+
 (define (tc-bind-variant-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -24808,34 +25024,21 @@
                 (tc-context-symbols ctx)
                 handle)
                 [(OkAstTypeList fields)
-                  (match enum-lifetimes
-                    [(AstLifetimeNil)
+                  (match (tc-variant-pattern-payload-types
+                    ctx
+                    enum-name
+                    enum-lifetimes
+                    fields)
+                    [(OkTcVariantPayloadTypes payload-fields)
                       (tc-bind-sub-pattern-list
                         ctx
                         env
                         args
                         (match payload-region
                           [(TcSomeString region)
-                            (tc-tag-type-list-region region fields)]
-                          [(TcNoString) fields]))]
-                    [_
-                      (match (tc-lifetime-subst-from-nominal-args
-                        ctx
-                        enum-name
-                        enum-lifetimes)
-                        [(OkTcLifetimeSubst subst)
-                          (let
-                            [subst-fields : AstTypeList
-                              (tc-lifetime-subst-type-list subst fields)]
-                            (tc-bind-sub-pattern-list
-                              ctx
-                              env
-                              args
-                              (match payload-region
-                                [(TcSomeString region)
-                                  (tc-tag-type-list-region region subst-fields)]
-                                [(TcNoString) subst-fields])))]
-                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                            (tc-tag-type-list-region region payload-fields)]
+                          [(TcNoString) payload-fields]))]
+                    [(ErrTcVariantPayloadTypes message) (ErrTcEnv message)])]
                 [(ErrAstTypeList message) (ErrTcEnv message)])
               (ErrTcEnv
                 (string.string-append
@@ -25206,29 +25409,19 @@
                 (tc-context-symbols ctx)
                 handle)
                 [(OkAstTypeList fields)
-                  (match enum-lifetimes
-                    [(AstLifetimeNil)
+                  (match (tc-variant-pattern-payload-types
+                    ctx
+                    enum-name
+                    enum-lifetimes
+                    fields)
+                    [(OkTcVariantPayloadTypes payload-fields)
                       (tc-bind-borrowed-sub-pattern-list
                         ctx
                         env
                         lifetime
                         args
-                        (tc-resolve-type-list ctx fields))]
-                    [_
-                      (match (tc-lifetime-subst-from-nominal-args
-                        ctx
-                        enum-name
-                        enum-lifetimes)
-                        [(OkTcLifetimeSubst subst)
-                          (tc-bind-borrowed-sub-pattern-list
-                            ctx
-                            env
-                            lifetime
-                            args
-                            (tc-resolve-type-list
-                              ctx
-                              (tc-lifetime-subst-type-list subst fields)))]
-                        [(ErrTcLifetimeSubst message) (ErrTcEnv message)])])]
+                        payload-fields)]
+                    [(ErrTcVariantPayloadTypes message) (ErrTcEnv message)])]
                 [(ErrAstTypeList message) (ErrTcEnv message)])
               (ErrTcEnv
                 (string.string-append
@@ -27065,7 +27258,8 @@
   [struct-ty : AstType]
   [fields : AstFieldDefList]) : AstTypeList
   (let
-    [field-types : AstTypeList (tc-field-type-list ctx fields)]
+    [field-types : AstTypeList
+      (tc-resolve-type-list ctx (tc-field-type-list ctx fields))]
     (match struct-ty
       [(AstTyStructArgs _ lifetimes)
         (match (tc-lifetime-subst-from-nominal-args
@@ -27090,22 +27284,26 @@
   [enum-name : String]
   [enum-ty : AstType]
   [fields : AstTypeList]) : AstTypeList
-  (match enum-ty
-    [(AstTyEnumArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args
-        ctx
-        enum-name
-        (box-get lifetimes))
-        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
-        [(ErrTcLifetimeSubst _) fields])]
-    [(AstTyVarArgs _ lifetimes)
-      (match (tc-lifetime-subst-from-nominal-args
-        ctx
-        enum-name
-        (box-get lifetimes))
-        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
-        [(ErrTcLifetimeSubst _) fields])]
-    [_ fields]))
+  (let
+    [field-types : AstTypeList (tc-resolve-type-list ctx fields)]
+    (match enum-ty
+      [(AstTyEnumArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          enum-name
+          (box-get lifetimes))
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [(AstTyVarArgs _ lifetimes)
+        (match (tc-lifetime-subst-from-nominal-args
+          ctx
+          enum-name
+          (box-get lifetimes))
+          [(OkTcLifetimeSubst subst)
+            (tc-lifetime-subst-type-list subst field-types)]
+          [(ErrTcLifetimeSubst _) field-types])]
+      [_ field-types])))
 
 (define (tc-context-with-nominal-owner-module
   [ctx : TcContext]
@@ -27113,6 +27311,23 @@
   (if (tc-name-qualified? nominal-name)
     (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
     ctx))
+
+(define (tc-context-with-nominal-owner-handle-module
+  [ctx : TcContext]
+  [handle : i64]) : TcContext
+  (match (tc-nominal-owner-name ctx handle)
+    [(OkTcString owner-name)
+      (if (tc-name-qualified? owner-name)
+        (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+        (tc-context-with-module ctx ""))]
+    [(ErrTcString _) ctx]))
+
+(define (tc-init-nominal-field-context
+  [ctx : TcContext]
+  [nominal-name : String]) : TcContext
+  (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
+    [(SomeI64 handle) (tc-context-with-nominal-owner-handle-module ctx handle)]
+    [(NoneI64) (tc-context-with-nominal-owner-module ctx nominal-name)]))
 
 (define (tc-init-struct-supported
   [ctx : TcContext]
@@ -27125,7 +27340,7 @@
         [(TcStructDecl repr cleanup fields)
           (let
             [field-ctx : TcContext
-              (tc-context-with-nominal-owner-module ctx struct-name)]
+              (tc-init-nominal-field-context ctx struct-name)]
             (if (ast-struct-repr-c? repr)
               (ErrTcUnit "typecheck: init supports only default-layout structs")
               (if (ast-struct-cleanup? cleanup)
@@ -27149,7 +27364,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultTcUnit
   (let
-    [field-ctx : TcContext (tc-context-with-nominal-owner-module ctx enum-name)]
+    [field-ctx : TcContext (tc-init-nominal-field-context ctx enum-name)]
     (match (tc-enum-decl ctx enum-name)
       [(OkTcEnumDecl decl)
         (match decl
@@ -28822,8 +29037,10 @@
       [(string.string-eq call-name "int->string") true]
       [(string.string-eq call-name "expr-bool") true]
       [(string.string-eq call-name "expr-int") true]
+      [(string.string-eq call-name "expr-string") true]
       [(string.string-eq call-name "expr-var") true]
       [(string.string-eq call-name "expr-struct-get") true]
+      [(string.string-eq call-name "expr-struct-set") true]
       [(string.string-eq call-name "expr-splice") true]
       [(string.string-eq call-name "expr-if") true]
       [(string.string-eq call-name "expr-type") true]
@@ -31141,96 +31358,119 @@
   [moved : TcMovedSet]
   [bound : TcStringList]
   [seen : TcStringList]
+  [remaining : i64]
   [body : AstExpr]) : TcMoveResult
-  (match env
-    [(TcTypeNil) (OkTcMove moved)]
-    [(TcTypeCache _ _ _ _ _ _ _ rest _)
-      (tc-move-check-lambda-owner-captures-scan
-        ctx
-        root
-        (box-get rest)
-        locals
-        loop-carried
-        moved
-        bound
-        seen
-        body)]
-    [(TcTypeBind key ty rest)
-      (let
-        [rest-env : TcTypeEnv (box-get rest)]
-        [name : String (intern-str key)]
-        (cond
-          [(or
-              (= key (tc-region-marker-id))
-              (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key ty))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              seen
-              body)]
-          [(tc-string-list-contains seen name)
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              seen
-              body)]
-          [(not (tc-moved-contains? locals name))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              (tc-string-list-add seen name)
-              body)]
-          [(not (tc-expr-uses-free-name? body name bound))
-            (tc-move-check-lambda-owner-captures-scan
-              ctx
-              root
-              rest-env
-              locals
-              loop-carried
-              moved
-              bound
-              (tc-string-list-add seen name)
-              body)]
-          [else
-            (match (tc-lookup-id root key)
-              [(OkTcType visible-ty)
-                (if (tc-type-consuming-by-value-now? ctx visible-ty)
-                  (if (or
-                    (tc-moved-contains? moved name)
-                    (tc-moved-partial? moved name))
-                    (tc-move-rich-use-conflict-result
-                      (tc-moved-root-conflict moved name)
-                      name
-                      body
-                      name)
-                    (if (tc-moved-contains? loop-carried name)
-                      (tc-move-rich-loop-carried-result name body)
-                      (tc-move-check-lambda-owner-captures-scan
-                        ctx
-                        root
-                        rest-env
-                        locals
-                        loop-carried
-                        (tc-moved-add-origin moved name body)
-                        bound
-                        (tc-string-list-add seen name)
-                        body)))
+  (if (<= remaining 0)
+    (OkTcMove moved)
+    (match env
+      [(TcTypeNil) (OkTcMove moved)]
+      [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+        (if scan-through
+          (tc-move-check-lambda-owner-captures-scan
+            ctx
+            root
+            (box-get rest)
+            locals
+            loop-carried
+            moved
+            bound
+            seen
+            remaining
+            body)
+          (OkTcMove moved))]
+      [(TcTypeBind key ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [name : String (intern-str key)]
+          (cond
+            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(or
+                (= key (tc-region-marker-id))
+                (tc-cleanup-owner-marker-entry? key ty))
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                seen
+                remaining
+                body)]
+            [(tc-string-list-contains seen name)
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                seen
+                remaining
+                body)]
+            [(not (tc-moved-contains? locals name))
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                seen
+                remaining
+                body)]
+            [(not (tc-expr-uses-free-name? body name bound))
+              (tc-move-check-lambda-owner-captures-scan
+                ctx
+                root
+                rest-env
+                locals
+                loop-carried
+                moved
+                bound
+                (tc-string-list-add seen name)
+                (- remaining 1)
+                body)]
+            [else
+              (match (tc-lookup-id root key)
+                [(OkTcType visible-ty)
+                  (if (tc-type-consuming-by-value-now? ctx visible-ty)
+                    (if (or
+                      (tc-moved-contains? moved name)
+                      (tc-moved-partial? moved name))
+                      (tc-move-rich-use-conflict-result
+                        (tc-moved-root-conflict moved name)
+                        name
+                        body
+                        name)
+                      (if (tc-moved-contains? loop-carried name)
+                        (tc-move-rich-loop-carried-result name body)
+                        (tc-move-check-lambda-owner-captures-scan
+                          ctx
+                          root
+                          rest-env
+                          locals
+                          loop-carried
+                          (tc-moved-add-origin moved name body)
+                          bound
+                          (tc-string-list-add seen name)
+                          (- remaining 1)
+                          body)))
+                    (tc-move-check-lambda-owner-captures-scan
+                      ctx
+                      root
+                      rest-env
+                      locals
+                      loop-carried
+                      moved
+                      bound
+                      (tc-string-list-add seen name)
+                      (- remaining 1)
+                      body))]
+                [(ErrTcType _)
                   (tc-move-check-lambda-owner-captures-scan
                     ctx
                     root
@@ -31240,18 +31480,8 @@
                     moved
                     bound
                     (tc-string-list-add seen name)
-                    body))]
-              [(ErrTcType _)
-                (tc-move-check-lambda-owner-captures-scan
-                  ctx
-                  root
-                  rest-env
-                  locals
-                  loop-carried
-                  moved
-                  bound
-                  (tc-string-list-add seen name)
-                  body)])]))]))
+                    (- remaining 1)
+                    body)])]))])))
 
 (define (tc-move-check-lambda-owner-captures
   [ctx : TcContext]
@@ -31270,6 +31500,7 @@
     moved
     (tc-param-bound-names params)
     TcStringNil
+    (tc-moved-len locals)
     body))
 
 (define (tc-move-check-exprs-with-types-no-auto
@@ -35949,6 +36180,16 @@
     (tc-hygiene-template-base name)
     name))
 
+(define (macro-output-source-name [name : String]) : String
+  (let
+    [source-name : String
+      (if (tc-hygiene-template-name? name)
+        (tc-hygiene-template-base name)
+        (tc-hygiene-global-symbol-name name))]
+    (if (tc-source-slash-qualified? source-name)
+      (tc-name-slashes-to-dots source-name)
+      source-name)))
+
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
     [cursor : AstDeclList items]
@@ -36035,12 +36276,14 @@
     [(OkCtfe value next-fuel)
       (match value
         [(CtfeString text) (OkGenKey (spec-string-key text) next-fuel)]
+        [(CtfeI64 n)
+          (OkGenKey (str_cat.str-cat "i64:" (string.int->string n)) next-fuel)]
         [_
           (ErrGenKey
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                "typecheck: Module macro identity key expression must evaluate to String")))])]
+                "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
     [(ErrCtfe diag) (ErrGenKey diag)]))
 
 (define (macro-identity-key-string-exprs
@@ -36484,6 +36727,40 @@
                 (macro-decl-list-structural-eq? a-rest b-rest)))]
           [_ false]))]))
 
+(define (macro-generated-key-body-for-compare
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [decl-path : String]
+  [identity : String]
+  [body : AstDeclList]
+  [fuel : i64]) : AstDeclList
+  (if (<= fuel 0)
+    (macro-decls-filter-generated-key body identity)
+    (match (macro-expand-decls
+      ctx
+      top-env
+      orig-decls
+      body
+      (macro-paths-for-decls body decl-path)
+      target-module
+      false)
+      [(OkMacroDeclsWithPaths expanded _ needs-followup?)
+        (if needs-followup?
+          (macro-generated-key-body-for-compare
+            ctx
+            top-env
+            orig-decls
+            target-module
+            decl-path
+            identity
+            expanded
+            (- fuel 1))
+          (macro-decls-filter-generated-key expanded identity))]
+      [(ErrMacroDeclsWithPaths _)
+        (macro-decls-filter-generated-key body identity)])))
+
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
     [(AstDeclNil) false]
@@ -36741,7 +37018,8 @@
           (intern-str name)
           AstLifetimeNil
           span))]
-    [(AstTyVar name) (OkMacroSexpr (SpSSym (intern-str name) span))]
+    [(AstTyVar name)
+      (OkMacroSexpr (SpSSym (macro-output-source-name (intern-str name)) span))]
     [(AstTyStructArgs name lifetimes)
       (OkMacroSexpr
         (macro-resolved-nominal-type-sexpr
@@ -36757,7 +37035,10 @@
           (box-get lifetimes)
           span))]
     [(AstTyVarArgs name lifetimes)
-      (macro-type-named-args-sexpr (intern-str name) (box-get lifetimes) span)]
+      (macro-type-named-args-sexpr
+        (macro-output-source-name (intern-str name))
+        (box-get lifetimes)
+        span)]
     [(AstTyRef region inner)
       (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
         [(OkMacroSexpr sinner)
@@ -38730,15 +39011,19 @@
 ;; builds). macro-expand-program and the REPL typecheck entry reset it at the
 ;; same per-program boundary that resets the CTFE-env and clone-able caches;
 ;; the intern generation gate additionally covers intern-reset! boundaries.
-(define (macro-alias-cache-reset!) : unit
+(define (macro-alias-derived-cache-reset!) : unit
   (begin
     (set! macro-alias-cache-ready false)
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
     (macro-surface-call-decl-cache-reset!)
-    (tc-lazy-import-stubs-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
+
+(define (macro-alias-cache-reset!) : unit
+  (begin
+    (macro-alias-derived-cache-reset!)
+    (tc-lazy-import-stubs-reset!)))
 
 (define (macro-unqualified-import-cache-ensure!) : unit
   (if (if macro-unqualified-import-cache-ready
@@ -40434,7 +40719,7 @@
         (ast-expr-spanned (macro-generated-type-param-expr env inner) span))]
     [(AstExprVar name)
       (let
-        [lookup-name : String (macro-output-syntax-name (intern-str name))]
+        [lookup-name : String (macro-output-source-name (intern-str name))]
         (match (ctfe-env-lookup env lookup-name)
           [(CtfeSomeValue value)
             (match value
@@ -40448,7 +40733,7 @@
 (define (macro-generated-call-func-for-lookup [expr : AstExpr]) : AstExpr
   (match (ast-expr-unspan expr)
     [(AstExprVar name)
-      (AstExprVar (intern (macro-output-syntax-name (intern-str name))))]
+      (AstExprVar (intern (macro-output-source-name (intern-str name))))]
     [_ expr]))
 
 (define (macro-generated-import-type-arg
@@ -42683,6 +42968,8 @@
       " has incompatible payload")))
 
 (define (macro-expand-module-materialized
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [module : String]
   [target-module : String]
@@ -42709,10 +42996,34 @@
             ;: generated identity. Other identities may share the same module.
             [generated-key-body : AstDeclList
               (macro-decls-filter-generated-key generated-body identity)]
-            [same-body? : bool
-              (macro-decl-list-structural-eq?
+            [compare-existing-body : AstDeclList
+              (macro-generated-key-body-for-compare
+                ctx
+                top-env
+                orig-decls
+                target-module
+                decl-path
+                identity
                 same-identity-body
-                generated-key-body)]
+                (macro-expand-fixed-point-limit))]
+            [compare-generated-body : AstDeclList
+              (macro-generated-key-body-for-compare
+                ctx
+                top-env
+                orig-decls
+                target-module
+                decl-path
+                identity
+                generated-key-body
+                (macro-expand-fixed-point-limit))]
+            [same-body? : bool
+              (or
+                (macro-decl-list-structural-eq?
+                  same-identity-body
+                  generated-key-body)
+                (macro-decl-list-structural-eq?
+                  compare-existing-body
+                  compare-generated-body))]
             (if same-body?
               (match (macro-check-generated-import-collisions
                 orig-decls
@@ -42781,6 +43092,8 @@
               (box (macro-generated-import-diag span message)))])])))
 
 (define (macro-expand-module-generated-decls
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [module : String]
   [alias : AstMaybeImportAlias]
@@ -42809,6 +43122,8 @@
             (match first
               [(AstDeclModule target-module-id)
                 (macro-expand-module-materialized
+                  ctx
+                  top-env
                   orig-decls
                   module
                   (intern-str target-module-id)
@@ -43065,6 +43380,8 @@
                                       parse-dispatch)
                                       [(OkMacroParsedDecls generated)
                                         (macro-expand-module-generated-decls
+                                          ctx
+                                          top-env
                                           orig-decls
                                           module
                                           alias
@@ -44780,6 +45097,8 @@
                                 cur-module)
                                 [(OkTcEnv next-top-env)
                                   (begin
+                                    (tc-hygiene-reset-active-top-env!
+                                      next-top-env)
                                     (set! cur-top-env next-top-env)
                                     (set!
                                       out-rev
@@ -45102,7 +45421,7 @@
             ;; Same per-compile reset for the qualified-alias resolution cache:
             ;; the (module, qualifier) -> target mapping is derived from this
             ;; program's declarations.
-            (macro-alias-cache-reset!)
+            (macro-alias-derived-cache-reset!)
             (ctfe-module-macro-export-reset!)
             (set! macro-expand-expr-type-macro-names expr-type-macro-names)
             ;; Only build the (tens-of-MB, O(types^2)) reflection/layout metadata if
@@ -46132,6 +46451,10 @@
   (if (= tc-fn-scratch-arena 0)
     unit
     (begin
+      (if (= (tl_arena_current) tc-fn-scratch-arena)
+        (unsafe
+          (tl_arena_set node-pool-base-arena))
+        unit)
       (unsafe
         (tl_arena_destroy tc-fn-scratch-arena))
       (set! tc-fn-scratch-arena 0))))
@@ -46144,9 +46467,10 @@
 ;; clone-out shape of lower-function-escaping; do NOT re-run the check to
 ;; regenerate the message -- the body check is not idempotent and a second
 ;; run can surface a different diagnostic). New intern entries made while
-;; the scratch is active (e.g. first-use marker names) must outlive it, so
-;; persistent intern storage is forced on for the scope (the intern pool
-;; copies new strings into its global-init base arena; see compiler_intern).
+;; the scratch is active must outlive it, so persistent intern storage is
+;; forced on for the scope (the intern pool copies new strings into its
+;; global-init base arena; see compiler_intern). Synthetic marker names use
+;; tc-marker-name-id, which routes them to file-state storage instead.
 ;; Node pools already grow in the persistent base arena (#2357).
 (define (tc-check-fn-decl-scoped
   [ctx : TcContext]
@@ -47054,3 +47378,6 @@
     (set! tc-lazy-import-summary-macro-force-record-count 0)
     (ctfe-module-macro-export-reset!)
     (set! ctfe-needs-metadata true)))
+
+(define (compiler-typecheck-reset-intern-owned-state!) : unit
+  (tc-marker-name-id-arena-reset!))

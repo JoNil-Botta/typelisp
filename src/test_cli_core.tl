@@ -983,6 +983,31 @@
       with-slash-base
       (tltest-reach-mark-name with-slash-base leaf))))
 
+(define (tltest-reachable-name-marked?
+  [names : hashmap.StringI64Map]
+  [name : String]) : bool
+  (or
+    (hashmap.string-i64-map-contains? names name)
+    (if (tc-name-qualified? name)
+      (hashmap.string-i64-map-contains? names (tc-qualified-name-base name))
+      false)
+    (let
+      [leaf : String (tltest-reach-name-dot-leaf name)]
+      (if (string.string-eq leaf name)
+        false
+        (hashmap.string-i64-map-contains? names leaf)))))
+
+(define (tltest-generated-comptime-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta inner-box)
+      (match meta
+        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
+        [(AstNoGeneratedDeclMeta)
+          (tltest-generated-comptime-decl? (box-get inner-box))])]
+    [(AstDeclUnsafe inner-box)
+      (tltest-generated-comptime-decl? (box-get inner-box))]
+    [_ false]))
+
 (define (tltest-reach-mark-string-snapshot-runtime
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
@@ -1542,7 +1567,7 @@
     [(AstDeclDef name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
-        (if (hashmap.string-i64-map-contains? names (intern-str name))
+        (if (tltest-reachable-name-marked? names (intern-str name))
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDeclDefFn name _ _ body-box export)
@@ -1554,7 +1579,7 @@
               body
               (tltest-reach-mark-name names (intern-str name)))]
           [(AstFnNoExport)
-            (if (hashmap.string-i64-map-contains? names (intern-str name))
+            (if (tltest-reachable-name-marked? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
     [(AstDeclDefMacro _ _ _ body-box)
@@ -1630,14 +1655,22 @@
   [names : hashmap.StringI64Map]) : bool
   (match decl
     [(AstDeclDef name _ _)
-      (hashmap.string-i64-map-contains? names (intern-str name))]
+      (let
+        [name-str : String (intern-str name)]
+        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        marked)]
     [(AstDeclDefFn name _ _ _ export)
-      (match export
-        [(AstFnExport _) true]
-        [(AstFnNoExport)
-          (hashmap.string-i64-map-contains? names (intern-str name))])]
+      (let
+        [name-str : String (intern-str name)]
+        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        (match export
+          [(AstFnExport _) true]
+          [(AstFnNoExport) marked]))]
     [(AstDeclExtern name _ _ _)
-      (hashmap.string-i64-map-contains? names (intern-str name))]
+      (let
+        [name-str : String (intern-str name)]
+        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        marked)]
     [(AstDeclDefMacro _ _ _ _) true]
     [(AstDeclUnsafe inner-box)
       (let
@@ -1652,6 +1685,7 @@
 (define (tltest-prune-runtime-decls-in
   [decls : AstDeclList]
   [paths : AstDeclPathList]
+  [target-path : String]
   [names : hashmap.StringI64Map]
   [out-decls : AstDeclList]
   [out-paths : AstDeclPathList]) : InlineRuntimeDecls
@@ -1666,31 +1700,45 @@
           (tltest-prune-runtime-decls-in
             (box-get rest)
             AstDeclPathNil
+            target-path
             names
             out-decls
             out-paths)]
         [(AstDeclPathCons decl-path path-rest)
-          (if (tltest-reachable-runtime-decl? decl names)
+          ;; Keep imported generated helpers: macro-expanded bodies can
+          ;; reference them in ways the lightweight source reachability walk
+          ;; cannot always see. Local generated helpers and ordinary imported
+          ;; functions/values still go through reachability pruning so tiny
+          ;; inline harnesses stay small.
+          (if (or
+            (tltest-reachable-runtime-decl? decl names)
+            (and
+              (not (tltest-owned-test-path? target-path decl-path))
+              (tltest-generated-comptime-decl? decl)))
             (tltest-prune-runtime-decls-in
               (box-get rest)
               (box-get path-rest)
+              target-path
               names
               (ast-decl-cons decl out-decls)
               (ast-decl-path-cons decl-path out-paths))
             (tltest-prune-runtime-decls-in
               (box-get rest)
               (box-get path-rest)
+              target-path
               names
               out-decls
               out-paths))])]))
 
 (define (tltest-prune-runtime-decls
+  [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [tests : (Array InlineTest)]) : InlineRuntimeDecls
   (tltest-prune-runtime-decls-in
     decls
     paths
+    (compiler-load-normalize-path source)
     (tltest-reachable-names decls tests)
     AstDeclNil
     AstDeclPathNil))
@@ -1701,7 +1749,11 @@
   [paths : AstDeclPathList]) : InlineHarness
   (match (tltest-collect source decls paths)
     [(InlineCollect runtime-decls runtime-paths tests)
-      (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+      (match (tltest-prune-runtime-decls
+        source
+        runtime-decls
+        runtime-paths
+        tests)
         [(InlineRuntimeDecls pruned-decls pruned-paths)
           (let
             [count : i64 (array-length tests)]
@@ -1752,7 +1804,11 @@
         [count : i64 (array-length tests)]
         (if (= count 0)
           0
-          (match (tltest-prune-runtime-decls runtime-decls runtime-paths tests)
+          (match (tltest-prune-runtime-decls
+            source
+            runtime-decls
+            runtime-paths
+            tests)
             [(InlineRuntimeDecls pruned-decls pruned-paths)
               (match (typecheck-compiler-program-with-paths-cache
                 (tltest-inline-typecheck-program pruned-decls tests)
@@ -1783,6 +1839,17 @@
         (compiler-load-stdlib-owned-path-from-roots normalized roots))]
     (compiler-load-stdlib-import? stdlib-path)))
 
+(define (tltest-inline-clear-load-only-caches!) : unit
+  (begin
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (tc-prefix-snapshot-cache-clear!)))
+
+(define (tltest-inline-clear-load-caches!) : unit
+  (begin
+    (tltest-inline-clear-load-only-caches!)
+    (compiler-driver-reset-analysis-state!)))
+
 (define (tltest-inline-reset-load-state!) : unit
   (begin
     ;; Inline preflight runs after ordinary check/doctest phases in some CLI
@@ -1790,8 +1857,7 @@
     ;; nodes owned by a previous phase. Reset AST/type pools between package
     ;; sources to keep large packages bounded, but keep interns live because
     ;; callers may have already constructed cfg maps and path strings.
-    (compiler-load-program-cache-clear!)
-    (compiler-load-runtime-prelude-cache-clear!)
+    (tltest-inline-clear-load-caches!)
     (compiler-load-session-reset-pools!)
     (compiler-driver-reset-analysis-state!)))
 
@@ -1836,35 +1902,52 @@
   (if (tltest-source-has-inline-tests? source)
     (let
       [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
-      (begin
-        (tltest-inline-reset-load-state!)
-        (match (compiler-driver-load-package-file-with-runtime-owned-cfg
-          source
-          roots
-          manifest-dir
-          package-owner
-          deps
-          true
-          test-cfgs)
-          [(OkCompilerLoadWithPaths decls paths _ _)
-            (tltest-inline-typecheck-loaded
-              (compiler-load-package-owned-path
-                package-owner
-                manifest-dir
-                roots
-                source)
-              decls
-              paths
+      (match (compiler-driver-load-package-file-with-runtime-owned-cfg
+        source
+        roots
+        manifest-dir
+        package-owner
+        deps
+        true
+        test-cfgs)
+        [(OkCompilerLoadWithPaths decls paths _ _)
+          (tltest-inline-typecheck-loaded
+            (compiler-load-package-owned-path
+              package-owner
+              manifest-dir
               roots
-              test-cfgs
-              cache-scope-prefix)]
-          [(ErrCompilerLoadWithPaths diag)
-            (begin
-              (io.print-error
-                (compiler-diagnostic-render
-                  (tltest-diagnostic-with-source-fallback source (box-get diag))))
-              1)])))
+              source)
+            decls
+            paths
+            roots
+            test-cfgs
+            cache-scope-prefix)]
+        [(ErrCompilerLoadWithPaths diag)
+          (begin
+            (io.print-error
+              (compiler-diagnostic-render
+                (tltest-diagnostic-with-source-fallback source (box-get diag))))
+            1)]))
     0))
+
+(defenum TltestCfgNameList
+  (TltestCfgNameNil)
+  (TltestCfgNameCons String i64 (Box TltestCfgNameList)))
+
+(define (tltest-cfg-name-list-from-env [cfgs : SymI64Env]) : TltestCfgNameList
+  (match cfgs
+    [(SymI64Nil) (TltestCfgNameNil)]
+    [(SymI64Bind key value rest)
+      (TltestCfgNameCons
+        (intern-str key)
+        value
+        (box (tltest-cfg-name-list-from-env (box-get rest))))]))
+
+(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : SymI64Env
+  (match names
+    [(TltestCfgNameNil) (sym-i64-empty)]
+    [(TltestCfgNameCons name value rest)
+      (sym-i64-bind (tltest-cfg-name-list-to-env (box-get rest)) name value)]))
 
 (define (tltest-inline-typecheck-package-sources-from
   [sources : vector.StringVec]
@@ -1875,29 +1958,51 @@
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]
   [cache-scope-prefix : String]) : i64
-  (if (>= index (vector.string-vec-len sources))
-    0
-    (let
-      [source : String (vector.string-vec-get sources index "")]
-      [status : i64
-        (tltest-inline-typecheck-package-source-with-cfg
-          source
-          roots
-          manifest-dir
-          package-owner
-          deps
-          cfgs
-          cache-scope-prefix)]
-      (if (= status 0)
-        (tltest-inline-typecheck-package-sources-from
-          sources
-          (+ index 1)
-          roots
-          manifest-dir
-          package-owner
-          deps
-          cfgs
-          cache-scope-prefix)
+  (let
+    [count : i64 (vector.string-vec-len sources)]
+    [cursor : i64 index]
+    [status : i64 0]
+    [cfg-names : TltestCfgNameList (tltest-cfg-name-list-from-env cfgs)]
+    (begin
+      (while (and (= status 0) (< cursor count))
+        (let
+          [source : String (vector.string-vec-get sources cursor "")]
+          [has-inline-tests : bool (tltest-source-has-inline-tests? source)]
+          (begin
+            (if has-inline-tests
+              (begin
+                (tltest-inline-clear-load-caches!)
+                (set!
+                  status
+                  ;; Match package `test --check`: isolate each inline preflight
+                  ;; source so package builds do not retain every loaded/test AST
+                  ;; until the end of the package. The full file reset refreshes
+                  ;; interns, so rebuild cfg ids from the saved string snapshot.
+                  (with-scratch
+                    (begin
+                      (tltest-inline-clear-load-only-caches!)
+                      (compiler-driver-reset-file-state!)
+                      (tltest-inline-typecheck-package-source-with-cfg
+                        source
+                        roots
+                        manifest-dir
+                        package-owner
+                        deps
+                        (tltest-cfg-name-list-to-env cfg-names)
+                        cache-scope-prefix))))
+                (tltest-inline-clear-load-caches!))
+              (set! status 0))
+            (if (= status 0)
+              unit
+              (io.print-error
+                (string.string-append
+                  "test: package inline preflight failed: "
+                  source)))
+            (set! cursor (+ cursor 1)))))
+      (begin
+        (begin
+          (tltest-inline-clear-load-only-caches!)
+          (compiler-driver-reset-file-state!))
         status))))
 
 (define (tltest-inline-typecheck-package-sources-with-cfg
@@ -2457,11 +2562,11 @@
               AstDeclNil))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
-        "generated.tl"
+        "driver.tl"
         (ast-decl-path-cons
-          "generated.tl"
+          "driver.tl"
           (ast-decl-path-cons
-            "generated.tl"
+            "driver.tl"
             (ast-decl-path-cons "driver.tl" AstDeclPathNil))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness program _ count)
@@ -2480,6 +2585,59 @@
   (if (tltest-generated-reachability-self-test?)
     unit
     (panic "test CLI inline harness generated reachability mismatch")))
+
+(define (tltest-imported-generated-retained-self-test?) : bool
+  (let
+    [dead-name : String "__tl_imported_generated_dead"]
+    [ordinary-name : String "__tl_imported_ordinary_dead"]
+    [dead-decl : AstDecl
+      (tltest-generated-wrapper
+        dead-name
+        (ast-decl-def-fn
+          dead-name
+          AstParamNil
+          (AstTyUnit)
+          (ast-node-push (AstExprLiteral (AstLitUnit)))))]
+    [ordinary-decl : AstDecl
+      (ast-decl-def-fn
+        ordinary-name
+        AstParamNil
+        (AstTyUnit)
+        (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        dead-decl
+        (ast-decl-cons
+          ordinary-decl
+          (ast-decl-cons
+            (ast-decl-test
+              "keeps-imported-generated"
+              (ast-node-push (AstExprLiteral (AstLitUnit)))
+              span)
+            AstDeclNil)))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "generated.tl"
+        (ast-decl-path-cons
+          "generated.tl"
+          (ast-decl-path-cons "driver.tl" AstDeclPathNil)))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness program _ count)
+        (match program
+          [(AstProgram harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name? harness-decls dead-name)
+                (not (tltest-decl-list-has-name? harness-decls ordinary-name))))])])))
+
+(test
+  test-cli-inline-harness-keeps-imported-generated-wrappers
+  (if (tltest-imported-generated-retained-self-test?)
+    unit
+    (panic "test CLI inline harness pruned imported generated wrapper")))
 
 (define (tltest-macro-quasiquote-deps-self-test?) : bool
   (let
@@ -2999,37 +3157,39 @@
               (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
               1)]
           [(SourceToolCommandOk)
-            (match (tltest-run-harness-output source bin-path target)
-              [(process.OkProcessOutput output)
-                (let
-                  [status : i64 (process.process-output-status output)]
+            (begin
+              (compiler-driver-reset-analysis-state!)
+              (match (tltest-run-harness-output source bin-path target)
+                [(process.OkProcessOutput output)
+                  (let
+                    [status : i64 (process.process-output-status output)]
+                    (begin
+                      (source-tool-forward-output output)
+                      (if (= status 0)
+                        unit
+                        (tltest-report-child-status output))
+                      (source-tool-clean-temp
+                        temp-dir
+                        asm-path
+                        obj-path
+                        bin-path
+                        true)
+                      ;; A failed test executable (including one that
+                      ;; panics/aborts, which exits 134) is a test
+                      ;; FAILURE, not a host crash: report the raw status
+                      ;; above, but exit cleanly with 1 so CI does not retry
+                      ;; it as a transient #1204 segfault.
+                      (if (= status 0)
+                        0
+                        1)))]
+                [(process.ErrProcessOutput error)
                   (begin
-                    (source-tool-forward-output output)
-                    (if (= status 0)
-                      unit
-                      (tltest-report-child-status output))
-                    (source-tool-clean-temp
-                      temp-dir
-                      asm-path
-                      obj-path
-                      bin-path
-                      true)
-                    ;; A failed test executable (including one that
-                    ;; panics/aborts, which exits 134) is a test
-                    ;; FAILURE, not a host crash: report the raw status
-                    ;; above, but exit cleanly with 1 so CI does not retry
-                    ;; it as a transient #1204 segfault.
-                    (if (= status 0)
-                      0
-                      1)))]
-              [(process.ErrProcessOutput error)
-                (begin
-                  (io.print-error
-                    (tltest-run-executable-error-message
-                      bin-path
-                      temp-dir
-                      error))
-                  1)])])]
+                    (io.print-error
+                      (tltest-run-executable-error-message
+                        bin-path
+                        temp-dir
+                        error))
+                    1)]))])]
       [(ErrCompilerLower diag)
         (begin
           (io.print-error
@@ -3938,31 +4098,37 @@
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
-  (if (>= index (vector.string-vec-len paths))
+  (let
+    [count : i64 (vector.string-vec-len paths)]
+    [cursor : i64 index]
+    [files : i64 file-count]
+    [tests : i64 test-count]
+    [status : i64 0]
     (begin
-      (io.print-string (tltest-batch-summary-line file-count test-count))
-      0)
-    (let
-      [source : String (vector.string-vec-get paths index "")]
-      ;; Match compile --batch: isolate each entry in a destroyable scratch
-      ;; arena. Lexical arena rewind keeps overflow chunks retired until the
-      ;; owning arena is destroyed (#2441), so destroying the entry arena is
-      ;; required for long one-process batches to stay bounded.
-      [entry-result : i64
-        (tltest-run-batch-check-path source roots backend-target)]
-      (if (< entry-result 0)
+      (while (and (= status 0) (< cursor count))
+        (let
+          [source : String (vector.string-vec-get paths cursor "")]
+          ;; Match compile --batch: isolate each entry in a destroyable scratch
+          ;; arena. Lexical arena rewind keeps overflow chunks retired until the
+          ;; owning arena is destroyed (#2441), so destroying the entry arena is
+          ;; required for long one-process batches to stay bounded.
+          [entry-result : i64
+            (tltest-run-batch-check-path source roots backend-target)]
+          (if (< entry-result 0)
+            (begin
+              (io.print-error
+                (string.string-append "test: batch source failed: " source))
+              (io.print-error "\n")
+              (set! status (- 0 entry-result)))
+            (begin
+              (set! files (+ files 1))
+              (set! tests (+ tests entry-result))
+              (set! cursor (+ cursor 1))))))
+      (if (= status 0)
         (begin
-          (io.print-error
-            (string.string-append "test: batch source failed: " source))
-          (io.print-error "\n")
-          (- 0 entry-result))
-        (tltest-run-batch-check-paths-from
-          paths
-          (+ index 1)
-          roots
-          backend-target
-          (+ file-count 1)
-          (+ test-count entry-result))))))
+          (io.print-string (tltest-batch-summary-line files tests))
+          0)
+        status))))
 
 (define (tltest-run-batch-check-paths
   [paths : vector.StringVec]

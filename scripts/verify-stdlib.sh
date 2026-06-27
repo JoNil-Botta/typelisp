@@ -189,6 +189,7 @@ ffi.tl
 hash.tl
 hashmap.tl
 json.tl
+json_derive.tl
 math.tl
 msvc.tl
 option.tl

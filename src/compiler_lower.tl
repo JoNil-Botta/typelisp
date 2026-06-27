@@ -951,6 +951,33 @@
           (TcNoString))])
     (TcNoString)))
 
+(define (lower-hygiene-context-source-name
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [module : String]
+  [lookup-name : String]) : String
+  (if (tc-name-qualified? lookup-name)
+    lookup-name
+    (if (>= (tc-name-first-dot lookup-name) 0)
+      (match (tc-source-name-lookup-key
+        (tc-context-with-module ctx module)
+        type-env
+        lookup-name)
+        [(OkTcString resolved-name) resolved-name]
+        [(ErrTcString _) (compiler-symbol-module-key module lookup-name)])
+      (compiler-symbol-module-key module lookup-name))))
+
+(define (lower-hygiene-source-name-in-context
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [name : String]) : String
+  (if (tc-hygiene-global-name? name)
+    (match (tc-hygiene-global-decode name)
+      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
+      [(TcHygieneContextGlobal module lookup-name)
+        (lower-hygiene-context-source-name ctx type-env module lookup-name)])
+    name))
+
 (define (lower-type-cache-lookup-hygiene
   [cache : LowerTypeCache]
   [name : String]) : ResultTcType
@@ -996,17 +1023,49 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [name : String]) : ResultTcString
-  (if (tc-source-slash-qualified? name)
-    (OkTcString name)
-    (tc-source-name-lookup-key ctx type-env name)))
+  (let
+    [source-name : String
+      (lower-hygiene-source-name-in-context ctx type-env name)]
+    (if (tc-source-slash-qualified? source-name)
+      (OkTcString source-name)
+      (match (tc-source-name-lookup-key ctx type-env source-name)
+        [(OkTcString lookup-name) (OkTcString lookup-name)]
+        [(ErrTcString message)
+          (match (lower-hygiene-fallback-source-name name)
+            [(TcSomeString fallback)
+              (if (tc-source-slash-qualified? fallback)
+                (OkTcString fallback)
+                (match (tc-source-name-lookup-key ctx type-env fallback)
+                  [(OkTcString lookup-name) (OkTcString lookup-name)]
+                  [(ErrTcString _) (ErrTcString message)]))]
+            [(TcNoString) (ErrTcString message)])]))))
 
 (define (lower-source-name-lookup-key-after-local-field-check
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [name : String]) : ResultTcString
-  (if (tc-source-slash-qualified? name)
-    (OkTcString name)
-    (tc-source-name-lookup-key-after-local-field-check ctx type-env name)))
+  (let
+    [source-name : String
+      (lower-hygiene-source-name-in-context ctx type-env name)]
+    (if (tc-source-slash-qualified? source-name)
+      (OkTcString source-name)
+      (match (tc-source-name-lookup-key-after-local-field-check
+        ctx
+        type-env
+        source-name)
+        [(OkTcString lookup-name) (OkTcString lookup-name)]
+        [(ErrTcString message)
+          (match (lower-hygiene-fallback-source-name name)
+            [(TcSomeString fallback)
+              (if (tc-source-slash-qualified? fallback)
+                (OkTcString fallback)
+                (match (tc-source-name-lookup-key-after-local-field-check
+                  ctx
+                  type-env
+                  fallback)
+                  [(OkTcString lookup-name) (OkTcString lookup-name)]
+                  [(ErrTcString _) (ErrTcString message)]))]
+            [(TcNoString) (ErrTcString message)])]))))
 
 (define (lower-lookup-type
   [ctx : TcContext]
@@ -10821,6 +10880,38 @@
       (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
     [_ variant-name]))
 
+(define (lower-type-debug-kind [ty : AstType]) : String
+  (match (tc-type-strip-region ty)
+    [(AstTyEnum _) "enum"]
+    [(AstTyEnumArgs _ _) "enum-args"]
+    [(AstTyStruct _) "struct"]
+    [(AstTyStructArgs _ _) "struct-args"]
+    [(AstTyVar _) "var"]
+    [(AstTyVarArgs _ _) "var-args"]
+    [(AstTyRef _ _) "ref"]
+    [(AstTyMutRef _ _) "mut-ref"]
+    [_ "other"]))
+
+(define (lower-unsupported-match-pattern-message
+  [ctx : TcContext]
+  [scrut-ty : AstType]
+  [variant-name : String]) : String
+  (let
+    [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
+    (str_cat.str-cat
+      "lower: unsupported match pattern "
+      variant-name
+      " in module "
+      (tc-context-module ctx)
+      " raw "
+      (lower-type-debug-kind scrut-ty)
+      " "
+      (tc-type-render scrut-ty)
+      " resolved "
+      (lower-type-debug-kind resolved)
+      " "
+      (tc-type-render resolved))))
+
 (define (lower-member-name-base [name : String]) : String
   (let
     [source : String
@@ -11918,47 +12009,55 @@
   [ctx : TcContext]
   [struct-name : String]
   [field-name : String]) : ResultLowerFieldInfo
-  (if (lower-struct-repr-c? ctx struct-name)
-    (match (tc-repr-c-struct-layout ctx struct-name)
-      [(OkTcReprCLayout layout)
-        (lower-field-info-from-repr-c-list
-          (tc-repr-c-layout-fields layout)
-          field-name)]
-      [(ErrTcReprCLayout message)
-        (ErrLowerFieldInfo (box (lower-diagnostic message)))])
-    (match (lower-struct-fields ctx struct-name)
-      [(OkAstFieldDefList fields)
-        (lower-field-info-from-list ctx fields field-name 0)]
-      [(ErrAstFieldDefList message)
-        (ErrLowerFieldInfo (box (lower-diagnostic message)))])))
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx struct-name)]
+    (if (lower-struct-repr-c? field-ctx struct-name)
+      (match (tc-repr-c-struct-layout field-ctx struct-name)
+        [(OkTcReprCLayout layout)
+          (lower-field-info-from-repr-c-list
+            (tc-repr-c-layout-fields layout)
+            field-name)]
+        [(ErrTcReprCLayout message)
+          (ErrLowerFieldInfo (box (lower-diagnostic message)))])
+      (match (lower-struct-fields field-ctx struct-name)
+        [(OkAstFieldDefList fields)
+          (lower-field-info-from-list field-ctx fields field-name 0)]
+        [(ErrAstFieldDefList message)
+          (ErrLowerFieldInfo (box (lower-diagnostic message)))]))))
 
 (define (lower-struct-field-info-for-mode
   [ctx : TcContext]
   [mode : CompilerLowerMode]
   [struct-name : String]
   [field-name : String]) : ResultLowerFieldInfo
-  (if (lower-mode-inline-aggregates? mode)
-    (match (lower-struct-field-info ctx struct-name field-name)
-      [(OkLowerFieldInfo info)
-        (match info
-          [(LowerFieldInfo _ field-ty)
-            (match (tc-inline-aggregate-layout-for ctx struct-name)
-              [(OkTcInlineAggregateLayout layout)
-                (let
-                  [offset : i64
-                    (tc-inline-aggregate-layout-field-offset layout field-name)]
-                  (if (< offset 0)
-                    (ErrLowerFieldInfo
-                      (box
-                        (lower-diagnostic
-                          (string.string-append
-                            "lower: inline struct layout missing field "
-                            field-name))))
-                    (OkLowerFieldInfo (LowerFieldInfo offset field-ty))))]
-              [(ErrTcInlineAggregateLayout message)
-                (ErrLowerFieldInfo (box (lower-diagnostic message)))])])]
-      [(ErrLowerFieldInfo message) (ErrLowerFieldInfo message)])
-    (lower-struct-field-info ctx struct-name field-name)))
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx struct-name)]
+    (if (lower-mode-inline-aggregates? mode)
+      (match (lower-struct-field-info field-ctx struct-name field-name)
+        [(OkLowerFieldInfo info)
+          (match info
+            [(LowerFieldInfo _ field-ty)
+              (match (tc-inline-aggregate-layout-for field-ctx struct-name)
+                [(OkTcInlineAggregateLayout layout)
+                  (let
+                    [offset : i64
+                      (tc-inline-aggregate-layout-field-offset
+                        layout
+                        field-name)]
+                    (if (< offset 0)
+                      (ErrLowerFieldInfo
+                        (box
+                          (lower-diagnostic
+                            (string.string-append
+                              "lower: inline struct layout missing field "
+                              field-name))))
+                      (OkLowerFieldInfo (LowerFieldInfo offset field-ty))))]
+                [(ErrTcInlineAggregateLayout message)
+                  (ErrLowerFieldInfo (box (lower-diagnostic message)))])])]
+        [(ErrLowerFieldInfo message) (ErrLowerFieldInfo message)])
+      (lower-struct-field-info field-ctx struct-name field-name))))
 
 (define (lower-var
   [state : LowerState]
@@ -15584,6 +15683,23 @@
         "")]
     [(ErrTcString _) ""]))
 
+(define (lower-variant-payload-fields-for-handle
+  [ctx : TcContext]
+  [handle : i64]
+  [resolved-scrut-ty : AstType]
+  [fields : AstTypeList]) : AstTypeList
+  (let
+    [field-ctx : TcContext
+      (tc-context-with-module ctx (lower-variant-owner-module ctx handle))]
+    [enum-name : String (lower-enum-type-name-or-empty resolved-scrut-ty)]
+    (tc-resolve-type-list
+      field-ctx
+      (lower-enum-constructor-fields-for-result
+        field-ctx
+        enum-name
+        resolved-scrut-ty
+        fields))))
+
 (define (lower-construct-enum-with-name
   [ctx : TcContext]
   [state : LowerState]
@@ -15839,7 +15955,15 @@
   [nominal-name : String]) : TcContext
   (if (tc-name-qualified? nominal-name)
     (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
-    ctx))
+    (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
+      [(SomeI64 handle)
+        (match (tc-nominal-owner-name ctx handle)
+          [(OkTcString owner-name)
+            (if (tc-name-qualified? owner-name)
+              (tc-context-with-module ctx (tc-qualified-name-module owner-name))
+              (tc-context-with-module ctx ""))]
+          [(ErrTcString _) ctx])]
+      [(NoneI64) ctx])))
 
 (define (lower-construct-struct
   [ctx : TcContext]
@@ -22734,6 +22858,13 @@
                         (if hygiene-global
                           (tc-hygiene-global-call-name raw-text)
                           raw-text)]
+                      [lowered-name : String
+                        (if hygiene-global
+                          (lower-hygiene-source-name-in-context
+                            ctx
+                            type-env
+                            raw-text)
+                          name)]
                       [source-id : i64
                         (if hygiene-global
                           (intern source-name)
@@ -22950,7 +23081,7 @@
                             state
                             env
                             type-env
-                            name
+                            lowered-name
                             args
                             result-ty
                             origin)]))]
@@ -36063,7 +36194,10 @@
                           (ErrLowerExpr
                             (box
                               (lower-diagnostic
-                                "lower: unsupported match pattern")))))]
+                                (lower-unsupported-match-pattern-message
+                                  ctx
+                                  scrut-ty
+                                  (intern-str variant-name)))))))]
                     [_
                       (ErrLowerExpr
                         (box
@@ -36236,13 +36370,11 @@
               [(OkAstTypeList fields)
                 (let
                   [resolved-fields : AstTypeList
-                    (tc-resolve-type-list
+                    (lower-variant-payload-fields-for-handle
                       ctx
-                      (lower-enum-constructor-fields-for-result
-                        ctx
-                        (lower-enum-type-name-or-empty resolved-scrut-ty)
-                        resolved-scrut-ty
-                        fields))]
+                      handle
+                      resolved-scrut-ty
+                      fields)]
                   ;; The final arm has no next-arm continuation, so a refutable
                   ;; payload subpattern here would have nowhere to fall through to;
                   ;; require a trailing catch-all instead (#651).
@@ -36421,13 +36553,11 @@
               [(OkAstTypeList fields)
                 (let
                   [resolved-fields : AstTypeList
-                    (tc-resolve-type-list
+                    (lower-variant-payload-fields-for-handle
                       ctx
-                      (lower-enum-constructor-fields-for-result
-                        ctx
-                        (lower-enum-type-name-or-empty resolved-scrut-ty)
-                        resolved-scrut-ty
-                        fields))]
+                      handle
+                      resolved-scrut-ty
+                      fields)]
                   (match (lower-state-alloc-var state)
                     [(LowerAlloc eq-alloc eq-var)
                       (let
@@ -37546,7 +37676,8 @@
                 sret-var)]
             [(NoneI64)
               (match (if (tc-hygiene-global-name? raw-text)
-                (OkTcString (tc-hygiene-global-call-name raw-text))
+                (OkTcString
+                  (lower-hygiene-source-name-in-context ctx type-env raw-text))
                 (lower-source-name-lookup-key ctx type-env raw-text))
                 [(OkTcString name)
                   (lower-return-call-name-to-sret
@@ -38298,13 +38429,11 @@
               [(OkAstTypeList fields)
                 (let
                   [resolved-fields : AstTypeList
-                    (tc-resolve-type-list
+                    (lower-variant-payload-fields-for-handle
                       ctx
-                      (lower-enum-constructor-fields-for-result
-                        ctx
-                        (lower-enum-type-name-or-empty resolved-scrut-ty)
-                        resolved-scrut-ty
-                        fields))]
+                      handle
+                      resolved-scrut-ty
+                      fields)]
                   (if (lower-pattern-list-refutable-for-types?
                     ctx
                     args
@@ -38439,13 +38568,11 @@
               [(OkAstTypeList fields)
                 (let
                   [resolved-fields : AstTypeList
-                    (tc-resolve-type-list
+                    (lower-variant-payload-fields-for-handle
                       ctx
-                      (lower-enum-constructor-fields-for-result
-                        ctx
-                        (lower-enum-type-name-or-empty resolved-scrut-ty)
-                        resolved-scrut-ty
-                        fields))]
+                      handle
+                      resolved-scrut-ty
+                      fields)]
                   (match (lower-state-alloc-var state)
                     [(LowerAlloc eq-alloc eq-var)
                       (let

@@ -47,6 +47,34 @@
     [r : (& x i64) (& x)]
     (lambda () : unit (let [copy : (& x i64) r] unit))))")
 
+(define (compiler-typecheck-lambda-large-global-env-source-from
+  [index : i64]
+  [limit : i64]
+  [out : String]) : String
+  (if (>= index limit)
+    (string.string-append
+      out
+      "(define (main) : unit
+  (let
+    [f : (-> unit) (lambda () : unit unit)]
+    unit))
+")
+    (compiler-typecheck-lambda-large-global-env-source-from
+      (+ index 1)
+      limit
+      (string.string-append
+        out
+        (string.string-append
+          "(define (lambda-global-"
+          (string.string-append
+            (string.int->string index)
+            (string.string-append
+              ") : i64 "
+              (string.string-append (string.int->string index) ")\n"))))))))
+
+(define (compiler-typecheck-lambda-large-global-env-source) : String
+  (compiler-typecheck-lambda-large-global-env-source-from 0 192 ""))
+
 (define (compiler-typecheck-reference-lambda-immediate-ok-source) : String
   "(define (read [r : (& n i64)]) : i64 42)
 (define (main [n : i64]) : i64
@@ -991,6 +1019,7 @@
       (compiler-typecheck-reference-lambda-local-ok-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-lambda-while-ok-source))
+    (compiler-typecheck-ok? (compiler-typecheck-lambda-large-global-env-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-reference-lambda-nested-ok-source))
     (compiler-typecheck-ok?
@@ -1232,6 +1261,83 @@
 (define (main) : i64
   (user.score))")
 
+(define (compiler-typecheck-smoke-module-macro-generated-import-nested-enum-payload-source) : String
+  "(import stdlib.json)
+(defmacro (json-user) : Module
+  `(begin
+    (module generated.json_nested_payload_user)
+    (import stdlib.json as json)
+    (define (score [value : json.Json]) : i64
+      (match (json.json-object-get-owned value \"zip\")
+        [(json.JsonFound __json_value)
+          (match __json_value
+            [(json.JsonNumber text) (__tl_string_length text)]
+            [_ 0])]
+        [(json.JsonMissing) 0]))))
+(import (json-user) as user)
+(define (main) : i64
+  (user.score
+    (json.JsonObject
+      (box
+        (json.JsonMemberListCons
+          \"zip\"
+          (json.JsonNumber \"42\")
+          (box json.JsonMemberListNil))))))")
+
+(define (compiler-typecheck-smoke-module-macro-generated-init-nested-root-source) : String
+  "(defstruct InitAddress
+  (zip i64)
+  (city String))
+(defstruct InitPerson
+  (home InitAddress))
+(defmacro (init-user [T : type]) : Module
+  `(begin
+    (module generated.init_nested_root)
+    (define (make) : ,T
+      (init : ,T))))
+(import (init-user InitPerson) as init_user)
+(define (main) : i64
+  (struct-get (struct-get (init_user.make) home) zip))")
+
+(define (compiler-typecheck-smoke-module-macro-generated-replay-normalized-source) : String
+  "(defstruct ReplayAddress
+  (zip i64))
+(defstruct ReplayPerson
+  (home ReplayAddress))
+(defmacro (replay-leaf [T : type]) : Module
+  `(begin
+    (module generated.replay_leaf)
+    (defenum Result
+      (Ok ,T)
+      (Err String))
+    (define (make) : ,T
+      (init : ,T))))
+(defmacro (replay-nested [T : type] [index-expr : Expr]) : Decls
+  (match index-expr
+    [(ExprInt index)
+      (if (>= index (struct-field-count T))
+        `(begin)
+        (let
+          [field-type : Expr (struct-field-type T index)]
+          [field-kind : String (type-kind field-type)]
+          [next-index : Expr (expr-int (+ index 1))]
+          (match field-kind
+            [\"struct\"
+              `(begin
+                (replay-nested ,T ,next-index)
+                (import (replay-leaf ,field-type) as nested))]
+            [_ `(replay-nested ,T ,next-index)])))]
+    [_ `(begin)]))
+(defmacro (replay-user [T : type]) : Module
+  `(begin
+    (module generated.replay_user)
+    (replay-nested ,T 0)
+    (define (answer) : i64 42)))
+(import (replay-leaf ReplayAddress) as address_leaf)
+(import (replay-user ReplayPerson) as replay_user)
+(define (main) : i64
+  (replay_user.answer))")
+
 (define (compiler-typecheck-smoke-module-macro-strategy-alias-source) : String
   "(module toy.format)
 (defmacro (emit-i64 [value : i64]) : i64
@@ -1380,49 +1486,102 @@
       (compiler-typecheck-smoke-comptime-error-decls-source)
       "custom decl macro failure")))
 
+(define (compiler-typecheck-smoke-require [ok : bool] [name : String]) : bool
+  (if ok
+    true
+    (io.panic name)))
+
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-module-macro-import-incompatible-key-source)
-      "typecheck: Module macro output for generated identity :gen(string_3_105_54_52) has incompatible payload")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-module-macro-generated-collision-source)
-      "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-generated-local-shadow-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-local-collision-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-type-key-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-param-type-stdlib-vector-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-strategy-alias-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-strategy-dedup-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-module-macro-strategy-missing-hook-source)
-      "typecheck: strategy module toy.empty does not export hook emit-i64")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-module-macro-strategy-unresolved-source)
-      "typecheck: unknown module strategy missing; import the module or use a visible dotted module alias")
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-strategy-vector-hook-source))
-    (compiler-typecheck-ok?
-      (compiler-typecheck-smoke-module-macro-extension-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-module-macro-extension-incompatible-source)
-      "typecheck: Module macro output for generated identity :extra(string_3_105_54_52) has incompatible payload")))
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))
+      "typecheck: module macro identity import evaluated key failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-module-macro-import-incompatible-key-source)
+        "typecheck: Module macro output for generated identity :gen(string_3_105_54_52) has incompatible payload")
+      "typecheck: module macro identity import incompatible key failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-module-macro-generated-collision-source)
+        "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")
+      "typecheck: module macro identity generated collision failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-generated-local-shadow-source))
+      "typecheck: module macro identity generated local shadow failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-local-collision-source))
+      "typecheck: module macro identity local collision failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-type-key-source))
+      "typecheck: module macro identity type key failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-nested-vector-import-source))
+      "typecheck: module macro identity nested vector import failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-local-type-stdlib-vector-source))
+      "typecheck: module macro identity local type stdlib vector failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-qualified-type-stdlib-vector-source))
+      "typecheck: module macro identity qualified type stdlib vector failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-param-type-stdlib-vector-source))
+      "typecheck: module macro identity param type stdlib vector failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source))
+      "typecheck: module macro identity imported aggregate stdlib vector failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-generated-import-nested-enum-payload-source))
+      "typecheck: module macro identity generated import nested enum payload failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-generated-init-nested-root-source))
+      "typecheck: module macro identity generated init nested root failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-generated-replay-normalized-source))
+      "typecheck: module macro identity generated replay normalized failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-strategy-alias-source))
+      "typecheck: module macro identity strategy alias failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-strategy-dedup-source))
+      "typecheck: module macro identity strategy dedup failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-module-macro-strategy-missing-hook-source)
+        "typecheck: strategy module toy.empty does not export hook emit-i64")
+      "typecheck: module macro identity strategy missing hook failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-module-macro-strategy-unresolved-source)
+        "typecheck: unknown module strategy missing; import the module or use a visible dotted module alias")
+      "typecheck: module macro identity strategy unresolved failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-strategy-vector-hook-source))
+      "typecheck: module macro identity strategy vector hook failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-extension-source))
+      "typecheck: module macro identity extension failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-module-macro-extension-incompatible-source)
+        "typecheck: Module macro output for generated identity :extra(string_3_105_54_52) has incompatible payload")
+      "typecheck: module macro identity extension incompatible failed")))
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,

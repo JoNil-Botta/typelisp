@@ -296,6 +296,10 @@
 (define (expr-int [value : i64]) : Expr
   (expr-int value))
 
+;: Build a string literal expression during macro CTFE.
+(define (expr-string [value : String]) : Expr
+  (expr-string value))
+
 ;: Build a variable-reference expression during macro CTFE.
 (define (expr-var [name : String]) : Expr
   (expr-var name))
@@ -303,6 +307,10 @@
 ;: Build a struct field access expression during macro CTFE.
 (define (expr-struct-get [target : Expr] [field : String]) : Expr
   (expr-struct-get target field))
+
+;: Build a struct field assignment expression during macro CTFE.
+(define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
+  (expr-struct-set target field value))
 
 ;: Concatenate two strings during macro CTFE.
 (define (string-concat [left : String] [_right : String]) : String

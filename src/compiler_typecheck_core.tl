@@ -10096,6 +10096,16 @@
         "typecheck: "
         (string.string-append name " requires unsafe context")))))
 
+(define (tc-dyn-array-elem-list-supported?
+  [env : TcTypeEnv]
+  [types : AstTypeList]) : bool
+  (match types
+    [(AstTypeNil) true]
+    [(AstTypeCons head rest)
+      (if (tc-dyn-array-elem-supported? env (ty-node-get head))
+        (tc-dyn-array-elem-list-supported? env (box-get rest))
+        false)]))
+
 (define (tc-dyn-array-elem-supported? [env : TcTypeEnv] [ty : AstType]) : bool
   (if (tc-integer-type? ty)
     true
@@ -10110,6 +10120,8 @@
       [(AstTyStruct _) true]
       [(AstTyStructArgs _ _) true]
       [(AstTyDynArray _) true]
+      [(AstTyTuple elems)
+        (tc-dyn-array-elem-list-supported? env (box-get elems))]
       [(AstTyRef _ _)
         (tc-reference-lifetimes-visible?
           env

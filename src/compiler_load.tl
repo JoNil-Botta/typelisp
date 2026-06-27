@@ -1227,16 +1227,25 @@
             primary))]
       (OkPkgResolve resolved))))
 
+(define (compiler-load-dotted-path-cache-clear-ready! [index : i64]) : unit
+  (if (>= index compiler-load-dotted-path-cache-capacity)
+    unit
+    (begin
+      (array.array-set!
+        (struct-get compiler-load-active-session-state dotted-path-cache-ready)
+        index
+        false)
+      (compiler-load-dotted-path-cache-clear-ready! (+ index 1)))))
+
 (define (compiler-load-dotted-path-cache-reset!) : unit
   (begin
-    (set!
-      (struct-get compiler-load-active-session-state dotted-path-cache-ready)
-      (array.make-array bool compiler-load-dotted-path-cache-capacity))
-    (set!
+    (compiler-load-dotted-path-cache-clear-ready! 0)
+    (array.array-set!
       (struct-get
         compiler-load-active-session-state
         dotted-path-cache-generation)
-      (compiler-load-session-state-i64-cell (intern-generation)))))
+      0
+      (intern-generation))))
 
 (define (compiler-load-dotted-path-cache-ensure!) : unit
   (if (=
@@ -1316,11 +1325,18 @@
         [(CompilerLoadSomeString path) path]
         [(CompilerLoadNoString)
           (let
-            [path : String
-              (compiler-load-dotted-module-path-uncached module-name)]
+            [prev-arena : i64 (arena.tl_arena_current)]
             (begin
-              (compiler-load-dotted-path-cache-store! module-id path)
-              path))]))))
+              (unsafe
+                (arena.tl_arena_set node-pool-base-arena))
+              (let
+                [path : String
+                  (compiler-load-dotted-module-path-uncached module-name)]
+                (begin
+                  (compiler-load-dotted-path-cache-store! module-id path)
+                  (unsafe
+                    (arena.tl_arena_set prev-arena))
+                  path))))]))))
 
 (define (compiler-load-dotted-module-first-len [module-name : String]) : i64
   (let

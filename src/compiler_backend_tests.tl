@@ -8994,6 +8994,41 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-int-to-float-cast-asm
+  [to-ty : AstType]) : ResultCompilerBackend
+  (compiler-backend-emit-cast
+    "test_cast"
+    "entry"
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%xmm2"))
+        CompilerRegAssignmentNil))
+    1
+    (IrValueVar 0)
+    (AstTyI64)
+    to-ty
+    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+
+(define (compiler-backend-direct-int-to-float-cast-home-ok?) : bool
+  (match (compiler-backend-direct-int-to-float-cast-asm (AstTyF64))
+    [(OkCompilerBackend f64-asm)
+      (match (compiler-backend-direct-int-to-float-cast-asm (AstTyF32))
+        [(OkCompilerBackend f32-asm)
+          (and
+            (compiler-backend-string-contains?
+              f64-asm
+              "    cvtsi2sdq %r12, %xmm2\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    cvtsi2ssq %r12, %xmm2\n")
+            (not (compiler-backend-string-contains? f64-asm "%rax"))
+            (not (compiler-backend-string-contains? f32-asm "%rax"))
+            (not (compiler-backend-string-contains? f64-asm "%xmm0"))
+            (not (compiler-backend-string-contains? f32-asm "%xmm0")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-bitcast-shape-ok?) : bool
   (and
     (backend-and4
@@ -12496,7 +12531,8 @@
         (compiler-backend-syscall-source-ok?)
         (and
           (compiler-backend-numeric-cast-shape-ok?)
-          (compiler-backend-direct-float-precision-cast-home-ok?))
+          (compiler-backend-direct-float-precision-cast-home-ok?)
+          (compiler-backend-direct-int-to-float-cast-home-ok?))
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)

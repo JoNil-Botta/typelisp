@@ -11153,6 +11153,14 @@
     [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
     [_ "    cvtsi2sdq %rax, %xmm0\n"]))
 
+(define (compiler-backend-int-to-float-cast-reg-asm
+  [src-reg : String]
+  [to-ty : AstType]
+  [dst-reg : String]) : String
+  (match to-ty
+    [(AstTyF32) (str-cat "    cvtsi2ssq " src-reg ", " dst-reg "\n")]
+    [_ (str-cat "    cvtsi2sdq " src-reg ", " dst-reg "\n")]))
+
 (define (compiler-backend-u64-to-float-cast-op [to-ty : AstType]) : String
   (match to-ty
     [(AstTyF32) "ss"]
@@ -11254,38 +11262,48 @@
   [from-ty : AstType]
   [to-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-typed-value-with-plan
-    assignments
-    src
-    from-ty
-    program-index)
-    [(OkCompilerBackend load)
+  (let
+    [dst-home : String (compiler-backend-var-register-home assignments dst)]
+    [src-reg : String (compiler-backend-value-scalar-register assignments src)]
+    (if (and
+      (not (opt-type-eq from-ty (AstTyU64)))
+      (and
+        (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
+        (not (string-eq src-reg ""))))
       (OkCompilerBackend
-        (str-cat
-          load
-          (match from-ty
-            [(AstTyU64)
-              ;; Scavenge the odd-bit fixup scratch (was hardcoded %r11). The
-              ;; exclude-build set excludes %rax (the cast value) + %r11 (so it
-              ;; actively picks a different register); the freeness query keeps it
-              ;; off live homes. Degrades to %r11 only via emergency spill.
-              (compiler-backend-u64-to-float-cast-asm
-                function
-                current-label
+        (compiler-backend-int-to-float-cast-reg-asm src-reg to-ty dst-home))
+      (match (compiler-backend-emit-load-typed-value-with-plan
+        assignments
+        src
+        from-ty
+        program-index)
+        [(OkCompilerBackend load)
+          (OkCompilerBackend
+            (str-cat
+              load
+              (match from-ty
+                [(AstTyU64)
+                  ;; Scavenge the odd-bit fixup scratch (was hardcoded %r11). The
+                  ;; exclude-build set excludes %rax (the cast value) + %r11 (so it
+                  ;; actively picks a different register); the freeness query keeps it
+                  ;; off live homes. Degrades to %r11 only via emergency spill.
+                  (compiler-backend-u64-to-float-cast-asm
+                    function
+                    current-label
+                    dst
+                    to-ty
+                    (compiler-backend-scavenge-reg
+                      dst
+                      (compiler-backend-binop-scavenge-exclude-build)
+                      5
+                      "%r11"))]
+                [_ (compiler-backend-int-to-float-cast-asm to-ty)])
+              (compiler-backend-emit-store-float-var-with-plan
+                assignments
                 dst
-                to-ty
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-binop-scavenge-exclude-build)
-                  5
-                  "%r11"))]
-            [_ (compiler-backend-int-to-float-cast-asm to-ty)])
-          (compiler-backend-emit-store-float-var-with-plan
-            assignments
-            dst
-            "%xmm0"
-            to-ty)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                "%xmm0"
+                to-ty)))]
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-float-to-int-cast
   [assignments : CompilerRegAssignmentList]

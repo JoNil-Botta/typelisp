@@ -1593,8 +1593,16 @@
   (ast-expr-node-pool-state-len
     (array.array-ref (struct-get pools expr-pool) 0)))
 
+(define (ast-node-pool-context-expr-capacity [pools : AstNodePoolContext]) : i64
+  (ast-expr-node-pool-state-capacity
+    (array.array-ref (struct-get pools expr-pool) 0)))
+
 (define (ast-node-pool-context-type-len [pools : AstNodePoolContext]) : i64
   (ast-type-node-pool-state-len
+    (array.array-ref (struct-get pools type-pool) 0)))
+
+(define (ast-node-pool-context-type-capacity [pools : AstNodePoolContext]) : i64
+  (ast-type-node-pool-state-capacity
     (array.array-ref (struct-get pools type-pool) 0)))
 
 (define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64

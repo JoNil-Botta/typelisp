@@ -538,6 +538,109 @@
                   (string.string-append "|" (string.string-append name "\n")))))))
         unit))))
 
+(cfg
+  compile-profile
+  ;; Counter rows reuse the six-field phase schema so benchmark profile.tsv
+  ;; extraction preserves them; the counter value lives in the live-delta slot.
+  (define (compiler-lower-profile-counter [name : String] [value : i64]) : unit
+    (io.print-error
+      (string.string-append
+        "compile-profile|lower."
+        (string.string-append
+          name
+          (string.string-append
+            "|0|0"
+            (string.string-append (compiler-lower-profile-field value) "|0\n")))))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-pools
+    [point : String]
+    [pools : AstNodePoolContext]) : unit
+    (begin
+      (compiler-lower-profile-counter
+        (string.string-append
+          "ast_expr_pool."
+          (string.string-append point ".len"))
+        (ast-node-pool-context-expr-len pools))
+      (compiler-lower-profile-counter
+        (string.string-append
+          "ast_expr_pool."
+          (string.string-append point ".capacity"))
+        (ast-node-pool-context-expr-capacity pools))
+      (compiler-lower-profile-counter
+        (string.string-append
+          "ast_type_pool."
+          (string.string-append point ".len"))
+        (ast-node-pool-context-type-len pools))
+      (compiler-lower-profile-counter
+        (string.string-append
+          "ast_type_pool."
+          (string.string-append point ".capacity"))
+        (ast-node-pool-context-type-capacity pools)))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-decl-list-count [decls : AstDeclList]) : i64
+    (match decls
+      [(AstDeclNil) 0]
+      [(AstDeclCons _ rest)
+        (let
+          [rest : AstDeclList (box-get rest)]
+          (+ 1 (compiler-lower-profile-decl-list-count rest)))])))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-program-counts
+    [point : String]
+    [program : AstProgram]) : unit
+    (match program
+      [(AstProgram decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (begin
+            (compiler-lower-profile-counter
+              (string.string-append
+                "checked_program."
+                (string.string-append point ".decls"))
+              (compiler-lower-profile-decl-list-count decls))
+            (compiler-lower-profile-counter
+              (string.string-append
+                "checked_program."
+                (string.string-append point ".functions"))
+              (lower-function-decl-count decls))))])))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-ir-shape
+    [point : String]
+    [program : CompilerIrProgram]) : unit
+    (match program
+      [(IrProgram _ functions _)
+        (begin
+          (compiler-lower-profile-counter
+            (string.string-append
+              "ir."
+              (string.string-append point ".functions"))
+            (compiler-ir-function-list-count functions))
+          (compiler-lower-profile-counter
+            (string.string-append "ir." (string.string-append point ".blocks"))
+            (compiler-ir-function-list-block-count functions))
+          (compiler-lower-profile-counter
+            (string.string-append
+              "ir."
+              (string.string-append point ".instructions"))
+            (compiler-ir-function-list-instruction-count functions)))])))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-ir-arena [point : String]) : unit
+    (compiler-lower-profile-counter
+      (string.string-append "ir_arena." (string.string-append point ".active"))
+      (if (= lower-ir-arena 0)
+        0
+        1))))
+
 (define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
     [(AstExprSpanned _ span)
@@ -40818,6 +40921,21 @@
                                           "typecheck"))
                                       (cfg
                                         compile-profile
+                                        (compiler-lower-profile-pools
+                                          "typecheck"
+                                          clone-pools))
+                                      (cfg
+                                        compile-profile
+                                        (compiler-lower-profile-pools
+                                          "pre_decls"
+                                          clone-pools))
+                                      (cfg
+                                        compile-profile
+                                        (compiler-lower-profile-program-counts
+                                          "pre_decls"
+                                          checked-program))
+                                      (cfg
+                                        compile-profile
                                         (compiler-lower-profile-start))
                                       (match (lower-compiler-program-checked-with-names-mode
                                         ctx
@@ -40831,6 +40949,15 @@
                                               compile-profile
                                               (compiler-lower-profile-finish
                                                 "decls"))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-lower-profile-ir-shape
+                                                "after_decls"
+                                                ir))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-lower-profile-ir-arena
+                                                "after_decls"))
                                             (OkCompilerLower ir spans))]
                                         [(ErrCompilerLower diag)
                                           (begin
@@ -41001,6 +41128,9 @@
                 (cfg
                   compile-profile
                   (compiler-lower-profile-finish "macro_expand"))
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-pools "macro_expand" pools))
                 (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
                   entry-path
                   expanded

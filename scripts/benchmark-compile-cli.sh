@@ -282,6 +282,9 @@ profile_total_ms() {
 profile_peak_live_delta() {
     stderr=$1
     awk -F'|' '$1 == "compile-profile" && $2 != "phase" {
+            if ($2 ~ /^lower\.(ast_expr_pool|ast_type_pool|checked_program|ir\.|ir_arena\.)/) {
+                next
+            }
             if (($6 + 0) > peak) {
                 peak = $6 + 0
             }

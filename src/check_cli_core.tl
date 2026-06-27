@@ -140,7 +140,7 @@
   [input-path : String]
   [stdlib-roots : vector.StringVec]) : i64
   (match (compiler-check-file-with-roots input-path stdlib-roots)
-    [(OkCompilerCheck _)
+    [(ResultCompilerCheck.Ok _)
       (let
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
@@ -158,7 +158,7 @@
                 0)
               doctest-status))
           inline-test-status))]
-    [(ErrCompilerCheck diag)
+    [(ResultCompilerCheck.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
@@ -198,7 +198,7 @@
           manifest-dir
           (struct-get manifest deps)
           emit-entry)
-          [(OkCompilerCheckWithPaths _ paths)
+          [(ResultCompilerCheckWithPaths.Ok _ paths)
             (let
               [inline-test-status : i64
                 (tltest-inline-typecheck-package-sources-with-cfg
@@ -223,7 +223,7 @@
                       0)
                     doctest-status))
                 inline-test-status))]
-          [(ErrCompilerCheckWithPaths diag)
+          [(ResultCompilerCheckWithPaths.Err diag)
             (begin
               (io.print-error (compiler-diagnostic-render (box-get diag)))
               1)]))]))

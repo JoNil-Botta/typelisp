@@ -842,12 +842,18 @@
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
+    [(TcTypeStack start len parent)
+      (lower-type-env-count
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _) (lower-type-env-count (box-get rest))]
     [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
 
 (define (lower-type-env-contains-reference? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (lower-type-env-contains-reference?
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (lower-type-env-contains-reference? (box-get rest))]
     [(TcTypeBind _ ty rest)
@@ -883,6 +889,10 @@
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
     [(TcTypeNil) cache]
+    [(TcTypeStack start len parent)
+      (lower-type-cache-from-env-into
+        (tc-type-stack-materialize start len (box-get parent))
+        cache)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (lower-type-cache-from-env-into (box-get rest) cache)]
     [(TcTypeBind name-id ty rest)
@@ -13518,6 +13528,10 @@
             (begin
               (set! result (OkLowerState cur-state))
               (set! done true))]
+          [(TcTypeStack start len parent)
+            (set!
+              cur-env
+              (tc-type-stack-materialize start len (box-get parent)))]
           [(TcTypeCache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
           [(TcTypeBind key ty rest)
             (begin
@@ -13620,6 +13634,12 @@
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeNil) (OkLowerState state)]
+    [(TcTypeStack start len parent)
+      (lower-emit-active-cleanups-with
+        cleanup-marker-id
+        state
+        env
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (lower-emit-active-cleanups-with
         cleanup-marker-id

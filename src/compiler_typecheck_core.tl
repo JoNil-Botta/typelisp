@@ -38,6 +38,7 @@
 (defenum TcTypeEnv
   (TcTypeNil)
   (TcTypeBind i64 AstType (Box TcTypeEnv))
+  (TcTypeStack i64 i64 (Box TcTypeEnv))
   (TcTypeCache
     hashmap.I64I64Map
     (Array AstType)
@@ -2086,6 +2087,9 @@
       (begin
         (tc-topenv-membership-mark! key)
         (tc-topenv-membership-seed! (box-get rest)))]
+    [(TcTypeStack start len parent)
+      (tc-topenv-membership-seed!
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-topenv-membership-seed! (box-get rest))]))
 
@@ -2098,13 +2102,340 @@
 (define (tc-topenv-membership-end!) : unit
   (set! tc-topenv-membership-active false))
 
+(define (tc-type-stack-capacity) : i64
+  262144)
+
+(define tc-type-stack-name-ids : (Array i64)
+  (array.make-array i64 262144))
+(define tc-type-stack-types : (Array AstType)
+  (array.make-array AstType 262144))
+(define tc-type-stack-index-cache : (Array i64)
+  (array.make-array i64 262144))
+(define tc-type-stack-index-cache-gens : (Array i64)
+  (array.make-array i64 262144))
+(define tc-type-stack-len : i64
+  0)
+(define tc-type-stack-generation : i64
+  1)
+
+(define (tc-type-stack-reset!) : unit
+  (begin
+    (set! tc-type-stack-len 0)
+    (set! tc-type-stack-generation (+ tc-type-stack-generation 1))))
+
+(define (tc-type-stack-cache-mark! [name-id : i64] [index : i64]) : unit
+  (if (and (>= name-id 0) (< name-id (tc-type-stack-capacity)))
+    (begin
+      (array.array-set! tc-type-stack-index-cache name-id index)
+      (array.array-set!
+        tc-type-stack-index-cache-gens
+        name-id
+        tc-type-stack-generation))
+    unit))
+
+;; Probe result: >= 0 is the latest visible stack index; -1 means stale or
+;; unknown and must scan; -2 means definitely absent from the current stack
+;; generation and can fall through to the parent env immediately.
+(define (tc-type-stack-cache-probe [start : i64] [len : i64] [name-id : i64]) : i64
+  (if (and (>= name-id 0) (< name-id (tc-type-stack-capacity)))
+    (if (=
+      (array.array-ref tc-type-stack-index-cache-gens name-id)
+      tc-type-stack-generation)
+      (let
+        [index : i64 (array.array-ref tc-type-stack-index-cache name-id)]
+        (if (and
+          (>= index start)
+          (< index len)
+          (= (array.array-ref tc-type-stack-name-ids index) name-id))
+          index
+          -1))
+      -2)
+    -1))
+
+(define (tc-type-stack-root [parent : TcTypeEnv]) : TcTypeEnv
+  (TcTypeStack tc-type-stack-len tc-type-stack-len (box parent)))
+
+(define (tc-type-stack-materialize-range
+  [index : i64]
+  [len : i64]
+  [env : TcTypeEnv]) : TcTypeEnv
+  (if (>= index len)
+    env
+    (tc-type-stack-materialize-range
+      (+ index 1)
+      len
+      (TcTypeBind
+        (array.array-ref tc-type-stack-name-ids index)
+        (array.array-ref tc-type-stack-types index)
+        (box env)))))
+
+(define (tc-type-stack-materialize
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]) : TcTypeEnv
+  (tc-type-stack-materialize-range start len parent))
+
+(define (tc-type-stack-bind-id
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnv
+  (if (< len (tc-type-stack-capacity))
+    (begin
+      (set! tc-type-stack-len len)
+      (array.array-set! tc-type-stack-name-ids len name-id)
+      (array.array-set! tc-type-stack-types len ty)
+      (tc-type-stack-cache-mark! name-id len)
+      (set! tc-type-stack-len (+ len 1))
+      (TcTypeStack start (+ len 1) (box parent)))
+    (TcTypeBind name-id ty (box (tc-type-stack-materialize start len parent)))))
+
+(define (tc-type-stack-unsafe-marker-head-id?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (> len start)
+    (=
+      (array.array-ref tc-type-stack-name-ids (- len 1))
+      (tc-unsafe-decl-marker-id name-id))
+    (tc-binding-unsafe-marker-head-id? parent name-id)))
+
+(define (tc-type-stack-unsafe-marker-below-id?
+  [start : i64]
+  [index : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (> index start)
+    (=
+      (array.array-ref tc-type-stack-name-ids (- index 1))
+      (tc-unsafe-decl-marker-id name-id))
+    (tc-binding-unsafe-marker-head-id? parent name-id)))
+
+(define (tc-type-stack-c-abi-marker-near-id?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (if (<= len start)
+      (tc-c-abi-fnptr-marker-near-id? parent name-id remaining)
+      (let
+        [index : i64 (- len 1)]
+        [key : i64 (array.array-ref tc-type-stack-name-ids index)]
+        (if (= key (tc-c-abi-fnptr-marker-id name-id))
+          true
+          (if (= key name-id)
+            false
+            (tc-type-stack-c-abi-marker-near-id?
+              start
+              index
+              parent
+              name-id
+              (- remaining 1))))))))
+
+(define (tc-type-stack-c-abi-marker-below-id?
+  [start : i64]
+  [index : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]
+  [remaining : i64]) : bool
+  (if (<= remaining 0)
+    false
+    (if (<= index start)
+      (tc-c-abi-fnptr-marker-near-id? parent name-id remaining)
+      (let
+        [below-index : i64 (- index 1)]
+        [key : i64 (array.array-ref tc-type-stack-name-ids below-index)]
+        (if (= key (tc-c-abi-fnptr-marker-id name-id))
+          true
+          (if (= key name-id)
+            false
+            (tc-type-stack-c-abi-marker-below-id?
+              start
+              below-index
+              parent
+              name-id
+              (- remaining 1))))))))
+
+(define (tc-type-stack-lookup-id-scan
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : ResultTcType
+  (if (<= len start)
+    (tc-lookup-id parent name-id)
+    (let
+      [index : i64 (- len 1)]
+      [key : i64 (array.array-ref tc-type-stack-name-ids index)]
+      (if (= key name-id)
+        (OkTcType (array.array-ref tc-type-stack-types index))
+        (tc-type-stack-lookup-id-scan start index parent name-id)))))
+
+(define (tc-type-stack-lookup-id
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : ResultTcType
+  (let
+    [cached : i64 (tc-type-stack-cache-probe start len name-id)]
+    (if (>= cached 0)
+      (OkTcType (array.array-ref tc-type-stack-types cached))
+      (if (= cached -2)
+        (tc-lookup-id parent name-id)
+        (tc-type-stack-lookup-id-scan start len parent name-id)))))
+
+(define (tc-type-stack-name-bound-id-scan?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (<= len start)
+    (tc-name-bound-id? parent name-id)
+    (let
+      [index : i64 (- len 1)]
+      (if (= (array.array-ref tc-type-stack-name-ids index) name-id)
+        true
+        (tc-type-stack-name-bound-id-scan? start index parent name-id)))))
+
+(define (tc-type-stack-name-bound-id?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (let
+    [cached : i64 (tc-type-stack-cache-probe start len name-id)]
+    (if (>= cached 0)
+      true
+      (if (= cached -2)
+        (tc-name-bound-id? parent name-id)
+        (tc-type-stack-name-bound-id-scan? start len parent name-id)))))
+
+(define (tc-type-stack-lookup-unsafe-id-scan
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : ResultTcTypeUnsafe
+  (if (<= len start)
+    (tc-lookup-unsafe-id parent name-id)
+    (let
+      [index : i64 (- len 1)]
+      [key : i64 (array.array-ref tc-type-stack-name-ids index)]
+      (if (= key name-id)
+        (OkTcTypeUnsafe
+          (array.array-ref tc-type-stack-types index)
+          (tc-type-stack-unsafe-marker-below-id? start index parent name-id))
+        (tc-type-stack-lookup-unsafe-id-scan start index parent name-id)))))
+
+(define (tc-type-stack-lookup-unsafe-id
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : ResultTcTypeUnsafe
+  (let
+    [cached : i64 (tc-type-stack-cache-probe start len name-id)]
+    (if (>= cached 0)
+      (OkTcTypeUnsafe
+        (array.array-ref tc-type-stack-types cached)
+        (tc-type-stack-unsafe-marker-below-id? start cached parent name-id))
+      (if (= cached -2)
+        (tc-lookup-unsafe-id parent name-id)
+        (tc-type-stack-lookup-unsafe-id-scan start len parent name-id)))))
+
+(define (tc-type-stack-binding-c-abi-fnptr-id-scan?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (<= len start)
+    (tc-binding-c-abi-fnptr-id? parent name-id)
+    (let
+      [index : i64 (- len 1)]
+      [key : i64 (array.array-ref tc-type-stack-name-ids index)]
+      (if (= key name-id)
+        (tc-type-stack-c-abi-marker-below-id? start index parent name-id 3)
+        (tc-type-stack-binding-c-abi-fnptr-id-scan? start index parent name-id)))))
+
+(define (tc-type-stack-binding-c-abi-fnptr-id?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (let
+    [cached : i64 (tc-type-stack-cache-probe start len name-id)]
+    (if (>= cached 0)
+      (tc-type-stack-c-abi-marker-below-id? start cached parent name-id 3)
+      (if (= cached -2)
+        (tc-binding-c-abi-fnptr-id? parent name-id)
+        (tc-type-stack-binding-c-abi-fnptr-id-scan? start len parent name-id)))))
+
+(define (tc-type-stack-binding-unsafe-id-scan?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (<= len start)
+    (tc-binding-unsafe-id? parent name-id)
+    (let
+      [index : i64 (- len 1)]
+      [key : i64 (array.array-ref tc-type-stack-name-ids index)]
+      (if (= key name-id)
+        (tc-type-stack-unsafe-marker-below-id? start index parent name-id)
+        (tc-type-stack-binding-unsafe-id-scan? start index parent name-id)))))
+
+(define (tc-type-stack-binding-unsafe-id?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]
+  [name-id : i64]) : bool
+  (let
+    [cached : i64 (tc-type-stack-cache-probe start len name-id)]
+    (if (>= cached 0)
+      (tc-type-stack-unsafe-marker-below-id? start cached parent name-id)
+      (if (= cached -2)
+        (tc-binding-unsafe-id? parent name-id)
+        (tc-type-stack-binding-unsafe-id-scan? start len parent name-id)))))
+
+(define (tc-type-stack-in-unsafe-scan?
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]) : bool
+  (if (<= len start)
+    (tc-in-unsafe-scan? parent)
+    (let
+      [index : i64 (- len 1)]
+      (if (=
+        (array.array-ref tc-type-stack-name-ids index)
+        (tc-unsafe-marker-id))
+        true
+        (tc-type-stack-in-unsafe-scan? start index parent)))))
+
+(define (tc-type-stack-current-return-type-scan
+  [start : i64]
+  [len : i64]
+  [parent : TcTypeEnv]) : ResultTcType
+  (if (<= len start)
+    (tc-current-return-type-scan parent)
+    (let
+      [index : i64 (- len 1)]
+      [key : i64 (array.array-ref tc-type-stack-name-ids index)]
+      (if (= key (tc-return-type-id))
+        (OkTcType (array.array-ref tc-type-stack-types index))
+        (tc-type-stack-current-return-type-scan start index parent)))))
+
 (define (tc-bind-raw-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-bind))
     (if tc-topenv-membership-active
       (tc-topenv-membership-mark! name-id)
       unit)
-    (TcTypeBind name-id ty (box env))))
+    (match env
+      [(TcTypeStack start len parent)
+        (tc-type-stack-bind-id start len (box-get parent) name-id ty)]
+      [_ (TcTypeBind name-id ty (box env))])))
 
 (define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind-raw-id env (tc-name-id name) ty))
@@ -2260,6 +2591,13 @@
     false
     (match env
       [(TcTypeNil) false]
+      [(TcTypeStack start len parent)
+        (tc-type-stack-c-abi-marker-near-id?
+          start
+          len
+          (box-get parent)
+          name-id
+          remaining)]
       [(TcTypeCache _ _ _ _ _ _ _ rest _)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id remaining)]
       [(TcTypeBind key _ rest)
@@ -2275,6 +2613,8 @@
 (define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-type-stack-binding-c-abi-fnptr-id? start len (box-get parent) name-id)]
     [(TcTypeCache ids _ _ c-abi-fnptr-flags _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
@@ -2294,6 +2634,8 @@
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeBind key _ _) (= key (tc-unsafe-decl-marker-id name-id))]
+    [(TcTypeStack start len parent)
+      (tc-type-stack-unsafe-marker-head-id? start len (box-get parent) name-id)]
     [_ false]))
 
 (define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
@@ -2302,6 +2644,8 @@
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-type-stack-binding-unsafe-id? start len (box-get parent) name-id)]
     [(TcTypeCache ids _ unsafe-flags _ _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
@@ -2321,6 +2665,8 @@
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
+    [(TcTypeStack start len parent)
+      (+ (- len start) (tc-env-cache-count (box-get parent)))]
     [(TcTypeBind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-env-cache-count (box-get rest))]))
 
@@ -2328,6 +2674,10 @@
   (if (<= remaining 0)
     0
     (match env
+      [(TcTypeStack start len _)
+        (tc-env-cache-count-prefix
+          (tc-type-stack-materialize start len (TcTypeNil))
+          remaining)]
       [(TcTypeBind _ _ rest)
         (+ 1 (tc-env-cache-count-prefix (box-get rest) (- remaining 1)))]
       [_ 0])))
@@ -2395,6 +2745,15 @@
   [above-boundary : bool]) : hashmap.I64I64Map
   (match env
     [(TcTypeNil) ids]
+    [(TcTypeStack start len parent)
+      (tc-env-cache-fill
+        (tc-type-stack-materialize start len (box-get parent))
+        ids
+        values
+        unsafe-flags
+        c-abi-fnptr-flags
+        shadow-flags
+        above-boundary)]
     [(TcTypeBind name-id ty rest)
       (let
         ;; The boundary bind itself and everything below it are not default
@@ -2443,6 +2802,16 @@
   (if (<= remaining 0)
     ids
     (match env
+      [(TcTypeStack start len parent)
+        (tc-env-cache-fill-prefix
+          (tc-type-stack-materialize start len (box-get parent))
+          remaining
+          ids
+          values
+          unsafe-flags
+          c-abi-fnptr-flags
+          shadow-flags
+          above-boundary)]
       [(TcTypeBind name-id ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
@@ -3255,6 +3624,8 @@
 (define (tc-in-unsafe-scan? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-type-stack-in-unsafe-scan? start len (box-get parent))]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-in-unsafe-scan? (box-get rest))
@@ -3484,6 +3855,8 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: try requires enclosing Result-like function")]
+    [(TcTypeStack start len parent)
+      (tc-type-stack-current-return-type-scan start len (box-get parent))]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-current-return-type-scan (box-get rest))
@@ -4749,6 +5122,8 @@
       [(TcTypeNil)
         (ErrTcType
           (string.string-append "typecheck: unbound name " (intern-str name-id)))]
+      [(TcTypeStack start len parent)
+        (tc-type-stack-lookup-id start len (box-get parent) name-id)]
       [(TcTypeCache ids values _ _ _ _ partial _ below)
         (match (hashmap.i64-i64-map-get ids name-id)
           ;; #2357: MUST stay `array-ref` -- with #1867 inline-by-value `AstType` is
@@ -4774,6 +5149,8 @@
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-type-stack-name-bound-id? start len (box-get parent) name-id)]
     [(TcTypeCache ids _ _ _ _ _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound _) true]
@@ -4793,6 +5170,8 @@
       [(TcTypeNil)
         (ErrTcTypeUnsafe
           (string.string-append "typecheck: unbound name " (intern-str name-id)))]
+      [(TcTypeStack start len parent)
+        (tc-type-stack-lookup-unsafe-id start len (box-get parent) name-id)]
       [(TcTypeCache ids values unsafe-flags _ _ _ partial _ below)
         (match (hashmap.i64-i64-map-get ids name-id)
           ;; #2357: AstType read MUST stay `array-ref` (inline-by-value multi-word
@@ -4830,6 +5209,10 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-name-bound-before-hygiene-global-boundary-id?
+        (tc-type-stack-materialize start len (box-get parent))
+        name-id)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-name-bound-before-hygiene-global-boundary-id?
@@ -4931,6 +5314,11 @@
   [name-id : i64]) : ResultTcType
   (match env
     [(TcTypeNil) (tc-lookup-id root name-id)]
+    [(TcTypeStack start len parent)
+      (tc-lookup-hygiene-global-scan
+        root
+        (tc-type-stack-materialize start len (box-get parent))
+        name-id)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-lookup-hygiene-global-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
@@ -5041,6 +5429,11 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) (tc-binding-unsafe-id? root name-id)]
+    [(TcTypeStack start len parent)
+      (tc-hygiene-global-binding-unsafe-scan
+        root
+        (tc-type-stack-materialize start len (box-get parent))
+        name-id)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-hygiene-global-binding-unsafe-scan root (box-get rest) name-id)]
     [(TcTypeBind key _ rest)
@@ -5057,6 +5450,9 @@
 (define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeString
   (match env
     [(TcTypeNil) (TcNoString)]
+    [(TcTypeStack start len parent)
+      (tc-active-region-scan
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-active-region-scan (box-get rest))
@@ -5152,17 +5548,36 @@
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _ _ _ _ _) false]
+    [(TcTypeStack start len parent)
+      (if (> len start)
+        (tc-arena-owner-marker-for?
+          marker-id
+          (array.array-ref tc-type-stack-name-ids (- len 1))
+          (array.array-ref tc-type-stack-types (- len 1))
+          name)
+        (tc-arena-owner-marker-head? (box-get parent) name marker-id))]
     [(TcTypeBind key ty _) (tc-arena-owner-marker-for? marker-id key ty name)]))
 
 (define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
     [(TcTypeCache _ _ _ _ _ _ _ _ _) false]
+    [(TcTypeStack start len parent)
+      (if (> len start)
+        (tc-cleanup-owner-marker-for?
+          (array.array-ref tc-type-stack-name-ids (- len 1))
+          (array.array-ref tc-type-stack-types (- len 1))
+          name)
+        (tc-cleanup-owner-marker-head? (box-get parent) name))]
     [(TcTypeBind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
 
 (define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-cleanup-owner-active-scan?
+        (tc-type-stack-materialize start len (box-get parent))
+        name)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-cleanup-owner-active-scan? (box-get rest) name)
@@ -5186,6 +5601,11 @@
   [marker-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-arena-owner-active-scan?
+        (tc-type-stack-materialize start len (box-get parent))
+        name
+        marker-id)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-arena-owner-active-scan? (box-get rest) name marker-id)
@@ -5215,6 +5635,10 @@
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
     [(TcTypeNil) TcStringNil]
+    [(TcTypeStack start len parent)
+      (tc-active-cleanup-owners-scan
+        root
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-active-cleanup-owners-scan root (box-get rest))
@@ -5404,6 +5828,10 @@
 (define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-lifetime-visible-scan?
+        (tc-type-stack-materialize start len (box-get parent))
+        lifetime)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lifetime-visible-scan? (box-get rest) lifetime)
@@ -5438,6 +5866,12 @@
   [seen-target : bool]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-lifetime-outlives-binding-scan-inner
+        (tc-type-stack-materialize start len (box-get parent))
+        lifetime
+        target
+        seen-target)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lifetime-outlives-binding-scan-inner
@@ -5498,6 +5932,12 @@
     true
     (match env
       [(TcTypeNil) false]
+      [(TcTypeStack start len parent)
+        (tc-lifetime-outlives-lifetime-scan-inner
+          (tc-type-stack-materialize start len (box-get parent))
+          value-lifetime
+          target-lifetime
+          seen-target)]
       [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-lifetime-outlives-lifetime-scan-inner
@@ -6046,6 +6486,11 @@
     true
     (match env
       [(TcTypeNil) false]
+      [(TcTypeStack start len parent)
+        (tc-region-outlives-or-matches-scan
+          (tc-type-stack-materialize start len (box-get parent))
+          value-region
+          target-region)]
       [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-region-outlives-or-matches-scan
@@ -6290,6 +6735,11 @@
   [prefix-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-source-leading-segment-wins-over-exact-id?
+        (tc-type-stack-materialize start len (box-get parent))
+        name-id
+        prefix-id)]
     [(TcTypeBind key _ rest)
       (if (= key name-id)
         false
@@ -9991,6 +10441,10 @@
   (match env
     [(TcTypeNil)
       (ErrTcType "typecheck: ptr-addr-of requires a local or parameter name")]
+    [(TcTypeStack start len parent)
+      (tc-ptr-addr-of-local-lookup
+        (tc-type-stack-materialize start len (box-get parent))
+        name)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-ptr-addr-of-local-lookup (box-get rest) name)]
     [(TcTypeBind key ty rest)
@@ -10224,6 +10678,9 @@
 (define (tc-spmd-env-binding-count [env : TcTypeEnv]) : i64
   (match env
     [(TcTypeNil) 0]
+    [(TcTypeStack start len parent)
+      (tc-spmd-env-binding-count
+        (tc-type-stack-materialize start len (box-get parent)))]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-spmd-env-binding-count (box-get rest))]
     [(TcTypeBind _ _ rest) (+ 1 (tc-spmd-env-binding-count (box-get rest)))]))
@@ -10234,6 +10691,11 @@
   [index : i64]) : unit
   (match env
     [(TcTypeNil) unit]
+    [(TcTypeStack start len parent)
+      (tc-spmd-env-fill-from-type-env
+        (tc-type-stack-materialize start len (box-get parent))
+        bindings
+        index)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-spmd-env-fill-from-type-env (box-get rest) bindings index)]
     [(TcTypeBind name-id ty rest)
@@ -13640,6 +14102,10 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-default-builtin-unshadowed-scan-id?
+        (tc-type-stack-materialize start len (box-get parent))
+        name-id)]
     [(TcTypeCache ids _ _ _ shadow-flags _ partial _ below)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
@@ -13663,6 +14129,10 @@
   [name-id : i64]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-name-local-bound-before-module-scan-id?
+        (tc-type-stack-materialize start len (box-get parent))
+        name-id)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id)
@@ -15505,6 +15975,14 @@
   [body : AstExpr]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
+    [(TcTypeStack start len parent)
+      (tc-check-thread-safe-spawn-captures-scan-root
+        spawn-name
+        ctx
+        root
+        (tc-type-stack-materialize start len (box-get parent))
+        bound
+        body)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-check-thread-safe-spawn-captures-scan-root
@@ -17027,6 +17505,11 @@
   [body : AstExpr]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-lambda-captures-reference-scan-root
+        (tc-type-stack-materialize start len (box-get parent))
+        bound
+        body)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-lambda-captures-reference-scan-root (box-get rest) bound body)
@@ -21866,6 +22349,13 @@
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (match env
     [(TcTypeNil) OkTcUnit]
+    [(TcTypeStack start len parent)
+      (tc-check-lambda-region-captures-scan-root
+        root
+        (tc-type-stack-materialize start len (box-get parent))
+        bound
+        body
+        allow-immutable-reference-captures)]
     [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
         (tc-check-lambda-region-captures-scan-root
@@ -31150,6 +31640,17 @@
   [body : AstExpr]) : TcMoveResult
   (match env
     [(TcTypeNil) (OkTcMove moved)]
+    [(TcTypeStack start len parent)
+      (tc-move-check-lambda-owner-captures-scan
+        ctx
+        root
+        (tc-type-stack-materialize start len (box-get parent))
+        locals
+        loop-carried
+        moved
+        bound
+        seen
+        body)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-move-check-lambda-owner-captures-scan
         ctx
@@ -32744,6 +33245,13 @@
   [seen : TcStringList]) : bool
   (match env
     [(TcTypeNil) false]
+    [(TcTypeStack start len parent)
+      (tc-borrow-check-env-lifetime-used-in-exprs?
+        ctx
+        (tc-type-stack-materialize start len (box-get parent))
+        exprs
+        lifetime
+        seen)]
     [(TcTypeCache _ _ _ _ _ _ _ rest _)
       (tc-borrow-check-env-lifetime-used-in-exprs?
         ctx
@@ -44000,7 +44508,7 @@
     [body : AstExpr (ast-node-get body-box)]
     [env : TcTypeEnv
       (tc-bind-return-type
-        (tc-bind-params ctx global-env params)
+        (tc-bind-params ctx (tc-type-stack-root global-env) params)
         (tc-resolve-type ctx ret))]
     (match (tc-expr-with-expected-or-actual
       ctx
@@ -44078,6 +44586,7 @@
     [enclosing : i64 (tl_arena_current)]
     [scratch : i64 (tc-fn-scratch-arena-get)]
     (begin
+      (tc-type-stack-reset!)
       (intern-persistent-storage-enable!)
       (unsafe
         (tl_arena_set scratch))
@@ -44107,6 +44616,7 @@
               ;; scratch that was just rewound; invalidate them before
               ;; anything can compare against freed memory.
               (tc-nominal-owner-cache-reset!)
+              (tc-type-stack-reset!)
               escaped)))))))
 
 (define (tc-check-decl-with-global-env

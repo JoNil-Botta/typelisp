@@ -11623,11 +11623,10 @@
       (array-set! a 5 extra2)
       a)))
 
-;; Like scavenge-exclude-with but ALSO reserves %r8. Used at the 3-scratch
-;; copy-bytes-from-gep site, where the index scratch falls back to %r8: an active
-;; base/src scavenge must not pick %r8 (a candidate) or, under register pressure,
-;; the index's %r8 fallback would collide with it. Keeps the three fixed fallbacks
-;; (base=%r10, index=%r8, src=%r11) mutually distinct, as the hardcoded form was.
+;; Like scavenge-exclude-with but ALSO reserves %r8. Used where a later index or
+;; copy scratch falls back to %r8: an active base/src scavenge must not pick %r8
+;; (a candidate) or, under register pressure, the later %r8 fallback would
+;; collide with it.
 (define (compiler-backend-scavenge-exclude-with-r8 [extra : String]) : (Array String)
   (let
     [a : (Array String) (make-array String 7)]
@@ -11639,6 +11638,19 @@
       (array-set! a 4 "%r10")
       (array-set! a 5 "%r11")
       (array-set! a 6 extra)
+      a)))
+
+(define (compiler-backend-scavenge-exclude-with-r8-r11
+  [extra : String]) : (Array String)
+  (let
+    [a : (Array String) (make-array String 6)]
+    (begin
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rdx")
+      (array-set! a 2 "%rcx")
+      (array-set! a 3 "%r8")
+      (array-set! a 4 "%r11")
+      (array-set! a 5 extra)
       a)))
 
 ;; Like scavenge-exclude-ops2 but also reserves %r8 (see scavenge-exclude-with-r8).
@@ -11850,7 +11862,7 @@
                 (compiler-backend-scavenge-reg-here
                   (compiler-backend-scavenge-exclude-with dst-reg)
                   6
-                  "%r11")
+                  "%r9")
                 src-home)]
             [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
             [copy-gp : String
@@ -11891,15 +11903,15 @@
   [size : i64]) : ResultCompilerBackend
   (if (<= size 0)
     (OkCompilerBackend "")
-    ;; 3-scratch GEP-addressed copy (was hardcoded base=%r10, src=%r11):
+    ;; 3-scratch GEP-addressed copy:
     ;;   scav-base : the address being computed (live through the copy)
     ;;   scav-idx  : the scaled index, folded into scav-base then dead (NoI64 only)
     ;;   scav-src  : the source pointer (live through the copy)
-    ;; The copy chunks clobber %rax/%xmm15 (excluded by the active sets).
+    ;; The copy chunks use a scavenged GP/XMM scratch when needed.
     (let
       ;; base excludes src + offset homes (both still live when base loads) + the
-      ;; active set (off %r10/%r11). Base's own home need not be excluded -- base is
-      ;; moved into scav-base, freeing it.
+      ;; active set. Base's own home need not be excluded -- base is moved into
+      ;; scav-base, freeing it.
       [scav-base : String
         (compiler-backend-scavenge-reg-here
           (compiler-backend-scavenge-exclude-ops2-r8 assignments src offset)
@@ -11913,9 +11925,9 @@
             ;; is dead before src loads (folded into scav-base), so no exclude vs it.
             [scav-src : String
               (compiler-backend-scavenge-reg-here
-                (compiler-backend-scavenge-exclude-with-r8 scav-base)
-                7
-                "%r11")]
+                (compiler-backend-scavenge-exclude-with-r8-r11 scav-base)
+                6
+                "%r10")]
             [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
             [copy-gp : String
               (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)

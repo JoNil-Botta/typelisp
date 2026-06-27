@@ -9326,9 +9326,9 @@
       (and
         (compiler-backend-string-contains? asm "    movq -8(%rbp), %r9\n")
         (compiler-backend-string-contains? asm "    addq $8, %r9\n")
-        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r11\n")
-        (compiler-backend-string-contains? asm "    movups (%r11), %xmm2\n")
-        (compiler-backend-string-contains? asm "    movq 16(%r11), %r8\n")
+        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    movups (%r10), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movq 16(%r10), %r8\n")
         (not (compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -24(%rbp)\n"))
@@ -9350,8 +9350,8 @@
         (compiler-backend-string-contains? asm "    movq -8(%rbp), %r9\n")
         (compiler-backend-string-contains? asm "    movq -24(%rbp), %r8\n")
         (compiler-backend-string-contains? asm "    leaq (%r9,%r8,8), %r9\n")
-        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r11\n")
-        (compiler-backend-string-contains? asm "    movups (%r11), %xmm2\n")
+        (compiler-backend-string-contains? asm "    movq -16(%rbp), %r10\n")
+        (compiler-backend-string-contains? asm "    movups (%r10), %xmm2\n")
         (not (compiler-backend-string-contains? asm "%xmm15"))
         (not
           (compiler-backend-string-contains? asm "    movq %rax, -32(%rbp)\n"))

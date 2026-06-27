@@ -766,7 +766,8 @@ claims, live mutable aliases, and guards do not cross safe task-thread
 boundaries. Aggregate results that leave a worker must live in a spanning
 owner, or in a wrapper that explicitly copies them into one. `stdlib/sync.tl`
 provides the first concrete synchronized surfaces: generated `(channel i64)`
-modules, `ChannelI64PairChannel`, `ChannelString`, and `MutexI64`.
+modules, generated `(mutex i64)` modules, `ChannelI64PairChannel`, and
+`ChannelString`.
 
 Task threading is separate from SPMD `foreach`. SPMD is data-parallel lowering
 inside one task; task threading creates independently scheduled workers with

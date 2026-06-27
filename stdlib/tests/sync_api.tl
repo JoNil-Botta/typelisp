@@ -2,6 +2,8 @@
 (import stdlib.sync)
 (import (sync.channel i64) as channel_i64)
 (import (sync.channel i64) as channel_i64_again)
+(import (sync.mutex i64) as mutex_i64)
+(import (sync.mutex i64) as mutex_i64_again)
 (import stdlib.string)
 
 (define (sync-api-create-rejects-invalid?) : bool
@@ -121,29 +123,34 @@
           42
           9)))))
 
-(define (sync-api-run-mutex [mutex : sync.MutexI64]) : i64
+(define (sync-api-duplicate-mutex-score [_mutex : mutex_i64_again.Mutex]) : i64
+  (if (= (mutex_i64_again.raw-field-count) (mutex_i64.raw-field-count))
+    42
+    0))
+
+(define (sync-api-run-mutex [mutex : mutex_i64.Mutex]) : i64
   (let
-    [packed : (Array i64) (make-array i64 sync.mutex-i64-raw-field-count)]
+    [packed : (Array i64) (make-array i64 (mutex_i64.raw-field-count))]
     (begin
-      (sync.mutex-i64-store-raw! mutex packed 0)
+      (mutex_i64.store-raw! mutex packed 0)
       (let
-        [loaded : sync.MutexI64 (sync.mutex-i64-load-raw packed 0)]
+        [loaded : mutex_i64.Mutex (mutex_i64.load-raw packed 0)]
         [first : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
+            ([guard (mutex_i64.lock loaded) mutex_i64.unlock])
             (begin
-              (sync.mutex-i64-set! guard 17)
-              (sync.mutex-i64-add! guard 25)))]
+              (mutex_i64.set! guard 17)
+              (mutex_i64.add! guard 25)))]
         [second : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
-            (sync.mutex-i64-get guard))]
+            ([guard (mutex_i64.lock loaded) mutex_i64.unlock])
+            (mutex_i64.get guard))]
         [live-close-code : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
+            ([guard (mutex_i64.lock loaded) mutex_i64.unlock])
             (let
-              [blocked-close : bool (sync.mutex-i64-close loaded)]
-              [after : i64 (sync.mutex-i64-add! guard 1)]
+              [blocked-close : bool (mutex_i64.close loaded)]
+              [after : i64 (mutex_i64.add! guard 1)]
               (if (not blocked-close)
                 (if (= after 43)
                   42
@@ -151,13 +158,15 @@
                 6)))]
         [third : i64
           (with
-            ([guard (sync.mutex-i64-lock loaded) sync.mutex-i64-unlock])
-            (sync.mutex-i64-get guard))]
-        [closed : bool (sync.mutex-i64-close loaded)]
-        [closed-again : bool (sync.mutex-i64-close loaded)]
+            ([guard (mutex_i64.lock loaded) mutex_i64.unlock])
+            (mutex_i64.get guard))]
+        [dedup : i64 (sync-api-duplicate-mutex-score loaded)]
+        [closed : bool (mutex_i64.close loaded)]
+        [closed-again : bool (mutex_i64.close loaded)]
         (if (and
           closed
           (not closed-again)
+          (= dedup 42)
           (= first 42)
           (= second 42)
           (= live-close-code 42)
@@ -167,17 +176,15 @@
 
 (define (sync-api-close-fresh-mutex?) : bool
   (let
-    [mutex : sync.MutexI64
-      (sync.mutex-i64-create-initial-or 9 (sync.MutexI64 0 0 0))]
-    [closed : bool (sync.mutex-i64-close mutex)]
-    [closed-again : bool (sync.mutex-i64-close mutex)]
+    [mutex : mutex_i64.Mutex (mutex_i64.create-initial-or 9 (mutex_i64.empty))]
+    [closed : bool (mutex_i64.close mutex)]
+    [closed-again : bool (mutex_i64.close mutex)]
     (and closed (not closed-again))))
 
 (define (sync-api-run-mutex-create) : i64
-  (let
-    [mutex : sync.MutexI64
-      (sync.mutex-i64-create-initial-or 5 (sync.MutexI64 0 0 0))]
-    (sync-api-run-mutex mutex)))
+  (match (mutex_i64.create 5)
+    [(mutex_i64.CreateErr _) 5]
+    [(mutex_i64.CreateOk mutex) (sync-api-run-mutex mutex)]))
 
 (define (sync-api-run-pair-create) : i64
   (let

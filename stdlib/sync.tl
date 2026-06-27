@@ -3,13 +3,13 @@
 ;# Provides first concrete synchronization surfaces for native threads:
 ;# `(channel i64)` for copyable scalar ownership transfer,
 ;# `ChannelI64PairChannel` for a move-based two-field aggregate channel,
-;# `ChannelString` for atomic arena-owned text messages, and `MutexI64` for
+;# `ChannelString` for atomic arena-owned text messages, and `(mutex i64)` for
 ;# shared scalar mutation through a lexical cleanup guard. Handles are small
 ;# copyable values; shared state lives in runtime-owned OS memory and is
 ;# serialized with semaphore-backed synchronization.
 ;#
 ;# `ChannelString` accepts heap-backed messages only when their storage is owned
-;# by a spanning atomic arena. `MutexI64` makes the protected scalar race-free
+;# by a spanning atomic arena. `(mutex i64)` makes the protected scalar race-free
 ;# only while mutation goes through its lexical guard; atomic arena allocation
 ;# alone does not protect ordinary mutable storage.
 ;#
@@ -146,6 +146,157 @@
         `(begin
           (module ,module-name))])))
 
+;: Emit a generated mutex module for protected scalar values.
+;:
+;: The first generated surface supports `i64` and wraps the three-field
+;: `SyncI64Mutex` runtime handle plus its close-safe control protocol.
+(defmacro (mutex [T : type]) : Module
+  (let
+    [module-name : Expr
+      (expr-var (string-append "stdlib.sync.mutex.generated." (type-key T)))]
+    [set-name : Expr (expr-var "set!")]
+    (match (type-key T)
+      ["i64"
+        `(begin
+          (module ,module-name)
+          (import stdlib.sync as sync)
+          (defstruct Mutex
+            (value-addr i64)
+            (mutex-handle i64)
+            (control-addr i64))
+          (define (unlock-handle [handle : i64]) : unit
+            (sync.sync-i64-mutex-unlock-handle handle))
+          (define (untrack-user [control-addr : i64]) : unit
+            (sync.sync-i64-mutex-untrack-user control-addr))
+          (defstruct Guard
+            (:cleanup unlock)
+            (control-addr i64 (:cleanup untrack-user))
+            (mutex-handle i64 (:cleanup unlock-handle))
+            (value-addr i64))
+          (defenum CreateResult
+            (CreateOk Mutex)
+            (CreateErr i64))
+          (define (raw-field-count) : i64
+            sync.sync-i64-mutex-raw-field-count)
+          (define (empty-raw) : sync.SyncI64Mutex
+            (sync.SyncI64Mutex 0 0 0))
+          (define (empty) : Mutex
+            (Mutex 0 0 0))
+          (define (to-raw [mutex : Mutex]) : sync.SyncI64Mutex
+            (sync.SyncI64Mutex
+              (struct-get mutex value-addr)
+              (struct-get mutex mutex-handle)
+              (struct-get mutex control-addr)))
+          (define (from-raw [raw : sync.SyncI64Mutex]) : Mutex
+            (Mutex
+              (struct-get raw value-addr)
+              (struct-get raw mutex-handle)
+              (struct-get raw control-addr)))
+          (define (create [initial : i64]) : CreateResult
+            (let
+              [raw : sync.SyncI64Mutex
+                (sync.sync-i64-mutex-create-initial-or initial (empty-raw))]
+              (if (= (struct-get raw mutex-handle) 0)
+                (CreateErr 1)
+                (CreateOk (from-raw raw)))))
+          (define (create-initial-or [initial : i64] [fallback : Mutex]) : Mutex
+            (from-raw
+              (sync.sync-i64-mutex-create-initial-or initial (to-raw fallback))))
+          (define (create-initial-ok? [initial : i64]) : bool
+            (match (create initial)
+              [(CreateErr _) false]
+              [(CreateOk mutex)
+                (begin
+                  (close mutex)
+                  true)]))
+          (define (lock [mutex : Mutex]) : Guard
+            (let
+              [control-addr : i64 (struct-get mutex control-addr)]
+              [mutex-handle : i64 (struct-get mutex mutex-handle)]
+              [value-addr : i64 (struct-get mutex value-addr)]
+              (if (sync.sync-i64-mutex-closed? control-addr)
+                (sync.sync-abort 134)
+                (let
+                  [previous-users : i64
+                    (sync.sync-i64-mutex-track-user control-addr)]
+                  (if (< previous-users 0)
+                    (begin
+                      (sync.sync-i64-mutex-untrack-user control-addr)
+                      (lock mutex))
+                    (if (sync.sync-semaphore-wait mutex-handle)
+                      (Guard control-addr mutex-handle value-addr)
+                      (sync.sync-i64-mutex-lock-abort control-addr)))))))
+          (define (guard-control-addr [guard : (& guard Guard)]) : i64
+            (struct-get guard control-addr))
+          (define (guard-mutex-handle [guard : (& guard Guard)]) : i64
+            (struct-get guard mutex-handle))
+          (define (guard-value-addr [guard : (& guard Guard)]) : i64
+            (struct-get guard value-addr))
+          (define (get [guard : (& guard Guard)]) : i64
+            (sync.sync-read-i64 (struct-get guard value-addr) 0))
+          (define (,set-name [guard : (& guard Guard)] [value : i64]) : unit
+            (sync.sync-write-i64! (struct-get guard value-addr) 0 value))
+          (define (add! [guard : (& guard Guard)] [delta : i64]) : i64
+            (let
+              [next : i64 (+ (get guard) delta)]
+              (begin
+                (sync.sync-write-i64! (struct-get guard value-addr) 0 next)
+                next)))
+          (define (close [mutex : Mutex]) : bool
+            (let
+              [control-addr : i64 (struct-get mutex control-addr)]
+              (if (sync.sync-i64-mutex-closed? control-addr)
+                false
+                (if (=
+                  (sync.sync-atomic-i64-fetch-add!
+                    control-addr
+                    sync.sync-i64-mutex-control-users-slot
+                    sync.sync-i64-mutex-users-closing-delta)
+                  0)
+                  (let
+                    [ok : bool true]
+                    (begin
+                      (sync.sync-atomic-i64-store!
+                        control-addr
+                        sync.sync-i64-mutex-control-closed-slot
+                        1)
+                      (set!
+                        ok
+                        (if (sync.sync-semaphore-close
+                          (struct-get mutex mutex-handle))
+                          ok
+                          false))
+                      (set!
+                        ok
+                        (if (sync.sync-runtime-free
+                          (struct-get mutex value-addr)
+                          8)
+                          ok
+                          false))
+                      ok))
+                  (begin
+                    (sync.sync-atomic-i64-fetch-add!
+                      control-addr
+                      sync.sync-i64-mutex-control-users-slot
+                      sync.sync-i64-mutex-users-closing-undo)
+                    false)))))
+          (define (store-raw!
+            [mutex : Mutex]
+            [dst : (Array i64)]
+            [offset : i64]) : unit
+            (begin
+              (array-set! dst offset (struct-get mutex value-addr))
+              (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
+              (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
+          (define (load-raw [src : (Array i64)] [offset : i64]) : Mutex
+            (Mutex
+              (array-ref src offset)
+              (array-ref src (+ offset 1))
+              (array-ref src (+ offset 2)))))]
+      [_
+        `(begin
+          (module ,module-name))])))
+
 ;: Maximum supported channel capacity for this first concrete channel surface.
 (define sync-channel-max-capacity : i64
   1048576)
@@ -162,32 +313,32 @@
 (define channel-string-raw-field-count : i64
   7)
 
-;: Number of raw `i64` fields needed to serialize a `MutexI64` handle.
-(define mutex-i64-raw-field-count : i64
+;: Number of raw `i64` fields needed to serialize a `SyncI64Mutex` handle.
+(define sync-i64-mutex-raw-field-count : i64
   3)
 
 ;: Runtime-owned bytes for the close-state/live-user control cell.
-(define mutex-i64-control-byte-count : i64
+(define sync-i64-mutex-control-byte-count : i64
   16)
 
 ;: Control slot set to nonzero after a mutex has been permanently closed.
-(define mutex-i64-control-closed-slot : i64
+(define sync-i64-mutex-control-closed-slot : i64
   0)
 
 ;: Control slot tracking live lock attempts and cleanup-owned guards.
-(define mutex-i64-control-users-slot : i64
+(define sync-i64-mutex-control-users-slot : i64
   1)
 
 ;: Negative live-user delta used to claim close without a compare-exchange.
-(define mutex-i64-users-closing-delta : i64
+(define sync-i64-mutex-users-closing-delta : i64
   -1073741824)
 
-;: Positive inverse of `mutex-i64-users-closing-delta`.
-(define mutex-i64-users-closing-undo : i64
+;: Positive inverse of `sync-i64-mutex-users-closing-delta`.
+(define sync-i64-mutex-users-closing-undo : i64
   1073741824)
 
 ;: Runtime-owned mutex-protected `i64` slot.
-(defstruct MutexI64
+(defstruct SyncI64Mutex
   (value-addr i64)
   (mutex-handle i64)
   (control-addr i64))
@@ -242,10 +393,10 @@
   (ChannelStringCreateOk ChannelString)
   (ChannelStringCreateErr i64))
 
-;: Result returned by `mutex-i64-create`.
-(defenum MutexI64CreateResult
-  (MutexI64CreateOk MutexI64)
-  (MutexI64CreateErr i64))
+;: Result returned by `sync-i64-mutex-create`.
+(defenum SyncI64MutexCreateResult
+  (SyncI64MutexCreateOk SyncI64Mutex)
+  (SyncI64MutexCreateErr i64))
 
 ;: Result returned by `sync-i64-channel-send`.
 (defenum SyncI64ChannelSendResult
@@ -345,13 +496,13 @@
 (define (channel-string-create-err-result [_message : String]) : ChannelStringCreateResult
   (ChannelStringCreateErr 1))
 
-;: Construct a successful `mutex-i64-create` result.
-(define (mutex-i64-create-ok-result [value : MutexI64]) : MutexI64CreateResult
-  (MutexI64CreateOk value))
+;: Construct a successful `sync-i64-mutex-create` result.
+(define (sync-i64-mutex-create-ok-result [value : SyncI64Mutex]) : SyncI64MutexCreateResult
+  (SyncI64MutexCreateOk value))
 
-;: Construct a failed `mutex-i64-create` result.
-(define (mutex-i64-create-err-result [_message : String]) : MutexI64CreateResult
-  (MutexI64CreateErr 1))
+;: Construct a failed `sync-i64-mutex-create` result.
+(define (sync-i64-mutex-create-err-result [_message : String]) : SyncI64MutexCreateResult
+  (SyncI64MutexCreateErr 1))
 
 ;: Windows kernel32 `VirtualAlloc` for runtime-owned channel storage.
 (cfg
@@ -519,136 +670,149 @@
   (thread.thread-semaphore-close (sync-semaphore handle)))
 
 ;: Unlock a mutex guard field during cleanup.
-(define (mutex-i64-unlock-handle [handle : i64]) : unit
+(define (sync-i64-mutex-unlock-handle [handle : i64]) : unit
   (begin
     (sync-semaphore-post handle)
     unit))
 
 ;: Stop tracking one live lock attempt or guard during cleanup.
-(define (mutex-i64-untrack-user [control-addr : i64]) : unit
+(define (sync-i64-mutex-untrack-user [control-addr : i64]) : unit
   (begin
-    (sync-atomic-i64-fetch-add! control-addr mutex-i64-control-users-slot -1)
+    (sync-atomic-i64-fetch-add!
+      control-addr
+      sync-i64-mutex-control-users-slot
+      -1)
     unit))
 
 ;: Track one live lock attempt before touching the semaphore/value fields.
-(define (mutex-i64-track-user [control-addr : i64]) : i64
-  (sync-atomic-i64-fetch-add! control-addr mutex-i64-control-users-slot 1))
+(define (sync-i64-mutex-track-user [control-addr : i64]) : i64
+  (sync-atomic-i64-fetch-add! control-addr sync-i64-mutex-control-users-slot 1))
 
 ;: Return true once `mutex` has permanently closed its semaphore/value fields.
-(define (mutex-i64-closed? [control-addr : i64]) : bool
-  (not (= (sync-atomic-i64-load control-addr mutex-i64-control-closed-slot) 0)))
+(define (sync-i64-mutex-closed? [control-addr : i64]) : bool
+  (not
+    (= (sync-atomic-i64-load control-addr sync-i64-mutex-control-closed-slot) 0)))
 
 ;: Abort a failed lock attempt after removing its live-user claim.
-(define (mutex-i64-lock-abort [control-addr : i64]) : never
+(define (sync-i64-mutex-lock-abort [control-addr : i64]) : never
   (begin
-    (mutex-i64-untrack-user control-addr)
+    (sync-i64-mutex-untrack-user control-addr)
     (sync-abort 134)))
 
-;: Lexical guard returned by `mutex-i64-lock`.
-(defstruct MutexI64Guard
-  (:cleanup mutex-i64-unlock)
+;: Lexical guard returned by `sync-i64-mutex-lock`.
+(defstruct SyncI64MutexGuard
+  (:cleanup sync-i64-mutex-unlock)
   ; Field cleanups run in reverse declaration order, so post before untrack.
-  (control-addr i64 (:cleanup mutex-i64-untrack-user))
-  (mutex-handle i64 (:cleanup mutex-i64-unlock-handle))
+  (control-addr i64 (:cleanup sync-i64-mutex-untrack-user))
+  (mutex-handle i64 (:cleanup sync-i64-mutex-unlock-handle))
   (value-addr i64))
 
 ;: Finish mutex creation after storage allocation.
-(define (mutex-i64-create-semaphore [value-addr : i64] [control-addr : i64]) : MutexI64CreateResult
+(define (sync-i64-mutex-create-semaphore
+  [value-addr : i64]
+  [control-addr : i64]) : SyncI64MutexCreateResult
   (let
     [mutex-handle : i64 (thread.thread-semaphore-create-handle-or 1 -1)]
     (if (= mutex-handle -1)
       (begin
         (sync-runtime-free value-addr 8)
-        (sync-runtime-free control-addr mutex-i64-control-byte-count)
-        (mutex-i64-create-err-result "sync: semaphore create failed"))
-      (mutex-i64-create-ok-result
-        (MutexI64 value-addr mutex-handle control-addr)))))
+        (sync-runtime-free control-addr sync-i64-mutex-control-byte-count)
+        (sync-i64-mutex-create-err-result "sync: semaphore create failed"))
+      (sync-i64-mutex-create-ok-result
+        (SyncI64Mutex value-addr mutex-handle control-addr)))))
 
 ;: Create a mutex-protected `i64` initialized to `initial`.
-(define (mutex-i64-create [initial : i64]) : MutexI64CreateResult
+(define (sync-i64-mutex-create [initial : i64]) : SyncI64MutexCreateResult
   (let
     [value-addr : i64 (sync-runtime-alloc 8)]
     (if (= value-addr 0)
-      (mutex-i64-create-err-result "sync: mutex allocation failed")
+      (sync-i64-mutex-create-err-result "sync: mutex allocation failed")
       (let
-        [control-addr : i64 (sync-runtime-alloc mutex-i64-control-byte-count)]
+        [control-addr : i64
+          (sync-runtime-alloc sync-i64-mutex-control-byte-count)]
         (if (= control-addr 0)
           (begin
             (sync-runtime-free value-addr 8)
-            (mutex-i64-create-err-result "sync: mutex allocation failed"))
+            (sync-i64-mutex-create-err-result "sync: mutex allocation failed"))
           (begin
             (sync-write-i64! value-addr 0 initial)
-            (sync-write-i64! control-addr mutex-i64-control-closed-slot 0)
-            (sync-write-i64! control-addr mutex-i64-control-users-slot 0)
-            (mutex-i64-create-semaphore value-addr control-addr)))))))
+            (sync-write-i64! control-addr sync-i64-mutex-control-closed-slot 0)
+            (sync-write-i64! control-addr sync-i64-mutex-control-users-slot 0)
+            (sync-i64-mutex-create-semaphore value-addr control-addr)))))))
 
 ;: Lock `mutex`, blocking until the protected value is available.
-(define (mutex-i64-lock [mutex : MutexI64]) : MutexI64Guard
+(define (sync-i64-mutex-lock [mutex : SyncI64Mutex]) : SyncI64MutexGuard
   (let
     [control-addr : i64 (struct-get mutex control-addr)]
     [mutex-handle : i64 (struct-get mutex mutex-handle)]
     [value-addr : i64 (struct-get mutex value-addr)]
-    (if (mutex-i64-closed? control-addr)
+    (if (sync-i64-mutex-closed? control-addr)
       (sync-abort 134)
       (let
-        [previous-users : i64 (mutex-i64-track-user control-addr)]
+        [previous-users : i64 (sync-i64-mutex-track-user control-addr)]
         (if (< previous-users 0)
           (begin
-            (mutex-i64-untrack-user control-addr)
-            (mutex-i64-lock mutex))
+            (sync-i64-mutex-untrack-user control-addr)
+            (sync-i64-mutex-lock mutex))
           (if (sync-semaphore-wait mutex-handle)
-            (MutexI64Guard control-addr mutex-handle value-addr)
-            (mutex-i64-lock-abort control-addr)))))))
+            (SyncI64MutexGuard control-addr mutex-handle value-addr)
+            (sync-i64-mutex-lock-abort control-addr)))))))
 
 ;: Return the control cell address from a mutex guard.
-(define (mutex-i64-guard-control-addr [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-guard-control-addr
+  [guard : (& guard SyncI64MutexGuard)]) : i64
   (struct-get guard control-addr))
 
 ;: Return the semaphore handle from a mutex guard.
-(define (mutex-i64-guard-mutex-handle [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-guard-mutex-handle
+  [guard : (& guard SyncI64MutexGuard)]) : i64
   (struct-get guard mutex-handle))
 
 ;: Return the protected value address from a mutex guard.
-(define (mutex-i64-guard-value-addr [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-guard-value-addr [guard : (& guard SyncI64MutexGuard)]) : i64
   (struct-get guard value-addr))
 
 ;: Read the protected value while holding `guard`.
-(define (mutex-i64-get [guard : (& guard MutexI64Guard)]) : i64
+(define (sync-i64-mutex-get [guard : (& guard SyncI64MutexGuard)]) : i64
   (sync-read-i64 (struct-get guard value-addr) 0))
 
 ;: Write the protected value while holding `guard`.
-(define (mutex-i64-set! [guard : (& guard MutexI64Guard)] [value : i64]) : unit
+(define (sync-i64-mutex-set!
+  [guard : (& guard SyncI64MutexGuard)]
+  [value : i64]) : unit
   (sync-write-i64! (struct-get guard value-addr) 0 value))
 
 ;: Add `delta` to the protected value and return the new value.
-(define (mutex-i64-add! [guard : (& guard MutexI64Guard)] [delta : i64]) : i64
+(define (sync-i64-mutex-add!
+  [guard : (& guard SyncI64MutexGuard)]
+  [delta : i64]) : i64
   (let
-    [next : i64 (+ (mutex-i64-get guard) delta)]
+    [next : i64 (+ (sync-i64-mutex-get guard) delta)]
     (begin
-      (mutex-i64-set! guard next)
+      (sync-i64-mutex-set! guard next)
       next)))
 
 ;: Close mutex resources if no users or guards are live.
 ;:
 ;: The small control cell is retained so copied handles can fail closed instead
 ;: of touching freed semaphore/value storage after a successful close.
-(define (mutex-i64-close [mutex : MutexI64]) : bool
+(define (sync-i64-mutex-close [mutex : SyncI64Mutex]) : bool
   (let
     [control-addr : i64 (struct-get mutex control-addr)]
-    (if (mutex-i64-closed? control-addr)
+    (if (sync-i64-mutex-closed? control-addr)
       false
       (if (=
         (sync-atomic-i64-fetch-add!
           control-addr
-          mutex-i64-control-users-slot
-          mutex-i64-users-closing-delta)
+          sync-i64-mutex-control-users-slot
+          sync-i64-mutex-users-closing-delta)
         0)
         (let
           [ok : bool true]
           (begin
             (sync-atomic-i64-store!
               control-addr
-              mutex-i64-control-closed-slot
+              sync-i64-mutex-control-closed-slot
               1)
             (set!
               ok
@@ -664,13 +828,13 @@
         (begin
           (sync-atomic-i64-fetch-add!
             control-addr
-            mutex-i64-control-users-slot
-            mutex-i64-users-closing-undo)
+            sync-i64-mutex-control-users-slot
+            sync-i64-mutex-users-closing-undo)
           false)))))
 
 ;: Store a mutex handle into a raw `i64` array at `offset`.
-(define (mutex-i64-store-raw!
-  [mutex : MutexI64]
+(define (sync-i64-mutex-store-raw!
+  [mutex : SyncI64Mutex]
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
@@ -679,8 +843,8 @@
     (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
 
 ;: Rebuild a mutex handle from a raw `i64` array at `offset`.
-(define (mutex-i64-load-raw [src : (Array i64)] [offset : i64]) : MutexI64
-  (MutexI64
+(define (sync-i64-mutex-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Mutex
+  (SyncI64Mutex
     (array-ref src offset)
     (array-ref src (+ offset 1))
     (array-ref src (+ offset 2))))
@@ -1635,26 +1799,30 @@
               fallback)))))))
 
 ;: Return true when creating a mutex with `initial` succeeds.
-(define (mutex-i64-create-initial-ok? [initial : i64]) : bool
+(define (sync-i64-mutex-create-initial-ok? [initial : i64]) : bool
   (let
-    [mutex : MutexI64 (mutex-i64-create-initial-or initial (MutexI64 0 0 0))]
+    [mutex : SyncI64Mutex
+      (sync-i64-mutex-create-initial-or initial (SyncI64Mutex 0 0 0))]
     [ok : bool (not (= (struct-get mutex mutex-handle) 0))]
     (begin
       (if ok
         (begin
-          (mutex-i64-close mutex)
+          (sync-i64-mutex-close mutex)
           unit)
         unit)
       ok)))
 
 ;: Create a mutex with `initial`, or return `fallback` on error.
-(define (mutex-i64-create-initial-or [initial : i64] [fallback : MutexI64]) : MutexI64
+(define (sync-i64-mutex-create-initial-or
+  [initial : i64]
+  [fallback : SyncI64Mutex]) : SyncI64Mutex
   (let
     [value-addr : i64 (sync-runtime-alloc 8)]
     (if (= value-addr 0)
       fallback
       (let
-        [control-addr : i64 (sync-runtime-alloc mutex-i64-control-byte-count)]
+        [control-addr : i64
+          (sync-runtime-alloc sync-i64-mutex-control-byte-count)]
         (if (= control-addr 0)
           (begin
             (sync-runtime-free value-addr 8)
@@ -1664,13 +1832,21 @@
             (if (= mutex-handle -1)
               (begin
                 (sync-runtime-free value-addr 8)
-                (sync-runtime-free control-addr mutex-i64-control-byte-count)
+                (sync-runtime-free
+                  control-addr
+                  sync-i64-mutex-control-byte-count)
                 fallback)
               (begin
                 (sync-write-i64! value-addr 0 initial)
-                (sync-write-i64! control-addr mutex-i64-control-closed-slot 0)
-                (sync-write-i64! control-addr mutex-i64-control-users-slot 0)
-                (MutexI64 value-addr mutex-handle control-addr)))))))))
+                (sync-write-i64!
+                  control-addr
+                  sync-i64-mutex-control-closed-slot
+                  0)
+                (sync-write-i64!
+                  control-addr
+                  sync-i64-mutex-control-users-slot
+                  0)
+                (SyncI64Mutex value-addr mutex-handle control-addr)))))))))
 
 ;: Inline test failure helper.
 (define (sync-test-fail) : unit
@@ -1690,7 +1866,7 @@
     (sync-test-assert (= sync-i64-channel-raw-field-count 7))
     (sync-test-assert (= channel-i64-pair-raw-field-count 7))
     (sync-test-assert (= channel-string-raw-field-count 7))
-    (sync-test-assert (= mutex-i64-raw-field-count 3))
+    (sync-test-assert (= sync-i64-mutex-raw-field-count 3))
     (sync-test-assert (not (sync-i64-channel-create-capacity-ok? 0)))
     (sync-test-assert
       (not

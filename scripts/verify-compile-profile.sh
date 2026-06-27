@@ -38,6 +38,8 @@ BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
+VF_STDOUT="$WORKDIR/profile-vector-family.stdout"
+VF_STDERR="$WORKDIR/profile-vector-family.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
 LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
@@ -71,6 +73,21 @@ assert_contains_in() {
 
 assert_contains() {
     assert_contains_in "$1" "$2" "$CHECK_STDOUT" "$CHECK_STDERR"
+}
+
+assert_not_contains_in() {
+    _file=$1
+    _text=$2
+    _stdout=$3
+    _stderr=$4
+    if grep -F -- "$_text" "$_file" >/dev/null; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "unexpected profile text: $_text"
+    fi
+}
+
+assert_not_contains() {
+    assert_not_contains_in "$1" "$2" "$CHECK_STDOUT" "$CHECK_STDERR"
 }
 
 assert_layout_row() {
@@ -121,7 +138,7 @@ fi
 assert_contains "$CHECK_STDERR" "compile-profile-detail|typecheck.macro_expand|"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=2 calls=1"
 assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat arity=6 calls=1"
-assert_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat-pack arity=8 calls=1"
+assert_not_contains "$CHECK_STDERR" "stdlib.str_cat/str-cat-pack"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/and arity=3"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/or arity=2"
 assert_contains "$CHECK_STDERR" "stdlib.core_macros/cond arity=4"
@@ -133,6 +150,26 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
+
+echo "[compile-profile] check vector-family Decls macro fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_family_decls.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$VF_STDOUT" 2> "$VF_STDERR"; then
+    show_failure_logs "$VF_STDOUT" "$VF_STDERR"
+    fail "profiled vector-family fixture check failed"
+fi
+
+assert_contains_in \
+    "$VF_STDERR" \
+    "compile-profile-detail|typecheck.macro_expand|" \
+    "$VF_STDOUT" \
+    "$VF_STDERR"
+assert_contains_in \
+    "$VF_STDERR" \
+    "stdlib.vector_family/vector-family arity=3 calls=2" \
+    "$VF_STDOUT" \
+    "$VF_STDERR"
 
 echo "[compile-profile] check layout/spec counter fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_layout_spec.tl \

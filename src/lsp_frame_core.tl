@@ -5,7 +5,6 @@
 ;; diagnostics for full-document open/change notifications.
 (import stdlib.fs)
 (import stdlib.io)
-(import stdlib.str_cat)
 (import stdlib.byte_buf)
 (import stdlib.json)
 (import stdlib.vector)
@@ -15,6 +14,33 @@
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
 (import stdlib.string)
+
+(define (lsp-str2 [a : String] [b : String]) : String
+  (string.string-concat3 a b ""))
+
+(define (lsp-str3 [a : String] [b : String] [c : String]) : String
+  (string.string-concat3 a b c))
+
+(define (lsp-str4 [a : String] [b : String] [c : String] [d : String]) : String
+  (string.string-concat4 a b c d))
+
+(define (lsp-str5
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]) : String
+  (string.string-concat5 a b c d e))
+
+(define (lsp-str7
+  [a : String]
+  [b : String]
+  [c : String]
+  [d : String]
+  [e : String]
+  [f : String]
+  [g : String]) : String
+  (string.string-concat3 (lsp-str4 a b c d) (lsp-str3 e f g) ""))
 
 (defenum LspFrameRead
   (LspFrameOk String)
@@ -252,7 +278,7 @@
 (define (lsp-frame-write-body [body : String]) : unit
   (begin
     (lsp-frame-stdout-write
-      (str_cat.str-cat
+      (lsp-str5
         "Content-Length: "
         (string.int->string (string.string-length body))
         "\r\n\r\n"
@@ -686,7 +712,7 @@
                 (string.string-concat3 out (string.substring path i 1) ""))
               (set!
                 out
-                (str_cat.str-cat
+                (lsp-str4
                   out
                   "%"
                   (json.json-hex-digit (/ code 16))
@@ -696,8 +722,8 @@
 
 (define (lsp-path-to-file-uri [path : String]) : String
   (if (and (> (string.string-length path) 0) (= (string.string-ref path 0) '/'))
-    (str_cat.str-cat "file://" (lsp-percent-encode-path path))
-    (str_cat.str-cat "file:///" (lsp-percent-encode-path path))))
+    (lsp-str2 "file://" (lsp-percent-encode-path path))
+    (lsp-str2 "file:///" (lsp-percent-encode-path path))))
 
 (define (lsp-resolved-path-to-file-uri [path : String]) : String
   (let
@@ -2485,7 +2511,7 @@
   (match (lsp-validate-forms-result text)
     [(ValidLspForms) ""]
     [(InvalidLspForms line col msg ctx)
-      (str_cat.str-cat
+      (lsp-str7
         msg
         " at line "
         (string.int->string line)
@@ -3767,7 +3793,7 @@
         text-without-source
         dest-end-new
         (- (string.string-length text-without-source) dest-end-new))]
-    (str_cat.str-cat before "
+    (lsp-str4 before "
 " source-text after)))
 
 ;; Helper: get offset from LspDeclEntry end position
@@ -3912,12 +3938,7 @@
               second-end
               (- (string.string-length text) second-end))]
           [result : String
-            (str_cat.str-cat
-              text-before
-              second-text
-              middle
-              first-text
-              text-after)]
+            (lsp-str5 text-before second-text middle first-text text-after)]
           (lsp-write-structural-edit-success id docs result))])))
 
 ;; tl/move - Move a form by name or position.
@@ -4399,7 +4420,7 @@
                             (lsp-write-error
                               id
                               -32600
-                              (str_cat.str-cat
+                              (lsp-str2
                                 "Failed to read directory: "
                                 (io.io-error-message message)))
                             (LspContinue docs))])]
@@ -4495,7 +4516,7 @@
               (lsp-write-error
                 id
                 -32600
-                (str_cat.str-cat
+                (lsp-str2
                   "newText is not valid form(s): "
                   (lsp-validate-forms-error new-text)))
               (LspContinue docs))
@@ -4504,7 +4525,7 @@
               [result : String ""]
               (begin
                 (if (= n 0)
-                  (set! result (str_cat.str-cat text "\n\n" new-text))
+                  (set! result (lsp-str3 text "\n\n" new-text))
                   (let
                     [last-entry : LspDeclEntry
                       (lsp-decl-list-get
@@ -4519,7 +4540,7 @@
                         (struct-get last-entry form-end-col)
                         (struct-get last-entry form-end-line)
                         (struct-get last-entry form-end-col)
-                        (str_cat.str-cat "\n\n" new-text)))))
+                        (lsp-str2 "\n\n" new-text)))))
                 (let
                   [formatted : String (lsp-format-edit-text result)]
                   (begin
@@ -5200,7 +5221,7 @@
                                               (lsp-write-error
                                                 id
                                                 -32600
-                                                (str_cat.str-cat
+                                                (lsp-str2
                                                   "newPattern produces an invalid form in body: "
                                                   (lsp-validate-forms-error
                                                     replaced-body)))
@@ -5319,7 +5340,7 @@
                           (begin
                             (set!
                               err
-                              (str_cat.str-cat
+                              (lsp-str2
                                 "newBody is not a valid form: "
                                 (lsp-validate-forms-error new-body)))
                             (set! result ""))
@@ -5426,7 +5447,7 @@
                             (begin
                               (set!
                                 err
-                                (str_cat.str-cat
+                                (lsp-str2
                                   "newPattern produces an invalid form in body: "
                                   (lsp-validate-forms-error replaced-body)))
                               (set! result ""))
@@ -5477,7 +5498,7 @@
   [decls : LspDeclList]) : LspEditResult
   (if (not (lsp-text-is-valid-forms new-text))
     (ErrLspEdit
-      (str_cat.str-cat
+      (lsp-str2
         "newText is not valid form(s): "
         (lsp-validate-forms-error new-text)))
     (let
@@ -5556,7 +5577,7 @@
                   (string.string-replace text old-text new-text)]
                 (if (not (lsp-text-is-valid-forms replaced))
                   (ErrLspEdit
-                    (str_cat.str-cat
+                    (lsp-str2
                       "Patch produces invalid form(s): "
                       (lsp-validate-forms-error replaced)))
                   (OkLspEdit replaced))))))))))
@@ -5934,7 +5955,7 @@
                                   text
                                   form-end
                                   (- (string.string-length text) form-end))]
-                              [deleted : String (str_cat.str-cat before after)]
+                              [deleted : String (lsp-str2 before after)]
                               [formatted : String
                                 (lsp-format-edit-text deleted)]
                               (begin
@@ -6014,7 +6035,7 @@
                                       form-end
                                       (- (string.string-length text) form-end))]
                                   [new-doc-text : String
-                                    (str_cat.str-cat before "\n" new-text after)]
+                                    (lsp-str4 before "\n" new-text after)]
                                   [formatted : String
                                     (lsp-format-edit-text new-doc-text)]
                                   (begin

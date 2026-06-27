@@ -15,6 +15,7 @@ shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|tl: shift count o
 
 # Array/string/generated collection bounds trap rather than reading invalid memory.
 array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|tl: array index out of bounds
+array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|tl: array index out of bounds
 string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|tl: array index out of bounds
 make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
 byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds

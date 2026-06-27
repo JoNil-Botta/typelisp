@@ -11263,15 +11263,26 @@
     [(OkCompilerBackend ptr-asm)
       (OkCompilerBackend
         (if (compiler-backend-float-type? ty)
-          (string-append
-            ptr-asm
+          (let
+            [dst-home : String
+              (compiler-backend-var-register-home assignments dst)]
+            [load-reg : String
+              (if (string-eq dst-home "")
+                (let
+                  [no-exclude : (Array String) (make-array String 0)]
+                  (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
+                dst-home)]
             (string-append
-              (compiler-backend-emit-load-float-memory base-mem "%xmm0" ty)
-              (compiler-backend-emit-store-float-var-with-plan
-                assignments
-                dst
-                "%xmm0"
-                ty)))
+              ptr-asm
+              (string-append
+                (compiler-backend-emit-load-float-memory base-mem load-reg ty)
+                (if (string-eq dst-home "")
+                  (compiler-backend-emit-store-float-var-with-plan
+                    assignments
+                    dst
+                    load-reg
+                    ty)
+                  ""))))
           (let
             [dst-home : String
               (compiler-backend-var-register-home assignments dst)]

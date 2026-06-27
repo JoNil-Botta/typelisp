@@ -18383,13 +18383,19 @@
   [label : String]
   [ty : AstType]) : ResultCompilerBackend
   (let
+    [scratch-reg : String
+      (compiler-backend-scavenge-reg
+        dst
+        (compiler-backend-c-abi-return-store-base-exclude)
+        3
+        "%r11")]
     [scratch-asm : String
       (string-append
-        (str-cat "    movq " label "(%rip), %rax\n" "" "")
+        (str-cat "    movq " label "(%rip), " scratch-reg "\n")
         (compiler-backend-emit-store-typed-var-with-plan
           assignments
           dst
-          "%rax"
+          scratch-reg
           ty))]
     (match (compiler-reg-assignment-lookup assignments dst)
       [(CompilerRegSomeLocation location)

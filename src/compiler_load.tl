@@ -568,6 +568,7 @@
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persist-range! old-intern-floor new-intern-floor)
+          (intern-persistent-arena-floor-refresh!)
           (array.array-set!
             (struct-get compiler-load-active-session-state intern-floor)
             0
@@ -599,6 +600,7 @@
       (if (> new-intern-floor old-intern-floor)
         (begin
           (intern-persist-range! old-intern-floor new-intern-floor)
+          (intern-persistent-arena-floor-refresh!)
           (array.array-set!
             (struct-get compiler-load-active-session-state intern-floor)
             0
@@ -750,7 +752,9 @@
     (compiler-load-surface-summaries-reset!)
     (set! compiler-load-surface-summary-load-depth 0)
     (if (compiler-load-session-cache-enabled?)
-      (intern-reset-to! (compiler-load-session-intern-floor-value))
+      (begin
+        (intern-reset-to! (compiler-load-session-intern-floor-value))
+        (intern-persistent-arena-reset-to-floor!))
       (intern-reset!))))
 
 (define (compiler-load-runtime-prelude-cache-fill! [index : i64]) : unit

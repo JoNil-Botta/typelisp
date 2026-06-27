@@ -7072,6 +7072,78 @@
 (define (lower-no-main-entry-prune-set! [active : bool]) : unit
   (set! lower-no-main-entry-prune-active active))
 
+(define lower-comptime-error-id-generation : i64
+  -1)
+(define lower-comptime-error-id : i64
+  0)
+(define lower-comptime-error-comptime-dot-id : i64
+  0)
+(define lower-comptime-error-comptime-slash-id : i64
+  0)
+(define lower-comptime-error-stdlib-dot-dot-id : i64
+  0)
+(define lower-comptime-error-stdlib-dot-slash-id : i64
+  0)
+(define lower-comptime-error-stdlib-slash-dot-id : i64
+  0)
+(define lower-comptime-error-stdlib-slash-slash-id : i64
+  0)
+
+(define (lower-comptime-error-ids-ensure!) : unit
+  (if (= lower-comptime-error-id-generation (intern-generation))
+    unit
+    (begin
+      (set! lower-comptime-error-id (intern "comptime-error"))
+      (set!
+        lower-comptime-error-comptime-dot-id
+        (intern "comptime.comptime-error"))
+      (set!
+        lower-comptime-error-comptime-slash-id
+        (intern "comptime/comptime-error"))
+      (set!
+        lower-comptime-error-stdlib-dot-dot-id
+        (intern "stdlib.comptime.comptime-error"))
+      (set!
+        lower-comptime-error-stdlib-dot-slash-id
+        (intern "stdlib.comptime/comptime-error"))
+      (set!
+        lower-comptime-error-stdlib-slash-dot-id
+        (intern "stdlib/comptime.comptime-error"))
+      (set!
+        lower-comptime-error-stdlib-slash-slash-id
+        (intern "stdlib/comptime/comptime-error"))
+      (set! lower-comptime-error-id-generation (intern-generation)))))
+
+(define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
+  (or
+    (= id lower-comptime-error-id)
+    (= id lower-comptime-error-comptime-dot-id)
+    (= id lower-comptime-error-comptime-slash-id)
+    (= id lower-comptime-error-stdlib-dot-dot-id)
+    (= id lower-comptime-error-stdlib-dot-slash-id)
+    (= id lower-comptime-error-stdlib-slash-dot-id)
+    (= id lower-comptime-error-stdlib-slash-slash-id)))
+
+(define (lower-comptime-error-call-id? [id : i64]) : bool
+  (begin
+    (lower-comptime-error-ids-ensure!)
+    (lower-comptime-error-call-id-with-cache? id)))
+
+(define (lower-comptime-error-source-or-lookup-id?
+  [source-id : i64]
+  [lookup-id : i64]) : bool
+  (begin
+    (lower-comptime-error-ids-ensure!)
+    (or
+      (= source-id lower-comptime-error-id)
+      (= source-id lower-comptime-error-comptime-dot-id)
+      (= source-id lower-comptime-error-comptime-slash-id)
+      (= source-id lower-comptime-error-stdlib-dot-dot-id)
+      (= source-id lower-comptime-error-stdlib-dot-slash-id)
+      (= source-id lower-comptime-error-stdlib-slash-dot-id)
+      (= source-id lower-comptime-error-stdlib-slash-slash-id)
+      (= lookup-id lower-comptime-error-stdlib-slash-slash-id))))
+
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
   [decl-path : String]
@@ -22864,6 +22936,14 @@
                             args
                             result-ty
                             origin)]
+                        [(lower-comptime-error-source-or-lookup-id?
+                            source-id
+                            name-id)
+                          (ErrLowerExpr
+                            (box
+                              (lower-diagnostic-at-expr
+                                origin
+                                "lower: comptime-error is compile-time only")))]
                         [else
                           (lower-call-non-builtin
                             ctx
@@ -37624,68 +37704,77 @@
   [origin : AstExpr]) : ResultLowerState
   (match (ast-expr-unspan callee)
     [(AstExprVar name)
-      (cond
-        [(and
-            (lower-tail-call-var-unshadowed? env name)
-            ;; #2357: only suppress TCO when THIS call actually involves inline
-            ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
-            ;; disabled tail-call optimization for every call (mode is always on),
-            ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-            (not
-              (lower-tail-call-inline-aggregate-risk?
+      (let
+        [unshadowed : bool (lower-tail-call-var-unshadowed? env name)]
+        (cond
+          [(and unshadowed (lower-comptime-error-call-id? name))
+            (ErrLowerState
+              (box
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: comptime-error is compile-time only")))]
+          [(and
+              unshadowed
+              ;; #2357: only suppress TCO when THIS call actually involves inline
+              ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
+              ;; disabled tail-call optimization for every call (mode is always on),
+              ;; losing TCO entirely (deep self-recursion, smoke shape failure).
+              (not
+                (lower-tail-call-inline-aggregate-risk?
+                  ctx
+                  state
+                  env
+                  type-env
+                  args
+                  ret-ty
+                  sret-var))
+              (lower-tail-call-direct-supported?
                 ctx
                 state
                 env
                 type-env
-                args
-                ret-ty
-                sret-var))
-            (lower-tail-call-direct-supported?
+                name
+                ret-ty))
+            (match (lower-tail-call-args-for-target
               ctx
               state
               env
               type-env
               name
-              ret-ty))
-          (match (lower-tail-call-args-for-target
-            ctx
-            state
-            env
-            type-env
-            name
-            args)
-            [(OkLowerArgs args-state values)
-              (match (lower-tail-call-append-current-sret-arg
-                ctx
-                args-state
-                values
-                ret-ty
-                sret-var)
-                [(OkLowerArgs tail-state tail-values)
-                  (OkLowerState
-                    (lower-state-emit-at-expr
-                      tail-state
-                      (IrInstrTailCall
-                        (lower-resolve-name tail-state (intern-str name))
-                        (compiler-ir-call-args-from-list tail-values)
-                        (lower-one-word-register-storage-type ctx ret-ty))
-                      origin))]
-                [(ErrLowerArgs message) (ErrLowerState message)])]
-            [(ErrLowerArgs message) (ErrLowerState message)])]
-        [(lower-tail-call-var-unshadowed? env name)
-          (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
-        [(lower-tail-call-local-indirect-safe? env type-env name)
-          (lower-tail-call-indirect-expr
-            ctx
-            state
-            env
-            type-env
-            callee
-            args
-            ret-ty
-            sret-var
-            origin)]
-        [else (lower-return-expr ctx state env type-env origin ret-ty sret-var)])]
+              args)
+              [(OkLowerArgs args-state values)
+                (match (lower-tail-call-append-current-sret-arg
+                  ctx
+                  args-state
+                  values
+                  ret-ty
+                  sret-var)
+                  [(OkLowerArgs tail-state tail-values)
+                    (OkLowerState
+                      (lower-state-emit-at-expr
+                        tail-state
+                        (IrInstrTailCall
+                          (lower-resolve-name tail-state (intern-str name))
+                          (compiler-ir-call-args-from-list tail-values)
+                          (lower-one-word-register-storage-type ctx ret-ty))
+                        origin))]
+                  [(ErrLowerArgs message) (ErrLowerState message)])]
+              [(ErrLowerArgs message) (ErrLowerState message)])]
+          [unshadowed
+            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+          [(lower-tail-call-local-indirect-safe? env type-env name)
+            (lower-tail-call-indirect-expr
+              ctx
+              state
+              env
+              type-env
+              callee
+              args
+              ret-ty
+              sret-var
+              origin)]
+          [else
+            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]))]
     [_
       (if (lower-tail-call-reference-capturing-lambda? type-env callee)
         (lower-return-expr ctx state env type-env origin ret-ty sret-var)

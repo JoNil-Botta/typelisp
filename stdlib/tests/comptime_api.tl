@@ -101,6 +101,11 @@
                 0)))))]
     [_ (comptime.expr-int 0)]))
 
+(defmacro (stdlib-comptime-error-unreached [x : comptime.Expr]) : i64
+  (if false
+    (comptime.comptime-error "unreached stdlib comptime error")
+    x))
+
 (define (stdlib-comptime-qualified-import-shape) : i64
   (+
     (stdlib-comptime-id 14)
@@ -144,6 +149,9 @@
 
 (define (stdlib-comptime-legacy-string-helper-shape) : i64
   (stdlib-comptime-string-helper-total stdlib-comptime-derived))
+
+(define (stdlib-comptime-error-branch-shape) : i64
+  (stdlib-comptime-error-unreached 42))
 
 (test
   comptime-qualified-import-shape
@@ -210,6 +218,14 @@
 (test
   comptime-legacy-string-helper-shape
   (if (= (stdlib-comptime-legacy-string-helper-shape) 54)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-error-branch-shape
+  (if (= (stdlib-comptime-error-branch-shape) 42)
     unit
     (begin
       (/ 1 0)

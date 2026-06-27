@@ -9543,6 +9543,103 @@
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
 
+(define (compiler-backend-emit-float-compare-return
+  [assignments : CompilerRegAssignmentList]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [rhs : CompilerIrValue]
+  [fty : AstType]
+  [return-tail : String]) : ResultCompilerBackend
+  (if (compiler-backend-compare-op? op)
+    (let
+      [lhs-home : String (compiler-backend-float-value-register assignments lhs)]
+      [rhs-direct : String
+        (compiler-backend-float-direct-rhs-operand assignments rhs fty lhs-home)]
+      (if (and (not (string-eq lhs-home "")) (not (string-eq rhs-direct "")))
+        (OkCompilerBackend
+          (str-cat
+            (compiler-backend-float-compare-reg-asm
+              op
+              fty
+              lhs-home
+              rhs-direct
+              "%rax")
+            return-tail))
+        (let
+          [rhs-reg : String (compiler-backend-float-value-register assignments rhs)]
+          [xmm-exclude : (Array String)
+            (if (string-eq rhs-reg "")
+              (make-array String 0)
+              (compiler-backend-one-exclude rhs-reg))]
+          [xmm-exclude-n : i64 (if (string-eq rhs-reg "") 0 1)]
+          [lhs-temp : String
+            (compiler-backend-scavenge-xmm-reg -1 xmm-exclude xmm-exclude-n "%xmm2")]
+          [rhs-operand : String
+            (compiler-backend-float-direct-rhs-operand assignments rhs fty lhs-temp)]
+          (if (string-eq rhs-operand "")
+            (let
+              [rhs-temp-exclude0 : (Array String)
+                (compiler-backend-one-exclude lhs-temp)]
+              [rhs-temp-exclude : (Array String)
+                (if (string-eq lhs-home "")
+                  rhs-temp-exclude0
+                  (compiler-backend-scavenge-exclude-append
+                    rhs-temp-exclude0
+                    1
+                    lhs-home))]
+              [rhs-temp-exclude-n : i64
+                (if (string-eq lhs-home "") 1 2)]
+              [rhs-temp : String
+                (compiler-backend-scavenge-xmm-reg
+                  -1
+                  rhs-temp-exclude
+                  rhs-temp-exclude-n
+                  "%xmm3")]
+              (match (compiler-backend-emit-load-float-value-with-plan
+                assignments
+                rhs
+                fty
+                rhs-temp)
+                [(OkCompilerBackend rhs-asm)
+                  (match (compiler-backend-emit-load-float-value-with-plan
+                    assignments
+                    lhs
+                    fty
+                    lhs-temp)
+                    [(OkCompilerBackend lhs-asm)
+                      (OkCompilerBackend
+                        (str-cat
+                          rhs-asm
+                          lhs-asm
+                          (compiler-backend-float-compare-reg-asm
+                            op
+                            fty
+                            lhs-temp
+                            rhs-temp
+                            "%rax")
+                          return-tail))]
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+            (match (compiler-backend-emit-load-float-value-with-plan
+              assignments
+              lhs
+              fty
+              lhs-temp)
+              [(OkCompilerBackend lhs-asm)
+                (OkCompilerBackend
+                  (str-cat
+                    lhs-asm
+                    (compiler-backend-float-compare-reg-asm
+                      op
+                      fty
+                      lhs-temp
+                      rhs-operand
+                      "%rax")
+                    return-tail))]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+    (ErrCompilerBackend
+      (compiler-diagnostic-at-start "" "backend: unsupported float return compare"))))
+
 (define (compiler-backend-emit-binop-return
   [source-function : String]
   [blocks : CompilerIrBlockList]
@@ -9569,29 +9666,13 @@
             rhs
             fty
             return-tail)
-          (match (compiler-backend-emit-load-float-value-with-plan
+          (compiler-backend-emit-float-compare-return
             assignments
+            op
             lhs
+            rhs
             fty
-            "%xmm0")
-            [(OkCompilerBackend lhs-asm)
-              (match (compiler-backend-emit-load-float-value-with-plan
-                assignments
-                rhs
-                fty
-                "%xmm1")
-                [(OkCompilerBackend rhs-asm)
-                  (match (compiler-backend-float-binop-asm op fty)
-                    [(OkCompilerBackend op-asm)
-                      (OkCompilerBackend
-                        (string-append
-                          lhs-asm
-                          (string-append
-                            rhs-asm
-                            (string-append op-asm return-tail))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+            return-tail)))
       (let
         [operand-ty : AstType
           (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]

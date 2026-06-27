@@ -7768,6 +7768,38 @@
           [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
+(define (compiler-backend-emit-binop-direct-rcx-shift
+  [assignments : CompilerRegAssignmentList]
+  [dst-home : String]
+  [op : CompilerIrBinOp]
+  [lhs : CompilerIrValue]
+  [ty : AstType]) : ResultCompilerBackend
+  (let
+    [mnemonic : String
+      (match op
+        [(IrBinShl) "shl"]
+        [(IrBinShr)
+          (if (compiler-backend-type-signed? ty)
+            "sar"
+            "shr")]
+        [_ ""])]
+    (match (compiler-backend-emit-load-value-with-plan
+      assignments
+      lhs
+      dst-home)
+      [(OkCompilerBackend lhs-asm)
+        (OkCompilerBackend
+          (str-cat
+            lhs-asm
+            (compiler-backend-shift-guard-asm ty "%rcx")
+            "    "
+            mnemonic
+            (compiler-backend-int-instruction-suffix ty)
+            " %cl, "
+            (compiler-backend-sized-reg dst-home ty)
+            "\n"))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
 (define (compiler-backend-binop-immediate-reg-asm
   [mnemonic : String]
   [ty : AstType]
@@ -8010,6 +8042,19 @@
           ty)]
       [(CompilerBackendNoImmediate) false])
     false))
+
+(define (compiler-backend-binop-rcx-shift?
+  [assignments : CompilerRegAssignmentList]
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [dst-home : String]) : bool
+  (and
+    (compiler-backend-binop-shift-op? op)
+    (and
+      (not (string-eq dst-home "%rcx"))
+      (string-eq
+        (compiler-backend-value-scalar-register assignments rhs)
+        "%rcx"))))
 
 ;; #2386 (roadmap #1): the scalar register home of a value if it is a var the
 ;; allocator placed in a single GP register, else "". Used by the direct binop
@@ -8276,7 +8321,13 @@
           (if (= (compiler-backend-type-size operand-ty) 8)
             (or
               (not (string-eq mnem ""))
-              (compiler-backend-binop-valid-immediate-shift? op rhs operand-ty))
+              (or
+                (compiler-backend-binop-valid-immediate-shift? op rhs operand-ty)
+                (compiler-backend-binop-rcx-shift?
+                  assignments
+                  op
+                  rhs
+                  dst-home)))
             false)))
         ;; Accumulate directly in the destination register: dst = lhs <op> rhs.
         ;; #2386 (roadmap #1): if rhs already lives in a register distinct from
@@ -8306,7 +8357,14 @@
                 lhs
                 rhs
                 operand-ty)
-              (let
+              (if (compiler-backend-binop-shift-op? op)
+                (compiler-backend-emit-binop-direct-rcx-shift
+                  assignments
+                  dst-home
+                  op
+                  lhs
+                  operand-ty)
+                (let
               [rhs-reg : String
                 (compiler-backend-value-scalar-register assignments rhs)]
               [lhs-reg : String
@@ -8381,7 +8439,7 @@
                                   "\n"))))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))]))
+                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))]))
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs

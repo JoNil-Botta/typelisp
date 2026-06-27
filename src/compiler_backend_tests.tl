@@ -10142,6 +10142,66 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
+(define (compiler-backend-direct-rcx-shift-asm
+  [op : CompilerIrBinOp]) : ResultCompilerBackend
+  (compiler-backend-emit-binop
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType 0 (AstTyI64))
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType 1 (AstTyI64))
+        (compiler-reg-var-type-cons
+          (CompilerRegVarType 2 (AstTyI64))
+          CompilerRegVarTypeNil)))
+    (CompilerBackendGlobalTypeNil)
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 0 (CompilerRegRegister "%r15"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%rcx"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 2 (CompilerRegRegister "%r12"))
+          CompilerRegAssignmentNil)))
+    2
+    op
+    (IrValueVar 0)
+    (IrValueVar 1)
+    (AstTyI64)))
+
+(define (compiler-backend-direct-rcx-shift-home-ok?) : bool
+  (match (compiler-backend-direct-rcx-shift-asm (IrBinShl))
+    [(OkCompilerBackend shl-asm)
+      (match (compiler-backend-direct-rcx-shift-asm (IrBinShr))
+        [(OkCompilerBackend shr-asm)
+          (and
+            (backend-and8
+              (compiler-backend-string-contains?
+                shl-asm
+                "    movq %r15, %r12\n")
+              (compiler-backend-string-contains?
+                shl-asm
+                "    testq %rcx, %rcx\n")
+              (compiler-backend-string-contains?
+                shl-asm
+                "    cmpq $64, %rcx\n")
+              (compiler-backend-string-contains? shl-asm "    shlq %cl, %r12\n")
+              (compiler-backend-string-contains?
+                shr-asm
+                "    movq %r15, %r12\n")
+              (compiler-backend-string-contains?
+                shr-asm
+                "    testq %rcx, %rcx\n")
+              (compiler-backend-string-contains?
+                shr-asm
+                "    cmpq $64, %rcx\n")
+              (compiler-backend-string-contains? shr-asm "    sarq %cl, %r12\n"))
+            (not (compiler-backend-string-contains? shl-asm "%rax"))
+            (not (compiler-backend-string-contains? shr-asm "%rax"))
+            (not (compiler-backend-string-contains? shl-asm "%r8"))
+            (not (compiler-backend-string-contains? shr-asm "%r8"))
+            (not (compiler-backend-string-contains? shl-asm "    movq %rcx"))
+            (not (compiler-backend-string-contains? shr-asm "    movq %rcx")))]
+        [(ErrCompilerBackend _) false])]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-i64-immediate-load-shape-ok?) : bool
   (backend-and8
     (string-eq
@@ -12381,7 +12441,8 @@
         (compiler-backend-bit-and-low-mask-immediate-ok?)
         (compiler-backend-bit-and-low-mask-direct-ok?)
         (compiler-backend-direct-compare-home-ok?)
-        (compiler-backend-direct-immediate-shift-home-ok?))
+        (compiler-backend-direct-immediate-shift-home-ok?)
+        (compiler-backend-direct-rcx-shift-home-ok?))
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)

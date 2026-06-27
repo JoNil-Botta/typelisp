@@ -40877,7 +40877,7 @@
   (macro-vf-call name (macro-vf-expr-list2 a b)))
 
 (define (macro-vf-array-length [value : i64]) : i64
-  (macro-vf-call1 "array-length" value))
+  (macro-vf-call1 "__tl_array-length" value))
 
 (define (macro-vf-array-ty [elem-ty : AstType]) : AstType
   (ast-ty-dyn-array elem-ty))
@@ -42533,30 +42533,47 @@
                               (if (macro-vector-family-decls-macro?
                                 macro-name
                                 definition-module)
-                                (match (macro-vector-family-fast-decls
-                                  call-ctx
-                                  orig-decls
-                                  call-module
-                                  expanded-args
-                                  call-expr)
-                                  [(OkMacroParsedDecls generated)
-                                    (let
-                                      [contextual-generated : AstDeclList
-                                        (macro-generated-context-decls
-                                          generated
-                                          definition-module)]
-                                      [wrapped : AstDeclList
-                                        (macro-wrap-generated-decls-decls
-                                          contextual-generated
-                                          macro-name
-                                          (macro-decls-generated-key identity))]
-                                      (OkMacroDeclExpansion
-                                        wrapped
-                                        (macro-paths-for-decls
-                                          wrapped
-                                          decl-path)))]
-                                  [(ErrMacroParsedDecls diag)
-                                    (ErrMacroDeclExpansion diag)])
+                                (begin
+                                  (cfg
+                                    compile-profile
+                                    (compiler-tc-macro-profile-start))
+                                  (match (macro-vector-family-fast-decls
+                                    call-ctx
+                                    orig-decls
+                                    call-module
+                                    expanded-args
+                                    call-expr)
+                                    [(OkMacroParsedDecls generated)
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-macro-profile-finish
+                                            macro-name
+                                            expanded-args))
+                                        (let
+                                          [contextual-generated : AstDeclList
+                                            (macro-generated-context-decls
+                                              generated
+                                              definition-module)]
+                                          [wrapped : AstDeclList
+                                            (macro-wrap-generated-decls-decls
+                                              contextual-generated
+                                              macro-name
+                                              (macro-decls-generated-key
+                                                identity))]
+                                          (OkMacroDeclExpansion
+                                            wrapped
+                                            (macro-paths-for-decls
+                                              wrapped
+                                              decl-path))))]
+                                    [(ErrMacroParsedDecls diag)
+                                      (begin
+                                        (cfg
+                                          compile-profile
+                                          (compiler-tc-macro-profile-finish
+                                            macro-name
+                                            expanded-args))
+                                        (ErrMacroDeclExpansion diag))]))
                                 (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   orig-decls
@@ -43776,6 +43793,79 @@
         (macro-expanded-decl-inert? decl can-share)
         (macro-expanded-decls-inert? (box-get rest) can-share))]))
 
+(define (macro-vector-family-name-syntax? [name : String]) : bool
+  (or
+    (tc-name-base-eq? name "vector-family")
+    (tc-string-has-suffix? name ".vector-family")))
+
+(define (macro-vector-family-generated-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (match meta
+        [(AstSomeGeneratedDeclMeta generator _ _ _)
+          (or
+            (macro-vector-family-name-syntax? generator)
+            (macro-vector-family-generated-decl? (box-get template-box)))]
+        [(AstNoGeneratedDeclMeta)
+          (macro-vector-family-generated-decl? (box-get template-box))])]
+    [(AstDeclUnsafe inner-box)
+      (macro-vector-family-generated-decl? (box-get inner-box))]
+    [_ false]))
+
+(define (macro-vector-family-generated-decls-in?
+  [decls : AstDeclList]
+  [seen : bool]) : bool
+  (match decls
+    [(AstDeclNil) seen]
+    [(AstDeclCons decl rest)
+      (and
+        (macro-vector-family-generated-decl? decl)
+        (macro-vector-family-generated-decls-in? (box-get rest) true))]))
+
+(define (macro-vector-family-generated-decls? [decls : AstDeclList]) : bool
+  (macro-vector-family-generated-decls-in? decls false))
+
+(define (macro-vector-family-call-id? [call-id : i64]) : bool
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box _)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          (match (ast-expr-unspan func)
+            [(AstExprVar name)
+              (macro-vector-family-name-syntax? (intern-str name))]
+            [(AstExprStructGet _ field)
+              (macro-vector-family-name-syntax? (intern-str field))]
+            [_ false]))]
+      [_ false])))
+
+(define (macro-vector-family-placeholder? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      (match kind
+        [(AstImportMacroDecls call-id _) (macro-vector-family-call-id? call-id)]
+        [_ false])]
+    [(AstDeclComptimeDecl _ template-box)
+      (macro-vector-family-placeholder? (box-get template-box))]
+    [(AstDeclUnsafe inner-box)
+      (macro-vector-family-placeholder? (box-get inner-box))]
+    [_ false]))
+
+(define (macro-vector-family-batchable-decl?
+  [decl : AstDecl]
+  [can-share : bool]) : bool
+  (if (macro-decl-import-placeholder? decl)
+    (macro-vector-family-placeholder? decl)
+    (macro-expanded-decl-inert? decl can-share)))
+
+(define (macro-vector-family-batchable-next?
+  [decls : AstDeclList]
+  [can-share : bool]) : bool
+  (match decls
+    [(AstDeclNil) true]
+    [(AstDeclCons decl _) (macro-vector-family-batchable-decl? decl can-share)]))
+
 (define (macro-decls-have-import-placeholder? [decls : AstDeclList]) : bool
   (match decls
     [(AstDeclNil) false]
@@ -43798,6 +43888,7 @@
     [cur-module : String module]
     [out-rev : AstDeclList AstDeclNil]
     [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [needs-followup-after-batch : bool false]
     [result : ResultMacroDeclsWithPaths
       (ErrMacroDeclsWithPaths
         (box (tc-diag-at-start "macro: internal decl expansion walk")))]
@@ -43812,7 +43903,7 @@
                 (OkMacroDeclsWithPaths
                   (macro-decl-list-reverse out-rev)
                   (macro-decl-path-list-reverse out-paths-rev)
-                  false))
+                  needs-followup-after-batch))
               (set! done true))]
           [(AstDeclCons decl rest)
             (let
@@ -43839,67 +43930,109 @@
                     (set! cur-paths rest-paths)
                     (set! cur-module (intern-str next-module)))]
                 [_
-                  (if (macro-decl-import-placeholder? decl)
-                    (match (macro-expand-decl-with-path
-                      ctx
-                      top-env
-                      orig-decls
-                      cur-module
-                      decl
-                      decl-path)
-                      [(OkMacroDeclExpansion expanded expanded-paths)
-                        (if (and
-                          (macro-expanded-decls-inert? expanded can-share)
-                          (not (macro-decls-have-import-placeholder? rest))
-                          (macro-expanded-decls-inert? rest can-share))
-                          (begin
-                            (set!
-                              out-rev
-                              (macro-decl-list-reverse-into expanded out-rev))
-                            (set!
-                              out-paths-rev
-                              (macro-decl-path-list-reverse-into
-                                expanded-paths
-                                out-paths-rev))
-                            (set!
-                              cur-module
-                              (macro-decls-final-module expanded cur-module))
-                            (set! cur-decls rest)
-                            (set! cur-paths rest-paths))
-                          (begin
-                            (set!
-                              result
-                              (OkMacroDeclsWithPaths
-                                (macro-decl-list-append
-                                  (macro-decl-list-reverse out-rev)
-                                  (macro-decl-list-append expanded rest))
-                                (macro-decl-path-list-append
-                                  (macro-decl-path-list-reverse out-paths-rev)
-                                  (macro-decl-path-list-append
+                  (cond
+                    [(and
+                        needs-followup-after-batch
+                        (not
+                          (macro-vector-family-batchable-decl? decl can-share)))
+                      (begin
+                        (set!
+                          result
+                          (OkMacroDeclsWithPaths
+                            (macro-decl-list-append
+                              (macro-decl-list-reverse out-rev)
+                              cur-decls)
+                            (macro-decl-path-list-append
+                              (macro-decl-path-list-reverse out-paths-rev)
+                              cur-paths)
+                            true))
+                        (set! done true))]
+                    [(macro-decl-import-placeholder? decl)
+                      (match (macro-expand-decl-with-path
+                        ctx
+                        top-env
+                        orig-decls
+                        cur-module
+                        decl
+                        decl-path)
+                        [(OkMacroDeclExpansion expanded expanded-paths)
+                          (let
+                            [expanded-inert? : bool
+                              (macro-expanded-decls-inert? expanded can-share)]
+                            [expanded-has-placeholder? : bool
+                              (macro-decls-have-import-placeholder? expanded)]
+                            [can-finish-without-followup? : bool
+                              (and
+                                expanded-inert?
+                                (not expanded-has-placeholder?)
+                                (not
+                                  (macro-decls-have-import-placeholder? rest))
+                                (macro-expanded-decls-inert? rest can-share))]
+                            [can-batch-vector-family? : bool
+                              (and
+                                (not expanded-has-placeholder?)
+                                (macro-vector-family-generated-decls? expanded)
+                                (macro-vector-family-batchable-next?
+                                  rest
+                                  can-share))]
+                            (if (or
+                              can-finish-without-followup?
+                              can-batch-vector-family?)
+                              (begin
+                                (if can-finish-without-followup?
+                                  unit
+                                  (set! needs-followup-after-batch true))
+                                (set!
+                                  out-rev
+                                  (macro-decl-list-reverse-into
+                                    expanded
+                                    out-rev))
+                                (set!
+                                  out-paths-rev
+                                  (macro-decl-path-list-reverse-into
                                     expanded-paths
-                                    rest-paths))
-                                true))
-                            (set! done true)))]
-                      [(ErrMacroDeclExpansion diag)
-                        (begin
-                          (set! result (ErrMacroDeclsWithPaths diag))
-                          (set! done true))])
-                    (if (and can-share (macro-decl-cannot-fire? decl))
+                                    out-paths-rev))
+                                (set!
+                                  cur-module
+                                  (macro-decls-final-module expanded cur-module))
+                                (set! cur-decls rest)
+                                (set! cur-paths rest-paths))
+                              (begin
+                                (set!
+                                  result
+                                  (OkMacroDeclsWithPaths
+                                    (macro-decl-list-append
+                                      (macro-decl-list-reverse out-rev)
+                                      (macro-decl-list-append expanded rest))
+                                    (macro-decl-path-list-append
+                                      (macro-decl-path-list-reverse
+                                        out-paths-rev)
+                                      (macro-decl-path-list-append
+                                        expanded-paths
+                                        rest-paths))
+                                    true))
+                                (set! done true))))]
+                        [(ErrMacroDeclExpansion diag)
+                          (begin
+                            (set! result (ErrMacroDeclsWithPaths diag))
+                            (set! done true))])]
+                    [(and can-share (macro-decl-cannot-fire? decl))
                       ;; Predict-skip: a macro-free value decl can never fire a
-                      ;; macro, so share it unchanged (like the AstDeclModule
-                      ;; arm) instead of copying it through the expander. This
-                      ;; avoids the per-decl `tc-context-with-module` allocation
-                      ;; and the single-element relist that
-                      ;; `macro-expand-decl-with-path` would otherwise retain in
-                      ;; the installed pools. A non-module value decl never
-                      ;; changes the active module, so `cur-module` is unchanged.
+                      ;; macro, so share it unchanged (like the AstDeclModule arm)
+                      ;; instead of copying it through the expander. This avoids
+                      ;; the per-decl `tc-context-with-module` allocation and the
+                      ;; single-element relist that `macro-expand-decl-with-path`
+                      ;; would otherwise retain in the installed pools. A
+                      ;; non-module value decl never changes the active module, so
+                      ;; `cur-module` is unchanged.
                       (begin
                         (set! out-rev (ast-decl-cons decl out-rev))
                         (set!
                           out-paths-rev
                           (ast-decl-path-cons decl-path out-paths-rev))
                         (set! cur-decls rest)
-                        (set! cur-paths rest-paths))
+                        (set! cur-paths rest-paths))]
+                    [else
                       (match (macro-expand-decl-with-path
                         ctx
                         top-env
@@ -43925,7 +44058,7 @@
                         [(ErrMacroDeclExpansion diag)
                           (begin
                             (set! result (ErrMacroDeclsWithPaths diag))
-                            (set! done true))])))]))]))
+                            (set! done true))])])]))]))
       result)))
 
 (define (macro-expr-needs-compat-expansion? [expr : AstExpr]) : bool

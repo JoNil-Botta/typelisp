@@ -2119,6 +2119,13 @@
     "%rax"
     "%eax"))
 
+(define (compiler-backend-avx512-mask-gpr-part
+  [reg : String]
+  [lanes : i64]) : String
+  (if (> lanes 32)
+    reg
+    (compiler-backend-reg-part reg 4)))
+
 (define (compiler-backend-avx512-mask-mov-imm-mnemonic [lanes : i64]) : String
   (string-append "mov" (compiler-backend-avx512-mask-int-suffix lanes)))
 
@@ -2798,12 +2805,29 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
-    (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
+    [count-reg : String
+      (compiler-backend-scavenge-rcx-reg-here (make-array String 0) 0)]
+    [index-home : String
+      (compiler-backend-simd-index-home assignments index)]
+    [index-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-ops2 assignments index end-value)]
+    [index-reg : String
+      (if (and
+        (not (string-eq index-home ""))
+        (not (string-eq index-home count-reg)))
+        index-home
+        (compiler-backend-scavenge-reg-here index-exclude 7 "%r8"))]
+    [mask-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append index-exclude 7 index-reg)]
+    [mask-reg : String
+      (compiler-backend-scavenge-reg-here mask-exclude 8 "%r9")]
+    [mask-gpr : String
+      (compiler-backend-avx512-mask-gpr-part mask-reg lanes)]
+    (match (if (string-eq index-reg index-home)
+      (OkCompilerBackend "")
+      (compiler-backend-emit-load-value-with-plan assignments index index-reg))
       [(OkCompilerBackend index-asm)
-        (match (compiler-backend-emit-load-value-with-plan
-          assignments
-          end-value
-          "%rcx")
+        (match (compiler-backend-emit-load-value-with-plan assignments end-value count-reg)
           [(OkCompilerBackend end-asm)
             (let
               [full-label : String
@@ -2824,7 +2848,6 @@
                   current-label
                   dst
                   "_done")]
-              [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
               [mask-move : String
                 (compiler-backend-avx512-mask-move-mnemonic lanes)]
               [mov-imm : String
@@ -2834,14 +2857,24 @@
               [kxor : String (compiler-backend-avx512-mask-kxor-mnemonic lanes)]
               [body-range : String
                 (str-cat
-                  "    subq %rax, %rcx\n    cmpq $"
+                  "    subq "
+                  index-reg
+                  ", "
+                  count-reg
+                  "\n    cmpq $"
                   (int->string lanes)
-                  ", %rcx\n    jge "
+                  ", "
+                  count-reg
+                  "\n    jge "
                   full-label
                   "\n")]
               [body-nonzero-a : String
                 (str-cat
-                  "    testq %rcx, %rcx\n    jle "
+                  "    testq "
+                  count-reg
+                  ", "
+                  count-reg
+                  "\n    jle "
                   zero-label
                   "\n    "
                   mov-imm
@@ -25179,6 +25212,13 @@
       (array-set! a 10 "%rbx")
       a)))
 
+(define (compiler-backend-scavenge-rcx-candidates) : (Array String)
+  (let
+    [a : (Array String) (make-array String 1)]
+    (begin
+      (array-set! a 0 "%rcx")
+      a)))
+
 (define (compiler-backend-scavenge-xmm-candidates) : (Array String)
   (let
     [a : (Array String) (make-array String 4)]
@@ -25567,6 +25607,45 @@
         exclude
         exclude-n
         fallback)]
+    (begin
+      (cfg
+        scavenge-self-check
+        (compiler-backend-scavenge-freeness-check!
+          starts
+          ends
+          assignments
+          vars
+          point
+          reg)
+        unit)
+      reg)))
+
+(define (compiler-backend-scavenge-rcx-reg-here
+  [exclude : (Array String)]
+  [exclude-n : i64]) : String
+  (let
+    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [vars : i64 compiler-backend-scavenge-ctx-vars]
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [reg : String
+      (compiler-backend-scavenge-pick-from
+        starts
+        ends
+        assignments
+        vars
+        point
+        exclude
+        exclude-n
+        "%rcx"
+        (compiler-backend-scavenge-rcx-candidates))]
     (begin
       (cfg
         scavenge-self-check

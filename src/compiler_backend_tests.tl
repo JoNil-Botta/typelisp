@@ -6654,49 +6654,49 @@
       "    vmovdqu64 "
       "    vpaddq "
       "kmovw"
-      "shll %cl, %eax")
+      "shll %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "i32"
       "    vmovdqu32 "
       "    vpaddd "
       "kmovw"
-      "shll %cl, %eax")
+      "shll %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "i16"
       "    vmovdqu16 "
       "    vpaddw "
       "kmovd"
-      "shll %cl, %eax")
+      "shll %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "u16"
       "    vmovdqu16 "
       "    vpaddw "
       "kmovd"
-      "shll %cl, %eax")
+      "shll %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "f64"
       "    vmovupd "
       "    vaddpd "
       "kmovw"
-      "shll %cl, %eax")
+      "shll %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "f32"
       "    vmovups "
       "    vaddps "
       "kmovw"
-      "shll %cl, %eax")
+      "shll %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "i8"
       "    vmovdqu8 "
       "    vpaddb "
       "kmovq"
-      "shlq %cl, %rax")
+      "shlq %cl, %r")
     (compiler-backend-avx512-map-asm-contains?
       "u8"
       "    vmovdqu8 "
       "    vpaddb "
       "kmovq"
-      "shlq %cl, %rax")))
+      "shlq %cl, %r")))
 
 (define (compiler-backend-avx512-uniform-map-asm-contains?
   [elem : String]
@@ -7181,6 +7181,13 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains? asm "    kxorw %k1, %k1, %k1\n")
+        (compiler-backend-string-contains? asm "    movq %r13, %rcx\n")
+        (compiler-backend-string-contains? asm "    subq %r12, %rcx\n")
+        (compiler-backend-string-contains? asm "    movl $1, %r8d\n")
+        (compiler-backend-string-contains? asm "    shll %cl, %r8d\n")
+        (compiler-backend-string-contains? asm "    kmovw %r8d, %k1\n")
+        (not (compiler-backend-string-contains? asm "%rax"))
+        (not (compiler-backend-string-contains? asm "%eax"))
         (not
           (compiler-backend-string-contains?
             asm

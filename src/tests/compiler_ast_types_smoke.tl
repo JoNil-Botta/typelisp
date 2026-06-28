@@ -172,9 +172,206 @@
     (compiler-ast-state-owned-type-dedup-isolated-smoke?)
     (compiler-ast-state-owned-type-dedup-reset-smoke?)))
 
+(define (compiler-ast-context-expr-int-lit?
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [expected : i64]) : bool
+  (match (ast-node-pool-context-expr-get pools id)
+    [(AstExprLiteral lit)
+      (match lit
+        [(AstLitInt value _) (= value expected)]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-ast-context-shared-binary?
+  [pools : AstNodePoolContext]
+  [id : i64]
+  [old-lit : i64]
+  [old-span : i64]) : bool
+  (match (ast-node-pool-context-expr-get pools id)
+    [(AstExprBinary _ left right)
+      (if (= left right)
+        (match (ast-node-pool-context-expr-get pools left)
+          [(AstExprSpanned inner span)
+            (and
+              (not (= left old-span))
+              (not (= inner old-lit))
+              (= (struct-get span start-line) 1)
+              (= (struct-get span start-col) 2)
+              (= (struct-get span end-line) 3)
+              (= (struct-get span end-col) 4)
+              (compiler-ast-context-expr-int-lit? pools inner 7))]
+          [_ false])
+        false)]
+    [_ false]))
+
+(define (compiler-ast-global-shared-binary? [id : i64] [ptr-ty-id : i64]) : bool
+  (and
+    (match (ast-node-get id)
+      [(AstExprBinary _ left right)
+        (if (= left right)
+          (match (ast-node-get left)
+            [(AstExprSpanned inner _)
+              (match (ast-node-get inner)
+                [(AstExprLiteral lit)
+                  (match lit
+                    [(AstLitInt value _) (= value 7)]
+                    [_ false])]
+                [_ false])]
+            [_ false])
+          false)]
+      [_ false])
+    (match (ty-node-get ptr-ty-id)
+      [(AstTyPtr inner)
+        (match (ty-node-get inner)
+          [(AstTyI64) true]
+          [_ false])]
+      [_ false])))
+
+(define (compiler-ast-compaction-program-shape-ok?
+  [pools : AstNodePoolContext]
+  [program : AstProgram]
+  [source-body : i64]
+  [source-lit : i64]
+  [source-span : i64]) : bool
+  (match program
+    [(AstProgram decls-box)
+      (match (box-get decls-box)
+        [(AstDeclCons first rest-box)
+          (match first
+            [(AstDeclDef _ maybe-ty first-body)
+              (match (box-get rest-box)
+                [(AstDeclCons second tail-box)
+                  (match second
+                    [(AstDeclTest _ second-body _)
+                      (and
+                        (= first-body second-body)
+                        (not (= first-body source-body))
+                        (= (ast-node-pool-context-expr-len pools) 3)
+                        (= (ast-node-pool-context-type-len pools) 2)
+                        (compiler-ast-context-shared-binary?
+                          pools
+                          first-body
+                          source-lit
+                          source-span)
+                        (match maybe-ty
+                          [(AstSomeType ty)
+                            (match ty
+                              [(AstTyArray ptr-id count)
+                                (and
+                                  (= count 4)
+                                  (match (ast-node-pool-context-type-get
+                                    pools
+                                    ptr-id)
+                                    [(AstTyPtr inner)
+                                      (match (ast-node-pool-context-type-get
+                                        pools
+                                        inner)
+                                        [(AstTyI64) true]
+                                        [_ false])]
+                                    [_ false]))]
+                              [_ false])]
+                          [_ false])
+                        (match (box-get tail-box)
+                          [(AstDeclNil) true]
+                          [_ false]))]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [_ false])]))
+
+(define (compiler-ast-program-compaction-smoke?) : bool
+  (let
+    [source-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [dest-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [active-before : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [source-decoy-expr : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExprLiteral (ast-lit-int 999)))]
+    [source-decoy-ty : i64
+      (ast-node-pool-context-type-push source-pools (AstTyChar))]
+    [source-i64-ty : i64
+      (ast-node-pool-context-type-push source-pools (AstTyI64))]
+    [source-ptr-ty : i64
+      (ast-node-pool-context-type-push source-pools (AstTyPtr source-i64-ty))]
+    [array-ty : AstType (AstTyArray source-ptr-ty 4)]
+    [source-lit : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExprLiteral (ast-lit-int 7)))]
+    [source-span : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExprSpanned source-lit (AstSourceSpan 1 2 3 4)))]
+    [source-body : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExprBinary (AstBinAdd) source-span source-span))]
+    [program : AstProgram
+      (ast-program
+        (ast-decl-cons
+          (ast-decl-def "value" (AstSomeType array-ty) source-body)
+          (ast-decl-cons
+            (ast-decl-test "same" source-body (AstSourceSpan 5 6 7 8))
+            AstDeclNil)))]
+    [dest-decoy-expr : i64
+      (ast-node-pool-context-expr-push
+        dest-pools
+        (AstExprLiteral (ast-lit-int 1234)))]
+    [dest-decoy-ty : i64
+      (ast-node-pool-context-type-push dest-pools (AstTyBool))]
+    [compacted : AstProgramCompaction
+      (ast-program-compact-with-pools source-pools dest-pools program)]
+    (match compacted
+      [(AstProgramCompaction out-program out-pools)
+        (let
+          [shape-ok : bool
+            (and
+              (= source-decoy-expr 0)
+              (= source-decoy-ty 0)
+              (= dest-decoy-expr 0)
+              (= dest-decoy-ty 0)
+              (compiler-ast-compaction-program-shape-ok?
+                out-pools
+                out-program
+                source-body
+                source-lit
+                source-span))]
+          [installed-ok : bool
+            (match out-program
+              [(AstProgram decls-box)
+                (match (box-get decls-box)
+                  [(AstDeclCons first _)
+                    (match first
+                      [(AstDeclDef _ maybe-ty body)
+                        (match maybe-ty
+                          [(AstSomeType ty)
+                            (match ty
+                              [(AstTyArray ptr-id _)
+                                (begin
+                                  (ast-node-pool-context-install! out-pools)
+                                  (compiler-ast-global-shared-binary?
+                                    body
+                                    ptr-id))]
+                              [_ false])]
+                          [_ false])]
+                      [_ false])]
+                  [_ false])])]
+          (begin
+            (ast-node-pool-context-install! active-before)
+            (and shape-ok installed-ok)))])))
+
 (define (main) : i64
   (if (and
     (= (compiler-ast-smoke) 23)
-    (compiler-ast-state-owned-node-pools-smoke?))
+    (compiler-ast-state-owned-node-pools-smoke?)
+    (compiler-ast-program-compaction-smoke?))
     42
     1))

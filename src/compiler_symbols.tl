@@ -225,6 +225,61 @@
         macros
         (compiler-symbol-name-id-key name-id))]))
 
+(define (compiler-symbols-missing-handle) : i64
+  -1)
+
+(define (compiler-symbols-handle-found? [handle : i64]) : bool
+  (>= handle 0))
+
+(define (compiler-symbols-option-or
+  [found : option_i64.Option]
+  [fallback : i64]) : i64
+  (match found
+    [(option_i64.Some handle) handle]
+    [option_i64.None fallback]))
+
+(define (compiler-symbols-lookup-value-or
+  [symbols : CompilerSymbols]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-symbols-lookup-value-id-or symbols (intern name) fallback))
+
+(define (compiler-symbols-lookup-value-id-or
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-value-id symbols name-id)
+    fallback))
+
+(define (compiler-symbols-lookup-type-or
+  [symbols : CompilerSymbols]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-symbols-lookup-type-id-or symbols (intern name) fallback))
+
+(define (compiler-symbols-lookup-type-id-or
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-type-id symbols name-id)
+    fallback))
+
+(define (compiler-symbols-lookup-macro-or
+  [symbols : CompilerSymbols]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-symbols-lookup-macro-id-or symbols (intern name) fallback))
+
+(define (compiler-symbols-lookup-macro-id-or
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-macro-id symbols name-id)
+    fallback))
+
 (define (compiler-symbols-decls [symbols : CompilerSymbols]) : (Array AstDecl)
   (match symbols
     [(CompilerSymbols _ _ _ decls _) decls]))
@@ -794,6 +849,66 @@
         macros
         (compiler-symbol-module-key-id-by-id module-id name-id))]))
 
+(define (compiler-symbols-lookup-value-in-module-or
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-symbols-lookup-value-in-module-id-or
+    symbols
+    (intern module)
+    (intern name)
+    fallback))
+
+(define (compiler-symbols-lookup-value-in-module-id-or
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-value-in-module-id symbols module-id name-id)
+    fallback))
+
+(define (compiler-symbols-lookup-type-in-module-or
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-symbols-lookup-type-in-module-id-or
+    symbols
+    (intern module)
+    (intern name)
+    fallback))
+
+(define (compiler-symbols-lookup-type-in-module-id-or
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-type-in-module-id symbols module-id name-id)
+    fallback))
+
+(define (compiler-symbols-lookup-macro-in-module-or
+  [symbols : CompilerSymbols]
+  [module : String]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-symbols-lookup-macro-in-module-id-or
+    symbols
+    (intern module)
+    (intern name)
+    fallback))
+
+(define (compiler-symbols-lookup-macro-in-module-id-or
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-macro-in-module-id symbols module-id name-id)
+    fallback))
+
 (define (compiler-registries-lookup-field-in-module
   [registries : CompilerRegistries]
   [module : String]
@@ -818,6 +933,33 @@
           module-id
           type-name-id
           field-name-id))]))
+
+(define (compiler-registries-lookup-field-in-module-or
+  [registries : CompilerRegistries]
+  [module : String]
+  [type-name : String]
+  [field-name : String]
+  [fallback : i64]) : i64
+  (compiler-registries-lookup-field-in-module-id-or
+    registries
+    (intern module)
+    (intern type-name)
+    (intern field-name)
+    fallback))
+
+(define (compiler-registries-lookup-field-in-module-id-or
+  [registries : CompilerRegistries]
+  [module-id : i64]
+  [type-name-id : i64]
+  [field-name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-field-in-module-id
+      registries
+      module-id
+      type-name-id
+      field-name-id)
+    fallback))
 
 (define (compiler-symbols-add-decl
   [symbols : CompilerSymbols]
@@ -2205,6 +2347,43 @@
       (compiler-symbol-map-lookup-id
         fields
         (compiler-struct-field-key-id-by-id struct-name-id field-name-id))]))
+
+(define (compiler-registries-lookup-variant-or
+  [registries : CompilerRegistries]
+  [name : String]
+  [fallback : i64]) : i64
+  (compiler-registries-lookup-variant-id-or registries (intern name) fallback))
+
+(define (compiler-registries-lookup-variant-id-or
+  [registries : CompilerRegistries]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-variant-id registries name-id)
+    fallback))
+
+(define (compiler-registries-lookup-struct-field-or
+  [registries : CompilerRegistries]
+  [struct-name : String]
+  [field-name : String]
+  [fallback : i64]) : i64
+  (compiler-registries-lookup-struct-field-id-or
+    registries
+    (intern struct-name)
+    (intern field-name)
+    fallback))
+
+(define (compiler-registries-lookup-struct-field-id-or
+  [registries : CompilerRegistries]
+  [struct-name-id : i64]
+  [field-name-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-struct-field-id
+      registries
+      struct-name-id
+      field-name-id)
+    fallback))
 
 (define (compiler-registries-add-variant
   [registries : CompilerRegistries]

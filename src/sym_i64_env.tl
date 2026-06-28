@@ -39,6 +39,14 @@
               (set! cursor (box-get rest)))]))
       out)))
 
+(define (sym-i64-lookup-or [e : SymI64Env] [k : String] [fallback : i64]) : i64
+  (sym-i64-lookup-id-or e (ci.intern k) fallback))
+
+(define (sym-i64-lookup-id-or [e : SymI64Env] [k : i64] [fallback : i64]) : i64
+  (match (sym-i64-lookup-id e k)
+    [(option_i64.Some value) value]
+    [option_i64.None fallback]))
+
 (define (sym-i64-contains [e : SymI64Env] [k : String]) : bool
   (match (sym-i64-lookup e k)
     [(option_i64.Some _) true]

@@ -1437,6 +1437,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-compare-passes : i64
+    0))
+(cfg
+  compile-profile
   (define tc-lp-counts : (Array i64)
     (array.make-array i64 15)))
 
@@ -1477,6 +1481,13 @@
     (set!
       compiler-tc-env-profile-module-local-misses
       (+ compiler-tc-env-profile-module-local-misses 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-compare-pass) : unit
+    (set!
+      compiler-tc-macro-generated-compare-passes
+      (+ compiler-tc-macro-generated-compare-passes 1))))
 
 (cfg
   compile-profile
@@ -1535,6 +1546,7 @@
       (set! compiler-tc-env-profile-marker-scans 0)
       (set! compiler-tc-env-profile-module-local-hits 0)
       (set! compiler-tc-env-profile-module-local-misses 0)
+      (set! compiler-tc-macro-generated-compare-passes 0)
       (compiler-tc-reinfer-profile-reset)
       (tc-lp-reset 0))))
 
@@ -1861,6 +1873,18 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-macro-counter-profile-line
+    [phase : String]
+    [value : i64]) : unit
+    (io.print-error
+      (string.string-append
+        "compile-profile|typecheck.macro."
+        (string.string-append
+          phase
+          (string.string-append (compiler-tc-profile-field value) "|0|0|0\n"))))))
+
+(cfg
+  compile-profile
   (define (tc-lp-line [phase : String] [index : i64]) : unit
     (io.print-error
       (string.string-append
@@ -1960,6 +1984,9 @@
       (compiler-tc-env-profile-line
         "module_local_misses"
         compiler-tc-env-profile-module-local-misses)
+      (compiler-tc-macro-counter-profile-line
+        "generated_compare_passes"
+        compiler-tc-macro-generated-compare-passes)
       (compiler-tc-reinfer-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
       (tc-lp-line "repr_c_field_visits" 1)
@@ -36736,30 +36763,34 @@
   [identity : String]
   [body : AstDeclList]
   [fuel : i64]) : AstDeclList
-  (if (<= fuel 0)
-    (macro-decls-filter-generated-key body identity)
-    (match (macro-expand-decls
-      ctx
-      top-env
-      orig-decls
-      body
-      (macro-paths-for-decls body decl-path)
-      target-module
-      false)
-      [(OkMacroDeclsWithPaths expanded _ needs-followup?)
-        (if needs-followup?
-          (macro-generated-key-body-for-compare
-            ctx
-            top-env
-            orig-decls
-            target-module
-            decl-path
-            identity
-            expanded
-            (- fuel 1))
-          (macro-decls-filter-generated-key expanded identity))]
-      [(ErrMacroDeclsWithPaths _)
-        (macro-decls-filter-generated-key body identity)])))
+  (begin
+    (cfg
+      compile-profile
+      (compiler-tc-macro-profile-note-generated-compare-pass))
+    (if (<= fuel 0)
+      (macro-decls-filter-generated-key body identity)
+      (match (macro-expand-decls
+        ctx
+        top-env
+        orig-decls
+        body
+        (macro-paths-for-decls body decl-path)
+        target-module
+        false)
+        [(OkMacroDeclsWithPaths expanded _ needs-followup?)
+          (if needs-followup?
+            (macro-generated-key-body-for-compare
+              ctx
+              top-env
+              orig-decls
+              target-module
+              decl-path
+              identity
+              expanded
+              (- fuel 1))
+            (macro-decls-filter-generated-key expanded identity))]
+        [(ErrMacroDeclsWithPaths _)
+          (macro-decls-filter-generated-key body identity)]))))
 
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
@@ -42996,34 +43027,35 @@
             ;: generated identity. Other identities may share the same module.
             [generated-key-body : AstDeclList
               (macro-decls-filter-generated-key generated-body identity)]
-            [compare-existing-body : AstDeclList
-              (macro-generated-key-body-for-compare
-                ctx
-                top-env
-                orig-decls
-                target-module
-                decl-path
-                identity
-                same-identity-body
-                (macro-expand-fixed-point-limit))]
-            [compare-generated-body : AstDeclList
-              (macro-generated-key-body-for-compare
-                ctx
-                top-env
-                orig-decls
-                target-module
-                decl-path
-                identity
-                generated-key-body
-                (macro-expand-fixed-point-limit))]
             [same-body? : bool
-              (or
-                (macro-decl-list-structural-eq?
-                  same-identity-body
-                  generated-key-body)
-                (macro-decl-list-structural-eq?
-                  compare-existing-body
-                  compare-generated-body))]
+              (if (macro-decl-list-structural-eq?
+                same-identity-body
+                generated-key-body)
+                true
+                (let
+                  [compare-existing-body : AstDeclList
+                    (macro-generated-key-body-for-compare
+                      ctx
+                      top-env
+                      orig-decls
+                      target-module
+                      decl-path
+                      identity
+                      same-identity-body
+                      (macro-expand-fixed-point-limit))]
+                  [compare-generated-body : AstDeclList
+                    (macro-generated-key-body-for-compare
+                      ctx
+                      top-env
+                      orig-decls
+                      target-module
+                      decl-path
+                      identity
+                      generated-key-body
+                      (macro-expand-fixed-point-limit))]
+                  (macro-decl-list-structural-eq?
+                    compare-existing-body
+                    compare-generated-body)))]
             (if same-body?
               (match (macro-check-generated-import-collisions
                 orig-decls

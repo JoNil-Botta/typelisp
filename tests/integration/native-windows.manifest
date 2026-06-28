@@ -14,6 +14,7 @@ implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 implicit_scratch_loop|tests/integration/implicit_scratch_loop.tl|42|-|-|-
 macro_forward_order|tests/integration/macro_forward_order.tl|42|-|-|-
 compile_profile_macro_detail|tests/integration/compile_profile_macro_detail.tl|42|-|-|stdlib/string.tl stdlib/core_macros.tl stdlib/str_cat.tl
+compile_profile_generated_replay_lazy|tests/integration/compile_profile_generated_replay_lazy.tl|42|-|-|-
 compile_profile_vector_family_decls|tests/integration/compile_profile_vector_family_decls.tl|42|-|-|stdlib/vector_family.tl
 compile_profile_layout_spec|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl
 compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-

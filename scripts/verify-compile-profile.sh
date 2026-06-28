@@ -40,6 +40,8 @@ CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
 VF_STDOUT="$WORKDIR/profile-vector-family.stdout"
 VF_STDERR="$WORKDIR/profile-vector-family.stderr"
+REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
+REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
 LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
@@ -88,6 +90,19 @@ assert_not_contains_in() {
 
 assert_not_contains() {
     assert_not_contains_in "$1" "$2" "$CHECK_STDOUT" "$CHECK_STDERR"
+}
+
+assert_line_count_in() {
+    _file=$1
+    _text=$2
+    _want=$3
+    _stdout=$4
+    _stderr=$5
+    _got=$(grep -F -- "$_text" "$_file" | wc -l | tr -d '[:space:]')
+    if [ "$_got" != "$_want" ]; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected $_want profile rows for: $_text; got $_got"
+    fi
 }
 
 assert_layout_row() {
@@ -170,6 +185,38 @@ assert_contains_in \
     "stdlib.vector_family/vector-family arity=3 calls=2" \
     "$VF_STDOUT" \
     "$VF_STDERR"
+
+echo "[compile-profile] check generated module replay lazy fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$REPLAY_STDOUT" 2> "$REPLAY_STDERR"; then
+    show_failure_logs "$REPLAY_STDOUT" "$REPLAY_STDERR"
+    fail "profiled generated replay fixture check failed"
+fi
+
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile-detail|typecheck.macro_expand|" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro.generated_compare_passes|0|0|0|0" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_line_count_in \
+    "$REPLAY_STDERR" \
+    "profile-replay-user arity=1 calls=1" \
+    2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_line_count_in \
+    "$REPLAY_STDERR" \
+    "profile-replay-nested arity=2 calls=1" \
+    2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
 
 echo "[compile-profile] check layout/spec counter fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_layout_spec.tl \

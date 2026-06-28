@@ -4287,7 +4287,7 @@ Rules:
   implementation may instead resolve at program startup if that has the same
   observable behavior.
 - Selection may use the same CPUID/XGETBV capability checks exposed by
-  `stdlib/cpu.tl` (`cpu-runs-avx2?`, `cpu-runs-avx512bw?`), but ordinary user
+  `stdlib/cpu.tl` (`runs-avx2?`, `runs-avx512bw?`), but ordinary user
   code does not need to import `stdlib/cpu.tl` or call those helpers to use a
   dispatched function.
 - Variant selection runs no user variant body and performs no user-visible I/O.

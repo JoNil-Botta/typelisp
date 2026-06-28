@@ -2040,7 +2040,9 @@
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
         (and
           (not
-            (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
           (not
             (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n"))
           (not
@@ -2066,7 +2068,9 @@
         (compiler-backend-string-contains? asm "    call tl_cabi_color_use\n")
         (and
           (not
-            (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
           (not
             (compiler-backend-string-contains? asm "    movl %eax, (%r10)\n"))
           (not
@@ -2557,9 +2561,7 @@
         (IrInstrCallIndirectC 2 func (IrCallArgsNil) (AstTyI64))
         IrInstrNil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
-        IrBlockNil)]
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
         (compiler-backend-scavenge-install-ctx!
@@ -2691,9 +2693,7 @@
           slots)
         IrInstrNil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
-        IrBlockNil)]
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
         (compiler-backend-scavenge-install-ctx!
@@ -2775,9 +2775,7 @@
           slots)
         IrInstrNil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
-        IrBlockNil)]
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
         (compiler-backend-scavenge-install-ctx!
@@ -2928,8 +2926,7 @@
           (compiler-backend-string-contains? asm "(%r10)")
           (compiler-backend-string-contains? asm "movzbq")
           (not (compiler-backend-string-contains? asm "movsbq (%r10)")))
-        (not
-          (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n"))
+        (not (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n"))
         (not
           (compiler-backend-string-contains? asm "    jl .Lf0_str_bounds_ok"))
         (not
@@ -3396,7 +3393,8 @@
         (compiler-backend-string-contains? asm "    movsd %xmm2, -40(%rbp)\n")
         (compiler-backend-string-contains? asm "    movsd -40(%rbp), %xmm0\n")
         (not (compiler-backend-string-contains? asm "    addsd %xmm1, %xmm0\n"))
-        (not (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm0\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movsd -16(%rbp), %xmm0\n"))
         (not (compiler-backend-string-contains? asm "%xmm3")))]
     [(ErrCompilerBackend _) false]))
 
@@ -4885,9 +4883,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movsd -24(%rbp), %xmm2\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -16(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, -16(%rbp)\n")
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-test-instrs
@@ -5512,18 +5508,10 @@
         [(OkCompilerBackend cycle)
           (and
             (string.string-eq same-home "")
-            (compiler-backend-string-contains?
-              cycle
-              "    pushq -8(%rbp)\n")
-            (compiler-backend-string-contains?
-              cycle
-              "    movq -16(%rbp), %")
-            (compiler-backend-string-contains?
-              cycle
-              ", -8(%rbp)\n")
-            (compiler-backend-string-contains?
-              cycle
-              "    popq -16(%rbp)\n")
+            (compiler-backend-string-contains? cycle "    pushq -8(%rbp)\n")
+            (compiler-backend-string-contains? cycle "    movq -16(%rbp), %")
+            (compiler-backend-string-contains? cycle ", -8(%rbp)\n")
+            (compiler-backend-string-contains? cycle "    popq -16(%rbp)\n")
             (not (compiler-backend-string-contains? cycle "%rax")))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
@@ -8393,8 +8381,7 @@
     [prev-fuse-use-counts : (Array i64) compiler-backend-fuse-use-counts]
     [prev-fuse-free-counts : (Array i64) compiler-backend-fuse-free-counts]
     [prev-loop-active : bool compiler-backend-emit-instrs-loop-active]
-    [prev-continue-pending : bool
-      compiler-backend-emit-instrs-continue-pending]
+    [prev-continue-pending : bool compiler-backend-emit-instrs-continue-pending]
     [prev-identity-tail : bool compiler-backend-identity-tail-forwarder-active]
     [vars : i64 8]
     [starts : (Array i64) (make-array i64 vars)]
@@ -8485,7 +8472,9 @@
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
-              (set! compiler-backend-addr-of-forwarding-src prev-addr-forward-src)
+              (set!
+                compiler-backend-addr-of-forwarding-src
+                prev-addr-forward-src)
               (set! compiler-backend-fuse-need-ready prev-fuse-ready)
               (set! compiler-backend-fuse-use-counts prev-fuse-use-counts)
               (set! compiler-backend-fuse-free-counts prev-fuse-free-counts)
@@ -8512,7 +8501,9 @@
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
-              (set! compiler-backend-addr-of-forwarding-src prev-addr-forward-src)
+              (set!
+                compiler-backend-addr-of-forwarding-src
+                prev-addr-forward-src)
               (set! compiler-backend-fuse-need-ready prev-fuse-ready)
               (set! compiler-backend-fuse-use-counts prev-fuse-use-counts)
               (set! compiler-backend-fuse-free-counts prev-fuse-free-counts)
@@ -8546,18 +8537,15 @@
     [prev-fuse-use-counts : (Array i64) compiler-backend-fuse-use-counts]
     [prev-fuse-free-counts : (Array i64) compiler-backend-fuse-free-counts]
     [prev-loop-active : bool compiler-backend-emit-instrs-loop-active]
-    [prev-continue-pending : bool
-      compiler-backend-emit-instrs-continue-pending]
+    [prev-continue-pending : bool compiler-backend-emit-instrs-continue-pending]
     [prev-identity-tail : bool compiler-backend-identity-tail-forwarder-active]
     [prev-emergency-pending : bool compiler-backend-emergency-pending]
     [prev-emergency-reg : String compiler-backend-emergency-reg]
     [prev-emergency-used : bool compiler-backend-emergency-used]
     [prev-emergency-pending-count : i64
       compiler-backend-emergency-pending-count]
-    [prev-emergency-used-count : i64
-      compiler-backend-emergency-used-count]
-    [prev-emergency-slot-offset : i64
-      compiler-backend-emergency-slot-offset]
+    [prev-emergency-used-count : i64 compiler-backend-emergency-used-count]
+    [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
     [prev-callee0 : bool (array-ref compiler-backend-scavenge-used-callee 0)]
     [prev-callee1 : bool (array-ref compiler-backend-scavenge-used-callee 1)]
     [prev-callee2 : bool (array-ref compiler-backend-scavenge-used-callee 2)]
@@ -8604,7 +8592,9 @@
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
-              (set! compiler-backend-addr-of-forwarding-src prev-addr-forward-src)
+              (set!
+                compiler-backend-addr-of-forwarding-src
+                prev-addr-forward-src)
               (set! compiler-backend-fuse-need-ready prev-fuse-ready)
               (set! compiler-backend-fuse-use-counts prev-fuse-use-counts)
               (set! compiler-backend-fuse-free-counts prev-fuse-free-counts)
@@ -8647,7 +8637,9 @@
               (set!
                 compiler-backend-addr-of-forwarding-enabled
                 prev-addr-forward-enabled)
-              (set! compiler-backend-addr-of-forwarding-src prev-addr-forward-src)
+              (set!
+                compiler-backend-addr-of-forwarding-src
+                prev-addr-forward-src)
               (set! compiler-backend-fuse-need-ready prev-fuse-ready)
               (set! compiler-backend-fuse-use-counts prev-fuse-use-counts)
               (set! compiler-backend-fuse-free-counts prev-fuse-free-counts)
@@ -9377,9 +9369,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq %r8, -40(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, -40(%rbp)\n")
           (not (compiler-backend-string-contains? asm "%rax")))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-test-instrs
@@ -9393,9 +9383,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movq 8(%r10), %r8\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq %r8, -32(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq %r8, -32(%rbp)\n")
           (not
             (compiler-backend-string-contains? asm "    movq 8(%r10), %rax\n")))]
       [(ErrCompilerBackend _) false])
@@ -9409,16 +9397,12 @@
       5)
       [(OkCompilerBackend asm)
         (and
-              (compiler-backend-string-contains?
-                asm
-                "    movq (%r10,%r8,8), %r9\n")
-              (compiler-backend-string-contains?
-                asm
-                "    movq %r9, -40(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq (%r10,%r8,8), %r9\n")
+          (compiler-backend-string-contains? asm "    movq %r9, -40(%rbp)\n")
           (not
             (compiler-backend-string-contains?
               asm
-                  "    movq (%r10,%r8,8), %rax\n")))]
+              "    movq (%r10,%r8,8), %rax\n")))]
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-float-load-scratch-ok?) : bool
@@ -9445,9 +9429,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movsd (%r10), %xmm2\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -40(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, -40(%rbp)\n")
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])))
 
@@ -9479,9 +9461,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movsd 8(%r10), %xmm2\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -32(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, -32(%rbp)\n")
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-test-instrs
@@ -9496,9 +9476,9 @@
       5)
       [(OkCompilerBackend asm)
         (and
-              (compiler-backend-string-contains?
-                asm
-                "    movsd (%r10,%r8,8), %xmm3\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movsd (%r10,%r8,8), %xmm3\n")
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])))
 
@@ -9537,9 +9517,7 @@
 
 (define (compiler-backend-addr-of-spill-scratch-shape-ok?) : bool
   (match (compiler-backend-emit-test-instrs
-    (compiler-ir-instr-cons
-      (IrInstrAddrOf 2 1)
-      IrInstrNil)
+    (compiler-ir-instr-cons (IrInstrAddrOf 2 1) IrInstrNil)
     CompilerRegAssignmentNil
     4)
     [(OkCompilerBackend asm)
@@ -9724,9 +9702,7 @@
       [(OkCompilerBackend asm)
         (and
           (compiler-backend-string-contains? asm "    movsd (%r10), %xmm2\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movsd %xmm2, -24(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movsd %xmm2, -24(%rbp)\n")
           (not (compiler-backend-string-contains? asm "%xmm0")))]
       [(ErrCompilerBackend _) false])))
 
@@ -9803,12 +9779,8 @@
         (and
           (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
           (compiler-backend-string-contains? asm "    movq -24(%rbp), %r8\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq -16(%rbp), %r9\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq %r9, (%r10,%r8,8)\n")
+          (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n")
+          (compiler-backend-string-contains? asm "    movq %r9, (%r10,%r8,8)\n")
           (not
             (compiler-backend-string-contains? asm "    movq -16(%rbp), %rax\n")))]
       [(ErrCompilerBackend _) false])))
@@ -9827,10 +9799,10 @@
           IrInstrNil))
       assignments
       4)
-        [(OkCompilerBackend asm)
-          (and
-            (compiler-backend-string-contains?
-              asm
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
             "    movq -8(%rbp), %r10\n    movq %r9, %r8\n    movq $0, (%r10,%r8,8)\n")
           (not
             (compiler-backend-string-contains?
@@ -9942,7 +9914,8 @@
         [(OkCompilerBackend asm)
           (and
             (string.string-eq asm "    movq $11, (%r11)\n")
-            (not (compiler-backend-string-contains? asm "    movq %r11, %r10\n")))]
+            (not
+              (compiler-backend-string-contains? asm "    movq %r11, %r10\n")))]
         [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-gep-load-store-order-shape-ok?) : bool
@@ -10015,15 +9988,10 @@
             asm
             "    movzbq (%r12,%r8,1), %rcx\n")
           (and
-            (not
-              (compiler-backend-string-contains?
-                asm
-                "    movq %r8, %r9\n"))
+            (not (compiler-backend-string-contains? asm "    movq %r8, %r9\n"))
             (and
               (not
-                (compiler-backend-string-contains?
-                  asm
-                  "    movq %r12, %r10\n"))
+                (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
               (not
                 (compiler-backend-string-contains?
                   asm
@@ -10089,30 +10057,20 @@
 
 (define (compiler-backend-gep-load-live-through-home-preserved-ok?) : bool
   (match (compiler-backend-gep-load-live-through-home-asm)
-      [(OkCompilerBackend asm)
-        (and
-          (compiler-backend-string-contains? asm "    movl $5, %r9d\n")
-          (compiler-backend-string-contains? asm "    movq %r9, (")
-          (not
-            (compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r9\n"))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              "    movq -8(%rbp), %r10\n"))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              "    movq 192(%r9), %rcx\n"))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              "    movq 192(%r10), %rcx\n")))]
-      [(ErrCompilerBackend _) false]))
+    [(OkCompilerBackend asm)
+      (and
+        (compiler-backend-string-contains? asm "    movl $5, %r9d\n")
+        (compiler-backend-string-contains? asm "    movq %r9, (")
+        (not (compiler-backend-string-contains? asm "    movq -8(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq 192(%r9), %rcx\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq 192(%r10), %rcx\n")))]
+    [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-gep-load-multi-emergency-assignments)
-  : CompilerRegAssignmentList
+(define (compiler-backend-gep-load-multi-emergency-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
     (compiler-reg-assignment-cons
@@ -10127,29 +10085,40 @@
               (CompilerRegAssignment 6 (CompilerRegRegister "%r8"))
               CompilerRegAssignmentNil)))))))
 
-(define (compiler-backend-gep-load-multi-emergency-instrs)
-  : CompilerIrInstrList
+(define (compiler-backend-gep-load-multi-emergency-instrs) : CompilerIrInstrList
   (let
     [instrs : CompilerIrInstrList IrInstrNil]
     (begin
       (set!
         instrs
-        (compiler-ir-instr-cons (IrInstrMov 35 (IrValueVar 6) (AstTyI64)) instrs))
+        (compiler-ir-instr-cons
+          (IrInstrMov 35 (IrValueVar 6) (AstTyI64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (IrInstrMov 34 (IrValueVar 5) (AstTyI64)) instrs))
+        (compiler-ir-instr-cons
+          (IrInstrMov 34 (IrValueVar 5) (AstTyI64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (IrInstrMov 33 (IrValueVar 4) (AstTyI64)) instrs))
+        (compiler-ir-instr-cons
+          (IrInstrMov 33 (IrValueVar 4) (AstTyI64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (IrInstrMov 32 (IrValueVar 3) (AstTyI64)) instrs))
+        (compiler-ir-instr-cons
+          (IrInstrMov 32 (IrValueVar 3) (AstTyI64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (IrInstrMov 31 (IrValueVar 2) (AstTyI64)) instrs))
+        (compiler-ir-instr-cons
+          (IrInstrMov 31 (IrValueVar 2) (AstTyI64))
+          instrs))
       (set!
         instrs
-        (compiler-ir-instr-cons (IrInstrMov 30 (IrValueVar 1) (AstTyI64)) instrs))
+        (compiler-ir-instr-cons
+          (IrInstrMov 30 (IrValueVar 1) (AstTyI64))
+          instrs))
       (set!
         instrs
         (compiler-ir-instr-cons
@@ -10189,8 +10158,7 @@
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
-    [prev-emergency-slot-offset : i64
-      compiler-backend-emergency-slot-offset]
+    [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
     [assignments : CompilerRegAssignmentList
       (compiler-backend-gep-load-multi-emergency-assignments)]
     [instrs : CompilerIrInstrList
@@ -10220,9 +10188,7 @@
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count)
-        (set!
-          compiler-backend-emergency-slot-offset
-          prev-emergency-slot-offset))]
+        (set! compiler-backend-emergency-slot-offset prev-emergency-slot-offset))]
     result))
 
 (define (compiler-backend-gep-load-multi-emergency-preserved-ok?) : bool
@@ -10252,12 +10218,8 @@
       [(OkCompilerBackend asm)
         (and
           (backend-and4
-            (compiler-backend-string-contains?
-              asm
-              "    movups (%r13), %xmm2\n")
-            (compiler-backend-string-contains?
-              asm
-              "    movups %xmm2, (%r12)\n")
+            (compiler-backend-string-contains? asm "    movups (%r13), %xmm2\n")
+            (compiler-backend-string-contains? asm "    movups %xmm2, (%r12)\n")
             (compiler-backend-string-contains? asm "    movq 16(%r13), %r8\n")
             (compiler-backend-string-contains? asm "    movq %r8, 16(%r12)\n"))
           (not (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
@@ -10321,7 +10283,8 @@
         (compiler-backend-string-contains? asm "    movq %r9, %r8\n")
         (compiler-backend-string-contains? asm "    movq %r8, -32(%rbp)\n")
         (not (compiler-backend-string-contains? asm "    movq -8(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n"))
         (not (compiler-backend-string-contains? asm "%xmm15")))]
     [(ErrCompilerBackend _) false]))
 
@@ -10386,13 +10349,20 @@
       (and
         (compiler-backend-string-contains? asm "%r9")
         (not (compiler-backend-string-contains? asm "    movq -8(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -24(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -32(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -40(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -48(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -56(%rbp), %r9\n"))
-        (not (compiler-backend-string-contains? asm "    movq -64(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -16(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -32(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -40(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -48(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -56(%rbp), %r9\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq -64(%rbp), %r9\n"))
         (not (compiler-backend-string-contains? asm "%xmm15")))]
     [(ErrCompilerBackend _) false]))
 
@@ -10451,8 +10421,11 @@
         2)
         [(OkCompilerBackend asm)
           (and
-            (compiler-backend-string-contains? asm "    movl %r12d, _tl_g(%rip)\n")
-            (not (compiler-backend-string-contains? asm "    movq %r12, %rax\n"))
+            (compiler-backend-string-contains?
+              asm
+              "    movl %r12d, _tl_g(%rip)\n")
+            (not
+              (compiler-backend-string-contains? asm "    movq %r12, %rax\n"))
             (not
               (compiler-backend-string-contains?
                 asm
@@ -10467,7 +10440,9 @@
         [(OkCompilerBackend asm)
           (and
             (compiler-backend-string-contains? asm "    movq -8(%rbp), %r8\n")
-            (compiler-backend-string-contains? asm "    movq %r8, _tl_g(%rip)\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movq %r8, _tl_g(%rip)\n")
             (not (compiler-backend-string-contains? asm "%rax")))]
         [(ErrCompilerBackend _) false])
       (match (compiler-backend-emit-test-instrs
@@ -10478,7 +10453,9 @@
         2)
         [(OkCompilerBackend asm)
           (and
-            (compiler-backend-string-contains? asm "    movsd -8(%rbp), %xmm2\n")
+            (compiler-backend-string-contains?
+              asm
+              "    movsd -8(%rbp), %xmm2\n")
             (compiler-backend-string-contains?
               asm
               "    movsd %xmm2, _tl_g(%rip)\n")
@@ -10917,9 +10894,7 @@
     (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
 
 (define (compiler-backend-spill-float-precision-cast-home-ok?) : bool
-  (match (compiler-backend-spill-float-precision-cast-asm
-    (AstTyF64)
-    (AstTyF32))
+  (match (compiler-backend-spill-float-precision-cast-asm (AstTyF64) (AstTyF32))
     [(OkCompilerBackend narrow-asm)
       (match (compiler-backend-spill-float-precision-cast-asm
         (AstTyF32)
@@ -10949,8 +10924,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-direct-int-to-float-cast-asm
-  [to-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-direct-int-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
     "entry"
@@ -10984,8 +10958,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-int-to-float-cast-asm
-  [to-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-int-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
     "entry"
@@ -11025,8 +10998,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-u64-to-float-cast-asm
-  [to-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-u64-to-float-cast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
     "entry"
@@ -11049,12 +11021,24 @@
           (and
             (compiler-backend-string-contains? f64-asm "    movq %r12, %r8\n")
             (compiler-backend-string-contains? f64-asm "    testq %r8, %r8\n")
-            (compiler-backend-string-contains? f64-asm "    cvtsi2sdq %r8, %xmm2\n")
-            (compiler-backend-string-contains? f64-asm "    addsd %xmm2, %xmm2\n")
-            (compiler-backend-string-contains? f64-asm "    movsd %xmm2, -16(%rbp)\n")
-            (compiler-backend-string-contains? f32-asm "    cvtsi2ssq %r8, %xmm2\n")
-            (compiler-backend-string-contains? f32-asm "    addss %xmm2, %xmm2\n")
-            (compiler-backend-string-contains? f32-asm "    movss %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    cvtsi2sdq %r8, %xmm2\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    addsd %xmm2, %xmm2\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movsd %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    cvtsi2ssq %r8, %xmm2\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    addss %xmm2, %xmm2\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movss %xmm2, -16(%rbp)\n")
             (not (compiler-backend-string-contains? f64-asm "%rax"))
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
             (not (compiler-backend-string-contains? f32-asm "%rax"))
@@ -11062,8 +11046,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-direct-float-to-int-cast-asm
-  [from-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-direct-float-to-int-cast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
     "entry"
@@ -11097,8 +11080,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-float-to-int-cast-asm
-  [from-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-float-to-int-cast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-cast
     "test_cast"
     "entry"
@@ -11248,8 +11230,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-float-to-int-bitcast-asm
-  [from-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-float-to-int-bitcast-asm [from-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (compiler-reg-assignment-cons
       (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
@@ -11269,9 +11250,13 @@
         [(OkCompilerBackend f32-asm)
           (and
             (compiler-backend-string-contains? f64-asm "    movq %xmm3, %r8\n")
-            (compiler-backend-string-contains? f64-asm "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movq %r8, -16(%rbp)\n")
             (compiler-backend-string-contains? f32-asm "    movd %xmm3, %r8d\n")
-            (compiler-backend-string-contains? f32-asm "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movq %r8, -16(%rbp)\n")
             (not (compiler-backend-string-contains? f64-asm "%rax"))
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
             (not (compiler-backend-string-contains? f32-asm "%rax"))
@@ -11279,8 +11264,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-int-to-float-bitcast-asm
-  [to-ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-int-to-float-bitcast-asm [to-ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (compiler-reg-assignment-cons
       (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
@@ -11300,9 +11284,15 @@
         [(OkCompilerBackend f32-asm)
           (and
             (compiler-backend-string-contains? f64-asm "    movq %r12, %xmm2\n")
-            (compiler-backend-string-contains? f64-asm "    movsd %xmm2, -16(%rbp)\n")
-            (compiler-backend-string-contains? f32-asm "    movd %r12d, %xmm2\n")
-            (compiler-backend-string-contains? f32-asm "    movss %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movsd %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movd %r12d, %xmm2\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movss %xmm2, -16(%rbp)\n")
             (not (compiler-backend-string-contains? f64-asm "%rax"))
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
             (not (compiler-backend-string-contains? f32-asm "%rax"))
@@ -11310,8 +11300,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-float-to-float-bitcast-asm
-  [ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-float-to-float-bitcast-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-bitcast
     (compiler-reg-assignment-cons
       (CompilerRegAssignment 0 (CompilerRegRegister "%xmm3"))
@@ -11330,10 +11319,18 @@
       (match (compiler-backend-spill-float-to-float-bitcast-asm (AstTyF32))
         [(OkCompilerBackend f32-asm)
           (and
-            (compiler-backend-string-contains? f64-asm "    movsd %xmm3, %xmm2\n")
-            (compiler-backend-string-contains? f64-asm "    movsd %xmm2, -16(%rbp)\n")
-            (compiler-backend-string-contains? f32-asm "    movss %xmm3, %xmm2\n")
-            (compiler-backend-string-contains? f32-asm "    movss %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movsd %xmm3, %xmm2\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movsd %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movss %xmm3, %xmm2\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movss %xmm2, -16(%rbp)\n")
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
             (not (compiler-backend-string-contains? f32-asm "%xmm0")))]
         [(ErrCompilerBackend _) false])]
@@ -11391,12 +11388,8 @@
           (compiler-backend-string-contains? asm "    cmpq $3, %rax\n")
           (not (compiler-backend-string-contains? asm "    movl $3, %r11d\n"))
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq %r9, (%r10,%r8,8)\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq (%r10,%r8,8), %r9\n")
+          (compiler-backend-string-contains? asm "    movq %r9, (%r10,%r8,8)\n")
+          (compiler-backend-string-contains? asm "    movq (%r10,%r8,8), %r9\n")
           (not
             (compiler-backend-string-contains?
               asm
@@ -11404,7 +11397,9 @@
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
         (and
           (not
-            (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
           (not
             (compiler-backend-string-contains?
               asm
@@ -12261,7 +12256,8 @@
         (compiler-backend-string-contains? asm "    ucomiss -16(%rbp), %xmm2\n")
         (compiler-backend-string-contains? asm "    addss -16(%rbp), %xmm2\n")
         (compiler-backend-string-contains? asm "    setb %r8b\n")
-        (not (compiler-backend-string-contains? asm "    ucomiss %xmm1, %xmm0\n"))
+        (not
+          (compiler-backend-string-contains? asm "    ucomiss %xmm1, %xmm0\n"))
         (not (compiler-backend-string-contains? asm "    addss %xmm1, %xmm0\n"))
         (not (compiler-backend-string-contains? asm "    cvtsd2ss "))
         (not (compiler-backend-string-contains? asm "    ucomisd")))]
@@ -12318,8 +12314,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-float-arith-asm
-  [ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-float-arith-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 ty)
@@ -12361,8 +12356,12 @@
               (compiler-backend-string-contains?
                 f32-asm
                 "    addss %xmm4, %xmm2\n"))
-            (compiler-backend-string-contains? f64-asm "    movsd %xmm2, -16(%rbp)\n")
-            (compiler-backend-string-contains? f32-asm "    movss %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f64-asm
+              "    movsd %xmm2, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              f32-asm
+              "    movss %xmm2, -16(%rbp)\n")
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
             (not (compiler-backend-string-contains? f64-asm "%xmm1"))
             (not (compiler-backend-string-contains? f32-asm "%xmm0"))
@@ -12370,8 +12369,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-direct-float-compare-asm
-  [ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-direct-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 ty)
@@ -12424,8 +12422,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-spill-float-compare-asm
-  [ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-spill-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 ty)
@@ -12469,8 +12466,12 @@
               (compiler-backend-string-contains?
                 f32-asm
                 "    movzbq %r8b, %r8\n")
-              (compiler-backend-string-contains? f64-asm "    movq %r8, -16(%rbp)\n")
-              (compiler-backend-string-contains? f32-asm "    movq %r8, -16(%rbp)\n"))
+              (compiler-backend-string-contains?
+                f64-asm
+                "    movq %r8, -16(%rbp)\n")
+              (compiler-backend-string-contains?
+                f32-asm
+                "    movq %r8, -16(%rbp)\n"))
             (not (compiler-backend-string-contains? f64-asm "%rax"))
             (not (compiler-backend-string-contains? f32-asm "%rax"))
             (not (compiler-backend-string-contains? f64-asm "%xmm0"))
@@ -12480,8 +12481,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-fallback-float-self-rhs-asm
-  [ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-fallback-float-self-rhs-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 ty)
@@ -12500,8 +12500,7 @@
     (IrValueVar 2)
     ty))
 
-(define (compiler-backend-fallback-float-compare-asm
-  [ty : AstType]) : ResultCompilerBackend
+(define (compiler-backend-fallback-float-compare-asm [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 ty)
@@ -12835,9 +12834,7 @@
           (CompilerBackendNoLabel))
           [(OkCompilerBackend stack-asm)
             (and
-              (compiler-backend-string-contains?
-                reg-asm
-                "    cmpq $10, %r12\n")
+              (compiler-backend-string-contains? reg-asm "    cmpq $10, %r12\n")
               (not
                 (compiler-backend-string-contains?
                   reg-asm
@@ -13033,8 +13030,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-direct-compare-asm
-  [rhs : CompilerIrValue]) : ResultCompilerBackend
+(define (compiler-backend-direct-compare-asm [rhs : CompilerIrValue]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 (AstTyI64))
@@ -13075,9 +13071,7 @@
             (compiler-backend-direct-compare-asm-ok? imm-asm)
             (compiler-backend-direct-compare-asm-ok? reg-asm)
             (compiler-backend-string-contains? imm-asm "    cmpq $42, %r12\n")
-            (compiler-backend-string-contains?
-              reg-asm
-              "    cmpq %r13, %r12\n"))]
+            (compiler-backend-string-contains? reg-asm "    cmpq %r13, %r12\n"))]
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
@@ -13103,13 +13097,9 @@
     ty))
 
 (define (compiler-backend-direct-immediate-shift-home-ok?) : bool
-  (match (compiler-backend-direct-immediate-shift-asm
-    (IrBinShl)
-    (AstTyI64))
+  (match (compiler-backend-direct-immediate-shift-asm (IrBinShl) (AstTyI64))
     [(OkCompilerBackend shl-asm)
-      (match (compiler-backend-direct-immediate-shift-asm
-        (IrBinShr)
-        (AstTyI64))
+      (match (compiler-backend-direct-immediate-shift-asm (IrBinShr) (AstTyI64))
         [(OkCompilerBackend shr-asm)
           (and
             (backend-and4
@@ -13128,8 +13118,7 @@
         [(ErrCompilerBackend _) false])]
     [(ErrCompilerBackend _) false]))
 
-(define (compiler-backend-direct-rcx-shift-asm
-  [op : CompilerIrBinOp]) : ResultCompilerBackend
+(define (compiler-backend-direct-rcx-shift-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
   (compiler-backend-emit-binop
     (compiler-reg-var-type-cons
       (CompilerRegVarType 0 (AstTyI64))
@@ -13165,9 +13154,7 @@
               (compiler-backend-string-contains?
                 shl-asm
                 "    testq %rcx, %rcx\n")
-              (compiler-backend-string-contains?
-                shl-asm
-                "    cmpq $64, %rcx\n")
+              (compiler-backend-string-contains? shl-asm "    cmpq $64, %rcx\n")
               (compiler-backend-string-contains? shl-asm "    shlq %cl, %r12\n")
               (compiler-backend-string-contains?
                 shr-asm
@@ -13175,9 +13162,7 @@
               (compiler-backend-string-contains?
                 shr-asm
                 "    testq %rcx, %rcx\n")
-              (compiler-backend-string-contains?
-                shr-asm
-                "    cmpq $64, %rcx\n")
+              (compiler-backend-string-contains? shr-asm "    cmpq $64, %rcx\n")
               (compiler-backend-string-contains? shr-asm "    sarq %cl, %r12\n"))
             (not (compiler-backend-string-contains? shl-asm "%rax"))
             (not (compiler-backend-string-contains? shr-asm "%rax"))
@@ -13210,26 +13195,22 @@
     result-ty))
 
 (define (compiler-backend-spill-immediate-binop-home-ok?) : bool
-  (match (compiler-backend-spill-immediate-binop-asm
-    (IrBinAdd)
-    (AstTyI64))
+  (match (compiler-backend-spill-immediate-binop-asm (IrBinAdd) (AstTyI64))
     [(OkCompilerBackend add-asm)
-      (match (compiler-backend-spill-immediate-binop-asm
-        (IrBinLt)
-        (AstTyBool))
+      (match (compiler-backend-spill-immediate-binop-asm (IrBinLt) (AstTyBool))
         [(OkCompilerBackend cmp-asm)
           (and
             (backend-and4
-              (compiler-backend-string-contains?
-                add-asm
-                "    movq %r12, %r8\n")
+              (compiler-backend-string-contains? add-asm "    movq %r12, %r8\n")
               (compiler-backend-string-contains? add-asm "    addq $7, %r8\n")
-              (compiler-backend-string-contains?
-                cmp-asm
-                "    cmpq $7, %r8\n")
+              (compiler-backend-string-contains? cmp-asm "    cmpq $7, %r8\n")
               (compiler-backend-string-contains? cmp-asm "    setl %r8b\n"))
-            (compiler-backend-string-contains? add-asm "    movq %r8, -16(%rbp)\n")
-            (compiler-backend-string-contains? cmp-asm "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              add-asm
+              "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              cmp-asm
+              "    movq %r8, -16(%rbp)\n")
             (not (compiler-backend-string-contains? add-asm "%rax"))
             (not (compiler-backend-string-contains? cmp-asm "%rax")))]
         [(ErrCompilerBackend _) false])]
@@ -13261,26 +13242,22 @@
     result-ty))
 
 (define (compiler-backend-spill-source-binop-home-ok?) : bool
-  (match (compiler-backend-spill-source-binop-asm
-    (IrBinAdd)
-    (AstTyI64))
+  (match (compiler-backend-spill-source-binop-asm (IrBinAdd) (AstTyI64))
     [(OkCompilerBackend add-asm)
-      (match (compiler-backend-spill-source-binop-asm
-        (IrBinLt)
-        (AstTyBool))
+      (match (compiler-backend-spill-source-binop-asm (IrBinLt) (AstTyBool))
         [(OkCompilerBackend cmp-asm)
           (and
             (backend-and4
-              (compiler-backend-string-contains?
-                add-asm
-                "    movq %r12, %r8\n")
+              (compiler-backend-string-contains? add-asm "    movq %r12, %r8\n")
               (compiler-backend-string-contains? add-asm "    addq %r13, %r8\n")
-              (compiler-backend-string-contains?
-                cmp-asm
-                "    cmpq %r13, %r8\n")
+              (compiler-backend-string-contains? cmp-asm "    cmpq %r13, %r8\n")
               (compiler-backend-string-contains? cmp-asm "    setl %r8b\n"))
-            (compiler-backend-string-contains? add-asm "    movq %r8, -16(%rbp)\n")
-            (compiler-backend-string-contains? cmp-asm "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              add-asm
+              "    movq %r8, -16(%rbp)\n")
+            (compiler-backend-string-contains?
+              cmp-asm
+              "    movq %r8, -16(%rbp)\n")
             (not (compiler-backend-string-contains? add-asm "%rax"))
             (not (compiler-backend-string-contains? cmp-asm "%rax")))]
         [(ErrCompilerBackend _) false])]
@@ -13879,8 +13856,7 @@
         (compiler-backend-string-contains? asm "    movsd %xmm0, ")
         (not
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
-        (not
-          (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")))]
+        (not (compiler-backend-string-contains? asm "    divsd %xmm1, %xmm0\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; Windows f64 ABI emit-shape coverage (#1456): the first four positional
@@ -13913,9 +13889,7 @@
           (compiler-backend-string-contains? asm "    movsd %xmm2, -24(%rbp)\n")
           (compiler-backend-string-contains? asm "    movsd %xmm3, -32(%rbp)\n")
           (compiler-backend-string-contains? asm "    subq $112, %rsp\n")
-          (compiler-backend-string-contains?
-            asm
-            "    movq -48(%rbp), %r10\n")
+          (compiler-backend-string-contains? asm "    movq -48(%rbp), %r10\n")
           (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
           (compiler-backend-string-contains? asm "    movsd 48(%rbp), %xmm2\n"))
         (or
@@ -14053,8 +14027,10 @@
         (compiler-backend-stack-add-call-ok? asm)
         (compiler-backend-string-contains? asm "    movq 16(%rbp), %r8\n")
         (compiler-backend-string-contains? asm "    movq 24(%rbp), %r8\n")
-        (not (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n"))
-        (not (compiler-backend-string-contains? asm "    movq 24(%rbp), %rax\n")))]
+        (not
+          (compiler-backend-string-contains? asm "    movq 16(%rbp), %rax\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movq 24(%rbp), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a SysV call with ten f64 args uses xmm0..xmm7 then spills two on the
@@ -14070,8 +14046,10 @@
         (compiler-backend-string-contains? asm "    movq %r10, 8(%rsp)\n")
         (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm2\n")
         (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm2\n")
-        (not (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n"))
-        (not (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm0\n")))]
+        (not
+          (compiler-backend-string-contains? asm "    movsd 16(%rbp), %xmm0\n"))
+        (not
+          (compiler-backend-string-contains? asm "    movsd 24(%rbp), %xmm0\n")))]
     [(ErrCompilerBackend _) false]))
 
 ;; #750: a mixed call spilling one int and one f64 keeps the integer and float
@@ -14101,7 +14079,8 @@
         (compiler-backend-string-contains? asm "    movq %r10, 32(%rsp)\n")
         (compiler-backend-string-contains? asm "    movq %r10, 56(%rsp)\n")
         (compiler-backend-string-contains? asm "    movq 48(%rbp), %r8\n")
-        (not (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n")))]
+        (not
+          (compiler-backend-string-contains? asm "    movq 48(%rbp), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-i64-type-list8) : AstTypeList
@@ -14545,15 +14524,10 @@
         CompilerRegVarTypeNil)]
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (IrInstrTailCallIndirect
-          (IrValueVar 0)
-          (IrCallArgsNil)
-          (AstTyI64))
+        (IrInstrTailCallIndirect (IrValueVar 0) (IrCallArgsNil) (AstTyI64))
         IrInstrNil)]
     [blocks : CompilerIrBlockList
-      (compiler-ir-block-cons
-        (compiler-ir-block "entry" instrs)
-        IrBlockNil)]
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
         (compiler-backend-scavenge-install-ctx!
@@ -14910,13 +14884,13 @@
     [(OkCompilerBackend asm)
       (and
         (compiler-backend-string-contains?
-            asm
-            (str-cat
-              "    movq 8(%r10), "
-              (match (compiler-backend-target-arg-reg target 0)
-                [(OkBackendReg reg) reg]
-                [(ErrBackendReg _) ""])
-              "\n"))
+          asm
+          (str-cat
+            "    movq 8(%r10), "
+            (match (compiler-backend-target-arg-reg target 0)
+              [(OkBackendReg reg) reg]
+              [(ErrBackendReg _) ""])
+            "\n"))
         (compiler-backend-string-contains? asm "    call *(%r10)\n")
         (not (compiler-backend-string-contains? asm "    call *(%r11)\n")))]
     [(ErrCompilerBackend _) false]))
@@ -15102,7 +15076,9 @@
         (compiler-backend-string-contains? asm "    movq (%r10,%r8,8), %r9\n")
         (and
           (not
-            (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker)))
           (not
             (compiler-backend-string-contains? asm "    movq (%r10), %rax\n"))))]
     [(ErrCompilerBackend _) false]))
@@ -15131,7 +15107,9 @@
           ;; (box-get b): load the boxed value back through the box pointer.
           (compiler-backend-string-contains? asm "    movq (%r10), %r8\n")
           (not
-            (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker))))
         (not (compiler-backend-string-contains? asm "    movq %rax, (%r10)\n"))
         (not (compiler-backend-string-contains? asm "    movq (%r10), %rax\n")))]
     [(ErrCompilerBackend _) false]))
@@ -15755,8 +15733,8 @@
             5
             (compiler-backend-binop-scavenge-exclude-build)
             5
-          "%r8")
-        "%r11")))))
+            "%r8")
+          "%r11")))))
 
 (define (compiler-backend-scavenge-exclude-with-keeps-pooled-r10-r11-ok?) : bool
   (let
@@ -15816,8 +15794,8 @@
             5
             (compiler-backend-scavenge-exclude-with "%r13")
             6
-          "%r8")
-        "%r11")))))
+            "%r8")
+          "%r11")))))
 
 (define (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?) : bool
   (let
@@ -15978,9 +15956,7 @@
             (IrParam "c" (AstTyU64) 2)
             (compiler-ir-param-cons
               (IrParam "d" (AstTyU64) 3)
-              (compiler-ir-param-cons
-                (IrParam "e" (AstTyBool) 4)
-                IrParamNil)))))]
+              (compiler-ir-param-cons (IrParam "e" (AstTyBool) 4) IrParamNil)))))]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment 3 (CompilerRegRegister "%r9"))
@@ -15999,9 +15975,7 @@
         (and
           (compiler-backend-string-contains? asm "    movzbq 48(%rbp), ")
           (not
-            (compiler-backend-string-contains?
-              asm
-              "    movzbq 48(%rbp), %r9\n")))]
+            (compiler-backend-string-contains? asm "    movzbq 48(%rbp), %r9\n")))]
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-self-test) : i64

@@ -4760,7 +4760,9 @@
     [(IrBinShr) true]
     [_ false]))
 
-(define (compiler-reg-clobber-instr-kind? [instr : CompilerIrInstr] [kind : i64]) : bool
+(define (compiler-reg-clobber-instr-kind?
+  [instr : CompilerIrInstr]
+  [kind : i64]) : bool
   (match instr
     [(IrInstrBinOp _ op _ _ _)
       (if (= kind 1)
@@ -4787,7 +4789,9 @@
     (begin
       (while (< index count)
         (begin
-          (if (compiler-reg-clobber-instr-kind? (array.array-ref slots index) kind)
+          (if (compiler-reg-clobber-instr-kind?
+            (array.array-ref slots index)
+            kind)
             (set! out (compiler-live-set-insert out p))
             unit)
           (set! p (+ p 2))
@@ -4806,7 +4810,11 @@
         [(IrBlock _ instrs)
           (match (compiler-reg-clobber-kind-points-seq instrs point set kind)
             [(CompilerRegCallScan p2 s2)
-              (compiler-reg-clobber-kind-points-blocks (box-get rest) p2 s2 kind)])])]
+              (compiler-reg-clobber-kind-points-blocks
+                (box-get rest)
+                p2
+                s2
+                kind)])])]
     [(IrBlockArray seq)
       (compiler-reg-clobber-kind-points-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -4814,7 +4822,9 @@
         set
         kind)]))
 
-(define (compiler-reg-clobber-kind-points [func : CompilerIrFunction] [kind : i64]) : CompilerLiveI64Set
+(define (compiler-reg-clobber-kind-points
+  [func : CompilerIrFunction]
+  [kind : i64]) : CompilerLiveI64Set
   (match func
     [(IrFunction _ _ _ _ blocks)
       (match (compiler-reg-clobber-kind-points-blocks
@@ -8521,20 +8531,11 @@
       ;; (start-idx 0) with `forbidden` excluding just {rax,rdx,r10,r11} (div) and/or
       ;; {rcx} (shift).
       [spans-call : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          interval-index
-          call-points
-          var)]
+        (compiler-reg-greedy-var-spans-clobber? interval-index call-points var)]
       [spans-div : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          interval-index
-          div-points
-          var)]
+        (compiler-reg-greedy-var-spans-clobber? interval-index div-points var)]
       [spans-shift : bool
-        (compiler-reg-greedy-var-spans-clobber?
-          interval-index
-          shift-points
-          var)]
+        (compiler-reg-greedy-var-spans-clobber? interval-index shift-points var)]
       [start-idx : i64
         (if spans-call
           caller-saved-count
@@ -9056,10 +9057,8 @@
     ;; leaves alone instead of being forced callee-saved. On the SIMD-integer path
     ;; caller-saved-count=0 makes every pool register callee-saved (no restriction);
     ;; on the XMM path call-spanning floats are already excluded pre-allocation.
-    [call-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 0)]
-    [div-points : CompilerLiveI64Set
-      (compiler-reg-clobber-kind-points func 1)]
+    [call-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 0)]
+    [div-points : CompilerLiveI64Set (compiler-reg-clobber-kind-points func 1)]
     [shift-points : CompilerLiveI64Set
       (compiler-reg-clobber-kind-points func 2)]
     ;; Step B: the unified greedy is the scalar integer allocator and homes
@@ -16236,8 +16235,7 @@
   (let
     [zero-call-callers : CompilerRegStringList
       (compiler-reg-zero-call-caller-saved-integer-registers)]
-    [greedy-pool : CompilerRegStringList
-      (compiler-reg-greedy-integer-pool)]
+    [greedy-pool : CompilerRegStringList (compiler-reg-greedy-integer-pool)]
     [sysv-callers : CompilerRegStringList
       (compiler-reg-sysv-caller-saved-integer-registers)]
     [sysv-callees : CompilerRegStringList

@@ -84,7 +84,7 @@
   (Err SourceError))
 
 ;; --- flat SpannedSexpr node pool (mirrors the AstExpr flat pool, #2294) ---
-;; SpSCons / SpSBracketList children are i64 ids into this pool instead of
+;; SpannedSexpr.Cons / SpannedSexpr.BracketList children are i64 ids into this pool instead of
 ;; (box ...). Two plain globals (array + count), NOT a struct, to avoid the
 ;; opt2 hot-path-inline miscompile seen on the AstExpr pool. The spanned tree
 ;; is transient (consumed into AstExpr, spans copied out by value, then dead),

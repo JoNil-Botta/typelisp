@@ -37306,16 +37306,16 @@
   (if (<= fuel 0)
     (MacroGeneratedFingerprintTooLarge)
     (match sexpr
-      [(SpSInt _ text _)
+      [(SpannedSexpr.Int _ text _)
         (MacroGeneratedFingerprintKey
           (str_cat.str-cat "int:" (spec-string-key text))
           (- fuel 1))]
-      [(SpSSym name _)
+      [(SpannedSexpr.Sym name _)
         (MacroGeneratedFingerprintKey
           (str_cat.str-cat "sym:" (spec-string-key name))
           (- fuel 1))]
-      [(SpSNil _) (MacroGeneratedFingerprintKey "nil" (- fuel 1))]
-      [(SpSCons head tail _)
+      [(SpannedSexpr.Nil _) (MacroGeneratedFingerprintKey "nil" (- fuel 1))]
+      [(SpannedSexpr.Cons head tail _)
         (match (macro-generated-fingerprint-sexpr (sp-node-get head) (- fuel 1))
           [(MacroGeneratedFingerprintKey head-key head-fuel)
             (match (macro-generated-fingerprint-sexpr
@@ -37333,19 +37333,19 @@
                 (MacroGeneratedFingerprintTooLarge)])]
           [(MacroGeneratedFingerprintTooLarge)
             (MacroGeneratedFingerprintTooLarge)])]
-      [(SpSStr text _)
+      [(SpannedSexpr.Str text _)
         (MacroGeneratedFingerprintKey
           (str_cat.str-cat "str:" (spec-string-key text))
           (- fuel 1))]
-      [(SpSChar c _)
+      [(SpannedSexpr.Char c _)
         (MacroGeneratedFingerprintKey
           (str_cat.str-cat "char:" (string.int->string (cast c : i64)))
           (- fuel 1))]
-      [(SpSFloat text _)
+      [(SpannedSexpr.Float text _)
         (MacroGeneratedFingerprintKey
           (str_cat.str-cat "float:" (spec-string-key text))
           (- fuel 1))]
-      [(SpSBracketList items _)
+      [(SpannedSexpr.BracketList items _)
         (match (macro-generated-fingerprint-sexpr
           (sp-node-get items)
           (- fuel 1))

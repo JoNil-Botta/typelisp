@@ -1097,7 +1097,7 @@
 (define (doc-test-run-report-add-prefix-count
   [prefix-count : i64]
   [report : DocTestRunReport]) : DocTestRunReport
-  (DocTestRunReport
+  (DocTestRunReport.Report
     (+ prefix-count (doc-test-run-report-count report))
     (doc-test-run-report-failures report)))
 

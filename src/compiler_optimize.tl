@@ -1045,6 +1045,14 @@
   [instr : CompilerIrInstr]) : OptInstrResult
   (OptInstrResult (opt-const-unbind env dst) instr))
 
+(define (opt-invalidate-spmd-result
+  [env : OptConstEnv]
+  [result : CompilerIrSpmdCallResult]
+  [instr : CompilerIrInstr]) : OptInstrResult
+  (match result
+    [(IrSpmdCallResultUnit) (OptInstrResult env instr)]
+    [(IrSpmdCallResultValue dst _ _) (opt-invalidate-def env dst instr)]))
+
 (define (opt-fold-mask-binop-op
   [op : CompilerIrMaskBinOp]
   [lhs : CompilerIrValue]
@@ -1133,6 +1141,10 @@
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirectC dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (opt-invalidate-spmd-result env result instr)])]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -1231,6 +1243,10 @@
     [(IrInstrCall dst name args ty) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirect dst _ _ _) (opt-invalidate-def env dst instr)]
     [(IrInstrCallIndirectC dst _ _ _) (opt-invalidate-def env dst instr)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (opt-invalidate-spmd-result env result instr)])]
     [(IrInstrTailCall _ _ _) (OptInstrResult env instr)]
     [(IrInstrPhi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult env instr)]))
@@ -1302,6 +1318,18 @@
       (opt-collect-value-uses (opt-collect-value-uses set a) b)]
     [(IrCallArgsArray values) (opt-collect-call-args-array-uses set values 0)]))
 
+(define (opt-collect-spmd-call-args-uses
+  [set : hashmap.I64I64Map]
+  [args : CompilerIrSpmdCallArgList]) : hashmap.I64I64Map
+  (match args
+    [(IrSpmdCallArgNil) set]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (opt-collect-spmd-call-args-uses
+            (opt-collect-value-uses set value)
+            (box-get rest))])]))
+
 (define (opt-collect-phi-uses
   [set : hashmap.I64I64Map]
   [inputs : CompilerIrPhiInputList]) : hashmap.I64I64Map
@@ -1332,6 +1360,12 @@
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
           (opt-collect-call-args-uses
             (opt-collect-value-uses (opt-collect-value-uses set base) func)
+            args)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (opt-collect-spmd-call-args-uses
+            (opt-collect-value-uses set active-mask)
             args)])]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses set args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses set value)]
@@ -1721,6 +1755,18 @@
     [(IrCallArgsArray values)
       (opt-collect-call-args-array-uses-array items values 0)]))
 
+(define (opt-collect-spmd-call-args-uses-array
+  [items : (Array i64)]
+  [args : CompilerIrSpmdCallArgList]) : unit
+  (match args
+    [(IrSpmdCallArgNil) unit]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (begin
+            (opt-collect-value-uses-array items value)
+            (opt-collect-spmd-call-args-uses-array items (box-get rest)))])]))
+
 (define (opt-collect-phi-uses-array
   [items : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
@@ -1763,6 +1809,12 @@
             (opt-collect-value-uses-array items base)
             (opt-collect-value-uses-array items func)
             (opt-collect-call-args-uses-array items args))])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (begin
+            (opt-collect-value-uses-array items active-mask)
+            (opt-collect-spmd-call-args-uses-array items args))])]
     [(IrInstrTailCall _ args _) (opt-collect-call-args-uses-array items args)]
     [(IrInstrStore _ value _) (opt-collect-value-uses-array items value)]
     [(IrInstrAddrOf _ src) (opt-used-array-add items src)]
@@ -2337,6 +2389,19 @@
     [(IrCallArgsArray values)
       (opt-aggregate-call-args-array-has-pointer? base ptrs values 0)]))
 
+(define (opt-aggregate-spmd-call-args-has-pointer?
+  [base : i64]
+  [ptrs : OptAggregatePointerList]
+  [args : CompilerIrSpmdCallArgList]) : bool
+  (match args
+    [(IrSpmdCallArgNil) false]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs value)
+            (opt-aggregate-spmd-call-args-has-pointer? base ptrs (box-get rest)))])]))
+
 (define (opt-aggregate-maybe-value-has-pointer?
   [base : i64]
   [ptrs : OptAggregatePointerList]
@@ -2486,6 +2551,12 @@
             (opt-aggregate-value-has-pointer? base ptrs store-base)
             (opt-aggregate-value-has-pointer? base ptrs func)
             (opt-aggregate-call-args-has-pointer? base ptrs args))])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs active-mask)
+            (opt-aggregate-spmd-call-args-has-pointer? base ptrs args))])]
     [(IrInstrTailCall _ args _)
       (opt-aggregate-call-args-has-pointer? base ptrs args)]
     [(IrInstrStore _ value _)
@@ -3860,6 +3931,85 @@
             (opt-call-args-array-eq av bv 0))]
         [_ false])]))
 
+(define (opt-spmd-backend-eq
+  [a : CompilerIrSpmdBackend]
+  [b : CompilerIrSpmdBackend]) : bool
+  (match a
+    [(IrSpmdBackendScalar)
+      (match b
+        [(IrSpmdBackendScalar) true]
+        [_ false])]
+    [(IrSpmdBackendAvx2)
+      (match b
+        [(IrSpmdBackendAvx2) true]
+        [_ false])]
+    [(IrSpmdBackendAvx512)
+      (match b
+        [(IrSpmdBackendAvx512) true]
+        [_ false])]))
+
+(define (opt-spmd-value-class-eq
+  [a : CompilerIrSpmdValueClass]
+  [b : CompilerIrSpmdValueClass]) : bool
+  (match a
+    [(IrSpmdValueUniform)
+      (match b
+        [(IrSpmdValueUniform) true]
+        [_ false])]
+    [(IrSpmdValueVarying)
+      (match b
+        [(IrSpmdValueVarying) true]
+        [_ false])]
+    [(IrSpmdValueMask)
+      (match b
+        [(IrSpmdValueMask) true]
+        [_ false])]))
+
+(define (opt-spmd-call-arg-eq
+  [a : CompilerIrSpmdCallArg]
+  [b : CompilerIrSpmdCallArg]) : bool
+  (match a
+    [(IrSpmdCallArg aclass avalue aty)
+      (match b
+        [(IrSpmdCallArg bclass bvalue bty)
+          (and
+            (opt-spmd-value-class-eq aclass bclass)
+            (opt-value-eq avalue bvalue)
+            (opt-type-eq aty bty))])]))
+
+(define (opt-spmd-call-args-eq
+  [a : CompilerIrSpmdCallArgList]
+  [b : CompilerIrSpmdCallArgList]) : bool
+  (match a
+    [(IrSpmdCallArgNil)
+      (match b
+        [(IrSpmdCallArgNil) true]
+        [_ false])]
+    [(IrSpmdCallArgCons aarg arest)
+      (match b
+        [(IrSpmdCallArgCons barg brest)
+          (and
+            (opt-spmd-call-arg-eq aarg barg)
+            (opt-spmd-call-args-eq (box-get arest) (box-get brest)))]
+        [_ false])]))
+
+(define (opt-spmd-call-result-eq
+  [a : CompilerIrSpmdCallResult]
+  [b : CompilerIrSpmdCallResult]) : bool
+  (match a
+    [(IrSpmdCallResultUnit)
+      (match b
+        [(IrSpmdCallResultUnit) true]
+        [_ false])]
+    [(IrSpmdCallResultValue adst aclass aty)
+      (match b
+        [(IrSpmdCallResultValue bdst bclass bty)
+          (and
+            (= adst bdst)
+            (opt-spmd-value-class-eq aclass bclass)
+            (opt-type-eq aty bty))]
+        [_ false])]))
+
 (define (opt-phi-input-eq
   [av : CompilerIrValue]
   [alabel : String]
@@ -4284,6 +4434,33 @@
                     (opt-call-args-eq aargs bargs)
                     (opt-c-abi-return-slot-list-eq aslots bslots))])]
             [_ false])])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            acallee
+            abackend
+            alanes
+            aactive-mask
+            aargs
+            aresult)
+          (match b
+            [(IrInstrSpmdCall other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrSpmdCallPayload
+                    bcallee
+                    bbackend
+                    blanes
+                    bactive-mask
+                    bargs
+                    bresult)
+                  (and
+                    (string.string-eq acallee bcallee)
+                    (opt-spmd-backend-eq abackend bbackend)
+                    (= alanes blanes)
+                    (opt-value-eq aactive-mask bactive-mask)
+                    (opt-spmd-call-args-eq aargs bargs)
+                    (opt-spmd-call-result-eq aresult bresult))])]
+            [_ false])])]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)
@@ -4696,6 +4873,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
           (OptCseResult (OptExprNil) instr)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+          (OptCseResult (OptExprNil) instr)])]
     [(IrInstrTailCall _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStore _ _ _) (OptCseResult (OptExprNil) instr)]
     [(IrInstrStorePtr _ _ _) (OptCseResult (OptExprNil) instr)]
@@ -4895,6 +5076,32 @@
           (opt-copy-subst-call-args-array env values out 0)
           (IrCallArgsArray out)))]))
 
+(define (opt-copy-resolve-spmd-value
+  [env : OptCopyEnv]
+  [class : CompilerIrSpmdValueClass]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match class
+    [(IrSpmdValueUniform) (opt-copy-resolve env value)]
+    [(IrSpmdValueVarying) (opt-copy-resolve-mask env value)]
+    [(IrSpmdValueMask) (opt-copy-resolve-mask env value)]))
+
+(define (opt-copy-subst-spmd-call-arg
+  [env : OptCopyEnv]
+  [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
+  (match arg
+    [(IrSpmdCallArg class value ty)
+      (IrSpmdCallArg class (opt-copy-resolve-spmd-value env class value) ty)]))
+
+(define (opt-copy-subst-spmd-call-args
+  [env : OptCopyEnv]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
+    [(IrSpmdCallArgCons arg rest)
+      (IrSpmdCallArgCons
+        (opt-copy-subst-spmd-call-arg env arg)
+        (box (opt-copy-subst-spmd-call-args env (box-get rest))))]))
+
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `IrInstrAddrOf` are intentionally not rewritten.
 (define (opt-copy-subst-instr [env : OptCopyEnv] [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -5008,6 +5215,22 @@
             (opt-copy-resolve env func)
             (opt-copy-subst-call-args env args)
             slots)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            callee
+            backend
+            lanes
+            active-mask
+            args
+            result)
+          (ir-instr-spmd-call
+            callee
+            backend
+            lanes
+            (opt-copy-resolve-mask env active-mask)
+            (opt-copy-subst-spmd-call-args env args)
+            result)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-copy-subst-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -5112,6 +5335,12 @@
     [(IrInstrCall dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCallIndirect dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(IrInstrCallIndirectC dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) env]
+            [(IrSpmdCallResultValue dst _ _) (opt-copy-invalidate-var env dst)])])]
     [(IrInstrPhi dst _ _) (opt-copy-invalidate-var env dst)]
     ;; #2386: register-group ops define their dst -- drop any stale copy fact for
     ;; it (a reused var id must not trigger a later stale rewrite).
@@ -5378,6 +5607,9 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
           (OptBoundsNil)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) (OptBoundsNil)])]
     [(IrInstrTailCall _ _ _) (OptBoundsNil)]
     [(IrInstrStore _ _ _) (OptBoundsNil)]
     [(IrInstrStorePtr _ _ _) (OptBoundsNil)]
@@ -7341,6 +7573,12 @@
     [(IrInstrXgetbv dst _) (OptSomeI64 dst)]
     [(IrInstrSyscall dst _) (OptSomeI64 dst)]
     [(IrInstrCall dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (OptNoI64)]
+            [(IrSpmdCallResultValue dst _ _) (OptSomeI64 dst)])])]
     [(IrInstrPhi dst _ _) (OptSomeI64 dst)]
     ;; #2386: Pack/Word define their dst like any scalar op. Without these arms
     ;; the verifier saw every use of a register-group word as use-before-def
@@ -7662,6 +7900,26 @@
     [(IrCallArgsArray values)
       (opt-verify-call-args-array-uses defs doms values use-block use-pos 0)]))
 
+(define (opt-verify-spmd-call-args-uses
+  [defs : (Array OptMaybeVarDef)]
+  [doms : OptDomInfo]
+  [args : CompilerIrSpmdCallArgList]
+  [use-block : String]
+  [use-pos : i64]) : ResultCompilerOptimizeVerify
+  (match args
+    [(IrSpmdCallArgNil) (OkCompilerOptimizeVerify)]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms value use-block use-pos)
+            (opt-verify-spmd-call-args-uses
+              defs
+              doms
+              (box-get rest)
+              use-block
+              use-pos))])]))
+
 (define (opt-verify-maybe-value-use
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
@@ -7833,6 +8091,12 @@
             (opt-verify-two
               (opt-verify-value-use defs doms func block-label pos)
               (opt-verify-call-args-uses defs doms args block-label pos)))])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms active-mask block-label pos)
+            (opt-verify-spmd-call-args-uses defs doms args block-label pos))])]
     [(IrInstrTailCall _ args _)
       (opt-verify-call-args-uses defs doms args block-label pos)]
     [(IrInstrStore _ value _)
@@ -8238,6 +8502,16 @@
     [(IrInstrCall dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrCallIndirect dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrCallIndirectC dst _ _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) facts]
+            [(IrSpmdCallResultValue dst class ty)
+              (match class
+                [(IrSpmdValueUniform) (opt-ssa-facts-add-def-ty facts dst ty)]
+                [(IrSpmdValueVarying) (opt-ssa-facts-add-def-bad facts dst)]
+                [(IrSpmdValueMask) (opt-ssa-facts-add-def-bad facts dst)])])])]
     [(IrInstrPhi dst _ ty) (opt-ssa-facts-add-def-ty facts dst ty)]
     [(IrInstrEntryArgc dst) (opt-ssa-facts-add-def-ty facts dst (AstTyI64))]
     [(IrInstrAddrOf dst src)
@@ -8775,6 +9049,23 @@
           (opt-ssa-rewrite-call-args-array env values out 0)
           (IrCallArgsArray out)))]))
 
+(define (opt-ssa-rewrite-spmd-call-arg
+  [env : OptSsaRenameEnv]
+  [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
+  (match arg
+    [(IrSpmdCallArg class value ty)
+      (IrSpmdCallArg class (opt-ssa-rewrite-value env value) ty)]))
+
+(define (opt-ssa-rewrite-spmd-call-args
+  [env : OptSsaRenameEnv]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
+    [(IrSpmdCallArgCons arg rest)
+      (IrSpmdCallArgCons
+        (opt-ssa-rewrite-spmd-call-arg env arg)
+        (box (opt-ssa-rewrite-spmd-call-args env (box-get rest))))]))
+
 (define (opt-ssa-rename-dst
   [facts : OptSsaFacts]
   [env : OptSsaRenameEnv]
@@ -8899,6 +9190,40 @@
               slots)
             env
             next-var)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            callee
+            backend
+            lanes
+            active-mask
+            args
+            result)
+          (match result
+            [(IrSpmdCallResultUnit)
+              (OptSsaInstrResult
+                (ir-instr-spmd-call
+                  callee
+                  backend
+                  lanes
+                  (opt-ssa-rewrite-value env active-mask)
+                  (opt-ssa-rewrite-spmd-call-args env args)
+                  result)
+                env
+                next-var)]
+            [(IrSpmdCallResultValue dst class ty)
+              (match (opt-ssa-rename-dst facts env next-var dst)
+                [(OptSsaDstResult out-dst next-env out-next)
+                  (OptSsaInstrResult
+                    (ir-instr-spmd-call
+                      callee
+                      backend
+                      lanes
+                      (opt-ssa-rewrite-value env active-mask)
+                      (opt-ssa-rewrite-spmd-call-args env args)
+                      (IrSpmdCallResultValue out-dst class ty))
+                    next-env
+                    out-next)])])])]
     [(IrInstrEntryArgc dst)
       (match (opt-ssa-rename-dst facts env next-var dst)
         [(OptSsaDstResult out-dst next-env out-next)
@@ -10135,6 +10460,64 @@
             0)
           (IrCallArgsArray out)))]))
 
+(define (opt-global-copy-resolve-spmd-value
+  [facts : OptGlobalCopyFactTable]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [class : CompilerIrSpmdValueClass]
+  [value : CompilerIrValue]) : CompilerIrValue
+  (match class
+    [(IrSpmdValueUniform)
+      (opt-global-copy-resolve facts doms use-block-id use-pos value)]
+    [(IrSpmdValueVarying)
+      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]
+    [(IrSpmdValueMask)
+      (opt-global-copy-resolve-mask facts doms use-block-id use-pos value)]))
+
+(define (opt-global-copy-subst-spmd-call-arg
+  [facts : OptGlobalCopyFactTable]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
+  (match arg
+    [(IrSpmdCallArg class value ty)
+      (IrSpmdCallArg
+        class
+        (opt-global-copy-resolve-spmd-value
+          facts
+          doms
+          use-block-id
+          use-pos
+          class
+          value)
+        ty)]))
+
+(define (opt-global-copy-subst-spmd-call-args
+  [facts : OptGlobalCopyFactTable]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
+    [(IrSpmdCallArgCons arg rest)
+      (IrSpmdCallArgCons
+        (opt-global-copy-subst-spmd-call-arg
+          facts
+          doms
+          use-block-id
+          use-pos
+          arg)
+        (box
+          (opt-global-copy-subst-spmd-call-args
+            facts
+            doms
+            use-block-id
+            use-pos
+            (box-get rest))))]))
+
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
@@ -10236,6 +10619,22 @@
             (opt-global-copy-resolve facts doms block-id pos func)
             (opt-global-copy-subst-call-args facts doms block-id pos args)
             slots)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            callee
+            backend
+            lanes
+            active-mask
+            args
+            result)
+          (ir-instr-spmd-call
+            callee
+            backend
+            lanes
+            (opt-global-copy-resolve-mask facts doms block-id pos active-mask)
+            (opt-global-copy-subst-spmd-call-args facts doms block-id pos args)
+            result)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall
         name
@@ -12389,6 +12788,15 @@
     [(IrInstrCall dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
     [(IrInstrCallIndirect dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
     [(IrInstrCallIndirectC dst _ _ ty) (opt-licm-type-env-bind types dst ty)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) types]
+            [(IrSpmdCallResultValue dst class ty)
+              (match class
+                [(IrSpmdValueUniform) (opt-licm-type-env-bind types dst ty)]
+                [_ types])])])]
     [(IrInstrPhi dst _ ty) (opt-licm-type-env-bind types dst ty)]
     [_ types]))
 
@@ -12591,6 +12999,12 @@
       [(IrInstrCallIndirectCAbiStoreResult payload-box)
         (match (box-get payload-box)
           [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
+            (opt-licm-store-state-add-summary
+              invalid
+              (opt-licm-store-summary-call-or-unknown))])]
+      [(IrInstrSpmdCall payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
             (opt-licm-store-state-add-summary
               invalid
               (opt-licm-store-summary-call-or-unknown))])]
@@ -13432,6 +13846,9 @@
     [(IrInstrCpuId _ _ _ _) true]
     [(IrInstrXgetbv _ _) true]
     [(IrInstrSyscall _ _) true]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [_ false]))
@@ -14570,6 +14987,12 @@
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
     [(IrInstrCallIndirectC dst _ _ _) dst]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (- 0 1)]
+            [(IrSpmdCallResultValue dst _ _) dst])])]
     ;; Pack/Word dsts must be counted so opt-sccp-env-make sizes the lattice
     ;; array over them; opt-sccp-env-set silently drops out-of-range writes,
     ;; which would defeat the Overdefined binding in opt-sccp-process-instr.
@@ -14919,6 +15342,13 @@
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
     [(IrInstrCallIndirectC dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpOverdefined))]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) state]
+            [(IrSpmdCallResultValue dst _ _)
+              (opt-sccp-state-bind state dst (OptSccpOverdefined))])])]
     ;; #2386 register-group dsts: bind Overdefined like loads/calls. Falling
     ;; into the wildcard left them OptSccpUnknown forever, so a branch on a
     ;; Word-extracted enum tag marked NO successor executable and SCCP folded
@@ -15157,6 +15587,23 @@
           (opt-sccp-rewrite-call-args-array env values out 0)
           (IrCallArgsArray out)))]))
 
+(define (opt-sccp-rewrite-spmd-call-arg
+  [env : OptSccpEnv]
+  [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
+  (match arg
+    [(IrSpmdCallArg class value ty)
+      (IrSpmdCallArg class (opt-sccp-rewrite-value env value) ty)]))
+
+(define (opt-sccp-rewrite-spmd-call-args
+  [env : OptSccpEnv]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
+    [(IrSpmdCallArgCons arg rest)
+      (IrSpmdCallArgCons
+        (opt-sccp-rewrite-spmd-call-arg env arg)
+        (box (opt-sccp-rewrite-spmd-call-args env (box-get rest))))]))
+
 (define (opt-sccp-rewrite-phi-inputs
   [env : OptSccpEnv]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -15264,6 +15711,22 @@
             (opt-sccp-rewrite-value env callee)
             (opt-sccp-rewrite-call-args env args)
             slots)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            callee
+            backend
+            lanes
+            active-mask
+            args
+            result)
+          (ir-instr-spmd-call
+            callee
+            backend
+            lanes
+            (opt-sccp-rewrite-value env active-mask)
+            (opt-sccp-rewrite-spmd-call-args env args)
+            result)])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (opt-sccp-rewrite-call-args env args) ty)]
     [(IrInstrStore name value ty)
@@ -16088,6 +16551,12 @@
     [(IrInstrCallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) (- 0 1)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (- 0 1)]
+            [(IrSpmdCallResultValue dst _ _) dst])])]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrStorePtr _ _ _) (- 0 1)]
     [(IrInstrCopyBytes _ _ _) (- 0 1)]
@@ -19107,6 +19576,14 @@
     [(IrInstrCallIndirectC dst _ _ _)
       (opt-loop-bce-state-clear-lengths
         (opt-loop-bce-state-invalidate-def state dst))]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (opt-loop-bce-state-clear-lengths state)]
+            [(IrSpmdCallResultValue dst _ _)
+              (opt-loop-bce-state-clear-lengths
+                (opt-loop-bce-state-invalidate-def state dst))])])]
     [(IrInstrCallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _)
@@ -20977,6 +21454,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload _ name _ _)
           (opt-callgraph-add-callee index callees name)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload name _ _ _ _ _)
+          (opt-callgraph-add-callee index callees name)])]
     [(IrInstrTailCall name _ _) (opt-callgraph-add-callee index callees name)]
     [_ callees]))
 
@@ -21126,6 +21607,20 @@
       (opt-inline-census-value index (opt-inline-census-value index census a) b)]
     [(IrCallArgsArray values)
       (opt-inline-census-args-array index census values 0)]))
+
+(define (opt-inline-census-spmd-args
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [args : CompilerIrSpmdCallArgList]) : OptInlineCensus
+  (match args
+    [(IrSpmdCallArgNil) census]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (opt-inline-census-spmd-args
+            index
+            (opt-inline-census-value index census value)
+            (box-get rest))])]))
 
 (define (opt-inline-census-maybe-value
   [index : OptFunctionIndex]
@@ -21297,6 +21792,16 @@
             (opt-inline-census-args
               index
               (opt-inline-census-value index census base)
+              args)
+            name)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload name _ _ active-mask args _)
+          (opt-inline-census-add-ref
+            index
+            (opt-inline-census-spmd-args
+              index
+              (opt-inline-census-value index census active-mask)
               args)
             name)])]
     [(IrInstrCallIndirect _ func args _)
@@ -24926,6 +25431,20 @@
       (opt-reach-value index (opt-reach-value index state a) b)]
     [(IrCallArgsArray values) (opt-reach-call-args-array index state values 0)]))
 
+(define (opt-reach-spmd-call-args
+  [index : OptFunctionIndex]
+  [state : OptReachState]
+  [args : CompilerIrSpmdCallArgList]) : OptReachState
+  (match args
+    [(IrSpmdCallArgNil) state]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (opt-reach-spmd-call-args
+            index
+            (opt-reach-value index state value)
+            (box-get rest))])]))
+
 (define (opt-reach-maybe-value
   [index : OptFunctionIndex]
   [state : OptReachState]
@@ -25036,6 +25555,16 @@
           (opt-reach-add-call-target
             index
             (opt-reach-call-args index (opt-reach-value index state base) args)
+            name)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload name _ _ active-mask args _)
+          (opt-reach-add-call-target
+            index
+            (opt-reach-spmd-call-args
+              index
+              (opt-reach-value index state active-mask)
+              args)
             name)])]
     [(IrInstrCallIndirect _ func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
@@ -25527,6 +26056,15 @@
             (match (box-get payload-box)
               [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
                 (OptLoopBceCleanScan state false)])]
+          [(IrInstrSpmdCall payload-box)
+            (match (box-get payload-box)
+              [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+                (match result
+                  [(IrSpmdCallResultUnit) (OptLoopBceCleanScan state false)]
+                  [(IrSpmdCallResultValue dst _ _)
+                    (OptLoopBceCleanScan
+                      (opt-loop-bce-state-invalidate-def state dst)
+                      false)])])]
           [(IrInstrTailCallIndirect _ _ _) (OptLoopBceCleanScan state false)]
           [(IrInstrSyscall dst _)
             (OptLoopBceCleanScan
@@ -25680,6 +26218,18 @@
       (opt-const-globals-disq-value (opt-const-globals-disq-value disq a) b)]
     [(IrCallArgsArray values) (opt-const-globals-disq-args-array disq values 0)]))
 
+(define (opt-const-globals-disq-spmd-args
+  [disq : hashmap.StringI64Map]
+  [args : CompilerIrSpmdCallArgList]) : hashmap.StringI64Map
+  (match args
+    [(IrSpmdCallArgNil) disq]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (opt-const-globals-disq-spmd-args
+            (opt-const-globals-disq-value disq value)
+            (box-get rest))])]))
+
 (define (opt-const-globals-disq-maybe
   [disq : hashmap.StringI64Map]
   [maybe : CompilerIrMaybeValue]) : hashmap.StringI64Map
@@ -25802,6 +26352,12 @@
         [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
           (opt-const-globals-disq-args
             (opt-const-globals-disq-value disq base)
+            args)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (opt-const-globals-disq-spmd-args
+            (opt-const-globals-disq-value disq active-mask)
             args)])]
     [(IrInstrCallIndirect _ func args _)
       (opt-const-globals-disq-args
@@ -26265,6 +26821,13 @@
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrCall dst _ _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (OptRemapSpanNoKey)]
+            [(IrSpmdCallResultValue dst _ _)
+              (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))])])]
     [(IrInstrPack dst _ _)
       (OptRemapSpanSomeKey (opt-remap-spans-value-key value-prefix dst))]
     [(IrInstrWord dst _ _ _)
@@ -37159,6 +37722,9 @@
     [(IrInstrCallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [_ (opt-alias-effect-clears-facts? (compiler-ir-instr-effect instr))]))
@@ -37416,6 +37982,10 @@
           (match (box-get payload-box)
             [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
               (OptScratchBlocked "extern_call")])]
+        [(IrInstrSpmdCall payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+              (OptScratchBlocked "call")])]
         [(IrInstrSyscall _ _) (OptScratchBlocked "extern_call")]
         [(IrInstrTailCall _ _ _) (OptScratchBlocked "tail_call")]
         [(IrInstrTailCallIndirect _ _ _) (OptScratchBlocked "tail_call")]

@@ -548,6 +548,22 @@
     [(IrCallArgsTwo a b) (compiler-live-values2-vars a b)]
     [(IrCallArgsArray values) (compiler-live-call-args-array-vars values 0)]))
 
+(define (compiler-live-spmd-call-args-vars [args : CompilerIrSpmdCallArgList]) : CompilerLiveI64Set
+  (match args
+    [(IrSpmdCallArgNil) (compiler-live-set-empty)]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (compiler-live-value-vars-into
+            (compiler-live-spmd-call-args-vars (box-get rest))
+            value)])]))
+
+(define (compiler-live-spmd-call-result-defs
+  [result : CompilerIrSpmdCallResult]) : CompilerLiveI64Set
+  (match result
+    [(IrSpmdCallResultUnit) (compiler-live-set-empty)]
+    [(IrSpmdCallResultValue dst _ _) (compiler-live-set1 dst)]))
+
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
     [(IrNoValue) (compiler-live-set-empty)]
@@ -646,6 +662,12 @@
               (compiler-live-call-args-vars args)
               base)
             func)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (compiler-live-value-vars-into
+            (compiler-live-spmd-call-args-vars args)
+            active-mask)])]
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
@@ -701,6 +723,10 @@
     [(IrInstrCall dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirect dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirectC dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (compiler-live-spmd-call-result-defs result)])]
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]
     [(IrInstrPack dst _ _) (compiler-live-set1 dst)]
     [(IrInstrWord dst _ _ _) (compiler-live-set1 dst)]
@@ -1484,6 +1510,36 @@
         (compiler-live-set-eq? uses (compiler-live-set5 10 11 12 13 14))
         (compiler-live-set-eq? defs (compiler-live-set6 0 1 2 3 4 5)))]))
 
+(define (compiler-live-spmd-call-use-def-ok?) : bool
+  (let
+    [args : CompilerIrSpmdCallArgList
+      (ir-spmd-call-arg-cons
+        (IrSpmdCallArg
+          (IrSpmdValueUniform)
+          (IrValueVar 21)
+          (compiler-live-i64-ty))
+        (ir-spmd-call-arg-cons
+          (IrSpmdCallArg
+            (IrSpmdValueVarying)
+            (IrValueVar 22)
+            (compiler-live-i64-ty))
+          IrSpmdCallArgNil))]
+    [instr : CompilerIrInstr
+      (ir-instr-spmd-call
+        "helper"
+        (IrSpmdBackendAvx512)
+        8
+        (IrValueVar 20)
+        args
+        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (compiler-live-i64-ty)))]
+    (and
+      (compiler-live-set-eq?
+        (compiler-live-instr-uses instr)
+        (compiler-live-set3 20 21 22))
+      (compiler-live-set-eq?
+        (compiler-live-instr-defs instr)
+        (compiler-live-set1 6)))))
+
 (define (compiler-live-straight-ok?) : bool
   (let
     [liveness : CompilerFunctionLiveness
@@ -1590,6 +1646,7 @@
     (compiler-live-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)
+    (compiler-live-spmd-call-use-def-ok?)
     (compiler-live-straight-ok?)
     (compiler-live-branch-ok?)
     (compiler-live-phi-ok?)

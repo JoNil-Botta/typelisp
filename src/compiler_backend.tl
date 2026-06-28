@@ -897,6 +897,14 @@
         instr-diag
         "backend: vector/mask IR emission is not implemented"))))
 
+(define (compiler-backend-spmd-call-unimplemented
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (ErrCompilerBackend
+    (box
+      (compiler-diagnostic-with-message
+        instr-diag
+        "backend: SPMD call IR emission is not implemented"))))
+
 (define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
   (match mode
     [(BackendModeAvx2) "    vzeroupper\n"]
@@ -12588,6 +12596,9 @@
     [(IrInstrCallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrBoundsCheck _ _ _) true]
@@ -16475,6 +16486,10 @@
         (compiler-backend-emit-xgetbv assignments dst index)]
       [(IrInstrSyscall dst args)
         (compiler-backend-emit-syscall target assignments dst args)]
+      [(IrInstrSpmdCall payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+            (compiler-backend-spmd-call-unimplemented instr-diag)])]
       [(IrInstrCall dst name args ty)
         (compiler-backend-emit-direct-call-with-arg-assignments
           target
@@ -16859,6 +16874,18 @@
     [(IrCallArgsArray values)
       (compiler-backend-count-call-args-array-uses counts values 0)]))
 
+(define (compiler-backend-count-spmd-call-args-uses
+  [counts : (Array i64)]
+  [args : CompilerIrSpmdCallArgList]) : unit
+  (match args
+    [(IrSpmdCallArgNil) unit]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (begin
+            (compiler-backend-count-value-use counts value)
+            (compiler-backend-count-spmd-call-args-uses counts (box-get rest)))])]))
+
 (define (compiler-backend-count-phi-input-uses
   [counts : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
@@ -16991,6 +17018,12 @@
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts callee)
             (compiler-backend-count-call-args-uses counts args))])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (begin
+            (compiler-backend-count-value-use counts active-mask)
+            (compiler-backend-count-spmd-call-args-uses counts args))])]
     [(IrInstrTailCall _ args _)
       (compiler-backend-count-call-args-uses counts args)]
     [(IrInstrTailCallIndirect callee args _)
@@ -23769,6 +23802,18 @@
         values
         0)]))
 
+(define (compiler-backend-collect-spmd-call-args-collections
+  [collections : CompilerBackendProgramCollections]
+  [args : CompilerIrSpmdCallArgList]) : CompilerBackendProgramCollections
+  (match args
+    [(IrSpmdCallArgNil) collections]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (compiler-backend-collect-spmd-call-args-collections
+            (compiler-backend-collect-value-collections collections value)
+            (box-get rest))])]))
+
 (define (compiler-backend-collect-phi-collections
   [collections : CompilerBackendProgramCollections]
   [inputs : CompilerIrPhiInputList]) : CompilerBackendProgramCollections
@@ -23822,6 +23867,12 @@
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections collections base)
               func)
+            args)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (compiler-backend-collect-spmd-call-args-collections
+            (compiler-backend-collect-value-collections collections active-mask)
             args)])]
     [(IrInstrTailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
@@ -28872,6 +28923,20 @@ tl_memchr:
       args
       (+ index 1))))
 
+(define (compiler-backend-object-spmd-call-args
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [args : CompilerIrSpmdCallArgList]) : CompilerBackendObjectParts
+  (match args
+    [(IrSpmdCallArgNil) parts]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (compiler-backend-object-spmd-call-args
+            (compiler-backend-object-value-ref parts site value)
+            site
+            (box-get rest))])]))
+
 (define (compiler-backend-object-maybe-value-ref
   [parts : CompilerBackendObjectParts]
   [site : String]
@@ -29973,6 +30038,13 @@ tl_memchr:
       (compiler-backend-object-value-ref parts function index)]
     [(IrInstrSyscall _ args)
       (compiler-backend-object-call-args parts function args 0)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (compiler-backend-object-spmd-call-args
+            (compiler-backend-object-value-ref parts function active-mask)
+            function
+            args)])]
     [(IrInstrPack _ words _)
       (compiler-backend-object-value-list-ref parts function words)]
     [(IrInstrWord _ src _ _)

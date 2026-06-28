@@ -14,10 +14,11 @@
 ;; least-fixed-point over the type graph.
 (import "compiler_ast_types.tl")
 (import stdlib.hashmap)
+(import (hashmap String i64) as clone_name_map)
 (import stdlib.string)
 
 (defstruct CloneNameSet
-  (map hashmap.StringI64Map))
+  (map clone_name_map.Map))
 
 (defenum CloneNameList
   (CloneNameNil)
@@ -84,23 +85,29 @@
       (string.string-append (string.string-append module "/") local))))
 
 (define (clone-name-set-empty) : CloneNameSet
-  (CloneNameSet (hashmap.string-i64-map-with-capacity 8)))
+  (CloneNameSet (clone_name_map.with-capacity 8)))
 
 ;; The fixpoint rebuilds its accepted set on each step over the whole-program
 ;; type universe; seeding that accumulator at the input set's capacity (it can
 ;; only shrink relative to the input) avoids the rehash+fill-empty grow chain a
 ;; capacity-8 seed would walk on every step.
 (define (clone-name-set-with-capacity [capacity : i64]) : CloneNameSet
-  (CloneNameSet (hashmap.string-i64-map-with-capacity capacity)))
+  (CloneNameSet (clone_name_map.with-capacity capacity)))
 
-(define (clone-name-set-map [names : CloneNameSet]) : hashmap.StringI64Map
+(define (clone-name-set-map [names : CloneNameSet]) : clone_name_map.Map
   (struct-get names map))
 
 (define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
-  (CloneNameSet (hashmap.string-i64-map-put (clone-name-set-map names) name 1)))
+  (let
+    [map : clone_name_map.Map (clone-name-set-map names)]
+    (begin
+      (clone_name_map.insert (&mut map) name 1)
+      (CloneNameSet map))))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
-  (hashmap.string-i64-map-contains? (clone-name-set-map names) name))
+  (let
+    [map : clone_name_map.Map (clone-name-set-map names)]
+    (clone_name_map.contains? (& map) name)))
 
 (define (clone-name-set-contains-canonical?
   [names : CloneNameSet]
@@ -145,10 +152,14 @@
       found)))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
-  (hashmap.string-i64-map-len (clone-name-set-map names)))
+  (let
+    [map : clone_name_map.Map (clone-name-set-map names)]
+    (clone_name_map.len (& map))))
 
 (define (clone-name-set-capacity [names : CloneNameSet]) : i64
-  (hashmap.string-i64-map-capacity (clone-name-set-map names)))
+  (let
+    [map : clone_name_map.Map (clone-name-set-map names)]
+    (clone_name_map.capacity (& map))))
 
 (define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
   (if (<= count 0)

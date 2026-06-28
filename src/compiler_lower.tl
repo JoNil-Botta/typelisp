@@ -72,7 +72,7 @@
 
 (defenum LowerTypeCache
   (LowerNoTypeCache)
-  (LowerSomeTypeCache hashmap.StringI64Map (Array AstType) i64 LowerTypeParent))
+  (LowerSomeTypeCache hashmap.I64I64Map (Array AstType) i64 LowerTypeParent))
 
 ;; #3759: the shared global decl-lowering type cache (built once per lower-decls
 ;; from top-env). Per-module overlay caches (LowerTypeParentGlobal) fall through
@@ -1058,18 +1058,18 @@
 
 (define (lower-type-cache-add
   [cache : LowerTypeCache]
-  [name : String]
+  [name-id : i64]
   [ty : AstType]) : LowerTypeCache
   (match cache
     [(LowerNoTypeCache) cache]
     [(LowerSomeTypeCache ids values next parent)
-      (match (hashmap.string-i64-map-get ids name)
-        [(hashmap.StringI64MapFound _) cache]
-        [(hashmap.StringI64MapMissing)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound _) cache]
+        [(hashmap.I64I64MapMissing)
           (begin
             (array.array-set! values next ty)
             (LowerSomeTypeCache
-              (hashmap.string-i64-map-put ids name next)
+              (hashmap.i64-i64-map-put ids name-id next)
               values
               (+ next 1)
               parent))])]))
@@ -1084,7 +1084,7 @@
     [(TcTypeBind name-id ty rest)
       (lower-type-cache-from-env-into
         (box-get rest)
-        (lower-type-cache-add cache (intern-str name-id) ty))]))
+        (lower-type-cache-add cache name-id ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -1092,7 +1092,7 @@
     (lower-type-cache-from-env-into
       env
       (LowerSomeTypeCache
-        (hashmap.string-i64-map-with-capacity (lower-type-cache-capacity count))
+        (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
         (array.make-array AstType count)
         0
         (LowerTypeParentNone)))))
@@ -1106,25 +1106,39 @@
     (lower-type-cache-from-env-into
       env
       (LowerSomeTypeCache
-        (hashmap.string-i64-map-with-capacity (lower-type-cache-capacity count))
+        (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
         (array.make-array AstType count)
         0
         (LowerTypeParentGlobal)))))
 
-(define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
+(define (lower-type-cache-lookup-id
+  [cache : LowerTypeCache]
+  [name-id : i64]
+  [display-name : String]) : ResultTcType
   (match cache
     [(LowerNoTypeCache)
-      (ErrTcType (string.string-append "typecheck: unbound name " name))]
+      (ErrTcType (string.string-append "typecheck: unbound name " display-name))]
     [(LowerSomeTypeCache ids values _ parent)
-      (match (hashmap.string-i64-map-get ids name)
-        [(hashmap.StringI64MapFound index)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound index)
           (OkTcType (array.array-ref values index))]
-        [(hashmap.StringI64MapMissing)
+        [(hashmap.I64I64MapMissing)
           (match parent
             [(LowerTypeParentNone)
-              (ErrTcType (string.string-append "typecheck: unbound name " name))]
+              (ErrTcType
+                (string.string-append "typecheck: unbound name " display-name))]
             [(LowerTypeParentGlobal)
-              (lower-type-cache-lookup lower-decls-global-type-cache name)])])]))
+              (lower-type-cache-lookup-id
+                lower-decls-global-type-cache
+                name-id
+                display-name)])])]))
+
+(define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
+  (match (intern-lookup name)
+    [(InternLookupFound name-id)
+      (lower-type-cache-lookup-id cache name-id name)]
+    [(InternLookupMissing)
+      (ErrTcType (string.string-append "typecheck: unbound name " name))]))
 
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
@@ -52568,6 +52582,58 @@
         (lower-name-cache-resolve-source cache "unknown.value")
         "unknown.value"))))
 
+(define (compiler-lower-type-cache-i64-keys-ok?) : bool
+  (let
+    [module : String "type_cache_mod_3939"]
+    [name : String "TypeCacheThing3939"]
+    [name-id : i64 (intern name)]
+    [qualified-name : String (compiler-symbol-module-key module name)]
+    [qualified-id : i64 (tc-module-name-id module name-id)]
+    [fallback-name : String "TypeCacheFallback3939"]
+    [fallback-id : i64 (intern fallback-name)]
+    [fallback-primary : String
+      (compiler-symbol-module-key module fallback-name)]
+    [fallback-primary-missing-before : bool
+      (match (intern-lookup fallback-primary)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])]
+    [env : TcTypeEnv
+      (tc-bind-id
+        (tc-bind-id TcTypeNil qualified-id (AstTyI64))
+        fallback-id
+        (AstTyBool))]
+    [cache : LowerTypeCache (lower-type-cache-from-env env)]
+    [qualified-hygiene : String (tc-hygiene-global-context-name module name)]
+    [fallback-hygiene : String
+      (tc-hygiene-global-context-name module fallback-name)]
+    [missing : String "TypeCacheMissing3939"]
+    [missing-before : bool
+      (match (intern-lookup missing)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])]
+    (and
+      (string.string-eq (intern-str qualified-id) qualified-name)
+      fallback-primary-missing-before
+      missing-before
+      (match (lower-type-cache-lookup cache qualified-name)
+        [(OkTcType ty) (tc-type-eq ty (AstTyI64))]
+        [(ErrTcType _) false])
+      (match (lower-type-cache-lookup-hygiene cache qualified-hygiene)
+        [(OkTcType ty) (tc-type-eq ty (AstTyI64))]
+        [(ErrTcType _) false])
+      (match (lower-type-cache-lookup-hygiene cache fallback-hygiene)
+        [(OkTcType ty) (tc-type-eq ty (AstTyBool))]
+        [(ErrTcType _) false])
+      (match (lower-type-cache-lookup cache missing)
+        [(OkTcType _) false]
+        [(ErrTcType _) true])
+      (match (intern-lookup fallback-primary)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])
+      (match (intern-lookup missing)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true]))))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -52576,6 +52642,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-name-cache-intern-id-dotted-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-cache-i64-keys-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-specialize-ok?)

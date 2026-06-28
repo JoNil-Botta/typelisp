@@ -36751,36 +36751,40 @@
   (match (compiler-ctfe-eval expr env fuel)
     [(OkCtfe value next-fuel)
       (match value
-        [(CtfeString text) (OkGenKey (spec-string-key text) next-fuel)]
+        [(CtfeString text) (ResultGenKey.Ok (spec-string-key text) next-fuel)]
         [(CtfeI64 n)
-          (OkGenKey (str_cat.str-cat "i64:" (string.int->string n)) next-fuel)]
+          (ResultGenKey.Ok
+            (str_cat.str-cat "i64:" (string.int->string n))
+            next-fuel)]
         [_
-          (ErrGenKey
+          (ResultGenKey.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
-    [(ErrCtfe diag) (ErrGenKey diag)]))
+    [(ErrCtfe diag) (ResultGenKey.Err diag)]))
 
 (define (macro-identity-key-string-exprs
   [exprs : AstExprList]
   [env : CtfeEnv]
   [fuel : i64]) : ResultGenKey
   (match exprs
-    [(AstExprNil) (OkGenKey "" fuel)]
+    [(AstExprNil) (ResultGenKey.Ok "" fuel)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         (match (macro-identity-key-string-expr head-expr env fuel)
-          [(OkGenKey head-key head-fuel)
+          [(ResultGenKey.Ok head-key head-fuel)
             (match (macro-identity-key-string-exprs
               (box-get rest)
               env
               head-fuel)
-              [(OkGenKey tail tail-fuel)
-                (OkGenKey (macro-identity-key-join head-key tail) tail-fuel)]
-              [(ErrGenKey diag) (ErrGenKey diag)])]
-          [(ErrGenKey diag) (ErrGenKey diag)]))]))
+              [(ResultGenKey.Ok tail tail-fuel)
+                (ResultGenKey.Ok
+                  (macro-identity-key-join head-key tail)
+                  tail-fuel)]
+              [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+          [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))
 
 (define (macro-identity-key-sexpr [sexpr : SpannedSexpr]) : String
   (match sexpr
@@ -36810,10 +36814,10 @@
   [fuel : i64]) : ResultGenKey
   (match (macro-expr-to-spanned-sexpr expr origin)
     [(ResultMacroSexpr.Ok sexpr)
-      (OkGenKey
+      (ResultGenKey.Ok
         (str_cat.str-cat "syntax:" (macro-identity-key-sexpr sexpr))
         fuel)]
-    [(ResultMacroSexpr.Err diag) (ErrGenKey diag)]))
+    [(ResultMacroSexpr.Err diag) (ResultGenKey.Err diag)]))
 
 (define (macro-identity-syntax-param-type? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -36835,8 +36839,9 @@
   [call-expr : AstExpr]) : ResultGenKey
   (if (macro-identity-syntax-param-type? ctx ty)
     (match (macro-identity-key-string-expr expr env fuel)
-      [(OkGenKey key next-fuel) (OkGenKey key next-fuel)]
-      [(ErrGenKey _) (macro-identity-key-syntax-expr expr call-expr fuel)])
+      [(ResultGenKey.Ok key next-fuel) (ResultGenKey.Ok key next-fuel)]
+      [(ResultGenKey.Err _)
+        (macro-identity-key-syntax-expr expr call-expr fuel)])
     (macro-identity-key-string-expr expr env fuel)))
 
 (define (macro-identity-key-param-exprs
@@ -36847,7 +36852,7 @@
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
   (match exprs
-    [(AstExprNil) (OkGenKey "" fuel)]
+    [(AstExprNil) (ResultGenKey.Ok "" fuel)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -36858,7 +36863,7 @@
           env
           fuel
           call-expr)
-          [(OkGenKey head-key head-fuel)
+          [(ResultGenKey.Ok head-key head-fuel)
             (match (macro-identity-key-param-exprs
               ctx
               ty
@@ -36866,10 +36871,12 @@
               env
               head-fuel
               call-expr)
-              [(OkGenKey tail tail-fuel)
-                (OkGenKey (macro-identity-key-join head-key tail) tail-fuel)]
-              [(ErrGenKey diag) (ErrGenKey diag)])]
-          [(ErrGenKey diag) (ErrGenKey diag)]))]))
+              [(ResultGenKey.Ok tail tail-fuel)
+                (ResultGenKey.Ok
+                  (macro-identity-key-join head-key tail)
+                  tail-fuel)]
+              [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+          [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))
 
 (define (macro-identity-key-params
   [ctx : TcContext]
@@ -36883,9 +36890,9 @@
   (match params
     [(AstMacroParamNil)
       (match args
-        [(AstExprNil) (OkGenKey "" fuel)]
+        [(AstExprNil) (ResultGenKey.Ok "" fuel)]
         [(AstExprCons head _)
-          (ErrGenKey
+          (ResultGenKey.Err
             (box
               (ctfe-diagnostic-at-expr
                 (ast-node-get head)
@@ -36898,13 +36905,13 @@
             (if variadic
               (cond
                 [(tc-macro-type-param-kind? ty)
-                  (ErrGenKey
+                  (ResultGenKey.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         call-expr
                         "typecheck: type macro operand cannot be variadic")))]
                 [(tc-macro-module-param-kind? ty)
-                  (ErrGenKey
+                  (ResultGenKey.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         call-expr
@@ -36920,7 +36927,7 @@
                 [else (macro-identity-key-string-exprs args env fuel)])
               (match args
                 [(AstExprNil)
-                  (ErrGenKey
+                  (ResultGenKey.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         call-expr
@@ -36936,24 +36943,25 @@
                         fallback-module
                         head-expr)
                         [(ResultMacroTypeArg.Ok resolved-ty)
-                          (OkGenKey
+                          (ResultGenKey.Ok
                             (str_cat.str-cat
                               "type_"
                               (ctfe-type-key resolved-ty))
                             fuel)]
-                        [(ResultMacroTypeArg.Err diag) (ErrGenKey diag)])
+                        [(ResultMacroTypeArg.Err diag) (ResultGenKey.Err diag)])
                       (if (tc-macro-module-param-kind? ty)
                         (match (macro-module-strategy-arg-with-fallback
                           ctx
                           fallback-module
                           head-expr)
                           [(ResultMacroModuleArg.Ok module)
-                            (OkGenKey
+                            (ResultGenKey.Ok
                               (str_cat.str-cat
                                 "module_"
                                 (spec-string-key module))
                               fuel)]
-                          [(ResultMacroModuleArg.Err diag) (ErrGenKey diag)])
+                          [(ResultMacroModuleArg.Err diag)
+                            (ResultGenKey.Err diag)])
                         (macro-identity-key-param-expr
                           ctx
                           ty
@@ -36961,7 +36969,7 @@
                           env
                           fuel
                           call-expr)))
-                      [(OkGenKey head-key head-fuel)
+                      [(ResultGenKey.Ok head-key head-fuel)
                         (match (macro-identity-key-params
                           ctx
                           decls
@@ -36971,12 +36979,12 @@
                           env
                           head-fuel
                           call-expr)
-                          [(OkGenKey tail tail-fuel)
-                            (OkGenKey
+                          [(ResultGenKey.Ok tail tail-fuel)
+                            (ResultGenKey.Ok
                               (macro-identity-key-join head-key tail)
                               tail-fuel)]
-                          [(ErrGenKey diag) (ErrGenKey diag)])]
-                      [(ErrGenKey diag) (ErrGenKey diag)]))]))]))]))
+                          [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
+                      [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))]))]))]))
 
 (define (macro-module-identity
   [ctx : TcContext]
@@ -36997,11 +37005,11 @@
     env
     (ctfe-fuel-limit)
     call-expr)
-    [(OkGenKey arg-key fuel)
-      (OkGenKey
+    [(ResultGenKey.Ok arg-key fuel)
+      (ResultGenKey.Ok
         (str_cat.str-cat definition-module ":" macro-name "(" arg-key ")")
         fuel)]
-    [(ErrGenKey diag) (ErrGenKey diag)]))
+    [(ResultGenKey.Err diag) (ResultGenKey.Err diag)]))
 
 (define (macro-decls-generated-key [identity : String]) : String
   (string.string-append "decls:" identity))
@@ -37038,11 +37046,11 @@
         decl)]
     [_
       (match (gen-decl-visible-name decl)
-        [(SpecSomeString item)
+        [(SpecMaybeString.Some item)
           (ast-decl-comptime-decl-with-meta
             (macro-generated-meta generator item key)
             decl)]
-        [(SpecNoString) decl])]))
+        [(SpecMaybeString.None) decl])]))
 
 (define (macro-wrap-generated-decls
   [decls : AstDeclList]
@@ -37060,11 +37068,11 @@
   [generator : String]
   [key : String]) : AstDecl
   (match (gen-decl-visible-name decl)
-    [(SpecSomeString item)
+    [(SpecMaybeString.Some item)
       (ast-decl-comptime-decl-with-meta
         (macro-generated-meta generator item key)
         decl)]
-    [(SpecNoString) decl]))
+    [(SpecMaybeString.None) decl]))
 
 (define (macro-wrap-generated-decls-decls
   [decls : AstDeclList]
@@ -44610,11 +44618,11 @@
                             expanded-args
                             (tc-ctfe-env call-ctx)
                             call-expr)
-                            [(OkGenKey identity _)
+                            [(ResultGenKey.Ok identity _)
                               (macro-find-generated-identity-module
                                 orig-decls
                                 identity)]
-                            [(ErrGenKey _) CompilerNoString])]
+                            [(ResultGenKey.Err _) CompilerNoString])]
                         [(ResultMacroExprList.Err _) CompilerNoString])
                       CompilerNoString)]
                   [(MacroMaybeDecl.No) CompilerNoString]))]
@@ -45005,7 +45013,7 @@
                             expanded-args
                             (tc-ctfe-env call-ctx)
                             call-expr)
-                            [(OkGenKey identity _)
+                            [(ResultGenKey.Ok identity _)
                               (if (macro-vector-family-decls-macro?
                                 macro-name
                                 definition-module)
@@ -45099,7 +45107,7 @@
                                           (ResultMacroDeclExpansion.Err diag)]))]
                                   [(ResultMacroValueEnv.Err diag)
                                     (ResultMacroDeclExpansion.Err diag)]))]
-                            [(ErrGenKey diag)
+                            [(ResultGenKey.Err diag)
                               (ResultMacroDeclExpansion.Err diag)])]
                         [(ResultMacroExprList.Err diag)
                           (ResultMacroDeclExpansion.Err diag)])
@@ -45178,7 +45186,7 @@
                             expanded-args
                             (tc-ctfe-env call-ctx)
                             call-expr)
-                            [(OkGenKey identity _)
+                            [(ResultGenKey.Ok identity _)
                               (match (macro-eval-transformer-expanded-with-env
                                 call-ctx
                                 orig-decls
@@ -45220,7 +45228,7 @@
                                         (ResultMacroDeclExpansion.Err diag)]))]
                                 [(ResultMacroValueEnv.Err diag)
                                   (ResultMacroDeclExpansion.Err diag)])]
-                            [(ErrGenKey diag)
+                            [(ResultGenKey.Err diag)
                               (ResultMacroDeclExpansion.Err diag)])]
                         [(ResultMacroExprList.Err diag)
                           (ResultMacroDeclExpansion.Err diag)])
@@ -47788,9 +47796,11 @@
                       materialized-paths
                       (tc-decl-path-list-last materialized-paths "")
                       pools)
-                    (OkGenProgramWithPaths materialized materialized-paths))]
+                    (ResultGenProgramWithPaths.Ok
+                      materialized
+                      materialized-paths))]
                 (match normalized-result
-                  [(OkGenProgramWithPaths normalized normalized-paths)
+                  [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
                     (match normalized
                       [(AstProgram decls-box)
                         (let
@@ -47839,7 +47849,8 @@
                                 cfgs
                                 (- fuel 1)))
                             (ResultMacroExpand.Ok normalized normalized-paths)))])]
-                  [(ErrGenProgramWithPaths diag) (ResultMacroExpand.Err diag)]))]
+                  [(ResultGenProgramWithPaths.Err diag)
+                    (ResultMacroExpand.Err diag)]))]
             [(ResultMacroMaterializeImport.Err diag)
               (ResultMacroExpand.Err diag)])]
         [(ResultMacroExpandPass.Err diag) (ResultMacroExpand.Err diag)]))))

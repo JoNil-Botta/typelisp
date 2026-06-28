@@ -669,6 +669,13 @@
     [(IrInstrXgetbv dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrSyscall dst _) (compiler-reg-var-type-insert types dst (AstTyI64))]
     [(IrInstrCall dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) types]
+            [(IrSpmdCallResultValue dst _ ty)
+              (compiler-reg-var-type-insert types dst ty)])])]
     [(IrInstrPhi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrPack dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrWord dst _ _ ty) (compiler-reg-var-type-insert types dst ty)]
@@ -727,6 +734,13 @@
       (compiler-reg-var-type-array-set! present types dst (AstTyBool))]
     [(IrInstrCall dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) unit]
+            [(IrSpmdCallResultValue dst _ ty)
+              (compiler-reg-var-type-array-set! present types dst ty)])])]
     [(IrInstrPhi dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(IrInstrPack dst _ ty)
@@ -2504,6 +2518,12 @@
                     (compiler-live-set-union
                       out
                       (compiler-live-after liveness label instr-index))])]
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-after liveness label instr-index))])]
               [(IrInstrTailCall _ _ _)
                 (compiler-live-set-union
                   out
@@ -2576,6 +2596,14 @@
                           (compiler-live-call-args-vars args)
                           base)
                         func))])]
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-value-vars-into
+                        (compiler-live-spmd-call-args-vars args)
+                        active-mask))])]
               [(IrInstrTailCall _ args _)
                 (compiler-live-set-union
                   out
@@ -3535,6 +3563,12 @@
     [(IrInstrCall dst _ _ _) dst]
     [(IrInstrCallIndirect dst _ _ _) dst]
     [(IrInstrCallIndirectC dst _ _ _) dst]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (match result
+            [(IrSpmdCallResultUnit) (- 0 1)]
+            [(IrSpmdCallResultValue dst _ _) dst])])]
     [(IrInstrPhi dst _ _) dst]
     [(IrInstrPack dst _ _) dst]
     [(IrInstrWord dst _ _ _) dst]
@@ -4584,6 +4618,10 @@
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _)
                     (compiler-live-set-insert out p)])]
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                    (compiler-live-set-insert out p)])]
               [(IrInstrTailCall _ _ _) (compiler-live-set-insert out p)]
               [(IrInstrTailCallIndirect _ _ _) (compiler-live-set-insert out p)]
               [_ out]))
@@ -4639,6 +4677,9 @@
     [(IrInstrCallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
     [(IrInstrTailCall _ _ _) true]
     [(IrInstrTailCallIndirect _ _ _) true]
     [(IrInstrSyscall _ _) true]
@@ -4982,6 +5023,10 @@
             out
             (match (array.array-ref slots index)
               [(IrInstrCall _ _ _ _) (compiler-live-set-insert out p)]
+              [(IrInstrSpmdCall payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                    (compiler-live-set-insert out p)])]
               [_ out]))
           (set! p (+ p 2))
           (set! index (+ index 1))))
@@ -9833,6 +9878,22 @@
               (array.array-ref items i))
             (set! i (+ i 1)))))]))
 
+(define (compiler-reg-color-invalidate-spmd-call-args!
+  [roots : (Array i64)]
+  [invalid : (Array bool)]
+  [args : CompilerIrSpmdCallArgList]) : unit
+  (match args
+    [(IrSpmdCallArgNil) unit]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid value)
+            (compiler-reg-color-invalidate-spmd-call-args!
+              roots
+              invalid
+              (box-get rest)))])]))
+
 (define (compiler-reg-color-invalidate-phi!
   [roots : (Array i64)]
   [invalid : (Array bool)]
@@ -9999,6 +10060,12 @@
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid callee)
             (compiler-reg-color-invalidate-call-args! roots invalid args))])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid active-mask)
+            (compiler-reg-color-invalidate-spmd-call-args! roots invalid args))])]
     [(IrInstrTailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(IrInstrStore _ value _)
@@ -10615,6 +10682,31 @@
               (set! i (+ i 1))))
           (IrCallArgsArray out)))]))
 
+(define (compiler-reg-remap-spmd-call-arg
+  [remap : (Array i64)]
+  [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
+  (match arg
+    [(IrSpmdCallArg class value ty)
+      (IrSpmdCallArg class (compiler-reg-remap-value remap value) ty)]))
+
+(define (compiler-reg-remap-spmd-call-args
+  [remap : (Array i64)]
+  [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
+  (match args
+    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
+    [(IrSpmdCallArgCons arg rest)
+      (IrSpmdCallArgCons
+        (compiler-reg-remap-spmd-call-arg remap arg)
+        (box (compiler-reg-remap-spmd-call-args remap (box-get rest))))]))
+
+(define (compiler-reg-remap-spmd-call-result
+  [remap : (Array i64)]
+  [result : CompilerIrSpmdCallResult]) : CompilerIrSpmdCallResult
+  (match result
+    [(IrSpmdCallResultUnit) IrSpmdCallResultUnit]
+    [(IrSpmdCallResultValue dst class ty)
+      (IrSpmdCallResultValue (compiler-reg-remap-id remap dst) class ty)]))
+
 (define (compiler-reg-remap-phi-inputs
   [remap : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
@@ -10861,6 +10953,22 @@
             (compiler-reg-remap-value remap callee)
             (compiler-reg-remap-call-args remap args)
             slots)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload
+            callee
+            backend
+            lanes
+            active-mask
+            args
+            result)
+          (ir-instr-spmd-call
+            callee
+            backend
+            lanes
+            (compiler-reg-remap-value remap active-mask)
+            (compiler-reg-remap-spmd-call-args remap args)
+            (compiler-reg-remap-spmd-call-result remap result))])]
     [(IrInstrTailCall name args ty)
       (IrInstrTailCall name (compiler-reg-remap-call-args remap args) ty)]
     [(IrInstrTailCallIndirect callee args ty)
@@ -11165,6 +11273,60 @@
                         (compiler-ir-instr-cons
                           (IrInstrMov var (IrValueVar segment) ty)
                           acc))))))])]
+        [(IrInstrSpmdCall payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+              (match (compiler-reg-caller-save-active-at
+                intervals
+                type-info
+                splits
+                current
+                point)
+                [(CompilerRegNoCallSaveActive)
+                  (compiler-reg-caller-save-rewrite-instrs-rev
+                    (box-get rest)
+                    (+ point 2)
+                    vars
+                    next-var
+                    type-info
+                    intervals
+                    splits
+                    current
+                    remap
+                    extra-assignments
+                    extra-types
+                    (compiler-ir-instr-cons instr acc))]
+                [(CompilerRegSomeCallSaveActive var segment ty)
+                  (let
+                    [after-var : i64 next-var]
+                    [next-extra-assignments : CompilerRegAssignmentList
+                      (compiler-reg-caller-save-segment-assignment
+                        after-var
+                        extra-assignments)]
+                    [next-extra-types : CompilerRegVarTypeList
+                      (compiler-reg-var-type-insert extra-types after-var ty)]
+                    (begin
+                      (array.array-set! current var after-var)
+                      (array.array-set! remap var after-var)
+                      (compiler-reg-caller-save-rewrite-instrs-rev
+                        (box-get rest)
+                        (+ point 2)
+                        vars
+                        (+ next-var 1)
+                        type-info
+                        intervals
+                        splits
+                        current
+                        remap
+                        next-extra-assignments
+                        next-extra-types
+                        (compiler-ir-instr-cons
+                          (IrInstrMov after-var (IrValueVar var) ty)
+                          (compiler-ir-instr-cons
+                            instr
+                            (compiler-ir-instr-cons
+                              (IrInstrMov var (IrValueVar segment) ty)
+                              acc))))))])])]
         [_
           (let
             [split-def : i64

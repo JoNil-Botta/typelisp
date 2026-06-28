@@ -3973,7 +3973,7 @@
           ctx
           decls
           able
-          (CloneNameCons helper-name (box roots))
+          (CloneNameList.Cons helper-name (box roots))
           helper-name))
       roots)))
 
@@ -5229,7 +5229,7 @@
             (tc-context-pools ctx)
             decls
             (clone-all-type-names decls (clone-name-set-empty)))
-          (CloneNameNil)
+          (CloneNameList.Nil)
           names
           name-cache
           ""))]))
@@ -5240,9 +5240,9 @@
 ;; scratch arena the original list was discovered in.
 (define (lower-clone-name-list-escape [names : CloneNameList]) : CloneNameList
   (match names
-    [(CloneNameNil) (CloneNameNil)]
-    [(CloneNameCons name rest)
-      (CloneNameCons
+    [(CloneNameList.Nil) (CloneNameList.Nil)]
+    [(CloneNameList.Cons name rest)
+      (CloneNameList.Cons
         (intern-str (intern name))
         (box (lower-clone-name-list-escape (box-get rest))))]))
 
@@ -7600,8 +7600,8 @@
   [roots : CloneNameList]
   [state : LowerReachState]) : LowerReachState
   (match roots
-    [(CloneNameNil) state]
-    [(CloneNameCons name rest)
+    [(CloneNameList.Nil) state]
+    [(CloneNameList.Cons name rest)
       (lower-reach-add-clone-root-helpers
         all-functions
         names
@@ -7897,7 +7897,7 @@
     program
     paths
     names
-    (CloneNameNil)))
+    (CloneNameList.Nil)))
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
@@ -41143,7 +41143,7 @@
   [program : AstProgram]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-specialize-program program)
-    [(OkSpecProgram specialized)
+    [(ResultSpecProgram.Ok specialized)
       (match (typecheck-compiler-specialized-program-with-paths-checked
         specialized
         AstDeclPathNil)
@@ -41167,7 +41167,7 @@
               alias-names
               mode))]
         [(ErrCompilerTypecheckChecked diag) (ErrCompilerLower diag)])]
-    [(ErrSpecProgram diag) (ErrCompilerLower diag)]))
+    [(ResultSpecProgram.Err diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-unlocated-mode
   [program : AstProgram]
@@ -41177,12 +41177,12 @@
     ;; Generate declaration families before macro expansion (see
     ;; typecheck-compiler-program-with-paths for why).
     (match (gen-normalize-program program)
-      [(OkGenProgram generated)
+      [(ResultGenProgram.Ok generated)
         (match (macro-expand-program generated)
           [(ResultMacroExpand.Ok expanded _)
             (lower-compiler-expanded-program-unlocated-mode expanded mode)]
           [(ResultMacroExpand.Err diag) (ErrCompilerLower diag)])]
-      [(ErrGenProgram diag) (ErrCompilerLower diag)])))
+      [(ResultGenProgram.Err diag) (ErrCompilerLower diag)])))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
   (lower-compiler-program-unlocated-mode program (CompilerLowerScalar)))
@@ -41226,8 +41226,8 @@
               (lower-name-env-from-decls decls paths entry-path LowerNameNil))])]
       (match (if needs-specialization
         (compiler-specialize-program-with-pools program pools)
-        (OkSpecProgram program))
-        [(OkSpecProgram specialized)
+        (ResultSpecProgram.Ok program))
+        [(ResultSpecProgram.Ok specialized)
           (begin
             (ast-node-pool-context-install! pools)
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
@@ -41250,7 +41250,7 @@
                 specialized
                 specialized-paths
                 prune-names
-                (CloneNameNil))
+                (CloneNameList.Nil))
                 [(LowerPrunedProgram base-program base-paths)
                   (begin
                     (cfg
@@ -41388,7 +41388,7 @@
                               compile-profile
                               (compiler-lower-profile-finish "clone_roots"))
                             (ErrCompilerLower diag))])))])))]
-        [(ErrSpecProgram diag)
+        [(ResultSpecProgram.Err diag)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))
             (ErrCompilerLower
@@ -41518,7 +41518,7 @@
       paths
       entry-path
       pools)
-      [(OkGenProgramWithPaths generated generated-paths)
+      [(ResultGenProgramWithPaths.Ok generated generated-paths)
         (begin
           (ast-node-pool-context-install! pools)
           (match (macro-expand-program-with-paths-and-pools-roots-cfg
@@ -41551,7 +41551,7 @@
                   (compiler-lower-profile-finish "macro_expand"))
                 (ErrCompilerLower
                   (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))]
-      [(ErrGenProgramWithPaths diag)
+      [(ResultGenProgramWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "macro_expand"))
           (ErrCompilerLower

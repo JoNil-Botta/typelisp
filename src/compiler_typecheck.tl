@@ -67,7 +67,7 @@
                 pools
                 stdlib-roots
                 (typecheck-compiler-source-language-cfgs))
-                [(OkMacroExpand expanded expanded-paths)
+                [(ResultMacroExpand.Ok expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (if (compiler-specialize-needed? expanded)
@@ -122,7 +122,7 @@
                         stdlib-roots
                         cache-scope
                         pools)))]
-                [(ErrMacroExpand diag) (ErrCompilerTypecheck diag)])]
+                [(ResultMacroExpand.Err diag) (ErrCompilerTypecheck diag)])]
             [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-cache
@@ -168,7 +168,7 @@
                 pools
                 stdlib-roots
                 (typecheck-compiler-source-language-cfgs))
-                [(OkMacroExpand expanded expanded-paths)
+                [(ResultMacroExpand.Ok expanded expanded-paths)
                   (begin
                     (ast-node-pool-context-capture-active! pools)
                     (if (compiler-specialize-needed? expanded)
@@ -223,7 +223,8 @@
                         stdlib-roots
                         cache-scope
                         pools)))]
-                [(ErrMacroExpand diag) (ErrCompilerTypecheckChecked diag)])]
+                [(ResultMacroExpand.Err diag)
+                  (ErrCompilerTypecheckChecked diag)])]
             [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-checked-cache

@@ -36085,139 +36085,139 @@
 ;; net. Call-site arity and operand signature checks run before the transformer
 ;; so obvious operand type errors are reported at the macro call site.
 (defenum MacroMaybeDecl
-  (MacroNoDecl)
-  (MacroSomeDecl String String AstMacroParamList AstType AstExpr))
+  (No)
+  (Some String String AstMacroParamList AstType AstExpr))
 
 (defenum ResultMacroCallDecl
-  (OkMacroCallDecl MacroMaybeDecl)
-  (ErrMacroCallDecl (Box CompilerDiagnostic)))
+  (Ok MacroMaybeDecl)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroCallDeclModule
-  (OkMacroCallDeclModule MacroMaybeDecl String)
-  (ErrMacroCallDeclModule (Box CompilerDiagnostic)))
+  (Ok MacroMaybeDecl String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpr
-  (OkMacroExpr i64)
-  (ErrMacroExpr (Box CompilerDiagnostic)))
+  (Ok i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroCompatCall
-  (OkMacroCompatCall i64)
-  (NoMacroCompatCall)
-  (ErrMacroCompatCall (Box CompilerDiagnostic)))
+  (Ok i64)
+  (No)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExprList
-  (OkMacroExprList AstExprList)
-  (ErrMacroExprList (Box CompilerDiagnostic)))
+  (Ok AstExprList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroArms
-  (OkMacroArms AstMatchArmList)
-  (ErrMacroArms (Box CompilerDiagnostic)))
+  (Ok AstMatchArmList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroLetBindings
-  (OkMacroLetBindings AstLetBindingList TcTypeEnv)
-  (ErrMacroLetBindings (Box CompilerDiagnostic)))
+  (Ok AstLetBindingList TcTypeEnv)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroEnv
-  (OkMacroEnv CtfeEnv)
-  (ErrMacroEnv (Box CompilerDiagnostic)))
+  (Ok CtfeEnv)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroCheck
-  (OkMacroCheck)
-  (ErrMacroCheck (Box CompilerDiagnostic)))
+  (Ok)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroModuleArg
-  (OkMacroModuleArg String)
-  (ErrMacroModuleArg (Box CompilerDiagnostic)))
+  (Ok String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroClause
-  (OkMacroClause AstExprClause)
-  (ErrMacroClause (Box CompilerDiagnostic)))
+  (Ok AstExprClause)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroClauseList
-  (OkMacroClauseList AstExprClauseList)
-  (ErrMacroClauseList (Box CompilerDiagnostic)))
+  (Ok AstExprClauseList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroBindingClause
-  (OkMacroBindingClause AstExprBindingClause)
-  (ErrMacroBindingClause (Box CompilerDiagnostic)))
+  (Ok AstExprBindingClause)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroBindingClauseList
-  (OkMacroBindingClauseList AstExprBindingClauseList)
-  (ErrMacroBindingClauseList (Box CompilerDiagnostic)))
+  (Ok AstExprBindingClauseList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDecl
-  (OkMacroDecl AstDecl)
-  (ErrMacroDecl (Box CompilerDiagnostic)))
+  (Ok AstDecl)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDecls
-  (OkMacroDecls AstDeclList)
-  (ErrMacroDecls (Box CompilerDiagnostic)))
+  (Ok AstDeclList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDeclExpansion
-  (OkMacroDeclExpansion AstDeclList AstDeclPathList)
-  (ErrMacroDeclExpansion (Box CompilerDiagnostic)))
+  (Ok AstDeclList AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroDeclsWithPaths
-  (OkMacroDeclsWithPaths AstDeclList AstDeclPathList bool)
-  (ErrMacroDeclsWithPaths (Box CompilerDiagnostic)))
+  (Ok AstDeclList AstDeclPathList bool)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpand
-  (OkMacroExpand AstProgram AstDeclPathList)
-  (ErrMacroExpand (Box CompilerDiagnostic)))
+  (Ok AstProgram AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpandPass
-  (OkMacroExpandPass AstProgram AstDeclPathList bool)
-  (ErrMacroExpandPass (Box CompilerDiagnostic)))
+  (Ok AstProgram AstDeclPathList bool)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroValue
-  (OkMacroValue CompilerCtfeValue)
-  (ErrMacroValue (Box CompilerDiagnostic)))
+  (Ok CompilerCtfeValue)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroValueEnv
-  (OkMacroValueEnv CompilerCtfeValue CtfeEnv)
-  (ErrMacroValueEnv (Box CompilerDiagnostic)))
+  (Ok CompilerCtfeValue CtfeEnv)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroTypeArg
-  (OkMacroTypeArg AstType)
-  (ErrMacroTypeArg (Box CompilerDiagnostic)))
+  (Ok AstType)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroSexpr
-  (OkMacroSexpr SpannedSexpr)
-  (ErrMacroSexpr (Box CompilerDiagnostic)))
+  (Ok SpannedSexpr)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroParsedDecls
-  (OkMacroParsedDecls AstDeclList)
-  (ErrMacroParsedDecls (Box CompilerDiagnostic)))
+  (Ok AstDeclList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum MacroMaybeModuleName
-  (MacroNoModuleName)
-  (MacroSomeModuleName String))
+  (No)
+  (Some String))
 
 (defenum MacroMaybeDeclList
-  (MacroNoDeclList)
-  (MacroSomeDeclList AstDeclList))
+  (No)
+  (Some AstDeclList))
 
 (defenum MacroHygieneEnv
-  (MacroHygieneNil)
-  (MacroHygieneBind String String (Box MacroHygieneEnv)))
+  (Nil)
+  (Bind String String (Box MacroHygieneEnv)))
 
 (defenum MacroHygieneName
-  (MacroHygieneName String MacroHygieneEnv))
+  (Name String MacroHygieneEnv))
 
 (defenum MacroHygieneParams
-  (MacroHygieneParams AstParamList MacroHygieneEnv))
+  (Params AstParamList MacroHygieneEnv))
 
 (defenum MacroHygieneLetBindings
-  (MacroHygieneLetBindings AstLetBindingList MacroHygieneEnv))
+  (LetBindings AstLetBindingList MacroHygieneEnv))
 
 (defenum MacroHygieneResourceBindings
-  (MacroHygieneResourceBindings AstResourceBindingList MacroHygieneEnv))
+  (ResourceBindings AstResourceBindingList MacroHygieneEnv))
 
 (defenum MacroHygienePattern
-  (MacroHygienePattern AstPattern MacroHygieneEnv))
+  (Pattern AstPattern MacroHygieneEnv))
 
 (defenum MacroHygienePatternList
-  (MacroHygienePatternList AstPatternList MacroHygieneEnv))
+  (PatternList AstPatternList MacroHygieneEnv))
 
 (define macro-expand-active-module : String
   "")
@@ -36422,11 +36422,11 @@
   [origin : AstExpr]
   [fuel : i64]) : ResultGenKey
   (match (macro-expr-to-spanned-sexpr expr origin)
-    [(OkMacroSexpr sexpr)
+    [(ResultMacroSexpr.Ok sexpr)
       (OkGenKey
         (str_cat.str-cat "syntax:" (macro-identity-key-sexpr sexpr))
         fuel)]
-    [(ErrMacroSexpr diag) (ErrGenKey diag)]))
+    [(ResultMacroSexpr.Err diag) (ErrGenKey diag)]))
 
 (define (macro-identity-syntax-param-type? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -36548,25 +36548,25 @@
                         decls
                         fallback-module
                         head-expr)
-                        [(OkMacroTypeArg resolved-ty)
+                        [(ResultMacroTypeArg.Ok resolved-ty)
                           (OkGenKey
                             (str_cat.str-cat
                               "type_"
                               (ctfe-type-key resolved-ty))
                             fuel)]
-                        [(ErrMacroTypeArg diag) (ErrGenKey diag)])
+                        [(ResultMacroTypeArg.Err diag) (ErrGenKey diag)])
                       (if (tc-macro-module-param-kind? ty)
                         (match (macro-module-strategy-arg-with-fallback
                           ctx
                           fallback-module
                           head-expr)
-                          [(OkMacroModuleArg module)
+                          [(ResultMacroModuleArg.Ok module)
                             (OkGenKey
                               (str_cat.str-cat
                                 "module_"
                                 (spec-string-key module))
                               fuel)]
-                          [(ErrMacroModuleArg diag) (ErrGenKey diag)])
+                          [(ResultMacroModuleArg.Err diag) (ErrGenKey diag)])
                         (macro-identity-key-param-expr
                           ctx
                           ty
@@ -36819,13 +36819,13 @@
           [_ false]))]))
 
 (defenum MacroGeneratedFingerprintCacheLookup
-  (MacroGeneratedFingerprintCacheMiss)
-  (MacroGeneratedFingerprintCacheTooLarge)
-  (MacroGeneratedFingerprintCacheHit String))
+  (Miss)
+  (TooLarge)
+  (Hit String))
 
 (defenum MacroGeneratedFingerprintKey
-  (MacroGeneratedFingerprintKey String i64)
-  (MacroGeneratedFingerprintTooLarge))
+  (Key String i64)
+  (TooLarge))
 
 (define macro-generated-fingerprint-cache-capacity : i64
   4096)
@@ -36885,7 +36885,7 @@
         [identity-key : i64 (+ identity-id 1)]
         [steps : i64 0]
         [out : MacroGeneratedFingerprintCacheLookup
-          (MacroGeneratedFingerprintCacheMiss)]
+          (MacroGeneratedFingerprintCacheLookup.Miss)]
         [done : bool false]
         (begin
           (while (if done
@@ -36916,8 +36916,8 @@
                         (if (string.string-eq
                           value
                           macro-generated-fingerprint-cache-too-large-value)
-                          (MacroGeneratedFingerprintCacheTooLarge)
-                          (MacroGeneratedFingerprintCacheHit value))))
+                          (MacroGeneratedFingerprintCacheLookup.TooLarge)
+                          (MacroGeneratedFingerprintCacheLookup.Hit value))))
                     (set! done true))
                   (begin
                     (set!
@@ -37369,57 +37369,57 @@
 
 (define (macro-generated-fingerprint-sexpr [sexpr : SpannedSexpr] [fuel : i64]) : MacroGeneratedFingerprintKey
   (if (<= fuel 0)
-    (MacroGeneratedFingerprintTooLarge)
+    (MacroGeneratedFingerprintKey.TooLarge)
     (match sexpr
       [(SpannedSexpr.Int _ text _)
-        (MacroGeneratedFingerprintKey
+        (MacroGeneratedFingerprintKey.Key
           (str_cat.str-cat "int:" (spec-string-key text))
           (- fuel 1))]
       [(SpannedSexpr.Sym name _)
-        (MacroGeneratedFingerprintKey
+        (MacroGeneratedFingerprintKey.Key
           (str_cat.str-cat "sym:" (spec-string-key name))
           (- fuel 1))]
-      [(SpannedSexpr.Nil _) (MacroGeneratedFingerprintKey "nil" (- fuel 1))]
+      [(SpannedSexpr.Nil _) (MacroGeneratedFingerprintKey.Key "nil" (- fuel 1))]
       [(SpannedSexpr.Cons head tail _)
         (match (macro-generated-fingerprint-sexpr (sp-node-get head) (- fuel 1))
-          [(MacroGeneratedFingerprintKey head-key head-fuel)
+          [(MacroGeneratedFingerprintKey.Key head-key head-fuel)
             (match (macro-generated-fingerprint-sexpr
               (sp-node-get tail)
               head-fuel)
-              [(MacroGeneratedFingerprintKey tail-key tail-fuel)
-                (MacroGeneratedFingerprintKey
+              [(MacroGeneratedFingerprintKey.Key tail-key tail-fuel)
+                (MacroGeneratedFingerprintKey.Key
                   (str_cat.str-cat
                     "cons:"
                     (spec-string-key head-key)
                     ":"
                     (spec-string-key tail-key))
                   tail-fuel)]
-              [(MacroGeneratedFingerprintTooLarge)
-                (MacroGeneratedFingerprintTooLarge)])]
-          [(MacroGeneratedFingerprintTooLarge)
-            (MacroGeneratedFingerprintTooLarge)])]
+              [(MacroGeneratedFingerprintKey.TooLarge)
+                (MacroGeneratedFingerprintKey.TooLarge)])]
+          [(MacroGeneratedFingerprintKey.TooLarge)
+            (MacroGeneratedFingerprintKey.TooLarge)])]
       [(SpannedSexpr.Str text _)
-        (MacroGeneratedFingerprintKey
+        (MacroGeneratedFingerprintKey.Key
           (str_cat.str-cat "str:" (spec-string-key text))
           (- fuel 1))]
       [(SpannedSexpr.Char c _)
-        (MacroGeneratedFingerprintKey
+        (MacroGeneratedFingerprintKey.Key
           (str_cat.str-cat "char:" (string.int->string (cast c : i64)))
           (- fuel 1))]
       [(SpannedSexpr.Float text _)
-        (MacroGeneratedFingerprintKey
+        (MacroGeneratedFingerprintKey.Key
           (str_cat.str-cat "float:" (spec-string-key text))
           (- fuel 1))]
       [(SpannedSexpr.BracketList items _)
         (match (macro-generated-fingerprint-sexpr
           (sp-node-get items)
           (- fuel 1))
-          [(MacroGeneratedFingerprintKey items-key items-fuel)
-            (MacroGeneratedFingerprintKey
+          [(MacroGeneratedFingerprintKey.Key items-key items-fuel)
+            (MacroGeneratedFingerprintKey.Key
               (str_cat.str-cat "bracket:" (spec-string-key items-key))
               items-fuel)]
-          [(MacroGeneratedFingerprintTooLarge)
-            (MacroGeneratedFingerprintTooLarge)])])))
+          [(MacroGeneratedFingerprintKey.TooLarge)
+            (MacroGeneratedFingerprintKey.TooLarge)])])))
 
 (define (macro-generated-fingerprint-expr [expr : AstExpr]) : TcMaybeString
   (if (<
@@ -37431,19 +37431,19 @@
     (let
       [mark : i64 (sp-node-pool-len)]
       (match (macro-expr-to-spanned-sexpr expr expr)
-        [(OkMacroSexpr sexpr)
+        [(ResultMacroSexpr.Ok sexpr)
           (match (macro-generated-fingerprint-sexpr
             sexpr
             macro-generated-fingerprint-sexpr-fuel)
-            [(MacroGeneratedFingerprintKey key _)
+            [(MacroGeneratedFingerprintKey.Key key _)
               (begin
                 (sp-node-pool-truncate! mark)
                 (TcSomeString key))]
-            [(MacroGeneratedFingerprintTooLarge)
+            [(MacroGeneratedFingerprintKey.TooLarge)
               (begin
                 (sp-node-pool-truncate! mark)
                 (TcNoString))])]
-        [(ErrMacroSexpr _)
+        [(ResultMacroSexpr.Err _)
           (begin
             (sp-node-pool-truncate! mark)
             (TcNoString))]))))
@@ -37588,7 +37588,7 @@
         (macro-paths-for-decls body decl-path)
         target-module
         false)
-        [(OkMacroDeclsWithPaths expanded _ needs-followup?)
+        [(ResultMacroDeclsWithPaths.Ok expanded _ needs-followup?)
           (if needs-followup?
             (macro-generated-key-body-for-compare
               ctx
@@ -37600,7 +37600,7 @@
               expanded
               (- fuel 1))
             (macro-decls-filter-generated-key expanded identity))]
-        [(ErrMacroDeclsWithPaths _)
+        [(ResultMacroDeclsWithPaths.Err _)
           (macro-decls-filter-generated-key body identity)]))))
 
 (define (macro-generated-key-body-normalized-fingerprint
@@ -37631,19 +37631,19 @@
   [identity : String]
   [body : AstDeclList]) : TcMaybeString
   (match (macro-generated-fingerprint-cache-get target-module identity)
-    [(MacroGeneratedFingerprintCacheHit fingerprint)
+    [(MacroGeneratedFingerprintCacheLookup.Hit fingerprint)
       (begin
         (cfg
           compile-profile
           (compiler-tc-macro-profile-note-generated-fingerprint-cache-hit))
         (TcSomeString fingerprint))]
-    [(MacroGeneratedFingerprintCacheTooLarge)
+    [(MacroGeneratedFingerprintCacheLookup.TooLarge)
       (begin
         (cfg
           compile-profile
           (compiler-tc-macro-profile-note-generated-fingerprint-cache-hit))
         (TcNoString))]
-    [(MacroGeneratedFingerprintCacheMiss)
+    [(MacroGeneratedFingerprintCacheLookup.Miss)
       (begin
         (cfg
           compile-profile
@@ -37803,8 +37803,9 @@
   [decls : AstDeclList]
   [target-module : String]) : MacroMaybeDeclList
   (if (macro-module-exists? decls target-module)
-    (MacroSomeDeclList (macro-collect-module-body-decls decls target-module ""))
-    (MacroNoDeclList)))
+    (MacroMaybeDeclList.Some
+      (macro-collect-module-body-decls decls target-module ""))
+    (MacroMaybeDeclList.No)))
 
 (define (macro-expr-list-with-head-symbol
   [name : String]
@@ -37812,9 +37813,10 @@
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-expr-list-to-spanned-sexpr exprs span origin)
-    [(OkMacroSexpr tail)
-      (OkMacroSexpr (spanned-sexpr-cons (SpannedSexpr.Sym name span) tail span))]
-    [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))
+    [(ResultMacroSexpr.Ok tail)
+      (ResultMacroSexpr.Ok
+        (spanned-sexpr-cons (SpannedSexpr.Sym name span) tail span))]
+    [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 ;; Serialize a child expression node (referenced by node-pool id) back to a
 ;; spanned sexpr. Used by the declaration-emitting macro output serializer to
@@ -37924,15 +37926,15 @@
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match items
-    [(AstTypeNil) (OkMacroSexpr (SpannedSexpr.Nil span))]
+    [(AstTypeNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
     [(AstTypeCons head-id rest)
       (match (macro-type-to-spanned-sexpr (ty-node-get head-id) span origin)
-        [(OkMacroSexpr shead)
+        [(ResultMacroSexpr.Ok shead)
           (match (macro-type-list-to-spanned-sexpr (box-get rest) span origin)
-            [(OkMacroSexpr stail)
-              (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+            [(ResultMacroSexpr.Ok stail)
+              (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-type-unary-sexpr
   [name : String]
@@ -37940,14 +37942,15 @@
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-type-to-spanned-sexpr (ty-node-get inner-id) span origin)
-    [(OkMacroSexpr sinner) (OkMacroSexpr (macro-form1 name sinner span))]
-    [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))
+    [(ResultMacroSexpr.Ok sinner)
+      (ResultMacroSexpr.Ok (macro-form1 name sinner span))]
+    [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-type-named-args-sexpr
   [name : String]
   [lifetimes : AstLifetimeList]
   [span : SourceSpan]) : ResultMacroSexpr
-  (OkMacroSexpr
+  (ResultMacroSexpr.Ok
     (spanned-sexpr-cons
       (SpannedSexpr.Sym name span)
       (macro-lifetime-list-to-spanned-sexpr lifetimes span)
@@ -37960,51 +37963,51 @@
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match ty
-    [(AstTyI64) (OkMacroSexpr (SpannedSexpr.Sym "i64" span))]
-    [(AstTyI32) (OkMacroSexpr (SpannedSexpr.Sym "i32" span))]
-    [(AstTyI16) (OkMacroSexpr (SpannedSexpr.Sym "i16" span))]
-    [(AstTyI8) (OkMacroSexpr (SpannedSexpr.Sym "i8" span))]
-    [(AstTyU64) (OkMacroSexpr (SpannedSexpr.Sym "u64" span))]
-    [(AstTyU32) (OkMacroSexpr (SpannedSexpr.Sym "u32" span))]
-    [(AstTyU16) (OkMacroSexpr (SpannedSexpr.Sym "u16" span))]
-    [(AstTyU8) (OkMacroSexpr (SpannedSexpr.Sym "u8" span))]
-    [(AstTyF64) (OkMacroSexpr (SpannedSexpr.Sym "f64" span))]
-    [(AstTyF32) (OkMacroSexpr (SpannedSexpr.Sym "f32" span))]
-    [(AstTyBool) (OkMacroSexpr (SpannedSexpr.Sym "bool" span))]
-    [(AstTyChar) (OkMacroSexpr (SpannedSexpr.Sym "char" span))]
-    [(AstTyString) (OkMacroSexpr (SpannedSexpr.Sym "String" span))]
-    [(AstTyStr) (OkMacroSexpr (SpannedSexpr.Sym "str" span))]
-    [(AstTyBytes) (OkMacroSexpr (SpannedSexpr.Sym "bytes" span))]
-    [(AstTyUnit) (OkMacroSexpr (SpannedSexpr.Sym "unit" span))]
-    [(AstTyNever) (OkMacroSexpr (SpannedSexpr.Sym "never" span))]
-    [(AstTyExpr) (OkMacroSexpr (SpannedSexpr.Sym "Expr" span))]
-    [(AstTyExprList) (OkMacroSexpr (SpannedSexpr.Sym "ExprList" span))]
+    [(AstTyI64) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "i64" span))]
+    [(AstTyI32) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "i32" span))]
+    [(AstTyI16) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "i16" span))]
+    [(AstTyI8) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "i8" span))]
+    [(AstTyU64) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "u64" span))]
+    [(AstTyU32) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "u32" span))]
+    [(AstTyU16) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "u16" span))]
+    [(AstTyU8) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "u8" span))]
+    [(AstTyF64) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "f64" span))]
+    [(AstTyF32) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "f32" span))]
+    [(AstTyBool) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "bool" span))]
+    [(AstTyChar) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "char" span))]
+    [(AstTyString) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "String" span))]
+    [(AstTyStr) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "str" span))]
+    [(AstTyBytes) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "bytes" span))]
+    [(AstTyUnit) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "unit" span))]
+    [(AstTyNever) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "never" span))]
+    [(AstTyExpr) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "Expr" span))]
+    [(AstTyExprList) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "ExprList" span))]
     [(AstTyDynArray elem) (macro-type-unary-sexpr "Array" elem span origin)]
     [(AstTyArray elem count)
       (match (macro-type-to-spanned-sexpr (ty-node-get elem) span origin)
-        [(OkMacroSexpr selem)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok selem)
+          (ResultMacroSexpr.Ok
             (macro-form2
               "Array"
               selem
               (SpannedSexpr.Int count (string.int->string count) span)
               span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstTyBox inner) (macro-type-unary-sexpr "Box" inner span origin)]
     [(AstTyPtr inner) (macro-type-unary-sexpr "Ptr" inner span origin)]
     [(AstTyMutPtr inner) (macro-type-unary-sexpr "MutPtr" inner span origin)]
     [(AstTyTuple items)
       (match (macro-type-list-to-spanned-sexpr (box-get items) span origin)
-        [(OkMacroSexpr stail)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok stail)
+          (ResultMacroSexpr.Ok
             (spanned-sexpr-cons (SpannedSexpr.Sym "Tuple" span) stail span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstTyFunc args ret)
       (match (macro-type-list-to-spanned-sexpr (box-get args) span origin)
-        [(OkMacroSexpr sargs)
+        [(ResultMacroSexpr.Ok sargs)
           (match (macro-type-to-spanned-sexpr (ty-node-get ret) span origin)
-            [(OkMacroSexpr sret)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok sret)
+              (ResultMacroSexpr.Ok
                 (spanned-sexpr-cons
                   (SpannedSexpr.Sym "->" span)
                   (macro-spanned-sexpr-append
@@ -38012,34 +38015,34 @@
                     (spanned-sexpr-cons sret (SpannedSexpr.Nil span) span)
                     span)
                   span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstTyStruct name)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
           (macro-internal-resolved-struct-type-marker)
           (intern-str name)
           AstLifetimeNil
           span))]
     [(AstTyEnum name)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
           (macro-internal-resolved-enum-type-marker)
           (intern-str name)
           AstLifetimeNil
           span))]
     [(AstTyVar name)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (SpannedSexpr.Sym (macro-output-source-name (intern-str name)) span))]
     [(AstTyStructArgs name lifetimes)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
           (macro-internal-resolved-struct-type-marker)
           (intern-str name)
           (box-get lifetimes)
           span))]
     [(AstTyEnumArgs name lifetimes)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
           (macro-internal-resolved-enum-type-marker)
           (intern-str name)
@@ -38052,26 +38055,26 @@
         span)]
     [(AstTyRef region inner)
       (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok
             (if (= (string.string-length region) 0)
               (macro-form1 "&" sinner span)
               (macro-form2 "&" (SpannedSexpr.Sym region span) sinner span)))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstTyMutRef region inner)
       (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok
             (if (= (string.string-length region) 0)
               (macro-form1 "&mut" sinner span)
               (macro-form2 "&mut" (SpannedSexpr.Sym region span) sinner span)))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstTyRegion region inner)
       (match (macro-type-to-spanned-sexpr (ty-node-get inner) span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok
             (macro-form2 "in" (SpannedSexpr.Sym region span) sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-spanned-sexpr-append
   [left : SpannedSexpr]
@@ -38104,18 +38107,18 @@
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match patterns
-    [(AstPatternNil) (OkMacroSexpr (SpannedSexpr.Nil span))]
+    [(AstPatternNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
     [(AstPatternCons head rest)
       (match (macro-pattern-to-spanned-sexpr (box-get head) span origin)
-        [(OkMacroSexpr shead)
+        [(ResultMacroSexpr.Ok shead)
           (match (macro-pattern-list-to-spanned-sexpr
             (box-get rest)
             span
             origin)
-            [(OkMacroSexpr stail)
-              (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+            [(ResultMacroSexpr.Ok stail)
+              (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-pattern-to-spanned-sexpr
   [pattern : AstPattern]
@@ -38123,33 +38126,33 @@
   [origin : AstExpr]) : ResultMacroSexpr
   (match pattern
     [(AstPatBinding name)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (SpannedSexpr.Sym (macro-output-syntax-name (intern-str name)) span))]
-    [(AstPatWildcard) (OkMacroSexpr (SpannedSexpr.Sym "_" span))]
+    [(AstPatWildcard) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "_" span))]
     [(AstPatLiteral lit)
-      (OkMacroSexpr (macro-literal-to-spanned-sexpr lit span))]
+      (ResultMacroSexpr.Ok (macro-literal-to-spanned-sexpr lit span))]
     [(AstPatVariant name args-box)
       (match (macro-pattern-list-to-spanned-sexpr
         (box-get args-box)
         span
         origin)
-        [(OkMacroSexpr args)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok args)
+          (ResultMacroSexpr.Ok
             (spanned-sexpr-cons
               (SpannedSexpr.Sym
                 (macro-output-syntax-name (intern-str name))
                 span)
               args
               span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstPatTuple _)
-      (ErrMacroSexpr
+      (ResultMacroSexpr.Err
         (box
           (macro-output-syntax-diag
             origin
             "typecheck: module macro output tuple patterns cannot be parsed as source declarations")))]
     [(AstPatVar _ _)
-      (ErrMacroSexpr
+      (ResultMacroSexpr.Err
         (box
           (macro-output-syntax-diag
             origin
@@ -38162,36 +38165,36 @@
   (match arm
     [(AstMatchArm pattern body-id)
       (match (macro-pattern-to-spanned-sexpr pattern span origin)
-        [(OkMacroSexpr spattern)
+        [(ResultMacroSexpr.Ok spattern)
           (match (macro-child-to-spanned-sexpr body-id span origin)
-            [(OkMacroSexpr sbody)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok sbody)
+              (ResultMacroSexpr.Ok
                 (spanned-sexpr-bracket-list
                   (spanned-sexpr-cons
                     spattern
                     (spanned-sexpr-cons sbody (SpannedSexpr.Nil span) span)
                     span)
                   span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-match-arm-list-to-spanned-sexpr
   [arms : AstMatchArmList]
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match arms
-    [(AstMatchArmNil) (OkMacroSexpr (SpannedSexpr.Nil span))]
+    [(AstMatchArmNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
     [(AstMatchArmCons head rest)
       (match (macro-match-arm-bracket head span origin)
-        [(OkMacroSexpr shead)
+        [(ResultMacroSexpr.Ok shead)
           (match (macro-match-arm-list-to-spanned-sexpr
             (box-get rest)
             span
             origin)
-            [(OkMacroSexpr stail)
-              (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+            [(ResultMacroSexpr.Ok stail)
+              (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-let-binding-bracket
   [binding : AstLetBinding]
@@ -38200,10 +38203,10 @@
   (match binding
     [(AstLetBinding name maybe-ty value-id)
       (match (macro-child-to-spanned-sexpr value-id span origin)
-        [(OkMacroSexpr svalue)
+        [(ResultMacroSexpr.Ok svalue)
           (match maybe-ty
             [(AstNoType)
-              (OkMacroSexpr
+              (ResultMacroSexpr.Ok
                 (spanned-sexpr-bracket-list
                   (spanned-sexpr-cons
                     (SpannedSexpr.Sym
@@ -38214,8 +38217,8 @@
                   span))]
             [(AstSomeType ty)
               (match (macro-type-to-spanned-sexpr ty span origin)
-                [(OkMacroSexpr sty)
-                  (OkMacroSexpr
+                [(ResultMacroSexpr.Ok sty)
+                  (ResultMacroSexpr.Ok
                     (spanned-sexpr-bracket-list
                       (spanned-sexpr-cons
                         (SpannedSexpr.Sym
@@ -38233,8 +38236,8 @@
                           span)
                         span)
                       span))]
-                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+                [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-let-tail
   [bindings : AstLetBindingList]
@@ -38243,33 +38246,34 @@
   [origin : AstExpr]) : ResultMacroSexpr
   (match bindings
     [(AstLetBindingNil)
-      (OkMacroSexpr (spanned-sexpr-cons body (SpannedSexpr.Nil span) span))]
+      (ResultMacroSexpr.Ok
+        (spanned-sexpr-cons body (SpannedSexpr.Nil span) span))]
     [(AstLetBindingCons head rest)
       (match (macro-let-binding-bracket head span origin)
-        [(OkMacroSexpr sbracket)
+        [(ResultMacroSexpr.Ok sbracket)
           (match (macro-let-tail (box-get rest) body span origin)
-            [(OkMacroSexpr stail)
-              (OkMacroSexpr (spanned-sexpr-cons sbracket stail span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]))
+            [(ResultMacroSexpr.Ok stail)
+              (ResultMacroSexpr.Ok (spanned-sexpr-cons sbracket stail span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
 
 (define (macro-expr-list-to-spanned-sexpr
   [exprs : AstExprList]
   [span : SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match exprs
-    [(AstExprNil) (OkMacroSexpr (SpannedSexpr.Nil span))]
+    [(AstExprNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-expr-to-spanned-sexpr-with-span head-expr span origin)
-          [(OkMacroSexpr shead)
+          [(ResultMacroSexpr.Ok shead)
             (match (macro-expr-list-to-spanned-sexpr rest span origin)
-              [(OkMacroSexpr stail)
-                (OkMacroSexpr (spanned-sexpr-cons shead stail span))]
-              [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-          [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))]))
+              [(ResultMacroSexpr.Ok stail)
+                (ResultMacroSexpr.Ok (spanned-sexpr-cons shead stail span))]
+              [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))]))
 
 (define (macro-expr-to-spanned-sexpr-with-span
   [expr : AstExpr]
@@ -38283,36 +38287,38 @@
         origin)]
     [(AstExprLiteral lit)
       (match lit
-        [(AstLitInt n text) (OkMacroSexpr (SpannedSexpr.Int n text span))]
-        [(AstLitFloat text) (OkMacroSexpr (SpannedSexpr.Float text span))]
+        [(AstLitInt n text)
+          (ResultMacroSexpr.Ok (SpannedSexpr.Int n text span))]
+        [(AstLitFloat text)
+          (ResultMacroSexpr.Ok (SpannedSexpr.Float text span))]
         [(AstLitBool value)
-          (OkMacroSexpr
+          (ResultMacroSexpr.Ok
             (SpannedSexpr.Sym
               (if value
                 "true"
                 "false")
               span))]
-        [(AstLitChar c) (OkMacroSexpr (SpannedSexpr.Char c span))]
-        [(AstLitString text) (OkMacroSexpr (SpannedSexpr.Str text span))]
-        [(AstLitUnit) (OkMacroSexpr (SpannedSexpr.Sym "unit" span))])]
+        [(AstLitChar c) (ResultMacroSexpr.Ok (SpannedSexpr.Char c span))]
+        [(AstLitString text) (ResultMacroSexpr.Ok (SpannedSexpr.Str text span))]
+        [(AstLitUnit) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "unit" span))])]
     [(AstExprVar name)
-      (OkMacroSexpr
+      (ResultMacroSexpr.Ok
         (SpannedSexpr.Sym (macro-output-syntax-name (intern-str name)) span))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (macro-expr-to-spanned-sexpr-with-span func span origin)
-          [(OkMacroSexpr head)
+          [(ResultMacroSexpr.Ok head)
             (match (macro-expr-list-to-spanned-sexpr args span origin)
-              [(OkMacroSexpr tail)
-                (OkMacroSexpr (spanned-sexpr-cons head tail span))]
-              [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-          [(ErrMacroSexpr diag) (ErrMacroSexpr diag)]))]
+              [(ResultMacroSexpr.Ok tail)
+                (ResultMacroSexpr.Ok (spanned-sexpr-cons head tail span))]
+              [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+          [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))]
     [(AstExprBracketClause items)
       (match (macro-expr-list-to-spanned-sexpr items span origin)
-        [(OkMacroSexpr list)
-          (OkMacroSexpr (spanned-sexpr-bracket-list list span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok list)
+          (ResultMacroSexpr.Ok (spanned-sexpr-bracket-list list span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprIf cond-box then-box else-box)
       (macro-expr-list-with-head-symbol
         "if"
@@ -38355,58 +38361,58 @@
         origin)]
     [(AstExprBinary op left-id right-id)
       (match (macro-child-to-spanned-sexpr left-id span origin)
-        [(OkMacroSexpr sleft)
+        [(ResultMacroSexpr.Ok sleft)
           (match (macro-child-to-spanned-sexpr right-id span origin)
-            [(OkMacroSexpr sright)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok sright)
+              (ResultMacroSexpr.Ok
                 (macro-form2 (macro-binop-symbol op) sleft sright span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprUnary op inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr (macro-form1 (macro-unop-symbol op) sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok (macro-form1 (macro-unop-symbol op) sinner span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-id)
           (match (macro-child-to-spanned-sexpr body-id span origin)
-            [(OkMacroSexpr sbody)
+            [(ResultMacroSexpr.Ok sbody)
               (match (macro-let-tail bindings sbody span origin)
-                [(OkMacroSexpr stail)
-                  (OkMacroSexpr
+                [(ResultMacroSexpr.Ok stail)
+                  (ResultMacroSexpr.Ok
                     (spanned-sexpr-cons
                       (SpannedSexpr.Sym "let" span)
                       stail
                       span))]
-                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
+                [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(AstExprWhile cond-id body-id)
       (match (macro-child-to-spanned-sexpr cond-id span origin)
-        [(OkMacroSexpr scond)
+        [(ResultMacroSexpr.Ok scond)
           (match (macro-child-to-spanned-sexpr body-id span origin)
-            [(OkMacroSexpr sbody)
-              (OkMacroSexpr (macro-form2 "while" scond sbody span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Ok sbody)
+              (ResultMacroSexpr.Ok (macro-form2 "while" scond sbody span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-id arms)
           (match (macro-child-to-spanned-sexpr scrutinee-id span origin)
-            [(OkMacroSexpr sscrutinee)
+            [(ResultMacroSexpr.Ok sscrutinee)
               (match (macro-match-arm-list-to-spanned-sexpr arms span origin)
-                [(OkMacroSexpr sarms)
-                  (OkMacroSexpr
+                [(ResultMacroSexpr.Ok sarms)
+                  (ResultMacroSexpr.Ok
                     (spanned-sexpr-cons
                       (SpannedSexpr.Sym "match" span)
                       (spanned-sexpr-cons sscrutinee sarms span)
                       span))]
-                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
+                [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(AstExprSet name value-id)
       (match (macro-child-to-spanned-sexpr value-id span origin)
-        [(OkMacroSexpr svalue)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok svalue)
+          (ResultMacroSexpr.Ok
             (macro-form2
               "set!"
               (SpannedSexpr.Sym
@@ -38414,67 +38420,69 @@
                 span)
               svalue
               span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprMakeArray ty len-id)
       (match (macro-type-to-spanned-sexpr ty span origin)
-        [(OkMacroSexpr sty)
+        [(ResultMacroSexpr.Ok sty)
           (match (macro-child-to-spanned-sexpr len-id span origin)
-            [(OkMacroSexpr slen)
-              (OkMacroSexpr (macro-form2 "make-array" sty slen span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Ok slen)
+              (ResultMacroSexpr.Ok (macro-form2 "make-array" sty slen span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprArrayRef array-id index-id)
       (match (macro-child-to-spanned-sexpr array-id span origin)
-        [(OkMacroSexpr sarray)
+        [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr index-id span origin)
-            [(OkMacroSexpr sindex)
-              (OkMacroSexpr (macro-form2 "array-ref" sarray sindex span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Ok sindex)
+              (ResultMacroSexpr.Ok (macro-form2 "array-ref" sarray sindex span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprArraySet array-id index-id value-id)
       (match (macro-child-to-spanned-sexpr array-id span origin)
-        [(OkMacroSexpr sarray)
+        [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr index-id span origin)
-            [(OkMacroSexpr sindex)
+            [(ResultMacroSexpr.Ok sindex)
               (match (macro-child-to-spanned-sexpr value-id span origin)
-                [(OkMacroSexpr svalue)
-                  (OkMacroSexpr
+                [(ResultMacroSexpr.Ok svalue)
+                  (ResultMacroSexpr.Ok
                     (macro-form3 "array-set!" sarray sindex svalue span))]
-                [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+                [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprArrayPush array-id value-id)
       (match (macro-child-to-spanned-sexpr array-id span origin)
-        [(OkMacroSexpr sarray)
+        [(ResultMacroSexpr.Ok sarray)
           (match (macro-child-to-spanned-sexpr value-id span origin)
-            [(OkMacroSexpr svalue)
-              (OkMacroSexpr (macro-form2 "array-push!" sarray svalue span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Ok svalue)
+              (ResultMacroSexpr.Ok
+                (macro-form2 "array-push!" sarray svalue span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprStringRef string-id index-id)
       (match (macro-child-to-spanned-sexpr string-id span origin)
-        [(OkMacroSexpr sstring)
+        [(ResultMacroSexpr.Ok sstring)
           (match (macro-child-to-spanned-sexpr index-id span origin)
-            [(OkMacroSexpr sindex)
-              (OkMacroSexpr (macro-form2 "string-ref" sstring sindex span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Ok sindex)
+              (ResultMacroSexpr.Ok
+                (macro-form2 "string-ref" sstring sindex span))]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprStructGet receiver-id field)
       (match (macro-child-to-spanned-sexpr receiver-id span origin)
-        [(OkMacroSexpr sreceiver)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok sreceiver)
+          (ResultMacroSexpr.Ok
             (macro-form2
               "struct-get"
               sreceiver
               (SpannedSexpr.Sym (intern-str field) span)
               span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprStructSet receiver-id field value-id)
       (match (macro-child-to-spanned-sexpr receiver-id span origin)
-        [(OkMacroSexpr sreceiver)
+        [(ResultMacroSexpr.Ok sreceiver)
           (match (macro-child-to-spanned-sexpr value-id span origin)
-            [(OkMacroSexpr svalue)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok svalue)
+              (ResultMacroSexpr.Ok
                 (macro-form2
                   "set!"
                   (macro-form2
@@ -38484,29 +38492,29 @@
                     span)
                   svalue
                   span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprCast inner-id ty)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner)
+        [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr ty span origin)
-            [(OkMacroSexpr sty)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok sty)
+              (ResultMacroSexpr.Ok
                 (macro-form3 "cast" sinner (SpannedSexpr.Sym ":" span) sty span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprAnn inner-id ty)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner)
+        [(ResultMacroSexpr.Ok sinner)
           (match (macro-type-to-spanned-sexpr ty span origin)
-            [(OkMacroSexpr sty)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok sty)
+              (ResultMacroSexpr.Ok
                 (macro-form3 "ann" sinner (SpannedSexpr.Sym ":" span) sty span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprBorrow mutable lifetime place-id)
       (match (macro-child-to-spanned-sexpr place-id span origin)
-        [(OkMacroSexpr splace)
+        [(ResultMacroSexpr.Ok splace)
           (let
             [head : String
               (if mutable
@@ -38514,77 +38522,80 @@
                 "&")]
             (match lifetime
               [(AstBorrowLifetimeInferred)
-                (OkMacroSexpr (macro-form1 head splace span))]
+                (ResultMacroSexpr.Ok (macro-form1 head splace span))]
               [(AstBorrowLifetimeNamed name)
-                (OkMacroSexpr
+                (ResultMacroSexpr.Ok
                   (macro-form2 head (SpannedSexpr.Sym name span) splace span))]))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprReturn inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr (macro-form1 "return" sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok (macro-form1 "return" sinner span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprTry inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner) (OkMacroSexpr (macro-form1 "try" sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok (macro-form1 "try" sinner span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprBox inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner) (OkMacroSexpr (macro-form1 "box" sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok (macro-form1 "box" sinner span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprBoxGet inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr (macro-form1 "box-get" sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok (macro-form1 "box-get" sinner span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprBoxTake inner-id)
       (match (macro-child-to-spanned-sexpr inner-id span origin)
-        [(OkMacroSexpr sinner)
-          (OkMacroSexpr (macro-form1 "box-take" sinner span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sinner)
+          (ResultMacroSexpr.Ok (macro-form1 "box-take" sinner span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprBoxSet receiver-id value-id)
       (match (macro-child-to-spanned-sexpr receiver-id span origin)
-        [(OkMacroSexpr sreceiver)
+        [(ResultMacroSexpr.Ok sreceiver)
           (match (macro-child-to-spanned-sexpr value-id span origin)
-            [(OkMacroSexpr svalue)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok svalue)
+              (ResultMacroSexpr.Ok
                 (macro-form2
                   "set!"
                   (macro-form1 "box-get" sreceiver span)
                   svalue
                   span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprTupleRef tuple-id index)
       (match (macro-child-to-spanned-sexpr tuple-id span origin)
-        [(OkMacroSexpr stuple)
-          (OkMacroSexpr
+        [(ResultMacroSexpr.Ok stuple)
+          (ResultMacroSexpr.Ok
             (macro-form2
               "tuple-ref"
               stuple
               (SpannedSexpr.Int index (string.int->string index) span)
               span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstNoType)
-          (OkMacroSexpr
+          (ResultMacroSexpr.Ok
             (spanned-sexpr-cons
               (SpannedSexpr.Sym "init" span)
               (SpannedSexpr.Nil span)
               span))]
         [(AstSomeType ty)
           (match (macro-type-to-spanned-sexpr ty span origin)
-            [(OkMacroSexpr sty)
-              (OkMacroSexpr
+            [(ResultMacroSexpr.Ok sty)
+              (ResultMacroSexpr.Ok
                 (macro-form2 "init" (SpannedSexpr.Sym ":" span) sty span))]
-            [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])])]
     [(AstExprTypeLiteral ty)
       (match (macro-type-to-spanned-sexpr ty span origin)
-        [(OkMacroSexpr sty) (OkMacroSexpr (macro-form1 "type" sty span))]
-        [(ErrMacroSexpr diag) (ErrMacroSexpr diag)])]
+        [(ResultMacroSexpr.Ok sty)
+          (ResultMacroSexpr.Ok (macro-form1 "type" sty span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [_
-      (ErrMacroSexpr
+      (ResultMacroSexpr.Err
         (box
           (macro-output-syntax-diag
             origin
@@ -38616,11 +38627,13 @@
   [form : SpannedSexpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (parse-ast-decl-maybe dispatch form)
-    [(OkAstSomeDecl decl) (OkMacroParsedDecls (ast-decl-cons decl AstDeclNil))]
-    [(OkAstDecls decls) (OkMacroParsedDecls decls)]
-    [(OkAstNoDecl) (OkMacroParsedDecls AstDeclNil)]
+    [(OkAstSomeDecl decl)
+      (ResultMacroParsedDecls.Ok (ast-decl-cons decl AstDeclNil))]
+    [(OkAstDecls decls) (ResultMacroParsedDecls.Ok decls)]
+    [(OkAstNoDecl) (ResultMacroParsedDecls.Ok AstDeclNil)]
     [(ErrAstMaybeDecl message)
-      (ErrMacroParsedDecls (box (macro-output-syntax-diag origin message)))]))
+      (ResultMacroParsedDecls.Err
+        (box (macro-output-syntax-diag origin message)))]))
 
 (define (macro-parse-decls-from-one-expr
   [dispatch : SymI64Env]
@@ -38629,39 +38642,40 @@
   (let
     [mark : i64 (sp-node-pool-len)]
     (match (macro-expr-to-spanned-sexpr expr origin)
-      [(OkMacroSexpr form)
+      [(ResultMacroSexpr.Ok form)
         (match (macro-parse-decl-sexpr dispatch form origin)
-          [(OkMacroParsedDecls decls)
+          [(ResultMacroParsedDecls.Ok decls)
             (begin
               (sp-node-pool-truncate! mark)
-              (OkMacroParsedDecls decls))]
-          [(ErrMacroParsedDecls diag)
+              (ResultMacroParsedDecls.Ok decls))]
+          [(ResultMacroParsedDecls.Err diag)
             (begin
               (sp-node-pool-truncate! mark)
-              (ErrMacroParsedDecls diag))])]
-      [(ErrMacroSexpr diag)
+              (ResultMacroParsedDecls.Err diag))])]
+      [(ResultMacroSexpr.Err diag)
         (begin
           (sp-node-pool-truncate! mark)
-          (ErrMacroParsedDecls diag))])))
+          (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs
   [dispatch : SymI64Env]
   [exprs : AstExprList]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match exprs
-    [(AstExprNil) (OkMacroParsedDecls AstDeclNil)]
+    [(AstExprNil) (ResultMacroParsedDecls.Ok AstDeclNil)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-parse-decls-from-expr dispatch head-expr origin)
-          [(OkMacroParsedDecls head-decls)
+          [(ResultMacroParsedDecls.Ok head-decls)
             (match (macro-parse-decls-from-exprs dispatch rest origin)
-              [(OkMacroParsedDecls rest-decls)
-                (OkMacroParsedDecls
+              [(ResultMacroParsedDecls.Ok rest-decls)
+                (ResultMacroParsedDecls.Ok
                   (macro-decl-list-append head-decls rest-decls))]
-              [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)])]
-          [(ErrMacroParsedDecls diag) (ErrMacroParsedDecls diag)]))]))
+              [(ResultMacroParsedDecls.Err diag)
+                (ResultMacroParsedDecls.Err diag)])]
+          [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))]))
 
 (define (macro-parse-decls-from-expr
   [dispatch : SymI64Env]
@@ -38690,7 +38704,7 @@
     [(CtfeExpr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
-      (ErrMacroParsedDecls
+      (ResultMacroParsedDecls.Err
         (box
           (macro-output-syntax-diag
             origin
@@ -38704,7 +38718,7 @@
     [(CtfeExpr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
-      (ErrMacroParsedDecls
+      (ResultMacroParsedDecls.Err
         (box
           (macro-output-syntax-diag
             origin
@@ -38864,8 +38878,8 @@
     target-module))
 
 (defenum MacroSurfaceCallDeclCacheLookup
-  (MacroSurfaceCallDeclCacheMiss)
-  (MacroSurfaceCallDeclCacheHit MacroMaybeDecl))
+  (Miss)
+  (Hit MacroMaybeDecl))
 
 (define macro-surface-call-decl-cache-capacity : i64
   8192)
@@ -38912,7 +38926,8 @@
     [module-key : i64 (+ module-id 1)]
     [base-key : i64 (+ base-id 1)]
     [steps : i64 0]
-    [out : MacroSurfaceCallDeclCacheLookup (MacroSurfaceCallDeclCacheMiss)]
+    [out : MacroSurfaceCallDeclCacheLookup
+      (MacroSurfaceCallDeclCacheLookup.Miss)]
     [done : bool false]
     (begin
       (while (if done
@@ -38931,7 +38946,7 @@
               (begin
                 (set!
                   out
-                  (MacroSurfaceCallDeclCacheHit
+                  (MacroSurfaceCallDeclCacheLookup.Hit
                     (array.array-ref
                       macro-surface-call-decl-cache-values
                       cursor)))
@@ -39020,26 +39035,26 @@
       [(CompilerLoadSurfaceMacroSignature params ret body-box)
         (begin
           (tc-lazy-import-summary-macro-force-record!)
-          (MacroSomeDecl
+          (MacroMaybeDecl.Some
             (compiler-symbol-module-key target-module base)
             target-module
             params
             ret
             (ast-node-get body-box)))]
-      [_ (MacroNoDecl)])
-    (MacroNoDecl)))
+      [_ (MacroMaybeDecl.No)])
+    (MacroMaybeDecl.No)))
 
 (define (macro-surface-decls-call-decl-in-module
   [decls : CompilerLoadSurfaceDeclList]
   [target-module : String]
   [base : String]) : MacroMaybeDecl
   (match decls
-    [(CompilerLoadSurfaceDeclNil) (MacroNoDecl)]
+    [(CompilerLoadSurfaceDeclNil) (MacroMaybeDecl.No)]
     [(CompilerLoadSurfaceDeclCons decl rest)
       (match (macro-surface-decl-call-decl-in-module decl target-module base)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (MacroSomeDecl macro-name def-module params ret body)]
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (MacroMaybeDecl.Some macro-name def-module params ret body)]
+        [(MacroMaybeDecl.No)
           (macro-surface-decls-call-decl-in-module
             (box-get rest)
             target-module
@@ -39050,15 +39065,15 @@
   [target-module : String]
   [base : String]) : MacroMaybeDecl
   (match summaries
-    [(CompilerLoadSurfaceSummaryNil) (MacroNoDecl)]
+    [(CompilerLoadSurfaceSummaryNil) (MacroMaybeDecl.No)]
     [(CompilerLoadSurfaceSummaryCons summary rest)
       (match (macro-surface-decls-call-decl-in-module
         (struct-get summary decls)
         target-module
         base)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (MacroSomeDecl macro-name def-module params ret body)]
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (MacroMaybeDecl.Some macro-name def-module params ret body)]
+        [(MacroMaybeDecl.No)
           (macro-surface-summaries-call-decl-in-module
             (box-get rest)
             target-module
@@ -39073,8 +39088,8 @@
     (begin
       (macro-surface-call-decl-cache-ensure!)
       (match (macro-surface-call-decl-cache-get module-id base-id)
-        [(MacroSurfaceCallDeclCacheHit cached) cached]
-        [(MacroSurfaceCallDeclCacheMiss)
+        [(MacroSurfaceCallDeclCacheLookup.Hit cached) cached]
+        [(MacroSurfaceCallDeclCacheLookup.Miss)
           (let
             [result : MacroMaybeDecl
               (macro-surface-summaries-call-decl-in-module
@@ -39146,8 +39161,8 @@
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name : String]) : TcMaybeString
   (match env
-    [(MacroHygieneNil) (TcNoString)]
-    [(MacroHygieneBind key value rest)
+    [(MacroHygieneEnv.Nil) (TcNoString)]
+    [(MacroHygieneEnv.Bind key value rest)
       (if (string.string-eq key name)
         (TcSomeString value)
         (macro-hygiene-env-lookup (box-get rest) name))]))
@@ -39216,8 +39231,10 @@
     (let
       [base : String (tc-hygiene-template-base name)]
       [renamed : String (macro-hygiene-fresh-local macro-name depth base)]
-      (MacroHygieneName renamed (MacroHygieneBind base renamed (box env))))
-    (MacroHygieneName name env)))
+      (MacroHygieneName.Name
+        renamed
+        (MacroHygieneEnv.Bind base renamed (box env))))
+    (MacroHygieneName.Name name env)))
 
 (define (macro-hygiene-expr-list
   [exprs : AstExprList]
@@ -39240,7 +39257,7 @@
   [macro-name : String]
   [depth : i64]) : MacroHygieneParams
   (match params
-    [(AstParamNil) (MacroHygieneParams AstParamNil env)]
+    [(AstParamNil) (MacroHygieneParams.Params AstParamNil env)]
     [(AstParamCons param rest)
       (let
         [rest : AstParamList (box-get rest)]
@@ -39251,10 +39268,10 @@
               macro-name
               depth
               (intern-str name))
-              [(MacroHygieneName renamed next-env)
+              [(MacroHygieneName.Name renamed next-env)
                 (match (macro-hygiene-param-list rest next-env macro-name depth)
-                  [(MacroHygieneParams nrest final-env)
-                    (MacroHygieneParams
+                  [(MacroHygieneParams.Params nrest final-env)
+                    (MacroHygieneParams.Params
                       (ast-param-cons (ast-param renamed ty comptime?) nrest)
                       final-env)])])]))]))
 
@@ -39264,16 +39281,16 @@
   [macro-name : String]
   [depth : i64]) : MacroHygienePatternList
   (match patterns
-    [(AstPatternNil) (MacroHygienePatternList AstPatternNil env)]
+    [(AstPatternNil) (MacroHygienePatternList.PatternList AstPatternNil env)]
     [(AstPatternCons pattern rest)
       (let
         [pattern : AstPattern (box-get pattern)]
         [rest : AstPatternList (box-get rest)]
         (match (macro-hygiene-pattern pattern env macro-name depth)
-          [(MacroHygienePattern npattern next-env)
+          [(MacroHygienePattern.Pattern npattern next-env)
             (match (macro-hygiene-pattern-list rest next-env macro-name depth)
-              [(MacroHygienePatternList nrest final-env)
-                (MacroHygienePatternList
+              [(MacroHygienePatternList.PatternList nrest final-env)
+                (MacroHygienePatternList.PatternList
                   (ast-pattern-cons npattern nrest)
                   final-env)])]))]))
 
@@ -39285,26 +39302,30 @@
   (match pattern
     [(AstPatVar name maybe-ty)
       (match (macro-hygiene-bind-name env macro-name depth (intern-str name))
-        [(MacroHygieneName renamed next-env)
-          (MacroHygienePattern (AstPatVar (intern renamed) maybe-ty) next-env)])]
+        [(MacroHygieneName.Name renamed next-env)
+          (MacroHygienePattern.Pattern
+            (AstPatVar (intern renamed) maybe-ty)
+            next-env)])]
     [(AstPatTuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (match (macro-hygiene-pattern-list patterns env macro-name depth)
-          [(MacroHygienePatternList npatterns next-env)
-            (MacroHygienePattern (ast-pat-tuple npatterns) next-env)]))]
-    [(AstPatWildcard) (MacroHygienePattern AstPatWildcard env)]
+          [(MacroHygienePatternList.PatternList npatterns next-env)
+            (MacroHygienePattern.Pattern (ast-pat-tuple npatterns) next-env)]))]
+    [(AstPatWildcard) (MacroHygienePattern.Pattern AstPatWildcard env)]
     [(AstPatBinding name)
       (match (macro-hygiene-bind-name env macro-name depth (intern-str name))
-        [(MacroHygieneName renamed next-env)
-          (MacroHygienePattern (ast-pat-binding renamed) next-env)])]
+        [(MacroHygieneName.Name renamed next-env)
+          (MacroHygienePattern.Pattern (ast-pat-binding renamed) next-env)])]
     [(AstPatVariant name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
         (match (macro-hygiene-pattern-list args env macro-name depth)
-          [(MacroHygienePatternList nargs next-env)
-            (MacroHygienePattern (ast-pat-variant-id name nargs) next-env)]))]
-    [(AstPatLiteral lit) (MacroHygienePattern (AstPatLiteral lit) env)]))
+          [(MacroHygienePatternList.PatternList nargs next-env)
+            (MacroHygienePattern.Pattern
+              (ast-pat-variant-id name nargs)
+              next-env)]))]
+    [(AstPatLiteral lit) (MacroHygienePattern.Pattern (AstPatLiteral lit) env)]))
 
 (define (macro-hygiene-let-bindings
   [bindings : AstLetBindingList]
@@ -39312,7 +39333,8 @@
   [macro-name : String]
   [depth : i64]) : MacroHygieneLetBindings
   (match bindings
-    [(AstLetBindingNil) (MacroHygieneLetBindings AstLetBindingNil env)]
+    [(AstLetBindingNil)
+      (MacroHygieneLetBindings.LetBindings AstLetBindingNil env)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -39326,14 +39348,14 @@
                 macro-name
                 depth
                 (intern-str name))
-                [(MacroHygieneName renamed next-env)
+                [(MacroHygieneName.Name renamed next-env)
                   (match (macro-hygiene-let-bindings
                     rest
                     next-env
                     macro-name
                     depth)
-                    [(MacroHygieneLetBindings nrest final-env)
-                      (MacroHygieneLetBindings
+                    [(MacroHygieneLetBindings.LetBindings nrest final-env)
+                      (MacroHygieneLetBindings.LetBindings
                         (ast-let-binding-cons
                           (ast-let-binding renamed maybe-ty ninit)
                           nrest)
@@ -39346,7 +39368,7 @@
   [depth : i64]) : MacroHygieneResourceBindings
   (match bindings
     [(AstResourceBindingNil)
-      (MacroHygieneResourceBindings AstResourceBindingNil env)]
+      (MacroHygieneResourceBindings.ResourceBindings AstResourceBindingNil env)]
     [(AstResourceBindingCons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
@@ -39362,14 +39384,16 @@
                 macro-name
                 depth
                 (intern-str name))
-                [(MacroHygieneName renamed next-env)
+                [(MacroHygieneName.Name renamed next-env)
                   (match (macro-hygiene-resource-bindings
                     rest
                     next-env
                     macro-name
                     depth)
-                    [(MacroHygieneResourceBindings nrest final-env)
-                      (MacroHygieneResourceBindings
+                    [(MacroHygieneResourceBindings.ResourceBindings
+                        nrest
+                        final-env)
+                      (MacroHygieneResourceBindings.ResourceBindings
                         (ast-resource-binding-cons
                           (ast-resource-binding renamed ninit ncleanup)
                           nrest)
@@ -39390,7 +39414,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (match (macro-hygiene-pattern pattern env macro-name depth)
-                [(MacroHygienePattern npattern arm-env)
+                [(MacroHygienePattern.Pattern npattern arm-env)
                   (ast-match-arm-cons
                     (ast-match-arm
                       npattern
@@ -39447,7 +39471,7 @@
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (macro-hygiene-let-bindings bindings env macro-name depth)
-              [(MacroHygieneLetBindings nbindings body-env)
+              [(MacroHygieneLetBindings.LetBindings nbindings body-env)
                 (ast-expr-let
                   nbindings
                   (macro-hygiene-expr body body-env macro-name depth))]))])]
@@ -39457,7 +39481,7 @@
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (macro-hygiene-param-list params env macro-name depth)
-              [(MacroHygieneParams nparams body-env)
+              [(MacroHygieneParams.Params nparams body-env)
                 (ast-expr-lambda
                   nparams
                   maybe-ret
@@ -39562,7 +39586,7 @@
               macro-name
               depth
               (intern-str index))
-              [(MacroHygieneName nindex body-env)
+              [(MacroHygieneName.Name nindex body-env)
                 (ast-expr-foreach
                   nindex
                   index-ty
@@ -39582,7 +39606,7 @@
               macro-name
               depth
               (intern-str index))
-              [(MacroHygieneName nindex body-env)
+              [(MacroHygieneName.Name nindex body-env)
                 (ast-expr-spmd-reduce
                   op
                   nindex
@@ -39615,13 +39639,13 @@
               macro-name
               depth
               (intern-str index))
-              [(MacroHygieneName nindex value-env)
+              [(MacroHygieneName.Name nindex value-env)
                 (match (macro-hygiene-bind-name
                   value-env
                   macro-name
                   depth
                   (intern-str prefix))
-                  [(MacroHygieneName nprefix body-env)
+                  [(MacroHygieneName.Name nprefix body-env)
                     (ast-expr-spmd-scan
                       op
                       nindex
@@ -39663,7 +39687,7 @@
           (macro-hygiene-expr value env macro-name depth)))]
     [(AstExprWithRegion name body)
       (match (macro-hygiene-bind-name env macro-name depth name)
-        [(MacroHygieneName nname body-env)
+        [(MacroHygieneName.Name nname body-env)
           (ast-node-push
             (AstExprWithRegion
               nname
@@ -39687,7 +39711,7 @@
       (match (box-get wr-box)
         [(AstWithResource bindings body)
           (match (macro-hygiene-resource-bindings bindings env macro-name depth)
-            [(MacroHygieneResourceBindings nbindings body-env)
+            [(MacroHygieneResourceBindings.ResourceBindings nbindings body-env)
               (ast-node-push
                 (AstExprWithResource
                   (box
@@ -39831,7 +39855,7 @@
   [name : String]
   [module : String]) : MacroMaybeDecl
   (match decls
-    [(AstDeclNil) (MacroNoDecl)]
+    [(AstDeclNil) (MacroMaybeDecl.No)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -39843,7 +39867,7 @@
               [mname-str : String (intern-str mname)]
               [body : AstExpr (ast-node-get body-box)]
               (if (string.string-eq mname-str name)
-                (MacroSomeDecl
+                (MacroMaybeDecl.Some
                   (compiler-symbol-module-key module mname-str)
                   module
                   params
@@ -39861,7 +39885,7 @@
       (let
         [name-str : String (intern-str name)]
         [body : AstExpr (ast-node-get body-box)]
-        (MacroSomeDecl
+        (MacroMaybeDecl.Some
           (compiler-symbol-module-key module name-str)
           module
           params
@@ -39875,7 +39899,7 @@
       (let
         [template : AstDecl (box-get template-box)]
         (macro-decl-from-decl template module))]
-    [_ (MacroNoDecl)]))
+    [_ (MacroMaybeDecl.No)]))
 
 ;; Resolve a macro decl from its symbol-table index in O(1). The symbols decls
 ;; array is populated (compiler-symbols-index-decl!) at the SAME index that
@@ -39885,7 +39909,7 @@
 ;; that the old linear scan skipped. The array already stores the unwrapped decl
 ;; (compiler-symbol-indexed-decl peels AstDeclUnsafe/AstDeclComptimeDecl the same
 ;; way macro-decl-from-decl does), so direct module lookups return the identical
-;; MacroSomeDecl the previous O(decls) macro-find-decl-by-index walk produced.
+;; MacroMaybeDecl.Some the previous O(decls) macro-find-decl-by-index walk produced.
 (define (macro-decl-owner-module-or
   [symbols : CompilerSymbols]
   [target : i64]
@@ -39903,7 +39927,7 @@
   [module : String]) : MacroMaybeDecl
   (match (compiler-symbols-decl-at-index symbols target)
     [(OkAstDecl decl) (macro-decl-from-decl decl module)]
-    [(ErrAstDecl _) (MacroNoDecl)]))
+    [(ErrAstDecl _) (MacroMaybeDecl.No)]))
 
 ;; Imported macro aliases can be looked up from the importing module. In that
 ;; path, recover the indexed owner module so the transformer still runs as its
@@ -39917,7 +39941,7 @@
       (macro-decl-from-decl
         decl
         (macro-decl-owner-module-or symbols target module))]
-    [(ErrAstDecl _) (MacroNoDecl)]))
+    [(ErrAstDecl _) (MacroMaybeDecl.No)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
 ;; previous String-based walk converted every AstDeclModule's interned name
@@ -39976,12 +40000,12 @@
 ;; per-program boundary so generated macro bodies do not repeatedly rescan the
 ;; whole declaration list.
 (defenum MacroFlatImportTargetList
-  (MacroFlatImportTargetNil)
-  (MacroFlatImportTargetCons i64 (Box MacroFlatImportTargetList)))
+  (Nil)
+  (Cons i64 (Box MacroFlatImportTargetList)))
 
 (defenum MacroFlatImportTargetCacheLookup
-  (MacroFlatImportTargetCacheMissing)
-  (MacroFlatImportTargetCacheHit MacroFlatImportTargetList))
+  (Missing)
+  (Hit MacroFlatImportTargetList))
 
 ;; Even with id compares, each resolution walks the ENTIRE declaration list
 ;; (most declarations are neither modules nor imports), and the same
@@ -40204,7 +40228,8 @@
     [cursor : i64 (macro-flat-import-target-cache-bucket module-id)]
     [module-key : i64 (+ module-id 1)]
     [steps : i64 0]
-    [out : MacroFlatImportTargetCacheLookup (MacroFlatImportTargetCacheMissing)]
+    [out : MacroFlatImportTargetCacheLookup
+      (MacroFlatImportTargetCacheLookup.Missing)]
     [done : bool false]
     (begin
       (while (if done
@@ -40219,7 +40244,7 @@
               (begin
                 (set!
                   out
-                  (MacroFlatImportTargetCacheHit
+                  (MacroFlatImportTargetCacheLookup.Hit
                     (array.array-ref
                       macro-flat-import-target-cache-values
                       cursor)))
@@ -40283,8 +40308,8 @@
   [targets : MacroFlatImportTargetList]
   [target-id : i64]) : bool
   (match targets
-    [(MacroFlatImportTargetNil) false]
-    [(MacroFlatImportTargetCons target rest)
+    [(MacroFlatImportTargetList.Nil) false]
+    [(MacroFlatImportTargetList.Cons target rest)
       (if (= target target-id)
         true
         (macro-flat-import-target-list-contains? (box-get rest) target-id))]))
@@ -40294,23 +40319,23 @@
   [target-id : i64]) : MacroFlatImportTargetList
   (if (macro-flat-import-target-list-contains? targets target-id)
     targets
-    (MacroFlatImportTargetCons target-id (box targets))))
+    (MacroFlatImportTargetList.Cons target-id (box targets))))
 
 (define (macro-flat-import-target-list-reverse-into
   [targets : MacroFlatImportTargetList]
   [out : MacroFlatImportTargetList]) : MacroFlatImportTargetList
   (match targets
-    [(MacroFlatImportTargetNil) out]
-    [(MacroFlatImportTargetCons target rest)
+    [(MacroFlatImportTargetList.Nil) out]
+    [(MacroFlatImportTargetList.Cons target rest)
       (macro-flat-import-target-list-reverse-into
         (box-get rest)
-        (MacroFlatImportTargetCons target (box out)))]))
+        (MacroFlatImportTargetList.Cons target (box out)))]))
 
 (define (macro-flat-import-target-list-reverse
   [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
   (macro-flat-import-target-list-reverse-into
     targets
-    (MacroFlatImportTargetNil)))
+    (MacroFlatImportTargetList.Nil)))
 
 (define (macro-flat-import-targets-from-list
   [decls : AstDeclList]
@@ -40378,15 +40403,15 @@
   (begin
     (macro-flat-import-target-cache-ensure!)
     (match (macro-flat-import-target-cache-get current-module-id)
-      [(MacroFlatImportTargetCacheHit targets) targets]
-      [(MacroFlatImportTargetCacheMissing)
+      [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
+      [(MacroFlatImportTargetCacheLookup.Missing)
         (let
           [targets : MacroFlatImportTargetList
             (macro-flat-import-targets-from-list
               decls
               current-module-id
               (intern "")
-              (MacroFlatImportTargetNil))]
+              (MacroFlatImportTargetList.Nil))]
           (begin
             (macro-flat-import-target-cache-put! current-module-id targets)
             targets))])))
@@ -40552,28 +40577,28 @@
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
         target-module)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl)
-          (ErrMacroCallDecl
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No)
+          (ResultMacroCallDecl.Err
             (box
               (ctfe-diagnostic-at-expr
                 call-expr
                 (macro-missing-macro-message name))))])]
     [(NoneI64)
       (match (macro-surface-call-decl-in-module target-module base)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No)
           (match (compiler-symbols-lookup-value-in-module-id
             (tc-context-symbols ctx)
             (intern target-module)
             (intern base))
-            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
+            [(SomeI64 _) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]
             [(NoneI64)
-              (ErrMacroCallDecl
+              (ResultMacroCallDecl.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     call-expr
@@ -40601,7 +40626,7 @@
 ;; that is not bound as a macro in the current module falls back to this module's
 ;; available macros, so `and`/`or`/`when`/`unless`/`cond` resolve without an
 ;; explicit import (#2060). Local macros and explicit imports therefore take
-;; precedence over the prelude. Returns MacroNoDecl (an ordinary call, not an
+;; precedence over the prelude. Returns MacroMaybeDecl.No (an ordinary call, not an
 ;; error) when the name is not a prelude macro, leaving plain calls unaffected.
 (define (macro-prelude-resolve-module
   [symbols : CompilerSymbols]
@@ -40619,27 +40644,27 @@
         symbols
         (compiler-symbol-handle-index handle)
         module-name)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])]
+    [(NoneI64) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
 
 (define (macro-prelude-resolve
   [symbols : CompilerSymbols]
   [lookup-name : String]) : ResultMacroCallDecl
   (match (macro-prelude-resolve-module symbols "stdlib.core_macros" lookup-name)
-    [(OkMacroCallDecl maybe-decl)
+    [(ResultMacroCallDecl.Ok maybe-decl)
       (match maybe-decl
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.No)
           ;; Compatibility fallback for sources loaded with the old module
           ;; identity before the core_macros spelling migration.
           (macro-prelude-resolve-module
             symbols
             "stdlib.core-macros"
             lookup-name)]
-        [_ (OkMacroCallDecl maybe-decl)])]
-    [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))
+        [_ (ResultMacroCallDecl.Ok maybe-decl)])]
+    [(ResultMacroCallDecl.Err diag) (ResultMacroCallDecl.Err diag)]))
 
 (define (macro-prelude-call-decl
   [ctx : TcContext]
@@ -40664,16 +40689,16 @@
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
         target-module)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])]
     [(NoneI64)
       (match (macro-surface-call-decl-in-module target-module lookup-name)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]))
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])]))
 
 (define (macro-unqualified-imported-call-target
   [ctx : TcContext]
@@ -40697,8 +40722,8 @@
   [targets : MacroFlatImportTargetList]
   [lookup-name-id : i64]) : i64
   (match targets
-    [(MacroFlatImportTargetNil) -1]
-    [(MacroFlatImportTargetCons target-module-id rest-box)
+    [(MacroFlatImportTargetList.Nil) -1]
+    [(MacroFlatImportTargetList.Cons target-module-id rest-box)
       (let
         [target : i64
           (macro-unqualified-imported-call-target
@@ -40723,7 +40748,7 @@
       (intern-str target)
       lookup-name
       call-expr)
-    (OkMacroCallDecl (MacroNoDecl))))
+    (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))))
 
 (define (macro-unqualified-imported-call-decl-cached
   [ctx : TcContext]
@@ -40788,7 +40813,7 @@
         target-module
         lookup-name
         call-expr)]
-    [(TcNoString) (OkMacroCallDecl (MacroNoDecl))]))
+    [(TcNoString) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
 
 (define (macro-unqualified-call-decl-in-module
   [ctx : TcContext]
@@ -40805,32 +40830,32 @@
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
         module)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))])]
     [(NoneI64)
       (match (macro-surface-call-decl-in-module module lookup-name)
-        [(MacroSomeDecl macro-name def-module params ret body)
-          (OkMacroCallDecl
-            (MacroSomeDecl macro-name def-module params ret body))]
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.Some macro-name def-module params ret body)
+          (ResultMacroCallDecl.Ok
+            (MacroMaybeDecl.Some macro-name def-module params ret body))]
+        [(MacroMaybeDecl.No)
           (match (macro-unqualified-imported-call-decl
             ctx
             decls
             module
             lookup-name
             call-expr)
-            [(OkMacroCallDecl imported-decl)
+            [(ResultMacroCallDecl.Ok imported-decl)
               (match imported-decl
-                [(MacroNoDecl)
+                [(MacroMaybeDecl.No)
                   (macro-prelude-call-decl
                     (tc-context-with-module ctx module)
                     decls
                     lookup-name
                     call-expr)]
-                [_ (OkMacroCallDecl imported-decl)])]
-            [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)])])]))
+                [_ (ResultMacroCallDecl.Ok imported-decl)])]
+            [(ResultMacroCallDecl.Err diag) (ResultMacroCallDecl.Err diag)])])]))
 
 (define (macro-call-decl-from-name
   [ctx : TcContext]
@@ -40867,7 +40892,8 @@
         [(OkTcString resolved-name)
           (macro-call-decl-from-name ctx decls module resolved-name call-expr)]
         [(ErrTcString message)
-          (ErrMacroCallDecl (box (ctfe-diagnostic-at-expr call-expr message)))]))))
+          (ResultMacroCallDecl.Err
+            (box (ctfe-diagnostic-at-expr call-expr message)))]))))
 
 (define (macro-call-decl-from-hygiene-name
   [ctx : TcContext]
@@ -40929,7 +40955,7 @@
           (tc-context-module ctx)
           (intern-str name)
           call-expr))]
-    [_ (OkMacroCallDecl (MacroNoDecl))]))
+    [_ (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))
 
 (define (macro-call-decl-with-self-alias
   [ctx : TcContext]
@@ -40942,9 +40968,9 @@
     func
     decls
     call-expr)
-    [(OkMacroCallDecl maybe-decl)
+    [(ResultMacroCallDecl.Ok maybe-decl)
       (match maybe-decl
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.No)
           (match (ast-expr-unspan func)
             [(AstExprVar name)
               (let
@@ -40953,16 +40979,16 @@
                   (tc-hygiene-global-name? lookup-name)
                   (tc-name-qualified? lookup-name)
                   (>= (tc-name-first-dot lookup-name) 0))
-                  (OkMacroCallDecl maybe-decl)
+                  (ResultMacroCallDecl.Ok maybe-decl)
                   (macro-alias-self-call-decl
                     ctx
                     decls
                     module
                     lookup-name
                     call-expr)))]
-            [_ (OkMacroCallDecl maybe-decl)])]
-        [_ (OkMacroCallDecl maybe-decl)])]
-    [(ErrMacroCallDecl diag) (ErrMacroCallDecl diag)]))
+            [_ (ResultMacroCallDecl.Ok maybe-decl)])]
+        [_ (ResultMacroCallDecl.Ok maybe-decl)])]
+    [(ResultMacroCallDecl.Err diag) (ResultMacroCallDecl.Err diag)]))
 
 (define (macro-call-decl-with-context
   [ctx : TcContext]
@@ -40972,43 +40998,50 @@
   [context : AstMaybeModuleName]
   [call-expr : AstExpr]) : ResultMacroCallDeclModule
   (match (macro-call-decl-with-self-alias ctx func decls module call-expr)
-    [(OkMacroCallDecl maybe-decl)
+    [(ResultMacroCallDecl.Ok maybe-decl)
       (match maybe-decl
-        [(MacroNoDecl)
+        [(MacroMaybeDecl.No)
           (match context
             [(AstSomeModuleName context-module)
               (if (string.string-eq context-module module)
-                (OkMacroCallDeclModule maybe-decl module)
+                (ResultMacroCallDeclModule.Ok maybe-decl module)
                 (match (macro-call-decl-with-self-alias
                   ctx
                   func
                   decls
                   context-module
                   call-expr)
-                  [(OkMacroCallDecl context-decl)
+                  [(ResultMacroCallDecl.Ok context-decl)
                     (match context-decl
-                      [(MacroNoDecl) (OkMacroCallDeclModule maybe-decl module)]
-                      [_ (OkMacroCallDeclModule context-decl context-module)])]
-                  [(ErrMacroCallDecl diag) (ErrMacroCallDeclModule diag)]))]
-            [(AstNoModuleName) (OkMacroCallDeclModule maybe-decl module)])]
-        [_ (OkMacroCallDeclModule maybe-decl module)])]
-    [(ErrMacroCallDecl primary-diag)
+                      [(MacroMaybeDecl.No)
+                        (ResultMacroCallDeclModule.Ok maybe-decl module)]
+                      [_
+                        (ResultMacroCallDeclModule.Ok
+                          context-decl
+                          context-module)])]
+                  [(ResultMacroCallDecl.Err diag)
+                    (ResultMacroCallDeclModule.Err diag)]))]
+            [(AstNoModuleName) (ResultMacroCallDeclModule.Ok maybe-decl module)])]
+        [_ (ResultMacroCallDeclModule.Ok maybe-decl module)])]
+    [(ResultMacroCallDecl.Err primary-diag)
       (match context
         [(AstSomeModuleName context-module)
           (if (string.string-eq context-module module)
-            (ErrMacroCallDeclModule primary-diag)
+            (ResultMacroCallDeclModule.Err primary-diag)
             (match (macro-call-decl-with-self-alias
               ctx
               func
               decls
               context-module
               call-expr)
-              [(OkMacroCallDecl context-decl)
+              [(ResultMacroCallDecl.Ok context-decl)
                 (match context-decl
-                  [(MacroNoDecl) (ErrMacroCallDeclModule primary-diag)]
-                  [_ (OkMacroCallDeclModule context-decl context-module)])]
-              [(ErrMacroCallDecl _) (ErrMacroCallDeclModule primary-diag)]))]
-        [(AstNoModuleName) (ErrMacroCallDeclModule primary-diag)])]))
+                  [(MacroMaybeDecl.No)
+                    (ResultMacroCallDeclModule.Err primary-diag)]
+                  [_ (ResultMacroCallDeclModule.Ok context-decl context-module)])]
+              [(ResultMacroCallDecl.Err _)
+                (ResultMacroCallDeclModule.Err primary-diag)]))]
+        [(AstNoModuleName) (ResultMacroCallDeclModule.Err primary-diag)])]))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str_cat.str-cat
@@ -41139,10 +41172,11 @@
     (ctfe-fuel-limit))
     [(OkCtfeQuoteType ty _)
       (match (tc-source-type-policy-ok ctx ty)
-        [(OkTcUnit) (OkMacroTypeArg (macro-type-arg-resolve ctx decls ty))]
+        [(OkTcUnit)
+          (ResultMacroTypeArg.Ok (macro-type-arg-resolve ctx decls ty))]
         [(ErrTcUnit message)
-          (ErrMacroTypeArg (box (ctfe-diagnostic-at-expr arg message)))])]
-    [(ErrCtfeQuoteType diag) (ErrMacroTypeArg diag)]))
+          (ResultMacroTypeArg.Err (box (ctfe-diagnostic-at-expr arg message)))])]
+    [(ErrCtfeQuoteType diag) (ResultMacroTypeArg.Err diag)]))
 
 (define (macro-type-arg-with-fallback
   [ctx : TcContext]
@@ -41150,16 +41184,17 @@
   [fallback-module : String]
   [arg : AstExpr]) : ResultMacroTypeArg
   (match (macro-type-arg ctx decls arg)
-    [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
-    [(ErrMacroTypeArg primary-diag)
+    [(ResultMacroTypeArg.Ok resolved-ty) (ResultMacroTypeArg.Ok resolved-ty)]
+    [(ResultMacroTypeArg.Err primary-diag)
       (if (string.string-eq fallback-module (tc-context-module ctx))
-        (ErrMacroTypeArg primary-diag)
+        (ResultMacroTypeArg.Err primary-diag)
         (match (macro-type-arg
           (tc-context-with-module ctx fallback-module)
           decls
           arg)
-          [(OkMacroTypeArg resolved-ty) (OkMacroTypeArg resolved-ty)]
-          [(ErrMacroTypeArg _) (ErrMacroTypeArg primary-diag)]))]))
+          [(ResultMacroTypeArg.Ok resolved-ty)
+            (ResultMacroTypeArg.Ok resolved-ty)]
+          [(ResultMacroTypeArg.Err _) (ResultMacroTypeArg.Err primary-diag)]))]))
 
 (define (macro-module-strategy-unknown-message [name : String]) : String
   (str_cat.str-cat
@@ -41173,7 +41208,7 @@
       (let
         [name : String (intern-str name-id)]
         (if (tc-source-slash-qualified-id? name name-id)
-          (ErrMacroModuleArg
+          (ResultMacroModuleArg.Err
             (box
               (ctfe-diagnostic-at-expr
                 arg
@@ -41186,19 +41221,19 @@
                     (box-get decls-box)
                     (intern current-module)
                     name)
-                    [(TcSomeString target) (OkMacroModuleArg target)]
+                    [(TcSomeString target) (ResultMacroModuleArg.Ok target)]
                     [(TcNoString)
                       (if (or
                         (string.string-eq name current-module)
                         (tc-imported-module-identity? ctx name))
-                        (OkMacroModuleArg name)
-                        (ErrMacroModuleArg
+                        (ResultMacroModuleArg.Ok name)
+                        (ResultMacroModuleArg.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               arg
                               (macro-module-strategy-unknown-message name)))))])])])))]
     [_
-      (ErrMacroModuleArg
+      (ResultMacroModuleArg.Err
         (box
           (ctfe-diagnostic-at-expr
             arg
@@ -41209,15 +41244,15 @@
   [fallback-module : String]
   [arg : AstExpr]) : ResultMacroModuleArg
   (match (macro-module-strategy-arg ctx arg)
-    [(OkMacroModuleArg module) (OkMacroModuleArg module)]
-    [(ErrMacroModuleArg primary-diag)
+    [(ResultMacroModuleArg.Ok module) (ResultMacroModuleArg.Ok module)]
+    [(ResultMacroModuleArg.Err primary-diag)
       (if (string.string-eq fallback-module (tc-context-module ctx))
-        (ErrMacroModuleArg primary-diag)
+        (ResultMacroModuleArg.Err primary-diag)
         (match (macro-module-strategy-arg
           (tc-context-with-module ctx fallback-module)
           arg)
-          [(OkMacroModuleArg module) (OkMacroModuleArg module)]
-          [(ErrMacroModuleArg _) (ErrMacroModuleArg primary-diag)]))]))
+          [(ResultMacroModuleArg.Ok module) (ResultMacroModuleArg.Ok module)]
+          [(ResultMacroModuleArg.Err _) (ResultMacroModuleArg.Err primary-diag)]))]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
   (match items
@@ -41227,23 +41262,24 @@
         (match rest1
           [(AstExprCons second rest2)
             (match (box-get rest2)
-              [(AstExprNil) (OkMacroClause (ast-expr-clause first second))]
+              [(AstExprNil)
+                (ResultMacroClause.Ok (ast-expr-clause first second))]
               [_
-                (ErrMacroClause
+                (ResultMacroClause.Err
                   (box
                     (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))])]
           [_
-            (ErrMacroClause
+            (ResultMacroClause.Err
               (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))]))]
     [_
-      (ErrMacroClause
+      (ResultMacroClause.Err
         (box (ctfe-diagnostic-at-expr arg (macro-clause-shape-message))))]))
 
 (define (macro-expr-clause-from-arg [arg : AstExpr]) : ResultMacroClause
   (match (ast-expr-unspan arg)
     [(AstExprBracketClause items) (macro-expr-clause-from-items arg items)]
     [_
-      (ErrMacroClause
+      (ResultMacroClause.Err
         (box
           (ctfe-diagnostic-at-expr
             arg
@@ -41251,18 +41287,19 @@
 
 (define (macro-expr-clause-list-from-args [args : AstExprList]) : ResultMacroClauseList
   (match args
-    [(AstExprNil) (OkMacroClauseList AstExprClauseNil)]
+    [(AstExprNil) (ResultMacroClauseList.Ok AstExprClauseNil)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-expr-clause-from-arg head-expr)
-          [(OkMacroClause clause)
+          [(ResultMacroClause.Ok clause)
             (match (macro-expr-clause-list-from-args rest)
-              [(OkMacroClauseList clauses)
-                (OkMacroClauseList (ast-expr-clause-cons clause clauses))]
-              [(ErrMacroClauseList diag) (ErrMacroClauseList diag)])]
-          [(ErrMacroClause diag) (ErrMacroClauseList diag)]))]))
+              [(ResultMacroClauseList.Ok clauses)
+                (ResultMacroClauseList.Ok (ast-expr-clause-cons clause clauses))]
+              [(ResultMacroClauseList.Err diag)
+                (ResultMacroClauseList.Err diag)])]
+          [(ResultMacroClause.Err diag) (ResultMacroClauseList.Err diag)]))]))
 
 (define (macro-expr-span-or-zero [arg : AstExpr]) : AstSourceSpan
   (match arg
@@ -41275,7 +41312,7 @@
     [_ false]))
 
 (define (macro-expr-binding-clause-shape-error [arg : AstExpr]) : ResultMacroBindingClause
-  (ErrMacroBindingClause
+  (ResultMacroBindingClause.Err
     (box (ctfe-diagnostic-at-expr arg (macro-binding-clause-shape-message)))))
 
 (define (macro-expr-binding-clause-from-name
@@ -41295,7 +41332,7 @@
                   [(AstExprCons init rest3)
                     (match (box-get rest3)
                       [(AstExprNil)
-                        (OkMacroBindingClause
+                        (ResultMacroBindingClause.Ok
                           (ast-expr-binding-clause-id
                             name
                             true
@@ -41307,7 +41344,7 @@
             [_ (macro-expr-binding-clause-shape-error arg)])
           (match rest1
             [(AstExprNil)
-              (OkMacroBindingClause
+              (ResultMacroBindingClause.Ok
                 (ast-expr-binding-clause-id
                   name
                   false
@@ -41333,7 +41370,7 @@
     [(AstExprBracketClause items)
       (macro-expr-binding-clause-from-items arg items)]
     [_
-      (ErrMacroBindingClause
+      (ResultMacroBindingClause.Err
         (box
           (ctfe-diagnostic-at-expr
             arg
@@ -41341,20 +41378,21 @@
 
 (define (macro-expr-binding-clause-list-from-args [args : AstExprList]) : ResultMacroBindingClauseList
   (match args
-    [(AstExprNil) (OkMacroBindingClauseList AstExprBindingClauseNil)]
+    [(AstExprNil) (ResultMacroBindingClauseList.Ok AstExprBindingClauseNil)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-expr-binding-clause-from-arg head-expr)
-          [(OkMacroBindingClause clause)
+          [(ResultMacroBindingClause.Ok clause)
             (match (macro-expr-binding-clause-list-from-args rest)
-              [(OkMacroBindingClauseList clauses)
-                (OkMacroBindingClauseList
+              [(ResultMacroBindingClauseList.Ok clauses)
+                (ResultMacroBindingClauseList.Ok
                   (ast-expr-binding-clause-cons clause clauses))]
-              [(ErrMacroBindingClauseList diag)
-                (ErrMacroBindingClauseList diag)])]
-          [(ErrMacroBindingClause diag) (ErrMacroBindingClauseList diag)]))]))
+              [(ResultMacroBindingClauseList.Err diag)
+                (ResultMacroBindingClauseList.Err diag)])]
+          [(ResultMacroBindingClause.Err diag)
+            (ResultMacroBindingClauseList.Err diag)]))]))
 
 (define (macro-check-ordinary-operand
   [ctx : TcContext]
@@ -41362,18 +41400,18 @@
   [resolved-expected : AstType]
   [arg : AstExpr]) : ResultMacroCheck
   (if (tc-type-eq resolved-expected (AstTyExpr))
-    OkMacroCheck
+    ResultMacroCheck.Ok
     (match (tc-expr-with-expected-or-actual ctx env arg resolved-expected)
       [(OkTcType actual)
         (if (tc-type-compatible? resolved-expected actual)
-          OkMacroCheck
-          (ErrMacroCheck
+          ResultMacroCheck.Ok
+          (ResultMacroCheck.Err
             (box
               (tc-expr-diag
                 arg
                 (macro-operand-mismatch-message resolved-expected actual)))))]
       [(ErrTcType message)
-        (ErrMacroCheck
+        (ResultMacroCheck.Err
           (box
             (tc-expr-diag
               arg
@@ -41397,22 +41435,22 @@
       (match (tc-context-program ctx)
         [(AstProgram decls-box) (box-get decls-box)])
       arg)
-      [(OkMacroTypeArg _) OkMacroCheck]
-      [(ErrMacroTypeArg diag) (ErrMacroCheck diag)])
+      [(ResultMacroTypeArg.Ok _) ResultMacroCheck.Ok]
+      [(ResultMacroTypeArg.Err diag) (ResultMacroCheck.Err diag)])
     (let
       [resolved-expected : AstType
         (tc-resolve-type ctx (tc-macro-signature-type expected))]
       (cond
         [(tc-macro-expr-clause-type? resolved-expected)
           (match (macro-expr-clause-from-arg arg)
-            [(OkMacroClause _) OkMacroCheck]
-            [(ErrMacroClause diag) (ErrMacroCheck diag)])]
+            [(ResultMacroClause.Ok _) ResultMacroCheck.Ok]
+            [(ResultMacroClause.Err diag) (ResultMacroCheck.Err diag)])]
         [(tc-macro-expr-binding-clause-type? resolved-expected)
           (match (macro-expr-binding-clause-from-arg arg)
-            [(OkMacroBindingClause _) OkMacroCheck]
-            [(ErrMacroBindingClause diag) (ErrMacroCheck diag)])]
+            [(ResultMacroBindingClause.Ok _) ResultMacroCheck.Ok]
+            [(ResultMacroBindingClause.Err diag) (ResultMacroCheck.Err diag)])]
         [(macro-operand-bracket-clause? arg)
-          (ErrMacroCheck
+          (ResultMacroCheck.Err
             (box
               (ctfe-diagnostic-at-expr
                 arg
@@ -41425,14 +41463,15 @@
   [expected : AstType]
   [args : AstExprList]) : ResultMacroCheck
   (match args
-    [(AstExprNil) OkMacroCheck]
+    [(AstExprNil) ResultMacroCheck.Ok]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-check-operand ctx env expected head)
-          [(OkMacroCheck) (macro-check-variadic-operands ctx env expected rest)]
-          [(ErrMacroCheck diag) (ErrMacroCheck diag)]))]))
+          [(ResultMacroCheck.Ok)
+            (macro-check-variadic-operands ctx env expected rest)]
+          [(ResultMacroCheck.Err diag) (ResultMacroCheck.Err diag)]))]))
 
 (define (macro-param-expr-clause? [ctx : TcContext] [ty : AstType]) : bool
   (tc-macro-expr-clause-type?
@@ -41468,38 +41507,38 @@
   [env : CtfeEnv]) : ResultMacroEnv
   (cond
     [(tc-macro-type-param-kind? ty)
-      (ErrMacroEnv
+      (ResultMacroEnv.Err
         (box
           (ctfe-diagnostic-at-expr
             (AstExprVar name)
             "typecheck: type macro operand cannot be variadic")))]
     [(tc-macro-module-param-kind? ty)
-      (ErrMacroEnv
+      (ResultMacroEnv.Err
         (box
           (ctfe-diagnostic-at-expr
             (AstExprVar name)
             "typecheck: Module macro operand cannot be variadic")))]
     [(macro-param-expr-clause? ctx ty)
       (match (macro-expr-clause-list-from-args args)
-        [(OkMacroClauseList clauses)
-          (OkMacroEnv
+        [(ResultMacroClauseList.Ok clauses)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeExprClauseList clauses)))]
-        [(ErrMacroClauseList diag) (ErrMacroEnv diag)])]
+        [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx ty)
       (match (macro-expr-binding-clause-list-from-args args)
-        [(OkMacroBindingClauseList clauses)
-          (OkMacroEnv
+        [(ResultMacroBindingClauseList.Ok clauses)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend
               env
               (intern-str name)
               (CtfeExprBindingClauseList clauses)))]
-        [(ErrMacroBindingClauseList diag) (ErrMacroEnv diag)])]
+        [(ResultMacroBindingClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [else
       (match (macro-check-variadic-operands ctx type-env ty args)
-        [(OkMacroCheck)
-          (OkMacroEnv
+        [(ResultMacroCheck.Ok)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeExprList args)))]
-        [(ErrMacroCheck diag) (ErrMacroEnv diag)])]))
+        [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
 
 (define (macro-bind-fixed-param
   [ctx : TcContext]
@@ -41515,45 +41554,45 @@
   (cond
     [(tc-macro-type-param-kind? ty)
       (match (macro-type-arg-with-fallback ctx decls fallback-module arg-expr)
-        [(OkMacroTypeArg resolved-ty)
-          (OkMacroEnv
+        [(ResultMacroTypeArg.Ok resolved-ty)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
-        [(ErrMacroTypeArg diag) (ErrMacroEnv diag)])]
+        [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
         ctx
         fallback-module
         arg-expr)
-        [(OkMacroModuleArg module)
-          (OkMacroEnv
+        [(ResultMacroModuleArg.Ok module)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend-typed
               env
               (intern-str name)
               (CtfeString module)
               (AstTyString)))]
-        [(ErrMacroModuleArg diag) (ErrMacroEnv diag)])]
+        [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-clause? ctx ty)
       (match (macro-expr-clause-from-arg arg-expr)
-        [(OkMacroClause clause)
-          (OkMacroEnv
+        [(ResultMacroClause.Ok clause)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
-        [(ErrMacroClause diag) (ErrMacroEnv diag)])]
+        [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx ty)
       (match (macro-expr-binding-clause-from-arg arg-expr)
-        [(OkMacroBindingClause clause)
-          (OkMacroEnv
+        [(ResultMacroBindingClause.Ok clause)
+          (ResultMacroEnv.Ok
             (ctfe-env-extend
               env
               (intern-str name)
               (CtfeExprBindingClause clause)))]
-        [(ErrMacroBindingClause diag) (ErrMacroEnv diag)])]
+        [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
     [else
       (let
         [resolved-expected : AstType
           (tc-resolve-type ctx (tc-macro-signature-type ty))]
         (match (macro-check-operand ctx type-env ty arg-expr)
-          [(OkMacroCheck)
-            (OkMacroEnv
+          [(ResultMacroCheck.Ok)
+            (ResultMacroEnv.Ok
               (ctfe-env-extend
                 env
                 (intern-str name)
@@ -41565,7 +41604,7 @@
                     resolved-expected
                     capture-expr-types
                     arg-expr))))]
-          [(ErrMacroCheck diag) (ErrMacroEnv diag)]))]))
+          [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)]))]))
 
 ;; Bind the unevaluated operand forms to the macro parameters as `Expr` values.
 ;; A trailing variadic parameter collects the remaining operands as an ExprList.
@@ -41582,9 +41621,9 @@
   (match params
     [(AstMacroParamNil)
       (match args
-        [(AstExprNil) (OkMacroEnv env)]
+        [(AstExprNil) (ResultMacroEnv.Ok env)]
         [_
-          (ErrMacroEnv
+          (ResultMacroEnv.Err
             (box
               (ctfe-diagnostic-at-expr
                 call-expr
@@ -41598,7 +41637,7 @@
               (macro-bind-variadic-param ctx type-env pname pty args env)
               (match args
                 [(AstExprNil)
-                  (ErrMacroEnv
+                  (ResultMacroEnv.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         call-expr
@@ -41618,7 +41657,7 @@
                       arg-expr
                       capture-expr-types
                       env)
-                      [(OkMacroEnv next-env)
+                      [(ResultMacroEnv.Ok next-env)
                         (macro-bind-params
                           ctx
                           decls
@@ -41629,7 +41668,7 @@
                           next-env
                           capture-expr-types
                           call-expr)]
-                      [(ErrMacroEnv diag) (ErrMacroEnv diag)]))]))]))]))
+                      [(ResultMacroEnv.Err diag) (ResultMacroEnv.Err diag)]))]))]))]))
 
 ;; Run a macro transformer via CTFE. Module/declaration macro expansion also
 ;; needs the bound CTFE environment while normalizing generated import operands.
@@ -41655,7 +41694,7 @@
       (tc-ctfe-env ctx)
       (tc-string-list-contains macro-expand-expr-type-macro-names macro-name)
       call-expr)
-      [(OkMacroEnv env)
+      [(ResultMacroEnv.Ok env)
         (begin
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (ctfe-eval-node
@@ -41668,14 +41707,14 @@
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
-                (OkMacroValueEnv value env))]
+                (ResultMacroValueEnv.Ok value env))]
             [(ErrCtfe diag)
               (begin
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
-                (ErrMacroValueEnv diag))]))]
-      [(ErrMacroEnv diag) (ErrMacroValueEnv diag)])))
+                (ResultMacroValueEnv.Err diag))]))]
+      [(ResultMacroEnv.Err diag) (ResultMacroValueEnv.Err diag)])))
 
 ;; Run a macro transformer via CTFE. Callers decide how to interpret the
 ;; returned syntax value for expression, module, or declaration positions.
@@ -41699,8 +41738,8 @@
     body
     expanded-args
     call-expr)
-    [(OkMacroValueEnv value _) (OkMacroValue value)]
-    [(ErrMacroValueEnv diag) (ErrMacroValue diag)]))
+    [(ResultMacroValueEnv.Ok value _) (ResultMacroValue.Ok value)]
+    [(ResultMacroValueEnv.Err diag) (ResultMacroValue.Err diag)]))
 
 (define (macro-eval-transformer
   [ctx : TcContext]
@@ -41717,7 +41756,7 @@
   ;; and bound; otherwise the operand typecheck sees the inner macro name as an
   ;; unbound value.
   (match (macro-expand-exprs ctx type-env decls depth args)
-    [(OkMacroExprList expanded-args)
+    [(ResultMacroExprList.Ok expanded-args)
       (macro-eval-transformer-expanded
         ctx
         decls
@@ -41728,7 +41767,7 @@
         body
         expanded-args
         call-expr)]
-    [(ErrMacroExprList diag) (ErrMacroValue diag)]))
+    [(ResultMacroExprList.Err diag) (ResultMacroValue.Err diag)]))
 
 (define (macro-generated-type-param-expr-list
   [env : CtfeEnv]
@@ -41818,11 +41857,11 @@
   [fallback : i64]
   [maybe-decl : MacroMaybeDecl]) : i64
   (match maybe-decl
-    [(MacroSomeDecl _ _ params _ _)
+    [(MacroMaybeDecl.Some _ _ params _ _)
       (ast-expr-call
         func-box
         (macro-generated-import-type-args params args env))]
-    [(MacroNoDecl) fallback]))
+    [(MacroMaybeDecl.No) fallback]))
 
 (define (macro-rewrite-generated-import-direct-call
   [ctx : TcContext]
@@ -41853,20 +41892,20 @@
                 target
                 lookup-name
                 call-expr)
-                [(OkMacroCallDecl maybe-decl)
+                [(ResultMacroCallDecl.Ok maybe-decl)
                   (match maybe-decl
-                    [(MacroSomeDecl _ _ _ _ _)
+                    [(MacroMaybeDecl.Some _ _ _ _ _)
                       (macro-rewrite-generated-import-call-with-decl
                         func-box
                         args
                         env
                         fallback
                         maybe-decl)]
-                    [(MacroNoDecl)
+                    [(MacroMaybeDecl.No)
                       (ast-expr-call
                         func-box
                         (macro-generated-type-param-expr-list env args))])]
-                [(ErrMacroCallDecl _) fallback])]
+                [(ResultMacroCallDecl.Err _) fallback])]
             [(TcNoString) fallback])))]
     [_ fallback]))
 
@@ -41891,16 +41930,16 @@
             module
             (AstSomeModuleName definition-module)
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl _)
+            [(ResultMacroCallDeclModule.Ok maybe-decl _)
               (match maybe-decl
-                [(MacroSomeDecl _ _ _ _ _)
+                [(MacroMaybeDecl.Some _ _ _ _ _)
                   (macro-rewrite-generated-import-call-with-decl
                     func-box
                     args
                     env
                     call-id
                     maybe-decl)]
-                [(MacroNoDecl)
+                [(MacroMaybeDecl.No)
                   (macro-rewrite-generated-import-direct-call
                     ctx
                     orig-decls
@@ -41911,7 +41950,7 @@
                     args
                     env
                     call-id)])]
-            [(ErrMacroCallDeclModule _)
+            [(ResultMacroCallDeclModule.Err _)
               (macro-rewrite-generated-import-direct-call
                 ctx
                 orig-decls
@@ -42447,7 +42486,7 @@
                           AstDeclNil)))))))))))))
 
 (define (macro-vector-family-fast-arity-error [call-expr : AstExpr]) : ResultMacroParsedDecls
-  (ErrMacroParsedDecls
+  (ResultMacroParsedDecls.Err
     (box
       (ctfe-diagnostic-at-expr
         call-expr
@@ -42478,17 +42517,20 @@
                         decls
                         fallback-module
                         type-expr)
-                        [(OkMacroTypeArg elem-ty)
+                        [(ResultMacroTypeArg.Ok elem-ty)
                           (match (macro-vf-name-expr vec-expr)
                             [(TcSomeString vec-name)
                               (match (macro-vf-name-expr
                                 (ast-node-get prefix-id))
                                 [(TcSomeString base)
-                                  (OkMacroParsedDecls
+                                  (ResultMacroParsedDecls.Ok
                                     (macro-vf-decls elem-ty vec-name base))]
-                                [(TcNoString) (OkMacroParsedDecls AstDeclNil)])]
-                            [(TcNoString) (OkMacroParsedDecls AstDeclNil)])]
-                        [(ErrMacroTypeArg diag) (ErrMacroParsedDecls diag)])]
+                                [(TcNoString)
+                                  (ResultMacroParsedDecls.Ok AstDeclNil)])]
+                            [(TcNoString)
+                              (ResultMacroParsedDecls.Ok AstDeclNil)])]
+                        [(ResultMacroTypeArg.Err diag)
+                          (ResultMacroParsedDecls.Err diag)])]
                     [_ (macro-vector-family-fast-arity-error call-expr)])]
                 [_ (macro-vector-family-fast-arity-error call-expr)]))]
           [_ (macro-vector-family-fast-arity-error call-expr)]))]
@@ -42561,7 +42603,7 @@
         (macro-core-fast-or (box-get rest)))]))
 
 (define (macro-core-fast-arity-error [call-expr : AstExpr] [message : String]) : ResultMacroCompatCall
-  (ErrMacroCompatCall (box (ctfe-diagnostic-at-expr call-expr message))))
+  (ResultMacroCompatCall.Err (box (ctfe-diagnostic-at-expr call-expr message))))
 
 (define (macro-core-fast-guard
   [args : AstExprList]
@@ -42576,8 +42618,8 @@
               (let
                 [unit-expr : i64 (macro-core-fast-unit)]
                 (if is-unless
-                  (OkMacroCompatCall (ast-expr-if cond unit-expr body))
-                  (OkMacroCompatCall (ast-expr-if cond body unit-expr))))]
+                  (ResultMacroCompatCall.Ok (ast-expr-if cond unit-expr body))
+                  (ResultMacroCompatCall.Ok (ast-expr-if cond body unit-expr))))]
             [_
               (macro-core-fast-arity-error
                 call-expr
@@ -42612,9 +42654,9 @@
 
 (define (macro-core-fast-cond-call [args : AstExprList]) : ResultMacroCompatCall
   (match (macro-expr-clause-list-from-args args)
-    [(OkMacroClauseList clauses)
-      (OkMacroCompatCall (macro-core-fast-cond clauses))]
-    [(ErrMacroClauseList diag) (ErrMacroCompatCall diag)]))
+    [(ResultMacroClauseList.Ok clauses)
+      (ResultMacroCompatCall.Ok (macro-core-fast-cond clauses))]
+    [(ResultMacroClauseList.Err diag) (ResultMacroCompatCall.Err diag)]))
 
 (define (macro-str-cat-fast-length [args : AstExprList]) : i64
   (match args
@@ -42695,22 +42737,24 @@
                   decls
                   (tc-context-module ctx)
                   type-expr)
-                  [(OkMacroTypeArg elem-ty)
+                  [(ResultMacroTypeArg.Ok elem-ty)
                     (match (macro-expand-expr
                       ctx
                       type-env
                       decls
                       depth
                       (ast-node-get count-id))
-                      [(OkMacroExpr ncount)
+                      [(ResultMacroExpr.Ok ncount)
                         (begin
                           (tc-context-capture-active-pools! ctx)
                           (macro-core-fast-profile-ok
                             macro-name
                             args
                             (ast-expr-make-array elem-ty ncount)))]
-                      [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
-                  [(ErrMacroTypeArg diag) (ErrMacroCompatCall diag)])]
+                      [(ResultMacroExpr.Err diag)
+                        (ResultMacroCompatCall.Err diag)])]
+                  [(ResultMacroTypeArg.Err diag)
+                    (ResultMacroCompatCall.Err diag)])]
               [_
                 (macro-core-fast-arity-error
                   call-expr
@@ -42742,7 +42786,7 @@
             decls
             depth
             (ast-node-get items-id))
-            [(OkMacroExpr nitems)
+            [(ResultMacroExpr.Ok nitems)
               (begin
                 (tc-context-capture-active-pools! ctx)
                 (macro-core-fast-profile-ok
@@ -42751,7 +42795,7 @@
                   (macro-array-fast-private-call
                     "__tl_array-length"
                     (macro-str-cat-fast-list1 nitems))))]
-            [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
         [_
           (macro-core-fast-arity-error
             call-expr
@@ -42783,22 +42827,23 @@
                   decls
                   depth
                   (ast-node-get items-id))
-                  [(OkMacroExpr nitems)
+                  [(ResultMacroExpr.Ok nitems)
                     (match (macro-expand-expr
                       ctx
                       type-env
                       decls
                       depth
                       (ast-node-get index-id))
-                      [(OkMacroExpr nindex)
+                      [(ResultMacroExpr.Ok nindex)
                         (begin
                           (tc-context-capture-active-pools! ctx)
                           (macro-core-fast-profile-ok
                             macro-name
                             args
                             (ast-expr-array-ref nitems nindex)))]
-                      [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
-                  [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                      [(ResultMacroExpr.Err diag)
+                        (ResultMacroCompatCall.Err diag)])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
               [_
                 (macro-core-fast-arity-error
                   call-expr
@@ -42838,30 +42883,33 @@
                         decls
                         depth
                         (ast-node-get items-id))
-                        [(OkMacroExpr nitems)
+                        [(ResultMacroExpr.Ok nitems)
                           (match (macro-expand-expr
                             ctx
                             type-env
                             decls
                             depth
                             (ast-node-get index-id))
-                            [(OkMacroExpr nindex)
+                            [(ResultMacroExpr.Ok nindex)
                               (match (macro-expand-expr
                                 ctx
                                 type-env
                                 decls
                                 depth
                                 (ast-node-get value-id))
-                                [(OkMacroExpr nvalue)
+                                [(ResultMacroExpr.Ok nvalue)
                                   (begin
                                     (tc-context-capture-active-pools! ctx)
                                     (macro-core-fast-profile-ok
                                       macro-name
                                       args
                                       (ast-expr-array-set nitems nindex nvalue)))]
-                                [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
-                            [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
-                        [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                                [(ResultMacroExpr.Err diag)
+                                  (ResultMacroCompatCall.Err diag)])]
+                            [(ResultMacroExpr.Err diag)
+                              (ResultMacroCompatCall.Err diag)])]
+                        [(ResultMacroExpr.Err diag)
+                          (ResultMacroCompatCall.Err diag)])]
                     [_
                       (macro-core-fast-arity-error
                         call-expr
@@ -42901,22 +42949,23 @@
                   decls
                   depth
                   (ast-node-get items-id))
-                  [(OkMacroExpr nitems)
+                  [(ResultMacroExpr.Ok nitems)
                     (match (macro-expand-expr
                       ctx
                       type-env
                       decls
                       depth
                       (ast-node-get value-id))
-                      [(OkMacroExpr nvalue)
+                      [(ResultMacroExpr.Ok nvalue)
                         (begin
                           (tc-context-capture-active-pools! ctx)
                           (macro-core-fast-profile-ok
                             macro-name
                             args
                             (ast-expr-array-push nitems nvalue)))]
-                      [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
-                  [(ErrMacroExpr diag) (ErrMacroCompatCall diag)])]
+                      [(ResultMacroExpr.Err diag)
+                        (ResultMacroCompatCall.Err diag)])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)])]
               [_
                 (macro-core-fast-arity-error
                   call-expr
@@ -43073,17 +43122,17 @@
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (cfg compile-profile (compiler-tc-macro-profile-finish _macro-name _args))
-    (OkMacroCompatCall expanded)))
+    (ResultMacroCompatCall.Ok expanded)))
 
 (define (macro-core-fast-profile-result
   [macro-name : String]
   [args : AstExprList]
   [result : ResultMacroCompatCall]) : ResultMacroCompatCall
   (match result
-    [(OkMacroCompatCall expanded)
+    [(ResultMacroCompatCall.Ok expanded)
       (macro-core-fast-profile-ok macro-name args expanded)]
-    [(ErrMacroCompatCall diag) (ErrMacroCompatCall diag)]
-    [(NoMacroCompatCall) (NoMacroCompatCall)]))
+    [(ResultMacroCompatCall.Err diag) (ResultMacroCompatCall.Err diag)]
+    [(ResultMacroCompatCall.No) (ResultMacroCompatCall.No)]))
 
 (define (macro-core-fast-expand
   [ctx : TcContext]
@@ -43107,7 +43156,7 @@
         call-expr)]
     [(macro-str-cat-fast-path? macro-name definition-module)
       (match (macro-expand-exprs ctx type-env decls depth args)
-        [(OkMacroExprList expanded-args)
+        [(ResultMacroExprList.Ok expanded-args)
           (begin
             (tc-context-capture-active-pools! ctx)
             (match (macro-bind-params
@@ -43122,19 +43171,19 @@
                 macro-expand-expr-type-macro-names
                 macro-name)
               call-expr)
-              [(OkMacroEnv _)
+              [(ResultMacroEnv.Ok _)
                 (macro-core-fast-profile-ok
                   macro-name
                   expanded-args
                   (macro-str-cat-fast-expand definition-module expanded-args))]
-              [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
-        [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])]
+              [(ResultMacroEnv.Err diag) (ResultMacroCompatCall.Err diag)]))]
+        [(ResultMacroExprList.Err diag) (ResultMacroCompatCall.Err diag)])]
     [(macro-core-prelude-module? definition-module)
       (let
         [base : String (macro-core-fast-path-base macro-name)]
         (if (macro-core-fast-path-base-known? base)
           (match (macro-expand-exprs ctx type-env decls depth args)
-            [(OkMacroExprList expanded-args)
+            [(ResultMacroExprList.Ok expanded-args)
               (begin
                 (tc-context-capture-active-pools! ctx)
                 (match (macro-bind-params
@@ -43149,7 +43198,7 @@
                     macro-expand-expr-type-macro-names
                     macro-name)
                   call-expr)
-                  [(OkMacroEnv _)
+                  [(ResultMacroEnv.Ok _)
                     (cond
                       [(string-eq base "and")
                         (macro-core-fast-profile-ok
@@ -43176,10 +43225,10 @@
                           macro-name
                           expanded-args
                           (macro-core-fast-cond-call expanded-args))])]
-                  [(ErrMacroEnv diag) (ErrMacroCompatCall diag)]))]
-            [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])
-          (NoMacroCompatCall)))]
-    [else (NoMacroCompatCall)]))
+                  [(ResultMacroEnv.Err diag) (ResultMacroCompatCall.Err diag)]))]
+            [(ResultMacroExprList.Err diag) (ResultMacroCompatCall.Err diag)])
+          (ResultMacroCompatCall.No)))]
+    [else (ResultMacroCompatCall.No)]))
 
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
@@ -43196,13 +43245,13 @@
   [depth : i64]
   [call-expr : AstExpr]) : ResultMacroExpr
   (if (tc-macro-result-module? ret)
-    (ErrMacroExpr
+    (ResultMacroExpr.Err
       (box
         (ctfe-diagnostic-at-expr
           call-expr
           "typecheck: Module macro can only be used in import position")))
     (if (tc-macro-result-decls? ret)
-      (ErrMacroExpr
+      (ResultMacroExpr.Err
         (box
           (ctfe-diagnostic-at-expr
             call-expr
@@ -43217,9 +43266,9 @@
         args
         depth
         call-expr)
-        [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
-        [(ErrMacroCompatCall diag) (ErrMacroExpr diag)]
-        [(NoMacroCompatCall)
+        [(ResultMacroCompatCall.Ok expanded) (ResultMacroExpr.Ok expanded)]
+        [(ResultMacroCompatCall.Err diag) (ResultMacroExpr.Err diag)]
+        [(ResultMacroCompatCall.No)
           (match (macro-eval-transformer
             ctx
             type-env
@@ -43230,7 +43279,7 @@
             args
             depth
             call-expr)
-            [(OkMacroValue value)
+            [(ResultMacroValue.Ok value)
               (match value
                 [(CtfeExpr expanded produced)
                   (if (tc-macro-produced-type-compatible? ctx ret produced)
@@ -43242,23 +43291,23 @@
                       (ast-node-get
                         (macro-hygiene-expr
                           (ast-node-get expanded)
-                          MacroHygieneNil
+                          MacroHygieneEnv.Nil
                           (macro-hygiene-context-macro-name
                             macro-name
                             definition-module)
                           (+ depth 1))))
-                    (ErrMacroExpr
+                    (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           call-expr
                           "typecheck: macro expansion produced type does not match declaration"))))]
                 [_
-                  (ErrMacroExpr
+                  (ResultMacroExpr.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         call-expr
                         "macro transformer did not produce an Expr")))])]
-            [(ErrMacroValue diag) (ErrMacroExpr diag)])]))))
+            [(ResultMacroValue.Err diag) (ResultMacroExpr.Err diag)])]))))
 
 (define (macro-expand-exprs
   [ctx : TcContext]
@@ -43267,18 +43316,18 @@
   [depth : i64]
   [exprs : AstExprList]) : ResultMacroExprList
   (match exprs
-    [(AstExprNil) (OkMacroExprList (AstExprNil))]
+    [(AstExprNil) (ResultMacroExprList.Ok (AstExprNil))]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (macro-expand-expr ctx env decls depth head)
-          [(OkMacroExpr nhead)
+          [(ResultMacroExpr.Ok nhead)
             (match (macro-expand-exprs ctx env decls depth rest)
-              [(OkMacroExprList nrest)
-                (OkMacroExprList (ast-expr-cons nhead nrest))]
-              [(ErrMacroExprList diag) (ErrMacroExprList diag)])]
-          [(ErrMacroExpr diag) (ErrMacroExprList diag)]))]))
+              [(ResultMacroExprList.Ok nrest)
+                (ResultMacroExprList.Ok (ast-expr-cons nhead nrest))]
+              [(ResultMacroExprList.Err diag) (ResultMacroExprList.Err diag)])]
+          [(ResultMacroExpr.Err diag) (ResultMacroExprList.Err diag)]))]))
 
 (define (macro-expand-arms
   [ctx : TcContext]
@@ -43288,7 +43337,7 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : ResultMacroArms
   (match arms
-    [(AstMatchArmNil) (OkMacroArms (AstMatchArmNil))]
+    [(AstMatchArmNil) (ResultMacroArms.Ok (AstMatchArmNil))]
     [(AstMatchArmCons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -43299,7 +43348,7 @@
               (match (tc-bind-match-pattern ctx env scrut-ty pattern)
                 [(OkTcEnv arm-env)
                   (match (macro-expand-expr ctx arm-env decls depth body)
-                    [(OkMacroExpr nbody)
+                    [(ResultMacroExpr.Ok nbody)
                       (match (macro-expand-arms
                         ctx
                         env
@@ -43307,15 +43356,15 @@
                         depth
                         scrut-ty
                         rest)
-                        [(OkMacroArms nrest)
-                          (OkMacroArms
+                        [(ResultMacroArms.Ok nrest)
+                          (ResultMacroArms.Ok
                             (ast-match-arm-cons
                               (ast-match-arm pattern nbody)
                               nrest))]
-                        [(ErrMacroArms diag) (ErrMacroArms diag)])]
-                    [(ErrMacroExpr diag) (ErrMacroArms diag)])]
+                        [(ResultMacroArms.Err diag) (ResultMacroArms.Err diag)])]
+                    [(ResultMacroExpr.Err diag) (ResultMacroArms.Err diag)])]
                 [(ErrTcEnv message)
-                  (ErrMacroArms (box (tc-expr-diag body message)))]))]))]))
+                  (ResultMacroArms.Err (box (tc-expr-diag body message)))]))]))]))
 
 (define (macro-expand-bindings
   [ctx : TcContext]
@@ -43324,7 +43373,7 @@
   [depth : i64]
   [bindings : AstLetBindingList]) : ResultMacroLetBindings
   (match bindings
-    [(AstLetBindingNil) (OkMacroLetBindings (AstLetBindingNil) env)]
+    [(AstLetBindingNil) (ResultMacroLetBindings.Ok (AstLetBindingNil) env)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -43333,7 +43382,7 @@
             (let
               [init : AstExpr (ast-node-get init-box)]
               (match (macro-expand-expr ctx env decls depth init)
-                [(OkMacroExpr ninit)
+                [(ResultMacroExpr.Ok ninit)
                   (match (tc-let-bindings
                     ctx
                     env
@@ -43347,17 +43396,18 @@
                         decls
                         depth
                         rest)
-                        [(OkMacroLetBindings nrest final-env)
-                          (OkMacroLetBindings
+                        [(ResultMacroLetBindings.Ok nrest final-env)
+                          (ResultMacroLetBindings.Ok
                             (ast-let-binding-cons
                               (ast-let-binding-id name maybe-ty ninit)
                               nrest)
                             final-env)]
-                        [(ErrMacroLetBindings diag) (ErrMacroLetBindings diag)])]
+                        [(ResultMacroLetBindings.Err diag)
+                          (ResultMacroLetBindings.Err diag)])]
                     [(ErrTcEnv message)
-                      (ErrMacroLetBindings
+                      (ResultMacroLetBindings.Err
                         (box (tc-expr-diag (ast-node-get ninit) message)))])]
-                [(ErrMacroExpr diag) (ErrMacroLetBindings diag)]))]))]))
+                [(ResultMacroExpr.Err diag) (ResultMacroLetBindings.Err diag)]))]))]))
 
 (define (macro-compat-unit-expr) : i64
   (ast-node-push (AstExprLiteral AstLitUnit)))
@@ -43389,18 +43439,18 @@
   [body : AstExprList]
   [is-unless : bool]) : ResultMacroCompatCall
   (match (macro-expand-expr ctx env decls depth cond)
-    [(OkMacroExpr ncond)
+    [(ResultMacroExpr.Ok ncond)
       (match (macro-expand-exprs ctx env decls depth body)
-        [(OkMacroExprList nbody)
+        [(ResultMacroExprList.Ok nbody)
           (let
             [unit-expr : i64 (macro-compat-unit-expr)]
             [body-expr : i64
               (ast-node-push (AstExprBegin (macro-compat-append-unit nbody)))]
             (if is-unless
-              (OkMacroCompatCall (ast-expr-if ncond unit-expr body-expr))
-              (OkMacroCompatCall (ast-expr-if ncond body-expr unit-expr))))]
-        [(ErrMacroExprList diag) (ErrMacroCompatCall diag)])]
-    [(ErrMacroExpr diag) (ErrMacroCompatCall diag)]))
+              (ResultMacroCompatCall.Ok (ast-expr-if ncond unit-expr body-expr))
+              (ResultMacroCompatCall.Ok (ast-expr-if ncond body-expr unit-expr))))]
+        [(ResultMacroExprList.Err diag) (ResultMacroCompatCall.Err diag)])]
+    [(ResultMacroExpr.Err diag) (ResultMacroCompatCall.Err diag)]))
 
 (define (macro-expand-compat-guard-call
   [ctx : TcContext]
@@ -43418,7 +43468,7 @@
         [body : AstExprList (box-get body)]
         (match body
           [(AstExprNil)
-            (ErrMacroCompatCall
+            (ResultMacroCompatCall.Err
               (box
                 (ctfe-diagnostic-at-expr
                   call-expr
@@ -43433,7 +43483,7 @@
               body
               is-unless)]))]
     [_
-      (ErrMacroCompatCall
+      (ResultMacroCompatCall.Err
         (box
           (ctfe-diagnostic-at-expr call-expr (macro-compat-guard-message name))))]))
 
@@ -43467,8 +43517,8 @@
             args
             true
             call-expr)
-          (NoMacroCompatCall)))]
-    [(TcNoString) (NoMacroCompatCall)]))
+          (ResultMacroCompatCall.No)))]
+    [(TcNoString) (ResultMacroCompatCall.No)]))
 
 (define (macro-expand-expr
   [ctx : TcContext]
@@ -43477,7 +43527,7 @@
   [depth : i64]
   [expr : AstExpr]) : ResultMacroExpr
   (if (< (macro-expand-depth-limit) depth)
-    (ErrMacroExpr
+    (ResultMacroExpr.Err
       (box
         (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit")))
     (match expr
@@ -43485,16 +43535,22 @@
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-spanned ninner span))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-spanned ninner span))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprCall func-box args)
         (let
           [func : AstExpr (ast-node-get func-box)]
           (if (macro-call-callee-maybe-macro? func)
             (match (macro-call-decl ctx func decls expr)
-              [(OkMacroCallDecl maybe-decl)
+              [(ResultMacroCallDecl.Ok maybe-decl)
                 (match maybe-decl
-                  [(MacroSomeDecl macro-name definition-module params ret body)
+                  [(MacroMaybeDecl.Some
+                      macro-name
+                      definition-module
+                      params
+                      ret
+                      body)
                     (macro-expand-call
                       ctx
                       env
@@ -43507,7 +43563,7 @@
                       args
                       depth
                       expr)]
-                  [(MacroNoDecl)
+                  [(MacroMaybeDecl.No)
                     (match (macro-expand-compat-call
                       ctx
                       env
@@ -43516,78 +43572,83 @@
                       func
                       args
                       expr)
-                      [(OkMacroCompatCall expanded) (OkMacroExpr expanded)]
-                      [(NoMacroCompatCall)
+                      [(ResultMacroCompatCall.Ok expanded)
+                        (ResultMacroExpr.Ok expanded)]
+                      [(ResultMacroCompatCall.No)
                         (match (macro-expand-expr ctx env decls depth func)
-                          [(OkMacroExpr nfunc)
+                          [(ResultMacroExpr.Ok nfunc)
                             (match (macro-expand-exprs ctx env decls depth args)
-                              [(OkMacroExprList nargs)
-                                (OkMacroExpr (ast-expr-call nfunc nargs))]
-                              [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-                          [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                      [(ErrMacroCompatCall diag) (ErrMacroExpr diag)])])]
-              [(ErrMacroCallDecl diag) (ErrMacroExpr diag)])
+                              [(ResultMacroExprList.Ok nargs)
+                                (ResultMacroExpr.Ok (ast-expr-call nfunc nargs))]
+                              [(ResultMacroExprList.Err diag)
+                                (ResultMacroExpr.Err diag)])]
+                          [(ResultMacroExpr.Err diag)
+                            (ResultMacroExpr.Err diag)])]
+                      [(ResultMacroCompatCall.Err diag)
+                        (ResultMacroExpr.Err diag)])])]
+              [(ResultMacroCallDecl.Err diag) (ResultMacroExpr.Err diag)])
             (match (macro-expand-expr ctx env decls depth func)
-              [(OkMacroExpr nfunc)
+              [(ResultMacroExpr.Ok nfunc)
                 (match (macro-expand-exprs ctx env decls depth args)
-                  [(OkMacroExprList nargs)
-                    (OkMacroExpr (ast-expr-call nfunc nargs))]
-                  [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-              [(ErrMacroExpr diag) (ErrMacroExpr diag)])))]
+                  [(ResultMacroExprList.Ok nargs)
+                    (ResultMacroExpr.Ok (ast-expr-call nfunc nargs))]
+                  [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])))]
       [(AstExprBracketClause items)
         (match (macro-expand-exprs ctx env decls depth items)
-          [(OkMacroExprList nitems)
-            (OkMacroExpr (ast-expr-bracket-clause nitems))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nitems)
+            (ResultMacroExpr.Ok (ast-expr-bracket-clause nitems))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprBinary op left-box right-box)
         (let
           [left : AstExpr (ast-node-get left-box)]
           [right : AstExpr (ast-node-get right-box)]
           (match (macro-expand-expr ctx env decls depth left)
-            [(OkMacroExpr nleft)
+            [(ResultMacroExpr.Ok nleft)
               (match (macro-expand-expr ctx env decls depth right)
-                [(OkMacroExpr nright)
-                  (OkMacroExpr (ast-expr-binary op nleft nright))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nright)
+                  (ResultMacroExpr.Ok (ast-expr-binary op nleft nright))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprUnary op inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-unary op ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-unary op ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprIf cond-box then-branch-box else-branch-box)
         (let
           [cond : AstExpr (ast-node-get cond-box)]
           [then-branch : AstExpr (ast-node-get then-branch-box)]
           [else-branch : AstExpr (ast-node-get else-branch-box)]
           (match (macro-expand-expr ctx env decls depth cond)
-            [(OkMacroExpr ncond)
+            [(ResultMacroExpr.Ok ncond)
               (match (macro-expand-expr ctx env decls depth then-branch)
-                [(OkMacroExpr nthen)
+                [(ResultMacroExpr.Ok nthen)
                   (match (macro-expand-expr ctx env decls depth else-branch)
-                    [(OkMacroExpr nelse)
-                      (OkMacroExpr (ast-expr-if ncond nthen nelse))]
-                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                    [(ResultMacroExpr.Ok nelse)
+                      (ResultMacroExpr.Ok (ast-expr-if ncond nthen nelse))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprLet let-box)
         (match (box-get let-box)
           [(AstLet bindings body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (match (macro-expand-bindings ctx env decls depth bindings)
-                [(OkMacroLetBindings nbindings body-env)
+                [(ResultMacroLetBindings.Ok nbindings body-env)
                   (match (macro-expand-expr ctx body-env decls depth body)
-                    [(OkMacroExpr nbody)
-                      (OkMacroExpr (ast-expr-let nbindings nbody))]
-                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                [(ErrMacroLetBindings diag) (ErrMacroExpr diag)]))])]
+                    [(ResultMacroExpr.Ok nbody)
+                      (ResultMacroExpr.Ok (ast-expr-let nbindings nbody))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                [(ResultMacroLetBindings.Err diag) (ResultMacroExpr.Err diag)]))])]
       [(AstExprBegin exprs)
         (match (macro-expand-exprs ctx env decls depth exprs)
-          [(OkMacroExprList nexprs)
-            (OkMacroExpr (ast-node-push (AstExprBegin nexprs)))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nexprs)
+            (ResultMacroExpr.Ok (ast-node-push (AstExprBegin nexprs)))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprUnsafe exprs)
         ;; Expansion typechecks some sub-expressions (e.g. `match` scrutinees) via
         ;; `tc-expr`; descend with the unsafe marker set so those checks see the
@@ -43595,26 +43656,26 @@
         ;; this, an `unsafe`-only primitive under an `(unsafe ...)` reachable here
         ;; is wrongly rejected once the program defines a macro.
         (match (macro-expand-exprs ctx (tc-enter-unsafe env) decls depth exprs)
-          [(OkMacroExprList nexprs)
-            (OkMacroExpr (ast-node-push (AstExprUnsafe nexprs)))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nexprs)
+            (ResultMacroExpr.Ok (ast-node-push (AstExprUnsafe nexprs)))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprTuple exprs)
         (match (macro-expand-exprs ctx env decls depth exprs)
-          [(OkMacroExprList nexprs)
-            (OkMacroExpr (ast-node-push (AstExprTuple nexprs)))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nexprs)
+            (ResultMacroExpr.Ok (ast-node-push (AstExprTuple nexprs)))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprArray exprs)
         (match (macro-expand-exprs ctx env decls depth exprs)
-          [(OkMacroExprList nexprs)
-            (OkMacroExpr (ast-node-push (AstExprArray nexprs)))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nexprs)
+            (ResultMacroExpr.Ok (ast-node-push (AstExprArray nexprs)))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprMatch match-box)
         (match (box-get match-box)
           [(AstMatch scrut-box arms)
             (let
               [scrut : AstExpr (ast-node-get scrut-box)]
               (match (macro-expand-expr ctx env decls depth scrut)
-                [(OkMacroExpr nscrut)
+                [(ResultMacroExpr.Ok nscrut)
                   (match (tc-expr ctx env (ast-node-get nscrut))
                     [(OkTcType scrut-ty)
                       (match (macro-expand-arms
@@ -43624,23 +43685,24 @@
                         depth
                         scrut-ty
                         arms)
-                        [(OkMacroArms narms)
-                          (OkMacroExpr (ast-expr-match nscrut narms))]
-                        [(ErrMacroArms diag) (ErrMacroExpr diag)])]
+                        [(ResultMacroArms.Ok narms)
+                          (ResultMacroExpr.Ok (ast-expr-match nscrut narms))]
+                        [(ResultMacroArms.Err diag) (ResultMacroExpr.Err diag)])]
                     [(ErrTcType message)
-                      (ErrMacroExpr
+                      (ResultMacroExpr.Err
                         (box (tc-expr-diag (ast-node-get nscrut) message)))])]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)]))])]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
       [(AstExprWhile cond-box body-box)
         (let
           [cond : AstExpr (ast-node-get cond-box)]
           [body : AstExpr (ast-node-get body-box)]
           (match (macro-expand-expr ctx env decls depth cond)
-            [(OkMacroExpr ncond)
+            [(ResultMacroExpr.Ok ncond)
               (match (macro-expand-expr ctx env decls depth body)
-                [(OkMacroExpr nbody) (OkMacroExpr (ast-expr-while ncond nbody))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nbody)
+                  (ResultMacroExpr.Ok (ast-expr-while ncond nbody))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprForeach fe-box)
         (match (box-get fe-box)
           [(AstForeach index index-ty start-box end-box body-box)
@@ -43649,26 +43711,26 @@
               [end : AstExpr (ast-node-get end-box)]
               [body : AstExpr (ast-node-get body-box)]
               (match (macro-expand-expr ctx env decls depth start)
-                [(OkMacroExpr nstart)
+                [(ResultMacroExpr.Ok nstart)
                   (match (macro-expand-expr ctx env decls depth end)
-                    [(OkMacroExpr nend)
+                    [(ResultMacroExpr.Ok nend)
                       (match (macro-expand-expr
                         ctx
                         (tc-bind-id env index (tc-resolve-type ctx index-ty))
                         decls
                         depth
                         body)
-                        [(OkMacroExpr nbody)
-                          (OkMacroExpr
+                        [(ResultMacroExpr.Ok nbody)
+                          (ResultMacroExpr.Ok
                             (ast-expr-foreach-id
                               index
                               index-ty
                               nstart
                               nend
                               nbody))]
-                        [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)]))])]
+                        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
       [(AstExprLambda lambda-box)
         (match (box-get lambda-box)
           [(AstLambda params maybe-ret body-box)
@@ -43688,46 +43750,49 @@
                 decls
                 depth
                 body)
-                [(OkMacroExpr nbody)
-                  (OkMacroExpr (ast-expr-lambda params maybe-ret nbody))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)]))])]
+                [(ResultMacroExpr.Ok nbody)
+                  (ResultMacroExpr.Ok (ast-expr-lambda params maybe-ret nbody))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
       [(AstExprAnn inner-box ty)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-ann ninner ty))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-ann ninner ty))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprCast inner-box ty)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-cast ninner ty))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-cast ninner ty))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprBorrow mutable lifetime place-box)
         (let
           [place : AstExpr (ast-node-get place-box)]
           (match (macro-expand-expr ctx env decls depth place)
-            [(OkMacroExpr nplace)
-              (OkMacroExpr (ast-expr-borrow mutable lifetime nplace))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok nplace)
+              (ResultMacroExpr.Ok (ast-expr-borrow mutable lifetime nplace))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprStructGet inner-box field)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner)
-              (OkMacroExpr (ast-expr-struct-get-id ninner field))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-struct-get-id ninner field))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprStructSet inner-box field value-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           [value : AstExpr (ast-node-get value-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner)
+            [(ResultMacroExpr.Ok ninner)
               (match (macro-expand-expr ctx env decls depth value)
-                [(OkMacroExpr nvalue)
-                  (OkMacroExpr (ast-expr-struct-set-id ninner field nvalue))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nvalue)
+                  (ResultMacroExpr.Ok
+                    (ast-expr-struct-set-id ninner field nvalue))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprWithRegion region body)
         (match (macro-expand-exprs
           ctx
@@ -43735,188 +43800,203 @@
           decls
           depth
           body)
-          [(OkMacroExprList nbody)
-            (OkMacroExpr (ast-node-push (AstExprWithRegion region nbody)))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nbody)
+            (ResultMacroExpr.Ok
+              (ast-node-push (AstExprWithRegion region nbody)))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprWithEscape scratch-box body)
         (let
           [scratch : AstExpr (ast-node-get scratch-box)]
           (match (macro-expand-expr ctx env decls depth scratch)
-            [(OkMacroExpr nscratch)
+            [(ResultMacroExpr.Ok nscratch)
               (match (macro-expand-exprs ctx env decls depth body)
-                [(OkMacroExprList nbody)
-                  (OkMacroExpr (ast-expr-with-escape nscratch nbody))]
-                [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExprList.Ok nbody)
+                  (ResultMacroExpr.Ok (ast-expr-with-escape nscratch nbody))]
+                [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprWithScratch body)
         (match (macro-expand-exprs ctx env decls depth body)
-          [(OkMacroExprList nbody) (OkMacroExpr (ast-expr-with-scratch nbody))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
+          [(ResultMacroExprList.Ok nbody)
+            (ResultMacroExpr.Ok (ast-expr-with-scratch nbody))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
       [(AstExprInArena arena-box body)
         (let
           [arena : AstExpr (ast-node-get arena-box)]
           (match (macro-expand-expr ctx env decls depth arena)
-            [(OkMacroExpr narena)
+            [(ResultMacroExpr.Ok narena)
               (match (macro-expand-exprs ctx env decls depth body)
-                [(OkMacroExprList nbody)
-                  (OkMacroExpr (ast-expr-in-arena narena nbody))]
-                [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExprList.Ok nbody)
+                  (ResultMacroExpr.Ok (ast-expr-in-arena narena nbody))]
+                [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprArrayRef array-box index-box)
         (let
           [array : AstExpr (ast-node-get array-box)]
           [index : AstExpr (ast-node-get index-box)]
           (match (macro-expand-expr ctx env decls depth array)
-            [(OkMacroExpr narray)
+            [(ResultMacroExpr.Ok narray)
               (match (macro-expand-expr ctx env decls depth index)
-                [(OkMacroExpr nindex)
-                  (OkMacroExpr (ast-expr-array-ref narray nindex))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nindex)
+                  (ResultMacroExpr.Ok (ast-expr-array-ref narray nindex))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprArraySet array-box index-box value-box)
         (let
           [array : AstExpr (ast-node-get array-box)]
           [index : AstExpr (ast-node-get index-box)]
           [value : AstExpr (ast-node-get value-box)]
           (match (macro-expand-expr ctx env decls depth array)
-            [(OkMacroExpr narray)
+            [(ResultMacroExpr.Ok narray)
               (match (macro-expand-expr ctx env decls depth index)
-                [(OkMacroExpr nindex)
+                [(ResultMacroExpr.Ok nindex)
                   (match (macro-expand-expr ctx env decls depth value)
-                    [(OkMacroExpr nvalue)
-                      (OkMacroExpr (ast-expr-array-set narray nindex nvalue))]
-                    [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                    [(ResultMacroExpr.Ok nvalue)
+                      (ResultMacroExpr.Ok
+                        (ast-expr-array-set narray nindex nvalue))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprBox inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-box ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-box ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprBoxGet inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-box-get ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-box-get ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprBoxTake inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-box-take ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-box-take ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprBoxSet inner-box value-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           [value : AstExpr (ast-node-get value-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner)
+            [(ResultMacroExpr.Ok ninner)
               (match (macro-expand-expr ctx env decls depth value)
-                [(OkMacroExpr nvalue)
-                  (OkMacroExpr (ast-expr-box-set ninner nvalue))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nvalue)
+                  (ResultMacroExpr.Ok (ast-expr-box-set ninner nvalue))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprComptime inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-comptime ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-comptime ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprReturn inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-return ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-return ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprSet name rhs-box)
         (let
           [rhs : AstExpr (ast-node-get rhs-box)]
           (match (macro-expand-expr ctx env decls depth rhs)
-            [(OkMacroExpr nrhs) (OkMacroExpr (ast-expr-set-id name nrhs))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok nrhs)
+              (ResultMacroExpr.Ok (ast-expr-set-id name nrhs))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprStringData inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-string-data ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-string-data ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprStringFromBytes ptr-box len-box)
         (let
           [ptr : AstExpr (ast-node-get ptr-box)]
           [len : AstExpr (ast-node-get len-box)]
           (match (macro-expand-expr ctx env decls depth ptr)
-            [(OkMacroExpr nptr)
+            [(ResultMacroExpr.Ok nptr)
               (match (macro-expand-expr ctx env decls depth len)
-                [(OkMacroExpr nlen)
-                  (OkMacroExpr (ast-expr-string-from-bytes nptr nlen))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nlen)
+                  (ResultMacroExpr.Ok (ast-expr-string-from-bytes nptr nlen))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprArrayData inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (macro-expand-expr ctx env decls depth inner)
-            [(OkMacroExpr ninner) (OkMacroExpr (ast-expr-array-data ninner))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok ninner)
+              (ResultMacroExpr.Ok (ast-expr-array-data ninner))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprBinaryData bytes)
-        (OkMacroExpr (ast-node-push (AstExprBinaryData bytes)))]
-      [(AstExprSpmdProgramIndex) (OkMacroExpr (ast-expr-spmd-program-index))]
-      [(AstExprSpmdProgramCount) (OkMacroExpr (ast-expr-spmd-program-count))]
+        (ResultMacroExpr.Ok (ast-node-push (AstExprBinaryData bytes)))]
+      [(AstExprSpmdProgramIndex)
+        (ResultMacroExpr.Ok (ast-expr-spmd-program-index))]
+      [(AstExprSpmdProgramCount)
+        (ResultMacroExpr.Ok (ast-expr-spmd-program-count))]
       [(AstExprCpuIdEax leaf-box subleaf-box)
         (let
           [leaf : AstExpr (ast-node-get leaf-box)]
           [subleaf : AstExpr (ast-node-get subleaf-box)]
           (match (macro-expand-expr ctx env decls depth leaf)
-            [(OkMacroExpr nleaf)
+            [(ResultMacroExpr.Ok nleaf)
               (match (macro-expand-expr ctx env decls depth subleaf)
-                [(OkMacroExpr nsubleaf)
-                  (OkMacroExpr (ast-expr-cpuid-eax nleaf nsubleaf))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nsubleaf)
+                  (ResultMacroExpr.Ok (ast-expr-cpuid-eax nleaf nsubleaf))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprCpuIdEbx leaf-box subleaf-box)
         (let
           [leaf : AstExpr (ast-node-get leaf-box)]
           [subleaf : AstExpr (ast-node-get subleaf-box)]
           (match (macro-expand-expr ctx env decls depth leaf)
-            [(OkMacroExpr nleaf)
+            [(ResultMacroExpr.Ok nleaf)
               (match (macro-expand-expr ctx env decls depth subleaf)
-                [(OkMacroExpr nsubleaf)
-                  (OkMacroExpr (ast-expr-cpuid-ebx nleaf nsubleaf))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nsubleaf)
+                  (ResultMacroExpr.Ok (ast-expr-cpuid-ebx nleaf nsubleaf))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprCpuIdEcx leaf-box subleaf-box)
         (let
           [leaf : AstExpr (ast-node-get leaf-box)]
           [subleaf : AstExpr (ast-node-get subleaf-box)]
           (match (macro-expand-expr ctx env decls depth leaf)
-            [(OkMacroExpr nleaf)
+            [(ResultMacroExpr.Ok nleaf)
               (match (macro-expand-expr ctx env decls depth subleaf)
-                [(OkMacroExpr nsubleaf)
-                  (OkMacroExpr (ast-expr-cpuid-ecx nleaf nsubleaf))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nsubleaf)
+                  (ResultMacroExpr.Ok (ast-expr-cpuid-ecx nleaf nsubleaf))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprCpuIdEdx leaf-box subleaf-box)
         (let
           [leaf : AstExpr (ast-node-get leaf-box)]
           [subleaf : AstExpr (ast-node-get subleaf-box)]
           (match (macro-expand-expr ctx env decls depth leaf)
-            [(OkMacroExpr nleaf)
+            [(ResultMacroExpr.Ok nleaf)
               (match (macro-expand-expr ctx env decls depth subleaf)
-                [(OkMacroExpr nsubleaf)
-                  (OkMacroExpr (ast-expr-cpuid-edx nleaf nsubleaf))]
-                [(ErrMacroExpr diag) (ErrMacroExpr diag)])]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+                [(ResultMacroExpr.Ok nsubleaf)
+                  (ResultMacroExpr.Ok (ast-expr-cpuid-edx nleaf nsubleaf))]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprXgetbv index-box)
         (let
           [index : AstExpr (ast-node-get index-box)]
           (match (macro-expand-expr ctx env decls depth index)
-            [(OkMacroExpr nindex) (OkMacroExpr (ast-expr-xgetbv nindex))]
-            [(ErrMacroExpr diag) (ErrMacroExpr diag)]))]
+            [(ResultMacroExpr.Ok nindex)
+              (ResultMacroExpr.Ok (ast-expr-xgetbv nindex))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExprSyscall args)
         (match (macro-expand-exprs ctx env decls depth args)
-          [(OkMacroExprList nargs) (OkMacroExpr (ast-expr-syscall nargs))]
-          [(ErrMacroExprList diag) (ErrMacroExpr diag)])]
-      [_ (OkMacroExpr (ast-node-push expr))])))
+          [(ResultMacroExprList.Ok nargs)
+            (ResultMacroExpr.Ok (ast-expr-syscall nargs))]
+          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+      [_ (ResultMacroExpr.Ok (ast-node-push expr))])))
 
 (define (macro-expand-module-call-position
   [ctx : TcContext]
@@ -43930,55 +44010,55 @@
         (let
           [func : AstExpr (ast-node-get func-box)]
           (match (macro-call-decl ctx func decls call-expr)
-            [(OkMacroCallDecl maybe-decl)
+            [(ResultMacroCallDecl.Ok maybe-decl)
               (match maybe-decl
-                [(MacroSomeDecl _ _ _ ret _)
+                [(MacroMaybeDecl.Some _ _ _ ret _)
                   (cond
                     [(and import-position (tc-macro-result-module? ret))
-                      (ErrMacroDecl
+                      (ResultMacroDecl.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
                             "typecheck: Module macro expansion is not implemented yet (#3153)")))]
                     [(and import-position (tc-macro-result-decls? ret))
-                      (ErrMacroDecl
+                      (ResultMacroDecl.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
                             "typecheck: Decls macro cannot be used in import position")))]
                     [import-position
-                      (ErrMacroDecl
+                      (ResultMacroDecl.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
                             "typecheck: expression macro cannot be used as module import")))]
                     [(tc-macro-result-decls? ret)
-                      (ErrMacroDecl
+                      (ResultMacroDecl.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
                             "typecheck: Decls macro expansion is not implemented yet (#3153)")))]
                     [(tc-macro-result-module? ret)
-                      (ErrMacroDecl
+                      (ResultMacroDecl.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
                             "typecheck: Module macro can only be used in import position")))]
                     [else
-                      (ErrMacroDecl
+                      (ResultMacroDecl.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             call-expr
                             "typecheck: expression macro cannot be used at module scope")))])]
-                [(MacroNoDecl)
-                  (ErrMacroDecl
+                [(MacroMaybeDecl.No)
+                  (ResultMacroDecl.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         call-expr
                         "typecheck: module-scope macro call must resolve to defmacro")))])]
-            [(ErrMacroCallDecl diag) (ErrMacroDecl diag)]))]
+            [(ResultMacroCallDecl.Err diag) (ResultMacroDecl.Err diag)]))]
       [_
-        (ErrMacroDecl
+        (ResultMacroDecl.Err
           (box
             (ctfe-diagnostic-at-expr
               call-expr
@@ -43996,9 +44076,9 @@
         (let
           [expr : AstExpr (ast-node-get expr-box)]
           (match (macro-expand-expr ctx global-env decls 0 expr)
-            [(OkMacroExpr nexpr)
-              (OkMacroDecl (ast-decl-def-id name maybe-ty nexpr))]
-            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
+            [(ResultMacroExpr.Ok nexpr)
+              (ResultMacroDecl.Ok (ast-decl-def-id name maybe-ty nexpr))]
+            [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
       [(AstDeclDefFn name params ret body-box export)
         (let
           [body : AstExpr (ast-node-get body-box)]
@@ -44010,28 +44090,29 @@
             decls
             0
             body)
-            [(OkMacroExpr nbody)
-              (OkMacroDecl
+            [(ResultMacroExpr.Ok nbody)
+              (ResultMacroDecl.Ok
                 (ast-decl-def-fn-export-id name params ret nbody export))]
-            [(ErrMacroExpr diag) (ErrMacroDecl diag)]))]
-      [(AstDeclTest _ _ _) (OkMacroDecl decl)]
+            [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
+      [(AstDeclTest _ _ _) (ResultMacroDecl.Ok decl)]
       [(AstDeclImport (AstImportSpec kind _ _ _ _))
         (match kind
           [(AstImportMacro call-id _)
             (macro-expand-module-call-position ctx decls call-id true)]
           [(AstImportMacroDecls call-id _)
             (macro-expand-module-call-position ctx decls call-id false)]
-          [_ (OkMacroDecl decl)])]
+          [_ (ResultMacroDecl.Ok decl)])]
       [(AstDeclUnsafe inner-box)
         (let
           [inner : AstDecl (box-get inner-box)]
           (match (macro-expand-decl ctx top-env decls inner)
-            [(OkMacroDecl ninner) (OkMacroDecl (ast-decl-unsafe ninner))]
-            [(ErrMacroDecl diag) (ErrMacroDecl diag)]))]
-      [_ (OkMacroDecl decl)])))
+            [(ResultMacroDecl.Ok ninner)
+              (ResultMacroDecl.Ok (ast-decl-unsafe ninner))]
+            [(ResultMacroDecl.Err diag) (ResultMacroDecl.Err diag)]))]
+      [_ (ResultMacroDecl.Ok decl)])))
 
 (define (macro-single-decl-expansion [decl : AstDecl] [path : String]) : ResultMacroDeclExpansion
-  (OkMacroDeclExpansion
+  (ResultMacroDeclExpansion.Ok
     (ast-decl-cons decl AstDeclNil)
     (ast-decl-path-cons path AstDeclPathNil)))
 
@@ -44100,7 +44181,7 @@
     [materialized : AstDeclList
       (ast-decl-cons (ast-decl-module target-module) generated-body)]
     (match (macro-find-module-body-decls orig-decls target-module)
-      [(MacroSomeDeclList existing-body)
+      [(MacroMaybeDeclList.Some existing-body)
         (if (macro-decls-contain-generated-key? existing-body identity)
           (let
             [same-identity-body : AstDeclList
@@ -44138,13 +44219,13 @@
                         target-module
                         alias
                         span)]
-                    (OkMacroDeclExpansion
+                    (ResultMacroDeclExpansion.Ok
                       expanded
                       (macro-paths-for-decls expanded decl-path)))]
                 [(CompilerSomeString message)
-                  (ErrMacroDeclExpansion
+                  (ResultMacroDeclExpansion.Err
                     (box (macro-generated-import-diag span message)))])
-              (ErrMacroDeclExpansion
+              (ResultMacroDeclExpansion.Err
                 (box (macro-module-incompatible-output-diag call-expr identity)))))
           (match (macro-check-generated-import-collisions
             orig-decls
@@ -44163,13 +44244,13 @@
                         target-module
                         alias
                         span)))]
-                (OkMacroDeclExpansion
+                (ResultMacroDeclExpansion.Ok
                   expanded
                   (macro-paths-for-decls expanded decl-path)))]
             [(CompilerSomeString message)
-              (ErrMacroDeclExpansion
+              (ResultMacroDeclExpansion.Err
                 (box (macro-generated-import-diag span message)))]))]
-      [(MacroNoDeclList)
+      [(MacroMaybeDeclList.No)
         (match (macro-check-generated-import-collisions
           orig-decls
           generated-body
@@ -44184,11 +44265,11 @@
                   (ast-decl-cons
                     (ast-decl-module module)
                     (macro-module-import-marker-decls target-module alias span)))]
-              (OkMacroDeclExpansion
+              (ResultMacroDeclExpansion.Ok
                 expanded
                 (macro-paths-for-decls expanded decl-path)))]
           [(CompilerSomeString message)
-            (ErrMacroDeclExpansion
+            (ResultMacroDeclExpansion.Err
               (box (macro-generated-import-diag span message)))])])))
 
 (define (macro-expand-module-generated-decls
@@ -44209,13 +44290,13 @@
   (let
     [module-count : i64 (macro-decls-module-count generated)]
     (if (= module-count 0)
-      (ErrMacroDeclExpansion
+      (ResultMacroDeclExpansion.Err
         (box
           (ctfe-diagnostic-at-expr
             call-expr
             "typecheck: Module macro output must include a module declaration")))
       (if (> module-count 1)
-        (ErrMacroDeclExpansion
+        (ResultMacroDeclExpansion.Err
           (box
             (ctfe-diagnostic-at-expr
               call-expr
@@ -44260,13 +44341,13 @@
                     final-body
                     call-expr))]
               [_
-                (ErrMacroDeclExpansion
+                (ResultMacroDeclExpansion.Err
                   (box
                     (ctfe-diagnostic-at-expr
                       call-expr
                       "typecheck: Module macro output must start with a module declaration")))])]
           [(AstDeclNil)
-            (ErrMacroDeclExpansion
+            (ResultMacroDeclExpansion.Err
               (box
                 (ctfe-diagnostic-at-expr
                   call-expr
@@ -44294,11 +44375,16 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl call-module)
+            [(ResultMacroCallDeclModule.Ok maybe-decl call-module)
               (let
                 [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
-                  [(MacroSomeDecl macro-name definition-module params ret body)
+                  [(MacroMaybeDecl.Some
+                      macro-name
+                      definition-module
+                      params
+                      ret
+                      body)
                     (if (tc-macro-result-decls? ret)
                       (match (macro-expand-exprs
                         call-ctx
@@ -44306,7 +44392,7 @@
                         orig-decls
                         0
                         args)
-                        [(OkMacroExprList expanded-args)
+                        [(ResultMacroExprList.Ok expanded-args)
                           (match (macro-module-identity
                             call-ctx
                             orig-decls
@@ -44340,7 +44426,7 @@
                                         macro-name
                                         expanded-args))
                                     (match fast-result
-                                      [(OkMacroParsedDecls generated)
+                                      [(ResultMacroParsedDecls.Ok generated)
                                         (let
                                           [contextual-generated : AstDeclList
                                             (macro-generated-context-decls
@@ -44352,13 +44438,13 @@
                                               macro-name
                                               (macro-decls-generated-key
                                                 identity))]
-                                          (OkMacroDeclExpansion
+                                          (ResultMacroDeclExpansion.Ok
                                             wrapped
                                             (macro-paths-for-decls
                                               wrapped
                                               decl-path)))]
-                                      [(ErrMacroParsedDecls diag)
-                                        (ErrMacroDeclExpansion diag)])))
+                                      [(ResultMacroParsedDecls.Err diag)
+                                        (ResultMacroDeclExpansion.Err diag)])))
                                 (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   orig-decls
@@ -44369,7 +44455,7 @@
                                   body
                                   expanded-args
                                   call-expr)
-                                  [(OkMacroValueEnv value macro-env)
+                                  [(ResultMacroValueEnv.Ok value macro-env)
                                     (let
                                       [parse-dispatch : SymI64Env
                                         (macro-parse-dispatch-for-macro
@@ -44379,7 +44465,7 @@
                                         value
                                         call-expr
                                         parse-dispatch)
-                                        [(OkMacroParsedDecls generated)
+                                        [(ResultMacroParsedDecls.Ok generated)
                                           (let
                                             [generated : AstDeclList
                                               (if (tc-macro-param-list-needs-call-context?
@@ -44402,34 +44488,37 @@
                                                 macro-name
                                                 (macro-decls-generated-key
                                                   identity))]
-                                            (OkMacroDeclExpansion
+                                            (ResultMacroDeclExpansion.Ok
                                               wrapped
                                               (macro-paths-for-decls
                                                 wrapped
                                                 decl-path)))]
-                                        [(ErrMacroParsedDecls diag)
-                                          (ErrMacroDeclExpansion diag)]))]
-                                  [(ErrMacroValueEnv diag)
-                                    (ErrMacroDeclExpansion diag)]))]
-                            [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
-                        [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
+                                        [(ResultMacroParsedDecls.Err diag)
+                                          (ResultMacroDeclExpansion.Err diag)]))]
+                                  [(ResultMacroValueEnv.Err diag)
+                                    (ResultMacroDeclExpansion.Err diag)]))]
+                            [(ErrGenKey diag)
+                              (ResultMacroDeclExpansion.Err diag)])]
+                        [(ResultMacroExprList.Err diag)
+                          (ResultMacroDeclExpansion.Err diag)])
                       (if (tc-macro-result-module? ret)
-                        (ErrMacroDeclExpansion
+                        (ResultMacroDeclExpansion.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               call-expr
                               "typecheck: Module macro can only be used in import position")))
-                        (ErrMacroDeclExpansion
+                        (ResultMacroDeclExpansion.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               call-expr
                               "typecheck: expression macro cannot be used at module scope")))))]
-                  [(MacroNoDecl)
-                    (ErrMacroDeclExpansion
+                  [(MacroMaybeDecl.No)
+                    (ResultMacroDeclExpansion.Err
                       (box (macro-call-not-macro-diag call-expr)))]))]
-            [(ErrMacroCallDeclModule diag) (ErrMacroDeclExpansion diag)]))]
+            [(ResultMacroCallDeclModule.Err diag)
+              (ResultMacroDeclExpansion.Err diag)]))]
       [_
-        (ErrMacroDeclExpansion
+        (ResultMacroDeclExpansion.Err
           (box
             (ctfe-diagnostic-at-expr
               call-expr
@@ -44459,11 +44548,16 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl call-module)
+            [(ResultMacroCallDeclModule.Ok maybe-decl call-module)
               (let
                 [call-ctx : TcContext (tc-context-with-module ctx module)]
                 (match maybe-decl
-                  [(MacroSomeDecl macro-name definition-module params ret body)
+                  [(MacroMaybeDecl.Some
+                      macro-name
+                      definition-module
+                      params
+                      ret
+                      body)
                     (if (tc-macro-result-module? ret)
                       (match (macro-expand-exprs
                         call-ctx
@@ -44471,7 +44565,7 @@
                         orig-decls
                         0
                         args)
-                        [(OkMacroExprList expanded-args)
+                        [(ResultMacroExprList.Ok expanded-args)
                           (match (macro-module-identity
                             call-ctx
                             orig-decls
@@ -44493,7 +44587,7 @@
                                 body
                                 expanded-args
                                 call-expr)
-                                [(OkMacroValueEnv value macro-env)
+                                [(ResultMacroValueEnv.Ok value macro-env)
                                   (let
                                     [parse-dispatch : SymI64Env
                                       (macro-parse-dispatch-for-macro
@@ -44503,7 +44597,7 @@
                                       value
                                       call-expr
                                       parse-dispatch)
-                                      [(OkMacroParsedDecls generated)
+                                      [(ResultMacroParsedDecls.Ok generated)
                                         (macro-expand-module-generated-decls
                                           ctx
                                           top-env
@@ -44520,29 +44614,32 @@
                                             params)
                                           generated
                                           call-expr)]
-                                      [(ErrMacroParsedDecls diag)
-                                        (ErrMacroDeclExpansion diag)]))]
-                                [(ErrMacroValueEnv diag)
-                                  (ErrMacroDeclExpansion diag)])]
-                            [(ErrGenKey diag) (ErrMacroDeclExpansion diag)])]
-                        [(ErrMacroExprList diag) (ErrMacroDeclExpansion diag)])
+                                      [(ResultMacroParsedDecls.Err diag)
+                                        (ResultMacroDeclExpansion.Err diag)]))]
+                                [(ResultMacroValueEnv.Err diag)
+                                  (ResultMacroDeclExpansion.Err diag)])]
+                            [(ErrGenKey diag)
+                              (ResultMacroDeclExpansion.Err diag)])]
+                        [(ResultMacroExprList.Err diag)
+                          (ResultMacroDeclExpansion.Err diag)])
                       (if (tc-macro-result-decls? ret)
-                        (ErrMacroDeclExpansion
+                        (ResultMacroDeclExpansion.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               call-expr
                               "typecheck: Decls macro cannot be used in import position")))
-                        (ErrMacroDeclExpansion
+                        (ResultMacroDeclExpansion.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               call-expr
                               "typecheck: expression macro cannot be used as module import")))))]
-                  [(MacroNoDecl)
-                    (ErrMacroDeclExpansion
+                  [(MacroMaybeDecl.No)
+                    (ResultMacroDeclExpansion.Err
                       (box (macro-call-not-macro-diag call-expr)))]))]
-            [(ErrMacroCallDeclModule diag) (ErrMacroDeclExpansion diag)]))]
+            [(ResultMacroCallDeclModule.Err diag)
+              (ResultMacroDeclExpansion.Err diag)]))]
       [_
-        (ErrMacroDeclExpansion
+        (ResultMacroDeclExpansion.Err
           (box
             (ctfe-diagnostic-at-expr
               call-expr
@@ -44591,11 +44688,12 @@
               (if (not (macro-decl-uses-macro? decl-ctx orig-decls template))
                 (macro-single-decl-expansion decl decl-path)
                 (match (macro-expand-decl decl-ctx top-env orig-decls template)
-                  [(OkMacroDecl expanded)
+                  [(ResultMacroDecl.Ok expanded)
                     (macro-single-decl-expansion
                       (ast-decl-comptime-decl-with-meta meta expanded)
                       decl-path)]
-                  [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)])))]))]
+                  [(ResultMacroDecl.Err diag)
+                    (ResultMacroDeclExpansion.Err diag)])))]))]
     [(AstDeclImport (AstImportSpec kind _ _ alias span))
       (match kind
         [(AstImportMacro call-id context)
@@ -44625,9 +44723,9 @@
         (if (not (macro-decl-uses-macro? decl-ctx orig-decls decl))
           (macro-single-decl-expansion decl decl-path)
           (match (macro-expand-decl decl-ctx top-env orig-decls decl)
-            [(OkMacroDecl expanded)
+            [(ResultMacroDecl.Ok expanded)
               (macro-single-decl-expansion expanded decl-path)]
-            [(ErrMacroDecl diag) (ErrMacroDeclExpansion diag)])))]))
+            [(ResultMacroDecl.Err diag) (ResultMacroDeclExpansion.Err diag)])))]))
 
 (define (macro-module-generated-key? [key : String]) : bool
   (and
@@ -44799,14 +44897,14 @@
       ;; calls through `macro-call-decl`.
       (if (macro-call-name-maybe-macro? name)
         (match (macro-call-decl ctx func decls call-expr)
-          [(OkMacroCallDecl maybe)
+          [(ResultMacroCallDecl.Ok maybe)
             (match maybe
-              [(MacroSomeDecl _ _ _ _ _) true]
-              [(MacroNoDecl)
+              [(MacroMaybeDecl.Some _ _ _ _ _) true]
+              [(MacroMaybeDecl.No)
                 (or
                   (string.string-eq name "when")
                   (string.string-eq name "unless"))])]
-          [(ErrMacroCallDecl _) true])
+          [(ResultMacroCallDecl.Err _) true])
         false)]
     [(TcNoString) false]))
 
@@ -45439,9 +45537,9 @@
     [(TcSomeString name)
       (if (macro-call-name-maybe-macro? name)
         (match (macro-call-decl ctx func decls call-expr)
-          [(OkMacroCallDecl maybe-decl)
+          [(ResultMacroCallDecl.Ok maybe-decl)
             (match maybe-decl
-              [(MacroSomeDecl macro-name definition-module _ ret _)
+              [(MacroMaybeDecl.Some macro-name definition-module _ ret _)
                 (and
                   (not (tc-macro-result-decls? ret))
                   (not (tc-macro-result-module? ret))
@@ -45451,9 +45549,9 @@
                       (macro-core-fast-path-base-known?
                         (macro-core-fast-path-base macro-name)))
                     (macro-str-cat-fast-path? macro-name definition-module)))]
-              [(MacroNoDecl)
+              [(MacroMaybeDecl.No)
                 (or (string-eq name "when") (string-eq name "unless"))])]
-          [(ErrMacroCallDecl _) false])
+          [(ResultMacroCallDecl.Err _) false])
         true)]
     [(TcNoString) true]))
 
@@ -46077,16 +46175,16 @@
             module
             context
             call-expr)
-            [(OkMacroCallDeclModule maybe-decl _)
+            [(ResultMacroCallDeclModule.Ok maybe-decl _)
               (match maybe-decl
-                [(MacroSomeDecl macro-name definition-module _ ret _)
+                [(MacroMaybeDecl.Some macro-name definition-module _ ret _)
                   (and
                     (tc-macro-result-decls? ret)
                     (macro-vector-family-decls-macro?
                       macro-name
                       definition-module))]
-                [(MacroNoDecl) false])]
-            [(ErrMacroCallDeclModule _) false]))]
+                [(MacroMaybeDecl.No) false])]
+            [(ResultMacroCallDeclModule.Err _) false]))]
       [_ false])))
 
 (define (macro-decl-vector-family-placeholder?
@@ -46133,7 +46231,7 @@
     ;; needs a rebuilt top env so generated symbols are visible.
     [batched-inert-splice? : bool false]
     [result : ResultMacroDeclsWithPaths
-      (ErrMacroDeclsWithPaths
+      (ResultMacroDeclsWithPaths.Err
         (box (tc-diag-at-start "macro: internal decl expansion walk")))]
     [done : bool false]
     (begin
@@ -46143,7 +46241,7 @@
             (begin
               (set!
                 result
-                (OkMacroDeclsWithPaths
+                (ResultMacroDeclsWithPaths.Ok
                   (macro-decl-list-reverse out-rev)
                   (macro-decl-path-list-reverse out-paths-rev)
                   false))
@@ -46186,7 +46284,7 @@
                       (begin
                         (set!
                           result
-                          (OkMacroDeclsWithPaths
+                          (ResultMacroDeclsWithPaths.Ok
                             (macro-decl-list-append
                               (macro-decl-list-reverse out-rev)
                               cur-decls)
@@ -46203,7 +46301,7 @@
                         cur-module
                         decl
                         decl-path)
-                        [(OkMacroDeclExpansion expanded expanded-paths)
+                        [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
                           (let
                             [next-module : String
                               (macro-decls-final-module expanded cur-module)]
@@ -46236,13 +46334,13 @@
                                   (begin
                                     (set!
                                       result
-                                      (ErrMacroDeclsWithPaths
+                                      (ResultMacroDeclsWithPaths.Err
                                         (box (tc-diag-at-start message))))
                                     (set! done true))])
                               (begin
                                 (set!
                                   result
-                                  (OkMacroDeclsWithPaths
+                                  (ResultMacroDeclsWithPaths.Ok
                                     (macro-decl-list-append
                                       (macro-decl-list-reverse out-rev)
                                       (macro-decl-list-append expanded rest))
@@ -46254,9 +46352,9 @@
                                         rest-paths))
                                     true))
                                 (set! done true))))]
-                        [(ErrMacroDeclExpansion diag)
+                        [(ResultMacroDeclExpansion.Err diag)
                           (begin
-                            (set! result (ErrMacroDeclsWithPaths diag))
+                            (set! result (ResultMacroDeclsWithPaths.Err diag))
                             (set! done true))])]
                     [(and
                         batched-inert-splice?
@@ -46270,7 +46368,7 @@
                       (begin
                         (set!
                           result
-                          (OkMacroDeclsWithPaths
+                          (ResultMacroDeclsWithPaths.Ok
                             (macro-decl-list-append
                               (macro-decl-list-reverse out-rev)
                               cur-decls)
@@ -46303,7 +46401,7 @@
                         cur-module
                         decl
                         decl-path)
-                        [(OkMacroDeclExpansion expanded expanded-paths)
+                        [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
                           (begin
                             (set!
                               out-rev
@@ -46318,9 +46416,9 @@
                               (macro-decls-final-module expanded cur-module))
                             (set! cur-decls rest)
                             (set! cur-paths rest-paths))]
-                        [(ErrMacroDeclExpansion diag)
+                        [(ResultMacroDeclExpansion.Err diag)
                           (begin
-                            (set! result (ErrMacroDeclsWithPaths diag))
+                            (set! result (ResultMacroDeclsWithPaths.Err diag))
                             (set! done true))])])]))]))
       result)))
 
@@ -46595,7 +46693,7 @@
                                         paths
                                         ""
                                         (not has-expr-type-macros))
-                                        [(OkMacroDeclsWithPaths
+                                        [(ResultMacroDeclsWithPaths.Ok
                                             ndecls
                                             npaths
                                             needs-followup?)
@@ -46609,11 +46707,11 @@
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-emit))
-                                            (OkMacroExpandPass
+                                            (ResultMacroExpandPass.Ok
                                               (ast-program ndecls)
                                               npaths
                                               needs-followup?))]
-                                        [(ErrMacroDeclsWithPaths diag)
+                                        [(ResultMacroDeclsWithPaths.Err diag)
                                           (begin
                                             (tc-context-capture-active-pools!
                                               ctx)
@@ -46624,18 +46722,19 @@
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-emit))
-                                            (ErrMacroExpandPass diag))]))]
+                                            (ResultMacroExpandPass.Err diag))]))]
                                   [(ErrTcEnv message)
-                                    (ErrMacroExpandPass
+                                    (ResultMacroExpandPass.Err
                                       (box (tc-diag-at-start message)))])]
                               [(ErrTcUnit message)
-                                (ErrMacroExpandPass
+                                (ResultMacroExpandPass.Err
                                   (box (tc-diag-at-start message)))])))]
                       [(ResultCompilerRegistries.Err message)
-                        (ErrMacroExpandPass (box (tc-diag-at-start message)))])]
+                        (ResultMacroExpandPass.Err
+                          (box (tc-diag-at-start message)))])]
                   [(ResultCompilerSymbols.Err message)
-                    (ErrMacroExpandPass (box (tc-diag-at-start message)))]))
-              (OkMacroExpandPass program paths false))))])))
+                    (ResultMacroExpandPass.Err (box (tc-diag-at-start message)))]))
+              (ResultMacroExpandPass.Ok program paths false))))])))
 
 (define (macro-expand-program-pass-with-paths-and-pools
   [program : AstProgram]
@@ -46645,9 +46744,9 @@
     program
     paths
     pools)
-    [(OkMacroExpandPass expanded expanded-paths _)
-      (OkMacroExpand expanded expanded-paths)]
-    [(ErrMacroExpandPass diag) (ErrMacroExpand diag)]))
+    [(ResultMacroExpandPass.Ok expanded expanded-paths _)
+      (ResultMacroExpand.Ok expanded expanded-paths)]
+    [(ResultMacroExpandPass.Err diag) (ResultMacroExpand.Err diag)]))
 
 (define (macro-expand-program-pass-with-paths
   [program : AstProgram]
@@ -46673,8 +46772,8 @@
           (macro-program-module-placeholder-count (box-get decls-box))))]))
 
 (defenum MacroMaybeGeneratedNormalImport
-  (MacroNoGeneratedNormalImport)
-  (MacroSomeGeneratedNormalImport
+  (No)
+  (Some
     AstImportKind
     String
     AstMaybeModuleName
@@ -46683,8 +46782,8 @@
     AstDecl))
 
 (defenum ResultMacroMaterializeImport
-  (OkMacroMaterializeImport AstDeclList AstDeclPathList SymI64Env bool)
-  (ErrMacroMaterializeImport (Box CompilerDiagnostic)))
+  (Ok AstDeclList AstDeclPathList SymI64Env bool)
+  (Err (Box CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
   (match decl
@@ -46697,19 +46796,19 @@
               [(AstDeclImport
                   (AstImportSpec kind import-path expected alias span))
                 (if (macro-import-placeholder-kind? kind)
-                  (MacroNoGeneratedNormalImport)
-                  (MacroSomeGeneratedNormalImport
+                  (MacroMaybeGeneratedNormalImport.No)
+                  (MacroMaybeGeneratedNormalImport.Some
                     kind
                     import-path
                     expected
                     alias
                     span
                     template))]
-              [_ (MacroNoGeneratedNormalImport)])]
+              [_ (MacroMaybeGeneratedNormalImport.No)])]
           [(AstNoGeneratedDeclMeta) (macro-generated-normal-import template)]))]
     [(AstDeclUnsafe inner-box)
       (macro-generated-normal-import (box-get inner-box))]
-    [_ (MacroNoGeneratedNormalImport)]))
+    [_ (MacroMaybeGeneratedNormalImport.No)]))
 
 (define (macro-materialize-seen-from
   [decls : AstDeclList]
@@ -46762,13 +46861,19 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match (macro-generated-normal-import decl)
-    [(MacroNoGeneratedNormalImport)
-      (OkMacroMaterializeImport
+    [(MacroMaybeGeneratedNormalImport.No)
+      (ResultMacroMaterializeImport.Ok
         (ast-decl-cons decl AstDeclNil)
         (ast-decl-path-cons decl-path AstDeclPathNil)
         seen
         false)]
-    [(MacroSomeGeneratedNormalImport kind import-path expected alias span _)
+    [(MacroMaybeGeneratedNormalImport.Some
+        kind
+        import-path
+        expected
+        alias
+        span
+        _)
       (let
         [import-root : String (compiler-load-dirname decl-path)]
         (match (compiler-load-resolve-import-spec-with-roots
@@ -46819,15 +46924,15 @@
                       after-import-alias
                       imported-decls
                       AstDeclPathNil)]
-                  (OkMacroMaterializeImport
+                  (ResultMacroMaterializeImport.Ok
                     (macro-decl-list-append imported-decls tail-decls)
                     (macro-decl-path-list-append imported-paths tail-paths)
                     next-seen
                     true))]
               [(ResultCompilerLoadWithPaths.Err diag)
-                (ErrMacroMaterializeImport diag)])]
+                (ResultMacroMaterializeImport.Err diag)])]
           [(ResultPkgResolve.Err message)
-            (ErrMacroMaterializeImport
+            (ResultMacroMaterializeImport.Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
 (define (macro-materialize-generated-imports-in
@@ -46845,7 +46950,7 @@
     [out-paths-rev : AstDeclPathList AstDeclPathNil]
     [changed : bool false]
     [result : ResultMacroMaterializeImport
-      (ErrMacroMaterializeImport
+      (ResultMacroMaterializeImport.Err
         (box
           (tc-diag-at-start "macro: internal generated import materialization")))]
     [done : bool false]
@@ -46856,7 +46961,7 @@
             (begin
               (set!
                 result
-                (OkMacroMaterializeImport
+                (ResultMacroMaterializeImport.Ok
                   (macro-decl-list-reverse out-rev)
                   (macro-decl-path-list-reverse out-paths-rev)
                   seen
@@ -46895,7 +47000,7 @@
                     stdlib-roots
                     cfgs
                     pools)
-                    [(OkMacroMaterializeImport
+                    [(ResultMacroMaterializeImport.Ok
                         materialized-decls
                         materialized-paths
                         next-seen
@@ -46920,9 +47025,9 @@
                             cur-module))
                         (set! cur-decls rest)
                         (set! cur-paths rest-paths))]
-                    [(ErrMacroMaterializeImport diag)
+                    [(ResultMacroMaterializeImport.Err diag)
                       (begin
-                        (set! result (ErrMacroMaterializeImport diag))
+                        (set! result (ResultMacroMaterializeImport.Err diag))
                         (set! done true))])]))]))
       result)))
 
@@ -46949,7 +47054,7 @@
   [cfgs : SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
-    (ErrMacroExpand
+    (ResultMacroExpand.Err
       (box
         (tc-diag-at-start
           "typecheck: module macro expansion exceeded fixed-point limit")))
@@ -46959,14 +47064,14 @@
         program
         paths
         pools)
-        [(OkMacroExpandPass expanded expanded-paths needs-followup?)
+        [(ResultMacroExpandPass.Ok expanded expanded-paths needs-followup?)
           (match (macro-materialize-generated-imports
             expanded
             expanded-paths
             stdlib-roots
             cfgs
             pools)
-            [(OkMacroMaterializeImport
+            [(ResultMacroMaterializeImport.Ok
                 materialized-decls
                 materialized-paths
                 _
@@ -47016,10 +47121,11 @@
                                 stdlib-roots
                                 cfgs
                                 (- fuel 1)))
-                            (OkMacroExpand normalized normalized-paths)))])]
-                  [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
-            [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
-        [(ErrMacroExpandPass diag) (ErrMacroExpand diag)]))))
+                            (ResultMacroExpand.Ok normalized normalized-paths)))])]
+                  [(ErrGenProgramWithPaths diag) (ResultMacroExpand.Err diag)]))]
+            [(ResultMacroMaterializeImport.Err diag)
+              (ResultMacroExpand.Err diag)])]
+        [(ResultMacroExpandPass.Err diag) (ResultMacroExpand.Err diag)]))))
 
 (define (macro-expand-program-with-paths-loop
   [program : AstProgram]

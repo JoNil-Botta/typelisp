@@ -8901,6 +8901,57 @@
     (compiler-reg-string-list-count (compiler-reg-greedy-integer-pool))
     (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers))))
 
+;; ABI-aware GP greedy pool. SysV is the byte-identical default pool above. Win64
+;; differs ONLY in the caller/callee SPLIT: %rsi/%rdi are NONVOLATILE (callee-
+;; saved) on Win64, so they must live in the callee-saved suffix (saved/restored
+;; by the prologue, kept across calls) rather than the caller-saved prefix --
+;; otherwise a Win64 function homes a value in %rsi/%rdi, treats it as clobbered
+;; across calls, and clobbers the caller's nonvolatile register. All 14 registers
+;; are in the pool for both ABIs; only the order (and thus caller-saved-count)
+;; changes. The SysV self-host fixpoint cannot exercise this (SysV-only).
+(define (compiler-reg-greedy-integer-pool-for-abi
+  [abi : CompilerRegTargetAbi]) : CompilerRegStringList
+  (match abi
+    [(CompilerRegAbiLinux) (compiler-reg-greedy-integer-pool)]
+    [(CompilerRegAbiWindows)
+      ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
+      ;; epilogue (compiler-backend-emit-save-callee-regs) saves only the SysV
+      ;; callee set (r12-r15,rbx), so -- to stay sound WITHOUT a Win64-specific
+      ;; save-set -- EXCLUDE %rsi/%rdi from the Win64 allocatable pool (12 GP regs).
+      ;; caller-saved (volatile) first: rax,rcx,rdx,r8,r9,r10,r11 (7), then the
+      ;; backend-saved callee suffix r12-r15,rbx (5). Reclaiming %rsi/%rdi as Win64
+      ;; homes requires a Win64 callee save-set -- a follow-up; this keeps Win64
+      ;; CORRECT now (previously %rsi/%rdi sat in the caller-saved prefix and were
+      ;; clobbered without save, corrupting the caller's nonvolatile registers).
+      (compiler-reg-string-cons
+        "%rax"
+        (compiler-reg-string-cons
+          "%rcx"
+          (compiler-reg-string-cons
+            "%rdx"
+            (compiler-reg-string-cons
+              "%r8"
+              (compiler-reg-string-cons
+                "%r9"
+                (compiler-reg-string-cons
+                  "%r10"
+                  (compiler-reg-string-cons
+                    "%r11"
+                    (compiler-reg-sysv-integer-registers))))))))]))
+
+(define (compiler-reg-greedy-caller-saved-count-for-abi
+  [abi : CompilerRegTargetAbi]) : i64
+  (match abi
+    [(CompilerRegAbiLinux) (compiler-reg-greedy-caller-saved-count)]
+    [(CompilerRegAbiWindows)
+      ;; Win64 pool = 7 caller-saved + the 5 backend-saved callee regs (r12-r15,rbx);
+      ;; %rsi/%rdi are excluded (see pool-for-abi). 12 - 5 = 7 caller-saved.
+      (-
+        (compiler-reg-string-list-count
+          (compiler-reg-greedy-integer-pool-for-abi abi))
+        (compiler-reg-string-list-count
+          (compiler-reg-sysv-integer-registers)))]))
+
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (The clobber-span half of the old per-register zero-call gate, sans the
 ;; conflict check which the LiveIntervalUnion test already covers.)
@@ -9084,6 +9135,7 @@
 ;; var biased toward the SysV register it is marshalled into. Indexed by coalesce
 ;; root (like copy hints); -1 = no preference.
 (define (compiler-reg-function-arg-prefs
+  [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [coalesce : CompilerRegCoalesceMap]
   [n : i64]) : (Array i64)
@@ -9092,9 +9144,17 @@
     [parents : (Array i64) (struct-get coalesce parents)]
     (begin
       (compiler-reg-fill-i64-array prefs -1)
-      (match func
-        [(IrFunction _ _ _ _ blocks)
-          (compiler-reg-arg-pref-blocks! blocks prefs parents)])
+      ;; The arg->ABI-register preference is keyed on the SysV arg-register map
+      ;; (compiler-reg-greedy-arg-pool-index). On Win64 the arg registers differ
+      ;; (rcx/rdx/r8/r9) AND %rsi/%rdi are callee-saved, so the SysV bias is both
+      ;; wrong and counterproductive there; skip it (empty preference) on Win64
+      ;; until a Win64 arg-coalescing pass lands. SysV is unchanged.
+      (match abi
+        [(CompilerRegAbiLinux)
+          (match func
+            [(IrFunction _ _ _ _ blocks)
+              (compiler-reg-arg-pref-blocks! blocks prefs parents)])]
+        [(CompilerRegAbiWindows) unit])
       prefs)))
 
 (define (compiler-reg-greedy-state
@@ -9171,7 +9231,8 @@
   [assignment-table : CompilerRegAssignmentTable]
   [ineligible : CompilerLiveI64Set]
   [blocked : CompilerLiveI64Set]
-  [allow-caller-saved-zero-call : bool]) : CompilerRegPlan
+  [allow-caller-saved-zero-call : bool]
+  [abi : CompilerRegTargetAbi]) : CompilerRegPlan
   (let
     [moves
       : CompilerRegMoveList
@@ -9268,6 +9329,7 @@
     [arg-prefs
       : (Array i64)
       (compiler-reg-function-arg-prefs
+        abi
         func
         coalesce
         (array.array-length (struct-get interval-index starts)))]
@@ -9341,7 +9403,7 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-greedy-state
           integer-candidates
-          (compiler-reg-greedy-integer-pool)
+          (compiler-reg-greedy-integer-pool-for-abi abi)
           prepass-assignments
           eff-index
           group-vars
@@ -9352,7 +9414,7 @@
           div-points
           shift-points
           integer-registers
-          (compiler-reg-greedy-caller-saved-count))
+          (compiler-reg-greedy-caller-saved-count-for-abi abi))
         ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
         ;; integer registers (= the old SIMD pool) with caller-saved-count=0 so every
         ;; register is treated callee-saved (no caller-saved-first ordering; the SIMD
@@ -9506,7 +9568,8 @@
       (compiler-reg-assignment-table-make vars)
       ineligible
       ineligible
-      false)))
+      false
+      CompilerRegAbiLinux)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
 ;; small multi-block functions, structural ineligibility that keeps
@@ -9576,7 +9639,8 @@
                 preassignments
                 ineligible
                 blocked
-                true)]))])))
+                true
+                abi)]))])))
 
 (define (compiler-reg-plan-function-scalar [func : CompilerIrFunction]) : CompilerRegPlan
   (compiler-reg-plan-function-scalar-for-abi CompilerRegAbiLinux func))
@@ -16536,6 +16600,22 @@
       (compiler-reg-string-list-contains? greedy-pool "%r8")
       (compiler-reg-string-list-contains? greedy-pool "%r10")
       (compiler-reg-string-list-contains? greedy-pool "%r11")
+      ;; ABI-aware split: SysV caller-saved-count=9; Win64=7 (%rsi/%rdi are
+      ;; nonvolatile on Win64 -> in the callee-saved suffix, not the prefix).
+      (= (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegAbiLinux) 9)
+      (= (compiler-reg-greedy-caller-saved-count-for-abi CompilerRegAbiWindows) 7)
+      (=
+        (compiler-reg-string-list-count
+          (compiler-reg-greedy-integer-pool-for-abi CompilerRegAbiWindows))
+        12)
+      (not
+        (compiler-reg-string-list-contains?
+          (compiler-reg-greedy-integer-pool-for-abi CompilerRegAbiWindows)
+          "%rsi"))
+      (not
+        (compiler-reg-string-list-contains?
+          (compiler-reg-greedy-integer-pool-for-abi CompilerRegAbiWindows)
+          "%rdi"))
       ;; The scalar zero-call extension is the older three-register subset.
       ;; Keep ABI/result registers and Win64 callee-saved %rsi/%rdi out of it.
       (= (compiler-reg-string-list-count zero-call-callers) 3)

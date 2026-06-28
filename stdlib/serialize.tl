@@ -23,7 +23,7 @@
 (import stdlib.comptime)
 
 ;: Emit the encoded value expression for one struct field.
-(defmacro (serialize-encode-field
+(defmacro (encode-field
   [format : Module]
   [T : type]
   [index-expr : Expr]
@@ -107,7 +107,7 @@
         "serialize: field index must be an integer literal")]))
 
 ;: Emit the strategy-owned object field accumulator for struct fields.
-(defmacro (serialize-encode-fields
+(defmacro (encode-fields
   [format : Module]
   [T : type]
   [index-expr : Expr]
@@ -126,22 +126,18 @@
           [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
           `(,field-hook
             ,field-key-expr
-            (stdlib.serialize.serialize-encode-field
+            (stdlib.serialize.encode-field
               ,format-expr
               ,T
               ,(comptime.expr-int index)
               ,value)
-            (stdlib.serialize.serialize-encode-fields
-              ,format-expr
-              ,T
-              ,next-index
-              ,value))))]
+            (stdlib.serialize.encode-fields ,format-expr ,T ,next-index ,value))))]
     [_
       (comptime.comptime-error
         "serialize: field accumulator index must be an integer literal")]))
 
 ;: Emit decode logic for one struct field.
-(defmacro (serialize-decode-field
+(defmacro (decode-field
   [format : Module]
   [T : type]
   [index-expr : Expr]
@@ -336,7 +332,7 @@
         "serialize: decode field index must be an integer literal")]))
 
 ;: Emit recursive decode logic for all struct fields.
-(defmacro (serialize-decode-fields
+(defmacro (decode-fields
   [format : Module]
   [T : type]
   [index-expr : Expr]
@@ -351,14 +347,14 @@
           [next-index : Expr (comptime.expr-int (+ index 1))]
           [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
           `(begin
-            (stdlib.serialize.serialize-decode-field
+            (stdlib.serialize.decode-field
               ,format-expr
               ,T
               ,(comptime.expr-int index)
               ,value
               ,out
               ,err-ctor)
-            (stdlib.serialize.serialize-decode-fields
+            (stdlib.serialize.decode-fields
               ,format-expr
               ,T
               ,next-index
@@ -370,10 +366,7 @@
         "serialize: decode fields index must be an integer literal")]))
 
 ;: Emit recursive generated serializer imports needed for nested struct fields.
-(defmacro (serialize-nested-imports
-  [format : Module]
-  [T : type]
-  [index-expr : Expr]) : Decls
+(defmacro (nested-imports [format : Module] [T : type] [index-expr : Expr]) : Decls
   (match index-expr
     [(ExprInt index)
       (if (>= index (struct-field-count T))
@@ -392,16 +385,9 @@
                       "__serialize_nested_"
                       (comptime.int->string index)))]
                 `(begin
-                  (stdlib.serialize.serialize-nested-imports
-                    ,format-expr
-                    ,T
-                    ,next-index)
+                  (stdlib.serialize.nested-imports ,format-expr ,T ,next-index)
                   (import (stdlib.serialize.serialize ,format-expr ,field-type) as ,nested-alias)))]
-            [_
-              `(stdlib.serialize.serialize-nested-imports
-                ,format-expr
-                ,T
-                ,next-index)])))]
+            [_ `(stdlib.serialize.nested-imports ,format-expr ,T ,next-index)])))]
     [_
       (comptime.comptime-error
         "serialize: nested import index must be an integer literal")]))
@@ -435,7 +421,7 @@
           (module ,module-name-expr)
           (import stdlib.serialize)
           (import ,format-module-expr as __serialize_format)
-          (stdlib.serialize.serialize-nested-imports ,format-module-expr ,T 0)
+          (stdlib.serialize.nested-imports ,format-module-expr ,T 0)
           (defenum Result
             (Ok ,T)
             (Err String))
@@ -453,11 +439,7 @@
               [(Err message) message]))
           (define (encode [value : ,T]) : ,value-type
             (,object-finish-hook
-              (stdlib.serialize.serialize-encode-fields
-                ,format-module-expr
-                ,T
-                0
-                value)))
+              (stdlib.serialize.encode-fields ,format-module-expr ,T 0 value)))
           (define (decode [value : ,value-type]) : Result
             (begin
               (,expect-object-hook
@@ -467,7 +449,7 @@
               (let
                 [__serialize_out : ,T (init : ,T)]
                 (begin
-                  (stdlib.serialize.serialize-decode-fields
+                  (stdlib.serialize.decode-fields
                     ,format-module-expr
                     ,T
                     0

@@ -2,7 +2,7 @@
 ;#
 ;# This module provides stable, non-cryptographic hash building blocks for
 ;# future maps, sets, intern tables, and compiler data structures. Hash values
-;# are normalized nonnegative `i64` values in `0 <= hash < hash-modulus`.
+;# are normalized nonnegative `i64` values in `0 <= hash < modulus`.
 ;#
 ;# A hash is only a bucket hint. Key users must still compare candidate keys
 ;# with the matching equality predicate because different keys can collide.
@@ -15,22 +15,22 @@
 ;# (import stdlib.hash)
 ;# (define (main) : i64
 ;#   (let [key : String "symbol"]
-;#     (hash.hash-combine (hash.hash-string (& key)) (hash.hash-i64 7))))
+;#     (hash.combine (hash.string-key (& key)) (hash.i64 7))))
 ;# ```
 (module stdlib.hash)
 
-(import stdlib.string)
+(import stdlib.string as string_mod)
 
 ;: Return the fixed hash modulus.
-(define (hash-modulus) : i64
+(define (modulus) : i64
   2147483647)
 
-;: Return the fixed multiplier used by `hash-combine` and `hash-string`.
-(define (hash-multiplier) : i64
+;: Return the fixed multiplier used by `combine` and `string-key`.
+(define (multiplier) : i64
   131)
 
 ;: Normalize any integer into the public hash range.
-(define (hash-normalize [value : i64]) : i64
+(define (normalize [value : i64]) : i64
   (let
     [m : i64 2147483647]
     [raw : i64 (% value 2147483647)]
@@ -41,50 +41,48 @@
 ;: Combine an accumulated hash value with one component hash.
 ;:
 ;: The result is deterministic and non-cryptographic. The `+ 1` delimiter keeps
-;: `hash-combine 0 0` distinct from an untouched empty accumulator.
-(define (hash-combine [seed : i64] [component : i64]) : i64
-  (stdlib.hash.hash-normalize
+;: `combine 0 0` distinct from an untouched empty accumulator.
+(define (combine [seed : i64] [component : i64]) : i64
+  (stdlib.hash.normalize
     (+
-      (+
-        (* (stdlib.hash.hash-normalize seed) 131)
-        (stdlib.hash.hash-normalize component))
+      (+ (* (stdlib.hash.normalize seed) 131) (stdlib.hash.normalize component))
       1)))
 
 ;: Combine already-normalized hash parts without re-normalizing inputs.
-(define (hash-combine-normalized [seed : i64] [component : i64]) : i64
-  (stdlib.hash.hash-normalize (+ (+ (* seed 131) component) 1)))
+(define (combine-normalized [seed : i64] [component : i64]) : i64
+  (stdlib.hash.normalize (+ (+ (* seed 131) component) 1)))
 
 ;: Hash an `i64` key value.
-(define (hash-i64 [value : i64]) : i64
-  (stdlib.hash.hash-normalize value))
+(define (i64 [value : i64]) : i64
+  (stdlib.hash.normalize value))
 
 ;: Return true when two `i64` keys are equal.
-(define (hash-key-i64-eq? [a : i64] [b : i64]) : bool
+(define (key-i64-eq? [a : i64] [b : i64]) : bool
   (= a b))
 
 ;: Hash a `bool` key value.
-(define (hash-bool [value : bool]) : i64
+(define (bool [value : bool]) : i64
   (if value
     1
     0))
 
 ;: Return true when two `bool` keys are equal.
-(define (hash-key-bool-eq? [a : bool] [b : bool]) : bool
+(define (key-bool-eq? [a : bool] [b : bool]) : bool
   (= a b))
 
 ;: Hash a `char` key value by scalar code.
-(define (hash-char [value : char]) : i64
-  (stdlib.hash.hash-normalize (cast value : i64)))
+(define (char [value : char]) : i64
+  (stdlib.hash.normalize (cast value : i64)))
 
 ;: Return true when two `char` keys have the same scalar code.
-(define (hash-key-char-eq? [a : char] [b : char]) : bool
+(define (key-char-eq? [a : char] [b : char]) : bool
   (= (cast a : i64) (cast b : i64)))
 
 ;: Hash borrowed text by walking its current byte/char sequence.
 ;:
 ;: Hash values are bucket hints only; key users must still compare candidate keys
 ;: with the matching equality predicate because different keys can collide.
-(define (hash-string [key : (& key str)]) : i64
+(define (string-key [key : (& key str)]) : i64
   (let
     [n : i64 (string-length key)]
     [i : i64 0]
@@ -118,8 +116,8 @@
       hash)))
 
 ;: Return true when two borrowed string keys are equal.
-(define (hash-key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
-  (string.string-eq a b))
+(define (key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
+  (string_mod.string-eq a b))
 
 (test
   hash-api
@@ -138,151 +136,149 @@
     [ba : String "ba"]
     [a-newline-b : String "a\nb"]
     [bc : String "bc"]
-    [joined : String (string.string-append a bc)]
+    [joined : String (string_mod.string-append a bc)]
     [same : String "same"]
-    [same-copy : String (string.string-append "sa" "me")]
+    [same-copy : String (string_mod.string-append "sa" "me")]
     [different : String "different"]
     [edge : String "edge\ncase"]
-    [range-min : i64 (stdlib.hash.hash-i64 -9223372036854775808)]
-    [range-max : i64 (stdlib.hash.hash-i64 9223372036854775807)]
-    [range-combine : i64 (stdlib.hash.hash-combine -1 -1)]
-    [range-empty : i64 (stdlib.hash.hash-string (& empty))]
-    [range-edge : i64 (stdlib.hash.hash-string (& edge))]
+    [range-min : i64 (stdlib.hash.i64 -9223372036854775808)]
+    [range-max : i64 (stdlib.hash.i64 9223372036854775807)]
+    [range-combine : i64 (stdlib.hash.combine -1 -1)]
+    [range-empty : i64 (stdlib.hash.string-key (& empty))]
+    [range-edge : i64 (stdlib.hash.string-key (& edge))]
     (begin
-      (if (= (stdlib.hash.hash-modulus) 2147483647)
+      (if (= (stdlib.hash.modulus) 2147483647)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-multiplier) 131)
+      (if (= (stdlib.hash.multiplier) 131)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-normalize 2147483647) 0)
+      (if (= (stdlib.hash.normalize 2147483647) 0)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-normalize -1) 2147483646)
+      (if (= (stdlib.hash.normalize -1) 2147483646)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-i64 42) 42)
+      (if (= (stdlib.hash.i64 42) 42)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-i64 -42) 2147483605)
+      (if (= (stdlib.hash.i64 -42) 2147483605)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-bool false) 0)
+      (if (= (stdlib.hash.bool false) 0)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-bool true) 1)
+      (if (= (stdlib.hash.bool true) 1)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-char 'A') 65)
+      (if (= (stdlib.hash.char 'A') 65)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-char '\n') 10)
+      (if (= (stdlib.hash.char '\n') 10)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-combine 0 0) 1)
+      (if (= (stdlib.hash.combine 0 0) 1)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-combine 42 7) 5510)
+      (if (= (stdlib.hash.combine 42 7) 5510)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& empty)) 0)
+      (if (= (stdlib.hash.string-key (& empty)) 0)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& a)) 98)
+      (if (= (stdlib.hash.string-key (& a)) 98)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& ab)) 12937)
+      (if (= (stdlib.hash.string-key (& ab)) 12937)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& abc)) 1694847)
+      (if (= (stdlib.hash.string-key (& abc)) 1694847)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& abcd)) 222025058)
+      (if (= (stdlib.hash.string-key (& abcd)) 222025058)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& abcdefgh)) 1379066653)
+      (if (= (stdlib.hash.string-key (& abcdefgh)) 1379066653)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& ba)) 13067)
+      (if (= (stdlib.hash.string-key (& ba)) 13067)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-string (& a-newline-b)) 1683318)
+      (if (= (stdlib.hash.string-key (& a-newline-b)) 1683318)
         unit
         (fail))
-      (if (= (stdlib.hash.hash-i64 42) (stdlib.hash.hash-i64 (+ 40 2)))
+      (if (= (stdlib.hash.i64 42) (stdlib.hash.i64 (+ 40 2)))
         unit
         (fail))
-      (if (= (stdlib.hash.hash-bool true) (stdlib.hash.hash-bool (not false)))
+      (if (= (stdlib.hash.bool true) (stdlib.hash.bool (not false)))
+        unit
+        (fail))
+      (if (= (stdlib.hash.char 'A') (stdlib.hash.char (string-ref "A" 0)))
         unit
         (fail))
       (if (=
-        (stdlib.hash.hash-char 'A')
-        (stdlib.hash.hash-char (string-ref "A" 0)))
+        (stdlib.hash.string-key (& abc))
+        (stdlib.hash.string-key (& joined)))
         unit
         (fail))
-      (if (=
-        (stdlib.hash.hash-string (& abc))
-        (stdlib.hash.hash-string (& joined)))
+      (if (stdlib.hash.key-i64-eq? 5 5)
         unit
         (fail))
-      (if (stdlib.hash.hash-key-i64-eq? 5 5)
+      (if (not (stdlib.hash.key-i64-eq? 5 6))
         unit
         (fail))
-      (if (not (stdlib.hash.hash-key-i64-eq? 5 6))
+      (if (stdlib.hash.key-bool-eq? true true)
         unit
         (fail))
-      (if (stdlib.hash.hash-key-bool-eq? true true)
+      (if (not (stdlib.hash.key-bool-eq? true false))
         unit
         (fail))
-      (if (not (stdlib.hash.hash-key-bool-eq? true false))
+      (if (stdlib.hash.key-char-eq? 'x' 'x')
         unit
         (fail))
-      (if (stdlib.hash.hash-key-char-eq? 'x' 'x')
+      (if (not (stdlib.hash.key-char-eq? 'x' (string-ref "y" 0)))
         unit
         (fail))
-      (if (not (stdlib.hash.hash-key-char-eq? 'x' (string-ref "y" 0)))
+      (if (stdlib.hash.key-string-eq? (& same) (& same-copy))
         unit
         (fail))
-      (if (stdlib.hash.hash-key-string-eq? (& same) (& same-copy))
+      (if (not (stdlib.hash.key-string-eq? (& same) (& different)))
         unit
         (fail))
-      (if (not (stdlib.hash.hash-key-string-eq? (& same) (& different)))
+      (if (= (stdlib.hash.i64 0) (stdlib.hash.i64 2147483647))
         unit
         (fail))
-      (if (= (stdlib.hash.hash-i64 0) (stdlib.hash.hash-i64 2147483647))
+      (if (not (stdlib.hash.key-i64-eq? 0 2147483647))
         unit
         (fail))
-      (if (not (stdlib.hash.hash-key-i64-eq? 0 2147483647))
+      (if (= (stdlib.hash.combine 0 131) (stdlib.hash.combine 1 0))
         unit
         (fail))
-      (if (= (stdlib.hash.hash-combine 0 131) (stdlib.hash.hash-combine 1 0))
-        unit
-        (fail))
-      (if (not (stdlib.hash.hash-key-i64-eq? 0 1))
+      (if (not (stdlib.hash.key-i64-eq? 0 1))
         unit
         (fail))
       (if (if (>= range-min 0)
-        (< range-min (stdlib.hash.hash-modulus))
+        (< range-min (stdlib.hash.modulus))
         false)
         unit
         (fail))
       (if (if (>= range-max 0)
-        (< range-max (stdlib.hash.hash-modulus))
+        (< range-max (stdlib.hash.modulus))
         false)
         unit
         (fail))
       (if (if (>= range-combine 0)
-        (< range-combine (stdlib.hash.hash-modulus))
+        (< range-combine (stdlib.hash.modulus))
         false)
         unit
         (fail))
       (if (if (>= range-empty 0)
-        (< range-empty (stdlib.hash.hash-modulus))
+        (< range-empty (stdlib.hash.modulus))
         false)
         unit
         (fail))
       (if (if (>= range-edge 0)
-        (< range-edge (stdlib.hash.hash-modulus))
+        (< range-edge (stdlib.hash.modulus))
         false)
         unit
         (fail)))))

@@ -133,20 +133,20 @@
   compile-profile
   (define (compiler-opt-profile-start) : unit
     (begin
-      (set! compiler-opt-profile-start-ms (profile.profile-now-ms))
-      (set! compiler-opt-profile-start-total (profile.profile-alloc-total))
-      (set! compiler-opt-profile-start-live (profile.profile-alloc-live))
-      (profile.profile-alloc-reset-peak))))
+      (set! compiler-opt-profile-start-ms (profile.now-ms))
+      (set! compiler-opt-profile-start-total (profile.alloc-total))
+      (set! compiler-opt-profile-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-opt-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile.profile-now-ms)]
-      [end-total : i64 (profile.profile-alloc-total)]
-      [end-live : i64 (profile.profile-alloc-live)]
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.profile-alloc-peak) compiler-opt-profile-start-live)]
+        (- (profile.alloc-peak) compiler-opt-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|optimize."
@@ -168,14 +168,13 @@
 (cfg
   compile-profile
   (define (compiler-opt-profile-detail-start) : unit
-    (set! compiler-opt-profile-detail-start-ms (profile.profile-now-ms))))
+    (set! compiler-opt-profile-detail-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
   (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
     (let
-      [elapsed : i64
-        (- (profile.profile-now-ms) compiler-opt-profile-detail-start-ms)]
+      [elapsed : i64 (- (profile.now-ms) compiler-opt-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -196,7 +195,7 @@
     [name : String]
     [start-ms : i64]) : unit
     (let
-      [elapsed : i64 (- (profile.profile-now-ms) start-ms)]
+      [elapsed : i64 (- (profile.now-ms) start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -218,7 +217,7 @@
     [name : String]
     [start-ms : i64]) : unit
     (let
-      [elapsed : i64 (- (profile.profile-now-ms) start-ms)]
+      [elapsed : i64 (- (profile.now-ms) start-ms)]
       (io.print-error
         (str_cat.str-cat
           "compile-profile-detail|optimize.escape."
@@ -3670,144 +3669,136 @@
 
 (define (opt-value-hash [value : CompilerIrValue]) : i64
   (match value
-    [(IrValueVar id) (hash.hash-combine 1 (hash.hash-i64 id))]
-    [(IrValueGlobal name) (hash.hash-combine 2 (hash.hash-string (& name)))]
-    [(IrValueGlobalAddr name) (hash.hash-combine 3 (hash.hash-string (& name)))]
-    [(IrValueFunction name) (hash.hash-combine 4 (hash.hash-string (& name)))]
-    [(IrValueI64 value) (hash.hash-combine 5 (hash.hash-i64 value))]
-    [(IrValueF64 value)
-      (hash.hash-combine 6 (hash.hash-i64 (cast value : i64)))]
-    [(IrValueBool value) (hash.hash-combine 7 (hash.hash-bool value))]
-    [(IrValueChar value) (hash.hash-combine 8 (hash.hash-char value))]
-    [(IrValueString value) (hash.hash-combine 9 (hash.hash-string (& value)))]
-    [(IrValueBytes value) (hash.hash-combine 11 (hash.hash-string (& value)))]
-    [(IrValueUnit) (hash.hash-i64 10)]))
+    [(IrValueVar id) (hash.combine 1 (hash.i64 id))]
+    [(IrValueGlobal name) (hash.combine 2 (hash.string-key (& name)))]
+    [(IrValueGlobalAddr name) (hash.combine 3 (hash.string-key (& name)))]
+    [(IrValueFunction name) (hash.combine 4 (hash.string-key (& name)))]
+    [(IrValueI64 value) (hash.combine 5 (hash.i64 value))]
+    [(IrValueF64 value) (hash.combine 6 (hash.i64 (cast value : i64)))]
+    [(IrValueBool value) (hash.combine 7 (hash.bool value))]
+    [(IrValueChar value) (hash.combine 8 (hash.char value))]
+    [(IrValueString value) (hash.combine 9 (hash.string-key (& value)))]
+    [(IrValueBytes value) (hash.combine 11 (hash.string-key (& value)))]
+    [(IrValueUnit) (hash.i64 10)]))
 
 (define (opt-expr-key-hash [key : OptExprKey]) : i64
   (match key
     [(OptBinKey op lhs rhs ty)
-      (hash.hash-combine
+      (hash.combine
         1
-        (hash.hash-combine
+        (hash.combine
           (opt-type-hash ty)
-          (hash.hash-combine
-            (hash.hash-i64 (opt-binop-tag op))
-            (hash.hash-combine (opt-value-hash lhs) (opt-value-hash rhs)))))]
+          (hash.combine
+            (hash.i64 (opt-binop-tag op))
+            (hash.combine (opt-value-hash lhs) (opt-value-hash rhs)))))]
     [(OptUnKey op value ty)
-      (hash.hash-combine
+      (hash.combine
         2
-        (hash.hash-combine
+        (hash.combine
           (opt-type-hash ty)
-          (hash.hash-combine
-            (hash.hash-i64 (opt-unop-tag op))
-            (opt-value-hash value))))]
+          (hash.combine (hash.i64 (opt-unop-tag op)) (opt-value-hash value))))]
     [(OptCpuIdKey leaf subleaf reg-index)
-      (hash.hash-combine
+      (hash.combine
         3
-        (hash.hash-combine
-          (hash.hash-i64 reg-index)
-          (hash.hash-combine (opt-value-hash leaf) (opt-value-hash subleaf))))]
-    [(OptXgetbvKey index) (hash.hash-combine 4 (opt-value-hash index))]))
+        (hash.combine
+          (hash.i64 reg-index)
+          (hash.combine (opt-value-hash leaf) (opt-value-hash subleaf))))]
+    [(OptXgetbvKey index) (hash.combine 4 (opt-value-hash index))]))
 
 (define (opt-type-list-hash [types : AstTypeList]) : i64
   (match types
-    [(AstTypeNil) (hash.hash-i64 0)]
+    [(AstTypeNil) (hash.i64 0)]
     [(AstTypeCons head rest)
-      (hash.hash-combine
+      (hash.combine
         1
-        (hash.hash-combine
+        (hash.combine
           (opt-type-hash (ty-node-get head))
           (opt-type-list-hash (box-get rest))))]))
 
 (define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
   (match lifetimes
-    [(AstLifetimeNil) (hash.hash-i64 0)]
+    [(AstLifetimeNil) (hash.i64 0)]
     [(AstLifetimeCons head rest)
-      (hash.hash-combine
+      (hash.combine
         1
-        (hash.hash-combine
-          (hash.hash-string (& head))
+        (hash.combine
+          (hash.string-key (& head))
           (opt-lifetime-list-hash (box-get rest))))]))
 
 (define (opt-type-hash [ty : AstType]) : i64
   (match ty
-    [(AstTyI64) (hash.hash-i64 1)]
-    [(AstTyI32) (hash.hash-i64 2)]
-    [(AstTyI16) (hash.hash-i64 3)]
-    [(AstTyI8) (hash.hash-i64 4)]
-    [(AstTyU64) (hash.hash-i64 5)]
-    [(AstTyU32) (hash.hash-i64 6)]
-    [(AstTyU16) (hash.hash-i64 7)]
-    [(AstTyU8) (hash.hash-i64 8)]
-    [(AstTyF64) (hash.hash-i64 9)]
-    [(AstTyF32) (hash.hash-i64 10)]
-    [(AstTyBool) (hash.hash-i64 11)]
-    [(AstTyChar) (hash.hash-i64 12)]
-    [(AstTyString) (hash.hash-i64 13)]
-    [(AstTyStr) (hash.hash-i64 14)]
-    [(AstTyBytes) (hash.hash-i64 35)]
-    [(AstTyUnit) (hash.hash-i64 15)]
-    [(AstTyNever) (hash.hash-i64 16)]
-    [(AstTyExpr) (hash.hash-i64 17)]
-    [(AstTyExprList) (hash.hash-i64 18)]
+    [(AstTyI64) (hash.i64 1)]
+    [(AstTyI32) (hash.i64 2)]
+    [(AstTyI16) (hash.i64 3)]
+    [(AstTyI8) (hash.i64 4)]
+    [(AstTyU64) (hash.i64 5)]
+    [(AstTyU32) (hash.i64 6)]
+    [(AstTyU16) (hash.i64 7)]
+    [(AstTyU8) (hash.i64 8)]
+    [(AstTyF64) (hash.i64 9)]
+    [(AstTyF32) (hash.i64 10)]
+    [(AstTyBool) (hash.i64 11)]
+    [(AstTyChar) (hash.i64 12)]
+    [(AstTyString) (hash.i64 13)]
+    [(AstTyStr) (hash.i64 14)]
+    [(AstTyBytes) (hash.i64 35)]
+    [(AstTyUnit) (hash.i64 15)]
+    [(AstTyNever) (hash.i64 16)]
+    [(AstTyExpr) (hash.i64 17)]
+    [(AstTyExprList) (hash.i64 18)]
     [(AstTyFunc params ret)
-      (hash.hash-combine
+      (hash.combine
         19
-        (hash.hash-combine
+        (hash.combine
           (opt-type-list-hash (box-get params))
           (opt-type-hash (ty-node-get ret))))]
-    [(AstTyTuple items)
-      (hash.hash-combine 20 (opt-type-list-hash (box-get items)))]
+    [(AstTyTuple items) (hash.combine 20 (opt-type-list-hash (box-get items)))]
     [(AstTyArray item len)
-      (hash.hash-combine
+      (hash.combine
         21
-        (hash.hash-combine
-          (opt-type-hash (ty-node-get item))
-          (hash.hash-i64 len)))]
-    [(AstTyDynArray item)
-      (hash.hash-combine 22 (opt-type-hash (ty-node-get item)))]
-    [(AstTyBox item) (hash.hash-combine 23 (opt-type-hash (ty-node-get item)))]
-    [(AstTyPtr item) (hash.hash-combine 24 (opt-type-hash (ty-node-get item)))]
-    [(AstTyMutPtr item)
-      (hash.hash-combine 25 (opt-type-hash (ty-node-get item)))]
+        (hash.combine (opt-type-hash (ty-node-get item)) (hash.i64 len)))]
+    [(AstTyDynArray item) (hash.combine 22 (opt-type-hash (ty-node-get item)))]
+    [(AstTyBox item) (hash.combine 23 (opt-type-hash (ty-node-get item)))]
+    [(AstTyPtr item) (hash.combine 24 (opt-type-hash (ty-node-get item)))]
+    [(AstTyMutPtr item) (hash.combine 25 (opt-type-hash (ty-node-get item)))]
     [(AstTyRef region inner)
-      (hash.hash-combine
+      (hash.combine
         26
-        (hash.hash-combine
-          (hash.hash-string (& region))
+        (hash.combine
+          (hash.string-key (& region))
           (opt-type-hash (ty-node-get inner))))]
     [(AstTyMutRef region inner)
-      (hash.hash-combine
+      (hash.combine
         27
-        (hash.hash-combine
-          (hash.hash-string (& region))
+        (hash.combine
+          (hash.string-key (& region))
           (opt-type-hash (ty-node-get inner))))]
     [(AstTyRegion region inner)
-      (hash.hash-combine
+      (hash.combine
         28
-        (hash.hash-combine
-          (hash.hash-string (& region))
+        (hash.combine
+          (hash.string-key (& region))
           (opt-type-hash (ty-node-get inner))))]
-    [(AstTyEnum name) (hash.hash-combine 29 (hash.hash-i64 name))]
+    [(AstTyEnum name) (hash.combine 29 (hash.i64 name))]
     [(AstTyEnumArgs name lifetimes)
-      (hash.hash-combine
+      (hash.combine
         30
-        (hash.hash-combine
-          (hash.hash-i64 name)
+        (hash.combine
+          (hash.i64 name)
           (opt-lifetime-list-hash (box-get lifetimes))))]
-    [(AstTyStruct name) (hash.hash-combine 31 (hash.hash-i64 name))]
+    [(AstTyStruct name) (hash.combine 31 (hash.i64 name))]
     [(AstTyStructArgs name lifetimes)
-      (hash.hash-combine
+      (hash.combine
         32
-        (hash.hash-combine
-          (hash.hash-i64 name)
+        (hash.combine
+          (hash.i64 name)
           (opt-lifetime-list-hash (box-get lifetimes))))]
-    [(AstTyVar name) (hash.hash-combine 33 (hash.hash-i64 name))]
+    [(AstTyVar name) (hash.combine 33 (hash.i64 name))]
     [(AstTyVarArgs name lifetimes)
-      (hash.hash-combine
+      (hash.combine
         34
-        (hash.hash-combine
-          (hash.hash-i64 name)
+        (hash.combine
+          (hash.i64 name)
           (opt-lifetime-list-hash (box-get lifetimes))))]))
 
 (define (opt-maybe-value-eq
@@ -9755,35 +9746,33 @@
 (define (opt-global-expr-key-hash [key : OptGlobalExprKey]) : i64
   (match key
     [(OptGlobalMovKey value ty)
-      (hash.hash-combine
-        1
-        (hash.hash-combine (opt-value-hash value) (opt-type-hash ty)))]
+      (hash.combine 1 (hash.combine (opt-value-hash value) (opt-type-hash ty)))]
     [(OptGlobalGepKey base offset ty)
-      (hash.hash-combine
+      (hash.combine
         2
-        (hash.hash-combine
+        (hash.combine
           (opt-value-hash base)
-          (hash.hash-combine (opt-value-hash offset) (opt-type-hash ty))))]
+          (hash.combine (opt-value-hash offset) (opt-type-hash ty))))]
     [(OptGlobalCastKey value from-ty to-ty)
-      (hash.hash-combine
+      (hash.combine
         3
-        (hash.hash-combine
+        (hash.combine
           (opt-value-hash value)
-          (hash.hash-combine (opt-type-hash from-ty) (opt-type-hash to-ty))))]
+          (hash.combine (opt-type-hash from-ty) (opt-type-hash to-ty))))]
     [(OptGlobalBinKey op lhs rhs ty)
-      (hash.hash-combine
+      (hash.combine
         4
-        (hash.hash-combine
-          (hash.hash-i64 (opt-binop-tag op))
-          (hash.hash-combine
+        (hash.combine
+          (hash.i64 (opt-binop-tag op))
+          (hash.combine
             (opt-value-hash lhs)
-            (hash.hash-combine (opt-value-hash rhs) (opt-type-hash ty)))))]
+            (hash.combine (opt-value-hash rhs) (opt-type-hash ty)))))]
     [(OptGlobalUnKey op value ty)
-      (hash.hash-combine
+      (hash.combine
         5
-        (hash.hash-combine
-          (hash.hash-i64 (opt-unop-tag op))
-          (hash.hash-combine (opt-value-hash value) (opt-type-hash ty))))]))
+        (hash.combine
+          (hash.i64 (opt-unop-tag op))
+          (hash.combine (opt-value-hash value) (opt-type-hash ty))))]))
 
 ;; Key operands must hold a single unchanging value for the fact's lifetime.
 ;; An `IrValueGlobal` operand is a hidden LOAD of a mutable global (the backend
@@ -20128,7 +20117,7 @@
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (let
-    [_t-tailrec : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+    [_t-tailrec : i64 (cfg compile-profile (profile.now-ms) 0)]
     [tailrec : CompilerIrFunction (opt-tailrec-function func)]
     (match tailrec
       [(IrFunction name params ret-ty frame blocks)
@@ -20140,7 +20129,7 @@
               compile-profile
               (compiler-opt-profile-pass-finish "tailrec" name _t-tailrec)
               unit)]
-          [_t-fold : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+          [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [folded : CompilerIrBlockList (optimize-block-list blocks)]
           [_p-fold : unit
             (cfg
@@ -20151,7 +20140,7 @@
             (if (struct-get summaries enabled)
               (opt-loop-bce-blocks summaries params folded)
               folded)]
-          [_t-promote : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+          [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
           [promoted : CompilerIrFunction
             (opt-aggregate-stack-promote-function
               (IrFunction name params ret-ty frame loop-bce))]
@@ -20166,7 +20155,7 @@
               ;; blocks/frame (it leaves the frame unchanged), so the slots stay
               ;; consistent with the later #1530 global-GVN pass below.
               (let
-                [_t-sroa : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+                [_t-sroa : i64 (cfg compile-profile (profile.now-ms) 0)]
                 [sroa : CompilerIrFunction
                   (opt-aggregate-sroa-function
                     (IrFunction
@@ -20196,7 +20185,7 @@
                           (compiler-ir-block-list-count sroa-blocks)
                           (opt-heavy-pass-block-limit))]
                       [_t-rotation : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                        (cfg compile-profile (profile.now-ms) 0)]
                       [rotated : CompilerIrFunction
                         (if run-heavy?
                           (opt-loop-rotation-function
@@ -20223,8 +20212,7 @@
                       ;; Scalar SSA construction feeds the verifier-gated
                       ;; dominator passes below. Unsupported cases fall back to the
                       ;; original function, so the optimization path remains safe.
-                      [_t-ssa : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-ssa : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [ssa-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-ssa-construct-function-with-context-result
@@ -20244,8 +20232,7 @@
                       [ssa-frame : i64 (opt-function-frame ssa)]
                       [ssa-blocks : CompilerIrBlockList
                         (opt-function-blocks ssa)]
-                      [_t-gvn : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-gvn : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [gvn : CompilerIrBlockList
                         (if run-heavy?
                           (opt-gvn-blocks-with-context
@@ -20258,8 +20245,7 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "gvn" name _t-gvn)
                           unit)]
-                      [_t-sccp : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-sccp : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [sccp-result : OptBlockCtxResult
                         (if run-heavy?
                           (opt-sccp-blocks-with-context-result
@@ -20284,8 +20270,7 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "sccp" name _t-sccp)
                           unit)]
-                      [_t-cfg2 : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-cfg2 : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [cfg-result : OptBlockCtxResult
                         (if run-heavy?
                           (opt-cfg-simplify-blocks-with-context-result
@@ -20308,8 +20293,7 @@
                           compile-profile
                           (compiler-opt-profile-pass-finish "cfg" name _t-cfg2)
                           unit)]
-                      [_t-switch : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-switch : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [switch-input : CompilerIrFunction
                         (IrFunction name params ret-ty ssa-frame cfg)]
                       [switch-result : OptFunctionPassResult
@@ -20339,7 +20323,7 @@
                             _t-switch)
                           unit)]
                       [_t-preheaders : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                        (cfg compile-profile (profile.now-ms) 0)]
                       ;; (#2874) Thread one OptCfgContext per block-state through
                       ;; the preheaders -> scratch_reset -> licm -> induction -> global_gvn chain.
                       ;; Each pass's output blocks are fed verbatim to the next,
@@ -20384,7 +20368,7 @@
                             _t-preheaders)
                           unit)]
                       [_t-scratch-reset : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                        (cfg compile-profile (profile.now-ms) 0)]
                       [scratch-reset-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-scratch-reset-function-with-context-result
@@ -20405,8 +20389,7 @@
                             name
                             _t-scratch-reset)
                           unit)]
-                      [_t-licm : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-licm : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [licm-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-licm-function-with-context-result
@@ -20425,7 +20408,7 @@
                           (compiler-opt-profile-pass-finish "licm" name _t-licm)
                           unit)]
                       [_t-induction : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                        (cfg compile-profile (profile.now-ms) 0)]
                       [induction-result : OptFunctionCtxResult
                         (if run-heavy?
                           (opt-induction-function-with-context-result
@@ -20455,8 +20438,7 @@
                       ;; consistent with the promoted blocks. It reuses the
                       ;; context induction handed back (#2874): induction's output
                       ;; blocks are global_gvn's input blocks unchanged.
-                      [_t-global : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-global : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [global : CompilerIrFunction
                         (if run-heavy?
                           (opt-global-value-number-function-with-context
@@ -20495,7 +20477,7 @@
                           summaries
                           global-blocks)]
                       [_t-divrem-safety : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                        (cfg compile-profile (profile.now-ms) 0)]
                       [divrem-safe : CompilerIrBlockList
                         (if run-heavy?
                           (opt-divrem-safety-blocks-with-context
@@ -20511,8 +20493,7 @@
                             name
                             _t-divrem-safety)
                           unit)]
-                      [_t-dce : i64
-                        (cfg compile-profile (profile.profile-now-ms) 0)]
+                      [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
                       [used : (Array i64)
                         (opt-collect-blocks-uses-array
                           induction-frame
@@ -20538,7 +20519,7 @@
   (match func
     [(IrFunction name params ret-ty frame blocks)
       (let
-        [_t-fold : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+        [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : CompilerIrBlockList (optimize-block-list blocks)]
         [_p-fold : unit
           (cfg
@@ -20549,7 +20530,7 @@
           (if (struct-get summaries enabled)
             (opt-loop-bce-blocks summaries params folded)
             folded)]
-        [_t-promote : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+        [_t-promote : i64 (cfg compile-profile (profile.now-ms) 0)]
         [promoted : CompilerIrFunction
           (opt-aggregate-stack-promote-function
             (IrFunction name params ret-ty frame loop-bce))]
@@ -20561,7 +20542,7 @@
         (match promoted
           [(IrFunction _ _ _ promoted-frame promoted-blocks)
             (let
-              [_t-cfg : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+              [_t-cfg : i64 (cfg compile-profile (profile.now-ms) 0)]
               [cfg : CompilerIrBlockList
                 (opt-cfg-simplify-blocks promoted-blocks)]
               [_p-cfg : unit
@@ -20569,7 +20550,7 @@
                   compile-profile
                   (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
                   unit)]
-              [_t-dce : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+              [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
               [used : (Array i64)
                 (opt-collect-blocks-uses-array promoted-frame cfg)]
               [dced : CompilerIrBlockList (opt-dce-block-list-array used cfg)]
@@ -20775,7 +20756,7 @@
         (arena.tl_arena_set scratch))
       (let
         [mark : i64 (arena.tl_region_mark)]
-        [_t-body : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+        [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
         [body : CompilerIrFunction
           (optimize-function-with-level-and-summaries func level summaries)]
         [_profile-body : unit
@@ -20786,7 +20767,7 @@
               level
               _profile-name
               _t-body))]
-        [_t-compact : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+        [_t-compact : i64 (cfg compile-profile (profile.now-ms) 0)]
         [optimized : CompilerIrFunction
           (compiler-ir-function-compact-blocks body)]
         [_profile-compact : unit
@@ -20802,7 +20783,7 @@
           (unsafe
             (arena.tl_arena_set enclosing))
           (let
-            [_t-clone : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+            [_t-clone : i64 (cfg compile-profile (profile.now-ms) 0)]
             [escaped : CompilerIrFunction (clone optimized)]
             [_profile-clone : unit
               (cfg
@@ -20813,7 +20794,7 @@
                   _profile-name
                   _t-clone))]
             [new-enclosing : i64 (arena.tl_arena_current)]
-            [_t-restore : i64 (cfg compile-profile (profile.profile-now-ms) 0)]
+            [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
             [_restore : unit
               (unsafe
                 (arena.tl_arena_set scratch-head)
@@ -26207,7 +26188,7 @@
 ;; cannot change the produced spans. The entry-list probe stays the linear
 ;; first-match scan: entries are bounded by the 2049 fast-path cutoff, and a
 ;; hash-indexed variant measured MORE executed instructions once #2735 moved
-;; hash.hash-string into TypeLisp (long keys hash per instruction).
+;; hash.string-key into TypeLisp (long keys hash per instruction).
 (defenum OptRemapSpanKey
   (OptRemapSpanNoKey)
   (OptRemapSpanSomeKey String))

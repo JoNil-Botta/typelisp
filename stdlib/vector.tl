@@ -92,7 +92,7 @@
 ;: does not yet expose private string intrinsics.
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (define (vector-string-eq [a : String] [b : String]) : bool
+  (define (string-eq [a : String] [b : String]) : bool
     (let
       [n : i64 (string-length a)]
       [i : i64 0]

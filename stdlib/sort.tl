@@ -1,6 +1,6 @@
 ;# Stable deterministic sort helpers for generated stdlib vectors (#2678/#3218).
 ;#
-;# This module follows the generated concrete collection model. `(sort-vec T)`
+;# This module follows the generated concrete collection model. `(vec T)`
 ;# emits a module that sorts the matching `(vector T)` module's `Vec` in place.
 ;# Scalar element types with a built-in `<` get `sort!`; non-scalar element
 ;# types get `sort!` with an explicit caller-supplied `less?` comparator.
@@ -15,7 +15,7 @@
 ;# (import stdlib.sort)
 ;#
 ;# (import (stdlib.vector.vector i64) as ivec)
-;# (import (stdlib.sort.sort-vec i64) as isort)
+;# (import (stdlib.sort.vec i64) as isort)
 ;#
 ;# (define (main) : i64
 ;#   (let
@@ -36,7 +36,7 @@
 (import stdlib.vector)
 
 ;: Return the character code at `idx` in borrowed text.
-(define (sort-char-code-at [text : (& text str)] [idx : i64]) : i64
+(define (char-code-at [text : (& text str)] [idx : i64]) : i64
   (cast (string-ref text idx) : i64))
 
 ;: Return true when `left` is lexicographically before `right` by character
@@ -55,8 +55,8 @@
     (begin
       (while (and (not done) (< idx limit))
         (let
-          [lc : i64 (stdlib.sort.sort-char-code-at left idx)]
-          [rc : i64 (stdlib.sort.sort-char-code-at right idx)]
+          [lc : i64 (stdlib.sort.char-code-at left idx)]
+          [rc : i64 (stdlib.sort.char-code-at right idx)]
           (if (= lc rc)
             (set! idx (+ idx 1))
             (begin
@@ -76,7 +76,7 @@
 ;: `<`. Non-scalar element types expose `(sort! (&mut v) less?)`, where `less?`
 ;: has type `(-> T T bool)` and returns true when the first value should sort
 ;: before the second.
-(defmacro (sort-vec [T : type]) : Module
+(defmacro (vec [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
     [module-name : Expr
@@ -140,17 +140,17 @@
 ;; Inline coverage migrated from the old flat vector sort helpers (#3082).
 (cfg test (import stdlib.test))
 (cfg test (import (stdlib.vector.vector i64) as i64v))
-(cfg test (import (stdlib.sort.sort-vec i64) as i64sort))
-(cfg test (import (stdlib.sort.sort-vec i64) as i64sort_again))
+(cfg test (import (stdlib.sort.vec i64) as i64sort))
+(cfg test (import (stdlib.sort.vec i64) as i64sort_again))
 (cfg test (import (stdlib.vector.vector String) as strv))
-(cfg test (import (stdlib.sort.sort-vec String) as strsort))
+(cfg test (import (stdlib.sort.vec String) as strsort))
 
 (cfg
   test
   (define (sort-test-first-char-less? [left : String] [right : String]) : bool
     (<
-      (stdlib.sort.sort-char-code-at (& left) 0)
-      (stdlib.sort.sort-char-code-at (& right) 0))))
+      (stdlib.sort.char-code-at (& left) 0)
+      (stdlib.sort.char-code-at (& right) 0))))
 
 (cfg
   test

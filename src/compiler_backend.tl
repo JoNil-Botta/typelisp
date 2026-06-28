@@ -51,20 +51,20 @@
   compile-profile
   (define (compiler-backend-profile-start) : unit
     (begin
-      (set! compiler-backend-profile-start-ms (profile.profile-now-ms))
-      (set! compiler-backend-profile-start-total (profile.profile-alloc-total))
-      (set! compiler-backend-profile-start-live (profile.profile-alloc-live))
-      (profile.profile-alloc-reset-peak))))
+      (set! compiler-backend-profile-start-ms (profile.now-ms))
+      (set! compiler-backend-profile-start-total (profile.alloc-total))
+      (set! compiler-backend-profile-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-backend-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile.profile-now-ms)]
-      [end-total : i64 (profile.profile-alloc-total)]
-      [end-live : i64 (profile.profile-alloc-live)]
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.profile-alloc-peak) compiler-backend-profile-start-live)]
+        (- (profile.alloc-peak) compiler-backend-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|backend."
@@ -86,7 +86,7 @@
 (cfg
   compile-profile
   (define (compiler-backend-profile-detail-start) : unit
-    (set! compiler-backend-profile-detail-start-ms (profile.profile-now-ms))))
+    (set! compiler-backend-profile-detail-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -95,7 +95,7 @@
     [name : String]) : unit
     (let
       [elapsed : i64
-        (- (profile.profile-now-ms) compiler-backend-profile-detail-start-ms)]
+        (- (profile.now-ms) compiler-backend-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -4681,7 +4681,7 @@
           (string.int->string (compiler-backend-string-label-reverse-hash text)))))))
 
 (define (compiler-backend-string-label-forward-hash [key : String]) : i64
-  (hash.hash-string (& key)))
+  (hash.string-key (& key)))
 
 (define (compiler-backend-string-label-reverse-hash [text : String]) : i64
   (let

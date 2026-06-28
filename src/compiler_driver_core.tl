@@ -392,27 +392,21 @@
   compile-profile
   (define (compiler-driver-profile-start-phase) : unit
     (begin
-      (set! compiler-driver-profile-phase-start-ms (profile.profile-now-ms))
-      (set!
-        compiler-driver-profile-phase-start-total
-        (profile.profile-alloc-total))
-      (set!
-        compiler-driver-profile-phase-start-live
-        (profile.profile-alloc-live))
-      (profile.profile-alloc-reset-peak))))
+      (set! compiler-driver-profile-phase-start-ms (profile.now-ms))
+      (set! compiler-driver-profile-phase-start-total (profile.alloc-total))
+      (set! compiler-driver-profile-phase-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-driver-profile-finish-phase [phase : String]) : unit
     (let
-      [end-ms : i64 (profile.profile-now-ms)]
-      [end-total : i64 (profile.profile-alloc-total)]
-      [end-live : i64 (profile.profile-alloc-live)]
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
-          (-
-            (profile.profile-alloc-peak)
-            compiler-driver-profile-phase-start-live))]
+          (- (profile.alloc-peak) compiler-driver-profile-phase-start-live))]
       (begin
         (set!
           compiler-driver-profile-best-peak
@@ -431,13 +425,9 @@
   compile-profile
   (define (compiler-driver-profile-start-total) : unit
     (begin
-      (set! compiler-driver-profile-total-start-ms (profile.profile-now-ms))
-      (set!
-        compiler-driver-profile-total-start-total
-        (profile.profile-alloc-total))
-      (set!
-        compiler-driver-profile-total-start-live
-        (profile.profile-alloc-live))
+      (set! compiler-driver-profile-total-start-ms (profile.now-ms))
+      (set! compiler-driver-profile-total-start-total (profile.alloc-total))
+      (set! compiler-driver-profile-total-start-live (profile.alloc-live))
       (set! compiler-driver-profile-best-peak 0)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
@@ -449,13 +439,9 @@
     (io.print-error
       (compiler-driver-profile-line
         "total"
-        (- (profile.profile-now-ms) compiler-driver-profile-total-start-ms)
-        (-
-          (profile.profile-alloc-total)
-          compiler-driver-profile-total-start-total)
-        (-
-          (profile.profile-alloc-live)
-          compiler-driver-profile-total-start-live)
+        (- (profile.now-ms) compiler-driver-profile-total-start-ms)
+        (- (profile.alloc-total) compiler-driver-profile-total-start-total)
+        (- (profile.alloc-live) compiler-driver-profile-total-start-live)
         compiler-driver-profile-best-peak))))
 
 (define (compiler-driver-lower-mode-for-target

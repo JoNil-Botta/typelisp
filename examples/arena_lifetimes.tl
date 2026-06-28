@@ -5,7 +5,7 @@
 ; - one frame result is cloned out of a first-class scratch arena with with-escape
 (import stdlib.array)
 (import "stdlib/arena.tl")
-(import "stdlib/profile.tl")
+(import stdlib.profile)
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
 
@@ -19,7 +19,7 @@
 
 (define (frame-temp-score [frame-index : i64]) : i64
   (let
-    [before : i64 (profile-alloc-live)]
+    [before : i64 (profile.alloc-live)]
     [score : i64
       (with-arena
         frame
@@ -28,7 +28,7 @@
           [index-text : String (int->string frame-index)]
           [label : String (string-append (& prefix) (& index-text))]
           (string-length (& label))))]
-    [after : i64 (profile-alloc-live)]
+    [after : i64 (profile.alloc-live)]
     (begin
       (assert-i64-eq
         after

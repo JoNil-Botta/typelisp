@@ -4262,17 +4262,24 @@
 ;; it used during this function's body emission so the prologue/epilogue save and
 ;; restore them too. Reset per function in scavenge-install-ctx! (runs before the
 ;; body, and the body is emitted before the prologue str-cat reads the set).
+;; Single source of truth for the callee-saved GP registers
+;; {%r12,%r13,%r14,%r15,%rbx} = compiler-reg-sysv-integer-registers (built once).
+;; The used-callee tracking array size, the index map, the reset, and the
+;; membership predicate all derive from this list, so the set lives in one place
+;; instead of being hardcoded in 4-5 spots. Behavior-identical: same registers,
+;; same order, same indices (r12=0 .. rbx=4).
+(define compiler-backend-scavenge-callee-list : CompilerRegStringList
+  (compiler-reg-sysv-integer-registers))
+
 (define compiler-backend-scavenge-used-callee : (Array bool)
-  (make-array bool 5))
+  (make-array bool
+    (compiler-reg-string-list-count compiler-backend-scavenge-callee-list)))
 
 (define (compiler-backend-scavenge-callee-idx [reg : String]) : i64
-  (cond
-    [(string-eq reg "%r12") 0]
-    [(string-eq reg "%r13") 1]
-    [(string-eq reg "%r14") 2]
-    [(string-eq reg "%r15") 3]
-    [(string-eq reg "%rbx") 4]
-    [else (- 0 1)]))
+  (compiler-reg-string-list-index-of
+    compiler-backend-scavenge-callee-list
+    reg
+    0))
 
 (define (compiler-backend-scavenge-mark-callee-used! [reg : String]) : unit
   (let
@@ -4289,12 +4296,14 @@
       false)))
 
 (define (compiler-backend-scavenge-reset-callee!) : unit
-  (begin
-    (array-set! compiler-backend-scavenge-used-callee 0 false)
-    (array-set! compiler-backend-scavenge-used-callee 1 false)
-    (array-set! compiler-backend-scavenge-used-callee 2 false)
-    (array-set! compiler-backend-scavenge-used-callee 3 false)
-    (array-set! compiler-backend-scavenge-used-callee 4 false)))
+  (let
+    [i : i64 0]
+    [n : i64
+      (compiler-reg-string-list-count compiler-backend-scavenge-callee-list)]
+    (while (< i n)
+      (begin
+        (array-set! compiler-backend-scavenge-used-callee i false)
+        (set! i (+ i 1))))))
 
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
 ;; occupied -- genuine register pressure, not param pressure), it must not silently
@@ -27679,8 +27688,6 @@
     [(string-eq reg "%xmm5") 16384]
     [else 0]))
 
-(define compiler-backend-scavenge-all-reg-mask : i64
-  32767)
 (define compiler-backend-scavenge-reg-bit-count : i64
   15)
 
@@ -28542,12 +28549,7 @@
   (compiler-backend-scavenge-xmm-candidates))
 
 (define (compiler-backend-callee-saved-reg? [reg : String]) : bool
-  (or
-    (string-eq reg "%r12")
-    (string-eq reg "%r13")
-    (string-eq reg "%r14")
-    (string-eq reg "%r15")
-    (string-eq reg "%rbx")))
+  (>= (compiler-backend-scavenge-callee-idx reg) 0))
 
 ;; A candidate is usable as scratch iff: free at `point`, not excluded, and
 ;; (caller-saved OR already saved by the prologue).

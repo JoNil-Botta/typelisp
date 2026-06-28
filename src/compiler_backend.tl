@@ -16,6 +16,8 @@
 (import stdlib.string)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat)
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (cfg
   feature-tl-memchr
@@ -178,10 +180,6 @@
 (defstruct CompilerBackendPeepholeEmitResult
   (buf text_buf.TextBuf)
   (rax-owner String))
-
-(defenum CompilerBackendMaybeI64
-  (CompilerBackendNoI64)
-  (CompilerBackendSomeI64 i64))
 
 (defenum CompilerBackendUnsignedDivMagic
   (CompilerBackendNoUnsignedDivMagic)
@@ -1283,7 +1281,7 @@
   [index : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackendSimdIndexedAddress
   (match (compiler-backend-value-as-i64 index)
-    [(CompilerBackendSomeI64 n)
+    [(option_i64.Some n)
       (match (compiler-backend-emit-simd-base-data-pointer assignments base)
         [(OkCompilerBackend base-asm)
           (OkCompilerBackendSimdIndexedAddress
@@ -1293,7 +1291,7 @@
                 (* n (compiler-backend-type-size elem-ty)))))]
         [(ErrCompilerBackend message)
           (ErrCompilerBackendSimdIndexedAddress message)])]
-    [(CompilerBackendNoI64)
+    [(option_i64.None)
       (let
         [index-home : String
           (compiler-backend-simd-index-home assignments index)]
@@ -4094,16 +4092,16 @@
     [(IrValueUnit) (CompilerBackendSomeImmediate "$0")]
     [_ (CompilerBackendNoImmediate)]))
 
-(define (compiler-backend-value-as-i64 [value : CompilerIrValue]) : CompilerBackendMaybeI64
+(define (compiler-backend-value-as-i64 [value : CompilerIrValue]) : option_i64.Option
   (match value
-    [(IrValueI64 n) (CompilerBackendSomeI64 n)]
+    [(IrValueI64 n) (option_i64.Some n)]
     [(IrValueBool b)
       (if b
-        (CompilerBackendSomeI64 1)
-        (CompilerBackendSomeI64 0))]
-    [(IrValueChar c) (CompilerBackendSomeI64 (compiler-backend-char-code c))]
-    [(IrValueUnit) (CompilerBackendSomeI64 0)]
-    [_ (CompilerBackendNoI64)]))
+        (option_i64.Some 1)
+        (option_i64.Some 0))]
+    [(IrValueChar c) (option_i64.Some (compiler-backend-char-code c))]
+    [(IrValueUnit) (option_i64.Some 0)]
+    [_ (option_i64.None)]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
   (cond
@@ -5288,9 +5286,9 @@
   [value : CompilerIrValue]
   [reg : String]) : CompilerBackendMaybeAsm
   (match (compiler-backend-value-as-i64 value)
-    [(CompilerBackendSomeI64 n)
+    [(option_i64.Some n)
       (CompilerBackendSomeAsm (compiler-backend-emit-load-i64-immediate n reg))]
-    [(CompilerBackendNoI64)
+    [(option_i64.None)
       (match (compiler-backend-immediate-operand value)
         [(CompilerBackendSomeImmediate imm)
           (CompilerBackendSomeAsm
@@ -6891,9 +6889,8 @@
   [value : CompilerIrValue]
   [ty : AstType]) : bool
   (match (compiler-backend-value-as-i64 value)
-    [(CompilerBackendSomeI64 n)
-      (compiler-backend-divmod-safe-literal-i64? n ty)]
-    [(CompilerBackendNoI64) false]))
+    [(option_i64.Some n) (compiler-backend-divmod-safe-literal-i64? n ty)]
+    [(option_i64.None) false]))
 
 (define (compiler-backend-u64-div-pow2 [bits : i64] [divisor : u64]) : CompilerBackendU64DivPow2
   (let
@@ -7319,24 +7316,22 @@
   (match op
     [(IrBinDiv)
       (match (compiler-backend-value-as-i64 rhs)
-        [(CompilerBackendSomeI64 n)
-          (compiler-backend-constant-divmod-asm n ty false)]
-        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+        [(option_i64.Some n) (compiler-backend-constant-divmod-asm n ty false)]
+        [(option_i64.None) (CompilerBackendNoAsm)])]
     [(IrBinMod)
       (match (compiler-backend-value-as-i64 rhs)
-        [(CompilerBackendSomeI64 n)
-          (compiler-backend-constant-divmod-asm n ty true)]
-        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+        [(option_i64.Some n) (compiler-backend-constant-divmod-asm n ty true)]
+        [(option_i64.None) (CompilerBackendNoAsm)])]
     [(IrBinSafeDiv)
       (match (compiler-backend-value-as-i64 rhs)
-        [(CompilerBackendSomeI64 n)
+        [(option_i64.Some n)
           (compiler-backend-constant-safe-divmod-asm n ty false)]
-        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+        [(option_i64.None) (CompilerBackendNoAsm)])]
     [(IrBinSafeMod)
       (match (compiler-backend-value-as-i64 rhs)
-        [(CompilerBackendSomeI64 n)
+        [(option_i64.Some n)
           (compiler-backend-constant-safe-divmod-asm n ty true)]
-        [(CompilerBackendNoI64) (CompilerBackendNoAsm)])]
+        [(option_i64.None) (CompilerBackendNoAsm)])]
     [_ (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-shift-count-width [ty : AstType]) : i64
@@ -9006,7 +9001,7 @@
             ""
             "backend: unsupported gep load compare branch")))
       (match (compiler-backend-value-as-i64 offset)
-        [(CompilerBackendSomeI64 n)
+        [(option_i64.Some n)
           (let
             [disp : i64 (* n (compiler-backend-type-size elem-ty))]
             [addr : String (compiler-backend-r10-address disp)]
@@ -9056,7 +9051,7 @@
                       [(ErrCompilerBackend message)
                         (ErrCompilerBackend message)])])]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-        [(CompilerBackendNoI64)
+        [(option_i64.None)
           (ErrCompilerBackend
             (box
               (compiler-diagnostic-at-start
@@ -9382,7 +9377,7 @@
       false
       (not (string.string-eq base-reg "")))
       (match (compiler-backend-value-as-i64 offset)
-        [(CompilerBackendSomeI64 n)
+        [(option_i64.Some n)
           (let
             [disp : i64 (* n (compiler-backend-type-size elem-ty))]
             (if (if (= disp 0)
@@ -9396,7 +9391,7 @@
                   ", "
                   dst-home
                   "\n"))))]
-        [(CompilerBackendNoI64)
+        [(option_i64.None)
           (compiler-backend-emit-gep-staged assignments dst base offset elem-ty)])
       (compiler-backend-emit-gep-staged assignments dst base offset elem-ty))))
 
@@ -9411,7 +9406,7 @@
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
         (match (compiler-backend-value-as-i64 offset)
-          [(CompilerBackendSomeI64 n)
+          [(option_i64.Some n)
             (match (compiler-backend-gep-immediate-asm (* n scale))
               [(CompilerBackendSomeAsm offset-asm)
                 (OkCompilerBackend
@@ -9441,7 +9436,7 @@
                               dst
                               "%rax")))))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-          [(CompilerBackendNoI64)
+          [(option_i64.None)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
@@ -9642,7 +9637,7 @@
         (let
           [scale : i64 (compiler-backend-type-size elem-ty)]
           (match (compiler-backend-value-as-i64 offset)
-            [(CompilerBackendSomeI64 n)
+            [(option_i64.Some n)
               (match (compiler-backend-gep-immediate-r10-asm (* n scale))
                 [(CompilerBackendSomeAsm offset-asm)
                   (match (compiler-backend-emit-load-value-with-plan
@@ -9669,7 +9664,7 @@
                       (compiler-diagnostic-at-start
                         ""
                         "backend: fused gep copy displacement out of range")))])]
-            [(CompilerBackendNoI64)
+            [(option_i64.None)
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 offset
@@ -9726,7 +9721,7 @@
   [elem-ty : AstType]
   [load-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
-    [(CompilerBackendSomeI64 n)
+    [(option_i64.Some n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         [addr : String (compiler-backend-r10-address disp)]
@@ -9774,7 +9769,7 @@
                           dst
                           "%rax")))))))]
           [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-    [(CompilerBackendNoI64)
+    [(option_i64.None)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
         [addr : String (compiler-backend-gep-index-address-r10 scale)]
@@ -9854,7 +9849,7 @@
   [elem-ty : AstType]
   [load-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
-    [(CompilerBackendSomeI64 n)
+    [(option_i64.Some n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         [addr : String (compiler-backend-r10-address disp)]
@@ -9880,7 +9875,7 @@
                     assignments
                     dst
                     "%rax")))))))]
-    [(CompilerBackendNoI64)
+    [(option_i64.None)
       (ErrCompilerBackend
         (box
           (compiler-diagnostic-at-start
@@ -10020,7 +10015,7 @@
   [store-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
-    [(CompilerBackendSomeI64 n)
+    [(option_i64.Some n)
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         (match (compiler-backend-emit-address-base assignments base "%r10")
@@ -10039,7 +10034,7 @@
                   (OkCompilerBackend (string.string-append base-asm store-asm))]
                 [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
           [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]
-    [(CompilerBackendNoI64)
+    [(option_i64.None)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
         (match (compiler-backend-emit-address-base-with-avoid
@@ -18470,7 +18465,7 @@
         elem-ty
         load-ty)]
     (match (compiler-backend-value-as-i64 offset)
-      [(CompilerBackendSomeI64 _)
+      [(option_i64.Some _)
         (match rest
           [(IrInstrCons maybe-gep after-gep)
             (match maybe-gep
@@ -18479,7 +18474,7 @@
                   (compiler-backend-var-single-use? use-counts gep-dst2)
                   (opt-value-eq base2 base))
                   (match (compiler-backend-value-as-i64 offset2)
-                    [(CompilerBackendSomeI64 _)
+                    [(option_i64.Some _)
                       (match (box-get after-gep)
                         [(IrInstrCons maybe-load after-load2)
                           (match maybe-load
@@ -18601,7 +18596,7 @@
                             func-diag
                             use-counts
                             buf)])]
-                    [(CompilerBackendNoI64)
+                    [(option_i64.None)
                       (compiler-backend-emit-fused-result-rest
                         target
                         function
@@ -18692,7 +18687,7 @@
               func-diag
               use-counts
               buf)])]
-      [(CompilerBackendNoI64)
+      [(option_i64.None)
         (compiler-backend-emit-fused-result-rest
           target
           function
@@ -20277,7 +20272,7 @@
                     (opt-value-eq base ptr)
                     (compiler-backend-var-single-use? use-counts gep-dst))
                     (match (compiler-backend-value-as-i64 offset)
-                      [(CompilerBackendSomeI64 n)
+                      [(option_i64.Some n)
                         (let
                           [disp : i64
                             (* n (compiler-backend-type-size elem-ty))]
@@ -20409,7 +20404,7 @@
                               func-diag
                               use-counts
                               buf)))]
-                      [(CompilerBackendNoI64)
+                      [(option_i64.None)
                         (compiler-backend-emit-instrs-normal
                           target
                           function
@@ -20503,7 +20498,7 @@
         [(IrInstrGep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
-              [(CompilerBackendSomeI64 n)
+              [(option_i64.Some n)
                 (match (box-get rest)
                   [(IrInstrCons next after-load)
                     (match next
@@ -20943,7 +20938,7 @@
                       func-diag
                       use-counts
                       buf)])]
-              [(CompilerBackendNoI64)
+              [(option_i64.None)
                 (match (box-get rest)
                   [(IrInstrCons next after-gep)
                     (match next

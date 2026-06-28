@@ -3,10 +3,8 @@
 (module sym_i64_env)
 
 (import compiler_intern as ci)
-
-(defenum MaybeI64
-  (NoneI64)
-  (SomeI64 i64))
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (defenum SymI64Env
   (SymI64Nil)
@@ -21,32 +19,40 @@
 (define (sym-i64-bind-id [e : SymI64Env] [k : i64] [v : i64]) : SymI64Env
   (SymI64Bind k v (box e)))
 
-(define (sym-i64-lookup [e : SymI64Env] [k : String]) : MaybeI64
+(define (sym-i64-lookup [e : SymI64Env] [k : String]) : option_i64.Option
   (sym-i64-lookup-id e (ci.intern k)))
 
-(define (sym-i64-lookup-id [e : SymI64Env] [k : i64]) : MaybeI64
+(define (sym-i64-lookup-id [e : SymI64Env] [k : i64]) : option_i64.Option
   (let
     [cursor : SymI64Env e]
     [found : bool false]
-    [out : MaybeI64 NoneI64]
+    [out : option_i64.Option option_i64.None]
     (begin
       (while (not found)
         (match cursor
-          [(SymI64Nil) (return NoneI64)]
+          [(SymI64Nil) (return option_i64.None)]
           [(SymI64Bind kk vv rest)
             (if (= kk k)
               (begin
-                (set! out (SomeI64 vv))
+                (set! out (option_i64.Some vv))
                 (set! found true))
               (set! cursor (box-get rest)))]))
       out)))
 
+(define (sym-i64-lookup-or [e : SymI64Env] [k : String] [fallback : i64]) : i64
+  (sym-i64-lookup-id-or e (ci.intern k) fallback))
+
+(define (sym-i64-lookup-id-or [e : SymI64Env] [k : i64] [fallback : i64]) : i64
+  (match (sym-i64-lookup-id e k)
+    [(option_i64.Some value) value]
+    [option_i64.None fallback]))
+
 (define (sym-i64-contains [e : SymI64Env] [k : String]) : bool
   (match (sym-i64-lookup e k)
-    [(SomeI64 _) true]
-    [NoneI64 false]))
+    [(option_i64.Some _) true]
+    [option_i64.None false]))
 
 (define (sym-i64-contains-id [e : SymI64Env] [k : i64]) : bool
   (match (sym-i64-lookup-id e k)
-    [(SomeI64 _) true]
-    [NoneI64 false]))
+    [(option_i64.Some _) true]
+    [option_i64.None false]))

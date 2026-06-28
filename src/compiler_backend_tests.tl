@@ -2803,14 +2803,14 @@
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-aggregate-global-init-source) : String
-  "(defenum MaybeI64 (Some i64) (None))
+  "(defenum LocalMaybe (Some i64) (None))
 (defstruct Pair (x i64) (y i64))
-(defstruct Nested (label String) (choice MaybeI64))
+(defstruct Nested (label String) (choice LocalMaybe))
 (define (string.string-concat [left : String] [right : String]) : String
   left)
 
 (define greeting : String (string.string-concat \"he\" \"llo\"))
-(define choice : MaybeI64 (Some 8))
+(define choice : LocalMaybe (Some 8))
 (define pair : Pair (Pair 10 11))
 (define cells : (Array i64) (make-array i64 3))
 (define nested : Nested (Nested (string.string-concat \"o\" \"k\") (Some 3)))

@@ -2965,10 +2965,10 @@
       (result_i64_string.ok (+ x y)))))")
 
 (define (compiler-typecheck-option-try-source) : String
-  "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
+  "(defenum TryCount (SomeCount i64) (NoneCount))
 (defenum MaybeBool (NoneBool) (SomeBool bool))
-(define (read [flag : bool]) : MaybeI64
-  (if flag (SomeI64 41) NoneI64))
+(define (read [flag : bool]) : TryCount
+  (if flag (SomeCount 41) NoneCount))
 (define (main [flag : bool]) : MaybeBool
   (let ([x : i64 (try (read flag))])
     (SomeBool (> x 0))))")
@@ -2995,22 +2995,22 @@
   (result_i64_string.ok (try (read))))")
 
 (define (compiler-typecheck-option-try-carrier-mismatch-source) : String
-  "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
+  "(defenum TryCount (SomeCount i64) (NoneCount))
 (import \"stdlib/result.tl\")
 (import (result i64 String) as result_i64_string)
-(define (read) : MaybeI64 (SomeI64 1))
+(define (read) : TryCount (SomeCount 1))
 (define (main) : result_i64_string.Result
   (result_i64_string.ok (try (read))))")
 
 (define (compiler-typecheck-option-try-payloadless-some-source) : String
-  "(defenum MaybeI64 (SomeI64) (NoneI64))
-(define (read) : MaybeI64 SomeI64)
+  "(defenum TryPayloadless (SomePayloadless) (NonePayloadless))
+(define (read) : TryPayloadless SomePayloadless)
 (define (main) : i64
   (try (read)))")
 
 (define (compiler-typecheck-option-try-payloaded-none-source) : String
-  "(defenum MaybeI64 (SomeI64 i64) (NoneI64 i64))
-(define (read) : MaybeI64 (SomeI64 1))
+  "(defenum TryPayloadedNone (SomePayloadedNone i64) (NonePayloadedNone i64))
+(define (read) : TryPayloadedNone (SomePayloadedNone 1))
 (define (main) : i64
   (try (read)))")
 
@@ -5312,8 +5312,8 @@
 (define (main [s : Shape]) : i64 (match s [(Circle a b) 0] [_ 1]))")
 
 (define (compiler-typecheck-match-bad-maybe-exhaustive-source) : String
-  "(defenum MaybeI64 (NoneI64) (SomeI64 i64))
-(define (main [m : MaybeI64]) : i64 (match m [(SomeI64 v) v]))")
+  "(defenum LocalMaybe (NoneCount) (SomeCount i64))
+(define (main [m : LocalMaybe]) : i64 (match m [(SomeCount v) v]))")
 
 (define (compiler-typecheck-match-bad-result-exhaustive-source) : String
   "(import \"stdlib/result.tl\")
@@ -5581,7 +5581,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-maybe-exhaustive-source)
-            "typecheck: match missing arm for variant NoneI64")))
+            "typecheck: match missing arm for variant NoneCount")))
       (set!
         ok
         (and

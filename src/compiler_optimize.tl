@@ -29,6 +29,8 @@
 (import stdlib.hashmap)
 (import stdlib.string)
 (cfg compile-profile (import stdlib.str_cat))
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (defenum ResultCompilerOptimizeLevel
   (OkCompilerOptimizeLevel i64)
@@ -252,10 +254,6 @@
     (ErrCompilerOptimizeLevel)))
 
 ;; --- block-local constant environment: IR var id -> known typed scalar -------
-(defenum OptMaybeI64
-  (OptNoI64)
-  (OptSomeI64 i64))
-
 (defenum OptMaybeBool
   (OptNoBool)
   (OptSomeBool bool))
@@ -385,11 +383,11 @@
           (= (opt-int-sign-class from-ty) (opt-int-sign-class to-ty)))))
     false))
 
-(define (opt-value-to-i64 [value : CompilerIrValue]) : OptMaybeI64
+(define (opt-value-to-i64 [value : CompilerIrValue]) : option_i64.Option
   (match value
-    [(IrValueI64 n) (OptSomeI64 n)]
-    [(IrValueChar c) (OptSomeI64 (cast c : i64))]
-    [_ (OptNoI64)]))
+    [(IrValueI64 n) (option_i64.Some n)]
+    [(IrValueChar c) (option_i64.Some (cast c : i64))]
+    [_ (option_i64.None)]))
 
 (define (opt-value-to-bool [value : CompilerIrValue]) : OptMaybeBool
   (match value
@@ -441,15 +439,15 @@
 (define (opt-normalize-const [value : CompilerIrValue] [ty : AstType]) : OptKnownConst
   (if (opt-integer-type? ty)
     (match (opt-value-to-i64 value)
-      [(OptSomeI64 n)
+      [(option_i64.Some n)
         (OptSomeConst (IrValueI64 (opt-normalize-int-to-i64 n ty)) ty)]
-      [(OptNoI64) (OptNoConst)])
+      [(option_i64.None) (OptNoConst)])
     (match ty
       [(AstTyChar)
         (match (opt-value-to-i64 value)
-          [(OptSomeI64 n)
+          [(option_i64.Some n)
             (OptSomeConst (IrValueChar (cast n : char)) (AstTyChar))]
-          [(OptNoI64) (OptNoConst)])]
+          [(option_i64.None) (OptNoConst)])]
       [(AstTyBool)
         (match (opt-value-to-bool value)
           [(OptSomeBool b) (OptSomeConst (IrValueBool b) (AstTyBool))]
@@ -507,12 +505,12 @@
     [_ value]))
 
 ;; --- folding rules -----------------------------------------------------------
-(define (opt-normalize-scalar-to-i64 [value : CompilerIrValue] [ty : AstType]) : OptMaybeI64
+(define (opt-normalize-scalar-to-i64 [value : CompilerIrValue] [ty : AstType]) : option_i64.Option
   (if (opt-int-or-char-type? ty)
     (match (opt-value-to-i64 value)
-      [(OptSomeI64 n) (OptSomeI64 (opt-normalize-int-to-i64 n ty))]
-      [(OptNoI64) (OptNoI64)])
-    (OptNoI64)))
+      [(option_i64.Some n) (option_i64.Some (opt-normalize-int-to-i64 n ty))]
+      [(option_i64.None) (option_i64.None)])
+    (option_i64.None)))
 
 (define (opt-binop-operand-type
   [op : CompilerIrBinOp]
@@ -690,7 +688,7 @@
   [rhs-ty : AstType]
   [ty : AstType]) : CompilerIrMaybeValue
   (match (opt-normalize-scalar-to-i64 rhs rhs-ty)
-    [(OptSomeI64 count)
+    [(option_i64.Some count)
       (if (opt-shift-count-valid? count rhs-ty (opt-int-width ty))
         (match op
           [(IrBinShl)
@@ -703,7 +701,7 @@
                 (opt-normalize-int-to-i64 (opt-fold-shr-value a count ty) ty)))]
           [_ (IrNoValue)])
         (IrNoValue))]
-    [(OptNoI64) (IrNoValue)]))
+    [(option_i64.None) (IrNoValue)]))
 
 (define (opt-fold-int-char-binop
   [op : CompilerIrBinOp]
@@ -712,13 +710,13 @@
   [operand-ty : AstType]
   [rhs-ty : AstType]) : CompilerIrMaybeValue
   (match (opt-normalize-scalar-to-i64 lhs operand-ty)
-    [(OptSomeI64 a)
+    [(option_i64.Some a)
       (match op
         [(IrBinShl) (opt-fold-shift op a rhs rhs-ty operand-ty)]
         [(IrBinShr) (opt-fold-shift op a rhs rhs-ty operand-ty)]
         [_
           (match (opt-normalize-scalar-to-i64 rhs operand-ty)
-            [(OptSomeI64 b)
+            [(option_i64.Some b)
               (match op
                 [(IrBinAdd)
                   (if (opt-integer-type? operand-ty)
@@ -788,8 +786,8 @@
                 [(IrBinGt) (opt-fold-compare op a b operand-ty)]
                 [(IrBinGe) (opt-fold-compare op a b operand-ty)]
                 [_ (IrNoValue)])]
-            [(OptNoI64) (IrNoValue)])])]
-    [(OptNoI64) (IrNoValue)]))
+            [(option_i64.None) (IrNoValue)])])]
+    [(option_i64.None) (IrNoValue)]))
 
 (define (opt-fold-bool
   [op : CompilerIrBinOp]
@@ -922,10 +920,10 @@
         [(IrUnNeg)
           (if (opt-integer-type? result-ty)
             (match (opt-normalize-scalar-to-i64 value result-ty)
-              [(OptSomeI64 a)
+              [(option_i64.Some a)
                 (IrSomeValue
                   (IrValueI64 (opt-normalize-int-to-i64 (- 0 a) result-ty)))]
-              [(OptNoI64) (IrNoValue)])
+              [(option_i64.None) (IrNoValue)])
             (if (opt-float-type? result-ty)
               (match (opt-value-to-f64 value result-ty)
                 [(CompilerFloatSomeF64 a)
@@ -941,10 +939,10 @@
         [(IrUnBitNot)
           (if (opt-integer-type? result-ty)
             (match (opt-normalize-scalar-to-i64 value result-ty)
-              [(OptSomeI64 a)
+              [(option_i64.Some a)
                 (IrSomeValue
                   (IrValueI64 (opt-normalize-int-to-i64 (bit-not a) result-ty)))]
-              [(OptNoI64) (IrNoValue)])
+              [(option_i64.None) (IrNoValue)])
             (IrNoValue))])]
     [(OptNoConst) (IrNoValue)]))
 
@@ -2147,13 +2145,13 @@
     [(AstTyArray _ _) true]
     [_ false]))
 
-(define (opt-aggregate-tl-alloc-size [args : CompilerIrCallArgs]) : OptMaybeI64
+(define (opt-aggregate-tl-alloc-size [args : CompilerIrCallArgs]) : option_i64.Option
   (match args
     [(IrCallArgsOne value)
       (match value
-        [(IrValueI64 size) (OptSomeI64 size)]
-        [_ (OptNoI64)])]
-    [_ (OptNoI64)]))
+        [(IrValueI64 size) (option_i64.Some size)]
+        [_ (option_i64.None)])]
+    [_ (option_i64.None)]))
 
 (define (opt-aggregate-direct-alloc [instr : CompilerIrInstr]) : OptMaybeAggregateAlloc
   (match instr
@@ -2162,11 +2160,11 @@
         (string.string-eq name "tl_alloc")
         (opt-aggregate-fixed-type? ty))
         (match (opt-aggregate-tl-alloc-size args)
-          [(OptSomeI64 size)
+          [(option_i64.Some size)
             (if (> size 0)
               (OptSomeAggregateAlloc dst ty size)
               (OptNoAggregateAlloc))]
-          [(OptNoI64) (OptNoAggregateAlloc)])
+          [(option_i64.None) (OptNoAggregateAlloc)])
         (OptNoAggregateAlloc))]
     [_ (OptNoAggregateAlloc)]))
 
@@ -2317,38 +2315,38 @@
 (define (opt-aggregate-pointer-list-lookup-from
   [ptrs : OptAggregatePointerList]
   [var : i64]
-  [index : i64]) : OptMaybeI64
+  [index : i64]) : option_i64.Option
   (if (< index 0)
-    (OptNoI64)
+    (option_i64.None)
     (match (array.array-ref (struct-get ptrs slots) index)
       [(OptAggregatePointer ptr-var offset)
         (if (= ptr-var var)
-          (OptSomeI64 offset)
+          (option_i64.Some offset)
           (opt-aggregate-pointer-list-lookup-from ptrs var (- index 1)))])))
 
 (define (opt-aggregate-pointer-list-lookup
   [ptrs : OptAggregatePointerList]
-  [var : i64]) : OptMaybeI64
+  [var : i64]) : option_i64.Option
   (opt-aggregate-pointer-list-lookup-from ptrs var (- (struct-get ptrs len) 1)))
 
 (define (opt-aggregate-value-offset
   [base : i64]
   [ptrs : OptAggregatePointerList]
-  [value : CompilerIrValue]) : OptMaybeI64
+  [value : CompilerIrValue]) : option_i64.Option
   (match value
     [(IrValueVar var)
       (if (= var base)
-        (OptSomeI64 0)
+        (option_i64.Some 0)
         (opt-aggregate-pointer-list-lookup ptrs var))]
-    [_ (OptNoI64)]))
+    [_ (option_i64.None)]))
 
 (define (opt-aggregate-value-has-pointer?
   [base : i64]
   [ptrs : OptAggregatePointerList]
   [value : CompilerIrValue]) : bool
   (match (opt-aggregate-value-offset base ptrs value)
-    [(OptSomeI64 _) true]
-    [(OptNoI64) false]))
+    [(option_i64.Some _) true]
+    [(option_i64.None) false]))
 
 (define (opt-aggregate-value-list-has-pointer?
   [base : i64]
@@ -2428,8 +2426,8 @@
   (or
     (= var base)
     (match (opt-aggregate-pointer-list-lookup ptrs var)
-      [(OptSomeI64 _) true]
-      [(OptNoI64) false])))
+      [(option_i64.Some _) true]
+      [(option_i64.None) false])))
 
 (define (opt-aggregate-instr-has-pointer?
   [instr : CompilerIrInstr]
@@ -2592,11 +2590,11 @@
       (and (= dst base) (string.string-eq name "tl_alloc"))]
     [(IrInstrGep _ src offset _)
       (match (opt-aggregate-value-offset base ptrs src)
-        [(OptSomeI64 _)
+        [(option_i64.Some _)
           (match offset
             [(IrValueI64 _) true]
             [_ false])]
-        [(OptNoI64) false])]
+        [(option_i64.None) false])]
     [(IrInstrLoad _ src _) (opt-aggregate-value-has-pointer? base ptrs src)]
     [(IrInstrStorePtr ptr value _)
       (and
@@ -2659,7 +2657,7 @@
         (match instr
           [(IrInstrGep dst src offset _)
             (match (opt-aggregate-value-offset base ptrs src)
-              [(OptSomeI64 base-offset)
+              [(option_i64.Some base-offset)
                 (match offset
                   [(IrValueI64 field-offset)
                     (opt-aggregate-scan-instrs
@@ -2673,7 +2671,7 @@
                       accesses
                       true)]
                   [_ (OptAggregateScanReject)])]
-              [(OptNoI64)
+              [(option_i64.None)
                 (if (opt-aggregate-value-has-pointer? base ptrs offset)
                   (OptAggregateScanReject)
                   (opt-aggregate-scan-instrs
@@ -2686,7 +2684,7 @@
                     true))])]
           [(IrInstrLoad dst src load-ty)
             (match (opt-aggregate-value-offset base ptrs src)
-              [(OptSomeI64 offset)
+              [(option_i64.Some offset)
                 (opt-aggregate-scan-instrs
                   base
                   ty
@@ -2697,7 +2695,7 @@
                     accesses
                     (OptAggregateLoad dst offset load-ty))
                   true)]
-              [(OptNoI64)
+              [(option_i64.None)
                 (if (opt-aggregate-instrs-touch-candidate?
                   (box-get rest)
                   base
@@ -2713,7 +2711,7 @@
                     true))])]
           [(IrInstrStorePtr ptr value store-ty)
             (match (opt-aggregate-value-offset base ptrs ptr)
-              [(OptSomeI64 offset)
+              [(option_i64.Some offset)
                 (if (opt-aggregate-value-has-pointer? base ptrs value)
                   (OptAggregateScanReject)
                   (opt-aggregate-scan-instrs
@@ -2726,7 +2724,7 @@
                       accesses
                       (OptAggregateStore offset store-ty))
                     true))]
-              [(OptNoI64)
+              [(option_i64.None)
                 (if (or
                   (opt-aggregate-value-has-pointer? base ptrs value)
                   (and
@@ -2981,18 +2979,18 @@
 (define (opt-aggregate-promote-lookup-from
   [slot-list : OptAggregatePromoteSlotList]
   [base : i64]
-  [index : i64]) : OptMaybeI64
+  [index : i64]) : option_i64.Option
   (if (>= index (struct-get slot-list len))
-    (OptNoI64)
+    (option_i64.None)
     (match (array.array-ref (struct-get slot-list slots) index)
       [(OptAggregatePromoteSlot found storage)
         (if (= found base)
-          (OptSomeI64 storage)
+          (option_i64.Some storage)
           (opt-aggregate-promote-lookup-from slot-list base (+ index 1)))])))
 
 (define (opt-aggregate-promote-lookup
   [slots : OptAggregatePromoteSlotList]
-  [base : i64]) : OptMaybeI64
+  [base : i64]) : option_i64.Option
   (opt-aggregate-promote-lookup-from slots base 0))
 
 (define (opt-aggregate-promote-rewrite-instr
@@ -3001,11 +2999,11 @@
   (match (opt-aggregate-direct-alloc instr)
     [(OptSomeAggregateAlloc base ty _)
       (match (opt-aggregate-promote-lookup slots base)
-        [(OptSomeI64 storage)
+        [(option_i64.Some storage)
           (compiler-ir-instr-cons
             (IrInstrAlloc storage ty)
             (compiler-ir-instr-cons (IrInstrAddrOf base storage) IrInstrNil))]
-        [(OptNoI64) (compiler-ir-instr-cons instr IrInstrNil)])]
+        [(option_i64.None) (compiler-ir-instr-cons instr IrInstrNil)])]
     [(OptNoAggregateAlloc) (compiler-ir-instr-cons instr IrInstrNil)]))
 
 (define (opt-aggregate-promote-instrs
@@ -3095,8 +3093,8 @@
   (match candidate
     [(OptAggregateAllocCandidate base _ _ ptrs _)
       (match (opt-aggregate-value-offset base ptrs value)
-        [(OptSomeI64 offset) (OptSomeAggregateLocation base offset)]
-        [(OptNoI64) (OptNoAggregateLocation)])]))
+        [(option_i64.Some offset) (OptSomeAggregateLocation base offset)]
+        [(option_i64.None) (OptNoAggregateLocation)])]))
 
 (define (opt-aggregate-location-for-value-from
   [candidates : OptAggregateAllocCandidateList]
@@ -5408,13 +5406,13 @@
         (= id var))]
     [_ false]))
 
-(define (opt-object-length-lookup [fact : OptObjectLengthFact] [var : i64]) : OptMaybeI64
+(define (opt-object-length-lookup [fact : OptObjectLengthFact] [var : i64]) : option_i64.Option
   (match fact
     [(OptObjectLengthKnown fact-var object-var)
       (if (= fact-var var)
-        (OptSomeI64 object-var)
-        (OptNoI64))]
-    [(OptObjectLengthNone) (OptNoI64)]))
+        (option_i64.Some object-var)
+        (option_i64.None))]
+    [(OptObjectLengthNone) (option_i64.None)]))
 
 (define (opt-bounds-length-value
   [facts : OptObjectLengthFact]
@@ -5422,8 +5420,8 @@
   (match length
     [(IrValueVar var)
       (match (opt-object-length-lookup facts var)
-        [(OptSomeI64 object-var) (IrValueVar (- 0 (+ object-var 1)))]
-        [(OptNoI64) length])]
+        [(option_i64.Some object-var) (IrValueVar (- 0 (+ object-var 1)))]
+        [(option_i64.None) length])]
     [_ length]))
 
 (define (opt-bounds-fact-eq
@@ -5694,9 +5692,9 @@
                 (match src
                   [(IrValueVar ptr-var)
                     (match (opt-object-length-lookup ptrs2 ptr-var)
-                      [(OptSomeI64 object-var)
+                      [(option_i64.Some object-var)
                         (opt-object-length-bind lengths2 dst object-var)]
-                      [(OptNoI64) lengths2])]
+                      [(option_i64.None) lengths2])]
                   [_ lengths2])
                 lengths2)]
             (compiler-ir-instr-cons
@@ -5721,9 +5719,9 @@
                 (match src
                   [(IrValueVar length-var)
                     (match (opt-object-length-lookup lengths2 length-var)
-                      [(OptSomeI64 object-var)
+                      [(option_i64.Some object-var)
                         (opt-object-length-bind lengths2 dst object-var)]
-                      [(OptNoI64) lengths2])]
+                      [(option_i64.None) lengths2])]
                   [_ lengths2])
                 lengths2)]
             (compiler-ir-instr-cons
@@ -5745,11 +5743,11 @@
           (match ptr
             [(IrValueVar ptr-var)
               (match (opt-object-length-lookup ptrs ptr-var)
-                [(OptSomeI64 _)
+                [(option_i64.Some _)
                   (compiler-ir-instr-cons
                     instr
                     (opt-bounds-instrs (OptBoundsNil) casts (box-get rest)))]
-                [(OptNoI64)
+                [(option_i64.None)
                   (compiler-ir-instr-cons
                     instr
                     (opt-bounds-instrs-with-object
@@ -5767,8 +5765,8 @@
             [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
             [casts2 : OptBoundsCastEnv
               (match (opt-instr-def-var instr)
-                [(OptSomeI64 dst) (opt-bounds-cast-unbind casts dst)]
-                [(OptNoI64) casts])]
+                [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
+                [(option_i64.None) casts])]
             (match next-facts
               [(OptBoundsNil)
                 (compiler-ir-instr-cons
@@ -5776,7 +5774,7 @@
                   (opt-bounds-instrs next-facts casts2 (box-get rest)))]
               [_
                 (match (opt-instr-def-var instr)
-                  [(OptSomeI64 dst)
+                  [(option_i64.Some dst)
                     (compiler-ir-instr-cons
                       instr
                       (opt-bounds-instrs-with-object
@@ -5785,7 +5783,7 @@
                         (opt-object-length-invalidate-var ptrs dst)
                         casts2
                         (box-get rest)))]
-                  [(OptNoI64)
+                  [(option_i64.None)
                     (compiler-ir-instr-cons
                       instr
                       (opt-bounds-instrs-with-object
@@ -5849,8 +5847,8 @@
             (opt-bounds-instrs
               (opt-bounds-update-facts facts instr)
               (match (opt-instr-def-var instr)
-                [(OptSomeI64 dst) (opt-bounds-cast-unbind casts dst)]
-                [(OptNoI64) casts])
+                [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
+                [(option_i64.None) casts])
               (box-get rest)))])]))
 
 ;; --- conservative CFG simplification (#926) ---------------------------------
@@ -6560,10 +6558,10 @@
     (array.array-ref (struct-get index labels) id)
     ""))
 
-(define (opt-cfg-index-id [index : OptCfgIndex] [label : String]) : OptMaybeI64
+(define (opt-cfg-index-id [index : OptCfgIndex] [label : String]) : option_i64.Option
   (match (hashmap.string-i64-map-get (struct-get index ids) label)
-    [(hashmap.StringI64MapFound id) (OptSomeI64 id)]
-    [(hashmap.StringI64MapMissing) (OptNoI64)]))
+    [(hashmap.StringI64MapFound id) (option_i64.Some id)]
+    [(hashmap.StringI64MapMissing) (option_i64.None)]))
 
 (define (opt-cfg-index-row-labels-from
   [index : OptCfgIndex]
@@ -6599,20 +6597,20 @@
 
 (define (opt-cfg-index-successors [index : OptCfgIndex] [label : String]) : OptLabelSet
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id)
+    [(option_i64.Some id)
       (opt-cfg-index-row-labels index (struct-get index succs) id)]
-    [(OptNoI64) (OptLabelNil)]))
+    [(option_i64.None) (OptLabelNil)]))
 
 (define (opt-cfg-index-predecessors [index : OptCfgIndex] [label : String]) : OptLabelSet
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id)
+    [(option_i64.Some id)
       (opt-cfg-index-row-labels index (struct-get index preds) id)]
-    [(OptNoI64) (OptLabelNil)]))
+    [(option_i64.None) (OptLabelNil)]))
 
 (define (opt-cfg-index-reachable? [index : OptCfgIndex] [label : String]) : bool
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id) (array.array-ref (struct-get index reachable) id)]
-    [(OptNoI64) false]))
+    [(option_i64.Some id) (array.array-ref (struct-get index reachable) id)]
+    [(option_i64.None) false]))
 
 (define (opt-cfg-index-reachable-labels-from
   [index : OptCfgIndex]
@@ -6994,8 +6992,8 @@
     [entry-id : i64 (- 0 1)]
     (begin
       (match (opt-cfg-index-id index entry-label)
-        [(OptSomeI64 id) (set! entry-id id)]
-        [(OptNoI64) unit])
+        [(option_i64.Some id) (set! entry-id id)]
+        [(option_i64.None) unit])
       (opt-dom-init-rows! index rows words entry-id)
       (if (>= entry-id 0)
         (opt-dom-fixpoint! index rows scratch words entry-id (+ count 1))
@@ -7168,8 +7166,8 @@
     (begin
       (opt-cfg-fill-i64! idom count (- 0 1))
       (match (opt-cfg-index-id index entry-label)
-        [(OptSomeI64 id) (set! entry-id id)]
-        [(OptNoI64) unit])
+        [(option_i64.Some id) (set! entry-id id)]
+        [(option_i64.None) unit])
       (if (and
         (>= entry-id 0)
         (array.array-ref (struct-get index reachable) entry-id))
@@ -7384,12 +7382,12 @@
   [dominator : String]
   [label : String]) : bool
   (match (opt-cfg-index-id (struct-get table index) dominator)
-    [(OptSomeI64 dominator-id)
+    [(option_i64.Some dominator-id)
       (match (opt-cfg-index-id (struct-get table index) label)
-        [(OptSomeI64 label-id)
+        [(option_i64.Some label-id)
           (opt-dom-info-dominates-id? table dominator-id label-id)]
-        [(OptNoI64) false])]
-    [(OptNoI64) false]))
+        [(option_i64.None) false])]
+    [(option_i64.None) false]))
 
 (define (opt-dom-strict-dominates?
   [table : OptDomInfo]
@@ -7459,7 +7457,7 @@
                 doms
                 label-id)]
             (match (opt-cfg-index-id index block-label)
-              [(OptSomeI64 block-id)
+              [(option_i64.Some block-id)
                 (if (opt-cfg-dominance-frontier-block?
                   index
                   doms
@@ -7467,7 +7465,7 @@
                   block-id)
                   (opt-label-add tail block-label)
                   tail)]
-              [(OptNoI64) tail]))])]
+              [(option_i64.None) tail]))])]
     [(IrBlockArray seq)
       (opt-cfg-dominance-frontier-blocks
         (compiler-ir-block-seq-to-list seq)
@@ -7483,8 +7481,8 @@
     [index : OptCfgIndex (struct-get context index)]
     [label-id : i64
       (match (opt-cfg-index-id index label)
-        [(OptSomeI64 id) id]
-        [(OptNoI64) (- 0 1)])]
+        [(option_i64.Some id) id]
+        [(option_i64.None) (- 0 1)])]
     (opt-cfg-dominance-frontier-blocks
       blocks
       index
@@ -7535,57 +7533,60 @@
     (OptVarSetErr)
     (OptVarSetOk (opt-used-add set var))))
 
-(define (opt-instr-def-var [instr : CompilerIrInstr]) : OptMaybeI64
+(define (opt-instr-def-var [instr : CompilerIrInstr]) : option_i64.Option
   (match instr
-    [(IrInstrMov dst _ _) (OptSomeI64 dst)]
-    [(IrInstrAlloc dst _) (OptSomeI64 dst)]
-    [(IrInstrAddrOf dst _) (OptSomeI64 dst)]
-    [(IrInstrGep dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrLoad dst _ _) (OptSomeI64 dst)]
-    [(IrInstrCast dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrBitcast dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrBinOp dst _ _ _ _) (OptSomeI64 dst)]
-    [(IrInstrUnOp dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrLaneId dst _ _) (OptSomeI64 dst)]
-    [(IrInstrSplat dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrMov dst _ _) (option_i64.Some dst)]
+    [(IrInstrAlloc dst _) (option_i64.Some dst)]
+    [(IrInstrAddrOf dst _) (option_i64.Some dst)]
+    [(IrInstrGep dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrLoad dst _ _) (option_i64.Some dst)]
+    [(IrInstrCast dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrBitcast dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrBinOp dst _ _ _ _) (option_i64.Some dst)]
+    [(IrInstrUnOp dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrLaneId dst _ _) (option_i64.Some dst)]
+    [(IrInstrSplat dst _ _ _) (option_i64.Some dst)]
     [(IrInstrVectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _) (OptSomeI64 dst)])]
-    [(IrInstrVectorReduce dst _ _ _ _) (OptSomeI64 dst)]
+        [(CompilerIrInstrVectorBinOpPayload dst _ _ _ _ _)
+          (option_i64.Some dst)])]
+    [(IrInstrVectorReduce dst _ _ _ _) (option_i64.Some dst)]
     [(IrInstrVectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _) (OptSomeI64 dst)])]
-    [(IrInstrMaskBinOp dst _ _ _ _) (OptSomeI64 dst)]
-    [(IrInstrMaskNot dst _ _) (OptSomeI64 dst)]
-    [(IrInstrMaskReduce dst _ _ _) (OptSomeI64 dst)]
+        [(CompilerIrInstrVectorComparePayload dst _ _ _ _ _)
+          (option_i64.Some dst)])]
+    [(IrInstrMaskBinOp dst _ _ _ _) (option_i64.Some dst)]
+    [(IrInstrMaskNot dst _ _) (option_i64.Some dst)]
+    [(IrInstrMaskReduce dst _ _ _) (option_i64.Some dst)]
     [(IrInstrSelect payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) (OptSomeI64 dst)])]
-    [(IrInstrVectorLoad dst _ _ _ _) (OptSomeI64 dst)]
+        [(CompilerIrInstrSelectPayload dst _ _ _ _ _) (option_i64.Some dst)])]
+    [(IrInstrVectorLoad dst _ _ _ _) (option_i64.Some dst)]
     [(IrInstrPredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _) (OptSomeI64 dst)])]
-    [(IrInstrTailMask dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrEntryArgc dst) (OptSomeI64 dst)]
-    [(IrInstrEntryArgv dst) (OptSomeI64 dst)]
-    [(IrInstrEntryEnvp dst) (OptSomeI64 dst)]
-    [(IrInstrCpuId dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrXgetbv dst _) (OptSomeI64 dst)]
-    [(IrInstrSyscall dst _) (OptSomeI64 dst)]
-    [(IrInstrCall dst _ _ _) (OptSomeI64 dst)]
+        [(CompilerIrInstrPredicatedLoadPayload dst _ _ _ _ _)
+          (option_i64.Some dst)])]
+    [(IrInstrTailMask dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrEntryArgc dst) (option_i64.Some dst)]
+    [(IrInstrEntryArgv dst) (option_i64.Some dst)]
+    [(IrInstrEntryEnvp dst) (option_i64.Some dst)]
+    [(IrInstrCpuId dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrXgetbv dst _) (option_i64.Some dst)]
+    [(IrInstrSyscall dst _) (option_i64.Some dst)]
+    [(IrInstrCall dst _ _ _) (option_i64.Some dst)]
     [(IrInstrSpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
           (match result
-            [(IrSpmdCallResultUnit) (OptNoI64)]
-            [(IrSpmdCallResultValue dst _ _) (OptSomeI64 dst)])])]
-    [(IrInstrPhi dst _ _) (OptSomeI64 dst)]
+            [(IrSpmdCallResultUnit) (option_i64.None)]
+            [(IrSpmdCallResultValue dst _ _) (option_i64.Some dst)])])]
+    [(IrInstrPhi dst _ _) (option_i64.Some dst)]
     ;; #2386: Pack/Word define their dst like any scalar op. Without these arms
     ;; the verifier saw every use of a register-group word as use-before-def
     ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
-    [(IrInstrPack dst _ _) (OptSomeI64 dst)]
-    [(IrInstrWord dst _ _ _) (OptSomeI64 dst)]
-    [_ (OptNoI64)]))
+    [(IrInstrPack dst _ _) (option_i64.Some dst)]
+    [(IrInstrWord dst _ _ _) (option_i64.Some dst)]
+    [_ (option_i64.None)]))
 
 (define (opt-instr-def-position [instr : CompilerIrInstr] [pos : i64]) : i64
   (match instr
@@ -7611,11 +7612,11 @@
     [(IrInstrNil) (OptVarSetOk set)]
     [(IrInstrCons instr rest)
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 var)
+        [(option_i64.Some var)
           (match (opt-var-set-add-unique set var)
             [(OptVarSetOk next) (opt-verify-instr-def-set (box-get rest) next)]
             [(OptVarSetErr) (OptVarSetErr)])]
-        [(OptNoI64) (opt-verify-instr-def-set (box-get rest) set)])]))
+        [(option_i64.None) (opt-verify-instr-def-set (box-get rest) set)])]))
 
 (define (opt-verify-instr-def-seq-from
   [instrs : CompilerIrInstrSeq]
@@ -7624,12 +7625,12 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptVarSetOk set)
     (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
-      [(OptSomeI64 var)
+      [(option_i64.Some var)
         (match (opt-var-set-add-unique set var)
           [(OptVarSetOk next)
             (opt-verify-instr-def-seq-from instrs (+ index 1) next)]
           [(OptVarSetErr) (OptVarSetErr)])]
-      [(OptNoI64) (opt-verify-instr-def-seq-from instrs (+ index 1) set)])))
+      [(option_i64.None) (opt-verify-instr-def-seq-from instrs (+ index 1) set)])))
 
 (define (opt-verify-block-def-set
   [blocks : CompilerIrBlockList]
@@ -7680,7 +7681,7 @@
     [(IrInstrNil) defs]
     [(IrInstrCons instr rest)
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 var)
+        [(option_i64.Some var)
           (opt-var-defs-from-instrs
             (box-get rest)
             block-label
@@ -7688,7 +7689,7 @@
             (OptVarDefCons
               (OptVarDef var block-label (opt-instr-def-position instr pos))
               (box defs)))]
-        [(OptNoI64)
+        [(option_i64.None)
           (opt-var-defs-from-instrs (box-get rest) block-label (+ pos 1) defs)])]))
 
 (define (opt-var-defs-from-instr-seq-from
@@ -7702,7 +7703,7 @@
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 var)
+        [(option_i64.Some var)
           (opt-var-defs-from-instr-seq-from
             instrs
             block-label
@@ -7711,7 +7712,7 @@
             (OptVarDefCons
               (OptVarDef var block-label (opt-instr-def-position instr pos))
               (box defs)))]
-        [(OptNoI64)
+        [(option_i64.None)
           (opt-var-defs-from-instr-seq-from
             instrs
             block-label
@@ -8629,13 +8630,13 @@
   [labels : OptLabelSet]
   [label : String]) : OptLabelSet
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id)
+    [(option_i64.Some id)
       (if (opt-ssa-label-member? members id)
         labels
         (begin
           (array.array-set! members id true)
           (OptLabelCons label (box labels))))]
-    [(OptNoI64) (opt-label-add labels label)]))
+    [(option_i64.None) (opt-label-add labels label)]))
 
 (define (opt-ssa-label-mark-members!
   [index : OptCfgIndex]
@@ -8646,11 +8647,11 @@
     [(OptLabelCons label rest)
       (begin
         (match (opt-cfg-index-id index label)
-          [(OptSomeI64 id)
+          [(option_i64.Some id)
             (if (and (>= id 0) (< id (array.array-length members)))
               (array.array-set! members id true)
               unit)]
-          [(OptNoI64) unit])
+          [(option_i64.None) unit])
         (opt-ssa-label-mark-members! index members (box-get rest)))]))
 
 (define (opt-ssa-var-blocks-add
@@ -8721,11 +8722,11 @@
   [defs : OptSsaVarBlocks]
   [instr : CompilerIrInstr]) : OptSsaVarBlocks
   (match (opt-instr-def-var instr)
-    [(OptSomeI64 var)
+    [(option_i64.Some var)
       (if (opt-ssa-candidate? facts var)
         (opt-ssa-var-blocks-add index defs var label)
         defs)]
-    [(OptNoI64) defs]))
+    [(option_i64.None) defs]))
 
 (define (opt-ssa-def-blocks-add-instr-seq-from
   [cfg-index : OptCfgIndex]
@@ -8802,7 +8803,7 @@
   (match state
     [(OptSsaPhiInsertState sites next-var worklist work-members site-members)
       (match (opt-cfg-index-id index label)
-        [(OptSomeI64 id)
+        [(option_i64.Some id)
           (if (opt-ssa-label-member? site-members id)
             state
             (begin
@@ -8819,7 +8820,7 @@
                     (OptLabelCons label (box worklist))))
                 work-members
                 site-members)))]
-        [(OptNoI64) state])]))
+        [(option_i64.None) state])]))
 
 (define (opt-ssa-phi-add-frontier
   [index : OptCfgIndex]
@@ -8944,12 +8945,12 @@
             work-members
             site-members)))]))
 
-(define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : OptMaybeI64
+(define (opt-ssa-env-lookup [env : OptSsaRenameEnv] [var : i64]) : option_i64.Option
   (match env
-    [(OptSsaRenameNil) (OptNoI64)]
+    [(OptSsaRenameNil) (option_i64.None)]
     [(OptSsaRenameCons original current rest)
       (if (= original var)
-        (OptSomeI64 current)
+        (option_i64.Some current)
         (opt-ssa-env-lookup (box-get rest) var))]))
 
 (define (opt-ssa-env-bind
@@ -8996,8 +8997,8 @@
   (match value
     [(IrValueVar var)
       (match (opt-ssa-env-lookup env var)
-        [(OptSomeI64 current) (IrValueVar current)]
-        [(OptNoI64) value])]
+        [(option_i64.Some current) (IrValueVar current)]
+        [(option_i64.None) value])]
     [_ value]))
 
 (define (opt-ssa-rewrite-maybe-value
@@ -9671,7 +9672,7 @@
       (opt-ssa-env-from-params facts params (OptSsaRenameNil))]
     [entry-label : String (opt-cfg-entry-label blocks)]
     (match (opt-cfg-index-id (struct-get context index) entry-label)
-      [(OptSomeI64 entry-id)
+      [(option_i64.Some entry-id)
         (opt-ssa-rename-missing-blocks
           blocks
           facts
@@ -9688,7 +9689,7 @@
               (OptSsaRenameBlocksNil)
               (OptSsaBlockOutsNil)
               frame)))]
-      [(OptNoI64)
+      [(option_i64.None)
         (OptSsaRenameState (OptSsaRenameBlocksNil) (OptSsaBlockOutsNil) frame)])))
 
 (define (opt-ssa-phi-inputs
@@ -9702,8 +9703,8 @@
         [env : OptSsaRenameEnv (opt-ssa-block-out-lookup outs pred)]
         [value : CompilerIrValue
           (match (opt-ssa-env-lookup env var)
-            [(OptSomeI64 current) (IrValueVar current)]
-            [(OptNoI64) (IrValueVar var)])]
+            [(option_i64.Some current) (IrValueVar current)]
+            [(option_i64.None) (IrValueVar var)])]
         (compiler-ir-phi-input-cons
           value
           pred
@@ -9852,14 +9853,14 @@
   (let
     [index : OptCfgIndex (struct-get context index)]
     (match (opt-cfg-index-id index (struct-get context entry-label))
-      [(OptSomeI64 id)
+      [(option_i64.Some id)
         (let
           [preds : OptCfgCsr (struct-get index preds)]
           [offsets : (Array i64) (struct-get preds offsets)]
           (>
             (- (array.array-ref offsets (+ id 1)) (array.array-ref offsets id))
             0))]
-      [(OptNoI64) false])))
+      [(option_i64.None) false])))
 
 (define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
@@ -10145,8 +10146,8 @@
 
 (define (opt-global-block-id [doms : OptDomInfo] [label : String]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
-    [(OptSomeI64 id) id]
-    [(OptNoI64) (- 0 1)]))
+    [(option_i64.Some id) id]
+    [(option_i64.None) (- 0 1)]))
 
 (define (opt-global-copy-facts-from-instrs
   [block-id : i64]
@@ -10808,11 +10809,11 @@
         (match (opt-global-key-for-instr instr)
           [(OptSomeGlobalExprKey key)
             (match (opt-instr-def-var instr)
-              [(OptSomeI64 dst)
+              [(option_i64.Some dst)
                 (OptGlobalExprCons
                   (OptGlobalExprFact key dst block-id pos)
                   (box rest-facts))]
-              [(OptNoI64) rest-facts])]
+              [(option_i64.None) rest-facts])]
           [(OptNoGlobalExprKey) rest-facts]))]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
@@ -10829,11 +10830,11 @@
         (match (opt-global-key-for-instr instr)
           [(OptSomeGlobalExprKey key)
             (match (opt-instr-def-var instr)
-              [(OptSomeI64 dst)
+              [(option_i64.Some dst)
                 (OptGlobalExprCons
                   (OptGlobalExprFact key dst block-id (+ index 1))
                   (box rest-facts))]
-              [(OptNoI64) rest-facts])]
+              [(option_i64.None) rest-facts])]
           [(OptNoGlobalExprKey) rest-facts])]
       (opt-global-expr-facts-from-instr-seq-from
         block-id
@@ -10996,7 +10997,7 @@
   (match (opt-global-key-for-instr instr)
     [(OptSomeGlobalExprKey key)
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 dst)
+        [(option_i64.Some dst)
           (match (opt-global-expr-lookup facts key dst doms block-id pos)
             [(IrSomeValue earlier)
               (match instr
@@ -11007,7 +11008,7 @@
                 [(IrInstrUnOp _ _ _ ty) (IrInstrMov dst earlier ty)]
                 [_ instr])]
             [(IrNoValue) instr])]
-        [(OptNoI64) instr])]
+        [(option_i64.None) instr])]
     [(OptNoGlobalExprKey) instr]))
 
 (define (opt-global-cse-instrs
@@ -11325,11 +11326,11 @@
     [(OptLabelCons label rest)
       (begin
         (match (opt-cfg-index-id index label)
-          [(OptSomeI64 id)
+          [(option_i64.Some id)
             (if (and (>= id 0) (< id (array.array-length members)))
               (array.array-set! members id true)
               unit)]
-          [(OptNoI64) unit])
+          [(option_i64.None) unit])
         (opt-loop-body-fill-members! index members (box-get rest)))]))
 
 (define (opt-loop-body-member-array-contains-id?
@@ -11352,11 +11353,11 @@
             [tail : CompilerIrBlockList
               (opt-loop-body-blocks-from index members (box-get rest))]
             (match (opt-cfg-index-id index label)
-              [(OptSomeI64 id)
+              [(option_i64.Some id)
                 (if (opt-loop-body-member-array-contains-id? members id)
                   (compiler-ir-block-cons block tail)
                   tail)]
-              [(OptNoI64) tail]))])]
+              [(option_i64.None) tail]))])]
     [(IrBlockArray seq)
       (opt-loop-body-blocks-from
         index
@@ -11392,8 +11393,8 @@
   [index : OptCfgIndex]
   [label : String]) : bool
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id) (opt-loop-body-contains-id? body id)]
-    [(OptNoI64) false]))
+    [(option_i64.Some id) (opt-loop-body-contains-id? body id)]
+    [(option_i64.None) false]))
 
 (define (opt-loop-body-current-blocks-from
   [body : OptLoopBody]
@@ -11408,11 +11409,11 @@
             [tail : CompilerIrBlockList
               (opt-loop-body-current-blocks-from body index (box-get rest))]
             (match (opt-cfg-index-id index label)
-              [(OptSomeI64 id)
+              [(option_i64.Some id)
                 (if (opt-loop-body-contains-id? body id)
                   (compiler-ir-block-cons block tail)
                   tail)]
-              [(OptNoI64) tail]))])]
+              [(option_i64.None) tail]))])]
     [(IrBlockArray seq)
       (opt-loop-body-current-blocks-from
         body
@@ -11485,7 +11486,7 @@
   (match state
     [(OptNaturalLoopCollectState body worklist)
       (match (opt-cfg-index-id index pred)
-        [(OptSomeI64 pred-id)
+        [(option_i64.Some pred-id)
           (if (and
             (array.array-ref (struct-get index reachable) pred-id)
             (not (array.array-ref marks pred-id)))
@@ -11495,7 +11496,7 @@
                 (opt-label-add body pred)
                 (opt-label-add worklist pred)))
             state)]
-        [(OptNoI64) state])]))
+        [(option_i64.None) state])]))
 
 (define (opt-natural-loop-collect-add-preds
   [index : OptCfgIndex]
@@ -11541,8 +11542,8 @@
   [marks : (Array bool)]
   [label : String]) : unit
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id) (array.array-set! marks id true)]
-    [(OptNoI64) unit]))
+    [(option_i64.Some id) (array.array-set! marks id true)]
+    [(option_i64.None) unit]))
 
 (define (opt-natural-loop-safe-preheader-block?
   [pred-map : OptPredMap]
@@ -11678,7 +11679,7 @@
             (box-get rest)
             tail)]
         (match (opt-cfg-index-id (struct-get doms index) header)
-          [(OptSomeI64 header-id)
+          [(option_i64.Some header-id)
             (if (and
               (opt-label-contains reachable header)
               (opt-dom-info-dominates-id? doms header-id source-id))
@@ -11686,7 +11687,7 @@
                 (opt-natural-loop-build blocks pred-map reachable header source)
                 (box next))
               next)]
-          [(OptNoI64) next]))]))
+          [(option_i64.None) next]))]))
 
 (define (opt-cfg-natural-loop-blocks
   [all-blocks : CompilerIrBlockList]
@@ -11709,7 +11710,7 @@
                 doms)]
             (if (opt-label-contains reachable label)
               (match (opt-cfg-index-id (struct-get doms index) label)
-                [(OptSomeI64 source-id)
+                [(option_i64.Some source-id)
                   (opt-cfg-natural-loop-successors
                     all-blocks
                     pred-map
@@ -11721,7 +11722,7 @@
                       block
                       (opt-cfg-entry-label (box-get rest)))
                     tail)]
-                [(OptNoI64) tail])
+                [(option_i64.None) tail])
               tail))])]
     [(IrBlockArray seq)
       (opt-cfg-natural-loop-blocks
@@ -12626,9 +12627,9 @@
     [(IrInstrNil) set]
     [(IrInstrCons instr rest)
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 var)
+        [(option_i64.Some var)
           (opt-licm-collect-defs-instrs (box-get rest) (opt-used-add set var))]
-        [(OptNoI64) (opt-licm-collect-defs-instrs (box-get rest) set)])]))
+        [(option_i64.None) (opt-licm-collect-defs-instrs (box-get rest) set)])]))
 
 (define (opt-licm-collect-defs-instr-seq-from
   [instrs : CompilerIrInstrSeq]
@@ -12637,12 +12638,13 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     set
     (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
-      [(OptSomeI64 var)
+      [(option_i64.Some var)
         (opt-licm-collect-defs-instr-seq-from
           instrs
           (+ index 1)
           (opt-used-add set var))]
-      [(OptNoI64) (opt-licm-collect-defs-instr-seq-from instrs (+ index 1) set)])))
+      [(option_i64.None)
+        (opt-licm-collect-defs-instr-seq-from instrs (+ index 1) set)])))
 
 (define (opt-licm-collect-defs-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -12931,8 +12933,8 @@
   [state : OptLicmStoreState]
   [instr : CompilerIrInstr]) : OptLicmStoreState
   (match (opt-instr-def-var instr)
-    [(OptSomeI64 var) (opt-licm-store-state-invalidate-def state var)]
-    [(OptNoI64) state]))
+    [(option_i64.Some var) (opt-licm-store-state-invalidate-def state var)]
+    [(option_i64.None) state]))
 
 (define (opt-licm-store-summary-for-storeptr
   [ptrs : OptLicmPtrEnv]
@@ -13127,8 +13129,8 @@
   [hoisted : hashmap.I64I64Map]
   [instr : CompilerIrInstr]) : hashmap.I64I64Map
   (match (opt-instr-def-var instr)
-    [(OptSomeI64 var) (opt-used-add hoisted var)]
-    [(OptNoI64) hoisted]))
+    [(option_i64.Some var) (opt-used-add hoisted var)]
+    [(option_i64.None) hoisted]))
 
 (define (opt-licm-filter-instrs
   [loop-defs : hashmap.I64I64Map]
@@ -13561,10 +13563,10 @@
     [(AstTyI64) true]
     [_ false]))
 
-(define (opt-induction-nonzero-step [step : i64]) : OptMaybeI64
+(define (opt-induction-nonzero-step [step : i64]) : option_i64.Option
   (if (= step 0)
-    (OptNoI64)
-    (OptSomeI64 step)))
+    (option_i64.None)
+    (option_i64.Some step)))
 
 (define (opt-induction-phi-input-pair
   [a-value : CompilerIrValue]
@@ -13611,51 +13613,51 @@
 (define (opt-induction-step-from-add
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match lhs
     [(IrValueVar var)
       (if (= var phi-var)
         (match rhs
           [(IrValueI64 step) (opt-induction-nonzero-step step)]
-          [_ (OptNoI64)])
-        (OptNoI64))]
+          [_ (option_i64.None)])
+        (option_i64.None))]
     [(IrValueI64 step)
       (match rhs
         [(IrValueVar var)
           (if (= var phi-var)
             (opt-induction-nonzero-step step)
-            (OptNoI64))]
-        [_ (OptNoI64)])]
-    [_ (OptNoI64)]))
+            (option_i64.None))]
+        [_ (option_i64.None)])]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-step-from-sub
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match lhs
     [(IrValueVar var)
       (if (= var phi-var)
         (match rhs
           [(IrValueI64 step) (opt-induction-nonzero-step (- 0 step))]
-          [_ (OptNoI64)])
-        (OptNoI64))]
-    [_ (OptNoI64)]))
+          [_ (option_i64.None)])
+        (option_i64.None))]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-step-from-binop
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match op
     [(IrBinAdd) (opt-induction-step-from-add lhs rhs phi-var)]
     [(IrBinSub) (opt-induction-step-from-sub lhs rhs phi-var)]
-    [_ (OptNoI64)]))
+    [_ (option_i64.None)]))
 
 (define (opt-induction-update-step-instr
   [instr : CompilerIrInstr]
   [phi-var : i64]
   [next-var : i64]
-  [ty : AstType]) : OptMaybeI64
+  [ty : AstType]) : option_i64.Option
   (match instr
     [(IrInstrBinOp dst op lhs rhs instr-ty)
       (if (and
@@ -13663,19 +13665,19 @@
         (opt-type-eq instr-ty ty)
         (opt-induction-i64-type? ty))
         (opt-induction-step-from-binop op lhs rhs phi-var)
-        (OptNoI64))]
-    [_ (OptNoI64)]))
+        (option_i64.None))]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-find-update-instrs
   [instrs : CompilerIrInstrList]
   [phi-var : i64]
   [next-var : i64]
-  [ty : AstType]) : OptMaybeI64
+  [ty : AstType]) : option_i64.Option
   (match instrs
-    [(IrInstrNil) (OptNoI64)]
+    [(IrInstrNil) (option_i64.None)]
     [(IrInstrCons instr rest)
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 dst)
+        [(option_i64.Some dst)
           (if (= dst next-var)
             (opt-induction-update-step-instr instr phi-var next-var ty)
             (opt-induction-find-update-instrs
@@ -13683,7 +13685,7 @@
               phi-var
               next-var
               ty))]
-        [(OptNoI64)
+        [(option_i64.None)
           (opt-induction-find-update-instrs (box-get rest) phi-var next-var ty)])]))
 
 (define (opt-induction-find-update-instr-seq-from
@@ -13691,13 +13693,13 @@
   [index : i64]
   [phi-var : i64]
   [next-var : i64]
-  [ty : AstType]) : OptMaybeI64
+  [ty : AstType]) : option_i64.Option
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptNoI64)
+    (option_i64.None)
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 dst)
+        [(option_i64.Some dst)
           (if (= dst next-var)
             (opt-induction-update-step-instr instr phi-var next-var ty)
             (opt-induction-find-update-instr-seq-from
@@ -13706,7 +13708,7 @@
               phi-var
               next-var
               ty))]
-        [(OptNoI64)
+        [(option_i64.None)
           (opt-induction-find-update-instr-seq-from
             instrs
             (+ index 1)
@@ -13718,16 +13720,16 @@
   [instrs : CompilerIrInstrSeq]
   [phi-var : i64]
   [next-var : i64]
-  [ty : AstType]) : OptMaybeI64
+  [ty : AstType]) : option_i64.Option
   (opt-induction-find-update-instr-seq-from instrs 0 phi-var next-var ty))
 
 (define (opt-induction-find-update-blocks
   [body-blocks : CompilerIrBlockList]
   [phi-var : i64]
   [next-var : i64]
-  [ty : AstType]) : OptMaybeI64
+  [ty : AstType]) : option_i64.Option
   (match body-blocks
-    [(IrBlockNil) (OptNoI64)]
+    [(IrBlockNil) (option_i64.None)]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
@@ -13736,8 +13738,8 @@
             phi-var
             next-var
             ty)
-            [(OptSomeI64 step) (OptSomeI64 step)]
-            [(OptNoI64)
+            [(option_i64.Some step) (option_i64.Some step)]
+            [(option_i64.None)
               (opt-induction-find-update-blocks
                 (box-get rest)
                 phi-var
@@ -13768,10 +13770,10 @@
               phi-var
               next-var
               ty)
-              [(OptSomeI64 step)
+              [(option_i64.Some step)
                 (OptSomeInductionFact
                   (OptInductionFact phi-var start next-var step ty))]
-              [(OptNoI64) (OptNoInductionFact)])]
+              [(option_i64.None) (OptNoInductionFact)])]
           [(OptNoInductionPhiInputs) (OptNoInductionFact)])
         (OptNoInductionFact))]
     [_ (OptNoInductionFact)]))
@@ -13899,25 +13901,25 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [phi-var : i64]
-  [step : i64]) : OptMaybeI64
+  [step : i64]) : option_i64.Option
   (match lhs
     [(IrValueVar var)
       (if (= var phi-var)
         (match rhs
           [(IrValueI64 scale)
             (if (opt-induction-scale-ok? step scale)
-              (OptSomeI64 scale)
-              (OptNoI64))]
-          [_ (OptNoI64)])
-        (OptNoI64))]
+              (option_i64.Some scale)
+              (option_i64.None))]
+          [_ (option_i64.None)])
+        (option_i64.None))]
     [(IrValueI64 scale)
       (match rhs
         [(IrValueVar var)
           (if (and (= var phi-var) (opt-induction-scale-ok? step scale))
-            (OptSomeI64 scale)
-            (OptNoI64))]
-        [_ (OptNoI64)])]
-    [_ (OptNoI64)]))
+            (option_i64.Some scale)
+            (option_i64.None))]
+        [_ (option_i64.None)])]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-offset-ok? [offset : i64]) : bool
   (opt-induction-small-const? offset))
@@ -13925,30 +13927,30 @@
 (define (opt-induction-affine-offset-from-add
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match lhs
     [(IrValueVar var)
       (if (= var phi-var)
         (match rhs
           [(IrValueI64 offset)
             (if (opt-induction-offset-ok? offset)
-              (OptSomeI64 offset)
-              (OptNoI64))]
-          [_ (OptNoI64)])
-        (OptNoI64))]
+              (option_i64.Some offset)
+              (option_i64.None))]
+          [_ (option_i64.None)])
+        (option_i64.None))]
     [(IrValueI64 offset)
       (match rhs
         [(IrValueVar var)
           (if (and (= var phi-var) (opt-induction-offset-ok? offset))
-            (OptSomeI64 offset)
-            (OptNoI64))]
-        [_ (OptNoI64)])]
-    [_ (OptNoI64)]))
+            (option_i64.Some offset)
+            (option_i64.None))]
+        [_ (option_i64.None)])]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-affine-offset-from-sub
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match lhs
     [(IrValueVar var)
       (if (= var phi-var)
@@ -13958,22 +13960,22 @@
               (let
                 [negated : i64 (- 0 offset)]
                 (if (opt-induction-offset-ok? negated)
-                  (OptSomeI64 negated)
-                  (OptNoI64)))
-              (OptNoI64))]
-          [_ (OptNoI64)])
-        (OptNoI64))]
-    [_ (OptNoI64)]))
+                  (option_i64.Some negated)
+                  (option_i64.None)))
+              (option_i64.None))]
+          [_ (option_i64.None)])
+        (option_i64.None))]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-affine-offset-from-binop
   [op : CompilerIrBinOp]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match op
     [(IrBinAdd) (opt-induction-affine-offset-from-add lhs rhs phi-var)]
     [(IrBinSub) (opt-induction-affine-offset-from-sub lhs rhs phi-var)]
-    [_ (OptNoI64)]))
+    [_ (option_i64.None)]))
 
 (define (opt-induction-affine-offset-env-instr
   [env : hashmap.I64I64Map]
@@ -13983,8 +13985,8 @@
     [(IrInstrBinOp dst op lhs rhs ty)
       (if (opt-induction-i64-type? ty)
         (match (opt-induction-affine-offset-from-binop op lhs rhs phi-var)
-          [(OptSomeI64 offset) (hashmap.i64-i64-map-put env dst offset)]
-          [(OptNoI64) env])
+          [(option_i64.Some offset) (hashmap.i64-i64-map-put env dst offset)]
+          [(option_i64.None) env])
         env)]
     [_ env]))
 
@@ -14043,15 +14045,15 @@
 (define (opt-induction-value-offset
   [offsets : hashmap.I64I64Map]
   [value : CompilerIrValue]
-  [phi-var : i64]) : OptMaybeI64
+  [phi-var : i64]) : option_i64.Option
   (match value
     [(IrValueVar var)
       (if (= var phi-var)
-        (OptSomeI64 0)
+        (option_i64.Some 0)
         (match (hashmap.i64-i64-map-get offsets var)
-          [(hashmap.I64I64MapFound offset) (OptSomeI64 offset)]
-          [(hashmap.I64I64MapMissing) (OptNoI64)]))]
-    [_ (OptNoI64)]))
+          [(hashmap.I64I64MapFound offset) (option_i64.Some offset)]
+          [(hashmap.I64I64MapMissing) (option_i64.None)]))]
+    [_ (option_i64.None)]))
 
 (define (opt-induction-mul-derived
   [offsets : hashmap.I64I64Map]
@@ -14061,23 +14063,23 @@
   [step : i64]
   [ty : AstType]) : OptMaybeInductionDerived
   (match (opt-induction-value-offset offsets lhs phi-var)
-    [(OptSomeI64 offset)
+    [(option_i64.Some offset)
       (match rhs
         [(IrValueI64 scale)
           (if (opt-induction-scale-ok? step scale)
             (OptSomeInductionDerived (OptInductionDerivedMul scale offset ty))
             (OptNoInductionDerived))]
         [_ (OptNoInductionDerived)])]
-    [(OptNoI64)
+    [(option_i64.None)
       (match lhs
         [(IrValueI64 scale)
           (match (opt-induction-value-offset offsets rhs phi-var)
-            [(OptSomeI64 offset)
+            [(option_i64.Some offset)
               (if (opt-induction-scale-ok? step scale)
                 (OptSomeInductionDerived
                   (OptInductionDerivedMul scale offset ty))
                 (OptNoInductionDerived))]
-            [(OptNoI64) (OptNoInductionDerived)])]
+            [(option_i64.None) (OptNoInductionDerived)])]
         [_ (OptNoInductionDerived)])]))
 
 ;; Induction runs without a hoisted set, so GEP-base loop-invariance is
@@ -14108,12 +14110,12 @@
             [_ (OptNoInductionDerived)])]
         [(IrInstrGep _ base offset ty)
           (match (opt-induction-value-offset offsets offset phi-var)
-            [(OptSomeI64 derived-offset)
+            [(option_i64.Some derived-offset)
               (if (opt-induction-value-base-invariant? loop-defs base)
                 (OptSomeInductionDerived
                   (OptInductionDerivedGep base derived-offset ty))
                 (OptNoInductionDerived))]
-            [(OptNoI64) (OptNoInductionDerived)])]
+            [(option_i64.None) (OptNoInductionDerived)])]
         [_ (OptNoInductionDerived)])]))
 
 (define (opt-induction-derived-eq?
@@ -14294,8 +14296,9 @@
                 (opt-type-eq instr-ty ty)
                 (opt-value-eq instr-base base)
                 (match (opt-induction-value-offset offsets instr-offset phi-var)
-                  [(OptSomeI64 found-offset) (= found-offset derived-offset)]
-                  [(OptNoI64) false]))]
+                  [(option_i64.Some found-offset)
+                    (= found-offset derived-offset)]
+                  [(option_i64.None) false]))]
             [_ false])])]))
 
 (define (opt-induction-rewrite-instr
@@ -14306,12 +14309,12 @@
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (if (opt-induction-derived-matches? fact offsets derived instr)
     (match (opt-instr-def-var instr)
-      [(OptSomeI64 dst)
+      [(option_i64.Some dst)
         (IrInstrMov
           dst
           (IrValueVar derived-phi)
           (opt-induction-derived-type derived))]
-      [(OptNoI64) instr])
+      [(option_i64.None) instr])
     instr))
 
 (define (opt-induction-rewrite-instrs
@@ -15116,7 +15119,7 @@
   (match state
     [(OptSccpState cfg-index executable env changed)
       (match (opt-cfg-index-id cfg-index label)
-        [(OptSomeI64 id)
+        [(option_i64.Some id)
           (if (and (>= id 0) (< id (array.array-length executable)))
             (if (array.array-ref executable id)
               state
@@ -15124,7 +15127,7 @@
                 (array.array-set! executable id true)
                 (OptSccpState cfg-index executable env true)))
             state)]
-        [(OptNoI64) state])]))
+        [(option_i64.None) state])]))
 
 (define (opt-sccp-state-reset-changed [state : OptSccpState]) : OptSccpState
   (match state
@@ -15199,14 +15202,14 @@
   (match state
     [(OptSccpState cfg-index executable _ _)
       (match (opt-cfg-index-id cfg-index pred)
-        [(OptSomeI64 pred-id)
+        [(option_i64.Some pred-id)
           (if (and
             (>= pred-id 0)
             (< pred-id (array.array-length executable))
             (array.array-ref executable pred-id))
             (opt-sccp-value state value ty)
             (OptSccpUnknown))]
-        [(OptNoI64) (OptSccpUnknown)])]))
+        [(option_i64.None) (OptSccpUnknown)])]))
 
 (define (opt-sccp-phi-value
   [state : OptSccpState]
@@ -15448,11 +15451,11 @@
       (match (opt-cfg-index-id
         (struct-get context index)
         (struct-get context entry-label))
-        [(OptSomeI64 entry-id)
+        [(option_i64.Some entry-id)
           (if (and (>= entry-id 0) (< entry-id executable-count))
             (array.array-set! executable-flags entry-id true)
             unit)]
-        [(OptNoI64) unit])]
+        [(option_i64.None) unit])]
     (OptSccpState
       (struct-get context index)
       executable-flags
@@ -16633,8 +16636,8 @@
 
 (define (opt-gvn-block-id [doms : OptDomInfo] [label : String]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
-    [(OptSomeI64 id) id]
-    [(OptNoI64) (- 0 1)]))
+    [(option_i64.Some id) id]
+    [(option_i64.None) (- 0 1)]))
 
 (define (opt-gvn-recordable-instr?
   [instr : CompilerIrInstr]
@@ -17049,7 +17052,7 @@
     (begin
       (opt-gvn-block-results-fill-empty! out 0)
       (match (opt-cfg-index-id index (struct-get context entry-label))
-        [(OptSomeI64 entry-id)
+        [(option_i64.Some entry-id)
           (if (and
             (>= entry-id 0)
             (array.array-ref (struct-get index reachable) entry-id))
@@ -17062,7 +17065,7 @@
               out
               entry-id)
             unit)]
-        [(OptNoI64) unit])
+        [(option_i64.None) unit])
       (opt-gvn-materialize-blocks doms out blocks))))
 
 ;; Replace dominated repeated pure scalar expressions with a copy from the first
@@ -17375,23 +17378,23 @@
         (if (opt-divrem-var-defined-at-or-after? instrs cmp-index var)
           facts
           (match (opt-normalize-scalar-to-i64 rhs operand-ty)
-            [(OptSomeI64 value)
+            [(option_i64.Some value)
               (opt-divrem-add-compare-facts facts var operand-ty op value)]
-            [(OptNoI64) facts]))]
+            [(option_i64.None) facts]))]
       [_
         (match rhs
           [(IrValueVar var)
             (if (opt-divrem-var-defined-at-or-after? instrs cmp-index var)
               facts
               (match (opt-normalize-scalar-to-i64 lhs operand-ty)
-                [(OptSomeI64 value)
+                [(option_i64.Some value)
                   (opt-divrem-add-compare-facts
                     facts
                     var
                     operand-ty
                     (opt-divrem-flip-compare op)
                     value)]
-                [(OptNoI64) facts]))]
+                [(option_i64.None) facts]))]
           [_ facts])])))
 
 (define (opt-divrem-edge-facts
@@ -17435,16 +17438,16 @@
     (- (compiler-ir-instr-seq-count instrs) 1)
     cond-var))
 
-(define (opt-divrem-instr-def-var [instr : CompilerIrInstr]) : OptMaybeI64
+(define (opt-divrem-instr-def-var [instr : CompilerIrInstr]) : option_i64.Option
   (match instr
-    [(IrInstrCallIndirect dst _ _ _) (OptSomeI64 dst)]
-    [(IrInstrCallIndirectC dst _ _ _) (OptSomeI64 dst)]
+    [(IrInstrCallIndirect dst _ _ _) (option_i64.Some dst)]
+    [(IrInstrCallIndirectC dst _ _ _) (option_i64.Some dst)]
     [_ (opt-instr-def-var instr)]))
 
 (define (opt-divrem-instr-defines-var? [instr : CompilerIrInstr] [var : i64]) : bool
   (match (opt-divrem-instr-def-var instr)
-    [(OptSomeI64 dst) (= dst var)]
-    [(OptNoI64) false]))
+    [(option_i64.Some dst) (= dst var)]
+    [(option_i64.None) false]))
 
 (define (opt-divrem-var-defined-at-or-after-from?
   [instrs : CompilerIrInstrSeq]
@@ -17474,7 +17477,7 @@
   [ty : AstType]
   [kind : OptDivRemFactKind]) : bool
   (match (opt-normalize-scalar-to-i64 value ty)
-    [(OptSomeI64 n)
+    [(option_i64.Some n)
       (match kind
         [(OptDivRemFactNonZero) (!= n 0)]
         [(OptDivRemFactNotNegOne)
@@ -17485,7 +17488,7 @@
           (if (opt-signed-integer-type? ty)
             (!= n (opt-signed-min ty))
             true)])]
-    [(OptNoI64) false]))
+    [(option_i64.None) false]))
 
 (define (opt-divrem-value-proves-kind?
   [facts : OptDivRemFacts]
@@ -17546,8 +17549,8 @@
   [facts : OptDivRemFacts]
   [instr : CompilerIrInstr]) : OptDivRemFacts
   (match (opt-divrem-instr-def-var instr)
-    [(OptSomeI64 dst) (opt-divrem-facts-remove-var facts dst)]
-    [(OptNoI64) facts]))
+    [(option_i64.Some dst) (opt-divrem-facts-remove-var facts dst)]
+    [(option_i64.None) facts]))
 
 (define (opt-divrem-rewrite-instr-seq-from
   [facts : OptDivRemFacts]
@@ -17610,13 +17613,13 @@
   [label : String]
   [facts : OptDivRemFacts]) : unit
   (match (opt-cfg-index-id index label)
-    [(OptSomeI64 id)
+    [(option_i64.Some id)
       (if (and
         (array.array-ref (struct-get index reachable) id)
         (= (opt-divrem-reachable-pred-count index id) 1))
         (array.array-set! facts-by-id id facts)
         unit)]
-    [(OptNoI64) unit]))
+    [(option_i64.None) unit]))
 
 (define (opt-divrem-propagate-terminator!
   [index : OptCfgIndex]
@@ -17732,13 +17735,13 @@
           (let
             [material : CompilerIrBlock
               (match (opt-cfg-index-id (struct-get context index) label)
-                [(OptSomeI64 id)
+                [(option_i64.Some id)
                   (if (and (>= id 0) (< id (array.array-length out)))
                     (match (array.array-ref out id)
                       [(OptDivRemSomeBlock rewritten) rewritten]
                       [(OptDivRemNoBlock) block])
                     block)]
-                [(OptNoI64) block])]
+                [(option_i64.None) block])]
             (compiler-ir-block-cons
               material
               (opt-divrem-materialize-blocks context out (box-get rest))))])]
@@ -18168,10 +18171,10 @@
     [(IrValueVar _) (opt-divrem-value-type types lhs fallback)]
     [_ (opt-divrem-value-type types rhs fallback)]))
 
-(define (opt-range-expr-i64 [expr : OptLoopBceExpr] [ty : AstType]) : OptMaybeI64
+(define (opt-range-expr-i64 [expr : OptLoopBceExpr] [ty : AstType]) : option_i64.Option
   (match expr
     [(OptLoopBceValue value) (opt-normalize-scalar-to-i64 value ty)]
-    [_ (OptNoI64)]))
+    [_ (option_i64.None)]))
 
 (define (opt-range-proves-additive-index-in-range?
   [facts : OptRangeFacts]
@@ -18183,7 +18186,7 @@
     [(OptLoopBceBin op lhs rhs ty)
       (if (and (opt-binop-eq op (IrBinAdd)) (opt-signed-integer-type? ty))
         (match (opt-range-expr-i64 (box-get rhs) ty)
-          [(OptSomeI64 offset)
+          [(option_i64.Some offset)
             (let
               [base : OptLoopBceExpr (box-get lhs)]
               ;; `base < upper - k` only proves `(base + k) < upper` when the
@@ -18201,7 +18204,7 @@
                     (box upper)
                     (box (OptLoopBceValue (IrValueI64 offset)))
                     ty))))]
-          [(OptNoI64) false])
+          [(option_i64.None) false])
         false)]
     [_ false]))
 
@@ -18219,7 +18222,7 @@
       [from-lhs : OptRangeFacts
         (if (opt-range-expr-stable? sources lhs)
           (match (opt-range-expr-i64 rhs ty)
-            [(OptSomeI64 value)
+            [(option_i64.Some value)
               (match op
                 [(IrBinGe)
                   (if (= value 0)
@@ -18230,11 +18233,11 @@
                     (opt-range-facts-add-nonnegative facts label lhs)
                     facts)]
                 [_ facts])]
-            [(OptNoI64) facts])
+            [(option_i64.None) facts])
           facts)]
       (if (opt-range-expr-stable? sources rhs)
         (match (opt-range-expr-i64 lhs ty)
-          [(OptSomeI64 value)
+          [(option_i64.Some value)
             (match op
               [(IrBinLe)
                 (if (= value 0)
@@ -18245,7 +18248,7 @@
                   (opt-range-facts-add-nonnegative from-lhs label rhs)
                   from-lhs)]
               [_ from-lhs])]
-          [(OptNoI64) from-lhs])
+          [(option_i64.None) from-lhs])
         from-lhs))))
 
 (define (opt-range-add-less-than-from-compare
@@ -18985,8 +18988,8 @@
   [start : CompilerIrValue]
   [ty : AstType]) : bool
   (match (opt-normalize-scalar-to-i64 start ty)
-    [(OptSomeI64 value) (>= value 0)]
-    [(OptNoI64) false]))
+    [(option_i64.Some value) (>= value 0)]
+    [(option_i64.None) false]))
 
 (define (opt-loop-bce-induction-step-safe?
   [step : i64]
@@ -18998,11 +19001,11 @@
     (if (and (= step 1) (not upper-inclusive))
       true
       (match (opt-range-expr-i64 upper ty)
-        [(OptSomeI64 value)
+        [(option_i64.Some value)
           (if upper-inclusive
             (<= value (- 9223372036854775807 step))
             (<= value (+ (- 9223372036854775807 step) 1)))]
-        [(OptNoI64) false]))))
+        [(option_i64.None) false]))))
 
 (define (opt-loop-bce-induction-fact-safe?
   [fact : OptInductionFact]
@@ -19308,7 +19311,7 @@
             (match op
               [(IrBinGe)
                 (match (opt-range-expr-i64 rhs operand-ty)
-                  [(OptSomeI64 value)
+                  [(option_i64.Some value)
                     (if (= value 0)
                       (opt-loop-bce-state-bind-guard
                         range-state
@@ -19316,10 +19319,10 @@
                         lhs
                         marker)
                       range-state)]
-                  [(OptNoI64) range-state])]
+                  [(option_i64.None) range-state])]
               [(IrBinGt)
                 (match (opt-range-expr-i64 rhs operand-ty)
-                  [(OptSomeI64 value)
+                  [(option_i64.Some value)
                     (if (and
                       (opt-signed-integer-type? operand-ty)
                       (= value (- 0 1)))
@@ -19329,7 +19332,7 @@
                         lhs
                         marker)
                       range-state)]
-                  [(OptNoI64) range-state])]
+                  [(option_i64.None) range-state])]
               [(IrBinLt)
                 (if (or range-nonnegative loop-nonnegative)
                   (opt-loop-bce-state-bind-guard range-state true-label lhs rhs)
@@ -20186,7 +20189,7 @@
       (begin
         (opt-loop-bce-block-results-fill-empty! out 0)
         (match (opt-cfg-index-id cfg-index (struct-get context entry-label))
-          [(OptSomeI64 entry-id)
+          [(option_i64.Some entry-id)
             (if (and
               (>= entry-id 0)
               (array.array-ref (struct-get cfg-index reachable) entry-id))
@@ -20203,7 +20206,7 @@
                 entry-id
                 (opt-loop-bce-initial-state))
               unit)]
-          [(OptNoI64) unit])
+          [(option_i64.None) unit])
         (opt-loop-bce-materialize-blocks doms out blocks)))))
 
 (define (opt-loop-bce-state-propagate-guard
@@ -21403,12 +21406,12 @@
 (define (opt-function-index-count [index : OptFunctionIndex]) : i64
   (array.array-length (struct-get index values)))
 
-(define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : OptMaybeI64
+(define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : option_i64.Option
   (if (opt-function-index-defines? index name)
     (match (hashmap.string-i64-map-get (struct-get index ids) name)
-      [(hashmap.StringI64MapFound slot) (OptSomeI64 slot)]
-      [(hashmap.StringI64MapMissing) (OptNoI64)])
-    (OptNoI64)))
+      [(hashmap.StringI64MapFound slot) (option_i64.Some slot)]
+      [(hashmap.StringI64MapMissing) (option_i64.None)])
+    (option_i64.None)))
 
 ;; Resolve a function by its dense index slot (the value held in `ids` and in the
 ;; reachability worklist). Slots only ever come from a successful `ids` lookup, so
@@ -21439,8 +21442,8 @@
   [callees : OptSlotList]
   [name : String]) : OptSlotList
   (match (opt-function-index-slot index name)
-    [(OptSomeI64 slot) (opt-slot-list-add callees slot)]
-    [(OptNoI64) callees]))
+    [(option_i64.Some slot) (opt-slot-list-add callees slot)]
+    [(option_i64.None) callees]))
 
 ;; Deliberately call-only: address-taken function values are reachability roots,
 ;; but they are not direct call-graph edges for the inliner.
@@ -22618,8 +22621,8 @@
 
 (define (opt-inline-param-mutating-instr? [instr : CompilerIrInstr] [np : i64]) : bool
   (match (opt-instr-def-var instr)
-    [(OptSomeI64 var) (< var np)]
-    [(OptNoI64) false]))
+    [(option_i64.Some var) (< var np)]
+    [(option_i64.None) false]))
 
 (define (opt-inline-param-mutating-instrs-from?
   [instrs : CompilerIrInstrSeq]
@@ -22898,14 +22901,14 @@
     [(OptLabelNil) true]
     [(OptLabelCons label rest)
       (match (opt-cfg-index-id index label)
-        [(OptSomeI64 target-id)
+        [(option_i64.Some target-id)
           (and
             (> target-id source-id)
             (opt-inline-tiny-predicate-forward-successors?
               index
               source-id
               (box-get rest)))]
-        [(OptNoI64) false])]))
+        [(option_i64.None) false])]))
 
 (define (opt-inline-tiny-predicate-forward-edges-from?
   [index : OptCfgIndex]
@@ -23561,7 +23564,7 @@
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptMaybeFunction
   (match (opt-function-index-slot index cname)
-    [(OptSomeI64 callee-slot)
+    [(option_i64.Some callee-slot)
       (if (and
         (>= caller-scc 0)
         (=
@@ -23574,7 +23577,7 @@
           (if (opt-inline-callee-ok? callee caller-name)
             (OptSomeFunction callee)
             (OptNoFunction))))]
-    [(OptNoI64) (OptNoFunction)]))
+    [(option_i64.None) (OptNoFunction)]))
 
 (define (opt-inline-lookup-multiblock-inlinable
   [index : OptFunctionIndex]
@@ -23583,7 +23586,7 @@
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptMaybeFunction
   (match (opt-function-index-slot index cname)
-    [(OptSomeI64 callee-slot)
+    [(option_i64.Some callee-slot)
       (if (and
         (>= caller-scc 0)
         (=
@@ -23596,7 +23599,7 @@
           (if (opt-inline-multiblock-callee-ok? callee caller-name)
             (OptSomeFunction callee)
             (OptNoFunction))))]
-    [(OptNoI64) (OptNoFunction)]))
+    [(option_i64.None) (OptNoFunction)]))
 
 (define (opt-inline-instr-list-has-bounds-check? [instrs : CompilerIrInstrList]) : bool
   (match instrs
@@ -31440,8 +31443,8 @@
 
 (define (opt-callgraph-test-slot [index : OptFunctionIndex] [name : String]) : i64
   (match (opt-function-index-slot index name)
-    [(OptSomeI64 slot) slot]
-    [(OptNoI64) -1]))
+    [(option_i64.Some slot) slot]
+    [(option_i64.None) -1]))
 
 (define (opt-callgraph-test-edge?
   [index : OptFunctionIndex]
@@ -35409,8 +35412,8 @@
     [(OptNoNaturalLoop) false]
     [(OptSomeNaturalLoop loop)
       (match (opt-cfg-index-id index label)
-        [(OptSomeI64 id) (opt-natural-loop-body-contains-id? loop id)]
-        [(OptNoI64) false])]))
+        [(option_i64.Some id) (opt-natural-loop-body-contains-id? loop id)]
+        [(option_i64.None) false])]))
 
 (define (opt-natural-loop-maybe-body-block-label-at?
   [maybe : OptMaybeNaturalLoop]
@@ -37865,13 +37868,13 @@
     [(IrInstrCall dst name args _)
       (if (string.string-eq name "tl_alloc")
         (match (opt-aggregate-tl-alloc-size args)
-          [(OptSomeI64 size)
+          [(option_i64.Some size)
             (OptScratchAlloc
               dst
               (if (> size 0)
                 size
                 0))]
-          [(OptNoI64) (OptScratchAlloc dst 0)])
+          [(option_i64.None) (OptScratchAlloc dst 0)])
         (OptScratchNoAlloc))]
     [_ (OptScratchNoAlloc)]))
 
@@ -39255,12 +39258,12 @@
   (match entry
     [(OptLoadEntry _ var) var]))
 
-(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : OptMaybeI64
+(define (opt-load-table-lookup [table : OptLoadTable] [key : OptLoadKey]) : option_i64.Option
   (match table
-    [(OptLoadNil) (OptNoI64)]
+    [(OptLoadNil) (option_i64.None)]
     [(OptLoadCons entry rest)
       (if (opt-load-key-eq (opt-load-entry-key entry) key)
-        (OptSomeI64 (opt-load-entry-var entry))
+        (option_i64.Some (opt-load-entry-var entry))
         (opt-load-table-lookup (box-get rest) key))]))
 
 (define (opt-load-table-remove-key-scan
@@ -39280,8 +39283,8 @@
 ;; the whole spine (see opt-alias-remove-var).
 (define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
   (match (opt-load-table-lookup table key)
-    [(OptSomeI64 _) (opt-load-table-remove-key-scan table key)]
-    [(OptNoI64) table]))
+    [(option_i64.Some _) (opt-load-table-remove-key-scan table key)]
+    [(option_i64.None) table]))
 
 (define (opt-load-table-bind
   [table : OptLoadTable]
@@ -39330,9 +39333,9 @@
   (match state
     [(OptLoadCseState facts table)
       (match (opt-instr-def-var instr)
-        [(OptSomeI64 dst)
+        [(option_i64.Some dst)
           (OptLoadCseState facts (opt-load-table-invalidate-var table dst))]
-        [(OptNoI64) state])]))
+        [(option_i64.None) state])]))
 
 (define (opt-load-cse-state-update-facts
   [state : OptLoadCseState]
@@ -39371,7 +39374,7 @@
     (match invalidated
       [(OptLoadCseState _ table)
         (match (opt-load-table-lookup table key)
-          [(OptSomeI64 earlier)
+          [(option_i64.Some earlier)
             (let
               [new-instr : CompilerIrInstr
                 (IrInstrMov dst (IrValueVar earlier) ty)]
@@ -39380,7 +39383,7 @@
               (OptLoadCseResult
                 (opt-load-cse-record-load updated key dst)
                 new-instr))]
-          [(OptNoI64)
+          [(option_i64.None)
             (let
               [updated : OptLoadCseState
                 (opt-load-cse-state-update-facts invalidated instr)]
@@ -39436,8 +39439,8 @@
   (match entry
     [(OptLoadEntry key var)
       (match (opt-load-table-lookup table key)
-        [(OptSomeI64 found) (= found var)]
-        [(OptNoI64) false])]))
+        [(option_i64.Some found) (= found var)]
+        [(option_i64.None) false])]))
 
 (define (opt-load-table-intersect [a : OptLoadTable] [b : OptLoadTable]) : OptLoadTable
   (match a
@@ -39520,7 +39523,7 @@
     [preds : OptCfgCsr (struct-get index preds)]
     [entry-label : String (struct-get context entry-label)]
     (match (opt-cfg-index-id index entry-label)
-      [(OptSomeI64 entry-id)
+      [(option_i64.Some entry-id)
         (if (= id entry-id)
           (opt-load-cse-empty-state)
           (opt-load-gvn-entry-from-preds
@@ -39531,7 +39534,7 @@
             (array.array-ref (struct-get preds offsets) (+ id 1))
             false
             (opt-load-cse-empty-state)))]
-      [(OptNoI64) (opt-load-cse-empty-state)])))
+      [(option_i64.None) (opt-load-cse-empty-state)])))
 
 (define (opt-load-gvn-load
   [state : OptLoadCseState]
@@ -39550,7 +39553,7 @@
       (match invalidated
         [(OptLoadCseState _ table)
           (match (opt-load-table-lookup table key)
-            [(OptSomeI64 earlier)
+            [(option_i64.Some earlier)
               (let
                 [new-instr : CompilerIrInstr
                   (IrInstrMov dst (IrValueVar earlier) ty)]
@@ -39559,7 +39562,7 @@
                 (OptLoadCseResult
                   (opt-load-cse-record-load updated key dst)
                   new-instr))]
-            [(OptNoI64)
+            [(option_i64.None)
               (let
                 [updated : OptLoadCseState
                   (opt-load-cse-state-update-facts invalidated instr)]

@@ -779,14 +779,18 @@
       (compiler-object-symbol-list-contains?
         (struct-get image symbols)
         "_tl_start"
-        (ObjectSymbolExport)
-        (ObjectSymbolFunction))
+        (CompilerObjectSymbolBinding.Export)
+        (CompilerObjectSymbolKind.Function))
       (compiler-object-symbol-list-contains?
         (struct-get image symbols)
         "main"
-        (ObjectSymbolExport)
-        (ObjectSymbolFunction)))
-    (> (compiler-object-elf-section-raw-size image (ObjectSectionText)) 0)))
+        (CompilerObjectSymbolBinding.Export)
+        (CompilerObjectSymbolKind.Function)))
+    (>
+      (compiler-object-elf-section-raw-size
+        image
+        (CompilerObjectSectionKind.Text))
+      0)))
 
 (define (source-tool-linux-direct-object-archivable?
   [image : CompilerObjectImage]) : bool
@@ -889,7 +893,7 @@
   [name : String]
   [kind : CompilerObjectSymbolKind]) : bool
   (and
-    (compiler-object-symbol-kind-eq? kind (ObjectSymbolFunction))
+    (compiler-object-symbol-kind-eq? kind (CompilerObjectSymbolKind.Function))
     (or
       (string.string-eq name "ExitProcess")
       (string.string-eq name "GetCommandLineA")
@@ -909,11 +913,11 @@
     (begin
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
-          [(ObjectSymbol name binding kind _)
+          [(CompilerObjectSymbol.Symbol name binding kind _)
             (if (string.string-eq name target)
               (begin
                 (match binding
-                  [(ObjectSymbolExtern)
+                  [(CompilerObjectSymbolBinding.Extern)
                     (set!
                       ok
                       (source-tool-windows-direct-object-extern-linkable?
@@ -934,7 +938,7 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-relocation-list-ref relocs index)
-          [(ObjectRelocation _ _ _ target)
+          [(CompilerObjectRelocation.Relocation _ _ _ target)
             (if (source-tool-windows-direct-object-relocation-target-linkable?
               symbols
               target)
@@ -952,16 +956,20 @@
     (compiler-object-symbol-list-contains?
       (struct-get image symbols)
       "_tl_start"
-      (ObjectSymbolExport)
-      (ObjectSymbolFunction))
+      (CompilerObjectSymbolBinding.Export)
+      (CompilerObjectSymbolKind.Function))
     ;; Text labels live in the instruction stream, not the section data records.
     (>=
       (compiler-object-coff-section-label-offset
         image
-        (ObjectSectionText)
+        (CompilerObjectSectionKind.Text)
         "tl_setup_argv")
       0)
-    (> (compiler-object-coff-section-raw-size image (ObjectSectionText)) 0)))
+    (>
+      (compiler-object-coff-section-raw-size
+        image
+        (CompilerObjectSectionKind.Text))
+      0)))
 
 (define (source-tool-windows-direct-object-unavailable-message) : String
   "windows direct object unavailable: object image lacks encoded .text, _tl_start, or Windows runtime entry body")
@@ -1361,38 +1369,38 @@
   (let
     [symbols : CompilerObjectSymbolList
       (compiler-object-symbol-cons
-        (ObjectSymbol
+        (CompilerObjectSymbol.Symbol
           "GetStdHandle"
-          (ObjectSymbolExtern)
-          (ObjectSymbolFunction)
-          ObjectNoSection)
+          (CompilerObjectSymbolBinding.Extern)
+          (CompilerObjectSymbolKind.Function)
+          CompilerObjectMaybeSection.No)
         (compiler-object-symbol-cons
-          (ObjectSymbol
+          (CompilerObjectSymbol.Symbol
             "GetCurrentProcessId"
-            (ObjectSymbolExtern)
-            (ObjectSymbolFunction)
-            ObjectNoSection)
-          ObjectSymbolNil))]
+            (CompilerObjectSymbolBinding.Extern)
+            (CompilerObjectSymbolKind.Function)
+            CompilerObjectMaybeSection.No)
+          CompilerObjectSymbolList.Nil))]
     [allowed-relocs : CompilerObjectRelocationList
       (compiler-object-relocation-cons
-        (ObjectRelocation
-          (ObjectSectionText)
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
           "main"
-          (ObjectRelocCall)
+          (CompilerObjectRelocationKind.Call)
           "GetStdHandle")
-        ObjectRelocationNil)]
+        CompilerObjectRelocationList.Nil)]
     [blocked-relocs : CompilerObjectRelocationList
       (compiler-object-relocation-cons
-        (ObjectRelocation
-          (ObjectSectionText)
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
           "main"
-          (ObjectRelocCall)
+          (CompilerObjectRelocationKind.Call)
           "GetCurrentProcessId")
-        ObjectRelocationNil)]
+        CompilerObjectRelocationList.Nil)]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
         symbols
-        ObjectRelocationNil)
+        CompilerObjectRelocationList.Nil)
       (source-tool-windows-direct-object-relocations-linkable?
         symbols
         allowed-relocs)

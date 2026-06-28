@@ -41125,9 +41125,9 @@
     (match (gen-normalize-program program)
       [(OkGenProgram generated)
         (match (macro-expand-program generated)
-          [(OkMacroExpand expanded _)
+          [(ResultMacroExpand.Ok expanded _)
             (lower-compiler-expanded-program-unlocated-mode expanded mode)]
-          [(ErrMacroExpand diag) (ErrCompilerLower diag)])]
+          [(ResultMacroExpand.Err diag) (ErrCompilerLower diag)])]
       [(ErrGenProgram diag) (ErrCompilerLower diag)])))
 
 (define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
@@ -41473,7 +41473,7 @@
             pools
             stdlib-roots
             (typecheck-compiler-source-language-cfgs))
-            [(OkMacroExpand expanded expanded-paths)
+            [(ResultMacroExpand.Ok expanded expanded-paths)
               (begin
                 (ast-node-pool-context-install! pools)
                 (cfg
@@ -41490,7 +41490,7 @@
                   stdlib-roots
                   cache-scope
                   pools))]
-            [(ErrMacroExpand diag)
+            [(ResultMacroExpand.Err diag)
               (begin
                 (cfg
                   compile-profile

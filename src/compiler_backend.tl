@@ -24158,8 +24158,8 @@
 
 (define (compiler-backend-float-object-data [ty : AstType] [bits : u64]) : CompilerObjectDataRecord
   (if (compiler-backend-f64-type? ty)
-    (ObjectDataF64 bits)
-    (ObjectDataF32 (compiler-backend-float-payload-bits ty bits))))
+    (CompilerObjectDataRecord.F64 bits)
+    (CompilerObjectDataRecord.F32 (compiler-backend-float-payload-bits ty bits))))
 
 (define (compiler-backend-emit-float-entry [ty : AstType] [bits : u64]) : String
   (str_cat.str-cat
@@ -28548,14 +28548,14 @@ tl_memchr:
 
 (define (compiler-backend-object-parts-empty) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
-    ObjectInstrNil
-    ObjectDataNil
-    ObjectDataNil
-    ObjectDataNil
-    ObjectDataNil
-    ObjectDataNil
-    ObjectSymbolNil
-    ObjectRelocationNil))
+    CompilerObjectX64InstrList.Nil
+    CompilerObjectDataRecordList.Nil
+    CompilerObjectDataRecordList.Nil
+    CompilerObjectDataRecordList.Nil
+    CompilerObjectDataRecordList.Nil
+    CompilerObjectDataRecordList.Nil
+    CompilerObjectSymbolList.Nil
+    CompilerObjectRelocationList.Nil))
 
 (define (compiler-backend-object-add-text
   [parts : CompilerBackendObjectParts]
@@ -28649,7 +28649,7 @@ tl_memchr:
     (struct-get parts pdata)
     (struct-get parts xdata)
     (compiler-object-symbol-cons
-      (ObjectSymbol name binding kind section)
+      (CompilerObjectSymbol.Symbol name binding kind section)
       (struct-get parts symbols))
     (struct-get parts relocations)))
 
@@ -28668,7 +28668,7 @@ tl_memchr:
     (struct-get parts xdata)
     (struct-get parts symbols)
     (compiler-object-relocation-cons
-      (ObjectRelocation section site kind target)
+      (CompilerObjectRelocation.Relocation section site kind target)
       (struct-get parts relocations))))
 
 (define (compiler-backend-object-symbol-local-section
@@ -28679,9 +28679,9 @@ tl_memchr:
   (compiler-backend-object-add-symbol
     parts
     name
-    (ObjectSymbolLocal)
+    (CompilerObjectSymbolBinding.Local)
     kind
-    (ObjectSomeSection section)))
+    (CompilerObjectMaybeSection.Some section)))
 
 (define (compiler-backend-object-symbol-export-section
   [parts : CompilerBackendObjectParts]
@@ -28691,9 +28691,9 @@ tl_memchr:
   (compiler-backend-object-add-symbol
     parts
     name
-    (ObjectSymbolExport)
+    (CompilerObjectSymbolBinding.Export)
     kind
-    (ObjectSomeSection section)))
+    (CompilerObjectMaybeSection.Some section)))
 
 (define (compiler-backend-object-symbol-extern
   [parts : CompilerBackendObjectParts]
@@ -28702,9 +28702,9 @@ tl_memchr:
   (compiler-backend-object-add-symbol
     parts
     name
-    (ObjectSymbolExtern)
+    (CompilerObjectSymbolBinding.Extern)
     kind
-    (ObjectNoSection)))
+    (CompilerObjectMaybeSection.No)))
 
 (define (compiler-backend-object-symbol-extern-once
   [parts : CompilerBackendObjectParts]
@@ -28713,7 +28713,7 @@ tl_memchr:
   (if (compiler-object-symbol-list-contains?
     (struct-get parts symbols)
     name
-    (ObjectSymbolExtern)
+    (CompilerObjectSymbolBinding.Extern)
     kind)
     parts
     (compiler-backend-object-symbol-extern parts name kind)))
@@ -28725,7 +28725,7 @@ tl_memchr:
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (ObjectSectionText)
+    (CompilerObjectSectionKind.Text)
     site
     kind
     target))
@@ -28737,7 +28737,7 @@ tl_memchr:
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (ObjectSectionData)
+    (CompilerObjectSectionKind.Data)
     site
     kind
     target))
@@ -28749,7 +28749,7 @@ tl_memchr:
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (ObjectSectionRodata)
+    (CompilerObjectSectionKind.Rodata)
     site
     kind
     target))
@@ -28761,7 +28761,7 @@ tl_memchr:
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (ObjectSectionPdata)
+    (CompilerObjectSectionKind.Pdata)
     site
     kind
     target))
@@ -28778,9 +28778,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipValue)
+            (CompilerObjectRelocationKind.RipValue)
             symbol)
-          (ObjectX64LoadRip symbol)))]
+          (CompilerObjectX64Instr.LoadRip symbol)))]
     [(IrValueGlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -28788,9 +28788,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (ObjectX64LoadRipAddress symbol)))]
+          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [(IrValueString text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
@@ -28798,9 +28798,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (ObjectX64LoadRipAddress symbol)))]
+          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [(IrValueBytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
@@ -28808,9 +28808,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (ObjectX64LoadRipAddress symbol)))]
+          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [(IrValueF64 bits)
       (let
         [symbol : String (compiler-backend-f64-label bits)]
@@ -28818,9 +28818,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipValue)
+            (CompilerObjectRelocationKind.RipValue)
             symbol)
-          (ObjectX64LoadRip symbol)))]
+          (CompilerObjectX64Instr.LoadRip symbol)))]
     [(IrValueFunction name)
       (let
         [symbol : String (compiler-backend-closure-descriptor-label name)]
@@ -28828,9 +28828,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (ObjectX64LoadRipAddress symbol)))]
+          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [_ parts]))
 
 (define (compiler-backend-object-value-ref-with-type
@@ -28846,9 +28846,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (ObjectRelocRipValue)
+            (CompilerObjectRelocationKind.RipValue)
             symbol)
-          (ObjectX64LoadRip symbol)))]
+          (CompilerObjectX64Instr.LoadRip symbol)))]
     [_ (compiler-backend-object-value-ref parts site value)]))
 
 (define (compiler-backend-object-call-args
@@ -28940,7 +28940,9 @@ tl_memchr:
   [bytes : String]) : CompilerBackendObjectParts
   (if (= (string.string-length bytes) 0)
     parts
-    (compiler-backend-object-add-text parts (ObjectX64Bytes bytes))))
+    (compiler-backend-object-add-text
+      parts
+      (CompilerObjectX64Instr.Bytes bytes))))
 
 (define (compiler-backend-object-reg-low-code [reg : String]) : i64
   (cond
@@ -29377,11 +29379,11 @@ tl_memchr:
                 (compiler-backend-object-add-rodata-relocation
                   (compiler-backend-object-add-rodata
                     parts
-                    (ObjectDataLabel entry-label))
+                    (CompilerObjectDataRecord.Label entry-label))
                   entry-label
-                  (ObjectRelocAbs64)
+                  (CompilerObjectRelocationKind.Abs64)
                   target)
-                (ObjectDataSymbolAddress target))
+                (CompilerObjectDataRecord.SymbolAddress target))
               label-scope
               table-label
               (box-get rest)
@@ -29401,10 +29403,10 @@ tl_memchr:
           (compiler-backend-object-symbol-local-section
             parts
             table-label
-            (ObjectSectionRodata)
-            (ObjectSymbolData))
-          (ObjectDataAlign 8))
-        (ObjectDataLabel table-label))
+            (CompilerObjectSectionKind.Rodata)
+            (CompilerObjectSymbolKind.Data))
+          (CompilerObjectDataRecord.Align 8))
+        (CompilerObjectDataRecord.Label table-label))
       label-scope
       table-label
       cases
@@ -29435,31 +29437,33 @@ tl_memchr:
         with-index
         (compiler-backend-object-add-text
           with-index
-          (ObjectX64Bytes (compiler-backend-object-sub-imm32-rax-bytes base))))]
+          (CompilerObjectX64Instr.Bytes
+            (compiler-backend-object-sub-imm32-rax-bytes base))))]
     [with-cmp : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-base
-        (ObjectX64Bytes
+        (CompilerObjectX64Instr.Bytes
           (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1))))]
     [with-ja : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-cmp
           function-symbol
-          (ObjectRelocBranch)
+          (CompilerObjectRelocationKind.Branch)
           default-symbol)
-        (ObjectX64Ja default-symbol))]
+        (CompilerObjectX64Instr.Ja default-symbol))]
     [with-table : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-ja
           function-symbol
-          (ObjectRelocRipAddress)
+          (CompilerObjectRelocationKind.RipAddress)
           table-label)
-        (ObjectX64LoadRipAddressR11 table-label))]
+        (CompilerObjectX64Instr.LoadRipAddressR11 table-label))]
     (compiler-backend-object-add-text
       with-table
-      (ObjectX64Bytes (compiler-backend-object-switch-indirect-jump-bytes)))))
+      (CompilerObjectX64Instr.Bytes
+        (compiler-backend-object-switch-indirect-jump-bytes)))))
 
 (define (compiler-backend-object-switch
   [parts : CompilerBackendObjectParts]
@@ -29626,9 +29630,9 @@ tl_memchr:
             args
             0)
           site
-          (ObjectRelocCall)
+          (CompilerObjectRelocationKind.Call)
           symbol)
-        (ObjectX64Call symbol))
+        (CompilerObjectX64Instr.Call symbol))
       (compiler-backend-object-add-rsp-bytes space))))
 
 (define (compiler-backend-object-param-spills
@@ -29700,9 +29704,10 @@ tl_memchr:
               (compiler-backend-object-add-rip-instr
                 with-src
                 function
-                (ObjectRelocRipValue)
+                (CompilerObjectRelocationKind.RipValue)
                 (compiler-backend-f64-sign-bit-label)
-                (ObjectX64XorpdRip (compiler-backend-f64-sign-bit-label)))
+                (CompilerObjectX64Instr.XorpdRip
+                  (compiler-backend-f64-sign-bit-label)))
               with-src)]
           [_ with-src]))]
     [(IrInstrCall dst name args _)
@@ -29768,9 +29773,9 @@ tl_memchr:
                 0)
               (compiler-backend-object-leave-bytes))
             function
-            (ObjectRelocTailCall)
+            (CompilerObjectRelocationKind.TailCall)
             call-target)
-          (ObjectX64TailCall call-target)))]
+          (CompilerObjectX64Instr.TailCall call-target)))]
     [(IrInstrStore name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -29782,9 +29787,9 @@ tl_memchr:
               value
               ty)
             function
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (ObjectX64StoreRip symbol)))]
+          (CompilerObjectX64Instr.StoreRip symbol)))]
     [(IrInstrJump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
@@ -29792,9 +29797,9 @@ tl_memchr:
           (compiler-backend-object-add-text-relocation
             parts
             function
-            (ObjectRelocBranch)
+            (CompilerObjectRelocationKind.Branch)
             symbol)
-          (ObjectX64Jump symbol)))]
+          (CompilerObjectX64Instr.Jump symbol)))]
     [(IrInstrBranch cond true-label false-label)
       (let
         [true-symbol : String
@@ -29806,12 +29811,12 @@ tl_memchr:
             (compiler-backend-object-add-text-relocation
               (compiler-backend-object-value-ref parts function cond)
               function
-              (ObjectRelocBranch)
+              (CompilerObjectRelocationKind.Branch)
               true-symbol)
             function
-            (ObjectRelocBranch)
+            (CompilerObjectRelocationKind.Branch)
             false-symbol)
-          (ObjectX64Branch true-symbol false-symbol)))]
+          (CompilerObjectX64Instr.Branch true-symbol false-symbol)))]
     [(IrInstrReturn value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -30044,9 +30049,9 @@ tl_memchr:
                   (compiler-backend-object-symbol-local-section
                     parts
                     block-label
-                    (ObjectSectionText)
-                    (ObjectSymbolFunction))
-                  (ObjectX64Label block-label))
+                    (CompilerObjectSectionKind.Text)
+                    (CompilerObjectSymbolKind.Function))
+                  (CompilerObjectX64Instr.Label block-label))
                 target
                 function-symbol
                 label-scope
@@ -30095,9 +30100,9 @@ tl_memchr:
                       (compiler-backend-object-symbol-export-section
                         parts
                         symbol
-                        (ObjectSectionText)
-                        (ObjectSymbolFunction))
-                      (ObjectX64Label symbol))
+                        (CompilerObjectSectionKind.Text)
+                        (CompilerObjectSymbolKind.Function))
+                      (CompilerObjectX64Instr.Label symbol))
                     (compiler-backend-object-prologue-bytes
                       (compiler-backend-frame-size vars)))
                   target
@@ -30127,19 +30132,21 @@ tl_memchr:
   [ty : AstType]
   [value : CompilerIrValue]) : CompilerBackendObjectParts
   (match value
-    [(IrValueI64 n) (compiler-backend-object-add-data parts (ObjectDataI64 n))]
+    [(IrValueI64 n)
+      (compiler-backend-object-add-data parts (CompilerObjectDataRecord.I64 n))]
     [(IrValueBool b)
       (compiler-backend-object-add-data
         parts
-        (ObjectDataI64
+        (CompilerObjectDataRecord.I64
           (if b
             1
             0)))]
     [(IrValueChar c)
       (compiler-backend-object-add-data
         parts
-        (ObjectDataI64 (compiler-backend-char-code c)))]
-    [(IrValueUnit) (compiler-backend-object-add-data parts (ObjectDataI64 0))]
+        (CompilerObjectDataRecord.I64 (compiler-backend-char-code c)))]
+    [(IrValueUnit)
+      (compiler-backend-object-add-data parts (CompilerObjectDataRecord.I64 0))]
     [(IrValueF64 bits)
       (compiler-backend-object-add-data
         parts
@@ -30151,9 +30158,9 @@ tl_memchr:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             symbol)
-          (ObjectDataSymbolAddress symbol)))]
+          (CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(IrValueBytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
@@ -30161,9 +30168,9 @@ tl_memchr:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             symbol)
-          (ObjectDataSymbolAddress symbol)))]
+          (CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(IrValueGlobal name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -30171,9 +30178,9 @@ tl_memchr:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             symbol)
-          (ObjectDataSymbolAddress symbol)))]
+          (CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(IrValueGlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -30181,9 +30188,9 @@ tl_memchr:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             symbol)
-          (ObjectDataSymbolAddress symbol)))]
+          (CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(IrValueFunction name)
       (let
         [symbol : String (compiler-backend-closure-descriptor-label name)]
@@ -30191,9 +30198,9 @@ tl_memchr:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             symbol)
-          (ObjectDataSymbolAddress symbol)))]
+          (CompilerObjectDataRecord.SymbolAddress symbol)))]
     [_ parts]))
 
 (define (compiler-backend-object-globals
@@ -30214,18 +30221,18 @@ tl_memchr:
                     (compiler-backend-object-symbol-export-section
                       parts
                       symbol
-                      (ObjectSectionBss)
-                      (ObjectSymbolData))
-                    (ObjectDataLabel symbol))
-                  (ObjectDataZero 8))
+                      (CompilerObjectSectionKind.Bss)
+                      (CompilerObjectSymbolKind.Data))
+                    (CompilerObjectDataRecord.Label symbol))
+                  (CompilerObjectDataRecord.Zero 8))
                 (compiler-backend-object-global-value
                   (compiler-backend-object-add-data
                     (compiler-backend-object-symbol-export-section
                       parts
                       symbol
-                      (ObjectSectionData)
-                      (ObjectSymbolData))
-                    (ObjectDataLabel symbol))
+                      (CompilerObjectSectionKind.Data)
+                      (CompilerObjectSymbolKind.Data))
+                    (CompilerObjectDataRecord.Label symbol))
                   symbol
                   ty
                   value))
@@ -30253,20 +30260,20 @@ tl_memchr:
                           (compiler-backend-object-symbol-local-section
                             parts
                             data-symbol
-                            (ObjectSectionRodata)
-                            (ObjectSymbolData))
-                          (ObjectDataLabel data-symbol))
-                        (ObjectDataString text))
+                            (CompilerObjectSectionKind.Rodata)
+                            (CompilerObjectSymbolKind.Data))
+                          (CompilerObjectDataRecord.Label data-symbol))
+                        (CompilerObjectDataRecord.String text))
                       fat-symbol
-                      (ObjectSectionRodata)
-                      (ObjectSymbolData))
-                    (ObjectDataAlign 8))
+                      (CompilerObjectSectionKind.Rodata)
+                      (CompilerObjectSymbolKind.Data))
+                    (CompilerObjectDataRecord.Align 8))
                   fat-symbol
-                  (ObjectRelocAbs64)
+                  (CompilerObjectRelocationKind.Abs64)
                   data-symbol)
-                (ObjectDataLabel fat-symbol))
-              (ObjectDataSymbolAddress data-symbol))
-            (ObjectDataI64 (string.string-length text)))
+                (CompilerObjectDataRecord.Label fat-symbol))
+              (CompilerObjectDataRecord.SymbolAddress data-symbol))
+            (CompilerObjectDataRecord.I64 (string.string-length text)))
           (box-get rest)))]))
 
 (define (compiler-backend-object-bytes
@@ -30291,23 +30298,23 @@ tl_memchr:
                             (compiler-backend-object-symbol-local-section
                               parts
                               data-symbol
-                              (ObjectSectionData)
-                              (ObjectSymbolData))
+                              (CompilerObjectSectionKind.Data)
+                              (CompilerObjectSymbolKind.Data))
                             fat-symbol
-                            (ObjectSectionData)
-                            (ObjectSymbolData))
-                          (ObjectDataAlign 8))
-                        (ObjectDataLabel data-symbol))
+                            (CompilerObjectSectionKind.Data)
+                            (CompilerObjectSymbolKind.Data))
+                          (CompilerObjectDataRecord.Align 8))
+                        (CompilerObjectDataRecord.Label data-symbol))
                       (if (= (string.string-length bytes) 0)
-                        (ObjectDataZero 1)
-                        (ObjectDataBytes bytes)))
+                        (CompilerObjectDataRecord.Zero 1)
+                        (CompilerObjectDataRecord.Bytes bytes)))
                     fat-symbol
-                    (ObjectRelocAbs64)
+                    (CompilerObjectRelocationKind.Abs64)
                     data-symbol)
-                  (ObjectDataAlign 8))
-                (ObjectDataLabel fat-symbol))
-              (ObjectDataSymbolAddress data-symbol))
-            (ObjectDataI64 (string.string-length bytes)))
+                  (CompilerObjectDataRecord.Align 8))
+                (CompilerObjectDataRecord.Label fat-symbol))
+              (CompilerObjectDataRecord.SymbolAddress data-symbol))
+            (CompilerObjectDataRecord.I64 (string.string-length bytes)))
           (box-get rest)))]))
 
 (define (compiler-backend-object-floats
@@ -30325,13 +30332,13 @@ tl_memchr:
                 (compiler-backend-object-symbol-local-section
                   parts
                   symbol
-                  (ObjectSectionRodata)
-                  (ObjectSymbolData))
-                (ObjectDataAlign
+                  (CompilerObjectSectionKind.Rodata)
+                  (CompilerObjectSymbolKind.Data))
+                (CompilerObjectDataRecord.Align
                   (if (compiler-backend-f64-type? ty)
                     8
                     4)))
-              (ObjectDataLabel symbol))
+              (CompilerObjectDataRecord.Label symbol))
             (compiler-backend-float-object-data ty bits))
           (box-get rest)))]))
 
@@ -30348,12 +30355,12 @@ tl_memchr:
               (compiler-backend-object-symbol-local-section
                 parts
                 symbol
-                (ObjectSectionRodata)
-                (ObjectSymbolData))
-              (ObjectDataAlign 16))
-            (ObjectDataLabel symbol))
-          (ObjectDataI64 -9223372036854775808))
-        (ObjectDataI64 0)))
+                (CompilerObjectSectionKind.Rodata)
+                (CompilerObjectSymbolKind.Data))
+              (CompilerObjectDataRecord.Align 16))
+            (CompilerObjectDataRecord.Label symbol))
+          (CompilerObjectDataRecord.I64 -9223372036854775808))
+        (CompilerObjectDataRecord.I64 0)))
     parts))
 
 (define (compiler-backend-object-closure-descriptors
@@ -30378,18 +30385,18 @@ tl_memchr:
                           (compiler-backend-object-symbol-local-section
                             parts
                             descriptor
-                            (ObjectSectionRodata)
-                            (ObjectSymbolData))
+                            (CompilerObjectSectionKind.Rodata)
+                            (CompilerObjectSymbolKind.Data))
                           entry
-                          (ObjectSectionText)
-                          (ObjectSymbolFunction))
-                        (ObjectDataAlign 8))
-                      (ObjectDataLabel descriptor))
+                          (CompilerObjectSectionKind.Text)
+                          (CompilerObjectSymbolKind.Function))
+                        (CompilerObjectDataRecord.Align 8))
+                      (CompilerObjectDataRecord.Label descriptor))
                     descriptor
-                    (ObjectRelocAbs64)
+                    (CompilerObjectRelocationKind.Abs64)
                     entry)
-                  (ObjectDataSymbolAddress entry))
-                (ObjectDataI64 0))]
+                  (CompilerObjectDataRecord.SymbolAddress entry))
+                (CompilerObjectDataRecord.I64 0))]
             [(CompilerBackendNoSignature) parts])
           (box-get rest)
           program-index))]))
@@ -30424,7 +30431,7 @@ tl_memchr:
               (compiler-backend-object-symbol-extern
                 parts
                 (compiler-backend-link-symbol link-symbol plan)
-                (ObjectSymbolFunction))
+                (CompilerObjectSymbolKind.Function))
               parts)
             (box-get rest)
             plan
@@ -30470,8 +30477,8 @@ tl_memchr:
           (compiler-backend-object-symbol-local-section
             parts
             name
-            (ObjectSectionText)
-            (ObjectSymbolRuntime))
+            (CompilerObjectSectionKind.Text)
+            (CompilerObjectSymbolKind.Runtime))
           parts)
         plan
         (box-get rest))]))
@@ -30558,31 +30565,33 @@ tl_memchr:
 (define (compiler-backend-object-windows-manifest-resource-records) : CompilerObjectDataRecordList
   (compiler-object-data-list-dense-reversed
     (compiler-object-data-cons
-      (ObjectDataLabel ".L_tl_manifest_end")
+      (CompilerObjectDataRecord.Label ".L_tl_manifest_end")
       (compiler-object-data-cons
-        (ObjectDataBytes compiler-backend-object-windows-utf8-manifest)
+        (CompilerObjectDataRecord.Bytes
+          compiler-backend-object-windows-utf8-manifest)
         (compiler-object-data-cons
-          (ObjectDataLabel compiler-backend-object-windows-manifest-label)
+          (CompilerObjectDataRecord.Label
+            compiler-backend-object-windows-manifest-label)
           (compiler-object-data-cons
-            (ObjectDataAlign 4)
+            (CompilerObjectDataRecord.Align 4)
             (compiler-object-data-cons
               ;; Manifest size is 376 bytes (0x178), followed by codepage/reserved zeros.
-              (ObjectDataBytes
+              (CompilerObjectDataRecord.Bytes
                 (compiler-backend-object-bytes-from-hex
                   "780100000000000000000000"))
               (compiler-object-data-cons
-                (ObjectDataSymbolRva32
+                (CompilerObjectDataRecord.SymbolRva32
                   compiler-backend-object-windows-manifest-label)
                 (compiler-object-data-cons
-                  (ObjectDataLabel
+                  (CompilerObjectDataRecord.Label
                     compiler-backend-object-windows-rsrc-data-label)
                   (compiler-object-data-cons
-                    (ObjectDataBytes
+                    (CompilerObjectDataRecord.Bytes
                       (compiler-backend-object-bytes-from-hex
                         "000000000000000000000000000001001800000018000080000000000000000000000000000001000100000030000080000000000000000000000000000001000904000048000000"))
                     (compiler-object-data-cons
-                      (ObjectDataLabel ".L_tl_rsrc_base")
-                      ObjectDataNil)))))))))))
+                      (CompilerObjectDataRecord.Label ".L_tl_rsrc_base")
+                      CompilerObjectDataRecordList.Nil)))))))))))
 
 (define (compiler-backend-object-add-windows-entry-data
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -30591,56 +30600,56 @@ tl_memchr:
       (compiler-backend-object-symbol-local-section
         parts
         ".L_tl_argc"
-        (ObjectSectionData)
-        (ObjectSymbolData))]
+        (CompilerObjectSectionKind.Data)
+        (CompilerObjectSymbolKind.Data))]
     [with-argc : CompilerBackendObjectParts
       (compiler-backend-object-add-data
         (compiler-backend-object-add-data
           with-argc-symbol
-          (ObjectDataLabel ".L_tl_argc"))
-        (ObjectDataI64 0))]
+          (CompilerObjectDataRecord.Label ".L_tl_argc"))
+        (CompilerObjectDataRecord.I64 0))]
     [with-argv-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
         with-argc
         ".L_tl_argv"
-        (ObjectSectionData)
-        (ObjectSymbolData))]
+        (CompilerObjectSectionKind.Data)
+        (CompilerObjectSymbolKind.Data))]
     [with-argv : CompilerBackendObjectParts
       (compiler-backend-object-add-data
         (compiler-backend-object-add-data
           with-argv-symbol
-          (ObjectDataLabel ".L_tl_argv"))
-        (ObjectDataI64 0))]
+          (CompilerObjectDataRecord.Label ".L_tl_argv"))
+        (CompilerObjectDataRecord.I64 0))]
     [with-boot-off-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
         with-argv
         "tl_boot_off"
-        (ObjectSectionBss)
-        (ObjectSymbolData))]
+        (CompilerObjectSectionKind.Bss)
+        (CompilerObjectSymbolKind.Data))]
     [with-boot-off : CompilerBackendObjectParts
       (compiler-backend-object-add-bss
         (compiler-backend-object-add-bss
           (compiler-backend-object-add-bss
             with-boot-off-symbol
-            (ObjectDataAlign 8))
-          (ObjectDataLabel "tl_boot_off"))
-        (ObjectDataZero 8))]
+            (CompilerObjectDataRecord.Align 8))
+          (CompilerObjectDataRecord.Label "tl_boot_off"))
+        (CompilerObjectDataRecord.Zero 8))]
     [with-boot-pool-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
         with-boot-off
         "tl_boot_pool"
-        (ObjectSectionBss)
-        (ObjectSymbolData))]
+        (CompilerObjectSectionKind.Bss)
+        (CompilerObjectSymbolKind.Data))]
     (compiler-backend-object-add-bss
       (compiler-backend-object-add-bss
         with-boot-pool-symbol
-        (ObjectDataLabel "tl_boot_pool"))
-      (ObjectDataZero 524288))))
+        (CompilerObjectDataRecord.Label "tl_boot_pool"))
+      (CompilerObjectDataRecord.Zero 524288))))
 
 (define (compiler-backend-object-add-text-bytes
   [parts : CompilerBackendObjectParts]
   [bytes : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-text parts (ObjectX64Bytes bytes)))
+  (compiler-backend-object-add-text parts (CompilerObjectX64Instr.Bytes bytes)))
 
 (define (compiler-backend-object-add-call-instr
   [parts : CompilerBackendObjectParts]
@@ -30650,9 +30659,9 @@ tl_memchr:
     (compiler-backend-object-add-text-relocation
       parts
       site
-      (ObjectRelocCall)
+      (CompilerObjectRelocationKind.Call)
       target)
-    (ObjectX64Call target)))
+    (CompilerObjectX64Instr.Call target)))
 
 (define (compiler-backend-object-linux-exit-bytes) : String
   (compiler-backend-object-bytes-from-hex "4889c748c7c03c0000000f05"))
@@ -30665,10 +30674,12 @@ tl_memchr:
       (compiler-backend-object-symbol-export-section
         parts
         entry
-        (ObjectSectionText)
-        (ObjectSymbolFunction))]
+        (CompilerObjectSectionKind.Text)
+        (CompilerObjectSymbolKind.Function))]
     [with-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text with-symbol (ObjectX64Label entry))]
+      (compiler-backend-object-add-text
+        with-symbol
+        (CompilerObjectX64Instr.Label entry))]
     [with-main-call : CompilerBackendObjectParts
       (compiler-backend-object-add-call-instr with-label entry "main")]
     (compiler-backend-object-add-text-bytes
@@ -30695,20 +30706,20 @@ tl_memchr:
             (compiler-backend-object-symbol-local-section
               parts
               "__chkstk"
-              (ObjectSectionText)
-              (ObjectSymbolRuntime))
+              (CompilerObjectSectionKind.Text)
+              (CompilerObjectSymbolKind.Runtime))
             "tl_setup_argv"
-            (ObjectSectionText)
-            (ObjectSymbolRuntime))
+            (CompilerObjectSectionKind.Text)
+            (CompilerObjectSymbolKind.Runtime))
           ".L_tl_boot_alloc"
-          (ObjectSectionText)
-          (ObjectSymbolRuntime))
+          (CompilerObjectSectionKind.Text)
+          (CompilerObjectSymbolKind.Runtime))
         "GetCommandLineA"
-        (ObjectSymbolFunction))]
+        (CompilerObjectSymbolKind.Function))]
     [with-chkstk-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-symbols
-        (ObjectX64Label "__chkstk"))]
+        (CompilerObjectX64Instr.Label "__chkstk"))]
     [with-chkstk : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-chkstk-label
@@ -30716,7 +30727,7 @@ tl_memchr:
     [with-setup-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-chkstk
-        (ObjectX64Label "tl_setup_argv"))]
+        (CompilerObjectX64Instr.Label "tl_setup_argv"))]
     [with-setup-pre : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-setup-label
@@ -30752,16 +30763,16 @@ tl_memchr:
       (compiler-backend-object-add-rip-instr
         with-after-boot2
         "tl_setup_argv"
-        (ObjectRelocRipAddress)
+        (CompilerObjectRelocationKind.RipAddress)
         ".L_tl_argc"
-        (ObjectX64StoreR15Rip ".L_tl_argc"))]
+        (CompilerObjectX64Instr.StoreR15Rip ".L_tl_argc"))]
     [with-argv-store : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
         with-argc-store
         "tl_setup_argv"
-        (ObjectRelocRipAddress)
+        (CompilerObjectRelocationKind.RipAddress)
         ".L_tl_argv"
-        (ObjectX64StoreR14Rip ".L_tl_argv"))]
+        (CompilerObjectX64Instr.StoreR14Rip ".L_tl_argv"))]
     [with-setup-end : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-argv-store
@@ -30769,25 +30780,25 @@ tl_memchr:
     [with-boot-public-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-setup-end
-        (ObjectX64Label "tl_alloc"))]
+        (CompilerObjectX64Instr.Label "tl_alloc"))]
     [with-boot-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-boot-public-label
-        (ObjectX64Label ".L_tl_boot_alloc"))]
+        (CompilerObjectX64Instr.Label ".L_tl_boot_alloc"))]
     [with-boot-off-load : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
         with-boot-label
         ".L_tl_boot_alloc"
-        (ObjectRelocRipValue)
+        (CompilerObjectRelocationKind.RipValue)
         "tl_boot_off"
-        (ObjectX64LoadRip "tl_boot_off"))]
+        (CompilerObjectX64Instr.LoadRip "tl_boot_off"))]
     [with-boot-pool-lea : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
         with-boot-off-load
         ".L_tl_boot_alloc"
-        (ObjectRelocRipAddress)
+        (CompilerObjectRelocationKind.RipAddress)
         "tl_boot_pool"
-        (ObjectX64LoadRipAddressRdx "tl_boot_pool"))]
+        (CompilerObjectX64Instr.LoadRipAddressRdx "tl_boot_pool"))]
     [with-add-base : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-boot-pool-lea
@@ -30796,9 +30807,9 @@ tl_memchr:
       (compiler-backend-object-add-rip-instr
         with-add-base
         ".L_tl_boot_alloc"
-        (ObjectRelocRipAddress)
+        (CompilerObjectRelocationKind.RipAddress)
         "tl_boot_off"
-        (ObjectX64AddRcxRip "tl_boot_off"))]
+        (CompilerObjectX64Instr.AddRcxRip "tl_boot_off"))]
     (compiler-backend-object-add-text-bytes
       with-boot-off-add
       (compiler-backend-object-windows-ret-bytes))))
@@ -30814,25 +30825,29 @@ tl_memchr:
           (compiler-backend-object-symbol-export-section
             parts
             entry
-            (ObjectSectionText)
-            (ObjectSymbolFunction))
+            (CompilerObjectSectionKind.Text)
+            (CompilerObjectSymbolKind.Function))
           entry-end
-          (ObjectSectionText)
-          (ObjectSymbolFunction))
+          (CompilerObjectSectionKind.Text)
+          (CompilerObjectSymbolKind.Function))
         "ExitProcess"
-        (ObjectSymbolFunction))]
+        (CompilerObjectSymbolKind.Function))]
     [with-label : CompilerBackendObjectParts
-      (compiler-backend-object-add-text with-symbols (ObjectX64Label entry))]
+      (compiler-backend-object-add-text
+        with-symbols
+        (CompilerObjectX64Instr.Label entry))]
     [with-sub : CompilerBackendObjectParts
-      (compiler-backend-object-add-text with-label (ObjectX64SubRspImm8 40))]
+      (compiler-backend-object-add-text
+        with-label
+        (CompilerObjectX64Instr.SubRspImm8 40))]
     [with-setup-call : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-sub
           entry
-          (ObjectRelocCall)
+          (CompilerObjectRelocationKind.Call)
           "tl_setup_argv")
-        (ObjectX64Call "tl_setup_argv"))]
+        (CompilerObjectX64Instr.Call "tl_setup_argv"))]
     [with-gs-clear : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-setup-call
@@ -30842,36 +30857,40 @@ tl_memchr:
         (compiler-backend-object-add-text-relocation
           with-gs-clear
           entry
-          (ObjectRelocRipValue)
+          (CompilerObjectRelocationKind.RipValue)
           ".L_tl_argc")
-        (ObjectX64MovRcxRip ".L_tl_argc"))]
+        (CompilerObjectX64Instr.MovRcxRip ".L_tl_argc"))]
     [with-argv : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-argc
           entry
-          (ObjectRelocRipValue)
+          (CompilerObjectRelocationKind.RipValue)
           ".L_tl_argv")
-        (ObjectX64MovRdxRip ".L_tl_argv"))]
+        (CompilerObjectX64Instr.MovRdxRip ".L_tl_argv"))]
     [with-main-call : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-argv
           entry
-          (ObjectRelocCall)
+          (CompilerObjectRelocationKind.Call)
           "main")
-        (ObjectX64Call "main"))]
+        (CompilerObjectX64Instr.Call "main"))]
     [with-move-exit-code : CompilerBackendObjectParts
-      (compiler-backend-object-add-text with-main-call (ObjectX64MovRcxRax))]
+      (compiler-backend-object-add-text
+        with-main-call
+        (CompilerObjectX64Instr.MovRcxRax))]
     [with-exit-call : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-move-exit-code
           entry
-          (ObjectRelocCall)
+          (CompilerObjectRelocationKind.Call)
           "ExitProcess")
-        (ObjectX64Call "ExitProcess"))]
-    (compiler-backend-object-add-text with-exit-call (ObjectX64Label entry-end))))
+        (CompilerObjectX64Instr.Call "ExitProcess"))]
+    (compiler-backend-object-add-text
+      with-exit-call
+      (CompilerObjectX64Instr.Label entry-end))))
 
 (define (compiler-backend-object-add-windows-entry-unwind
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -30884,43 +30903,44 @@ tl_memchr:
       (compiler-backend-object-symbol-local-section
         parts
         xdata-label
-        (ObjectSectionXdata)
-        (ObjectSymbolData))]
+        (CompilerObjectSectionKind.Xdata)
+        (CompilerObjectSymbolKind.Data))]
     [with-xdata : CompilerBackendObjectParts
       (compiler-backend-object-add-xdata
         (compiler-backend-object-add-xdata
           with-xdata-symbol
-          (ObjectDataLabel xdata-label))
-        (ObjectDataBytes (compiler-backend-object-windows-entry-xdata-bytes)))]
+          (CompilerObjectDataRecord.Label xdata-label))
+        (CompilerObjectDataRecord.Bytes
+          (compiler-backend-object-windows-entry-xdata-bytes)))]
     [with-pdata-begin : CompilerBackendObjectParts
       (compiler-backend-object-add-pdata
         (compiler-backend-object-add-pdata-relocation
           (compiler-backend-object-add-pdata
             with-xdata
-            (ObjectDataLabel pdata-begin))
+            (CompilerObjectDataRecord.Label pdata-begin))
           pdata-begin
-          (ObjectRelocAddr32Nb)
+          (CompilerObjectRelocationKind.Addr32Nb)
           "_tl_start")
-        (ObjectDataSymbolRva32 "_tl_start"))]
+        (CompilerObjectDataRecord.SymbolRva32 "_tl_start"))]
     [with-pdata-end : CompilerBackendObjectParts
       (compiler-backend-object-add-pdata
         (compiler-backend-object-add-pdata-relocation
           (compiler-backend-object-add-pdata
             with-pdata-begin
-            (ObjectDataLabel pdata-end))
+            (CompilerObjectDataRecord.Label pdata-end))
           pdata-end
-          (ObjectRelocAddr32Nb)
+          (CompilerObjectRelocationKind.Addr32Nb)
           ".L_tl_start_end")
-        (ObjectDataSymbolRva32 ".L_tl_start_end"))]
+        (CompilerObjectDataRecord.SymbolRva32 ".L_tl_start_end"))]
     (compiler-backend-object-add-pdata
       (compiler-backend-object-add-pdata-relocation
         (compiler-backend-object-add-pdata
           with-pdata-end
-          (ObjectDataLabel pdata-unwind))
+          (CompilerObjectDataRecord.Label pdata-unwind))
         pdata-unwind
-        (ObjectRelocAddr32Nb)
+        (CompilerObjectRelocationKind.Addr32Nb)
         xdata-label)
-      (ObjectDataSymbolRva32 xdata-label))))
+      (CompilerObjectDataRecord.SymbolRva32 xdata-label))))
 
 (define (compiler-backend-object-add-windows-entry
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -30953,75 +30973,75 @@ tl_memchr:
   [crt-entry : bool]) : CompilerObjectSectionList
   (let
     [empty-data : CompilerObjectDataRecordList
-      (compiler-object-data-list-reverse ObjectDataNil)]
+      (compiler-object-data-list-reverse CompilerObjectDataRecordList.Nil)]
     [empty-instrs : CompilerObjectX64InstrList
-      (compiler-object-instr-list-reverse ObjectInstrNil)]
+      (compiler-object-instr-list-reverse CompilerObjectX64InstrList.Nil)]
     [base : CompilerObjectSectionList
       (compiler-object-section-cons
-        (ObjectSection
-          (ObjectSectionText)
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Text)
           empty-data
           (compiler-object-instr-list-reverse (struct-get parts text)))
         (compiler-object-section-cons
-          (ObjectSection
-            (ObjectSectionData)
+          (CompilerObjectSection.Section
+            (CompilerObjectSectionKind.Data)
             (compiler-object-data-list-reverse (struct-get parts data))
             empty-instrs)
           (compiler-object-section-cons
-            (ObjectSection
-              (ObjectSectionRodata)
+            (CompilerObjectSection.Section
+              (CompilerObjectSectionKind.Rodata)
               (compiler-object-data-list-reverse (struct-get parts rodata))
               empty-instrs)
             (compiler-object-section-cons
-              (ObjectSection
-                (ObjectSectionBss)
+              (CompilerObjectSection.Section
+                (CompilerObjectSectionKind.Bss)
                 (compiler-object-data-list-reverse (struct-get parts bss))
                 empty-instrs)
-              ObjectSectionNil))))]
+              CompilerObjectSectionList.Nil))))]
     (match target
       [(BackendTargetLinux) (compiler-object-section-list-dense base)]
       [(BackendTargetWindows)
         (compiler-object-section-list-dense
           (compiler-object-section-cons
-            (ObjectSection
-              (ObjectSectionText)
+            (CompilerObjectSection.Section
+              (CompilerObjectSectionKind.Text)
               empty-data
               (compiler-object-instr-list-reverse (struct-get parts text)))
             (compiler-object-section-cons
-              (ObjectSection
-                (ObjectSectionData)
+              (CompilerObjectSection.Section
+                (CompilerObjectSectionKind.Data)
                 (compiler-object-data-list-reverse (struct-get parts data))
                 empty-instrs)
               (compiler-object-section-cons
-                (ObjectSection
-                  (ObjectSectionRodata)
+                (CompilerObjectSection.Section
+                  (CompilerObjectSectionKind.Rodata)
                   (compiler-object-data-list-reverse (struct-get parts rodata))
                   empty-instrs)
                 (compiler-object-section-cons
-                  (ObjectSection
-                    (ObjectSectionBss)
+                  (CompilerObjectSection.Section
+                    (CompilerObjectSectionKind.Bss)
                     (compiler-object-data-list-reverse (struct-get parts bss))
                     empty-instrs)
                   (compiler-object-section-cons
-                    (ObjectSection
-                      (ObjectSectionPdata)
+                    (CompilerObjectSection.Section
+                      (CompilerObjectSectionKind.Pdata)
                       (compiler-object-data-list-reverse
                         (struct-get parts pdata))
                       empty-instrs)
                     (compiler-object-section-cons
-                      (ObjectSection
-                        (ObjectSectionXdata)
+                      (CompilerObjectSection.Section
+                        (CompilerObjectSectionKind.Xdata)
                         (compiler-object-data-list-reverse
                           (struct-get parts xdata))
                         empty-instrs)
                       (compiler-object-section-cons
-                        (ObjectSection
-                          (ObjectSectionRsrc)
+                        (CompilerObjectSection.Section
+                          (CompilerObjectSectionKind.Rsrc)
                           (if (and emit-entry (not crt-entry))
                             (compiler-backend-object-windows-manifest-resource-records)
                             empty-data)
                           empty-instrs)
-                        ObjectSectionNil))))))))])))
+                        CompilerObjectSectionList.Nil))))))))])))
 
 (define (compiler-backend-object-image-symbols
   [parts : CompilerBackendObjectParts]
@@ -31029,11 +31049,11 @@ tl_memchr:
   (compiler-object-symbol-list-reverse
     (if emit-manifest-resource
       (compiler-object-symbol-cons
-        (ObjectSymbol
+        (CompilerObjectSymbol.Symbol
           compiler-backend-object-windows-manifest-label
-          (ObjectSymbolLocal)
-          (ObjectSymbolData)
-          (ObjectSomeSection (ObjectSectionRsrc)))
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Data)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rsrc)))
         (struct-get parts symbols))
       (struct-get parts symbols))))
 
@@ -31043,10 +31063,10 @@ tl_memchr:
   (compiler-object-relocation-list-reverse
     (if emit-manifest-resource
       (compiler-object-relocation-cons
-        (ObjectRelocation
-          (ObjectSectionRsrc)
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Rsrc)
           compiler-backend-object-windows-rsrc-data-label
-          (ObjectRelocAddr32Nb)
+          (CompilerObjectRelocationKind.Addr32Nb)
           compiler-backend-object-windows-manifest-label)
         (struct-get parts relocations))
       (struct-get parts relocations))))
@@ -31124,7 +31144,7 @@ tl_memchr:
         emit-entry
         crt-entry)]
     (compiler-backend-object-image-from-parts
-      (compiler-backend-object-add-bss seed (ObjectDataZero 0))
+      (compiler-backend-object-add-bss seed (CompilerObjectDataRecord.Zero 0))
       target
       emit-entry
       crt-entry)))
@@ -32129,9 +32149,9 @@ tl_memchr:
       (while (< index count)
         (begin
           (match (compiler-object-relocation-list-ref relocs index)
-            [(ObjectRelocation _ _ kind target)
+            [(CompilerObjectRelocation.Relocation _ _ kind target)
               (match kind
-                [(ObjectRelocAbs64)
+                [(CompilerObjectRelocationKind.Abs64)
                   (set! out (compiler-backend-pic-rewrite-target out target))]
                 [_ unit])])
           (set! index (+ index 1))))
@@ -32150,16 +32170,19 @@ tl_memchr:
   [record : CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(ObjectDataLabel _) offset]
-    [(ObjectDataAlign align) (compiler-backend-pic-align-offset offset align)]
-    [(ObjectDataBytes bytes) (+ offset (string.string-length bytes))]
-    [(ObjectDataString text) (+ offset (+ (string.string-length text) 1))]
-    [(ObjectDataF64 _) (+ offset 8)]
-    [(ObjectDataF32 _) (+ offset 4)]
-    [(ObjectDataI64 _) (+ offset 8)]
-    [(ObjectDataZero count) (+ offset count)]
-    [(ObjectDataSymbolAddress _) (+ offset 8)]
-    [(ObjectDataSymbolRva32 _) (+ offset 4)]))
+    [(CompilerObjectDataRecord.Label _) offset]
+    [(CompilerObjectDataRecord.Align align)
+      (compiler-backend-pic-align-offset offset align)]
+    [(CompilerObjectDataRecord.Bytes bytes)
+      (+ offset (string.string-length bytes))]
+    [(CompilerObjectDataRecord.String text)
+      (+ offset (+ (string.string-length text) 1))]
+    [(CompilerObjectDataRecord.F64 _) (+ offset 8)]
+    [(CompilerObjectDataRecord.F32 _) (+ offset 4)]
+    [(CompilerObjectDataRecord.I64 _) (+ offset 8)]
+    [(CompilerObjectDataRecord.Zero count) (+ offset count)]
+    [(CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
+    [(CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-backend-pic-data-label-offset-from
   [records : CompilerObjectDataRecordList]
@@ -32177,7 +32200,7 @@ tl_memchr:
           [record : CompilerObjectDataRecord
             (compiler-object-data-record-list-ref records index)]
           (match record
-            [(ObjectDataLabel found)
+            [(CompilerObjectDataRecord.Label found)
               (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
@@ -32198,20 +32221,20 @@ tl_memchr:
   [kind : CompilerObjectSectionKind]
   [label : String]) : i64
   (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (match kind
-        [(ObjectSectionText) -1]
+        [(CompilerObjectSectionKind.Text) -1]
         [_ (compiler-backend-pic-data-label-offset-from data label 0)])]))
 
 (define (compiler-backend-pic-section-name [kind : CompilerObjectSectionKind]) : String
   (match kind
-    [(ObjectSectionText) "text"]
-    [(ObjectSectionData) "data"]
-    [(ObjectSectionRodata) "rodata"]
-    [(ObjectSectionBss) "bss"]
-    [(ObjectSectionPdata) "pdata"]
-    [(ObjectSectionXdata) "xdata"]
-    [(ObjectSectionRsrc) "rsrc"]))
+    [(CompilerObjectSectionKind.Text) "text"]
+    [(CompilerObjectSectionKind.Data) "data"]
+    [(CompilerObjectSectionKind.Rodata) "rodata"]
+    [(CompilerObjectSectionKind.Bss) "bss"]
+    [(CompilerObjectSectionKind.Pdata) "pdata"]
+    [(CompilerObjectSectionKind.Xdata) "xdata"]
+    [(CompilerObjectSectionKind.Rsrc) "rsrc"]))
 
 (define (compiler-backend-pic-fixup-line
   [section : CompilerObjectSectionKind]
@@ -32239,9 +32262,9 @@ tl_memchr:
       (while (< index count)
         (begin
           (match (compiler-object-relocation-list-ref relocs index)
-            [(ObjectRelocation section site kind target)
+            [(CompilerObjectRelocation.Relocation section site kind target)
               (match kind
-                [(ObjectRelocAbs64)
+                [(CompilerObjectRelocationKind.Abs64)
                   (let
                     [offset : i64
                       (compiler-backend-pic-section-label-offset
@@ -32281,9 +32304,9 @@ tl_memchr:
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
-          [(ObjectSymbol _ binding _ _)
+          [(CompilerObjectSymbol.Symbol _ binding _ _)
             (match binding
-              [(ObjectSymbolExtern) (set! found true)]
+              [(CompilerObjectSymbolBinding.Extern) (set! found true)]
               [_ (set! index (+ index 1))])]))
       found)))
 
@@ -32298,16 +32321,16 @@ tl_memchr:
     (begin
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
-          [(ObjectSymbol name binding _ section)
+          [(CompilerObjectSymbol.Symbol name binding _ section)
             (if (string.string-eq name target)
               (begin
                 (set!
                   result
                   (match binding
-                    [(ObjectSymbolExtern) false]
+                    [(CompilerObjectSymbolBinding.Extern) false]
                     [_
                       (match section
-                        [(ObjectNoSection) false]
+                        [(CompilerObjectMaybeSection.No) false]
                         [_ true])]))
                 (set! done true))
               (set! index (+ index 1)))]))
@@ -32317,15 +32340,15 @@ tl_memchr:
   [image : CompilerObjectImage]
   [reloc : CompilerObjectRelocation]) : bool
   (match reloc
-    [(ObjectRelocation section site kind target)
+    [(CompilerObjectRelocation.Relocation section site kind target)
       (match kind
-        [(ObjectRelocAbs64)
+        [(CompilerObjectRelocationKind.Abs64)
           (and
             (compiler-backend-pic-target-symbol-internal?
               (struct-get image symbols)
               target)
             (match section
-              [(ObjectSectionData)
+              [(CompilerObjectSectionKind.Data)
                 (let
                   [offset : i64
                     (compiler-backend-pic-section-label-offset
@@ -32333,7 +32356,7 @@ tl_memchr:
                       section
                       site)]
                   (and (>= offset 0) (= (% offset 8) 0)))]
-              [(ObjectSectionRodata)
+              [(CompilerObjectSectionKind.Rodata)
                 (let
                   [offset : i64
                     (compiler-backend-pic-section-label-offset

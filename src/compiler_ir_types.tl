@@ -812,33 +812,46 @@
     [(AstTyFunc args ret)
       (AstTyFunc
         (box (compiler-ir-clone-type-list (box-get args)))
-        (ty-node-push (compiler-ir-clone-type (ty-node-get ret))))]
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get ret))))]
     [(AstTyTuple elems)
       (AstTyTuple (box (compiler-ir-clone-type-list (box-get elems))))]
     [(AstTyArray elem len)
       (AstTyArray
-        (ty-node-push (compiler-ir-clone-type (ty-node-get elem)))
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get elem)))
         len)]
     [(AstTyDynArray elem)
-      (AstTyDynArray (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+      (AstTyDynArray
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
     [(AstTyBox elem)
-      (AstTyBox (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+      (AstTyBox
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
     [(AstTyRegion region inner)
       (AstTyRegion
         (clone region)
-        (ty-node-push (compiler-ir-clone-type (ty-node-get inner))))]
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get inner))))]
     [(AstTyRef region inner)
       (AstTyRef
         (clone region)
-        (ty-node-push (compiler-ir-clone-type (ty-node-get inner))))]
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get inner))))]
     [(AstTyMutRef region inner)
       (AstTyMutRef
         (clone region)
-        (ty-node-push (compiler-ir-clone-type (ty-node-get inner))))]
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get inner))))]
     [(AstTyPtr elem)
-      (AstTyPtr (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+      (AstTyPtr
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
     [(AstTyMutPtr elem)
-      (AstTyMutPtr (ty-node-push (compiler-ir-clone-type (ty-node-get elem))))]
+      (AstTyMutPtr
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
     [_ (clone ty)]))
 
 (define (compiler-ir-clone-type-list [tys : AstTypeList]) : AstTypeList
@@ -846,7 +859,8 @@
     [(AstTypeNil) (AstTypeNil)]
     [(AstTypeCons head tail)
       (AstTypeCons
-        (ty-node-push (compiler-ir-clone-type (ty-node-get head)))
+        (ast-node-pool-reader-type-push
+          (compiler-ir-clone-type (ast-node-pool-reader-type-get head)))
         (box (compiler-ir-clone-type-list (box-get tail))))]))
 
 (define (compiler-ir-clone-instr [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -1340,7 +1354,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (ast-node-pool-reader-type-get head)]
         [rest : AstTypeList (box-get rest)]
         (str_cat.str-cat
           (compiler-ir-type-render head)
@@ -1396,7 +1410,7 @@
         "(-> "
         (compiler-ir-type-list-render (box-get args))
         " "
-        (compiler-ir-type-render (ty-node-get ret))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get ret))
         ")")]
     [(AstTyTuple elems)
       (str_cat.str-cat
@@ -1406,37 +1420,40 @@
     [(AstTyArray elem count)
       (str_cat.str-cat
         "(Array "
-        (compiler-ir-type-render (ty-node-get elem))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         " "
         (string.int->string count)
         ")")]
     [(AstTyDynArray elem)
       (str_cat.str-cat
         "(Array "
-        (compiler-ir-type-render (ty-node-get elem))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         ")")]
     [(AstTyBox elem)
-      (str_cat.str-cat "(Box " (compiler-ir-type-render (ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(Box "
+        (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
+        ")")]
     [(AstTyRegion region inner)
       (str_cat.str-cat
         "(Region "
         region
         " "
-        (compiler-ir-type-render (ty-node-get inner))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstTyRef region inner)
       (str_cat.str-cat
         "(& "
         region
         " "
-        (compiler-ir-type-render (ty-node-get inner))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstTyMutRef region inner)
       (str_cat.str-cat
         "(&mut "
         region
         " "
-        (compiler-ir-type-render (ty-node-get inner))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
@@ -1454,11 +1471,14 @@
         (intern-str name)
         (box-get lifetimes))]
     [(AstTyPtr elem)
-      (str_cat.str-cat "(Ptr " (compiler-ir-type-render (ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(Ptr "
+        (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
+        ")")]
     [(AstTyMutPtr elem)
       (str_cat.str-cat
         "(MutPtr "
-        (compiler-ir-type-render (ty-node-get elem))
+        (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         ")")]))
 
 (define (compiler-ir-u64-payload-render [value : u64]) : String
@@ -2813,7 +2833,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons head tail)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (ast-node-pool-reader-type-get head)]
         [tail : AstTypeList (box-get tail)]
         (str_cat.str-cat
           " "
@@ -2846,7 +2866,7 @@
         "(->"
         (compiler-ir-type-list-name (box-get args))
         " "
-        (compiler-ir-type-name (ty-node-get ret))
+        (compiler-ir-type-name (ast-node-pool-reader-type-get ret))
         ")")]
     [(AstTyTuple elems)
       (str_cat.str-cat
@@ -2856,34 +2876,40 @@
     [(AstTyArray elem count)
       (str_cat.str-cat
         "(Array "
-        (compiler-ir-type-name (ty-node-get elem))
+        (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
         " "
         (string.int->string count)
         ")")]
     [(AstTyDynArray elem)
-      (str_cat.str-cat "(Array " (compiler-ir-type-name (ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(Array "
+        (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
+        ")")]
     [(AstTyBox elem)
-      (str_cat.str-cat "(Box " (compiler-ir-type-name (ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(Box "
+        (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
+        ")")]
     [(AstTyRegion region inner)
       (str_cat.str-cat
         "(in "
         region
         " "
-        (compiler-ir-type-name (ty-node-get inner))
+        (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstTyRef region inner)
       (str_cat.str-cat
         "(& "
         region
         " "
-        (compiler-ir-type-name (ty-node-get inner))
+        (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstTyMutRef region inner)
       (str_cat.str-cat
         "(&mut "
         region
         " "
-        (compiler-ir-type-name (ty-node-get inner))
+        (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name lifetimes)
@@ -2901,11 +2927,14 @@
         (intern-str name)
         (box-get lifetimes))]
     [(AstTyPtr elem)
-      (str_cat.str-cat "(Ptr " (compiler-ir-type-name (ty-node-get elem)) ")")]
+      (str_cat.str-cat
+        "(Ptr "
+        (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
+        ")")]
     [(AstTyMutPtr elem)
       (str_cat.str-cat
         "(MutPtr "
-        (compiler-ir-type-name (ty-node-get elem))
+        (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
         ")")]))
 
 (define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String

@@ -7753,7 +7753,7 @@
     [(AstTyEnum name) (intern-str name)]
     [(AstTyEnumArgs name _) (intern-str name)]
     [(AstTyRegion _ inner)
-      (compiler-reg-aggregate-type-name (ty-node-get inner))]
+      (compiler-reg-aggregate-type-name (ast-node-pool-reader-type-get inner))]
     [_ ""]))
 
 ;; True when a var's type is a >=2-word register-group per the program map.

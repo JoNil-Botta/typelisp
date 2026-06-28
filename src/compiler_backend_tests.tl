@@ -12009,7 +12009,7 @@
         [(AstTyI64)
           (match args
             [(AstTypeCons arg rest)
-              (match (ty-node-get arg)
+              (match (ast-node-pool-reader-type-get arg)
                 [(AstTyI64)
                   (match (box-get rest)
                     [(AstTypeNil) true]

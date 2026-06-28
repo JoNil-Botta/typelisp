@@ -1561,6 +1561,19 @@
     (ast-node-pool-state-capture)
     (ty-node-pool-state-capture)))
 
+(define ast-node-pool-reader-explicit? : bool
+  false)
+(define ast-node-pool-reader-context : AstNodePoolContext
+  (ast-node-pool-context-capture-active))
+
+(define (ast-node-pool-reader-use! [pools : AstNodePoolContext]) : unit
+  (begin
+    (set! ast-node-pool-reader-context pools)
+    (set! ast-node-pool-reader-explicit? true)))
+
+(define (ast-node-pool-reader-clear!) : unit
+  (set! ast-node-pool-reader-explicit? false))
+
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
   (ast-node-pool-context-new
     (array.array-ref (struct-get pools expr-pool) 0)
@@ -1596,6 +1609,10 @@
 
 (define (ast-node-pool-context-type-capacity [pools : AstNodePoolContext]) : i64
   (ast-type-node-pool-state-capacity
+    (array.array-ref (struct-get pools type-pool) 0)))
+
+(define (ast-node-pool-context-type-exhausted? [pools : AstNodePoolContext]) : bool
+  (ast-type-node-pool-state-exhausted?
     (array.array-ref (struct-get pools type-pool) 0)))
 
 (define (ast-node-pool-context-base-arena [pools : AstNodePoolContext]) : i64
@@ -1674,6 +1691,21 @@
   (ast-type-node-pool-state-get
     (array.array-ref (struct-get pools type-pool) 0)
     id))
+
+(define (ast-node-pool-reader-type-get [id : i64]) : AstType
+  (if ast-node-pool-reader-explicit?
+    (ast-node-pool-context-type-get ast-node-pool-reader-context id)
+    (ty-node-get id)))
+
+(define (ast-node-pool-reader-type-push [node : AstType]) : i64
+  (if ast-node-pool-reader-explicit?
+    (ast-node-pool-context-type-push ast-node-pool-reader-context node)
+    (ty-node-push node)))
+
+(define (ast-node-pool-reader-type-exhausted?) : bool
+  (if ast-node-pool-reader-explicit?
+    (ast-node-pool-context-type-exhausted? ast-node-pool-reader-context)
+    (ty-node-pool-exhausted?)))
 
 (define (ast-node-pool-context-type-set!
   [pools : AstNodePoolContext]
@@ -1787,10 +1819,10 @@
   (AstProgram (Box AstDeclList)))
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
-  (AstTypeCons (ty-node-push head) (box rest)))
+  (AstTypeCons (ast-node-pool-reader-type-push head) (box rest)))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
-  (AstTyFunc (box args) (ty-node-push ret)))
+  (AstTyFunc (box args) (ast-node-pool-reader-type-push ret)))
 
 (define (ast-ty-tuple [elems : AstTypeList]) : AstType
   (AstTyTuple (box elems)))
@@ -1805,28 +1837,28 @@
   (AstTyVarArgs name (box lifetimes)))
 
 (define (ast-ty-array [elem : AstType] [count : i64]) : AstType
-  (AstTyArray (ty-node-push elem) count))
+  (AstTyArray (ast-node-pool-reader-type-push elem) count))
 
 (define (ast-ty-dyn-array [elem : AstType]) : AstType
-  (AstTyDynArray (ty-node-push elem)))
+  (AstTyDynArray (ast-node-pool-reader-type-push elem)))
 
 (define (ast-ty-box [elem : AstType]) : AstType
-  (AstTyBox (ty-node-push elem)))
+  (AstTyBox (ast-node-pool-reader-type-push elem)))
 
 (define (ast-ty-region [region : String] [inner : AstType]) : AstType
-  (AstTyRegion region (ty-node-push inner)))
+  (AstTyRegion region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-ref [region : String] [inner : AstType]) : AstType
-  (AstTyRef region (ty-node-push inner)))
+  (AstTyRef region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-mut-ref [region : String] [inner : AstType]) : AstType
-  (AstTyMutRef region (ty-node-push inner)))
+  (AstTyMutRef region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-ptr [elem : AstType]) : AstType
-  (AstTyPtr (ty-node-push elem)))
+  (AstTyPtr (ast-node-pool-reader-type-push elem)))
 
 (define (ast-ty-mut-ptr [elem : AstType]) : AstType
-  (AstTyMutPtr (ty-node-push elem)))
+  (AstTyMutPtr (ast-node-pool-reader-type-push elem)))
 
 (define (ast-type-cons-with-pools
   [pools : AstNodePoolContext]
@@ -4015,7 +4047,9 @@
       (match b
         [(AstTypeCons b-head b-rest)
           (and
-            (ast-type-eq? (ty-node-get a-head) (ty-node-get b-head))
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-head)
+              (ast-node-pool-reader-type-get b-head))
             (ast-type-list-eq? (box-get a-rest) (box-get b-rest)))]
         [_ false])]))
 
@@ -4102,7 +4136,9 @@
         [(AstTyFunc b-args b-ret)
           (and
             (ast-type-list-eq? (box-get a-args) (box-get b-args))
-            (ast-type-eq? (ty-node-get a-ret) (ty-node-get b-ret)))]
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-ret)
+              (ast-node-pool-reader-type-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-elems)
       (match b
@@ -4114,38 +4150,50 @@
         [(AstTyArray b-elem b-len)
           (and
             (= a-len b-len)
-            (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem)))]
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-elem)
+              (ast-node-pool-reader-type-get b-elem)))]
         [_ false])]
     [(AstTyDynArray a-elem)
       (match b
         [(AstTyDynArray b-elem)
-          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
+          (ast-type-eq?
+            (ast-node-pool-reader-type-get a-elem)
+            (ast-node-pool-reader-type-get b-elem))]
         [_ false])]
     [(AstTyBox a-elem)
       (match b
         [(AstTyBox b-elem)
-          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
+          (ast-type-eq?
+            (ast-node-pool-reader-type-get a-elem)
+            (ast-node-pool-reader-type-get b-elem))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
           (and
             (string.string-eq a-region b-region)
-            (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-inner)
+              (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
     [(AstTyRef a-lifetime a-inner)
       (match b
         [(AstTyRef b-lifetime b-inner)
           (and
             (string.string-eq a-lifetime b-lifetime)
-            (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-inner)
+              (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-lifetime a-inner)
       (match b
         [(AstTyMutRef b-lifetime b-inner)
           (and
             (string.string-eq a-lifetime b-lifetime)
-            (ast-type-eq? (ty-node-get a-inner) (ty-node-get b-inner)))]
+            (ast-type-eq?
+              (ast-node-pool-reader-type-get a-inner)
+              (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -4183,12 +4231,16 @@
     [(AstTyPtr a-elem)
       (match b
         [(AstTyPtr b-elem)
-          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
+          (ast-type-eq?
+            (ast-node-pool-reader-type-get a-elem)
+            (ast-node-pool-reader-type-get b-elem))]
         [_ false])]
     [(AstTyMutPtr a-elem)
       (match b
         [(AstTyMutPtr b-elem)
-          (ast-type-eq? (ty-node-get a-elem) (ty-node-get b-elem))]
+          (ast-type-eq?
+            (ast-node-pool-reader-type-get a-elem)
+            (ast-node-pool-reader-type-get b-elem))]
         [_ false])]))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool

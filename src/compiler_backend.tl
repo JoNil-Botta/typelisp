@@ -4515,7 +4515,8 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (compiler-backend-type-size (ty-node-get inner))]
+    [(AstTyRegion _ inner)
+      (compiler-backend-type-size (ast-node-pool-reader-type-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]
@@ -10725,7 +10726,7 @@
     [(AstTypeNil) IrParamNil]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (IrParam (string.string-append "arg" (string.int->string idx)) ty idx)
@@ -10799,7 +10800,7 @@
               [(AstTyFunc args ret-ty)
                 (CompilerBackendSomeSignature
                   (box-get args)
-                  (ty-node-get ret-ty))]
+                  (ast-node-pool-reader-type-get ret-ty))]
               [_ (CompilerBackendNoSignature)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
@@ -10868,7 +10869,9 @@
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
     [(AstTyFunc args ret-ty)
-      (CompilerBackendSomeSignature (box-get args) (ty-node-get ret-ty))]
+      (CompilerBackendSomeSignature
+        (box-get args)
+        (ast-node-pool-reader-type-get ret-ty))]
     [_ (CompilerBackendNoSignature)]))
 
 (define (compiler-backend-program-index-extern-signatures-into
@@ -10953,7 +10956,8 @@
     [(AstTyEnum name) (ci.intern-str name)]
     [(AstTyEnumArgs name _) (ci.intern-str name)]
     [(AstTyRegion _ inner)
-      (compiler-backend-aggregate-type-name (ty-node-get inner))]
+      (compiler-backend-aggregate-type-name
+        (ast-node-pool-reader-type-get inner))]
     [_ ""]))
 
 (define (compiler-backend-collect-group-counts-instr
@@ -11660,7 +11664,7 @@
     [(AstTypeNil) count]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
         [is-float : bool (compiler-backend-float-type? ty)]
         [next-float : i64
@@ -11689,7 +11693,7 @@
     [(AstTypeNil) ""]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
         [tail : String
           (compiler-backend-windows-vararg-dup-asm
@@ -11759,7 +11763,7 @@
       (match fixed-types
         [(AstTypeCons ty rest)
           (ast-type-cons
-            (ty-node-get ty)
+            (ast-node-pool-reader-type-get ty)
             (compiler-backend-call-actual-param-types-from
               types
               global-types
@@ -11829,7 +11833,7 @@
     (match declared-types
       [(AstTypeCons declared rest)
         (let
-          [declared-ty : AstType (ty-node-get declared)]
+          [declared-ty : AstType (ast-node-pool-reader-type-get declared)]
           [rest-declared : AstTypeList (box-get rest)]
           [memory-size : i64
             (compiler-backend-c-memory-aggregate-marker-size
@@ -11920,7 +11924,8 @@
       (or
         (not
           (string.string-eq
-            (compiler-backend-aggregate-type-name (ty-node-get ty))
+            (compiler-backend-aggregate-type-name
+              (ast-node-pool-reader-type-get ty))
             ""))
         (compiler-backend-type-list-has-aggregate? (box-get rest)))]))
 
@@ -12047,7 +12052,7 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ty-node-get ty)]
+          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -12168,7 +12173,7 @@
     [(AstTypeNil) stack-count]
     [(AstTypeCons ty rest)
       (let
-        [arg-ty : AstType (ty-node-get ty)]
+        [arg-ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest-types : AstTypeList (box-get rest)]
         [is-float : bool (compiler-backend-float-type? arg-ty)]
         [next-int : i64
@@ -12263,7 +12268,9 @@
   (match types
     [(AstTypeNil) false]
     [(AstTypeCons ty rest)
-      (if (compiler-backend-group-type? program-index (ty-node-get ty))
+      (if (compiler-backend-group-type?
+        program-index
+        (ast-node-pool-reader-type-get ty))
         true
         (compiler-backend-type-list-has-group? (box-get rest) program-index))]))
 
@@ -12337,7 +12344,8 @@
             (match param
               [(IrParam _ source-ty var-id)
                 (let
-                  [callee-ty : AstType (ty-node-get target-ty)]
+                  [callee-ty : AstType
+                    (ast-node-pool-reader-type-get target-ty)]
                   (match (compiler-backend-call-arg-at args arg-index)
                     [(IrValueVar arg-var)
                       (and
@@ -12525,7 +12533,7 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ty-node-get ty)]
+          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -12777,7 +12785,7 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ty-node-get ty)]
+          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types
@@ -13126,7 +13134,7 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ty-node-get ty)]
+          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
           [(AstTypeNil) (AstTyI64)])]
       [rest-types : AstTypeList
         (match types

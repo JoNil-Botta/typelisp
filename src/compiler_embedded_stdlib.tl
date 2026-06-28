@@ -34,7 +34,6 @@
 (include-str compiler-embedded-stdlib-queue "stdlib/queue.tl")
 (include-str compiler-embedded-stdlib-random "stdlib/random.tl")
 (include-str compiler-embedded-stdlib-result "stdlib/result.tl")
-(include-str compiler-embedded-stdlib-result_family "stdlib/result_family.tl")
 (include-str compiler-embedded-stdlib-runtime "stdlib/runtime.tl")
 (include-str compiler-embedded-stdlib-serialize "stdlib/serialize.tl")
 (include-str compiler-embedded-stdlib-sort "stdlib/sort.tl")
@@ -134,8 +133,6 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-random)]
     [(embedded-eq? suffix "result.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-result)]
-    [(embedded-eq? suffix "result_family.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-result_family)]
     [(embedded-eq? suffix "runtime.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-runtime)]
     [(embedded-eq? suffix "serialize.tl")

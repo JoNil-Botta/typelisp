@@ -33,7 +33,7 @@
 ;; is a transitive import: the reader imports this module, which imports
 ;; `token.tl`; the loader's post-order DFS loads `token.tl` first, then this
 ;; module, then the reader.
-(import "compiler_intern.tl")
+(import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.io)
 (import "token.tl")
@@ -724,12 +724,12 @@
                     (array.array-set!
                       toks
                       count
-                      (Token.Sym (intern-slice src i (- end i))))
+                      (Token.Sym (ci.intern-slice src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end))
                   (begin
                     (array.array-set! starts count i)
-                    (array.array-set! toks count (Token.Sym (intern ":")))
+                    (array.array-set! toks count (Token.Sym (ci.intern ":")))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
             [(is-symbol-char c)
@@ -740,7 +740,7 @@
                   (array.array-set!
                     toks
                     count
-                    (Token.Sym (intern-slice src i (- end i))))
+                    (Token.Sym (ci.intern-slice src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
@@ -988,7 +988,7 @@
                       stoks
                       count
                       (SpannedToken.Spanned
-                        (Token.Sym (intern-slice src i (- end i)))
+                        (Token.Sym (ci.intern-slice src i (- end i)))
                         line
                         col))
                     (set! count (+ count 1))
@@ -998,7 +998,10 @@
                     (array.array-set!
                       stoks
                       count
-                      (SpannedToken.Spanned (Token.Sym (intern ":")) line col))
+                      (SpannedToken.Spanned
+                        (Token.Sym (ci.intern ":"))
+                        line
+                        col))
                     (set! count (+ count 1))
                     (set! col (+ col 1))
                     (set! i (+ i 1)))))]
@@ -1010,7 +1013,7 @@
                     stoks
                     count
                     (SpannedToken.Spanned
-                      (Token.Sym (intern-slice src i (- end i)))
+                      (Token.Sym (ci.intern-slice src i (- end i)))
                       line
                       col))
                   (set! count (+ count 1))

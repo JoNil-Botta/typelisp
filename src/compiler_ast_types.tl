@@ -8,7 +8,7 @@
 ;; Deferred on purpose: parser result/error wrappers, typechecker registries,
 ;; inferred types, and lowered IR metadata. Source spans are represented as data
 ;; but later parser work decides when they are populated.
-(import "compiler_intern.tl")
+(import compiler_intern as ci)
 (import stdlib.array)
 
 ;; #2357: arena access for the node-pool grow paths -- a regrown pool array must
@@ -1884,7 +1884,7 @@
   (AstLifetimeCons head (box rest)))
 
 (define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam (intern name) ty is-comptime))
+  (AstParam (ci.intern name) ty is-comptime))
 
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam name ty is-comptime))
@@ -1893,7 +1893,7 @@
   (AstParamCons head (box rest)))
 
 (define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
-  (AstMacroParam (intern name) ty variadic))
+  (AstMacroParam (ci.intern name) ty variadic))
 
 (define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
   (AstMacroParam name ty variadic))
@@ -1902,7 +1902,7 @@
   (AstMacroParamCons head (box rest)))
 
 (define (ast-field-cleanup-fn [name : String]) : AstFieldCleanup
-  (AstFieldCleanupFn (intern name)))
+  (AstFieldCleanupFn (ci.intern name)))
 
 (define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
   (AstFieldCleanupFn name))
@@ -1911,7 +1911,7 @@
   [name : String]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (AstFieldDef (intern name) ty cleanup))
+  (AstFieldDef (ci.intern name) ty cleanup))
 
 (define (ast-field-def-id
   [name : i64]
@@ -1928,25 +1928,25 @@
   (AstExternLinkInputCons head (box rest)))
 
 (define (ast-fn-export [name : String]) : AstFnExport
-  (AstFnExport (intern name)))
+  (AstFnExport (ci.intern name)))
 
 (define (ast-fn-export-id [name : i64]) : AstFnExport
   (AstFnExport name))
 
 (define (ast-struct-cleanup-fn [name : String]) : AstStructCleanup
-  (AstStructCleanupFn (intern name)))
+  (AstStructCleanupFn (ci.intern name)))
 
 (define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
   (AstStructCleanupFn name))
 
 (define (ast-enum-cleanup-fn [name : String]) : AstEnumCleanup
-  (AstEnumCleanupFn (intern name)))
+  (AstEnumCleanupFn (ci.intern name)))
 
 (define (ast-enum-cleanup-fn-id [name : i64]) : AstEnumCleanup
   (AstEnumCleanupFn name))
 
 (define (ast-variant-payload-cleanup-fn [name : String]) : AstVariantPayloadCleanup
-  (AstVariantPayloadCleanupFn (intern name)))
+  (AstVariantPayloadCleanupFn (ci.intern name)))
 
 (define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
   (AstVariantPayloadCleanupFn name))
@@ -1955,7 +1955,7 @@
   [name : String]
   [fields : AstTypeList]
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
-  (AstVariantDef (intern name) fields cleanups))
+  (AstVariantDef (ci.intern name) fields cleanups))
 
 (define (ast-variant-def-id
   [name : i64]
@@ -1975,7 +1975,7 @@
   (AstPatternCons (box head) (box rest)))
 
 (define (ast-pat-binding [name : String]) : AstPattern
-  (AstPatBinding (intern name)))
+  (AstPatBinding (ci.intern name)))
 
 (define (ast-pat-binding-id [name : i64]) : AstPattern
   (AstPatBinding name))
@@ -1984,7 +1984,7 @@
   (AstPatTuple (box items)))
 
 (define (ast-pat-variant [name : String] [items : AstPatternList]) : AstPattern
-  (AstPatVariant (intern name) (box items)))
+  (AstPatVariant (ci.intern name) (box items)))
 
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPatVariant name (box items)))
@@ -1993,7 +1993,7 @@
   [name : String]
   [maybe-ty : AstMaybeType]
   [value : i64]) : AstLetBinding
-  (AstLetBinding (intern name) maybe-ty value))
+  (AstLetBinding (ci.intern name) maybe-ty value))
 
 (define (ast-let-binding-id
   [name : i64]
@@ -2005,7 +2005,7 @@
   (AstLetBindingCons head (box rest)))
 
 (define (ast-resource-binding [name : String] [init : i64] [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding (intern name) init cleanup))
+  (AstResourceBinding (ci.intern name) init cleanup))
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding name init cleanup))
@@ -2036,7 +2036,7 @@
   [ty : i64]
   [init : i64]
   [span : AstSourceSpan]) : AstExprBindingClause
-  (AstExprBindingClause (intern name) has-type ty init span))
+  (AstExprBindingClause (ci.intern name) has-type ty init span))
 
 (define (ast-expr-binding-clause-id
   [name : i64]
@@ -2100,7 +2100,7 @@
   (ast-node-push (AstExprWhile cond body)))
 
 (define (ast-expr-set [name : String] [value : i64]) : i64
-  (ast-node-push (AstExprSet (intern name) value)))
+  (ast-node-push (AstExprSet (ci.intern name) value)))
 
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExprSet name value)))
@@ -2127,7 +2127,7 @@
   [end : i64]
   [body : i64]) : i64
   (ast-node-push
-    (AstExprForeach (box (AstForeach (intern name) index-ty start end body)))))
+    (AstExprForeach (box (AstForeach (ci.intern name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id
   [name : i64]
@@ -2148,7 +2148,7 @@
   [value : i64]) : i64
   (ast-node-push
     (AstExprSpmdReduce
-      (box (AstSpmdReduce op (intern name) index-ty start end init value)))))
+      (box (AstSpmdReduce op (ci.intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id
   [op : AstReduceOp]
@@ -2178,11 +2178,11 @@
       (box
         (AstSpmdScan
           op
-          (intern index)
+          (ci.intern index)
           index-ty
           start
           end
-          (intern prefix)
+          (ci.intern prefix)
           prefix-ty
           init
           value
@@ -2227,19 +2227,19 @@
   (ast-node-push (AstExprSpmdProgramCount)))
 
 (define (ast-expr-struct-get [target : i64] [field : String]) : i64
-  (ast-node-push (AstExprStructGet target (intern field))))
+  (ast-node-push (AstExprStructGet target (ci.intern field))))
 
 (define (ast-expr-struct-get-id [target : i64] [field : i64]) : i64
   (ast-node-push (AstExprStructGet target field)))
 
 (define (ast-expr-struct-set [target : i64] [field : String] [value : i64]) : i64
-  (ast-node-push (AstExprStructSet target (intern field) value)))
+  (ast-node-push (AstExprStructSet target (ci.intern field) value)))
 
 (define (ast-expr-struct-set-id [target : i64] [field : i64] [value : i64]) : i64
   (ast-node-push (AstExprStructSet target field value)))
 
 (define (ast-expr-unquote-set-target-field-id) : i64
-  (intern "__tl_unquote_set_target"))
+  (ci.intern "__tl_unquote_set_target"))
 
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExprWithEscape escape body)))
@@ -2296,7 +2296,7 @@
   (ast-node-push (AstExprPtrNullCheck ptr)))
 
 (define (ast-expr-ptr-addr-of [name : String]) : i64
-  (ast-node-push (AstExprPtrAddrOf (intern name))))
+  (ast-node-push (AstExprPtrAddrOf (ci.intern name))))
 
 (define (ast-expr-ptr-addr-of-id [name : i64]) : i64
   (ast-node-push (AstExprPtrAddrOf name)))
@@ -2447,7 +2447,7 @@
   [pools : AstNodePoolContext]
   [name : String]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSet (intern name) value)))
+  (ast-node-pool-context-expr-push pools (AstExprSet (ci.intern name) value)))
 
 (define (ast-expr-set-id-with-pools
   [pools : AstNodePoolContext]
@@ -2491,7 +2491,7 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprForeach (box (AstForeach (intern name) index-ty start end body)))))
+    (AstExprForeach (box (AstForeach (ci.intern name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id-with-pools
   [pools : AstNodePoolContext]
@@ -2516,7 +2516,7 @@
   (ast-node-pool-context-expr-push
     pools
     (AstExprSpmdReduce
-      (box (AstSpmdReduce op (intern name) index-ty start end init value)))))
+      (box (AstSpmdReduce op (ci.intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id-with-pools
   [pools : AstNodePoolContext]
@@ -2550,11 +2550,11 @@
       (box
         (AstSpmdScan
           op
-          (intern index)
+          (ci.intern index)
           index-ty
           start
           end
-          (intern prefix)
+          (ci.intern prefix)
           prefix-ty
           init
           value
@@ -2612,7 +2612,7 @@
   [field : String]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprStructGet target (intern field))))
+    (AstExprStructGet target (ci.intern field))))
 
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]
@@ -2627,7 +2627,7 @@
   [value : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprStructSet target (intern field) value)))
+    (AstExprStructSet target (ci.intern field) value)))
 
 (define (ast-expr-struct-set-id-with-pools
   [pools : AstNodePoolContext]
@@ -2716,7 +2716,7 @@
 (define (ast-expr-ptr-addr-of-with-pools
   [pools : AstNodePoolContext]
   [name : String]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrAddrOf (intern name))))
+  (ast-node-pool-context-expr-push pools (AstExprPtrAddrOf (ci.intern name))))
 
 (define (ast-expr-ptr-addr-of-id-with-pools
   [pools : AstNodePoolContext]
@@ -2812,13 +2812,13 @@
   (AstDeclCons head (box rest)))
 
 (define (ast-decl-module [name : String]) : AstDecl
-  (AstDeclModule (intern name)))
+  (AstDeclModule (ci.intern name)))
 
 (define (ast-decl-module-id [name : i64]) : AstDecl
   (AstDeclModule name))
 
 (define (ast-decl-def [name : String] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
-  (AstDeclDef (intern name) maybe-ty value))
+  (AstDeclDef (ci.intern name) maybe-ty value))
 
 (define (ast-decl-def-id [name : i64] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
   (AstDeclDef name maybe-ty value))
@@ -2828,7 +2828,7 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDeclDefFn (intern name) params ret body AstFnNoExport))
+  (AstDeclDefFn (ci.intern name) params ret body AstFnNoExport))
 
 (define (ast-decl-def-fn-id
   [name : i64]
@@ -2843,7 +2843,7 @@
   [ret : AstType]
   [body : i64]
   [export : AstFnExport]) : AstDecl
-  (AstDeclDefFn (intern name) params ret body export))
+  (AstDeclDefFn (ci.intern name) params ret body export))
 
 (define (ast-decl-def-fn-export-id
   [name : i64]
@@ -2858,7 +2858,7 @@
   [params : AstMacroParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDeclDefMacro (intern name) params ret body))
+  (AstDeclDefMacro (ci.intern name) params ret body))
 
 (define (ast-decl-def-macro-id
   [name : i64]
@@ -2872,7 +2872,7 @@
   [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : AstDecl
-  (AstDeclExtern (intern name) kind metadata ty))
+  (AstDeclExtern (ci.intern name) kind metadata ty))
 
 (define (ast-decl-extern-id
   [name : i64]
@@ -2885,7 +2885,7 @@
   [name : String]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDeclDefEnum (intern name) cleanup variants))
+  (AstDeclDefEnum (ci.intern name) cleanup variants))
 
 (define (ast-decl-def-enum-id
   [name : i64]
@@ -2898,7 +2898,7 @@
   [lifetimes : AstLifetimeList]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDeclDefEnumLifetimes (intern name) lifetimes cleanup variants))
+  (AstDeclDefEnumLifetimes (ci.intern name) lifetimes cleanup variants))
 
 (define (ast-decl-def-enum-lifetimes-id
   [name : i64]
@@ -2912,7 +2912,7 @@
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDeclDefStruct (intern name) repr cleanup fields))
+  (AstDeclDefStruct (ci.intern name) repr cleanup fields))
 
 (define (ast-decl-def-struct-id
   [name : i64]
@@ -2927,7 +2927,7 @@
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDeclDefStructLifetimes (intern name) lifetimes repr cleanup fields))
+  (AstDeclDefStructLifetimes (ci.intern name) lifetimes repr cleanup fields))
 
 (define (ast-decl-def-struct-lifetimes-id
   [name : i64]
@@ -2940,7 +2940,7 @@
 (define (ast-decl-def-dispatch
   [name : String]
   [variants : AstDispatchVariantList]) : AstDecl
-  (AstDeclDefDispatch (intern name) variants))
+  (AstDeclDefDispatch (ci.intern name) variants))
 
 (define (ast-decl-def-dispatch-id
   [name : i64]
@@ -2948,7 +2948,7 @@
   (AstDeclDefDispatch name variants))
 
 (define (ast-decl-test [name : String] [body : i64] [span : AstSourceSpan]) : AstDecl
-  (AstDeclTest (intern name) body span))
+  (AstDeclTest (ci.intern name) body span))
 
 (define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
   (AstDeclTest name body span))
@@ -3472,7 +3472,7 @@
       (let
         [args : AstPatternList (box-get args-box)]
         (and
-          (= name (intern "Some"))
+          (= name (ci.intern "Some"))
           (match args
             [(AstPatternCons tuple-pattern rest-box)
               (let
@@ -3494,7 +3494,7 @@
                               (and
                                 (match first
                                   [(AstPatBinding bind-name)
-                                    (= bind-name (intern "item"))]
+                                    (= bind-name (ci.intern "item"))]
                                   [_ false])
                                 (match tail
                                   [(AstPatternCons second done-box)
@@ -3554,7 +3554,7 @@
                           (let
                             [init : AstExpr (ast-node-get init-box)]
                             (and
-                              (= name (intern "x"))
+                              (= name (ci.intern "x"))
                               (compiler-ast-begin-expr? init)))]
                         [_ false])))]
                 [_ false])
@@ -3567,7 +3567,7 @@
                     (and
                       (match cond
                         [(AstExprVar name)
-                          (string.string-eq (intern-str name) "cond")]
+                          (string.string-eq (ci.intern-str name) "cond")]
                         [_ false])
                       (match then-expr
                         [(AstExprMatch match-box)
@@ -3579,7 +3579,7 @@
                                   (match scrut
                                     [(AstExprVar name)
                                       (string.string-eq
-                                        (intern-str name)
+                                        (ci.intern-str name)
                                         "input")]
                                     [_ false])
                                   (compiler-ast-single-arm-box-ok? arms)))])]
@@ -3611,12 +3611,12 @@
         (ast-match-arm variant-pattern begin-expr)
         AstMatchArmNil)]
     [match-expr : i64
-      (ast-expr-match (ast-node-push (AstExprVar (intern "input"))) arms)]
+      (ast-expr-match (ast-node-push (AstExprVar (ci.intern "input"))) arms)]
     [nested : i64
       (ast-expr-let
         bindings
         (ast-expr-if
-          (ast-node-push (AstExprVar (intern "cond")))
+          (ast-node-push (AstExprVar (ci.intern "cond")))
           match-expr
           begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))
@@ -3630,7 +3630,7 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (and
-          (= name (intern want-name))
+          (= name (ci.intern want-name))
           (match value
             [(AstExprLiteral (AstLitInt actual _)) (= actual want-value)]
             [_ false])))]

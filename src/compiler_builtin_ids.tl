@@ -1,5 +1,7 @@
 ;; compiler_builtin_ids.tl - reset-aware intern ids for fixed compiler builtins.
-(import "compiler_intern.tl")
+(module compiler_builtin_ids)
+
+(import compiler_intern as ci)
 
 (define compiler-builtin-generation : i64
   -1)
@@ -632,133 +634,147 @@
   (set! compiler-builtin-generation -1))
 
 (define (compiler-builtin-refresh!) : unit
-  (if (= compiler-builtin-generation (intern-generation))
+  (if (= compiler-builtin-generation (ci.intern-generation))
     unit
     (begin
-      (set! compiler-builtin-id-tl-alloc (intern "tl_alloc"))
-      (set! compiler-builtin-id-tl-region-mark (intern "tl_region_mark"))
-      (set! compiler-builtin-id-tl-region-reset (intern "tl_region_reset"))
-      (set! compiler-builtin-id-tl-arena-make (intern "tl_arena_make"))
+      (set! compiler-builtin-id-tl-alloc (ci.intern "tl_alloc"))
+      (set! compiler-builtin-id-tl-region-mark (ci.intern "tl_region_mark"))
+      (set! compiler-builtin-id-tl-region-reset (ci.intern "tl_region_reset"))
+      (set! compiler-builtin-id-tl-arena-make (ci.intern "tl_arena_make"))
       (set!
         compiler-builtin-id-tl-arena-make-atomic
-        (intern "tl_arena_make_atomic"))
-      (set! compiler-builtin-id-tl-arena-current (intern "tl_arena_current"))
-      (set! compiler-builtin-id-tl-arena-set (intern "tl_arena_set"))
-      (set! compiler-builtin-id-tl-arena-destroy (intern "tl_arena_destroy"))
+        (ci.intern "tl_arena_make_atomic"))
+      (set! compiler-builtin-id-tl-arena-current (ci.intern "tl_arena_current"))
+      (set! compiler-builtin-id-tl-arena-set (ci.intern "tl_arena_set"))
+      (set! compiler-builtin-id-tl-arena-destroy (ci.intern "tl_arena_destroy"))
       (set!
         compiler-builtin-id-tl-arena-poison-enable
-        (intern "tl_arena_poison_enable"))
+        (ci.intern "tl_arena_poison_enable"))
       (set!
         compiler-builtin-id-tl-thread-entry-ptr
-        (intern "tl_thread_entry_ptr"))
-      (set! compiler-builtin-id-tl-thread-init (intern "tl_thread_init"))
+        (ci.intern "tl_thread_entry_ptr"))
+      (set! compiler-builtin-id-tl-thread-init (ci.intern "tl_thread_init"))
       (set!
         compiler-builtin-id-tl-atomic-i64-load-ptr
-        (intern "tl_atomic_i64_load_ptr"))
+        (ci.intern "tl_atomic_i64_load_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i64-store-ptr
-        (intern "tl_atomic_i64_store_ptr"))
+        (ci.intern "tl_atomic_i64_store_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i64-add-ptr
-        (intern "tl_atomic_i64_add_ptr"))
+        (ci.intern "tl_atomic_i64_add_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
-        (intern "tl_atomic_i64_fetch_add_ptr"))
+        (ci.intern "tl_atomic_i64_fetch_add_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i64-cas-ptr
-        (intern "tl_atomic_i64_cas_ptr"))
+        (ci.intern "tl_atomic_i64_cas_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i32-load-ptr
-        (intern "tl_atomic_i32_load_ptr"))
+        (ci.intern "tl_atomic_i32_load_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i32-store-ptr
-        (intern "tl_atomic_i32_store_ptr"))
+        (ci.intern "tl_atomic_i32_store_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i32-add-ptr
-        (intern "tl_atomic_i32_add_ptr"))
+        (ci.intern "tl_atomic_i32_add_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
-        (intern "tl_atomic_i32_fetch_add_ptr"))
+        (ci.intern "tl_atomic_i32_fetch_add_ptr"))
       (set!
         compiler-builtin-id-tl-atomic-i32-cas-ptr
-        (intern "tl_atomic_i32_cas_ptr"))
+        (ci.intern "tl_atomic_i32_cas_ptr"))
       (set!
         compiler-builtin-id-tl-profile-alloc-total
-        (intern "tl_profile_alloc_total"))
+        (ci.intern "tl_profile_alloc_total"))
       (set!
         compiler-builtin-id-tl-profile-alloc-live
-        (intern "tl_profile_alloc_live"))
+        (ci.intern "tl_profile_alloc_live"))
       (set!
         compiler-builtin-id-tl-profile-alloc-peak
-        (intern "tl_profile_alloc_peak"))
+        (ci.intern "tl_profile_alloc_peak"))
       (set!
         compiler-builtin-id-tl-profile-alloc-reset-peak
-        (intern "tl_profile_alloc_reset_peak"))
-      (set! compiler-builtin-id-tl-substring (intern "tl_substring"))
-      (set! compiler-builtin-id-tl-str-view (intern "tl_str_view"))
+        (ci.intern "tl_profile_alloc_reset_peak"))
+      (set! compiler-builtin-id-tl-substring (ci.intern "tl_substring"))
+      (set! compiler-builtin-id-tl-str-view (ci.intern "tl_str_view"))
       (set!
         compiler-builtin-id-tl-private-string-length
-        (intern "__tl_string_length"))
+        (ci.intern "__tl_string_length"))
       (set!
         compiler-builtin-id-tl-private-string-ref
-        (intern "__tl_string_ref"))
-      (set! compiler-builtin-id-tl-private-string-eq (intern "__tl_string_eq"))
+        (ci.intern "__tl_string_ref"))
+      (set!
+        compiler-builtin-id-tl-private-string-eq
+        (ci.intern "__tl_string_eq"))
       (set!
         compiler-builtin-id-tl-private-string-to-int
-        (intern "__tl_string_to_int"))
-      (set! compiler-builtin-id-tl-string-concat (intern "tl_string_concat"))
-      (set! compiler-builtin-id-tl-string-concat3 (intern "tl_string_concat3"))
-      (set! compiler-builtin-id-tl-string-concat4 (intern "tl_string_concat4"))
-      (set! compiler-builtin-id-tl-string-concat5 (intern "tl_string_concat5"))
-      (set! compiler-builtin-id-tl-string-eq (intern "tl_string_eq"))
-      (set! compiler-builtin-id-tl-string-to-int (intern "tl_string_to_int"))
-      (set! compiler-builtin-id-tl-int-to-string (intern "tl_int_to_string"))
-      (set! compiler-builtin-id-tl-hash-string (intern "tl_hash_string"))
-      (set! compiler-builtin-id-tl-env-var-exists (intern "tl_env_var_exists"))
-      (set! compiler-builtin-id-tl-env-var-value (intern "tl_env_var_value"))
+        (ci.intern "__tl_string_to_int"))
+      (set! compiler-builtin-id-tl-string-concat (ci.intern "tl_string_concat"))
+      (set!
+        compiler-builtin-id-tl-string-concat3
+        (ci.intern "tl_string_concat3"))
+      (set!
+        compiler-builtin-id-tl-string-concat4
+        (ci.intern "tl_string_concat4"))
+      (set!
+        compiler-builtin-id-tl-string-concat5
+        (ci.intern "tl_string_concat5"))
+      (set! compiler-builtin-id-tl-string-eq (ci.intern "tl_string_eq"))
+      (set! compiler-builtin-id-tl-string-to-int (ci.intern "tl_string_to_int"))
+      (set! compiler-builtin-id-tl-int-to-string (ci.intern "tl_int_to_string"))
+      (set! compiler-builtin-id-tl-hash-string (ci.intern "tl_hash_string"))
+      (set!
+        compiler-builtin-id-tl-env-var-exists
+        (ci.intern "tl_env_var_exists"))
+      (set! compiler-builtin-id-tl-env-var-value (ci.intern "tl_env_var_value"))
       (set!
         compiler-builtin-id-env-path-separator
-        (intern "env-path-separator"))
-      (set! compiler-builtin-id-tl-oob-abort (intern "tl_oob_abort"))
-      (set! compiler-builtin-id-tl-abort-label (intern ".L_tl_abort"))
-      (set! compiler-builtin-id-tl-div-abort (intern "tl_div_abort"))
-      (set! compiler-builtin-id-tl-shift-abort (intern "tl_shift_abort"))
-      (set! compiler-builtin-id-tl-array-fill8 (intern "tl_array_fill8"))
-      (set! compiler-builtin-id-tl-array-zero (intern "tl_array_zero"))
-      (set! compiler-builtin-id-tl-print-char (intern "tl_print_char"))
-      (set! compiler-builtin-id-tl-print-f64 (intern "tl_print_f64"))
-      (set! compiler-builtin-id-string-length (intern "string-length"))
-      (set! compiler-builtin-id-length (intern "length"))
-      (set! compiler-builtin-id-string-eq (intern "string-eq"))
-      (set! compiler-builtin-id-string-eq-question (intern "string=?"))
-      (set! compiler-builtin-id-string-to-int (intern "string->int"))
-      (set! compiler-builtin-id-string-ref (intern "string-ref"))
-      (set! compiler-builtin-id-char-at (intern "char-at"))
-      (set! compiler-builtin-id-array-length (intern "array-length"))
+        (ci.intern "env-path-separator"))
+      (set! compiler-builtin-id-tl-oob-abort (ci.intern "tl_oob_abort"))
+      (set! compiler-builtin-id-tl-abort-label (ci.intern ".L_tl_abort"))
+      (set! compiler-builtin-id-tl-div-abort (ci.intern "tl_div_abort"))
+      (set! compiler-builtin-id-tl-shift-abort (ci.intern "tl_shift_abort"))
+      (set! compiler-builtin-id-tl-array-fill8 (ci.intern "tl_array_fill8"))
+      (set! compiler-builtin-id-tl-array-zero (ci.intern "tl_array_zero"))
+      (set! compiler-builtin-id-tl-print-char (ci.intern "tl_print_char"))
+      (set! compiler-builtin-id-tl-print-f64 (ci.intern "tl_print_f64"))
+      (set! compiler-builtin-id-string-length (ci.intern "string-length"))
+      (set! compiler-builtin-id-length (ci.intern "length"))
+      (set! compiler-builtin-id-string-eq (ci.intern "string-eq"))
+      (set! compiler-builtin-id-string-eq-question (ci.intern "string=?"))
+      (set! compiler-builtin-id-string-to-int (ci.intern "string->int"))
+      (set! compiler-builtin-id-string-ref (ci.intern "string-ref"))
+      (set! compiler-builtin-id-char-at (ci.intern "char-at"))
+      (set! compiler-builtin-id-array-length (ci.intern "array-length"))
       (set!
         compiler-builtin-id-private-array-length
-        (intern "__tl_array-length"))
-      (set! compiler-builtin-id-cpuid (intern "cpuid"))
-      (set! compiler-builtin-id-xgetbv (intern "xgetbv"))
-      (set! compiler-builtin-id-clone (intern "clone"))
-      (set! compiler-builtin-id-arena-make (intern "arena-make"))
-      (set! compiler-builtin-id-arena-make-atomic (intern "arena-make-atomic"))
-      (set! compiler-builtin-id-arena-current (intern "arena-current"))
-      (set! compiler-builtin-id-arena-mark (intern "arena-mark"))
-      (set! compiler-builtin-id-arena-set-bang (intern "arena-set!"))
-      (set! compiler-builtin-id-arena-destroy (intern "arena-destroy"))
-      (set! compiler-builtin-id-arena-rewind (intern "arena-rewind"))
-      (set! compiler-builtin-id-tls-current-arena (intern "tls-current-arena"))
+        (ci.intern "__tl_array-length"))
+      (set! compiler-builtin-id-cpuid (ci.intern "cpuid"))
+      (set! compiler-builtin-id-xgetbv (ci.intern "xgetbv"))
+      (set! compiler-builtin-id-clone (ci.intern "clone"))
+      (set! compiler-builtin-id-arena-make (ci.intern "arena-make"))
+      (set!
+        compiler-builtin-id-arena-make-atomic
+        (ci.intern "arena-make-atomic"))
+      (set! compiler-builtin-id-arena-current (ci.intern "arena-current"))
+      (set! compiler-builtin-id-arena-mark (ci.intern "arena-mark"))
+      (set! compiler-builtin-id-arena-set-bang (ci.intern "arena-set!"))
+      (set! compiler-builtin-id-arena-destroy (ci.intern "arena-destroy"))
+      (set! compiler-builtin-id-arena-rewind (ci.intern "arena-rewind"))
+      (set!
+        compiler-builtin-id-tls-current-arena
+        (ci.intern "tls-current-arena"))
       (set!
         compiler-builtin-id-tls-current-arena-set-bang
-        (intern "tls-current-arena-set!"))
+        (ci.intern "tls-current-arena-set!"))
       (set!
         compiler-builtin-id-tl-tls-current-arena-load
-        (intern "tl_tls_current_arena_load"))
+        (ci.intern "tl_tls_current_arena_load"))
       (set!
         compiler-builtin-id-tl-tls-current-arena-store
-        (intern "tl_tls_current_arena_store"))
-      (set! compiler-builtin-generation (intern-generation)))))
+        (ci.intern "tl_tls_current_arena_store"))
+      (set! compiler-builtin-generation (ci.intern-generation)))))
 
 (define (compiler-builtin-id-any2? [name-id : i64] [a : i64] [b : i64]) : bool
   (or (= name-id a) (= name-id b)))

@@ -1561,6 +1561,7 @@
     (compiler-load-string-contains? root "\\")))
 
 (define (compiler-load-resolve-module-import-with-roots
+  [importer-path : String]
   [import-root : String]
   [module-name : String]
   [stdlib-roots : vector.StringVec]) : ResultPkgResolve
@@ -1570,18 +1571,33 @@
       (ResultPkgResolve.Ok
         (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
       (let
-        [primary : String
+        [root-primary : String
           (compiler-load-normalize-path
             (compiler-load-join-root-path import-root module-path))]
         (if (compiler-load-nested-import-root? import-root)
-          (if (io.file-exists? primary)
-            (ResultPkgResolve.Ok primary)
-            (match (compiler-load-resolve-root-module-path
-              module-path
-              stdlib-roots)
-              [(CompilerLoadSomePath root-path) (ResultPkgResolve.Ok root-path)]
-              [(CompilerLoadNoPath) (ResultPkgResolve.Ok primary)]))
-          (ResultPkgResolve.Ok primary))))))
+          (if (io.file-exists? root-primary)
+            (ResultPkgResolve.Ok root-primary)
+            (let
+              [importer-dir : String (compiler-load-dirname importer-path)]
+              [importer-primary : String
+                (compiler-load-normalize-path
+                  (compiler-load-join-root-path importer-dir module-path))]
+              (if (and
+                (not (string.string-eq importer-dir import-root))
+                (compiler-load-nested-import-root? importer-dir)
+                (io.file-exists? importer-primary))
+                (ResultPkgResolve.Ok importer-primary)
+                (match (compiler-load-resolve-root-module-path
+                  module-path
+                  stdlib-roots)
+                  [(CompilerLoadSomePath root-path)
+                    (ResultPkgResolve.Ok root-path)]
+                  [(CompilerLoadNoPath) (ResultPkgResolve.Ok root-primary)]))))
+          (match (compiler-load-resolve-root-module-path
+            module-path
+            stdlib-roots)
+            [(CompilerLoadSomePath root-path) (ResultPkgResolve.Ok root-path)]
+            [(CompilerLoadNoPath) (ResultPkgResolve.Ok root-primary)]))))))
 
 (define (compiler-load-resolve-import-spec-with-roots
   [importer-path : String]
@@ -1597,6 +1613,7 @@
         stdlib-roots)]
     [(AstImportModule)
       (compiler-load-resolve-module-import-with-roots
+        importer-path
         import-root
         import-path
         stdlib-roots)]
@@ -1609,6 +1626,7 @@
 
 (define (compiler-load-resolve-package-module-import
   [module-name : String]
+  [importer-path : String]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [stdlib-roots : vector.StringVec]) : ResultPkgResolve
@@ -1621,9 +1639,19 @@
         (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
       (match (compiler-load-pkg-dep-lookup deps first)
         [(CompilerLoadNoPath)
-          (ResultPkgResolve.Ok
-            (compiler-load-normalize-path
-              (compiler-load-join-root-path manifest-dir module-path)))]
+          (let
+            [importer-dir : String (compiler-load-dirname importer-path)]
+            [primary : String
+              (compiler-load-normalize-path
+                (compiler-load-join-root-path importer-dir module-path))]
+            [fallback : String
+              (compiler-load-normalize-path
+                (compiler-load-join-root-path manifest-dir module-path))]
+            (if (and
+              (compiler-load-nested-import-root? importer-dir)
+              (io.file-exists? primary))
+              (ResultPkgResolve.Ok primary)
+              (ResultPkgResolve.Ok fallback)))]
         [(CompilerLoadSomePath dep-path)
           (let
             [rest : String
@@ -1666,6 +1694,7 @@
     [(AstImportModule)
       (compiler-load-resolve-package-module-import
         import-path
+        importer-path
         manifest-dir
         deps
         stdlib-roots)]
@@ -6391,12 +6420,14 @@
       (compiler-load-dotted-module-path "stdlib.core_macros")
       "stdlib/core_macros.tl")
     (match (compiler-load-resolve-module-import-with-roots
+      "src/main.tl"
       "src/"
       "app.lib"
       (vector.string-vec-new))
       [(ResultPkgResolve.Ok path) (string.string-eq path "src/app/lib.tl")]
       [(ResultPkgResolve.Err _) false])
     (match (compiler-load-resolve-module-import-with-roots
+      "src/main.tl"
       "src/"
       "stdlib.core_macros"
       (vector.string-vec-new))
@@ -6813,6 +6844,35 @@
             (sym-i64-contains seen "leaf"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
+(define (compiler-load-dotted-after-path-import-ok?) : bool
+  (let
+    [root : String "target/cl_dotted_after_path/src"]
+    [tests : String (compiler-load-join-root-path root "tests")]
+    [helper : String (compiler-load-join-root-path root "helper.tl")]
+    [provider : String (compiler-load-join-root-path root "provider.tl")]
+    [entry : String (compiler-load-join-root-path tests "entry.tl")]
+    (begin
+      (compiler-load-test-mkdir "target/cl_dotted_after_path")
+      (compiler-load-test-mkdir root)
+      (compiler-load-test-mkdir tests)
+      (io.write-file helper "(module helper)
+(define answer : i64 42)")
+      (io.write-file
+        provider
+        "(module provider)
+(import helper as helper)
+(define value : i64 helper.answer)")
+      (io.write-file
+        entry
+        "(import \"../provider.tl\")
+(define (main) : i64 value)")
+      (match (compiler-load-file-with-paths entry (sym-i64-empty))
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+          (and
+            (sym-i64-contains seen "provider")
+            (sym-i64-contains seen "helper"))]
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
+
 (define (compiler-load-package-dotted-import-resolution-ok?) : bool
   (let
     [deps : CompilerPkgDeps (compiler-load-pkg-resolve-deps)]
@@ -6844,6 +6904,29 @@
           (AstImportModule)
           "stdlib.core_macros"
           deps)))))
+
+(define (compiler-load-package-dotted-sibling-source-ok?) : bool
+  (let
+    [root : String "target/cl_pkg_dotted_src"]
+    [src : String (compiler-load-join-root-path root "src")]
+    [entry : String (compiler-load-join-root-path src "main.tl")]
+    [dep : String (compiler-load-join-root-path src "dep.tl")]
+    [deps : CompilerPkgDeps (compiler-load-pkg-resolve-deps)]
+    (begin
+      (compiler-load-test-mkdir root)
+      (compiler-load-test-mkdir src)
+      (io.write-file dep "(module dep)
+(define dep-val : i64 1)")
+      (match (compiler-load-resolve-package-import-spec
+        entry
+        (AstImportModule)
+        "dep"
+        (vector.string-vec-new)
+        root
+        deps)
+        [(ResultPkgResolve.Ok path)
+          (string.string-eq path (compiler-load-normalize-path dep))]
+        [(ResultPkgResolve.Err _) false]))))
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
@@ -9395,10 +9478,18 @@
       (return
         (io.panic "compiler-load: dotted source root fallback smoke mismatch")))
     (unless
+      (compiler-load-dotted-after-path-import-ok?)
+      (return
+        (io.panic "compiler-load: dotted after path import smoke mismatch")))
+    (unless
       (compiler-load-package-dotted-import-resolution-ok?)
       (return
         (io.panic
           "compiler-load: package dotted import resolution smoke mismatch")))
+    (unless
+      (compiler-load-package-dotted-sibling-source-ok?)
+      (return
+        (io.panic "compiler-load: package dotted sibling source smoke mismatch")))
     (unless
       (compiler-load-generated-meta-preserved-ok?)
       (return

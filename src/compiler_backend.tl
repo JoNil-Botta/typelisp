@@ -8,7 +8,7 @@
 (import "compiler_regalloc.tl")
 (import stdlib.text_buf)
 (import "compiler_object.tl")
-(import "compiler_intern.tl")
+(import compiler_intern as ci)
 (import "sym_i64_env.tl")
 (import stdlib.array)
 (import stdlib.hash)
@@ -403,10 +403,10 @@
     (set!
       compiler-backend-user-symbol-cache-epoch
       (+ compiler-backend-user-symbol-cache-epoch 1))
-    (set! compiler-backend-user-symbol-cache-generation (intern-generation))))
+    (set! compiler-backend-user-symbol-cache-generation (ci.intern-generation))))
 
 (define (compiler-backend-user-symbol-cache-ensure-current!) : unit
-  (if (= compiler-backend-user-symbol-cache-generation (intern-generation))
+  (if (= compiler-backend-user-symbol-cache-generation (ci.intern-generation))
     unit
     (compiler-backend-user-symbol-cache-reset!)))
 
@@ -4261,7 +4261,7 @@
         (array.array-ref compiler-backend-user-symbol-cache-values name-id)
         (let
           [symbol : String
-            (compiler-backend-user-symbol-uncached (intern-str name-id))]
+            (compiler-backend-user-symbol-uncached (ci.intern-str name-id))]
           (begin
             (array.array-set!
               compiler-backend-user-symbol-cache-values
@@ -4275,10 +4275,10 @@
               compiler-backend-user-symbol-cache-count-value
               (+ compiler-backend-user-symbol-cache-count-value 1))
             symbol)))
-      (compiler-backend-user-symbol-uncached (intern-str name-id)))))
+      (compiler-backend-user-symbol-uncached (ci.intern-str name-id)))))
 
 (define (compiler-backend-user-symbol [name : String]) : String
-  (match (intern-lookup name)
+  (match (ci.intern-lookup name)
     [(InternLookupFound name-id) (compiler-backend-user-symbol-id name-id)]
     [(InternLookupMissing) (compiler-backend-user-symbol-uncached name)]))
 
@@ -10835,7 +10835,7 @@
   [ids : hashmap.I64I64Map]
   [name : String]
   [index : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put ids (intern name) index))
+  (hashmap.i64-i64-map-put ids (ci.intern name) index))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
@@ -10953,10 +10953,10 @@
 ;; type-name -> word-count map). Empty for non-aggregate types.
 (define (compiler-backend-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstTyStruct name) (intern-str name)]
-    [(AstTyStructArgs name _) (intern-str name)]
-    [(AstTyEnum name) (intern-str name)]
-    [(AstTyEnumArgs name _) (intern-str name)]
+    [(AstTyStruct name) (ci.intern-str name)]
+    [(AstTyStructArgs name _) (ci.intern-str name)]
+    [(AstTyEnum name) (ci.intern-str name)]
+    [(AstTyEnumArgs name _) (ci.intern-str name)]
     [(AstTyRegion _ inner)
       (compiler-backend-aggregate-type-name (ty-node-get inner))]
     [_ ""]))
@@ -11297,7 +11297,7 @@
 (define (compiler-backend-index-function-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : hashmap.I64I64MapLookup
-  (match (intern-lookup name)
+  (match (ci.intern-lookup name)
     [(InternLookupFound name-id)
       (hashmap.i64-i64-map-get (struct-get index functions) name-id)]
     [(InternLookupMissing) (hashmap.I64I64MapMissing)]))
@@ -11305,7 +11305,7 @@
 (define (compiler-backend-index-extern-signature-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : hashmap.I64I64MapLookup
-  (match (intern-lookup name)
+  (match (ci.intern-lookup name)
     [(InternLookupFound name-id)
       (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)]
     [(InternLookupMissing) (hashmap.I64I64MapMissing)]))
@@ -11313,7 +11313,7 @@
 (define (compiler-backend-index-extern-reference-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : hashmap.I64I64MapLookup
-  (match (intern-lookup name)
+  (match (ci.intern-lookup name)
     [(InternLookupFound name-id)
       (hashmap.i64-i64-map-get (struct-get index extern-references) name-id)]
     [(InternLookupMissing) (hashmap.I64I64MapMissing)]))
@@ -11398,7 +11398,7 @@
   (match (hashmap.i64-i64-map-get (struct-get index extern-references) name-id)
     [(hashmap.I64I64MapFound slot)
       (array.array-ref (struct-get index extern-link-symbols) slot)]
-    [(hashmap.I64I64MapMissing) (intern-str name-id)]))
+    [(hashmap.I64I64MapMissing) (ci.intern-str name-id)]))
 
 (define (compiler-backend-index-extern-link-symbol
   [index : CompilerBackendProgramIndex]
@@ -24945,7 +24945,7 @@
       (compiler-builtin-backend-runtime-profile-id? name-id))))
 
 (define (compiler-backend-runtime-name-id [name : String]) : i64
-  (match (intern-lookup name)
+  (match (ci.intern-lookup name)
     [(InternLookupFound name-id) name-id]
     [(InternLookupMissing) -1]))
 
@@ -31921,7 +31921,7 @@ tl_memchr:
   [src : String]
   [target : CompilerBackendTarget]) : ResultCompilerLower
   (begin
-    (intern-reset!)
+    (ci.intern-reset!)
     (compiler-builtin-reset!)
     (match (parse-ast-source-diagnostic-with-cfg
       "<source>"

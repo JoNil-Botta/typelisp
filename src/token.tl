@@ -33,7 +33,9 @@
 ;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
-(import "compiler_intern.tl")
+(module token)
+
+(import compiler_intern as ci)
 
 (defenum Token
   (LParen)
@@ -183,7 +185,7 @@
     [(Token.LParen) ""]
     [(Token.RParen) ""]
     [(Token.Int _ _) ""]
-    [(Token.Sym id) (intern-str id)]
+    [(Token.Sym id) (ci.intern-str id)]
     [(Token.End) ""]
     [(Token.Str _) ""]
     [(Token.Char _) ""]

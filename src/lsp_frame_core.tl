@@ -1648,6 +1648,7 @@
   [module-name : String]
   [stdlib-roots : vector.StringVec]) : String
   (match (compiler-load-resolve-module-import-with-roots
+    path
     (compiler-load-dirname path)
     module-name
     stdlib-roots)

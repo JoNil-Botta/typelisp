@@ -5,7 +5,7 @@
 (import "compiler_backend.tl")
 (import "compiler_builtin_ids.tl")
 (import "compiler_float.tl")
-(import "compiler_intern.tl")
+(import compiler_intern as ci)
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
 (import stdlib.string)
@@ -3528,7 +3528,7 @@
         [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-register-group-test-type) : AstType
-  (AstTyStruct (intern "BackendGroupTest")))
+  (AstTyStruct (ci.intern "BackendGroupTest")))
 
 (define (compiler-backend-register-group-test-index) : CompilerBackendProgramIndex
   (let
@@ -8214,7 +8214,7 @@
         (compiler-builtin-backend-runtime-profile-id? profile-id)))))
 
 (define (compiler-backend-intern-missing? [name : String]) : bool
-  (match (intern-lookup name)
+  (match (ci.intern-lookup name)
     [(InternLookupMissing) true]
     [(InternLookupFound _) false]))
 
@@ -8225,7 +8225,7 @@
     (begin
       (compiler-builtin-refresh!)
       (let
-        [generation : i64 (intern-generation)]
+        [generation : i64 (ci.intern-generation)]
         [unknown : String "tl_issue_2464_unknown_runtime_probe"]
         (and
           (compiler-backend-intern-missing? unknown)
@@ -8237,7 +8237,7 @@
             [(BackendRuntimeOwnerUnknown) true]
             [_ false])
           (not (compiler-backend-plan-provides? plan unknown))
-          (= (intern-generation) generation)
+          (= (ci.intern-generation) generation)
           (compiler-backend-intern-missing? unknown))))))
 
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
@@ -12057,16 +12057,16 @@
 
 (define (compiler-backend-user-symbol-cache-ok?) : bool
   (begin
-    (intern-reset!)
+    (ci.intern-reset!)
     (compiler-backend-user-symbol-cache-reset!)
     (let
       [path-name : String "pkg/nested/module.tl::some-value"]
-      [path-id : i64 (intern path-name)]
+      [path-id : i64 (ci.intern path-name)]
       [path-symbol-first : String (compiler-backend-user-symbol-id path-id)]
       [count-after-path-first : i64 (compiler-backend-user-symbol-cache-count)]
       [path-symbol-second : String (compiler-backend-user-symbol-id path-id)]
       [count-after-path-second : i64 (compiler-backend-user-symbol-cache-count)]
-      [main-id : i64 (intern "main")]
+      [main-id : i64 (ci.intern "main")]
       [main-symbol-first : String (compiler-backend-user-symbol-id main-id)]
       [count-after-main-first : i64 (compiler-backend-user-symbol-cache-count)]
       [main-symbol-second : String (compiler-backend-user-symbol-id main-id)]
@@ -12100,15 +12100,15 @@
 (define (compiler-backend-program-index-id-maps-ok?) : bool
   (let
     [fn-name : String "pkg/really-long-backend-index-function"]
-    [fn-id : i64 (intern fn-name)]
+    [fn-id : i64 (ci.intern fn-name)]
     [provided-name : String "provided_decl"]
-    [provided-id : i64 (intern provided-name)]
-    [provided-link-id : i64 (intern "provided_link")]
+    [provided-id : i64 (ci.intern provided-name)]
+    [provided-link-id : i64 (ci.intern "provided_link")]
     [referenced-name : String "referenced_decl"]
-    [referenced-id : i64 (intern referenced-name)]
+    [referenced-id : i64 (ci.intern referenced-name)]
     [referenced-link : String "referenced_link"]
-    [referenced-link-id : i64 (intern referenced-link)]
-    [missing-id : i64 (intern "missing_backend_index_name")]
+    [referenced-link-id : i64 (ci.intern referenced-link)]
+    [missing-id : i64 (ci.intern "missing_backend_index_name")]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (compiler-backend-program-index-test-functions)
@@ -12160,7 +12160,7 @@
 
 (define (compiler-backend-program-index-interns-bound-names-ok?) : bool
   (begin
-    (intern-reset!)
+    (ci.intern-reset!)
     (let
       [fn-name : String "late_backend_index_fn"]
       [extern-name : String "late_backend_index_ext"]
@@ -12179,9 +12179,9 @@
               AstExternLinkInputNil
               false)
             IrExternNil))]
-      [fn-id : i64 (intern fn-name)]
-      [extern-id : i64 (intern extern-name)]
-      [extern-link-id : i64 (intern extern-link)]
+      [fn-id : i64 (ci.intern fn-name)]
+      [extern-id : i64 (ci.intern extern-name)]
+      [extern-link-id : i64 (ci.intern extern-link)]
       (backend-and8
         (compiler-backend-index-function-defines-id? index fn-id)
         (compiler-backend-index-function-defines? index fn-name)

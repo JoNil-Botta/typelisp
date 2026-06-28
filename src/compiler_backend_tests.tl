@@ -15693,6 +15693,67 @@
           "%rax")
         "%r11"))))
 
+(define (compiler-backend-binop-exclude-keeps-pooled-r10-r11-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 5)]
+    [ends : (Array i64) (make-array i64 5)]
+    [r10-free : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r9"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegister "%rdx"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 4 (CompilerRegRegister "%r8"))
+              CompilerRegAssignmentNil))))]
+    [r11-free : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r9"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegister "%rdx"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 3 (CompilerRegRegister "%r10"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment 4 (CompilerRegRegister "%r8"))
+                CompilerRegAssignmentNil)))))]
+    (begin
+      (array-set! starts 0 0)
+      (array-set! starts 1 0)
+      (array-set! starts 2 0)
+      (array-set! starts 3 0)
+      (array-set! starts 4 0)
+      (array-set! ends 0 10)
+      (array-set! ends 1 10)
+      (array-set! ends 2 10)
+      (array-set! ends 3 10)
+      (array-set! ends 4 10)
+      (and
+        (string-eq
+          (compiler-backend-scavenge-pick
+            starts
+            ends
+            r10-free
+            5
+            5
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r8")
+          "%r10")
+        (string-eq
+          (compiler-backend-scavenge-pick
+            starts
+            ends
+            r11-free
+            5
+            5
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%r8")
+          "%r11")))))
+
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 1)]
@@ -15807,6 +15868,7 @@
         (compiler-backend-address-mode-fusion-ok?)
         (compiler-backend-scratch-staging-direct-home-shape-ok?)
         (compiler-backend-scavenge-pooled-r10-r11-ok?)
+        (compiler-backend-binop-exclude-keeps-pooled-r10-r11-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)

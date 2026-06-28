@@ -27035,7 +27035,8 @@
       hit)))
 
 ;; Exclude set for binop scavenging: a safe superset of every binop op's fixed
-;; registers (div: rax/rdx + guard temps; shift: rcx; all: rax=lhs).
+;; registers (div/mul: rax/rdx; shift: rcx; fallback binops: rax=lhs). Pooled
+;; scratch registers such as r10/r11 must stay available to the scavenger.
 (define (compiler-backend-binop-scavenge-exclude-build) : (Array String)
   (let
     [a : (Array String) (make-array String 5)]
@@ -27043,8 +27044,8 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
+      (array-set! a 3 "%rax")
+      (array-set! a 4 "%rax")
       a)))
 
 ;; Op-specific scavenge exclude: only the registers THIS op actually clobbers

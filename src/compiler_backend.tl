@@ -11987,13 +11987,8 @@
             dst
             load-reg))))))
 
-(define (compiler-backend-r10-address [disp : i64]) : String
-  (if (= disp 0)
-    "(%r10)"
-    (str_cat.str-cat (string.int->string disp) "(%r10)" "" "")))
-
-;; Base-register-parameterized address: scavenged-register-aware variant of
-;; r10-address so addressing-base scratch is not fixed to %r10.
+;; Base-register-parameterized address: scavenged-register-aware address
+;; formatting so addressing-base scratch is not fixed to one register.
 (define (compiler-backend-base-address [disp : i64] [base : String]) : String
   (if (= disp 0)
     (str-cat "(" base ")")

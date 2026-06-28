@@ -19,6 +19,8 @@
 (import stdlib.string)
 (import stdlib.str_cat)
 (cfg compile-profile (import stdlib.profile))
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (defenum LowerNameEnv
   (LowerNameNil)
@@ -1219,16 +1221,16 @@
 
 (define (lower-symbols-lookup-value-hygiene
   [symbols : CompilerSymbols]
-  [source-name : String]) : MaybeI64
+  [source-name : String]) : option_i64.Option
   (let
     [primary : String (lower-hygiene-source-name source-name)]
     (match (compiler-symbols-lookup-value symbols primary)
-      [(SomeI64 handle) (SomeI64 handle)]
-      [(NoneI64)
+      [(option_i64.Some handle) (option_i64.Some handle)]
+      [(option_i64.None)
         (match (lower-hygiene-fallback-source-name source-name)
           [(TcSomeString fallback)
             (compiler-symbols-lookup-value symbols fallback)]
-          [(TcNoString) NoneI64])])))
+          [(TcNoString) option_i64.None])])))
 
 (define (lower-source-name-lookup-key
   [ctx : TcContext]
@@ -1296,8 +1298,8 @@
         name)
         [(OkTcString lookup-name)
           (match (sym-i64-lookup env lookup-name)
-            [(SomeI64 _) (tc-lookup type-env lookup-name)]
-            [(NoneI64)
+            [(option_i64.Some _) (tc-lookup type-env lookup-name)]
+            [(option_i64.None)
               (match (tc-lookup type-env lookup-name)
                 [(OkTcType ty) (OkTcType ty)]
                 [(ErrTcType _)
@@ -1326,8 +1328,8 @@
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
       (match (sym-i64-lookup-id env name-id)
-        [(SomeI64 _) (tc-lookup-id type-env name-id)]
-        [(NoneI64) (lower-lookup-type ctx type-cache env type-env name)]))))
+        [(option_i64.Some _) (tc-lookup-id type-env name-id)]
+        [(option_i64.None) (lower-lookup-type ctx type-cache env type-env name)]))))
 
 (define (lower-name-env-add-alias-if-free
   [names : LowerNameEnv]
@@ -1480,8 +1482,8 @@
   [env : SymI64Env]
   [source-name : String]) : String
   (match (sym-i64-lookup env source-name)
-    [(SomeI64 _) source-name]
-    [(NoneI64) (lower-resolve-name state source-name)]))
+    [(option_i64.Some _) source-name]
+    [(option_i64.None) (lower-resolve-name state source-name)]))
 
 (define (lower-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -3147,7 +3149,7 @@
           (match (lower-symbols-lookup-value-hygiene
             (tc-context-symbols ctx)
             name)
-            [(SomeI64 handle)
+            [(option_i64.Some handle)
               (if (=
                 (compiler-symbol-handle-kind handle)
                 (compiler-symbol-kind-function-define))
@@ -3159,7 +3161,8 @@
                   [(ErrAstDecl message)
                     (ErrLowerSpmdInlineHelper (box (lower-diagnostic message)))])
                 (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))]
-            [(NoneI64) (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))])))]
+            [(option_i64.None)
+              (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))])))]
     [(ErrTcString message)
       (if (string.string-eq message "")
         (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
@@ -8544,7 +8547,7 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defstruct))
@@ -8562,7 +8565,7 @@
               [(ErrAstDecl message) (ErrAstFieldDefList message)])
             (ErrAstFieldDefList
               (string.string-append "lower: unknown struct " struct-name)))]
-        [(NoneI64)
+        [(option_i64.None)
           (ErrAstFieldDefList
             (string.string-append "lower: unknown struct " struct-name))])]))
 
@@ -10361,8 +10364,9 @@
   [name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
-    [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))]
-    [(NoneI64)
+    [(option_i64.Some id)
+      (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))]
+    [(option_i64.None)
       (OkLowerExpr
         (LowerExpr
           state
@@ -10380,7 +10384,7 @@
   (let
     [referent-ty : AstType (tc-borrow-referent-type place-ty)]
     (match (sym-i64-lookup env name)
-      [(SomeI64 id)
+      [(option_i64.Some id)
         (if (lower-borrow-place-value-reference? ctx referent-ty)
           (OkLowerExpr (LowerExpr state (IrValueVar id) result-ty))
           (match (tc-type-strip-region (tc-resolve-type ctx result-ty))
@@ -10398,7 +10402,7 @@
                   (IrValueVar id)
                   referent-ty
                   result-ty))]))]
-      [(NoneI64)
+      [(option_i64.None)
         (OkLowerExpr
           (LowerExpr
             state
@@ -11706,14 +11710,14 @@
                               (match (compiler-registries-lookup-variant-id
                                 registries
                                 nested-name)
-                                [(NoneI64)
+                                [(option_i64.None)
                                   (ErrLowerEnv
                                     (box
                                       (lower-diagnostic
                                         (string.string-append
                                           "lower: unknown nested variant "
                                           nested-name-str))))]
-                                [(SomeI64 handle)
+                                [(option_i64.Some handle)
                                   (match (compiler-registries-variant-fields-indexed
                                     symbols
                                     handle)
@@ -12007,14 +12011,14 @@
                           (match (compiler-registries-lookup-variant-id
                             registries
                             nested-name)
-                            [(NoneI64)
+                            [(option_i64.None)
                               (ErrLowerEnv
                                 (box
                                   (lower-diagnostic
                                     (string.string-append
                                       "lower: unknown nested variant "
                                       nested-name-str))))]
-                            [(SomeI64 handle)
+                            [(option_i64.Some handle)
                               (match (compiler-registries-variant-fields-indexed
                                 symbols
                                 handle)
@@ -12340,8 +12344,8 @@
   [name : String]
   [ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
-    [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
-    [(NoneI64)
+    [(option_i64.Some id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
+    [(option_i64.None)
       (OkLowerExpr
         (LowerExpr state (IrValueGlobal (lower-resolve-name state name)) ty))]))
 
@@ -12351,8 +12355,8 @@
   [name-id : i64]
   [ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup-id env name-id)
-    [(SomeI64 id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
-    [(NoneI64)
+    [(option_i64.Some id) (OkLowerExpr (LowerExpr state (IrValueVar id) ty))]
+    [(option_i64.None)
       (OkLowerExpr
         (LowerExpr
           state
@@ -12368,7 +12372,7 @@
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
     (match (lower-symbols-lookup-value-hygiene symbols name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (if (=
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-extern))
@@ -12384,13 +12388,13 @@
                 [_ false])]
             [(ErrAstDecl _) false])
           false)]
-      [(NoneI64) false])))
+      [(option_i64.None) false])))
 
 (define (lower-extern-value-decl? [ctx : TcContext] [name : String]) : bool
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
     (match (lower-symbols-lookup-value-hygiene symbols name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (if (=
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-extern))
@@ -12406,7 +12410,7 @@
                 [_ false])]
             [(ErrAstDecl _) false])
           false)]
-      [(NoneI64) false])))
+      [(option_i64.None) false])))
 
 (define (lower-atomic-public-symbol? [symbol : String]) : bool
   (or
@@ -12508,8 +12512,9 @@
   [symbols : CompilerSymbols]
   [lookup-name : String]) : String
   (match (lower-symbols-lookup-value-hygiene symbols lookup-name)
-    [(SomeI64 handle) (lower-atomic-extern-symbol-from-handle symbols handle)]
-    [(NoneI64) ""]))
+    [(option_i64.Some handle)
+      (lower-atomic-extern-symbol-from-handle symbols handle)]
+    [(option_i64.None) ""]))
 
 (define (lower-atomic-extern-symbol-for-name [ctx : TcContext] [name : String]) : String
   (if (not (lower-atomic-name-candidate? name))
@@ -12569,7 +12574,7 @@
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
     (match (lower-symbols-lookup-value-hygiene symbols name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (or
           (=
             (compiler-symbol-handle-kind handle)
@@ -12578,7 +12583,7 @@
           (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defdispatch)))]
-      [(NoneI64) false])))
+      [(option_i64.None) false])))
 
 (define (lower-function-value-or-var
   [ctx : TcContext]
@@ -12587,8 +12592,8 @@
   [name : String]
   [ty : AstType]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
-    [(SomeI64 _) (lower-var state env name ty)]
-    [(NoneI64)
+    [(option_i64.Some _) (lower-var state env name ty)]
+    [(option_i64.None)
       (if (lower-extern-value-decl? ctx name)
         (match (lower-var state env name ty)
           [(OkLowerExpr lowered)
@@ -13906,7 +13911,7 @@
   [hidden-name : String]
   [cleanup-name : String]) : ResultLowerState
   (match (sym-i64-lookup env hidden-name)
-    [(SomeI64 resource-id)
+    [(option_i64.Some resource-id)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated var-id)
           (OkLowerState
@@ -13917,7 +13922,7 @@
                 (lower-resolve-call-name allocated env cleanup-name)
                 (IrCallArgsOne (IrValueVar resource-id))
                 (AstTyUnit))))])]
-    [(NoneI64)
+    [(option_i64.None)
       (ErrLowerState
         (box (lower-diagnostic "lower: missing resource cleanup binding")))]))
 
@@ -13926,7 +13931,7 @@
   [env : SymI64Env]
   [hidden-name : String]) : ResultLowerState
   (match (sym-i64-lookup env hidden-name)
-    [(SomeI64 mark-var)
+    [(option_i64.Some mark-var)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated reset-var)
           (OkLowerState
@@ -13937,7 +13942,7 @@
                 "tl_region_reset"
                 (IrCallArgsOne (IrValueVar mark-var))
                 (AstTyUnit))))])]
-    [(NoneI64)
+    [(option_i64.None)
       (ErrLowerState
         (box (lower-diagnostic "lower: missing region reset binding")))]))
 
@@ -13946,7 +13951,7 @@
   [env : SymI64Env]
   [hidden-name : String]) : ResultLowerState
   (match (sym-i64-lookup env hidden-name)
-    [(SomeI64 arena-var)
+    [(option_i64.Some arena-var)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated restore-var)
           (OkLowerState
@@ -13957,7 +13962,7 @@
                 "tl_arena_set"
                 (IrCallArgsOne (IrValueVar arena-var))
                 (AstTyUnit))))])]
-    [(NoneI64)
+    [(option_i64.None)
       (ErrLowerState
         (box (lower-diagnostic "lower: missing arena restore binding")))]))
 
@@ -14313,7 +14318,7 @@
         [err-ty : AstType
           (tc-type-without-regions (tc-result-info-err-type return-info))]
         (match (compiler-registries-lookup-variant registries err-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (lower-reserve-heap-storage
               state
               (lower-enum-storage-size ctx enum-name)
@@ -14363,7 +14368,7 @@
                       (lower-state-emit
                         payload-state
                         (IrInstrReturn (lower-return-maybe base ret-ty))))))])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerState
               (box
                 (lower-diagnostic
@@ -14443,7 +14448,7 @@
       (let
         [ok-name : String (tc-result-info-ok-name operand-info)]
         (match (compiler-registries-lookup-variant registries ok-name)
-          [(SomeI64 ok-handle)
+          [(option_i64.Some ok-handle)
             (match (lower-load-at-offset state result-value 0 (AstTyI64))
               [(LowerExpr tag-state tag-value _)
                 (match (lower-state-alloc-var tag-state)
@@ -14482,7 +14487,7 @@
                                 return-info
                                 ok-label
                                 err-label))])])])])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerExpr
               (box
                 (lower-diagnostic-at-expr
@@ -14550,8 +14555,8 @@
         (not (tc-name-qualified? name)))
         (compiler-symbols-lookup-value-in-module symbols module name)
         (compiler-symbols-lookup-value symbols name))
-        [(SomeI64 _) true]
-        [(NoneI64) false])]))
+        [(option_i64.Some _) true]
+        [(option_i64.None) false])]))
 
 (define (lower-builtin-call-available?
   [ctx : TcContext]
@@ -15417,7 +15422,7 @@
             effective-arg
             arg-ty)
           (match (sym-i64-lookup env name)
-            [(SomeI64 local-id)
+            [(option_i64.Some local-id)
               (match (lower-borrow-copy-to-inline-storage
                 ctx
                 state
@@ -15431,7 +15436,7 @@
                       storage
                       (LowerSomeArgWriteback
                         (LowerArgWriteback local-id storage referent-ir-ty arg))))])]
-            [(NoneI64)
+            [(option_i64.None)
               (lower-call-arg-normal-as
                 ctx
                 state
@@ -16233,14 +16238,14 @@
   (if (tc-name-qualified? nominal-name)
     (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
     (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (match (tc-nominal-owner-name ctx handle)
           [(OkTcString owner-name)
             (if (tc-name-qualified? owner-name)
               (tc-context-with-module ctx (tc-qualified-name-module owner-name))
               (tc-context-with-module ctx ""))]
           [(ErrTcString _) ctx])]
-      [(NoneI64) ctx])))
+      [(option_i64.None) ctx])))
 
 (define (lower-construct-struct
   [ctx : TcContext]
@@ -16446,7 +16451,7 @@
                       (match (compiler-registries-lookup-variant
                         (tc-context-registries ctx)
                         lookup-name)
-                        [(SomeI64 handle)
+                        [(option_i64.Some handle)
                           (lower-construct-enum-with-name
                             ctx
                             state
@@ -16457,7 +16462,7 @@
                             (lower-init-expr-list-from-types payload-types)
                             enum-name
                             enum-ty)]
-                        [(NoneI64)
+                        [(option_i64.None)
                           (ErrLowerExpr
                             (box
                               (lower-diagnostic
@@ -16544,7 +16549,7 @@
                       (match (compiler-registries-lookup-variant
                         (tc-context-registries ctx)
                         lookup-name)
-                        [(SomeI64 handle)
+                        [(option_i64.Some handle)
                           (lower-construct-enum-with-name-into
                             ctx
                             state
@@ -16556,7 +16561,7 @@
                             (lower-init-expr-list-from-types payload-types)
                             enum-name
                             enum-ty)]
-                        [(NoneI64)
+                        [(option_i64.None)
                           (ErrLowerState
                             (box
                               (lower-diagnostic
@@ -16746,7 +16751,7 @@
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
       [registries : CompilerRegistries (tc-context-registries ctx)]
       (match (compiler-registries-lookup-variant registries lookup-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
             [(OkAstTypeList fields)
               (match fields
@@ -16763,7 +16768,8 @@
                 [_ (lower-function-value-or-var ctx state env name expr-ty)])]
             [(ErrAstTypeList _)
               (lower-function-value-or-var ctx state env name expr-ty)])]
-        [(NoneI64) (lower-function-value-or-var ctx state env name expr-ty)]))
+        [(option_i64.None)
+          (lower-function-value-or-var ctx state env name expr-ty)]))
     (lower-function-value-or-var ctx state env name expr-ty)))
 
 ;; #2386: a register-group GLOBAL stores its two words inline at the symbol; a
@@ -16801,8 +16807,8 @@
   (lower-materialize-group-global
     ctx
     (match (sym-i64-lookup env name)
-      [(SomeI64 _) (lower-var state env name expr-ty)]
-      [(NoneI64)
+      [(option_i64.Some _) (lower-var state env name expr-ty)]
+      [(option_i64.None)
         (lower-nullary-variant-or-function-value
           ctx
           state
@@ -16825,8 +16831,8 @@
   (lower-materialize-group-global
     ctx
     (match (sym-i64-lookup-id env name-id)
-      [(SomeI64 _) (lower-var-id state env name-id expr-ty)]
-      [(NoneI64)
+      [(option_i64.Some _) (lower-var-id state env name-id expr-ty)]
+      [(option_i64.None)
         (let
           [name : String (intern-str name-id)]
           (match (lower-source-name-lookup-key ctx type-env name)
@@ -18153,7 +18159,7 @@
                     (match lowered
                       [(LowerExpr value-state value-ir _)
                         (match (sym-i64-lookup-id env name-id)
-                          [(SomeI64 id)
+                          [(option_i64.Some id)
                             (let
                               [assign-state
                                 : LowerState
@@ -18178,7 +18184,7 @@
                                     origin)
                                   IrValueUnit
                                   expr-ty)))]
-                          [(NoneI64)
+                          [(option_i64.None)
                             (match (lower-return-abi-value
                               ctx
                               value-state
@@ -18530,7 +18536,7 @@
           [(ErrLowerExpr diag) (ErrLowerExpr diag)]))]
     [(AstExprPtrAddrOf name)
       (match (sym-i64-lookup-id env name)
-        [(SomeI64 local-id)
+        [(option_i64.Some local-id)
           (match (lower-state-alloc-var state)
             [(LowerAlloc allocated var-id)
               (OkLowerExpr
@@ -18541,7 +18547,7 @@
                     origin)
                   (IrValueVar var-id)
                   expr-ty))])]
-        [(NoneI64)
+        [(option_i64.None)
           (ErrLowerExpr
             (box
               (lower-diagnostic-at-expr
@@ -19942,20 +19948,20 @@
   (if (not (lower-mode-c-abi? (lower-state-mode state)))
     false
     (match (sym-i64-lookup env name)
-      [(SomeI64 _) false]
-      [(NoneI64)
+      [(option_i64.Some _) false]
+      [(option_i64.None)
         (if (lower-c-abi-runtime-handle-extern? name)
           false
           (match (lower-symbols-lookup-value-hygiene
             (tc-context-symbols ctx)
             name)
-            [(SomeI64 handle)
+            [(option_i64.Some handle)
               (and
                 (=
                   (compiler-symbol-handle-kind handle)
                   (compiler-symbol-kind-extern))
                 (lower-extern-function-decl? ctx name))]
-            [(NoneI64) false]))])))
+            [(option_i64.None) false]))])))
 
 (define (lower-c-abi-extern-value-call?
   [ctx : TcContext]
@@ -19965,8 +19971,8 @@
   (if (not (lower-mode-c-abi? (lower-state-mode state)))
     false
     (match (sym-i64-lookup env name)
-      [(SomeI64 _) false]
-      [(NoneI64)
+      [(option_i64.Some _) false]
+      [(option_i64.None)
         (if (lower-c-abi-runtime-handle-extern? name)
           false
           (lower-extern-value-decl? ctx name))])))
@@ -22679,9 +22685,9 @@
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (match (sym-i64-lookup env name)
-    [(SomeI64 _)
+    [(option_i64.Some _)
       (lower-direct-call ctx state env type-env name args result-ty origin)]
-    [(NoneI64)
+    [(option_i64.None)
       (let
         [source-name : String (lower-hygiene-source-name name)]
         [symbols : CompilerSymbols (tc-context-symbols ctx)]
@@ -22699,7 +22705,7 @@
                 (lower-module-lookup-name ctx source-name))]
             [_ (lower-module-lookup-name ctx source-name)])]
         (match (compiler-registries-lookup-variant registries variant-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (lower-construct-enum-with-handle
               ctx
               state
@@ -22709,9 +22715,9 @@
               handle
               args
               result-ty)]
-          [(NoneI64)
+          [(option_i64.None)
             (match (compiler-symbols-lookup-type symbols struct-name)
-              [(SomeI64 handle)
+              [(option_i64.Some handle)
                 (if (=
                   (compiler-symbol-handle-kind handle)
                   (compiler-symbol-kind-defstruct))
@@ -22732,7 +22738,7 @@
                     args
                     result-ty
                     origin))]
-              [(NoneI64)
+              [(option_i64.None)
                 (lower-direct-call
                   ctx
                   state
@@ -22768,8 +22774,8 @@
   [result-ty : AstType]
   [_origin : AstExpr]) : LowerMaybeDirectStore
   (match (sym-i64-lookup env name)
-    [(SomeI64 _) (LowerNoDirectStore)]
-    [(NoneI64)
+    [(option_i64.Some _) (LowerNoDirectStore)]
+    [(option_i64.None)
       (let
         [source-name : String (lower-hygiene-source-name name)]
         [symbols : CompilerSymbols (tc-context-symbols ctx)]
@@ -22794,7 +22800,7 @@
                 (lower-module-lookup-name ctx source-name))]
             [_ (lower-module-lookup-name ctx source-name)])]
         (match (compiler-registries-lookup-variant registries variant-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (lower-direct-store-result
               (lower-construct-enum-with-handle-into
                 ctx
@@ -22806,9 +22812,9 @@
                 handle
                 args
                 result-ty))]
-          [(NoneI64)
+          [(option_i64.None)
             (match (compiler-symbols-lookup-type symbols struct-name)
-              [(SomeI64 handle)
+              [(option_i64.Some handle)
                 (if (=
                   (compiler-symbol-handle-kind handle)
                   (compiler-symbol-kind-defstruct))
@@ -22823,7 +22829,7 @@
                       args
                       result-ty))
                   (LowerNoDirectStore))]
-              [(NoneI64) (LowerNoDirectStore)])]))]))
+              [(option_i64.None) (LowerNoDirectStore)])]))]))
 
 (define (lower-direct-nullary-variant-into
   [ctx : TcContext]
@@ -22834,8 +22840,8 @@
   [name : String]
   [result-ty : AstType]) : LowerMaybeDirectStore
   (match (sym-i64-lookup env name)
-    [(SomeI64 _) (LowerNoDirectStore)]
-    [(NoneI64)
+    [(option_i64.Some _) (LowerNoDirectStore)]
+    [(option_i64.None)
       (let
         [source-name : String (lower-hygiene-source-name name)]
         [registries : CompilerRegistries (tc-context-registries ctx)]
@@ -22843,7 +22849,7 @@
         [variant-name : String
           (lower-variant-constructor-lookup-name ctx source-name result-ty)]
         (match (compiler-registries-lookup-variant registries variant-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (match fields
@@ -22862,7 +22868,7 @@
                   [_ (LowerNoDirectStore)])]
               [(ErrAstTypeList message)
                 (LowerDirectStoreErr (box (lower-diagnostic message)))])]
-          [(NoneI64) (LowerNoDirectStore)]))]))
+          [(option_i64.None) (LowerNoDirectStore)]))]))
 
 (define (lower-direct-init-into
   [ctx : TcContext]
@@ -23087,7 +23093,7 @@
                           "lower: call target is not a function"))))])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])
           (match (sym-i64-lookup env (intern-str raw-name))
-            [(SomeI64 local-id)
+            [(option_i64.Some local-id)
               (match (tc-lookup type-env (intern-str raw-name))
                 [(OkTcType fn-ty)
                   (if (lower-function-type? fn-ty)
@@ -23119,7 +23125,7 @@
                           "lower: call target is not a function"))))]
                 [(ErrTcType message)
                   (ErrLowerExpr (box (lower-diagnostic-at-expr func message)))])]
-            [(NoneI64)
+            [(option_i64.None)
               (let
                 [hygiene-global : bool (tc-hygiene-global-name? raw-text)]
                 (match (if hygiene-global
@@ -25599,7 +25605,7 @@
   [place-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (match (sym-i64-lookup-id env name)
-    [(SomeI64 local-id)
+    [(option_i64.Some local-id)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated var-id)
           (OkLowerExpr
@@ -25610,7 +25616,7 @@
                 origin)
               (IrValueVar var-id)
               place-ty))])]
-    [(NoneI64)
+    [(option_i64.None)
       (OkLowerExpr
         (LowerExpr
           state
@@ -26018,7 +26024,7 @@
   (match (tc-move-root-projection-var place)
     [(TcSomeString root)
       (match (sym-i64-lookup env root)
-        [(SomeI64 local-id)
+        [(option_i64.Some local-id)
           (match (tc-lookup type-env root)
             [(OkTcType root-ty)
               (let
@@ -26044,7 +26050,7 @@
                   (OkLowerState state)))]
             [(ErrTcType message)
               (ErrLowerState (box (lower-diagnostic-at-expr origin message)))])]
-        [(NoneI64) (OkLowerState state)])]
+        [(option_i64.None) (OkLowerState state)])]
     [(TcNoString) (OkLowerState state)]))
 
 (define (lower-register-resident-local-place?
@@ -26056,8 +26062,8 @@
     (match (ast-expr-unspan receiver)
       [(AstExprVar name)
         (match (sym-i64-lookup-id env name)
-          [(SomeI64 _) true]
-          [(NoneI64) false])]
+          [(option_i64.Some _) true]
+          [(option_i64.None) false])]
       [_ false])
     false))
 
@@ -26097,7 +26103,7 @@
   (match (ast-expr-unspan receiver)
     [(AstExprVar name)
       (match (sym-i64-lookup-id env name)
-        [(SomeI64 local-id)
+        [(option_i64.Some local-id)
           (let
             [receiver-ir-ty : AstType
               (tc-type-without-regions (tc-resolve-type ctx receiver-ty))]
@@ -26152,7 +26158,7 @@
                                     origin)])]
                             [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                     [(ErrLowerExpr message) (ErrLowerExpr message)]))]))]
-        [(NoneI64)
+        [(option_i64.None)
           (ErrLowerExpr
             (box
               (lower-diagnostic-at-expr
@@ -28301,7 +28307,7 @@
         (lower-dynamic-array-var env type-env inner))]
     [(AstExprVar name)
       (match (sym-i64-lookup-id env name)
-        [(SomeI64 var-id)
+        [(option_i64.Some var-id)
           (match (tc-lookup type-env (intern-str name))
             [(OkTcType ty)
               (match (tc-type-strip-region ty)
@@ -28325,7 +28331,7 @@
                     [_ LowerNoArrayVar])]
                 [_ LowerNoArrayVar])]
             [(ErrTcType _) LowerNoArrayVar])]
-        [NoneI64 LowerNoArrayVar])]
+        [option_i64.None LowerNoArrayVar])]
     [_ LowerNoArrayVar]))
 
 (define (lower-array-ref-var-for-index
@@ -28367,14 +28373,14 @@
     [(AstExprLiteral (AstLitInt n _)) (LowerSomeIrValue (IrValueI64 n))]
     [(AstExprVar name)
       (match (sym-i64-lookup-id env name)
-        [(SomeI64 var-id)
+        [(option_i64.Some var-id)
           (match (tc-lookup type-env (intern-str name))
             [(OkTcType ty)
               (if (tc-type-eq (tc-type-without-regions ty) (AstTyI64))
                 (LowerSomeIrValue (IrValueVar var-id))
                 LowerNoIrValue)]
             [(ErrTcType _) LowerNoIrValue])]
-        [NoneI64 LowerNoIrValue])]
+        [option_i64.None LowerNoIrValue])]
     [_ LowerNoIrValue]))
 
 (define (lower-array-var-set-empty) : LowerArrayVarSet
@@ -31275,7 +31281,7 @@
         (if (string.string-eq lookup-name index)
           LowerNoVectorMapValue
           (match (sym-i64-lookup-id env name)
-            [(SomeI64 var-id)
+            [(option_i64.Some var-id)
               (match (tc-lookup type-env lookup-name)
                 [(OkTcType ty)
                   (let
@@ -31287,7 +31293,7 @@
                         (LowerVectorMapUniform (IrValueVar var-id)))
                       LowerNoVectorMapValue))]
                 [(ErrTcType _) LowerNoVectorMapValue])]
-            [NoneI64 LowerNoVectorMapValue])))]
+            [option_i64.None LowerNoVectorMapValue])))]
     [(AstExprLiteral lit)
       (let
         [lit-ty : AstType (tc-literal-type lit)]
@@ -33311,19 +33317,19 @@
   [name : String]) : ResultLowerExpr
   (if (lower-string-set-contains? lane-locals name)
     (match (sym-i64-lookup env name)
-      [(SomeI64 var-id)
+      [(option_i64.Some var-id)
         (match (tc-lookup type-env name)
           [(OkTcType ty)
             (OkLowerExpr
               (LowerExpr state (IrValueVar var-id) (tc-type-without-regions ty)))]
           [(ErrTcType message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])]
-      [(NoneI64)
+      [(option_i64.None)
         (lower-avx512-masked-unsupported expr "unknown lane-local binding")])
     (if (string.string-eq name index)
       (OkLowerExpr (lower-emit-foreach-index-vector state index-var lanes))
       (match (sym-i64-lookup env name)
-        [(SomeI64 var-id)
+        [(option_i64.Some var-id)
           (match (tc-lookup type-env name)
             [(OkTcType ty)
               (let
@@ -33338,7 +33344,7 @@
                     "uniform non-lane values inside masked vector expressions")))]
             [(ErrTcType message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])]
-        [(NoneI64)
+        [(option_i64.None)
           (lower-avx512-masked-unsupported
             expr
             "unbound values inside masked vector expressions")]))))
@@ -36642,7 +36648,7 @@
             resolved-scrut-ty
             variant-name)]
         (match (compiler-registries-lookup-variant registries lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (let
@@ -36716,7 +36722,7 @@
                       [(ErrLowerEnv message) (ErrLowerExpr message)])))]
               [(ErrAstTypeList message)
                 (ErrLowerExpr (box (lower-diagnostic message)))])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerExpr
               (box
                 (lower-diagnostic
@@ -36825,7 +36831,7 @@
             resolved-scrut-ty
             variant-name)]
         (match (compiler-registries-lookup-variant registries lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (let
@@ -36885,7 +36891,7 @@
                                     scrut-reg-group?))])]))]))]
               [(ErrAstTypeList message)
                 (ErrLowerExpr (box (lower-diagnostic message)))])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerExpr
               (box
                 (lower-diagnostic
@@ -37058,16 +37064,16 @@
 
 (define (lower-tail-call-var-unshadowed? [env : SymI64Env] [name : i64]) : bool
   (match (sym-i64-lookup-id env name)
-    [(SomeI64 _) false]
-    [(NoneI64) true]))
+    [(option_i64.Some _) false]
+    [(option_i64.None) true]))
 
 (define (lower-tail-call-local-indirect-safe?
   [env : SymI64Env]
   [type-env : TcTypeEnv]
   [name : i64]) : bool
   (match (sym-i64-lookup-id env name)
-    [(SomeI64 _) (not (lower-type-env-contains-reference? type-env))]
-    [(NoneI64) true]))
+    [(option_i64.Some _) (not (lower-type-env-contains-reference? type-env))]
+    [(option_i64.None) true]))
 
 (define (lower-tail-call-reference-capturing-lambda?
   [type-env : TcTypeEnv]
@@ -37104,11 +37110,11 @@
   (let
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
     (match (lower-symbols-lookup-value-hygiene symbols name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (=
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-function-define))]
-      [(NoneI64) false])))
+      [(option_i64.None) false])))
 
 (define (lower-tail-call-compatible-return?
   [ctx : TcContext]
@@ -37864,7 +37870,7 @@
             (lower-module-lookup-name ctx source-name))]
         [_ (lower-module-lookup-name ctx source-name)])]
     (match (compiler-registries-lookup-variant registries variant-name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (match (lower-construct-enum-with-handle-into
           ctx
           state
@@ -37878,9 +37884,9 @@
           [(OkLowerState done-state)
             (lower-return-sret done-state ret-ty sret-var)]
           [(ErrLowerState message) (ErrLowerState message)])]
-      [(NoneI64)
+      [(option_i64.None)
         (match (compiler-symbols-lookup-type symbols struct-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (if (=
               (compiler-symbol-handle-kind handle)
               (compiler-symbol-kind-defstruct))
@@ -37906,7 +37912,7 @@
                 ret-ty
                 sret-var
                 origin))]
-          [(NoneI64)
+          [(option_i64.None)
             (lower-return-call-fallback-to-sret
               ctx
               state
@@ -37942,7 +37948,7 @@
             ret-ty
             sret-var)
           (match (sym-i64-lookup env raw-text)
-            [(SomeI64 _)
+            [(option_i64.Some _)
               (lower-return-expr-generic
                 ctx
                 state
@@ -37951,7 +37957,7 @@
                 origin
                 ret-ty
                 sret-var)]
-            [(NoneI64)
+            [(option_i64.None)
               (match (if (tc-hygiene-global-name? raw-text)
                 (OkTcString
                   (lower-hygiene-source-name-in-context ctx type-env raw-text))
@@ -38029,8 +38035,9 @@
         (ast-node-get inner-box))]
     [(AstExprVar name)
       (match (sym-i64-lookup-id env name)
-        [(SomeI64 var-id) (lower-state-tail-param-range-contains? state var-id)]
-        [(NoneI64) false])]
+        [(option_i64.Some var-id)
+          (lower-state-tail-param-range-contains? state var-id)]
+        [(option_i64.None) false])]
     [_ false]))
 
 (define (lower-expr-list-contains-unsafe-inline-aggregate?
@@ -38701,7 +38708,7 @@
             resolved-scrut-ty
             variant-name)]
         (match (compiler-registries-lookup-variant registries lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (let
@@ -38747,7 +38754,7 @@
                       [(ErrLowerEnv message) (ErrLowerState message)])))]
               [(ErrAstTypeList message)
                 (ErrLowerState (box (lower-diagnostic message)))])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerState
               (box
                 (lower-diagnostic
@@ -38840,7 +38847,7 @@
             resolved-scrut-ty
             variant-name)]
         (match (compiler-registries-lookup-variant registries lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (compiler-registries-variant-fields-indexed symbols handle)
               [(OkAstTypeList fields)
                 (let
@@ -38899,7 +38906,7 @@
                                     scrut-reg-group?))])]))]))]
               [(ErrAstTypeList message)
                 (ErrLowerState (box (lower-diagnostic message)))])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerState
               (box
                 (lower-diagnostic
@@ -40304,7 +40311,7 @@
         (match (compiler-symbols-lookup-value
           (tc-context-symbols ctx)
           lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (compiler-program-decl-at-index
               (tc-context-program ctx)
               (compiler-symbol-handle-index handle))
@@ -40321,7 +40328,7 @@
                   mode)]
               [(ErrAstDecl message)
                 (ErrLowerFunction (box (lower-diagnostic message)))])]
-          [(NoneI64)
+          [(option_i64.None)
             (ErrLowerFunction
               (box
                 (lower-diagnostic
@@ -43740,12 +43747,13 @@
   (chain flag))")
 
 (define (compiler-lower-option-try-source) : String
-  "(defenum MaybeI64 (SomeI64 i64) (NoneI64))
-(define (read [flag : bool] [n : i64]) : MaybeI64
-  (if flag (SomeI64 n) NoneI64))
-(define (main [a : bool] [b : bool]) : MaybeI64
+  "(import \"stdlib/option.tl\")
+(import (option i64) as option_i64)
+(define (read [flag : bool] [n : i64]) : option_i64.Option
+  (if flag (option_i64.Some n) option_i64.None))
+(define (main [a : bool] [b : bool]) : option_i64.Option
   (let ([x : i64 (try (read a 40))])
-    (SomeI64 (+ x (try (read b 2))))))")
+    (option_i64.Some (+ x (try (read b 2))))))")
 
 (define (compiler-lower-return-source) : String
   "(define (main [flag : bool]) : i64
@@ -48135,8 +48143,8 @@
       (match program
         [(IrProgram _ functions _)
           (and
-            (> (lower-test-function-branch-count functions "main") 1)
-            (> (lower-test-function-return-count functions "main") 2))])]
+            (> (lower-test-function-branch-count functions ".::main") 1)
+            (> (lower-test-function-return-count functions ".::main") 2))])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-return-shape-ok?) : bool

@@ -9,6 +9,8 @@
 (import "sym_i64_env.tl")
 (import stdlib.hashmap)
 (import stdlib.string)
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (defenum CompilerSymbols
   (CompilerSymbols
@@ -116,20 +118,20 @@
 
 (define (compiler-symbol-map-lookup-id
   [map : hashmap.I64I64Map]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match (hashmap.i64-i64-map-get map name-id)
-    [(hashmap.I64I64MapFound value) (SomeI64 value)]
-    [(hashmap.I64I64MapMissing) NoneI64]))
+    [(hashmap.I64I64MapFound value) (option_i64.Some value)]
+    [(hashmap.I64I64MapMissing) option_i64.None]))
 
-(define (compiler-symbol-map-lookup [map : hashmap.I64I64Map] [name : String]) : MaybeI64
+(define (compiler-symbol-map-lookup [map : hashmap.I64I64Map] [name : String]) : option_i64.Option
   (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-contains-id?
   [map : hashmap.I64I64Map]
   [name-id : i64]) : bool
   (match (compiler-symbol-map-lookup-id map name-id)
-    [(SomeI64 _) true]
-    [(NoneI64) false]))
+    [(option_i64.Some _) true]
+    [(option_i64.None) false]))
 
 (define (compiler-symbol-map-contains?
   [map : hashmap.I64I64Map]
@@ -183,12 +185,12 @@
 
 (define (compiler-symbols-lookup-value
   [symbols : CompilerSymbols]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-symbols-lookup-value-id symbols (intern name)))
 
 (define (compiler-symbols-lookup-value-id
   [symbols : CompilerSymbols]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols values _ _ _ _)
       (compiler-symbol-map-lookup-id
@@ -197,12 +199,12 @@
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-symbols-lookup-type-id symbols (intern name)))
 
 (define (compiler-symbols-lookup-type-id
   [symbols : CompilerSymbols]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols _ types _ _ _)
       (compiler-symbol-map-lookup-id
@@ -211,12 +213,12 @@
 
 (define (compiler-symbols-lookup-macro
   [symbols : CompilerSymbols]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-symbols-lookup-macro-id symbols (intern name)))
 
 (define (compiler-symbols-lookup-macro-id
   [symbols : CompilerSymbols]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols _ _ macros _ _)
       (compiler-symbol-map-lookup-id
@@ -389,7 +391,7 @@
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
       (match (compiler-symbol-map-lookup macros name)
-        [(SomeI64 existing)
+        [(option_i64.Some existing)
           (if (= existing handle)
             (match (hashmap.i64-i64-map-remove
               macros
@@ -398,7 +400,7 @@
                 (CompilerSymbols values types next-macros decls owner-names)]
               [(hashmap.I64I64MapRemoveMissing _) symbols])
             symbols)]
-        [(NoneI64) symbols])]))
+        [(option_i64.None) symbols])]))
 
 (define (compiler-registries-add-variant-alias
   [registries : CompilerRegistries]
@@ -461,7 +463,7 @@
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
       (match (compiler-symbol-map-lookup-id values name-id)
-        [(SomeI64 existing)
+        [(option_i64.Some existing)
           (if (=
             (compiler-symbol-handle-kind existing)
             (compiler-symbol-kind-enum-variant))
@@ -469,7 +471,7 @@
               (compiler-registries-duplicate-variant-message display-name))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
-        [(NoneI64)
+        [(option_i64.None)
           (if (compiler-symbol-map-contains-id? macros name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
@@ -489,14 +491,14 @@
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
       (match (compiler-symbol-map-lookup-id values name-id)
-        [(SomeI64 existing)
+        [(option_i64.Some existing)
           (if (=
             (compiler-symbol-handle-kind existing)
             (compiler-symbol-kind-enum-variant))
             (ResultCompilerSymbols.Ok symbols)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
-        [(NoneI64)
+        [(option_i64.None)
           (if (compiler-symbol-map-contains-id? macros name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
@@ -585,7 +587,7 @@
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
       (match (compiler-symbol-map-lookup-id values name-id)
-        [(SomeI64 existing)
+        [(option_i64.Some existing)
           (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
             (if (compiler-symbol-map-contains-id? macros name-id)
               (ResultCompilerSymbols.Err
@@ -599,7 +601,7 @@
                   owner-names)))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message display-name)))]
-        [(NoneI64)
+        [(option_i64.None)
           (if (compiler-symbol-map-contains-id? macros name-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message display-name))
@@ -738,7 +740,7 @@
 (define (compiler-symbols-lookup-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-symbols-lookup-value-in-module-id
     symbols
     (intern module)
@@ -747,7 +749,7 @@
 (define (compiler-symbols-lookup-value-in-module-id
   [symbols : CompilerSymbols]
   [module-id : i64]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols values _ _ _ _)
       (compiler-symbol-map-lookup-id
@@ -757,7 +759,7 @@
 (define (compiler-symbols-lookup-type-in-module
   [symbols : CompilerSymbols]
   [module : String]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-symbols-lookup-type-in-module-id
     symbols
     (intern module)
@@ -766,7 +768,7 @@
 (define (compiler-symbols-lookup-type-in-module-id
   [symbols : CompilerSymbols]
   [module-id : i64]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols _ types _ _ _)
       (compiler-symbol-map-lookup-id
@@ -776,7 +778,7 @@
 (define (compiler-symbols-lookup-macro-in-module
   [symbols : CompilerSymbols]
   [module : String]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-symbols-lookup-macro-in-module-id
     symbols
     (intern module)
@@ -785,7 +787,7 @@
 (define (compiler-symbols-lookup-macro-in-module-id
   [symbols : CompilerSymbols]
   [module-id : i64]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols _ _ macros _ _)
       (compiler-symbol-map-lookup-id
@@ -796,7 +798,7 @@
   [registries : CompilerRegistries]
   [module : String]
   [type-name : String]
-  [field-name : String]) : MaybeI64
+  [field-name : String]) : option_i64.Option
   (compiler-registries-lookup-field-in-module-id
     registries
     (intern module)
@@ -807,7 +809,7 @@
   [registries : CompilerRegistries]
   [module-id : i64]
   [type-name-id : i64]
-  [field-name-id : i64]) : MaybeI64
+  [field-name-id : i64]) : option_i64.Option
   (match registries
     [(CompilerRegistries _ fields)
       (compiler-symbol-map-lookup-id
@@ -1805,7 +1807,7 @@
   [_index : i64]
   [decl-path : String]) : CompilerMaybeString
   (match (compiler-symbols-lookup-value-in-module symbols module name)
-    [(SomeI64 existing)
+    [(option_i64.Some existing)
       (if (and
         (string.string-eq module "")
         (compiler-symbols-handle-from-nonroot-owner? symbols existing))
@@ -1822,7 +1824,7 @@
             (string.string-append
               (compiler-symbols-duplicate-value-message display-name)
               (compiler-symbols-duplicate-location-suffix first-path decl-path)))))]
-    [(NoneI64) CompilerNoString]))
+    [(option_i64.None) CompilerNoString]))
 
 (define (compiler-symbols-duplicate-value-message-for-decl-with-paths
   [symbols : CompilerSymbols]
@@ -2173,12 +2175,12 @@
 
 (define (compiler-registries-lookup-variant
   [registries : CompilerRegistries]
-  [name : String]) : MaybeI64
+  [name : String]) : option_i64.Option
   (compiler-registries-lookup-variant-id registries (intern name)))
 
 (define (compiler-registries-lookup-variant-id
   [registries : CompilerRegistries]
-  [name-id : i64]) : MaybeI64
+  [name-id : i64]) : option_i64.Option
   (match registries
     [(CompilerRegistries variants _)
       (compiler-symbol-map-lookup-id
@@ -2188,7 +2190,7 @@
 (define (compiler-registries-lookup-struct-field
   [registries : CompilerRegistries]
   [struct-name : String]
-  [field-name : String]) : MaybeI64
+  [field-name : String]) : option_i64.Option
   (compiler-registries-lookup-struct-field-id
     registries
     (intern struct-name)
@@ -2197,7 +2199,7 @@
 (define (compiler-registries-lookup-struct-field-id
   [registries : CompilerRegistries]
   [struct-name-id : i64]
-  [field-name-id : i64]) : MaybeI64
+  [field-name-id : i64]) : option_i64.Option
   (match registries
     [(CompilerRegistries _ fields)
       (compiler-symbol-map-lookup-id
@@ -3026,42 +3028,42 @@
     [(ErrAstDecl message) (ErrAstType message)]))
 
 (define (compiler-symbol-lookup-score
-  [found : MaybeI64]
+  [found : option_i64.Option]
   [want-kind : i64]
   [want-index : i64]) : i64
   (match found
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (if (and
         (= (compiler-symbol-handle-kind handle) want-kind)
         (= (compiler-symbol-handle-index handle) want-index))
         1
         0)]
-    [(NoneI64) 0]))
+    [(option_i64.None) 0]))
 
-(define (compiler-symbols-miss-score [found : MaybeI64]) : i64
+(define (compiler-symbols-miss-score [found : option_i64.Option]) : i64
   (match found
-    [(NoneI64) 1]
-    [(SomeI64 _) 0]))
+    [(option_i64.None) 1]
+    [(option_i64.Some _) 0]))
 
-(define (compiler-registry-miss-score [found : MaybeI64]) : i64
+(define (compiler-registry-miss-score [found : option_i64.Option]) : i64
   (match found
-    [(NoneI64) 1]
-    [(SomeI64 _) 0]))
+    [(option_i64.None) 1]
+    [(option_i64.Some _) 0]))
 
 (define (compiler-registry-lookup-score
-  [found : MaybeI64]
+  [found : option_i64.Option]
   [want-kind : i64]
   [want-owner : i64]
   [want-child : i64]) : i64
   (match found
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (if (and
         (= (compiler-registry-handle-kind handle) want-kind)
         (= (compiler-registry-handle-owner-index handle) want-owner)
         (= (compiler-registry-handle-child-index handle) want-child))
         1
         0)]
-    [(NoneI64) 0]))
+    [(option_i64.None) 0]))
 
 (define (compiler-type-result-tag-score
   [found : ResultAstType]
@@ -3161,11 +3163,13 @@
   [program : AstProgram]
   [registries : CompilerRegistries]) : i64
   (let
-    [some : MaybeI64 (compiler-registries-lookup-variant registries "Some")]
-    [none : MaybeI64 (compiler-registries-lookup-variant registries "None")]
-    [x-field : MaybeI64
+    [some : option_i64.Option
+      (compiler-registries-lookup-variant registries "Some")]
+    [none : option_i64.Option
+      (compiler-registries-lookup-variant registries "None")]
+    [x-field : option_i64.Option
       (compiler-registries-lookup-struct-field registries "Point" "x")]
-    [y-field : MaybeI64
+    [y-field : option_i64.Option
       (compiler-registries-lookup-struct-field registries "Point" "y")]
     (+
       (compiler-registry-lookup-score
@@ -3193,18 +3197,18 @@
               1)
             (+
               (match x-field
-                [(SomeI64 handle)
+                [(option_i64.Some handle)
                   (compiler-type-result-tag-score
                     (compiler-registries-struct-field-type program handle)
                     (ast-type-tag (AstTyI64)))]
-                [(NoneI64) 0])
+                [(option_i64.None) 0])
               (+
                 (match some
-                  [(SomeI64 handle)
+                  [(option_i64.Some handle)
                     (compiler-type-list-single-tag-score
                       (compiler-registries-variant-fields program handle)
                       (ast-type-tag (AstTyI64)))]
-                  [(NoneI64) 0])
+                  [(option_i64.None) 0])
                 (+
                   (compiler-symbols-miss-score
                     (compiler-registries-lookup-variant registries "Missing"))

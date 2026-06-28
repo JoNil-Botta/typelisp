@@ -11,6 +11,8 @@
 (import "read.tl")
 (import "sym_i64_env.tl")
 (import stdlib.string)
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (defenum ResultAstType
   (OkAstType AstType)
@@ -1074,8 +1076,8 @@
 
 (define (compiler-parse-dispatch-tag [dispatch : SymI64Env] [name : String]) : i64
   (match (sym-i64-lookup dispatch name)
-    [(SomeI64 tag) tag]
-    [(NoneI64) (compiler-parse-tag-unknown)]))
+    [(option_i64.Some tag) tag]
+    [(option_i64.None) (compiler-parse-tag-unknown)]))
 
 (define (ast-binop-tag? [tag : i64]) : bool
   (or

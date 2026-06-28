@@ -16,6 +16,8 @@
 (import stdlib.string)
 (import stdlib.str_cat)
 (cfg compile-profile (import stdlib.profile))
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 ;; TcTypeCache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
@@ -3121,14 +3123,14 @@
       [source-id : i64 (intern source-module)]
       [binding-id : i64 (tc-module-name-id alias name-id)]
       (match (sym-i64-lookup-id tc-unqualified-import-owner-modules key-id)
-        [(SomeI64 owner-id)
+        [(option_i64.Some owner-id)
           (if (= owner-id source-id)
             unit
             (match (sym-i64-lookup-id
               tc-unqualified-import-ambiguous-first-modules
               key-id)
-              [(SomeI64 _) unit]
-              [NoneI64
+              [(option_i64.Some _) unit]
+              [option_i64.None
                 (begin
                   (set! tc-unqualified-import-has-ambiguity true)
                   (set!
@@ -3143,7 +3145,7 @@
                       tc-unqualified-import-ambiguous-second-modules
                       key-id
                       source-id)))]))]
-        [NoneI64
+        [option_i64.None
           (if (tc-name-bound-id? env binding-id)
             unit
             (set!
@@ -4625,7 +4627,7 @@
     (tc-context-symbols ctx)
     (tc-stdlib-comptime-module-name)
     type-name)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (match (compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle))
@@ -4640,7 +4642,8 @@
                 0)]
             [_ (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
         [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
-    [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
+    [(option_i64.None)
+      (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
 
 (define (tc-stdlib-check-enum
   [ctx : TcContext]
@@ -4650,7 +4653,7 @@
     (tc-context-symbols ctx)
     (tc-stdlib-comptime-module-name)
     type-name)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (match (compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle))
@@ -4665,7 +4668,8 @@
                 0)]
             [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
         [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])]
-    [(NoneI64) (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
+    [(option_i64.None)
+      (tc-stdlib-well-known-mismatch type-name "missing declaration")]))
 
 (define (tc-stdlib-comptime-present? [ctx : TcContext]) : bool
   (or
@@ -4673,14 +4677,14 @@
       (tc-context-symbols ctx)
       (tc-stdlib-comptime-module-name)
       "Expr")
-      [(SomeI64 _) true]
-      [(NoneI64) false])
+      [(option_i64.Some _) true]
+      [(option_i64.None) false])
     (match (compiler-symbols-lookup-type-in-module
       (tc-context-symbols ctx)
       (tc-stdlib-comptime-module-name)
       "TypeInfo")
-      [(SomeI64 _) true]
-      [(NoneI64) false])))
+      [(option_i64.Some _) true]
+      [(option_i64.None) false])))
 
 (define (tc-stdlib-expr-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
@@ -5317,15 +5321,15 @@
   (match (sym-i64-lookup-id
     tc-unqualified-import-ambiguous-first-modules
     key-id)
-    [NoneI64 (TcNoString)]
-    [(SomeI64 first-module)
+    [option_i64.None (TcNoString)]
+    [(option_i64.Some first-module)
       (if (tc-name-bound-before-hygiene-global-boundary-id? env name-id)
         (TcNoString)
         (match (sym-i64-lookup-id
           tc-unqualified-import-ambiguous-second-modules
           key-id)
-          [NoneI64 (TcNoString)]
-          [(SomeI64 second-module)
+          [option_i64.None (TcNoString)]
+          [(option_i64.Some second-module)
             (TcSomeString
               (str_cat.str-cat
                 "typecheck: ambiguous unqualified import for value "
@@ -7357,7 +7361,7 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-value symbols base)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (let
             [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
             [index : i64 (compiler-symbol-handle-index handle)]
@@ -7377,7 +7381,7 @@
                   [(string.string-eq base "string-concat")
                     (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
                   [else false]))))]
-        [(NoneI64) false])]))
+        [(option_i64.None) false])]))
 
 (define (tc-stdlib-string-qualified-helper-id?
   [lookup-id : i64]
@@ -7855,14 +7859,14 @@
           (let
             [module-key : String (compiler-symbol-module-key module name)]
             (match (compiler-registries-lookup-variant registries module-key)
-              [(SomeI64 _) (OkTcString module-key)]
-              [(NoneI64)
+              [(option_i64.Some _) (OkTcString module-key)]
+              [(option_i64.None)
                 (match (compiler-registries-lookup-variant registries name)
-                  [(SomeI64 _) (OkTcString name)]
-                  [(NoneI64) (ErrTcString "")])]))
+                  [(option_i64.Some _) (OkTcString name)]
+                  [(option_i64.None) (ErrTcString "")])]))
           (match (compiler-registries-lookup-variant registries name)
-            [(SomeI64 _) (OkTcString name)]
-            [(NoneI64) (ErrTcString "")]))])
+            [(option_i64.Some _) (OkTcString name)]
+            [(option_i64.None) (ErrTcString "")]))])
     (ErrTcString "")))
 
 (define (tc-source-name-lookup-key-with-field-check
@@ -8099,20 +8103,20 @@
 
 (define (tc-resolve-type-name-symbol-lookup
   [symbols : CompilerSymbols]
-  [lookup-name : String]) : MaybeI64
+  [lookup-name : String]) : option_i64.Option
   (match (tc-resolve-type-name-cache-lookup lookup-name)
-    [(TcTypeNameLookupCacheFound handle) (SomeI64 handle)]
-    [(TcTypeNameLookupCacheMissing) NoneI64]
+    [(TcTypeNameLookupCacheFound handle) (option_i64.Some handle)]
+    [(TcTypeNameLookupCacheMissing) option_i64.None]
     [(TcTypeNameLookupCacheMiss)
       (match (compiler-symbols-lookup-type symbols lookup-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (begin
             (tc-resolve-type-name-cache-store! lookup-name true handle)
-            (SomeI64 handle))]
-        [(NoneI64)
+            (option_i64.Some handle))]
+        [(option_i64.None)
           (begin
             (tc-resolve-type-name-cache-store! lookup-name false 0)
-            NoneI64)])]))
+            option_i64.None)])]))
 
 (define (tc-nominal-owner-cache-slot [handle : i64]) : i64
   (% (compiler-symbol-handle-index handle) 8))
@@ -8126,11 +8130,11 @@
     (match (tc-resolve-type-name-symbol-lookup
       (tc-context-symbols ctx)
       cached-name)
-      [(SomeI64 cached-handle)
+      [(option_i64.Some cached-handle)
         (if (= cached-handle handle)
           (OkTcString cached-name)
           (ErrTcString ""))]
-      [(NoneI64) (ErrTcString "")])
+      [(option_i64.None) (ErrTcString "")])
     (ErrTcString "")))
 
 (define (tc-nominal-owner-cache-lookup [ctx : TcContext] [handle : i64]) : ResultTcString
@@ -8364,7 +8368,7 @@
             (compiler-symbol-module-key module source-name)
             source-name)]
         (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (if (and
               (tc-name-qualified? lookup-name)
               (string.string-eq (tc-qualified-name-module lookup-name) module))
@@ -8389,7 +8393,7 @@
                   (match (tc-stdlib-comptime-syntax-type lookup-name)
                     [(AstSomeType syntax-ty) syntax-ty]
                     [(AstNoType) (tc-resolved-nominal-type lookup-name handle)])]))]
-          [(NoneI64)
+          [(option_i64.None)
             (cond
               [(string.string-eq name "Expr") (AstTyExpr)]
               [(string.string-eq name "ExprList") (AstTyExprList)]
@@ -8452,7 +8456,7 @@
             (compiler-symbol-module-key module source-name)
             source-name)]
         (match (tc-resolve-type-name-symbol-lookup symbols lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (if (and
               (tc-name-qualified? lookup-name)
               (string.string-eq (tc-qualified-name-module lookup-name) module))
@@ -8483,7 +8487,7 @@
                         lookup-name
                         handle
                         lifetimes)])]))]
-          [(NoneI64) (ast-ty-var-args (intern name) lifetimes)]))]))
+          [(option_i64.None) (ast-ty-var-args (intern name) lifetimes)]))]))
 
 (define (tc-source-str-value-policy-message) : String
   "typecheck: str is a borrowed string-slice referent; use (& lifetime str)")
@@ -8527,13 +8531,14 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (match (compiler-symbols-decl-at-index
             symbols
             (compiler-symbol-handle-index handle))
             [(OkAstDecl decl) (tc-nominal-lifetimes-from-decl decl)]
             [(ErrAstDecl message) (ErrTcLifetimeList message)])]
-        [(NoneI64) (ErrTcLifetimeList "typecheck: nominal type not found")])]))
+        [(option_i64.None)
+          (ErrTcLifetimeList "typecheck: nominal type not found")])]))
 
 (define (tc-nominal-lifetime-use-policy-ok
   [ctx : TcContext]
@@ -11751,7 +11756,7 @@
       (match (compiler-symbols-lookup-value
         (tc-context-symbols ctx)
         lookup-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (let
             [kind : i64 (compiler-symbol-handle-kind handle)]
             (if (= kind (compiler-symbol-kind-defdispatch))
@@ -11776,7 +11781,7 @@
                   [(ErrAstDecl message) (ErrTcType message)])
                 (ErrTcType
                   (tc-dispatch-variant-non-function-message variant-name)))))]
-        [(NoneI64)
+        [(option_i64.None)
           (ErrTcType
             (string.string-append
               "typecheck: unknown defdispatch variant "
@@ -13933,18 +13938,18 @@
             (compiler-symbol-module-key module name)
             name)]
         (match (compiler-symbols-lookup-type symbols lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (if (=
               (compiler-symbol-handle-kind handle)
               (compiler-symbol-kind-defstruct))
               true
               (match (compiler-registries-lookup-variant registries lookup-name)
-                [(SomeI64 _) true]
-                [(NoneI64) false]))]
-          [(NoneI64)
+                [(option_i64.Some _) true]
+                [(option_i64.None) false]))]
+          [(option_i64.None)
             (match (compiler-registries-lookup-variant registries lookup-name)
-              [(SomeI64 _) true]
-              [(NoneI64) false])]))]))
+              [(option_i64.Some _) true]
+              [(option_i64.None) false])]))]))
 
 (define (tc-call-allows-region-args?
   [ctx : TcContext]
@@ -14059,7 +14064,7 @@
         (match (compiler-registries-lookup-variant
           (tc-context-registries ctx)
           lookup-name)
-          [(SomeI64 handle)
+          [(option_i64.Some handle)
             (match (tc-variant-owner-name ctx handle)
               [(OkTcString owner)
                 (if (string.string-eq owner enum-name)
@@ -14073,7 +14078,7 @@
                     [(ErrAstTypeList message) (ErrTcType message)])
                   (ErrTcType "typecheck: call target is not a function"))]
               [(ErrTcString message) (ErrTcType message)])]
-          [(NoneI64)
+          [(option_i64.None)
             (if (tc-name-qualified? lookup-name)
               (OkTcType (tc-tag-active-region env ret))
               (ErrTcType "typecheck: call target is not a function"))]))]
@@ -14675,7 +14680,7 @@
         (compiler-symbol-module-key module source-name)
         source-name)]
     (match (compiler-symbols-lookup-value (tc-context-symbols ctx) lookup-name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (if (=
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-extern))
@@ -14692,7 +14697,7 @@
                 [_ (TcNoExternAbi)])]
             [(ErrAstDecl _) (TcNoExternAbi)])
           (TcNoExternAbi))]
-      [(NoneI64) (TcNoExternAbi)])))
+      [(option_i64.None) (TcNoExternAbi)])))
 
 (define (tc-call-extern-abi [ctx : TcContext] [func : AstExpr]) : TcMaybeExternAbi
   (match (ast-expr-unspan func)
@@ -18223,7 +18228,7 @@
           (match (compiler-symbols-lookup-value
             (tc-context-symbols ctx)
             lookup-name)
-            [(SomeI64 handle)
+            [(option_i64.Some handle)
               (if (=
                 (compiler-symbol-handle-kind handle)
                 (compiler-symbol-kind-function-define))
@@ -18234,7 +18239,7 @@
                     (tc-spmd-inline-helper-from-decl lookup-name decl)]
                   [(ErrAstDecl message) (ErrTcSpmdInlineHelper message)])
                 (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper)))]
-            [(NoneI64) (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))])))]
+            [(option_i64.None) (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))])))]
     [(ErrTcString message)
       (if (string.string-eq message "")
         (OkTcSpmdInlineHelper (TcSpmdNoInlineHelper))
@@ -18466,8 +18471,9 @@
   [symbols : CompilerSymbols]
   [lookup-name : String]) : TcMaybeString
   (match (compiler-symbols-lookup-value symbols lookup-name)
-    [(SomeI64 handle) (tc-spmd-atomic-extern-symbol-from-handle symbols handle)]
-    [(NoneI64) (TcNoString)]))
+    [(option_i64.Some handle)
+      (tc-spmd-atomic-extern-symbol-from-handle symbols handle)]
+    [(option_i64.None) (TcNoString)]))
 
 (define (tc-spmd-atomic-extern-symbol-for-name
   [ctx : TcContext]
@@ -22336,7 +22342,7 @@
 
 (define (tc-context-enum-variants [ctx : TcContext] [enum-name : String]) : ResultAstVariantDefList
   (match (compiler-symbols-lookup-type (tc-context-symbols ctx) enum-name)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (if (=
         (compiler-symbol-handle-kind handle)
         (compiler-symbol-kind-defenum))
@@ -22354,7 +22360,8 @@
           [(ErrAstDecl message) (ErrAstVariantDefList message)])
         (ErrAstVariantDefList
           (string.string-append "typecheck: unknown enum " enum-name)))]
-    [(NoneI64) (tc-program-enum-variants (tc-context-program ctx) enum-name)]))
+    [(option_i64.None)
+      (tc-program-enum-variants (tc-context-program ctx) enum-name)]))
 
 (define (tc-layout-info-size [info : TcLayoutInfo]) : i64
   (match info
@@ -22821,7 +22828,7 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols struct-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defstruct))
@@ -22840,7 +22847,7 @@
               [(ErrAstDecl message) (ErrTcStructDecl message)])
             (ErrTcStructDecl
               (string.string-append "typecheck: unknown struct " struct-name)))]
-        [(NoneI64)
+        [(option_i64.None)
           (ErrTcStructDecl
             (string.string-append "typecheck: unknown struct " struct-name))])]))
 
@@ -22848,7 +22855,7 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-symbols-lookup-type symbols enum-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defenum))
@@ -22867,7 +22874,7 @@
               [(ErrAstDecl message) (ErrTcEnumDecl message)])
             (ErrTcEnumDecl
               (string.string-append "typecheck: unknown enum " enum-name)))]
-        [(NoneI64)
+        [(option_i64.None)
           (ErrTcEnumDecl
             (string.string-append "typecheck: unknown enum " enum-name))])]))
 
@@ -22950,7 +22957,7 @@
   (if (tc-string-list-contains stack name)
     (ErrTcUnit (tc-inline-aggregate-cycle-message name stack))
     (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (if (=
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-defenum))
@@ -22975,7 +22982,7 @@
               [(ErrTcStructDecl message) (ErrTcUnit message)])
             (ErrTcUnit
               (string.string-append "typecheck: unknown aggregate " name))))]
-      [(NoneI64)
+      [(option_i64.None)
         (ErrTcUnit (string.string-append "typecheck: unknown aggregate " name))])))
 
 (define (tc-inline-aggregate-type-finite-ok
@@ -23378,7 +23385,7 @@
   [name : String]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
   (match (compiler-symbols-lookup-type (tc-context-symbols ctx) name)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (begin
         (tc-agg-layout-cache-ensure!)
         (let
@@ -23401,7 +23408,7 @@
                     handle
                     stack
                     key))]))))]
-    [(NoneI64)
+    [(option_i64.None)
       (ErrTcInlineAggregateLayout
         (string.string-append "typecheck: unknown aggregate " name))]))
 
@@ -24483,7 +24490,7 @@
       (match (compiler-registries-lookup-variant
         (tc-context-registries ctx)
         variant-key)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (match (tc-variant-owner-name ctx handle)
             [(OkTcString owner)
               (match (compiler-registries-variant-fields-indexed
@@ -24501,7 +24508,7 @@
                     [(ErrTcLifetimeList message) (ErrTcType message)])]
                 [(ErrAstTypeList message) (ErrTcType message)])]
             [(ErrTcString message) (ErrTcType message)])]
-        [(NoneI64) (ErrTcType not-found-message)])]
+        [(option_i64.None) (ErrTcType not-found-message)])]
     [(ErrTcString _) (ErrTcType not-found-message)]))
 
 (define (tc-struct-field-type
@@ -24512,7 +24519,7 @@
     (tc-context-registries ctx)
     struct-name
     field)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (let
         [field-ctx : TcContext
           (tc-context-with-nominal-owner-index-module
@@ -24523,7 +24530,7 @@
           handle)
           [(OkAstType ty) (OkTcType (tc-resolve-type field-ctx ty))]
           [(ErrAstType message) (ErrTcType message)]))]
-    [(NoneI64)
+    [(option_i64.None)
       (ErrTcType
         (string.string-append
           "typecheck: unknown struct field "
@@ -24547,7 +24554,7 @@
     (tc-context-registries ctx)
     struct-name
     field)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (let
         [field-ctx : TcContext
           (tc-context-with-nominal-owner-index-module
@@ -24566,7 +24573,7 @@
                   (tc-resolve-type field-ctx (tc-lifetime-subst-type subst ty)))]
               [(ErrTcLifetimeSubst message) (ErrTcType message)])]
           [(ErrAstType message) (ErrTcType message)]))]
-    [(NoneI64)
+    [(option_i64.None)
       (ErrTcType
         (string.string-append
           "typecheck: unknown struct field "
@@ -25105,7 +25112,7 @@
     (match (compiler-registries-lookup-variant
       (tc-context-registries ctx)
       lookup-name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (match (tc-variant-owner-name ctx handle)
           [(OkTcString owner)
             (if (string.string-eq owner enum-name)
@@ -25140,7 +25147,7 @@
                         owner
                         (string.string-append ", not " enum-name)))))))]
           [(ErrTcString message) (ErrTcEnv message)])]
-      [(NoneI64)
+      [(option_i64.None)
         (ErrTcEnv
           (string.string-append "typecheck: unknown variant " variant-name))])))
 
@@ -25490,7 +25497,7 @@
     (match (compiler-registries-lookup-variant
       (tc-context-registries ctx)
       lookup-name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (match (tc-variant-owner-name ctx handle)
           [(OkTcString owner)
             (if (string.string-eq owner enum-name)
@@ -25523,7 +25530,7 @@
                         owner
                         (string.string-append ", not " enum-name)))))))]
           [(ErrTcString message) (ErrTcEnv message)])]
-      [(NoneI64)
+      [(option_i64.None)
         (ErrTcEnv
           (string.string-append "typecheck: unknown variant " variant-name))])))
 
@@ -25933,14 +25940,14 @@
       (match (compiler-registries-lookup-variant
         (tc-context-registries ctx)
         variant-name)
-        [(SomeI64 handle)
+        [(option_i64.Some handle)
           (match (tc-variant-owner-name ctx handle)
             [(OkTcString owner)
               (if (string.string-eq owner enum-name)
                 variant-name
                 (tc-qualified-variant-name enum-name variant-name))]
             [(ErrTcString _) (tc-qualified-variant-name enum-name variant-name)])]
-        [(NoneI64) (tc-qualified-variant-name enum-name variant-name)]))))
+        [(option_i64.None) (tc-qualified-variant-name enum-name variant-name)]))))
 
 (define (tc-variant-name-matches?
   [ctx : TcContext]
@@ -25961,13 +25968,14 @@
         (match (compiler-registries-lookup-variant
           (tc-context-registries ctx)
           pattern-key)
-          [(SomeI64 pattern-handle)
+          [(option_i64.Some pattern-handle)
             (match (compiler-registries-lookup-variant
               (tc-context-registries ctx)
               candidate-key)
-              [(SomeI64 candidate-handle) (= pattern-handle candidate-handle)]
-              [(NoneI64) false])]
-          [(NoneI64) false])))))
+              [(option_i64.Some candidate-handle)
+                (= pattern-handle candidate-handle)]
+              [(option_i64.None) false])]
+          [(option_i64.None) false])))))
 
 (define (tc-expr-pattern-enum-name) : String
   (tc-stdlib-comptime-type-key "Expr"))
@@ -26130,14 +26138,14 @@
     (match (compiler-registries-lookup-variant
       (tc-context-registries ctx)
       lookup-name)
-      [(SomeI64 handle)
+      [(option_i64.Some handle)
         (match (compiler-registries-variant-fields-indexed
           (tc-context-symbols ctx)
           handle)
           [(OkAstTypeList fields)
             (tc-pattern-list-irrefutable? ctx args fields)]
           [(ErrAstTypeList _) false])]
-      [(NoneI64) false])))
+      [(option_i64.None) false])))
 
 (define (tc-struct-pattern-irrefutable?
   [ctx : TcContext]
@@ -27415,8 +27423,9 @@
   [ctx : TcContext]
   [nominal-name : String]) : TcContext
   (match (compiler-symbols-lookup-type (tc-context-symbols ctx) nominal-name)
-    [(SomeI64 handle) (tc-context-with-nominal-owner-handle-module ctx handle)]
-    [(NoneI64) (tc-context-with-nominal-owner-module ctx nominal-name)]))
+    [(option_i64.Some handle)
+      (tc-context-with-nominal-owner-handle-module ctx handle)]
+    [(option_i64.None) (tc-context-with-nominal-owner-module ctx nominal-name)]))
 
 (define (tc-init-struct-supported
   [ctx : TcContext]
@@ -30169,7 +30178,7 @@
   [expr : AstExpr]
   [name-id : i64]) : ResultTcUnit
   (match (compiler-symbols-lookup-value-id (tc-context-symbols ctx) name-id)
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (let
         [name : String (intern-str name-id)]
         [kind : i64 (compiler-symbol-handle-kind handle)]
@@ -30199,7 +30208,7 @@
               name
               handle)]
           [else OkTcUnit]))]
-    [(NoneI64) OkTcUnit]))
+    [(option_i64.None) OkTcUnit]))
 
 (define (tc-comptime-purity-handle-decl
   [ctx : TcContext]
@@ -40547,7 +40556,7 @@
     (intern base))
     ;; A macro that exists in the target module resolves directly from the
     ;; symbol table.
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (match (macro-decl-at-index-in-module
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
@@ -40561,7 +40570,7 @@
               (ctfe-diagnostic-at-expr
                 call-expr
                 (macro-missing-macro-message name))))])]
-    [(NoneI64)
+    [(option_i64.None)
       (match (macro-surface-call-decl-in-module target-module base)
         [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
@@ -40571,8 +40580,8 @@
             (tc-context-symbols ctx)
             (intern target-module)
             (intern base))
-            [(SomeI64 _) (OkMacroCallDecl (MacroNoDecl))]
-            [(NoneI64)
+            [(option_i64.Some _) (OkMacroCallDecl (MacroNoDecl))]
+            [(option_i64.None)
               (ErrMacroCallDecl
                 (box
                   (ctfe-diagnostic-at-expr
@@ -40614,7 +40623,7 @@
     symbols
     (intern module-name)
     (intern lookup-name))
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (match (macro-decl-at-index-in-module
         symbols
         (compiler-symbol-handle-index handle)
@@ -40623,7 +40632,7 @@
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64) (OkMacroCallDecl (MacroNoDecl))]))
+    [(option_i64.None) (OkMacroCallDecl (MacroNoDecl))]))
 
 (define (macro-prelude-resolve
   [symbols : CompilerSymbols]
@@ -40659,7 +40668,7 @@
     (intern lookup-name))
     ;; Resolve an imported macro that exists in the target module directly from
     ;; the symbol table.
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (match (macro-decl-at-index-in-module
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
@@ -40668,7 +40677,7 @@
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64)
+    [(option_i64.None)
       (match (macro-surface-call-decl-in-module target-module lookup-name)
         [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl
@@ -40684,8 +40693,8 @@
     target-module-id
     lookup-name-id)
     ;; Any macro present in the target module is a resolution candidate.
-    [(SomeI64 _) target-module-id]
-    [(NoneI64)
+    [(option_i64.Some _) target-module-id]
+    [(option_i64.None)
       (if (macro-surface-macro-in-module?
         (intern-str target-module-id)
         (intern-str lookup-name-id))
@@ -40800,7 +40809,7 @@
     (tc-context-symbols ctx)
     (intern module)
     (intern lookup-name))
-    [(SomeI64 handle)
+    [(option_i64.Some handle)
       (match (macro-decl-at-index-with-owner-module
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle)
@@ -40809,7 +40818,7 @@
           (OkMacroCallDecl
             (MacroSomeDecl macro-name def-module params ret body))]
         [(MacroNoDecl) (OkMacroCallDecl (MacroNoDecl))])]
-    [(NoneI64)
+    [(option_i64.None)
       (match (macro-surface-call-decl-in-module module lookup-name)
         [(MacroSomeDecl macro-name def-module params ret body)
           (OkMacroCallDecl

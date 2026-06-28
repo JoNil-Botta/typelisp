@@ -21,8 +21,9 @@
 ;;     per-module enum identity, so a `Token` built in the importer's lexer and a
 ;;     `Token` matched by an imported accessor are the same type. No
 ;;     cross-module nominal-identity gap surfaces.
-;;   - The constructors (`TInt`, `TPlus`, ... `TEnd`) and `match` arms defined
-;;     here are usable from the importer exactly as if defined locally.
+;;   - The constructors (`Token.Int`, `Token.Plus`, ... `Token.End`) and
+;;     `match` arms defined here are usable from the importer exactly as if
+;;     defined locally.
 ;;   - Because this module declares no `main` (and `calc.tl` no longer declares
 ;;     its own `Token`/`token-tag`/`token-int`), concatenation yields exactly one
 ;;     `main` and one of each accessor - no duplicate-symbol clash.
@@ -52,7 +53,7 @@
     [(Token.RParen) 7]
     [(Token.End) 8]))
 
-;; Integer payload of a TInt token (0 for any other kind): projects the operand
+;; Integer payload of `Token.Int` (0 for any other kind): projects the operand
 ;; back out of the enum, the way the parser reads a literal.
 (define (token-int [t : Token]) : i64
   (match t

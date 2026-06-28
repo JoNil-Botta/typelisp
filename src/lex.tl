@@ -104,7 +104,7 @@
 ;; characters that may appear in a symbol/operator name:
 ;;   `-` `+` `*` `/` `%` `&` `?` `!` `>` `<` `=` `:` `_`
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
-;; `TSym` rather than as separate operator tokens.
+;; `Token.Sym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
   (or
     (= c '-')
@@ -581,7 +581,7 @@
     [(ResultLexCheck.Err err) (ResultLexI64.Err (source-error-message err))]))
 
 ;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
-;; large enough to hold every token plus the TEnd sentinel) and returning the
+;; large enough to hold every token plus the `Token.End` sentinel) and returning the
 ;; token count. Compatibility callers use this panic-on-error path through
 ;; `lex`; recoverable callers use `lex-into-spanned-result` directly.
 (define (lex-into [src : String] [toks : (Array Token)]) : i64
@@ -591,7 +591,7 @@
 ;; each token's starting byte index into `starts[count]` (#599). The plain token
 ;; path uses this through `lex-into`; `lex-spanned-result` uses a direct scanner
 ;; that records line/column positions while tokenizing. Returns the token count
-;; (excluding the trailing TEnd).
+;; (excluding the trailing `Token.End`).
 (define (lex-into-spanned-result
   [src : String]
   [toks : (Array Token)]
@@ -1031,8 +1031,9 @@
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
 ;; `lex : (-> String (Array Token))` - the public entry point. Size the token
-;; array by an upper bound (every char yields at most one token, plus the TEnd
-;; sentinel), lex into it, then return that exact array. The trailing TEnd marks
+;; array by an upper bound (every char yields at most one token, plus the
+;; `Token.End` sentinel), lex into it, then return that exact array. The trailing
+;; `Token.End` marks
 ;; the logical end even though the backing array may be larger.
 (define (lex-result [src : String]) : ResultTokens
   (let
@@ -1051,7 +1052,8 @@
 
 ;; ---- Spanned token stream (#599) --------------------------------------------
 ;; A position-bearing token stream parallel to `lex`/`lex-result`. Each token is
-;; paired with the 1-based line/column of its starting byte; the trailing `TEnd`
+;; paired with the 1-based line/column of its starting byte; the trailing
+;; `Token.End`
 ;; carries the position one past the last character. The plain `Token` path
 ;; above is untouched, so existing callers keep working.
 ;; 1-based line of byte index `idx` in `src`: 1 + the number of newlines before
@@ -1107,7 +1109,7 @@
 
 ;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
 ;; start-index pair of arrays, then materialize `count + 1` spanned tokens
-;; (including the trailing TEnd).
+;; (including the trailing `Token.End`).
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
@@ -1186,7 +1188,7 @@
 ;; positions, including a token inside a nested list and the trailing EOF.
 ;; Source `"(a\n  (b c))"` lexes to:
 ;;   0:'(' 1:1   1:'a' 1:2   2:'(' 2:3   3:'b' 2:4   4:'c' 2:6
-;;   5:')' 2:7   6:')' 2:8   7:TEnd 2:9
+;;   5:')' 2:7   6:')' 2:8   7:Token.End 2:9
 (define (lex-quote-text) : String
   "\"")
 

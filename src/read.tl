@@ -43,16 +43,17 @@
 ;; --------------------------------------------------------------------------
 ;; An s-expression is an atom (an integer, float, or symbol), the empty list, or a cons
 ;; cell pairing a head s-expression with a tail s-expression. A *proper list*
-;; `(a b c)` is the right-nested spine `(SCons a (SCons b (SCons c (SNil))))`,
-;; terminated by `SNil` - exactly the cons-cell encoding of a list in any Lisp.
-;; `SCons` carries two boxed `Sexpr` children, so the recursive layout is finite
-;; and every constructed node that escapes via a return is heap-promoted. The
-;; reader builds this tree; importers can walk it with `match`-based recursion.
-;; `SStr` carries the inner text of a `"..."` string-literal datum: the reader
-;; consumes the lexer's `TStr` token (#128) into it, so a quoted string reads as a
-;; distinct atom rather than being conflated with a `SSym` of the same characters.
-;; `SChar` carries a character-literal datum (`'x'`; #333), likewise keeping
-;; chars distinct from symbols, ints, and strings. `SStr` and `SChar`
+;; `(a b c)` is the right-nested spine
+;; `(Sexpr.Cons a (Sexpr.Cons b (Sexpr.Cons c Sexpr.Nil)))`, terminated by
+;; `Sexpr.Nil` - exactly the cons-cell encoding of a list in any Lisp.
+;; `Sexpr.Cons` carries two boxed `Sexpr` children, so the recursive layout is
+;; finite and every constructed node that escapes via a return is heap-promoted.
+;; The reader builds this tree; importers can walk it with `match`-based
+;; recursion. `Sexpr.Str` carries the inner text of a `"..."` string-literal
+;; datum: the reader consumes the lexer's `Token.Str` token (#128) into it, so a
+;; quoted string reads as a distinct atom rather than being conflated with a
+;; `Sexpr.Sym` of the same characters. `Sexpr.Char` carries a character-literal
+;; datum (`'x'`; #333), likewise keeping chars distinct from symbols, ints, and strings. `Sexpr.Str` and `Sexpr.Char`
 ;; are appended last so the existing variants keep their stable ordering for
 ;; every importer.
 (defenum Sexpr
@@ -291,14 +292,14 @@
 ;; --------------------------------------------------------------------------
 ;; read-form: read exactly one s-expression starting at the cursor and return
 ;; it, advancing the cursor past the tokens it consumed.
-;;   TInt n text -> (SInt n text)   an integer atom with source spelling
-;;   TFloat s -> (SFloat s)         a float atom carrying source text
-;;   TSym s  -> (SSym s)            a symbol atom
-;;   TStr s  -> (SStr s)            a string-literal atom (`"..."`, refs #128)
-;;   TChar c -> (SChar c)           a character-literal atom (`'x'`, refs #333)
-;;   TLParen -> read-list           consume '(' then read a list to its ')'
-;;   TRParen -> error                a stray ')' with no opening '(' is malformed
-;;   TEnd    -> error                end of stream where a form was expected
+;;   Token.Int n text -> Sexpr.Int n text  an integer atom with source spelling
+;;   Token.Float s -> Sexpr.Float s        a float atom carrying source text
+;;   Token.Sym s -> Sexpr.Sym s            a symbol atom
+;;   Token.Str s -> Sexpr.Str s            a string-literal atom (`"..."`, refs #128)
+;;   Token.Char c -> Sexpr.Char c          a character-literal atom (`'x'`, refs #333)
+;;   Token.LParen -> read-list             consume '(' then read a list to its ')'
+;;   Token.RParen -> error                 a stray ')' with no opening '(' is malformed
+;;   Token.End -> error                    end of stream where a form was expected
 ;; A grammar violation returns a recoverable `ErrSexpr String`; the compatibility
 ;; wrappers below still panic for callers that have not moved to `read-result`.
 (define (read-form-spanned-result
@@ -477,11 +478,12 @@
       [else (ResultSexpr.Err "reader: unexpected end of input")])))
 
 ;; read-list: the cursor is positioned just AFTER an opening '('. Read forms
-;; until the matching ')', returning the proper list `(SCons f1 (SCons f2 ...
-;; (SNil)))`. Built by right-recursion so the spine comes out in source order
+;; until the matching ')', returning the proper list
+;; `(Sexpr.Cons f1 (Sexpr.Cons f2 ... Sexpr.Nil))`. Built by right-recursion so
+;; the spine comes out in source order
 ;; with NO reversal: read the head form, then recurse to read the rest of the
 ;; list, and cons the two. The base case is the ')' that closes this list -
-;; consume it and return `SNil`. Hitting `TEnd` before a ')' is an unterminated
+;; consume it and return `Sexpr.Nil`. Hitting `Token.End` before a ')' is an unterminated
 ;; list and returns `ErrSexpr`. Nesting is handled for free: a head form that is
 ;; itself a '(' re-enters `read-form-result` -> `read-list-result`, which reads
 ;; the inner list to ITS ')' and advances the shared cursor past it before this
@@ -494,7 +496,7 @@
   (let
     [t : i64 (peek-tag toks cur)]
     (if (= t close-tag)
-      ;; End of this list: consume the ')' and terminate the spine with SNil.
+      ;; End of this list: consume the ')' and terminate the spine with `Sexpr.Nil`.
       (begin
         (advance cur)
         (ResultSexpr.Ok Sexpr.Nil))

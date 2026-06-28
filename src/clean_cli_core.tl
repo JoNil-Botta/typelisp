@@ -9,12 +9,12 @@
 (import stdlib.str_cat)
 
 (defenum CleanConfig
-  (CleanSourceConfig String bool)
-  (CleanPackageConfig String bool bool))
+  (Source String bool)
+  (Package String bool bool))
 
 (defenum ResultCleanConfig
-  (OkCleanConfig CleanConfig)
-  (ErrCleanConfig String))
+  (Ok CleanConfig)
+  (Err String))
 
 (define (clean-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -414,11 +414,12 @@
       (when
         (and has-source has-manifest)
         (return
-          (ErrCleanConfig
+          (ResultCleanConfig.Err
             "clean: cannot combine a source file with --manifest-path")))
       (if has-source
-        (OkCleanConfig (CleanSourceConfig source dry-run))
-        (OkCleanConfig (CleanPackageConfig manifest has-manifest dry-run))))
+        (ResultCleanConfig.Ok (CleanConfig.Source source dry-run))
+        (ResultCleanConfig.Ok
+          (CleanConfig.Package manifest has-manifest dry-run))))
     (let
       [current : String (io.arg idx)]
       (cond
@@ -433,9 +434,9 @@
             true)]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
-            (ErrCleanConfig "clean: --manifest-path requires a value")
+            (ResultCleanConfig.Err "clean: --manifest-path requires a value")
             (if has-manifest
-              (ErrCleanConfig
+              (ResultCleanConfig.Err
                 "clean: --manifest-path was provided more than once")
               (clean-parse-options
                 (+ idx 2)
@@ -446,8 +447,10 @@
                 true
                 dry-run)))]
         [(clean-flag? current)
-          (ErrCleanConfig (string.string-append "clean: unknown flag " current))]
-        [has-source (ErrCleanConfig "clean: accepts only one source file")]
+          (ResultCleanConfig.Err
+            (string.string-append "clean: unknown flag " current))]
+        [has-source
+          (ResultCleanConfig.Err "clean: accepts only one source file")]
         [else
           (clean-parse-options
             (+ idx 1)
@@ -463,12 +466,12 @@
 
 (define (clean-run-from [idx : i64] [count : i64]) : i64
   (match (clean-config-from idx count)
-    [(OkCleanConfig config)
+    [(ResultCleanConfig.Ok config)
       (match config
-        [(CleanSourceConfig source dry-run) (clean-source source dry-run)]
-        [(CleanPackageConfig manifest has-manifest dry-run)
+        [(CleanConfig.Source source dry-run) (clean-source source dry-run)]
+        [(CleanConfig.Package manifest has-manifest dry-run)
           (clean-package manifest has-manifest dry-run)])]
-    [(ErrCleanConfig message)
+    [(ResultCleanConfig.Err message)
       (begin
         (io.print-error message)
         1)]))

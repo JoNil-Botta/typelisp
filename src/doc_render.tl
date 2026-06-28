@@ -225,8 +225,8 @@
 
 ;: Enum docs mention variants.
 (defenum MaybeNumber
-  (NoNumber)
-  (SomeNumber i64))
+  (No)
+  (Some i64))
 
 ;: Struct docs mention fields.
 (defstruct Point
@@ -284,8 +284,8 @@ Kind: defenum
 
 ```typelisp
 (defenum MaybeNumber
-  (NoNumber)
-  (SomeNumber i64))
+  (No)
+  (Some i64))
 ```
 
 Enum docs mention variants.

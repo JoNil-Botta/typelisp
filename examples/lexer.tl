@@ -20,7 +20,7 @@
 ;; Token stream representation (refs #13/#27/#41): the scanner records each
 ;; emitted token as a real `Token` value in a generated `Token` vector. Identifier
 ;; tokens carry a `String` payload sliced out of the source with `substring`, so
-;; vector reads can return a `(TIdent text)` token whose payload is still
+;; vector reads can return a `(Token.Ident text)` token whose payload is still
 ;; projectable through `match`.
 ;;
 ;; Deferred - current language gaps, recorded as self-hosting signal:
@@ -44,7 +44,7 @@
 (import (vector.vector Token) as token_vec)
 
 ;; Numeric tag for a token kind. Exercises `match` over every variant of the
-;; Token enum, including the String-payload `TIdent` variant.
+;; Token enum, including the String-payload `Token.Ident` variant.
 (define (token-tag [t : Token]) : i64
   (match t
     [(Token.Ident _) 0]
@@ -85,9 +85,9 @@
 
 ;; Classify a single (non-digit, non-letter, non-space) char into its Token,
 ;; building an actual `Token` value so enum construction is exercised. An
-;; unexpected char aborts via the `panic` builtin (#45); the trailing `TEnd` is
-;; dead code that only satisfies the `Token` result type, since `panic` yields
-;; unit and never returns.
+;; unexpected char aborts via the `panic` builtin (#45); the trailing
+;; `Token.End` is dead code that only satisfies the `Token` result type, since
+;; `panic` yields unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
     [(= c '+') Token.Plus]
@@ -109,11 +109,11 @@
       j)))
 
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
-;; `(TIdent text)` token.
+;; `(Token.Ident text)` token.
 (define (ident-token [src : String] [start : i64] [end : i64]) : Token
   (Token.Ident (substring src start (- end start))))
 
-;; Length of the String payload of a `TIdent` token (0 for any other token):
+;; Length of the String payload of a `Token.Ident` token (0 for any other token):
 ;; projects the payload back out of the enum in a `match` arm, the way a parser
 ;; consuming the token stream would.
 (define (ident-text-length [t : Token]) : i64
@@ -144,7 +144,7 @@
           (cond
             [(is-space c) (set! i (+ i 1))]
             [(is-alpha c)
-              ;; Accumulate a run of identifier chars into one TIdent token.
+              ;; Accumulate a run of identifier chars into one `Token.Ident` token.
               (let
                 [start : i64 i]
                 [end : i64 (ident-end src i n)]
@@ -153,7 +153,7 @@
                   (set! count (+ count 1))
                   (set! i end)))]
             [(is-digit c)
-              ;; Accumulate a run of digits into one TInt token.
+              ;; Accumulate a run of digits into one `Token.Int` token.
               (let
                 [acc : i64 0]
                 (begin
@@ -174,10 +174,12 @@
 
 ;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and
 ;; the parens):
-;;   - Full token stream (excluding the TEnd sentinel): TIdent("foo") TMinus
-;;     TInt(3) TStar TLParen TInt(12) TSlash TInt(4) TRParen => 9 tokens.
-;;   - Token 0 is read back out of the token vector as `(TIdent "foo")`, whose
-;;     text length is 3.
+;;   - Full token stream (excluding the `Token.End` sentinel):
+;;     `Token.Ident("foo")`, `Token.Minus`, `Token.Int(3)`, `Token.Star`,
+;;     `Token.LParen`, `Token.Int(12)`, `Token.Slash`, `Token.Int(4)`,
+;;     `Token.RParen` => 9 tokens.
+;;   - Token 0 is read back out of the token vector as
+;;     `(Token.Ident "foo")`, whose text length is 3.
 ;; main returns 9 + 3 = 12, an observable result an execution test can check
 ;; that depends on both the token count and the substring-sliced identifier.
 (define (main) : i64

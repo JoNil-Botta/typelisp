@@ -21,16 +21,18 @@
 ;;   - The imported `defenum Token` defines ONE nominal type. The importer's
 ;;     `Token` parameters/locals and the `Token` values its lexer constructs all
 ;;     refer to that same type - there is no per-module enum identity.
-;;   - The constructors (`TLParen`, `TInt`, `TSym`, ...) and the accessors'
-;;     `match` arms defined here are usable from the importer as if local.
+;;   - The constructors (`Token.LParen`, `Token.Int`, `Token.Sym`, ...) and the
+;;     accessors' `match` arms defined here are usable from the importer as if
+;;     local.
 ;;   - Because this module declares no `main`, concatenation yields exactly one
 ;;     `main` (the importer's) - no duplicate-symbol clash.
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
 ;; carries an interned lexeme id), a string literal (`"..."`, carries the
 ;; sliced inner text), a character literal (`'x'`, carries the char),
-;; and an end-of-stream sentinel. `TStr`, `TChar`, and `TFloat` are appended last so the
-;; existing variants/tags keep their stable ordering for every importer.
+;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
+;; are appended last so the existing variants/tags keep their stable ordering
+;; for every importer.
 (import "compiler_intern.tl")
 
 (defenum Token
@@ -100,7 +102,7 @@
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
-;; i64-payload `TSym` and the source-preserving `TInt`.
+;; i64-payload `Token.Sym` and the source-preserving `Token.Int`.
 (define (token-tag [t : Token]) : i64
   (match t
     [(Token.LParen) 1]
@@ -118,7 +120,7 @@
     [(Token.Comma) 13]
     [(Token.CommaAt) 14]))
 
-;; Integer payload of a TInt token (0 for any other kind): projects the literal
+;; Integer payload of `Token.Int` (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
 (define (token-int [t : Token]) : i64
   (match t
@@ -137,7 +139,7 @@
     [(Token.Comma) 0]
     [(Token.CommaAt) 0]))
 
-;; Original source spelling of a TInt token (empty string for any other kind).
+;; Original source spelling of `Token.Int` (empty string for any other kind).
 (define (token-int-text [t : Token]) : String
   (match t
     [(Token.LParen) ""]
@@ -155,7 +157,7 @@
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
 
-;; Symbol intern id of a TSym token (-1 for any other kind): exposes the compact
+;; Symbol intern id of `Token.Sym` (-1 for any other kind): exposes the compact
 ;; lexer representation to callers that can stay id-native.
 (define (token-sym-id [t : Token]) : i64
   (match t
@@ -174,7 +176,7 @@
     [(Token.Comma) -1]
     [(Token.CommaAt) -1]))
 
-;; Symbol text of a TSym token (the empty string for any other kind): resolves
+;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
 (define (token-sym [t : Token]) : String
   (match t
@@ -193,10 +195,10 @@
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
 
-;; String text of a TStr token (the empty string for any other kind): projects
+;; String text of `Token.Str` (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
-;; parser reads a string-literal datum. Distinct from `token-sym` so a `TStr`
-;; and a `TSym` with the same characters stay distinguishable.
+;; parser reads a string-literal datum. Distinct from `token-sym` so a
+;; `Token.Str` and a `Token.Sym` with the same characters stay distinguishable.
 (define (token-str [t : Token]) : String
   (match t
     [(Token.LParen) ""]
@@ -214,7 +216,7 @@
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
 
-;; Float literal text of a TFloat token (the empty string for any other kind):
+;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it
 ;; does not need a string->f64 primitive.
 (define (token-float [t : Token]) : String
@@ -234,7 +236,7 @@
     [(Token.Comma) ""]
     [(Token.CommaAt) ""]))
 
-;; Character payload of a TChar token (NUL for any other kind): projects the
+;; Character payload of `Token.Char` (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
 ;; symbols, ints, and strings.
 (define (token-char [t : Token]) : char
@@ -256,8 +258,8 @@
 
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins (#599). The reader/parser recover positions from these so later
-;; diagnostics can point at the originating source location. `TEnd` carries the
-;; position one past the last character. This is additive: the plain `Token`
+;; diagnostics can point at the originating source location. `Token.End` carries
+;; the position one past the last character. This is additive: the plain `Token`
 ;; stream and its accessors are unchanged, so existing callers keep working.
 (defenum SpannedToken
   (Spanned Token i64 i64))

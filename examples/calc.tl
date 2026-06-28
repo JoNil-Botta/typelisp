@@ -21,10 +21,8 @@
 ;; still whole-program: it concatenates every imported module's declarations
 ;; into a single program, imported-before-importer, then runs the unchanged
 ;; `typecheck -> lower -> codegen` pipeline. So the imported `defenum Token`
-;; defines ONE nominal type that this file's lexer constructs (`(TInt acc)`,
-;; `TPlus`, ...) and that the imported accessors `match` over. The selfhost
-;; namespace model specified in SPEC.md replaces this flat import behavior with
-;; qualified module identities.
+;; defines ONE nominal type that this file's lexer constructs (`(Token.Int acc)`,
+;; `Token.Plus`, ...) and that the imported accessors `match` over.
 ;;
 ;; --------------------------------------------------------------------------
 ;; The unification that makes lex -> parse direct: a single token vector.
@@ -33,7 +31,8 @@
 ;; and a value array) built BY HAND, because reading a real `Token` back out of
 ;; storage was the unproven part. The lexer now emits a generated vector of real
 ;; `Token` values and the parser reads each token straight out of it with
-;; `(token-tag (tokvec.get toks i TEnd))` / `(token-int (tokvec.get toks i TEnd))`.
+;; `(token-tag (tokvec.get toks i Token.End))` /
+;; `(token-int (tokvec.get toks i Token.End))`.
 ;; There is no hand-built token stream anywhere in this file: the parser's input
 ;; is exactly the lexer's output.
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
@@ -50,11 +49,11 @@
 ;; sub-expressions for each of the four arithmetic operators. Recursive enum
 ;; payloads (#111) are 8-byte heap-pointer indirections, so the layout is finite.
 (defenum Expr
-  (ENum i64)
-  (EAdd (Box Expr) (Box Expr))
-  (ESub (Box Expr) (Box Expr))
-  (EMul (Box Expr) (Box Expr))
-  (EDiv (Box Expr) (Box Expr)))
+  (Num i64)
+  (Add (Box Expr) (Box Expr))
+  (Sub (Box Expr) (Box Expr))
+  (Mul (Box Expr) (Box Expr))
+  (Div (Box Expr) (Box Expr)))
 
 ;; ============================ Lexer =======================================
 ;; Scan a source String character by character into a real token vector.
@@ -96,8 +95,8 @@
 ;; Classify a single non-digit, non-space char into its operator/paren Token,
 ;; building a real `Token` value. An unexpected char aborts via the `panic`
 ;; builtin (#45) - exactly as a real lexer reports malformed input; the trailing
-;; `TEnd` is dead code that only satisfies the `Token` result type, since `panic`
-;; yields unit and never returns.
+;; `Token.End` is dead code that only satisfies the `Token` result type, since
+;; `panic` yields unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
     [(= c '+') Token.Plus]
@@ -111,8 +110,8 @@
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is the shape of a real lexer: a cursor over the input, a
 ;; whitespace skip, multi-char accumulation for integers, and single-char tokens
-;; for the operators and parens. The terminating `TEnd` is recorded too, so the
-;; parser's cursor always has a sentinel to stop on.
+;; for the operators and parens. The terminating `Token.End` is recorded too, so
+;; the parser's cursor always has a sentinel to stop on.
 (define (lex [src : String] [toks : (&mut toks tokvec.Vec)]) : i64
   (let
     [i : i64 0]
@@ -125,7 +124,7 @@
           (if (is-space c)
             (set! i (+ i 1))
             (if (is-digit c)
-              ;; Accumulate a run of digits into one TInt token.
+              ;; Accumulate a run of digits into one `Token.Int` token.
               (let
                 [end : i64 (scan-int-end src i n)]
                 [acc : i64 0]
@@ -165,7 +164,7 @@
 (define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
   (token-tag (tokvec.get toks (cur-pos cur) Token.End)))
 
-;; Integer value of the token under the cursor (meaningful only for TInt).
+;; Integer value of the token under the cursor (meaningful only for `Token.Int`).
 (define (current-val [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
   (token-int (tokvec.get toks (cur-pos cur) Token.End)))
 
@@ -187,12 +186,12 @@
   (let
     [t : i64 (current-tag toks cur)]
     (if (= t (tag-int))
-      ;; A literal: build (ENum v) and consume the TInt token.
+      ;; A literal: build `(Expr.Num v)` and consume the `Token.Int` token.
       (let
         [v : i64 (current-val toks cur)]
         (begin
           (advance cur)
-          (ENum v)))
+          (Expr.Num v)))
       (if (= t (tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
@@ -205,7 +204,7 @@
         (panic "parser: expected an integer or '('")))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
-;; Parse a factor, then fold left-associative `EMul`/`EDiv` nodes over the
+;; Parse a factor, then fold left-associative `Expr.Mul`/`Expr.Div` nodes over the
 ;; following `*`/`/` factors, giving them higher precedence than `+`/`-`.
 (define (parse-term [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
   (let
@@ -217,14 +216,14 @@
         (if (= (current-tag toks cur) (tag-star))
           (begin
             (advance cur)
-            (set! acc (EMul (box acc) (box (parse-factor toks cur)))))
+            (set! acc (Expr.Mul (box acc) (box (parse-factor toks cur)))))
           (begin
             (advance cur)
-            (set! acc (EDiv (box acc) (box (parse-factor toks cur)))))))
+            (set! acc (Expr.Div (box acc) (box (parse-factor toks cur)))))))
       acc)))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
-;; Parse a term, then fold left-associative `EAdd`/`ESub` nodes over the
+;; Parse a term, then fold left-associative `Expr.Add`/`Expr.Sub` nodes over the
 ;; following `+`/`-` terms. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
 (define (parse-expr [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : Expr
@@ -237,10 +236,10 @@
         (if (= (current-tag toks cur) (tag-plus))
           (begin
             (advance cur)
-            (set! acc (EAdd (box acc) (box (parse-term toks cur)))))
+            (set! acc (Expr.Add (box acc) (box (parse-term toks cur)))))
           (begin
             (advance cur)
-            (set! acc (ESub (box acc) (box (parse-term toks cur)))))))
+            (set! acc (Expr.Sub (box acc) (box (parse-term toks cur)))))))
       acc)))
 
 ;; Parse a whole token vector starting at index 0: thread a fresh cursor cell
@@ -252,23 +251,25 @@
     (parse-expr toks cur)))
 
 ;; ============================ Evaluator ===================================
-;; A recursive tree walk over the real `Expr` AST. `ENum` yields its literal;
+;; A recursive tree walk over the real `Expr` AST. `Expr.Num` yields its literal;
 ;; each binary node recurses into both children and combines them with the
 ;; matching arithmetic op (`/` is integer division). The bound recursive payloads
 ;; (`a`/`b`) are pointers to the child enums, passed straight back into `eval`.
 (define (eval [e : Expr]) : i64
   (match e
-    [(ENum n) n]
-    [(EAdd a b) (+ (eval (box-get a)) (eval (box-get b)))]
-    [(ESub a b) (- (eval (box-get a)) (eval (box-get b)))]
-    [(EMul a b) (* (eval (box-get a)) (eval (box-get b)))]
-    [(EDiv a b) (/ (eval (box-get a)) (eval (box-get b)))]))
+    [(Expr.Num n) n]
+    [(Expr.Add a b) (+ (eval (box-get a)) (eval (box-get b)))]
+    [(Expr.Sub a b) (- (eval (box-get a)) (eval (box-get b)))]
+    [(Expr.Mul a b) (* (eval (box-get a)) (eval (box-get b)))]
+    [(Expr.Div a b) (/ (eval (box-get a)) (eval (box-get b)))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":
-;;   - lex   produces the token stream TInt(2) TPlus TInt(3) TStar TInt(4) TEnd
+;;   - lex   produces the token stream Token.Int(2), Token.Plus,
+;;     Token.Int(3), Token.Star, Token.Int(4), Token.End
 ;;     in a generated token vector.
-;;   - parse builds the Expr tree (EAdd (ENum 2) (EMul (ENum 3) (ENum 4))) - `*`
+;;   - parse builds the Expr tree
+;;     `(Expr.Add (Expr.Num 2) (Expr.Mul (Expr.Num 3) (Expr.Num 4)))` - `*`
 ;;     binds tighter than `+`, so the multiplication is the right child of the
 ;;     addition rather than `(2 + 3) * 4`.
 ;;   - eval recursively folds it to 2 + (3 * 4) = 14 (NOT (2 + 3) * 4 = 20),

@@ -38,8 +38,8 @@ BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
-VF_STDOUT="$WORKDIR/profile-vector-family.stdout"
-VF_STDERR="$WORKDIR/profile-vector-family.stderr"
+VECTOR_STDOUT="$WORKDIR/profile-vector.stdout"
+VECTOR_STDERR="$WORKDIR/profile-vector.stderr"
 REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
 REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
@@ -176,25 +176,25 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_finge
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
 
-echo "[compile-profile] check vector-family Decls macro fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_family_decls.tl \
+echo "[compile-profile] check named vector Decls macro fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_named_vector_decls.tl \
     --stdlib-root . \
     --stdlib-root stdlib \
-    > "$VF_STDOUT" 2> "$VF_STDERR"; then
-    show_failure_logs "$VF_STDOUT" "$VF_STDERR"
-    fail "profiled vector-family fixture check failed"
+    > "$VECTOR_STDOUT" 2> "$VECTOR_STDERR"; then
+    show_failure_logs "$VECTOR_STDOUT" "$VECTOR_STDERR"
+    fail "profiled vector fixture check failed"
 fi
 
 assert_contains_in \
-    "$VF_STDERR" \
+    "$VECTOR_STDERR" \
     "compile-profile-detail|typecheck.macro_expand|" \
-    "$VF_STDOUT" \
-    "$VF_STDERR"
+    "$VECTOR_STDOUT" \
+    "$VECTOR_STDERR"
 assert_contains_in \
-    "$VF_STDERR" \
-    "stdlib.vector_family/vector-family arity=3 calls=2" \
-    "$VF_STDOUT" \
-    "$VF_STDERR"
+    "$VECTOR_STDERR" \
+    "stdlib.vector/vector-family arity=3 calls=2" \
+    "$VECTOR_STDOUT" \
+    "$VECTOR_STDERR"
 
 echo "[compile-profile] check generated module replay lazy fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \

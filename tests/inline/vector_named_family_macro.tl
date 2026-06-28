@@ -1,6 +1,6 @@
-;; vector_family_macro.tl - named generated vector-family coverage (#3305).
+;; vector_named_family_macro.tl - named generated vector-family coverage (#3305).
 (import "stdlib/test.tl")
-(import "stdlib/vector_family.tl")
+(import "stdlib/vector.tl")
 
 (defstruct VecFamilyPoint
   (x i64)

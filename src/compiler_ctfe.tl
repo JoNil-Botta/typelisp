@@ -3036,27 +3036,44 @@
             "offset-of expects exactly one type argument and one field name")))]))
 
 (define (ctfe-reflection-query-name? [name : String]) : bool
-  (cond
-    [(string.string-eq name "type-info") true]
-    [(string.string-eq name "type-kind") true]
-    [(string.string-eq name "type-key") true]
-    [(string.string-eq name "type-nominal-module") true]
-    [(string.string-eq name "type-nominal-name") true]
-    [(string.string-eq name "struct-field-count") true]
-    [(string.string-eq name "struct-field-name") true]
-    [(string.string-eq name "struct-field-type") true]
-    [(string.string-eq name "enum-variant-count") true]
-    [(string.string-eq name "enum-variant-name") true]
-    [(string.string-eq name "enum-variant-payload-count") true]
-    [(string.string-eq name "enum-variant-payload-type") true]
-    [(string.string-eq name "array-element-type") true]
-    [(string.string-eq name "array-length") true]
-    [(string.string-eq name "array-dynamic?") true]
-    [(string.string-eq name "tuple-element-count") true]
-    [(string.string-eq name "tuple-element-type") true]
-    [(string.string-eq name "function-param-count") true]
-    [(string.string-eq name "function-param-type") true]
-    [else (string.string-eq name "function-return-type")]))
+  (let
+    [len : i64 (ctfe-private-string-length name)]
+    (if (= len 0)
+      false
+      (let
+        [first : char (ctfe-private-string-ref name 0)]
+        (cond
+          [(string.char-eq first 'a')
+            (or
+              (string.string-eq name "array-element-type")
+              (string.string-eq name "array-length")
+              (string.string-eq name "array-dynamic?"))]
+          [(string.char-eq first 'e')
+            (or
+              (string.string-eq name "enum-variant-count")
+              (string.string-eq name "enum-variant-name")
+              (string.string-eq name "enum-variant-payload-count")
+              (string.string-eq name "enum-variant-payload-type"))]
+          [(string.char-eq first 'f')
+            (or
+              (string.string-eq name "function-param-count")
+              (string.string-eq name "function-param-type")
+              (string.string-eq name "function-return-type"))]
+          [(string.char-eq first 's')
+            (or
+              (string.string-eq name "struct-field-count")
+              (string.string-eq name "struct-field-name")
+              (string.string-eq name "struct-field-type"))]
+          [(string.char-eq first 't')
+            (or
+              (string.string-eq name "type-info")
+              (string.string-eq name "type-kind")
+              (string.string-eq name "type-key")
+              (string.string-eq name "type-nominal-module")
+              (string.string-eq name "type-nominal-name")
+              (string.string-eq name "tuple-element-count")
+              (string.string-eq name "tuple-element-type"))]
+          [else false])))))
 
 (define (ctfe-eval-one-type-reflection
   [name : String]

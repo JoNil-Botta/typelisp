@@ -9,7 +9,7 @@
 ;# `(cfg windows …)`.
 ;#
 ;# Linux uses raw syscalls (memfd-captured stdout/stderr, a pipe2 stdin feed, an
-;# `execve` failure-marker pipe, fork/execve, and wait4 exit-status decoding) and
+;# `execve` failure-marker pipe, vfork/execve, and wait4 exit-status decoding) and
 ;# fully supports the asynchronous `start`/`wait` pair. Windows uses kernel32
 ;# (CreateProcessA with temp-file stdout/stderr redirection) for the captured
 ;# `output` path and reports the asynchronous `start`/`wait` pair as unsupported,
@@ -928,7 +928,7 @@
 
 ;: Assemble argv/envp/cwd/marker C strings and open the capture descriptors
 ;: (memfd stdout/stderr, an optional stdin pipe, and the exec-failure pipe)
-;: before forking. `failed` records a pre-fork OS error.
+;: before spawning. `failed` records a pre-spawn OS error.
 (define (process-linux-prepare [command : ProcessRuntimeCommand]) : ProcessLinuxSpawn
   (cfg
     windows
@@ -1062,8 +1062,8 @@
         (syscall 60 127))
       (stdlib.process_runtime.process-linux-child-fail exec-w marker-addr))))
 
-;: Forked child path (syscalls only, no allocation): wire stdin/stdout/stderr,
-;: chdir, then `execve`. Never returns (it execs or exits 127).
+;: Child path after vfork (syscalls only, no allocation or parent-memory writes):
+;: wire stdin/stdout/stderr, chdir, then `execve`. Never returns.
 (define (process-linux-exec-child [spawn : ProcessLinuxSpawn]) : never
   (cfg
     windows
@@ -1257,7 +1257,7 @@
               (struct-get spawn stdout-fd)
               (struct-get spawn stderr-fd))))))))
 
-;: Linux captured-output runtime: prepare, fork, and dispatch parent/child.
+;: Linux captured-output runtime: prepare, vfork, and dispatch parent/child.
 (define (process-linux-output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
   (cfg
     windows
@@ -1270,9 +1270,11 @@
           (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
           (stdlib.process_runtime.process-spawn-error))
         (let
+          ;; Use vfork so high-RSS selfhost builds can still exec tiny tools
+          ;; on memory-constrained runners without copying page tables.
           [pid : i64
             (unsafe
-              (syscall 57))]
+              (syscall 58))]
           (if (< pid 0)
             (begin
               (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
@@ -1281,7 +1283,7 @@
               (stdlib.process_runtime.process-linux-exec-child spawn)
               (stdlib.process_runtime.process-linux-output-parent spawn pid))))))))
 
-;: Linux asynchronous start runtime: prepare, fork, and dispatch parent/child.
+;: Linux asynchronous start runtime: prepare, vfork, and dispatch parent/child.
 (define (process-linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
   (cfg
     windows
@@ -1294,9 +1296,11 @@
           (stdlib.process_runtime.process-linux-cleanup-spawn spawn)
           (stdlib.process_runtime.process-spawn-error-child))
         (let
+          ;; Use vfork so high-RSS selfhost builds can still exec tiny tools
+          ;; on memory-constrained runners without copying page tables.
           [pid : i64
             (unsafe
-              (syscall 57))]
+              (syscall 58))]
           (if (< pid 0)
             (begin
               (stdlib.process_runtime.process-linux-cleanup-spawn spawn)

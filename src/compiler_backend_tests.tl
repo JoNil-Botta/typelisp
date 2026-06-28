@@ -16236,7 +16236,9 @@
           (= (array-ref masks 0) (compiler-backend-scavenge-reg-bit "%r9"))
           (not
             (=
-              (bit-and (array-ref masks 2) (compiler-backend-scavenge-reg-bit "%r9"))
+              (bit-and
+                (array-ref masks 2)
+                (compiler-backend-scavenge-reg-bit "%r9"))
               0))
           (=
             (array-ref masks 3)
@@ -16261,12 +16263,7 @@
       (compiler-ir-block
         "header"
         (compiler-ir-instr-cons
-          (IrInstrBinOp
-            2
-            (IrBinLt)
-            (IrValueVar 1)
-            (IrValueVar 0)
-            (AstTyBool))
+          (IrInstrBinOp 2 (IrBinLt) (IrValueVar 1) (IrValueVar 0) (AstTyBool))
           (compiler-ir-instr-cons
             (IrInstrBranch (IrValueVar 2) "body" "exit")
             IrInstrNil)))

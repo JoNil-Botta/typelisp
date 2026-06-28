@@ -21401,8 +21401,7 @@
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (let
-    [next-buf : TextBuf
-      (compiler-backend-emergency-append buf head)]
+    [next-buf : TextBuf (compiler-backend-emergency-append buf head)]
     (match instr
       [(IrInstrCall dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
@@ -26980,7 +26979,6 @@
 
 (define compiler-backend-scavenge-all-reg-mask : i64
   32767)
-
 (define compiler-backend-scavenge-reg-bit-count : i64
   15)
 
@@ -27059,7 +27057,9 @@
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
                 (set!
                   events
-                  (+ events (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask))))
+                  (+
+                    events
+                    (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask))))
                 unit))
             unit)
           (set! v (+ v 1))))
@@ -27112,7 +27112,10 @@
   [bit-index : i64]
   [delta : i64]
   [used : i64]) : i64
-  (if (or (< event 0) (>= event (array-length heads)) (>= used (array-length event-bits)))
+  (if (or
+    (< event 0)
+    (>= event (array-length heads))
+    (>= used (array-length event-bits)))
     used
     (begin
       (array-set! event-bits used bit-index)
@@ -27383,7 +27386,8 @@
           (match location
             [(CompilerRegRegister _) true]
             [(CompilerRegRegisterPair _ _) true]
-            [_ (compiler-backend-assignments-have-register-home? (box-get rest))])])]))
+            [_
+              (compiler-backend-assignments-have-register-home? (box-get rest))])])]))
 
 (cfg
   scavenge-self-check
@@ -28648,7 +28652,8 @@
           (match coloring
             [(CompilerRegColoringNone) remat-vars]
             [(CompilerRegColoringRemap _ slots) slots])]
-        [scavenge-intervals : CompilerRegIntervalList
+        [scavenge-intervals
+          : CompilerRegIntervalList
           ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
           ;; instruction precision. The allocator plan intervals predate
           ;; call-save/remat rewrites and frame slot compaction, and the cheap

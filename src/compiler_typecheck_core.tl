@@ -7049,46 +7049,40 @@
   [current-module-id : i64]
   [target-id : i64]
   [module-id : i64]) : bool
-  (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDeclModule next-module)
-            (tc-imported-module-identity-ids?
-              rest
-              current-module-id
-              target-id
-              next-module)]
-          [(AstDeclImport (AstImportSpec _ _ expected _ _))
-            (if (= module-id current-module-id)
-              (match expected
-                [(AstSomeModuleName target)
-                  (if (= (intern target) target-id)
-                    true
-                    (tc-imported-module-identity-ids?
-                      rest
-                      current-module-id
-                      target-id
-                      module-id))]
-                [(AstNoModuleName)
-                  (tc-imported-module-identity-ids?
-                    rest
-                    current-module-id
-                    target-id
-                    module-id)])
-              (tc-imported-module-identity-ids?
-                rest
-                current-module-id
-                target-id
-                module-id))]
-          [_
-            (tc-imported-module-identity-ids?
-              rest
-              current-module-id
-              target-id
-              module-id)]))]))
+  (let
+    [cursor : AstDeclList decls]
+    [current-module : i64 module-id]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclNil) (set! done true)]
+          [(AstDeclCons decl rest-box)
+            (let
+              [rest : AstDeclList (box-get rest-box)]
+              (match decl
+                [(AstDeclModule next-module)
+                  (begin
+                    (set! current-module next-module)
+                    (set! cursor rest))]
+                [(AstDeclImport (AstImportSpec _ _ expected _ _))
+                  (begin
+                    (if (= current-module current-module-id)
+                      (match expected
+                        [(AstSomeModuleName target)
+                          (if (= (intern target) target-id)
+                            (begin
+                              (set! found true)
+                              (set! done true))
+                            unit)]
+                        [(AstNoModuleName) unit])
+                      unit)
+                    (if done
+                      unit
+                      (set! cursor rest)))]
+                [_ (set! cursor rest)]))]))
+      found)))
 
 (define (tc-imported-module-identity? [ctx : TcContext] [module-name : String]) : bool
   (match ctx
@@ -37016,6 +37010,34 @@
           (ast-decl-cons decl filtered-rest)
           filtered-rest))]))
 
+(define (macro-find-generated-identity-module-in
+  [decls : AstDeclList]
+  [identity : String]
+  [module : String]) : CompilerMaybeString
+  (match decls
+    [(AstDeclNil) CompilerNoString]
+    [(AstDeclCons decl rest-box)
+      (match decl
+        [(AstDeclModule next-module)
+          (macro-find-generated-identity-module-in
+            (box-get rest-box)
+            identity
+            (intern-str next-module))]
+        [_
+          (if (and
+            (> (string.string-length module) 0)
+            (macro-decl-generated-key? decl identity))
+            (CompilerSomeString module)
+            (macro-find-generated-identity-module-in
+              (box-get rest-box)
+              identity
+              module))])]))
+
+(define (macro-find-generated-identity-module
+  [decls : AstDeclList]
+  [identity : String]) : CompilerMaybeString
+  (macro-find-generated-identity-module-in decls identity ""))
+
 (define (macro-decl-list-structural-eq? [a : AstDeclList] [b : AstDeclList]) : bool
   (match a
     [(AstDeclNil)
@@ -44351,6 +44373,174 @@
           span))
       AstDeclNil)))
 
+(define (macro-existing-module-import-target
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [call-id : i64]
+  [context : AstMaybeModuleName]) : CompilerMaybeString
+  (let
+    [call-expr : AstExpr (ast-node-get call-id)]
+    (match (ast-expr-unspan call-expr)
+      [(AstExprCall func-box args)
+        (let
+          [func : AstExpr (ast-node-get func-box)]
+          [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
+          (match (macro-call-decl-with-context
+            ctx
+            func
+            orig-decls
+            module
+            context
+            call-expr)
+            [(ResultMacroCallDeclModule.Ok maybe-decl call-module)
+              (let
+                [call-ctx : TcContext (tc-context-with-module ctx module)]
+                (match maybe-decl
+                  [(MacroMaybeDecl.Some
+                      macro-name
+                      definition-module
+                      params
+                      ret
+                      _)
+                    (if (tc-macro-result-module? ret)
+                      (match (macro-expand-exprs
+                        call-ctx
+                        global-env
+                        orig-decls
+                        0
+                        args)
+                        [(ResultMacroExprList.Ok expanded-args)
+                          (match (macro-module-identity
+                            call-ctx
+                            orig-decls
+                            call-module
+                            macro-name
+                            definition-module
+                            params
+                            expanded-args
+                            (tc-ctfe-env call-ctx)
+                            call-expr)
+                            [(OkGenKey identity _)
+                              (macro-find-generated-identity-module
+                                orig-decls
+                                identity)]
+                            [(ErrGenKey _) CompilerNoString])]
+                        [(ResultMacroExprList.Err _) CompilerNoString])
+                      CompilerNoString)]
+                  [(MacroMaybeDecl.No) CompilerNoString]))]
+            [(ResultMacroCallDeclModule.Err _) CompilerNoString]))]
+      [_ CompilerNoString])))
+
+(define (macro-collapse-existing-module-import-decl
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decl : AstDecl]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (match decl
+    [(AstDeclComptimeDecl _ template-box)
+      (let
+        [template : AstDecl (box-get template-box)]
+        (match template
+          [(AstDeclImport (AstImportSpec kind _ _ alias span))
+            (match kind
+              [(AstImportMacro call-id context)
+                (match (macro-existing-module-import-target
+                  ctx
+                  top-env
+                  orig-decls
+                  module
+                  call-id
+                  context)
+                  [(CompilerSomeString target-module)
+                    (let
+                      [expanded : AstDeclList
+                        (macro-module-import-marker-decls
+                          target-module
+                          alias
+                          span)]
+                      (ResultMacroDeclExpansion.Ok
+                        expanded
+                        (macro-paths-for-decls expanded decl-path)))]
+                  [(CompilerNoString)
+                    (macro-single-decl-expansion decl decl-path)])]
+              [_ (macro-single-decl-expansion decl decl-path)])]
+          [_ (macro-single-decl-expansion decl decl-path)]))]
+    [(AstDeclImport (AstImportSpec kind _ _ alias span))
+      (match kind
+        [(AstImportMacro call-id context)
+          (match (macro-existing-module-import-target
+            ctx
+            top-env
+            orig-decls
+            module
+            call-id
+            context)
+            [(CompilerSomeString target-module)
+              (let
+                [expanded : AstDeclList
+                  (macro-module-import-marker-decls target-module alias span)]
+                (ResultMacroDeclExpansion.Ok
+                  expanded
+                  (macro-paths-for-decls expanded decl-path)))]
+            [(CompilerNoString) (macro-single-decl-expansion decl decl-path)])]
+        [_ (macro-single-decl-expansion decl decl-path)])]
+    [_ (macro-single-decl-expansion decl decl-path)]))
+
+(define (macro-collapse-existing-module-imports
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decls : AstDeclList]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (match decls
+    [(AstDeclNil) (ResultMacroDeclExpansion.Ok AstDeclNil AstDeclPathNil)]
+    [(AstDeclCons decl rest-box)
+      (match (macro-collapse-existing-module-import-decl
+        ctx
+        top-env
+        orig-decls
+        module
+        decl
+        decl-path)
+        [(ResultMacroDeclExpansion.Ok head-decls head-paths)
+          (match (macro-collapse-existing-module-imports
+            ctx
+            top-env
+            orig-decls
+            module
+            (box-get rest-box)
+            decl-path)
+            [(ResultMacroDeclExpansion.Ok rest-decls rest-paths)
+              (ResultMacroDeclExpansion.Ok
+                (macro-decl-list-append head-decls rest-decls)
+                (macro-decl-path-list-append head-paths rest-paths))]
+            [(ResultMacroDeclExpansion.Err diag)
+              (ResultMacroDeclExpansion.Err diag)])]
+        [(ResultMacroDeclExpansion.Err diag)
+          (ResultMacroDeclExpansion.Err diag)])]))
+
+(define (macro-collapse-existing-module-imports-or-original
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decls : AstDeclList]
+  [decl-path : String]) : AstDeclList
+  (match (macro-collapse-existing-module-imports
+    ctx
+    top-env
+    orig-decls
+    module
+    decls
+    decl-path)
+    [(ResultMacroDeclExpansion.Ok collapsed _) collapsed]
+    [(ResultMacroDeclExpansion.Err _) decls]))
+
 (define (macro-call-not-macro-diag [call-expr : AstExpr]) : CompilerDiagnostic
   (ctfe-diagnostic-at-expr
     call-expr
@@ -44392,8 +44582,16 @@
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
-    [generated-body : AstDeclList
+    [generated-body-raw : AstDeclList
       (macro-wrap-generated-decls body-rest macro-name identity)]
+    [generated-body : AstDeclList
+      (macro-collapse-existing-module-imports-or-original
+        ctx
+        top-env
+        orig-decls
+        target-module
+        generated-body-raw
+        decl-path)]
     [materialized : AstDeclList
       (ast-decl-cons (ast-decl-module target-module) generated-body)]
     (match (macro-find-module-body-decls orig-decls target-module)
@@ -47221,16 +47419,21 @@
                     (macro-decl-list-append imported-decls tail-decls)]
                   [materialized-paths : AstDeclPathList
                     (macro-decl-path-list-append imported-paths tail-paths)]
+                  [followup-work : MacroFollowupWorkList
+                    (match imported-decls
+                      [(AstDeclNil) MacroFollowupWorkNil]
+                      [_
+                        (macro-followup-work-for-decls
+                          decl-index
+                          materialized-decls
+                          materialized-paths
+                          module
+                          MacroFollowupGeneratedImport)])]
                   (ResultMacroMaterializeImport.Ok
                     materialized-decls
                     materialized-paths
                     next-seen
-                    (macro-followup-work-for-decls
-                      decl-index
-                      materialized-decls
-                      materialized-paths
-                      module
-                      MacroFollowupGeneratedImport)))]
+                    followup-work))]
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultMacroMaterializeImport.Err diag)])]
           [(ResultPkgResolve.Err message)

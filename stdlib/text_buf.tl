@@ -29,6 +29,7 @@
 ;# one.
 (module stdlib.text_buf)
 
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -170,7 +171,7 @@
     [(TextBufChunkNil) unit]
     [(TextBufChunkCons chunk rest)
       (begin
-        (array-set! items index chunk)
+        (array.array-set! items index chunk)
         (stdlib.text_buf.text-buf-chunks-fill-array-rev
           (box-get rest)
           items
@@ -184,7 +185,7 @@
   (if (>= lo hi)
     ""
     (if (= (+ lo 1) hi)
-      (array-ref items lo)
+      (array.array-ref items lo)
       (let
         [mid : i64 (/ (+ lo hi) 2)]
         (string.string-append
@@ -196,7 +197,7 @@
   [chunks : TextBufChunkList]
   [count : i64]) : String
   (let
-    [items : (Array String) (make-array String count)]
+    [items : (Array String) (array.make-array String count)]
     (begin
       (stdlib.text_buf.text-buf-chunks-fill-array-rev chunks items (- count 1))
       (stdlib.text_buf.text-buf-chunks-render-array-range items 0 count))))
@@ -312,7 +313,7 @@
   (if (= len 0)
     ""
     (let
-      [out : (Array u8) (make-array u8 len)]
+      [out : (Array u8) (array.make-array u8 len)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data out))]
@@ -364,7 +365,7 @@
           (begin
             (while (and (not done) (< index count))
               (let
-                [chunk : String (array-ref items index)]
+                [chunk : String (array.array-ref items index)]
                 [chunk-len : i64 (string-length chunk)]
                 (if (and (> bytes 0) (> (+ bytes chunk-len) batch-limit))
                   (set! done true)
@@ -386,7 +387,7 @@
 (define (text-buf-write-chunks-batched [raw : i64] [chunks : TextBufChunkList]) : i64
   (let
     [count : i64 (stdlib.text_buf.text-buf-chunk-count chunks 0)]
-    [items : (Array String) (make-array String count)]
+    [items : (Array String) (array.make-array String count)]
     (begin
       (stdlib.text_buf.text-buf-chunks-fill-array-rev chunks items (- count 1))
       (stdlib.text_buf.text-buf-write-array-batches

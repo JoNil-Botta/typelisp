@@ -30,6 +30,7 @@
 ;# ```
 (module stdlib.byte_buf)
 
+(import stdlib.array)
 (import stdlib.string)
 
 ;: Owned mutable binary byte buffer. Only the prefix `[0, len)` is live.
@@ -77,7 +78,7 @@
 
 ;: Number of bytes the backing array can hold without growing.
 (define (byte-buf-capacity [buf : ByteBuf]) : i64
-  (array-length (struct-get buf slots)))
+  (array.array-length (struct-get buf slots)))
 
 ;: True when `buf` has no live bytes.
 (define (byte-buf-empty? [buf : ByteBuf]) : bool
@@ -91,7 +92,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ByteBuf (make-array u8 cap) 0)))
+    (ByteBuf (array.make-array u8 cap) 0)))
 
 ;: Create an empty buffer with a small default capacity.
 (define (byte-buf-new) : ByteBuf
@@ -206,7 +207,7 @@
   (begin
     (byte-buf-check-range (bytes-length view) start count)
     (let
-      [out : (Array u8) (make-array u8 count)]
+      [out : (Array u8) (array.make-array u8 count)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data out))]
@@ -261,21 +262,21 @@
   (if (if (>= index 0)
     (< index (byte-buf-len buf))
     false)
-    (array-ref (struct-get buf slots) index)
+    (array.array-ref (struct-get buf slots) index)
     fallback))
 
 ;: Read live byte `index`, trapping when `index` is outside `[0, len)`.
 (define (byte-buf-ref [buf : ByteBuf] [index : i64]) : u8
   (begin
     (byte-buf-check-range (byte-buf-len buf) index 1)
-    (array-ref (struct-get buf slots) index)))
+    (array.array-ref (struct-get buf slots) index)))
 
 ;: Overwrite live byte `index`, trapping when `index` is outside `[0, len)`.
 ;: Returns the same buffer value.
 (define (byte-buf-set! [buf : ByteBuf] [index : i64] [value : u8]) : ByteBuf
   (begin
     (byte-buf-check-range (byte-buf-len buf) index 1)
-    (array-set! (struct-get buf slots) index value)
+    (array.array-set! (struct-get buf slots) index value)
     buf))
 
 ;: Copy `count` bytes from `src[src-start..]` into `dst[dst-start..]`,
@@ -287,17 +288,17 @@
   [src-start : i64]
   [count : i64]) : unit
   (begin
-    (byte-buf-check-range (array-length dst) dst-start count)
-    (byte-buf-check-range (array-length src) src-start count)
+    (byte-buf-check-range (array.array-length dst) dst-start count)
+    (byte-buf-check-range (array.array-length src) src-start count)
     (let
       [index : i64 0]
       (begin
         (while (< index count)
           (begin
-            (array-set!
+            (array.array-set!
               dst
               (+ dst-start index)
-              (array-ref src (+ src-start index)))
+              (array.array-ref src (+ src-start index)))
             (set! index (+ index 1))))
         unit))))
 
@@ -315,7 +316,7 @@
         (if (< doubled min-capacity)
           min-capacity
           doubled)]
-      [bigger : (Array u8) (make-array u8 new-capacity)]
+      [bigger : (Array u8) (array.make-array u8 new-capacity)]
       (begin
         (byte-buf-copy-array-range-into
           bigger
@@ -356,7 +357,7 @@
     [ready : ByteBuf (byte-buf-reserve buf 1)]
     [index : i64 (byte-buf-len ready)]
     (begin
-      (array-set! (struct-get ready slots) index value)
+      (array.array-set! (struct-get ready slots) index value)
       (set! (struct-get ready len) (+ index 1))
       ready)))
 
@@ -368,7 +369,7 @@
   [start : i64]
   [count : i64]) : ByteBuf
   (begin
-    (byte-buf-check-range (array-length src) start count)
+    (byte-buf-check-range (array.array-length src) start count)
     (let
       [ready : ByteBuf (byte-buf-reserve buf count)]
       [old-len : i64 (byte-buf-len ready)]
@@ -384,7 +385,7 @@
 
 ;: Append every byte from `src`.
 (define (byte-buf-append-array [buf : ByteBuf] [src : (Array u8)]) : ByteBuf
-  (byte-buf-append-array-range buf src 0 (array-length src)))
+  (byte-buf-append-array-range buf src 0 (array.array-length src)))
 
 ;: Append `count` bytes from `src` starting at `start`, trapping on invalid
 ;: source ranges.
@@ -405,7 +406,7 @@
       (begin
         (while (< index count)
           (begin
-            (array-set!
+            (array.array-set!
               (struct-get ready slots)
               (+ old-len index)
               (unsafe
@@ -455,7 +456,7 @@
 
 ;: Copy every byte from `src` into a new buffer.
 (define (byte-buf-from-array [src : (Array u8)]) : ByteBuf
-  (byte-buf-from-array-range src 0 (array-length src)))
+  (byte-buf-from-array-range src 0 (array.array-length src)))
 
 ;: Copy `count` bytes from `src` starting at `start` into a new buffer.
 (define (byte-buf-from-string-range [src : String] [start : i64] [count : i64]) : ByteBuf
@@ -482,7 +483,7 @@
   (begin
     (byte-buf-check-range (byte-buf-len buf) start count)
     (let
-      [out : (Array u8) (make-array u8 count)]
+      [out : (Array u8) (array.make-array u8 count)]
       (begin
         (byte-buf-copy-array-range-into
           out

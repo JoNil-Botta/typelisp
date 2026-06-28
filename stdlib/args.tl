@@ -30,6 +30,7 @@
 ;# ```
 (module stdlib.args)
 
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -478,11 +479,11 @@
   (if (>= index end)
     (OkArgsParsed (args-parse-finish-fields options positionals))
     (let
-      [current : String (array-ref argv index)]
+      [current : String (array.array-ref argv index)]
       [has-next : bool (< (+ index 1) end)]
       [next-value : String
         (if has-next
-          (array-ref argv (+ index 1))
+          (array.array-ref argv (+ index 1))
           "")]
       (cond
         [stop-options
@@ -575,7 +576,7 @@
   [start : i64]
   [end : i64]) : ResultArgsParsed
   (let
-    [limit : i64 (array-length argv)]
+    [limit : i64 (array.array-length argv)]
     [i : i64 (stdlib.args.args-clamp-start start)]
     [last : i64 (stdlib.args.args-clamp-end end limit)]
     [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
@@ -586,11 +587,11 @@
     (begin
       (while (and (< i last) (not failed))
         (let
-          [current : String (array-ref argv i)]
+          [current : String (array.array-ref argv i)]
           [has-next : bool (< (+ i 1) last)]
           [next-value : String
             (if has-next
-              (array-ref argv (+ i 1))
+              (array.array-ref argv (+ i 1))
               "")]
           (cond
             [stop-options
@@ -645,7 +646,7 @@
 
 ;: Parse the full argv array.
 (define (args-parse-array [specs : ArgsOptionSpecList] [argv : (Array String)]) : ResultArgsParsed
-  (args-parse-array-range specs argv 0 (array-length argv)))
+  (args-parse-array-range specs argv 0 (array.array-length argv)))
 
 ;: Parse process argv range `[index, end)` with `state`.
 (define (args-parse-argv-loop-fields
@@ -851,25 +852,25 @@
 
 ;: Build a zero-length argv array for inline tests.
 (define (args-test-array0) : (Array String)
-  (make-array String 0))
+  (array.make-array String 0))
 
 ;: Build a one-item argv array for inline tests.
 (define (args-test-array1 [a : String]) : (Array String)
   (let
-    [items : (Array String) (make-array String 1)]
+    [items : (Array String) (array.make-array String 1)]
     (begin
-      (array-set! items 0 a)
+      (array.array-set! items 0 a)
       items)))
 
 ;: Build a three-item argv array for inline tests.
 (define (args-test-array3 [a : String] [b : String] [c : String]) : (Array
     String)
   (let
-    [items : (Array String) (make-array String 3)]
+    [items : (Array String) (array.make-array String 3)]
     (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
+      (array.array-set! items 0 a)
+      (array.array-set! items 1 b)
+      (array.array-set! items 2 c)
       items)))
 
 ;: Build a five-item argv array for inline tests.
@@ -880,13 +881,13 @@
   [d : String]
   [e : String]) : (Array String)
   (let
-    [items : (Array String) (make-array String 5)]
+    [items : (Array String) (array.make-array String 5)]
     (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
-      (array-set! items 3 d)
-      (array-set! items 4 e)
+      (array.array-set! items 0 a)
+      (array.array-set! items 1 b)
+      (array.array-set! items 2 c)
+      (array.array-set! items 3 d)
+      (array.array-set! items 4 e)
       items)))
 
 ;: Build a six-item argv array for inline tests.
@@ -898,14 +899,14 @@
   [e : String]
   [f : String]) : (Array String)
   (let
-    [items : (Array String) (make-array String 6)]
+    [items : (Array String) (array.make-array String 6)]
     (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
-      (array-set! items 3 d)
-      (array-set! items 4 e)
-      (array-set! items 5 f)
+      (array.array-set! items 0 a)
+      (array.array-set! items 1 b)
+      (array.array-set! items 2 c)
+      (array.array-set! items 3 d)
+      (array.array-set! items 4 e)
+      (array.array-set! items 5 f)
       items)))
 
 ;: Unwrap a successful argv parse result for inline tests.
@@ -936,15 +937,15 @@
     [values : (Array String) (svec.to-array items)]
     (begin
       (args-test-assert-i64-eq
-        (array-length values)
+        (array.array-length values)
         2
         (string.string-append message " count"))
       (args-test-assert-owned-string-eq
-        (array-ref values 0)
+        (array.array-ref values 0)
         first
         (string.string-append message " first"))
       (args-test-assert-owned-string-eq
-        (array-ref values 1)
+        (array.array-ref values 1)
         second
         (string.string-append message " second")))))
 
@@ -959,19 +960,19 @@
     [values : (Array String) (svec.to-array items)]
     (begin
       (args-test-assert-i64-eq
-        (array-length values)
+        (array.array-length values)
         3
         (string.string-append message " count"))
       (args-test-assert-owned-string-eq
-        (array-ref values 0)
+        (array.array-ref values 0)
         first
         (string.string-append message " first"))
       (args-test-assert-owned-string-eq
-        (array-ref values 1)
+        (array.array-ref values 1)
         second
         (string.string-append message " second"))
       (args-test-assert-owned-string-eq
-        (array-ref values 2)
+        (array.array-ref values 2)
         third
         (string.string-append message " third")))))
 
@@ -999,7 +1000,7 @@
       (args-test-expect-ok
         (begin
           (args-test-assert-i64-eq
-            (array-length argv)
+            (array.array-length argv)
             3
             "args-test-array3 length")
           (args-parse-array (args-test-specs) argv))

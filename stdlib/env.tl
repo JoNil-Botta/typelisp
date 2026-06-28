@@ -16,6 +16,8 @@
 ;# ```
 (module stdlib.env)
 
+(import stdlib.array)
+
 ;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns
 ;: the process environment block: NUL-separated `NAME=VALUE` entries terminated
 ;: by an empty entry (a trailing double NUL). Replaces the former backend-emitted
@@ -48,12 +50,12 @@
       [n : i64
         (unsafe
           (env-c-string-length ptr))]
-      [buf : (Array u8) (make-array u8 n)]
+      [buf : (Array u8) (array.make-array u8 n)]
       [i : i64 0]
       (begin
         (while (< i n)
           (begin
-            (array-set!
+            (array.array-set!
               buf
               i
               (unsafe

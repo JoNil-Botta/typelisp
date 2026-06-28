@@ -21,6 +21,7 @@
 ;# ```
 (module stdlib.fs)
 
+(import stdlib.array)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.string)
@@ -365,14 +366,14 @@
             (if (= (cast byte : i64) 0)
               (set! done true)
               (begin
-                (array-push! out byte)
+                (array.array-push! out byte)
                 (set! i (+ i 1))))))
-        (array-push! out (cast '\n' : u8))))))
+        (array.array-push! out (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (fs-read-dir-bytes-string [out : (Array u8)]) : String
   (unsafe
-    (string-from-bytes (io.io-array-const-ptr out) (array-length out))))
+    (string-from-bytes (io.io-array-const-ptr out) (array.array-length out))))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
@@ -445,8 +446,8 @@
       (if (< fd 0)
         ""
         (let
-          [buf : (Array u8) (make-array u8 fs-read-dir-buffer-size)]
-          [out : (Array u8) (make-array u8 0)]
+          [buf : (Array u8) (array.make-array u8 fs-read-dir-buffer-size)]
+          [out : (Array u8) (array.make-array u8 0)]
           [ok : bool true]
           [done : bool false]
           (begin
@@ -523,7 +524,7 @@
     (let
       [pattern : String (fs-windows-read-dir-pattern path)]
       [pattern-bytes : (Array u8) (io.io-c-string pattern)]
-      [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
+      [data : (Array u8) (array.make-array u8 fs-windows-find-data-size)]
       [handle : i64
         (fs-win-find-first-file
           (io.io-array-const-ptr pattern-bytes)
@@ -541,8 +542,8 @@
     (let
       [pattern : String (fs-windows-read-dir-pattern path)]
       [pattern-bytes : (Array u8) (io.io-c-string pattern)]
-      [data : (Array u8) (make-array u8 fs-windows-find-data-size)]
-      [out : (Array u8) (make-array u8 0)]
+      [data : (Array u8) (array.make-array u8 fs-windows-find-data-size)]
+      [out : (Array u8) (array.make-array u8 0)]
       [handle : i64
         (fs-win-find-first-file
           (io.io-array-const-ptr pattern-bytes)
@@ -679,7 +680,7 @@
   (not windows)
   (define (fs-linux-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
     (let
-      [statbuf : (Array u8) (make-array u8 fs-linux-stat-buffer-size)]
+      [statbuf : (Array u8) (array.make-array u8 fs-linux-stat-buffer-size)]
       [statptr : (MutPtr u8) (io.io-array-ptr statbuf)]
       [status : i64
         (fs-status-from-result (fs-linux-syscall-newfstatat path statptr))]
@@ -733,7 +734,8 @@
   windows
   (define (fs-windows-file-metadata-probe [path : (Ptr u8)]) : FsFileMetadataProbe
     (let
-      [data : (Array u8) (make-array u8 fs-windows-file-attribute-data-size)]
+      [data : (Array u8)
+        (array.make-array u8 fs-windows-file-attribute-data-size)]
       [dataptr : (MutPtr u8) (io.io-array-ptr data)]
       [ok : i32 (fs-win-get-file-attributes-ex path (cast 0 : i32) dataptr)]
       (if (= ok (cast 0 : i32))
@@ -802,7 +804,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       io.io-status-name-too-long
       (let
-        [buf : (Array u8) (make-array u8 capacity)]
+        [buf : (Array u8) (array.make-array u8 capacity)]
         [written : i64
           (cast
             (stdlib.fs.fs-windows-get-current-directory
@@ -818,7 +820,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       io.io-status-name-too-long
       (let
-        [buf : (Array u8) (make-array u8 capacity)]
+        [buf : (Array u8) (array.make-array u8 capacity)]
         [result : (Ptr u8)
           (stdlib.fs.fs-linux-syscall-getcwd (io.io-array-ptr buf) capacity)]
         (if (ptr-null? result)
@@ -838,7 +840,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
-        [buf : (Array u8) (make-array u8 capacity)]
+        [buf : (Array u8) (array.make-array u8 capacity)]
         [written : i64
           (cast
             (stdlib.fs.fs-windows-get-current-directory
@@ -854,7 +856,7 @@
     (if (> capacity stdlib.fs.fs-current-dir-max-capacity)
       ""
       (let
-        [buf : (Array u8) (make-array u8 capacity)]
+        [buf : (Array u8) (array.make-array u8 capacity)]
         [result : (Ptr u8)
           (stdlib.fs.fs-linux-syscall-getcwd (io.io-array-ptr buf) capacity)]
         (if (ptr-null? result)

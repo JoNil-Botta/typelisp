@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.thread)
 
@@ -5,13 +6,15 @@
   (if (>= i 12)
     sum
     (let
-      [items : (Array i64) (make-array i64 1048576)]
+      [items : (Array i64) (array.make-array i64 1048576)]
       (begin
-        (array-set! items 0 i)
-        (array-set! items 1 (+ i 1))
-        (array-set! items 2 (+ i 2))
-        (array-set! items 3 (+ i 3))
-        (arena-atomic-worker-loop (+ i 1) (+ sum (array-ref items (% i 4))))))))
+        (array.array-set! items 0 i)
+        (array.array-set! items 1 (+ i 1))
+        (array.array-set! items 2 (+ i 2))
+        (array.array-set! items 3 (+ i 3))
+        (arena-atomic-worker-loop
+          (+ i 1)
+          (+ sum (array.array-ref items (% i 4))))))))
 
 (define (arena-atomic-worker [owner : i64]) : i64
   (let

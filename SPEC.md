@@ -701,32 +701,21 @@ Generated declaration identity is the tuple:
   arguments must use stable compiler-owned keys or explicit generator-defined
   string keys.
 
-For `stdlib/hashmap-family`, the argument key list must include the key
-`type-key`, value `type-key`, and an explicit key descriptor identity. The v1
-built-in descriptors are `stdlib/hashmap/string-key-v1` for owned `String`
-keys, `stdlib/hashmap/i64-key-v1` for scalar `i64` keys, and
-`stdlib/hashmap/aggregate-key-v1` for nominal struct/enum keys. A descriptor
-fixes the hash operation, equality operation, generated family/name prefix, and
-whether borrowed-key lookup wrappers are emitted. `String` uses `hash-string`,
-`hash-key-string-eq?`, and borrowed lookup/contains/remove wrappers; `i64` uses
-`hash-i64`, `hash-key-i64-eq?`, and no borrowed-key wrappers. Aggregate keys
-derive deterministic hash/equality from declaration-order struct fields or enum
-variant tag plus declaration-order payloads. Supported aggregate members are
-`i64`, `bool`, `char`, `String`, and nested supported nominal aggregates.
-Unsupported key types or unsupported aggregate members must produce a
-compile-time `hashmap-family` diagnostic naming the descriptor or aggregate
-member instead of using source-level traits, implicit `Hash`/`Eq` bounds,
-runtime type IDs, or address hashing. Changing descriptor identity changes
-generated declaration identity even when the key/value types and public item
-names are otherwise the same.
+Collection modules that expose generated-module surfaces must keep their
+identity keys stable and must not rely on compiler-private generator names or
+marker payloads. Hashmap support is stdlib-owned: checked-in concrete families
+and declaration-emitting module macros provide the public `(hashmap K V)`
+surface. `String` key maps support borrowed lookup/contains/remove wrappers;
+`i64` key maps use scalar keys directly. Aggregate-key support, where provided
+by a stdlib family, derives deterministic hash/equality from declaration-order
+struct fields or enum variant tag plus declaration-order payloads for supported
+members (`i64`, `bool`, `char`, `String`, and nested supported nominal
+aggregates). Unsupported key shapes must be rejected by stdlib macro/typecheck
+diagnostics instead of using source-level traits, implicit `Hash`/`Eq` bounds,
+runtime type IDs, or address hashing.
 
-The built-in key descriptors support nominal struct and enum value types.
-Aggregate values are stored as ordinary map-owned values, may be looked up
-through owned results, and may be borrowed through `*-get-value-borrowed` for
-field/payload inspection while the map is not mutated.
-
-Generated hashmap families may also expose borrowed-value lookup helpers such
-as `*-get-value-borrowed`. These helpers are independent from borrowed-key
+Generated hashmap-style families may also expose borrowed-value lookup helpers
+such as `*-get-value-borrowed`. These helpers are independent from borrowed-key
 lookup: the key path controls whether lookup can inspect a borrowed key without
 copying it, while borrowed-value lookup returns a lifetime-parameterized result
 whose found branch borrows the map-owned value and is invalidated by map
@@ -4287,7 +4276,7 @@ Rules:
   implementation may instead resolve at program startup if that has the same
   observable behavior.
 - Selection may use the same CPUID/XGETBV capability checks exposed by
-  `stdlib/cpu.tl` (`cpu-runs-avx2?`, `cpu-runs-avx512bw?`), but ordinary user
+  `stdlib/cpu.tl` (`runs-avx2?`, `runs-avx512bw?`), but ordinary user
   code does not need to import `stdlib/cpu.tl` or call those helpers to use a
   dispatched function.
 - Variant selection runs no user variant body and performs no user-visible I/O.

@@ -1,4 +1,5 @@
 ;; compiler_object_coff.tl - COFF object-file serialization for object images.
+(import stdlib.byte_buf_core)
 (import stdlib.string)
 (import "compiler_object.tl")
 
@@ -127,27 +128,37 @@
 (define (compiler-object-coff-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
 
-(define (compiler-object-coff-push-u8! [out : (Array u8)] [value : i64]) : unit
-  (array-push! out (compiler-object-coff-byte value)))
+(define (compiler-object-coff-push-u8!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
+  (byte_buf_core.byte-buf-builder-push out (compiler-object-coff-byte value)))
 
-(define (compiler-object-coff-push-u16! [out : (Array u8)] [value : i64]) : unit
+(define (compiler-object-coff-push-u16!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
   (begin
     (compiler-object-coff-push-u8! out value)
     (compiler-object-coff-push-u8! out (shr value 8))))
 
-(define (compiler-object-coff-push-u32! [out : (Array u8)] [value : i64]) : unit
+(define (compiler-object-coff-push-u32!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
   (begin
     (compiler-object-coff-push-u8! out value)
     (compiler-object-coff-push-u8! out (shr value 8))
     (compiler-object-coff-push-u8! out (shr value 16))
     (compiler-object-coff-push-u8! out (shr value 24))))
 
-(define (compiler-object-coff-push-u64! [out : (Array u8)] [value : i64]) : unit
+(define (compiler-object-coff-push-u64!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
   (begin
     (compiler-object-coff-push-u32! out value)
     (compiler-object-coff-push-u32! out (shr value 32))))
 
-(define (compiler-object-coff-push-zeroes! [out : (Array u8)] [count : i64]) : unit
+(define (compiler-object-coff-push-zeroes!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [count : i64]) : unit
   (let
     [i : i64 0]
     (begin
@@ -158,7 +169,7 @@
       unit)))
 
 (define (compiler-object-coff-push-string-bytes!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [text : String]) : unit
   (let
     [i : i64 0]
@@ -166,11 +177,15 @@
     (begin
       (while (< i n)
         (begin
-          (array-push! out (cast (compiler-object-coff-string-ref text i) : u8))
+          (byte_buf_core.byte-buf-builder-push
+            out
+            (cast (compiler-object-coff-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
-(define (compiler-object-coff-push-name8! [out : (Array u8)] [name : String]) : unit
+(define (compiler-object-coff-push-name8!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [name : String]) : unit
   (let
     [i : i64 0]
     [n : i64 (compiler-object-coff-string-length name)]
@@ -178,7 +193,7 @@
       (while (< i 8)
         (begin
           (if (< i n)
-            (array-push!
+            (byte_buf_core.byte-buf-builder-push
               out
               (cast (compiler-object-coff-string-ref name i) : u8))
             (compiler-object-coff-push-u8! out 0))
@@ -948,7 +963,7 @@
       (compiler-object-coff-total-relocation-count image))))
 
 (define (compiler-object-coff-push-file-header!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]) : unit
   (begin
     (compiler-object-coff-push-u16! out compiler-object-coff-machine-amd64)
@@ -964,7 +979,7 @@
     (compiler-object-coff-push-u16! out 0)))
 
 (define (compiler-object-coff-push-section-header!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : unit
   (begin
@@ -994,7 +1009,7 @@
       (compiler-object-coff-section-flags kind))))
 
 (define (compiler-object-coff-push-section-headers!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]) : unit
   (begin
     (compiler-object-coff-push-section-header!
@@ -1027,7 +1042,7 @@
       (CompilerObjectSectionKind.Rsrc))))
 
 (define (compiler-object-coff-render-data-record!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [record : CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
@@ -1072,7 +1087,7 @@
         (+ offset 4))]))
 
 (define (compiler-object-coff-render-data-records!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [records : CompilerObjectDataRecordList]
   [offset : i64]) : i64
   (let
@@ -1091,11 +1106,12 @@
           (set! index (+ index 1))))
       cur-offset)))
 
-(define (compiler-object-coff-push-rel32-placeholder! [out : (Array u8)]) : unit
+(define (compiler-object-coff-push-rel32-placeholder!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
   (compiler-object-coff-push-u32! out 0))
 
 (define (compiler-object-coff-render-instr!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [instr : CompilerObjectX64Instr]) : unit
   (match instr
     [(CompilerObjectX64Instr.Label _) unit]
@@ -1209,7 +1225,7 @@
     [(CompilerObjectX64Instr.Raw _) unit]))
 
 (define (compiler-object-coff-render-instrs!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [instrs : CompilerObjectX64InstrList]) : unit
   (let
     [count : i64 (compiler-object-instr-list-count instrs)]
@@ -1224,7 +1240,7 @@
       unit)))
 
 (define (compiler-object-coff-render-section-data!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : unit
   (match (compiler-object-section-list-find (struct-get image sections) kind)
@@ -1238,7 +1254,7 @@
             unit)])]))
 
 (define (compiler-object-coff-render-sections!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]) : unit
   (begin
     (compiler-object-coff-render-section-data!
@@ -1285,7 +1301,7 @@
     [_ 0]))
 
 (define (compiler-object-coff-render-relocation-record!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [offset : i64]
   [kind : CompilerObjectRelocationKind]
@@ -1300,7 +1316,7 @@
       (compiler-object-coff-relocation-type kind))))
 
 (define (compiler-object-coff-render-relocation!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [reloc : CompilerObjectRelocation]) : unit
   (match reloc
@@ -1313,7 +1329,7 @@
         target)]))
 
 (define (compiler-object-coff-render-text-instr-relocations!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [instrs : CompilerObjectX64InstrList]
   [offset : i64]) : unit
@@ -1459,7 +1475,7 @@
       unit)))
 
 (define (compiler-object-coff-render-text-relocations!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]) : unit
   (match (compiler-object-section-list-find
     (struct-get image sections)
@@ -1468,7 +1484,7 @@
       (compiler-object-coff-render-text-instr-relocations! out image instrs 0)]))
 
 (define (compiler-object-coff-render-relocations-for-section!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [relocs : CompilerObjectRelocationList]
   [kind : CompilerObjectSectionKind]) : unit
@@ -1490,7 +1506,7 @@
       unit)))
 
 (define (compiler-object-coff-render-relocations!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]) : unit
   (begin
     (compiler-object-coff-render-text-relocations! out image)
@@ -1566,7 +1582,7 @@
     4))
 
 (define (compiler-object-coff-push-symbol-name!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [name : String]) : unit
   (if (compiler-object-coff-symbol-name-long? name)
@@ -1610,7 +1626,7 @@
           offset))]))
 
 (define (compiler-object-coff-render-symbol!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [symbol : CompilerObjectSymbol]) : unit
   (match symbol
@@ -1632,7 +1648,7 @@
         (compiler-object-coff-push-u8! out 0))]))
 
 (define (compiler-object-coff-render-symbols!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]
   [symbols : CompilerObjectSymbolList]) : unit
   (let
@@ -1673,7 +1689,7 @@
   (compiler-object-coff-string-table-size-from symbols 4))
 
 (define (compiler-object-coff-render-string-table-symbols!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [symbols : CompilerObjectSymbolList]) : unit
   (let
     [count : i64 (compiler-object-symbol-list-count symbols)]
@@ -1692,7 +1708,7 @@
       unit)))
 
 (define (compiler-object-coff-render-string-table!
-  [out : (Array u8)]
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [image : CompilerObjectImage]) : unit
   (begin
     (compiler-object-coff-push-u32!
@@ -1702,27 +1718,26 @@
       out
       (struct-get image symbols))))
 
-(define (compiler-object-coff-bytes-string [bytes : (Array u8)]) : String
-  (unsafe
-    (string-from-bytes
-      (ptr-cast (array-data bytes) : (Ptr u8))
-      (array-length bytes))))
+(define (compiler-object-coff-bytes-string
+  [out : (& out byte_buf_core.ByteBufBuilder)]) : String
+  (byte_buf_core.byte-buf-builder-finish-string out))
 
 (define (compiler-object-coff-render [image : CompilerObjectImage]) : ResultCompilerObjectCoff
   (if (compiler-object-coff-image-supported? image)
     (let
-      [out : (Array u8) (make-array u8 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       (begin
-        (compiler-object-coff-push-file-header! out image)
-        (compiler-object-coff-push-section-headers! out image)
-        (compiler-object-coff-render-sections! out image)
-        (compiler-object-coff-render-relocations! out image)
+        (compiler-object-coff-push-file-header! (&mut out) image)
+        (compiler-object-coff-push-section-headers! (&mut out) image)
+        (compiler-object-coff-render-sections! (&mut out) image)
+        (compiler-object-coff-render-relocations! (&mut out) image)
         (compiler-object-coff-render-symbols!
-          out
+          (&mut out)
           image
           (struct-get image symbols))
-        (compiler-object-coff-render-string-table! out image)
-        (ResultCompilerObjectCoff.Ok (compiler-object-coff-bytes-string out))))
+        (compiler-object-coff-render-string-table! (&mut out) image)
+        (ResultCompilerObjectCoff.Ok
+          (compiler-object-coff-bytes-string (& out)))))
     (ResultCompilerObjectCoff.Err
       "coff: object image contains unsupported text, f64, or relocation records")))
 

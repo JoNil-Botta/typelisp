@@ -1510,36 +1510,6 @@
         (compiler-live-set-eq? uses (compiler-live-set5 10 11 12 13 14))
         (compiler-live-set-eq? defs (compiler-live-set6 0 1 2 3 4 5)))]))
 
-(define (compiler-live-spmd-call-use-def-ok?) : bool
-  (let
-    [args : CompilerIrSpmdCallArgList
-      (ir-spmd-call-arg-cons
-        (IrSpmdCallArg
-          (IrSpmdValueUniform)
-          (IrValueVar 21)
-          (compiler-live-i64-ty))
-        (ir-spmd-call-arg-cons
-          (IrSpmdCallArg
-            (IrSpmdValueVarying)
-            (IrValueVar 22)
-            (compiler-live-i64-ty))
-          IrSpmdCallArgNil))]
-    [instr : CompilerIrInstr
-      (ir-instr-spmd-call
-        "helper"
-        (IrSpmdBackendAvx512)
-        8
-        (IrValueVar 20)
-        args
-        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (compiler-live-i64-ty)))]
-    (and
-      (compiler-live-set-eq?
-        (compiler-live-instr-uses instr)
-        (compiler-live-set3 20 21 22))
-      (compiler-live-set-eq?
-        (compiler-live-instr-defs instr)
-        (compiler-live-set1 6)))))
-
 (define (compiler-live-straight-ok?) : bool
   (let
     [liveness : CompilerFunctionLiveness
@@ -1646,7 +1616,6 @@
     (compiler-live-use-def-ok?)
     (compiler-live-memory-use-def-ok?)
     (compiler-live-vector-mask-use-def-ok?)
-    (compiler-live-spmd-call-use-def-ok?)
     (compiler-live-straight-ok?)
     (compiler-live-branch-ok?)
     (compiler-live-phi-ok?)

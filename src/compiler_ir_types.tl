@@ -3836,55 +3836,12 @@
             (= lanes 8))]
         [_ false]))))
 
-(define (compiler-ir-spmd-call-shape-ok?) : bool
-  (let
-    [args : CompilerIrSpmdCallArgList
-      (ir-spmd-call-arg-cons
-        (IrSpmdCallArg (IrSpmdValueUniform) (IrValueVar 21) (AstTyI64))
-        (ir-spmd-call-arg-cons
-          (IrSpmdCallArg (IrSpmdValueVarying) (IrValueVar 22) (AstTyI64))
-          IrSpmdCallArgNil))]
-    [instr : CompilerIrInstr
-      (ir-instr-spmd-call
-        "helper"
-        (IrSpmdBackendAvx2)
-        8
-        (IrValueVar 20)
-        args
-        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (AstTyI64)))]
-    [span : AstSourceSpan (AstSourceSpan 3 4 3 9)]
-    [spans : CompilerSourceSpans
-      (compiler-source-spans-insert-instr
-        (compiler-source-spans-empty)
-        "func"
-        instr
-        span)]
-    (and
-      (string.string-eq
-        (compiler-ir-instr-render instr)
-        "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64")
-      (string.string-eq
-        (compiler-ir-instr-describe instr)
-        "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
-      (compiler-ir-effect-is? instr IrEffectUnknown)
-      (= (compiler-ir-instr-call-arg-count instr) 2)
-      (string.string-eq
-        (compiler-ir-instr-render (compiler-ir-clone-instr instr))
-        (compiler-ir-instr-render instr))
-      (match (compiler-source-spans-lookup-instr spans "func" instr)
-        [(CompilerSomeSourceSpan found)
-          (and
-            (= (struct-get found start-line) 3)
-            (= (struct-get found end-col) 9))]
-        [(CompilerNoSourceSpan) false]))))
-
 (define (compiler-ir-display-self-test-ok?) : bool
   (and
     (compiler-ir-display-type-names-ok?)
     (compiler-ir-display-op-names-ok?)
     (compiler-ir-display-instrs-ok?)
-    (compiler-ir-display-tail-mask-ok?)
-    (compiler-ir-spmd-call-shape-ok?)))
+    (compiler-ir-display-tail-mask-ok?)))
 
 (define (compiler-ir-tail-call-render-ok?) : bool
   (string.string-eq

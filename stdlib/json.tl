@@ -19,6 +19,7 @@
 ;# ```
 (module stdlib.json)
 
+(import stdlib.comptime)
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.text_buf)
@@ -32,6 +33,10 @@
   (JsonString String)
   (JsonArray (Box JsonList))
   (JsonObject (Box JsonMemberList)))
+
+;: Strategy value wrapper used by `stdlib.serialize`.
+(defenum Value
+  (JsonValue Json))
 
 ;: Immutable list of JSON array elements in source order.
 (defenum JsonList
@@ -1040,6 +1045,178 @@
   (if (io.io-float-f32-finite? value)
     (OkJsonNumberText (io.io-format-float-core (cast value : f64)))
     (ErrJsonNumberText "json: non-finite f32 cannot be rendered as a number")))
+
+;: Convert a JSON number rendering result into a JSON value, panicking only for
+;: non-finite floats that cannot be represented in JSON.
+(define (json-number-text-result->json [result : JsonNumberTextResult]) : Json
+  (match result
+    [(OkJsonNumberText text) (JsonNumber text)]
+    [(ErrJsonNumberText message) (io.panic message)]))
+
+;: Render a finite f64 as a JSON number value.
+(define (json-f64->number [value : f64]) : Json
+  (stdlib.json.json-number-text-result->json
+    (stdlib.json.json-f64->number-text value)))
+
+;: Render a finite f32 as a JSON number value.
+(define (json-f32->number [value : f32]) : Json
+  (stdlib.json.json-number-text-result->json
+    (stdlib.json.json-f32->number-text value)))
+
+;: `stdlib.serialize` hook for bool fields.
+(defmacro (encode-bool [value : bool]) : Value
+  `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))
+
+;: `stdlib.serialize` hook for bool fields.
+(defmacro (decode-bool [value : Expr] [err-ctor : Expr]) : Expr
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (match __json_value
+        [(stdlib.json.JsonBool parsed) parsed]
+        [_ (return (,err-ctor "json: expected bool"))])]))
+
+;: `stdlib.serialize` hook for integer fields.
+(defmacro (encode-int [T : type] [value : Expr]) : Value
+  (match (type-key T)
+    ["u64"
+      (comptime.comptime-error "serialize json: u64 fields are not supported")]
+    [_
+      `(stdlib.json.JsonValue
+        (stdlib.json.json-i64->number (cast ,value : i64)))]))
+
+;: `stdlib.serialize` hook for integer fields.
+(defmacro (decode-int [T : type] [value : Expr] [err-ctor : Expr]) : Expr
+  (let
+    [field-key : String (type-key T)]
+    (match field-key
+      ["u64"
+        (comptime.comptime-error "serialize json: u64 fields are not supported")]
+      [_
+        (let
+          [min-expr : Expr
+            (match field-key
+              ["i32" (comptime.expr-int (- 0 2147483648))]
+              ["i16" (comptime.expr-int (- 0 32768))]
+              ["i8" (comptime.expr-int (- 0 128))]
+              [_ (comptime.expr-int 0)])]
+          [max-expr : Expr
+            (match field-key
+              ["i32" (comptime.expr-int 2147483647)]
+              ["i16" (comptime.expr-int 32767)]
+              ["i8" (comptime.expr-int 127)]
+              ["u32" (comptime.expr-int 4294967295)]
+              ["u16" (comptime.expr-int 65535)]
+              ["u8" (comptime.expr-int 255)]
+              [_ (comptime.expr-int 9223372036854775807)])]
+          [range-error : Expr
+            (comptime.expr-string
+              (string-append
+                (string-append "json: integer outside " field-key)
+                " range"))]
+          [parsed-expr : Expr
+            (if (string=? field-key "i64")
+              `parsed
+              `(if (if (< parsed ,min-expr)
+                true
+                (> parsed ,max-expr))
+                (return (,err-ctor ,range-error))
+                (cast parsed : ,T)))]
+          `(match ,value
+            [(stdlib.json.JsonValue __json_value)
+              (match __json_value
+                [(stdlib.json.JsonNumber text)
+                  (match (stdlib.json.json-number-owned->i64 text)
+                    [(stdlib.json.OkJsonNumberI64 parsed) ,parsed-expr]
+                    [(stdlib.json.ErrJsonNumberI64 message)
+                      (return (,err-ctor message))])]
+                [_ (return (,err-ctor "json: expected integer number"))])]))])))
+
+;: `stdlib.serialize` hook for float fields.
+(defmacro (encode-float [T : type] [value : Expr]) : Value
+  (match (type-key T)
+    ["f64" `(stdlib.json.JsonValue (stdlib.json.json-f64->number ,value))]
+    ["f32" `(stdlib.json.JsonValue (stdlib.json.json-f32->number ,value))]
+    [_
+      (comptime.comptime-error
+        (string-append "serialize json: expected float type, got " (type-key T)))]))
+
+;: `stdlib.serialize` hook for float fields.
+(defmacro (decode-float [T : type] [value : Expr] [err-ctor : Expr]) : Expr
+  (match (type-key T)
+    ["f64"
+      `(match ,value
+        [(stdlib.json.JsonValue __json_value)
+          (match __json_value
+            [(stdlib.json.JsonNumber text)
+              (match (stdlib.json.json-number->f64 (& text))
+                [(stdlib.json.OkJsonNumberF64 parsed) parsed]
+                [(stdlib.json.ErrJsonNumberF64 message)
+                  (return (,err-ctor message))])]
+            [_ (return (,err-ctor "json: expected finite number"))])])]
+    ["f32"
+      `(match ,value
+        [(stdlib.json.JsonValue __json_value)
+          (match __json_value
+            [(stdlib.json.JsonNumber text)
+              (match (stdlib.json.json-number->f32 (& text))
+                [(stdlib.json.OkJsonNumberF32 parsed) parsed]
+                [(stdlib.json.ErrJsonNumberF32 message)
+                  (return (,err-ctor message))])]
+            [_ (return (,err-ctor "json: expected finite number"))])])]
+    [_
+      (comptime.comptime-error
+        (string-append "serialize json: expected float type, got " (type-key T)))]))
+
+;: `stdlib.serialize` hook for string fields.
+(defmacro (encode-string [value : String]) : Value
+  `(stdlib.json.JsonValue (stdlib.json.JsonString ,value)))
+
+;: `stdlib.serialize` hook for string fields.
+(defmacro (decode-string [value : Expr] [err-ctor : Expr]) : Expr
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (match __json_value
+        [(stdlib.json.JsonString parsed) parsed]
+        [_ (return (,err-ctor "json: expected string"))])]))
+
+;: `stdlib.serialize` hook for beginning an object field list.
+(defmacro (object-empty) : JsonMemberList
+  `stdlib.json.JsonMemberListNil)
+
+;: `stdlib.serialize` hook for adding one encoded object field.
+(defmacro (object-field [name : Expr] [value : Expr] [rest : Expr]) : JsonMemberList
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (stdlib.json.JsonMemberListCons ,name __json_value (box ,rest))]))
+
+;: `stdlib.serialize` hook for finishing an object value.
+(defmacro (object-finish [fields : Expr]) : Value
+  `(stdlib.json.JsonValue (stdlib.json.JsonObject (box ,fields))))
+
+;: `stdlib.serialize` hook for validating the decode input shape.
+(defmacro (expect-object [value : Expr] [_type-name : Expr] [err-ctor : Expr]) : unit
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (match __json_value
+        [(stdlib.json.JsonObject _) unit]
+        [_ (return (,err-ctor "json: expected object"))])]))
+
+;: `stdlib.serialize` hook for looking up one decoded object field.
+(defmacro (field-value [object : Expr] [name : Expr] [err-ctor : Expr]) : Expr
+  `(match ,object
+    [(stdlib.json.JsonValue __json_object)
+      (match (stdlib.json.json-object-get-owned __json_object ,name)
+        [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
+        [(stdlib.json.JsonMissing) (return (,err-ctor "json: missing field"))])]))
+
+;: Emit JSON-native aliases for generated `stdlib.serialize` modules.
+(defmacro (extra-decls [T : type]) : Decls
+  `(begin
+    (define (to-json [value : ,T]) : stdlib.json.Json
+      (match (encode value)
+        [(stdlib.json.JsonValue encoded) encoded]))
+    (define (from-json [value : stdlib.json.Json]) : Result
+      (decode (stdlib.json.JsonValue value)))))
 
 ;: Parse `keyword` at `pos` and return its fixed JSON value.
 (define (json-parse-keyword

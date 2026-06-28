@@ -1,6 +1,6 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
 (import stdlib.str_cat)
-(import "token.tl")
+(import token)
 (import "compiler_ast_types.tl")
 (import stdlib.string)
 
@@ -151,7 +151,7 @@
 
 (define (compiler-diagnostic-from-span
   [path : String]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-new
     message
@@ -160,10 +160,10 @@
     CompilerDiagnosticNoString
     (CompilerDiagnosticSpan
       path
-      (span-start-line span)
-      (span-start-col span)
-      (span-end-line span)
-      (span-end-col span))
+      (token.span-start-line span)
+      (token.span-start-col span)
+      (token.span-end-line span)
+      (token.span-end-col span))
     CompilerDiagnosticNoString
     CompilerDiagnosticLabelNil
     CompilerDiagnosticNoteNil))
@@ -189,11 +189,11 @@
 
 (define (compiler-diagnostic-from-source-error
   [path : String]
-  [err : SourceError]) : CompilerDiagnostic
+  [err : token.SourceError]) : CompilerDiagnostic
   (compiler-diagnostic-from-span
     path
-    (source-error-span err)
-    (source-error-message err)))
+    (token.source-error-span err)
+    (token.source-error-message err)))
 
 (define (compiler-diagnostic-at-start [path : String] [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-simple path 1 1 message))
@@ -660,8 +660,10 @@
 
 (define (compiler-diagnostic-source-error-ok?) : bool
   (let
-    [err : SourceError
-      (SourceError "lexer: unexpected character" (SourceSpan 4 5 4 6))]
+    [err : token.SourceError
+      (token.SourceError
+        "lexer: unexpected character"
+        (token.SourceSpan 4 5 4 6))]
     [diag : CompilerDiagnostic
       (compiler-diagnostic-from-source-error "input.tl" err)]
     (and
@@ -736,7 +738,7 @@
                 (compiler-diagnostic-with-secondary
                   (compiler-diagnostic-from-span
                     "meta.tl"
-                    (SourceSpan 1 2 1 8)
+                    (token.SourceSpan 1 2 1 8)
                     "metadata")
                   (CompilerDiagnosticSpan "" 3 4 3 5)
                   (CompilerDiagnosticSomeString "second related"))
@@ -756,7 +758,7 @@
     [diag : CompilerDiagnostic
       (compiler-diagnostic-from-span
         "input.tl"
-        (SourceSpan 2 3 2 9)
+        (token.SourceSpan 2 3 2 9)
         "wide token")]
     [moved : CompilerDiagnostic (compiler-diagnostic-with-path diag "moved.tl")]
     (and

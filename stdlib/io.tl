@@ -36,6 +36,7 @@
 (module stdlib.io)
 
 (import stdlib.array)
+(import stdlib.byte_buf_core)
 (import stdlib.io_core)
 (import stdlib.string)
 
@@ -1593,10 +1594,10 @@
             (string-from-bytes (io-array-const-ptr buf) offset)))))))
 
 ;: Read one stdin line without the trailing newline.
-;: Private compatibility builder; the API returns `String`, not bytes.
 (define (read-stdin-line) : String
   (let
-    [bytes : (Array u8) (array.make-array u8 0)]
+    [bytes : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
     [one : (Array u8) (array.make-array u8 1)]
     [done : bool false]
     (begin
@@ -1614,12 +1615,13 @@
                 (if (= (cast byte : i64) 10)
                   (set! done true)
                   (begin
-                    (array.array-push! bytes byte)
+                    (array.array-push! (struct-get bytes slots) byte)
                     (set! done false))))))))
-      (unsafe
-        (string-from-bytes
-          (io-array-const-ptr bytes)
-          (array.array-length bytes))))))
+      (begin
+        (set!
+          (struct-get bytes len)
+          (array.array-length (struct-get bytes slots)))
+        (byte_buf_core.byte-buf-builder-finish-string (& bytes))))))
 
 ;: Return the sticky stdin EOF state.
 (define (stdin-eof?) : bool

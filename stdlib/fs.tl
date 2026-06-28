@@ -22,6 +22,7 @@
 (module stdlib.fs)
 
 (import stdlib.array)
+(import stdlib.byte_buf_core)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.string)
@@ -350,8 +351,9 @@
           false)))))
 
 ;: Append one non-dot entry name plus a newline to `out`.
-;: Private compatibility builder; `fs-read-dir` returns `String`, not bytes.
-(define (fs-read-dir-append-entry! [out : (Array u8)] [name : (Ptr u8)]) : unit
+(define (fs-read-dir-append-entry!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [name : (Ptr u8)]) : unit
   (if (stdlib.fs.fs-read-dir-dot-entry? name)
     unit
     (let
@@ -366,14 +368,15 @@
             (if (= (cast byte : i64) 0)
               (set! done true)
               (begin
-                (array.array-push! out byte)
+                (array.array-push! (struct-get out slots) byte)
                 (set! i (+ i 1))))))
-        (array.array-push! out (cast '\n' : u8))))))
+        (array.array-push! (struct-get out slots) (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
-(define (fs-read-dir-bytes-string [out : (Array u8)]) : String
-  (unsafe
-    (string-from-bytes (io.io-array-const-ptr out) (array.array-length out))))
+(define (fs-read-dir-bytes-string [out : byte_buf_core.ByteBufBuilder]) : String
+  (begin
+    (set! (struct-get out len) (array.array-length (struct-get out slots)))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
@@ -419,7 +422,7 @@
   (define (fs-linux-read-dir-append-page!
     [buf : (Array u8)]
     [read-count : i64]
-    [out : (Array u8)]) : unit
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
     (let
       [base : (Ptr u8) (io.io-array-const-ptr buf)]
       [offset : i64 0]
@@ -447,7 +450,8 @@
         ""
         (let
           [buf : (Array u8) (array.make-array u8 fs-read-dir-buffer-size)]
-          [out : (Array u8) (array.make-array u8 0)]
+          [out : byte_buf_core.ByteBufBuilder
+            (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
           [ok : bool true]
           [done : bool false]
           (begin
@@ -464,7 +468,7 @@
                     (set! done true))
                   (if (= read-count 0)
                     (set! done true)
-                    (fs-linux-read-dir-append-page! buf read-count out)))))
+                    (fs-linux-read-dir-append-page! buf read-count (&mut out))))))
             (io.io-linux-syscall-close fd)
             (if ok
               (fs-read-dir-bytes-string out)
@@ -543,7 +547,8 @@
       [pattern : String (fs-windows-read-dir-pattern path)]
       [pattern-bytes : (Array u8) (io.io-c-string pattern)]
       [data : (Array u8) (array.make-array u8 fs-windows-find-data-size)]
-      [out : (Array u8) (array.make-array u8 0)]
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
       [handle : i64
         (fs-win-find-first-file
           (io.io-array-const-ptr pattern-bytes)
@@ -555,7 +560,9 @@
           (begin
             (while (not done)
               (begin
-                (fs-read-dir-append-entry! out (fs-windows-find-data-name data))
+                (fs-read-dir-append-entry!
+                  (&mut out)
+                  (fs-windows-find-data-name data))
                 (if (=
                   (fs-win-find-next-file handle (io.io-array-ptr data))
                   (cast 0 : i32))

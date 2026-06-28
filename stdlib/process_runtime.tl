@@ -413,6 +413,7 @@
         [(ProcessRuntimeUnsupported message)
           (ProcessRuntimeChildInfo false 3 (- 0 1) (- 0 1) (- 0 1) message)])]))
 
+(cfg windows (import stdlib.byte_buf_core))
 (import stdlib.io)
 (import stdlib.string)
 
@@ -525,6 +526,17 @@
 (define (process-array-u8-addr [buf : (Array u8)]) : i64
   (unsafe
     (cast (ptr->int (ptr-cast (array-data buf) : (Ptr u8))) : i64)))
+
+;: Return the integer address of a byte-builder snapshot backing buffer.
+(cfg
+  windows
+  (define (process-byte-builder-addr [buf : byte_buf_core.ByteBufBuilder]) : i64
+    (begin
+      (set! (struct-get buf len) (array.array-length (struct-get buf slots)))
+      (let
+        [bytes : (Array u8)
+          (byte_buf_core.byte-buf-builder-finish-array (& buf))]
+        (stdlib.process_runtime.process-array-u8-addr bytes)))))
 
 ;: Return the integer address of an `Array u64` backing buffer.
 (define (process-array-u64-addr [buf : (Array u64)]) : i64
@@ -1407,7 +1419,9 @@
 ;: final raw byte block, and no growable byte array escapes this module.
 (cfg
   windows
-  (define (process-windows-push-cstr [block : (Array u8)] [addr : i64]) : unit
+  (define (process-windows-push-cstr
+    [block : (&mut block byte_buf_core.ByteBufBuilder)]
+    [addr : i64]) : unit
     (let
       [ptr : (Ptr u8) (stdlib.process_runtime.process-addr->ptr addr)]
       [i : i64 0]
@@ -1417,7 +1431,7 @@
           (let
             [byte : i64 (stdlib.process_runtime.process-byte-at ptr i)]
             (begin
-              (array.array-push! block (cast byte : u8))
+              (array.array-push! (struct-get block slots) (cast byte : u8))
               (if (= byte 0)
                 (set! done true)
                 (set! i (+ i 1))))))
@@ -1436,7 +1450,8 @@
       (if (= ovc 0)
         0
         (let
-          [block : (Array u8) (array.make-array u8 0)]
+          [block : byte_buf_core.ByteBufBuilder
+            (byte_buf_core.ByteBufBuilder (array.make-array u8 0) 0)]
           [base : (Ptr u8)
             (stdlib.process_runtime.process-win-get-environment-strings)]
           [i : i64 0]
@@ -1460,7 +1475,7 @@
                         entry
                         ov))
                       (stdlib.process_runtime.process-windows-push-cstr
-                        block
+                        (&mut block)
                         (unsafe
                           (cast (ptr->int entry) : i64)))
                       unit)
@@ -1468,11 +1483,11 @@
             (while (< k ovc)
               (begin
                 (stdlib.process_runtime.process-windows-push-cstr
-                  block
+                  (&mut block)
                   (cast (array.array-ref ov k) : i64))
                 (set! k (+ k 1))))
-            (array.array-push! block (cast 0 : u8))
-            (stdlib.process_runtime.process-array-u8-addr block)))))))
+            (array.array-push! (struct-get block slots) (cast 0 : u8))
+            (stdlib.process_runtime.process-byte-builder-addr block)))))))
 
 ;: Close a Windows handle when it is not INVALID_HANDLE_VALUE.
 (cfg

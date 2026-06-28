@@ -60,12 +60,12 @@
 
 ;: Immutable list of candidates in source order (PRs first, then issues).
 (defenum CandList
-  (CandNil)
-  (CandCons Candidate (Box CandList)))
+  (Nil)
+  (Cons Candidate (Box CandList)))
 
 (defenum ChooserResult
-  (ChooserOk Candidate)
-  (ChooserErr String))
+  (Ok Candidate)
+  (Err String))
 
 ;: Read all of stdin into a single String by repeated bounded reads until EOF.
 ;: The queue snapshot can exceed 64 KiB once PR check rollups and issue labels
@@ -280,12 +280,12 @@
 ;: running are skipped until their checks reach a terminal state.
 (define (pr-candidates [items : JsonList]) : CandList
   (match items
-    [(JsonListNil) (CandNil)]
+    [(JsonListNil) (CandList.Nil)]
     [(JsonListCons head rest)
       (let
         [tail : CandList (pr-candidates (box-get rest))]
         (if (and (not (pr-draft? head)) (pr-checks-complete? head))
-          (CandCons (pr-candidate head) (box tail))
+          (CandList.Cons (pr-candidate head) (box tail))
           tail))]))
 
 ;: Map a JSON array of issue objects to candidates, preserving source order.
@@ -293,7 +293,7 @@
 ;: skipped when `implement-allowed?` is false (the review queue is saturated).
 (define (issue-candidates [items : JsonList] [implement-allowed? : bool]) : CandList
   (match items
-    [(JsonListNil) (CandNil)]
+    [(JsonListNil) (CandList.Nil)]
     [(JsonListCons head rest)
       (let
         [tail : CandList (issue-candidates (box-get rest) implement-allowed?)]
@@ -301,14 +301,14 @@
           (issue-blocked? head)
           (and (not implement-allowed?) (issue-ready? head)))
           tail
-          (CandCons (issue-candidate head) (box tail))))]))
+          (CandList.Cons (issue-candidate head) (box tail))))]))
 
 ;: Concatenate two candidate lists, preserving order.
 (define (cand-append [front : CandList] [back : CandList]) : CandList
   (match front
-    [(CandNil) back]
-    [(CandCons head rest)
-      (CandCons head (box (cand-append (box-get rest) back)))]))
+    [(CandList.Nil) back]
+    [(CandList.Cons head rest)
+      (CandList.Cons head (box (cand-append (box-get rest) back)))]))
 
 ;: Look up the JSON array stored at `field`, or an empty list when absent.
 (define (json-field-array [value : Json] [field : String]) : JsonList
@@ -350,8 +350,8 @@
 ;: index maps back to the candidate at the same position.
 (define (cand-weights [cands : CandList]) : RandomWeightList
   (match cands
-    [(CandNil) (random-weight-list-empty)]
-    [(CandCons head rest)
+    [(CandList.Nil) (random-weight-list-empty)]
+    [(CandList.Cons head rest)
       (random-weight-list-cons
         (struct-get head weight)
         (cand-weights (box-get rest)))]))
@@ -360,8 +360,8 @@
 ;: when out of range (should not happen for a valid weighted index).
 (define (cand-nth [cands : CandList] [index : i64]) : Candidate
   (match cands
-    [(CandNil) (Candidate kind-triage 0 "" research-weight)]
-    [(CandCons head rest)
+    [(CandList.Nil) (Candidate kind-triage 0 "" research-weight)]
+    [(CandList.Cons head rest)
       (if (= index 0)
         head
         (cand-nth (box-get rest) (- index 1)))]))
@@ -369,14 +369,14 @@
 ;: Number of candidates in a list.
 (define (cand-count [cands : CandList]) : i64
   (match cands
-    [(CandNil) 0]
-    [(CandCons _ rest) (+ 1 (cand-count (box-get rest)))]))
+    [(CandList.Nil) 0]
+    [(CandList.Cons _ rest) (+ 1 (cand-count (box-get rest)))]))
 
 ;: True when any candidate in the list has the given kind tag.
 (define (cand-list-has-kind? [cands : CandList] [target-kind : i64]) : bool
   (match cands
-    [(CandNil) false]
-    [(CandCons head rest)
+    [(CandList.Nil) false]
+    [(CandList.Cons head rest)
       (if (= (struct-get head kind) target-kind)
         true
         (cand-list-has-kind? (box-get rest) target-kind))]))
@@ -615,15 +615,15 @@
     [text : String normalized]
     (match (json-parse (& text))
       [(ErrJson message)
-        (ChooserErr (string-append "Error: invalid JSON: " message))]
+        (ChooserResult.Err (string-append "Error: invalid JSON: " message))]
       [(OkJson root)
         (let
           [cands : CandList (build-candidates root)]
           (if (= (cand-count cands) 0)
-            (ChooserErr "Error: no eligible candidates were provided")
+            (ChooserResult.Err "Error: no eligible candidates were provided")
             (match (random-system-seed)
               [(ErrSystemSeed err)
-                (ChooserErr
+                (ChooserResult.Err
                   (match err
                     [(RandomSystemSeedUnavailable message)
                       (string-append "Error: " message)]))]
@@ -632,17 +632,17 @@
                   (random-seed seed)
                   (cand-weights cands))
                   [(ErrRandomWeightedIndex message)
-                    (ChooserErr (string-append "Error: " message))]
+                    (ChooserResult.Err (string-append "Error: " message))]
                   [(OkRandomWeightedIndex _ index)
-                    (ChooserOk (cand-nth cands index))])])))])))
+                    (ChooserResult.Ok (cand-nth cands index))])])))])))
 
 (define (main) : i64
   (match (choose-candidate (read-all-stdin))
-    [(ChooserErr message)
+    [(ChooserResult.Err message)
       (begin
         (print-error message)
         1)]
-    [(ChooserOk cand)
+    [(ChooserResult.Ok cand)
       (begin
         (print-string (candidate-line cand))
         (print-newline)

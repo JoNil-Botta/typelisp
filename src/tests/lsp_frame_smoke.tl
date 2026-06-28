@@ -82,7 +82,7 @@
   (let
     [messy : String "(define   (f)  :  i64   (+ 1   2))"]
     (match (format-rules-render-source-width-result messy 80)
-      [(OkFormatString formatted)
+      [(ResultFormatString.Ok formatted)
         (let
           [rendered : String
             (json.json-stringify (lsp-formatting-edit messy formatted))]
@@ -93,7 +93,7 @@
             (string.string-contains (& formatted) (& sig))
             (string.string-contains (& rendered) (& newtext-key))
             (string.string-contains (& rendered) (& range-key))))]
-      [(ErrFormatString _) false])))
+      [(ResultFormatString.Err _) false])))
 
 (define (lsp-check-smoke-ok?) : bool
   (let

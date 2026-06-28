@@ -16,82 +16,84 @@
 (import stdlib.string)
 
 (defenum DocItemKind
-  (DocKindDefine)
-  (DocKindFunction)
-  (DocKindExtern)
-  (DocKindDefEnum)
-  (DocKindDefStruct)
-  (DocKindDefMacro))
+  (Define)
+  (Function)
+  (Extern)
+  (DefEnum)
+  (DefStruct)
+  (DefMacro))
 
 (defenum DocItem
-  (DocItem DocItemKind String String String))
+  (Item DocItemKind String String String))
 
 (defenum DocItemList
-  (DocItemNil)
-  (DocItemCons DocItem (Box DocItemList)))
+  (Nil)
+  (Cons DocItem (Box DocItemList)))
 
 (defenum DocExtraction
-  (DocExtraction String DocItemList))
+  (Extraction String DocItemList))
 
 (defenum DocMaybeDeclInfo
-  (DocNoDeclInfo)
+  (No)
   (DocDeclInfo DocItemKind String))
 
 (define (doc-kind-tag [kind : DocItemKind]) : i64
   (match kind
-    [(DocKindDefine) 1]
-    [(DocKindFunction) 2]
-    [(DocKindExtern) 3]
-    [(DocKindDefEnum) 4]
-    [(DocKindDefStruct) 5]
-    [(DocKindDefMacro) 6]))
+    [(DocItemKind.Define) 1]
+    [(DocItemKind.Function) 2]
+    [(DocItemKind.Extern) 3]
+    [(DocItemKind.DefEnum) 4]
+    [(DocItemKind.DefStruct) 5]
+    [(DocItemKind.DefMacro) 6]))
 
 (define (doc-kind-name [kind : DocItemKind]) : String
   (match kind
-    [(DocKindDefine) "define"]
-    [(DocKindFunction) "define-function"]
-    [(DocKindExtern) "extern"]
-    [(DocKindDefEnum) "defenum"]
-    [(DocKindDefStruct) "defstruct"]
-    [(DocKindDefMacro) "defmacro"]))
+    [(DocItemKind.Define) "define"]
+    [(DocItemKind.Function) "define-function"]
+    [(DocItemKind.Extern) "extern"]
+    [(DocItemKind.DefEnum) "defenum"]
+    [(DocItemKind.DefStruct) "defstruct"]
+    [(DocItemKind.DefMacro) "defmacro"]))
 
 (define (doc-extraction-module-doc [docs : DocExtraction]) : String
   (match docs
-    [(DocExtraction module-doc _) module-doc]))
+    [(DocExtraction.Extraction module-doc _) module-doc]))
 
 (define (doc-extraction-items [docs : DocExtraction]) : DocItemList
   (match docs
-    [(DocExtraction _ items) items]))
+    [(DocExtraction.Extraction _ items) items]))
 
 (define (doc-item-kind [item : DocItem]) : DocItemKind
   (match item
-    [(DocItem kind _ _ _) kind]))
+    [(DocItem.Item kind _ _ _) kind]))
 
 (define (doc-item-name [item : DocItem]) : String
   (match item
-    [(DocItem _ name _ _) name]))
+    [(DocItem.Item _ name _ _) name]))
 
 (define (doc-item-doc [item : DocItem]) : String
   (match item
-    [(DocItem _ _ doc-text _) doc-text]))
+    [(DocItem.Item _ _ doc-text _) doc-text]))
 
 (define (doc-item-signature [item : DocItem]) : String
   (match item
-    [(DocItem _ _ _ signature) signature]))
+    [(DocItem.Item _ _ _ signature) signature]))
 
 (define (doc-item-list-count [items : DocItemList]) : i64
   (match items
-    [(DocItemNil) 0]
-    [(DocItemCons _ rest) (+ 1 (doc-item-list-count (box-get rest)))]))
+    [(DocItemList.Nil) 0]
+    [(DocItemList.Cons _ rest) (+ 1 (doc-item-list-count (box-get rest)))]))
 
 (define (doc-item-list-reverse-into [items : DocItemList] [acc : DocItemList]) : DocItemList
   (match items
-    [(DocItemNil) acc]
-    [(DocItemCons item rest)
-      (doc-item-list-reverse-into (box-get rest) (DocItemCons item (box acc)))]))
+    [(DocItemList.Nil) acc]
+    [(DocItemList.Cons item rest)
+      (doc-item-list-reverse-into
+        (box-get rest)
+        (DocItemList.Cons item (box acc)))]))
 
 (define (doc-item-list-reverse [items : DocItemList]) : DocItemList
-  (doc-item-list-reverse-into items DocItemNil))
+  (doc-item-list-reverse-into items DocItemList.Nil))
 
 (define (doc-item-array-to-list-rev
   [items : (Array DocItem)]
@@ -102,10 +104,10 @@
     (doc-item-array-to-list-rev
       items
       (- index 1)
-      (DocItemCons (array-ref items index) (box acc)))))
+      (DocItemList.Cons (array-ref items index) (box acc)))))
 
 (define (doc-item-array-to-list [items : (Array DocItem)]) : DocItemList
-  (doc-item-array-to-list-rev items (- (array-length items) 1) DocItemNil))
+  (doc-item-array-to-list-rev items (- (array-length items) 1) DocItemList.Nil))
 
 (define (doc-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -378,28 +380,28 @@
     [name-idx : i64 (doc-next-code-token-index stream idx)]
     (if (doc-token-symbol? stream name-idx)
       (DocDeclInfo kind (doc-symbol-text stream name-idx))
-      (DocNoDeclInfo))))
+      (DocMaybeDeclInfo.No))))
 
 (define (doc-info-after-define [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
     (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
-      (doc-info-after-name (DocKindFunction) stream (+ next 1))
-      (doc-info-after-name (DocKindDefine) stream next))))
+      (doc-info-after-name (DocItemKind.Function) stream (+ next 1))
+      (doc-info-after-name (DocItemKind.Define) stream next))))
 
 (define (doc-info-after-extern [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
     (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
-      (doc-info-after-name (DocKindExtern) stream (+ next 1))
-      (doc-info-after-name (DocKindExtern) stream next))))
+      (doc-info-after-name (DocItemKind.Extern) stream (+ next 1))
+      (doc-info-after-name (DocItemKind.Extern) stream next))))
 
 (define (doc-info-after-defmacro [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
     (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
-      (doc-info-after-name (DocKindDefMacro) stream (+ next 1))
-      (DocNoDeclInfo))))
+      (doc-info-after-name (DocItemKind.DefMacro) stream (+ next 1))
+      (DocMaybeDeclInfo.No))))
 
 (define (doc-decl-info-at-list [stream : FormatTokenStream] [open-idx : i64]) : DocMaybeDeclInfo
   (if (= (format-token-tag (format-token-at stream open-idx)) (fmt-tag-lparen))
@@ -415,16 +417,16 @@
             [(string.string-eq head "extern")
               (doc-info-after-extern stream after-head)]
             [(string.string-eq head "defenum")
-              (doc-info-after-name (DocKindDefEnum) stream after-head)]
+              (doc-info-after-name (DocItemKind.DefEnum) stream after-head)]
             [(string.string-eq head "defstruct")
-              (doc-info-after-name (DocKindDefStruct) stream after-head)]
+              (doc-info-after-name (DocItemKind.DefStruct) stream after-head)]
             [(string.string-eq head "defmacro")
               (doc-info-after-defmacro stream after-head)]
             [(string.string-eq head "comptime-decl")
               (doc-info-after-comptime-decl stream after-head)]
-            [else (DocNoDeclInfo)]))
-        (DocNoDeclInfo)))
-    (DocNoDeclInfo)))
+            [else (DocMaybeDeclInfo.No)]))
+        (DocMaybeDeclInfo.No)))
+    (DocMaybeDeclInfo.No)))
 
 (define (doc-info-after-comptime-decl [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
   (let
@@ -511,8 +513,8 @@
                           [(DocDeclInfo kind name)
                             (array-push!
                               items
-                              (DocItem kind name pending-doc signature))]
-                          [(DocNoDeclInfo) unit])
+                              (DocItem.Item kind name pending-doc signature))]
+                          [(DocMaybeDeclInfo.No) unit])
                         unit)
                       (set! pending-doc "")
                       (set! pending-has false)
@@ -521,7 +523,7 @@
                     (set! pending-doc "")
                     (set! pending-has false)
                     (set! i (doc-next-line-start src line-end n)))))))))
-      (DocExtraction module-doc (doc-item-array-to-list items)))))
+      (DocExtraction.Extraction module-doc (doc-item-array-to-list items)))))
 
 (define (doc-extract-file [path : String]) : DocExtraction
   (doc-extract-source (io.read-file path)))
@@ -580,7 +582,7 @@
   [doc-text : String]
   [signature-fragment : String]) : bool
   (match item
-    [(DocItem kind item-name item-doc signature)
+    [(DocItem.Item kind item-name item-doc signature)
       (begin
         (unless (= (doc-kind-tag kind) kind-tag) (return false))
         (unless (string.string-eq item-name name) (return false))
@@ -589,19 +591,19 @@
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
   (match items
-    [(DocItemCons answer rest-answer)
+    [(DocItemList.Cons answer rest-answer)
       (match (box-get rest-answer)
-        [(DocItemCons main-fn rest-main)
+        [(DocItemList.Cons main-fn rest-main)
           (match (box-get rest-main)
-            [(DocItemCons maybe rest-maybe)
+            [(DocItemList.Cons maybe rest-maybe)
               (match (box-get rest-maybe)
-                [(DocItemCons print rest-print)
+                [(DocItemList.Cons print rest-print)
                   (match (box-get rest-print)
-                    [(DocItemCons point rest-point)
+                    [(DocItemList.Cons point rest-point)
                       (match (box-get rest-point)
-                        [(DocItemCons guard rest-guard)
+                        [(DocItemList.Cons guard rest-guard)
                           (match (box-get rest-guard)
-                            [(DocItemNil)
+                            [(DocItemList.Nil)
                               (begin
                                 (unless
                                   (doc-item-ok?
@@ -659,13 +661,13 @@
 
 (define (doc-extract-generated-smoke-ok?) : bool
   (match (doc-extract-source (doc-extract-generated-smoke-source))
-    [(DocExtraction _ items)
+    [(DocExtraction.Extraction _ items)
       (match items
-        [(DocItemCons option-item rest-option)
+        [(DocItemList.Cons option-item rest-option)
           (match (box-get rest-option)
-            [(DocItemCons helper-item rest-helper)
+            [(DocItemList.Cons helper-item rest-helper)
               (match (box-get rest-helper)
-                [(DocItemNil)
+                [(DocItemList.Nil)
                   (and
                     (doc-item-ok?
                       option-item
@@ -685,7 +687,7 @@
 
 (define (doc-extract-smoke) : i64
   (match (doc-extract-source (doc-extract-smoke-source))
-    [(DocExtraction module-doc items)
+    [(DocExtraction.Extraction module-doc items)
       (begin
         (unless
           (string.string-eq
@@ -702,7 +704,7 @@
           (doc-extract-generated-smoke-ok?)
           (return (io.panic "doc-extract: generated item mismatch")))
         (match (doc-extract-source (doc-extract-legacy-smoke-source))
-          [(DocExtraction legacy-module legacy-items)
+          [(DocExtraction.Extraction legacy-module legacy-items)
             (begin
               (unless
                 (string.string-eq legacy-module "Legacy module")
@@ -711,9 +713,9 @@
                 (= (doc-item-list-count legacy-items) 1)
                 (return (io.panic "doc-extract: legacy item count mismatch")))
               (match legacy-items
-                [(DocItemCons legacy legacy-rest)
+                [(DocItemList.Cons legacy legacy-rest)
                   (match (box-get legacy-rest)
-                    [(DocItemNil)
+                    [(DocItemList.Nil)
                       (begin
                         (unless
                           (doc-item-ok?

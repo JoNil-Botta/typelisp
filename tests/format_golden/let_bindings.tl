@@ -8,7 +8,7 @@
     [flat : String
       (format-core-render-source-width "(foo [bar 1] baz)\n; leading\n(qux)" 80)]
     [narrow : String (format-core-render-source-width "(alpha beta gamma)" 10)]
-    [atom : String (format-core-render (FmtCstAtom (FmtSymbol "name")))]
+    [atom : String (format-core-render (FormatCst.Atom (FormatToken.Symbol "name")))]
     0))
 
 (define (long) : i64

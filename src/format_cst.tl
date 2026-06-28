@@ -8,47 +8,47 @@
 (import "format_tokens.tl")
 
 (defenum FormatCst
-  (FmtCstAtom FormatToken)
-  (FmtCstComment String)
-  (FmtCstPrefix FormatToken (Box FormatCst))
-  (FmtCstList (Box FormatCstList))
-  (FmtCstBracketList (Box FormatCstList))
-  (FmtCstForms (Box FormatCstList)))
+  (Atom FormatToken)
+  (Comment String)
+  (Prefix FormatToken (Box FormatCst))
+  (List (Box FormatCstList))
+  (BracketList (Box FormatCstList))
+  (Forms (Box FormatCstList)))
 
 (defenum FormatCstList
-  (FmtCstNil)
-  (FmtCstCons FormatCst (Box FormatCstList))
-  (FmtCstDense (Array FormatCst) i64 i64))
+  (Nil)
+  (Cons FormatCst (Box FormatCstList))
+  (Dense (Array FormatCst) i64 i64))
 
 (defstruct FormatCstVec
   (slots (Array FormatCst))
   (len i64))
 
 (defenum FormatCstListStep
-  (FmtCstListStepEmpty)
-  (FmtCstListStepItem FormatCst FormatCstList))
+  (Empty)
+  (Item FormatCst FormatCstList))
 
 (defenum FormatParsedCst
-  (FmtParsedCst FormatCst i64))
+  (Parsed FormatCst i64))
 
 (defenum FormatParsedCstList
-  (FmtParsedCstList FormatCstList i64))
+  (ParsedList FormatCstList i64))
 
 (defenum ResultFormatCst
-  (OkFormatCst FormatCst)
-  (ErrFormatCst FormatSourceError))
+  (Ok FormatCst)
+  (Err FormatSourceError))
 
 (defenum ResultFormatParsedCst
-  (OkFormatParsedCst FormatParsedCst)
-  (ErrFormatParsedCst FormatSourceError))
+  (Ok FormatParsedCst)
+  (Err FormatSourceError))
 
 (defenum ResultFormatParsedCstList
-  (OkFormatParsedCstList FormatParsedCstList)
-  (ErrFormatParsedCstList FormatSourceError))
+  (Ok FormatParsedCstList)
+  (Err FormatSourceError))
 
 (defenum ResultFormatParseSeqEnd
-  (OkFormatParseSeqEnd i64)
-  (ErrFormatParseSeqEnd FormatSourceError))
+  (Ok i64)
+  (Err FormatSourceError))
 
 (define (format-cst-vec-new) : FormatCstVec
   (FormatCstVec (make-array FormatCst 4) 0))
@@ -96,77 +96,78 @@
   (let
     [count : i64 (struct-get items len)]
     (if (<= count 0)
-      FmtCstNil
-      (FmtCstDense (struct-get items slots) 0 count))))
+      FormatCstList.Nil
+      (FormatCstList.Dense (struct-get items slots) 0 count))))
 
 (define (fmt-cst-list-step [items : FormatCstList]) : FormatCstListStep
   (match items
-    [(FmtCstNil) (FmtCstListStepEmpty)]
-    [(FmtCstCons head rest) (FmtCstListStepItem head (box-get rest))]
-    [(FmtCstDense slots start count)
+    [(FormatCstList.Nil) (FormatCstListStep.Empty)]
+    [(FormatCstList.Cons head rest)
+      (FormatCstListStep.Item head (box-get rest))]
+    [(FormatCstList.Dense slots start count)
       (if (<= count 0)
-        (FmtCstListStepEmpty)
-        (FmtCstListStepItem
+        (FormatCstListStep.Empty)
+        (FormatCstListStep.Item
           (array-ref slots start)
           (if (<= count 1)
-            FmtCstNil
-            (FmtCstDense slots (+ start 1) (- count 1)))))]))
+            FormatCstList.Nil
+            (FormatCstList.Dense slots (+ start 1) (- count 1)))))]))
 
 (define (fmt-cst-list-empty? [items : FormatCstList]) : bool
   (match items
-    [(FmtCstNil) true]
-    [(FmtCstCons _ _) false]
-    [(FmtCstDense _ _ count) (<= count 0)]))
+    [(FormatCstList.Nil) true]
+    [(FormatCstList.Cons _ _) false]
+    [(FormatCstList.Dense _ _ count) (<= count 0)]))
 
 (define (fmt-list-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) 0]
-    [(FmtCstListStepItem _ rest) (+ 1 (fmt-list-count rest))]))
+    [(FormatCstListStep.Empty) 0]
+    [(FormatCstListStep.Item _ rest) (+ 1 (fmt-list-count rest))]))
 
 (define (fmt-cst-count [node : FormatCst]) : i64
   (match node
-    [(FmtCstAtom _) 1]
-    [(FmtCstComment _) 1]
-    [(FmtCstPrefix _ child) (+ 1 (fmt-cst-count (box-get child)))]
-    [(FmtCstList items) (+ 1 (fmt-cst-list-total (box-get items)))]
-    [(FmtCstBracketList items) (+ 1 (fmt-cst-list-total (box-get items)))]
-    [(FmtCstForms items) (+ 1 (fmt-cst-list-total (box-get items)))]))
+    [(FormatCst.Atom _) 1]
+    [(FormatCst.Comment _) 1]
+    [(FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (box-get child)))]
+    [(FormatCst.List items) (+ 1 (fmt-cst-list-total (box-get items)))]
+    [(FormatCst.BracketList items) (+ 1 (fmt-cst-list-total (box-get items)))]
+    [(FormatCst.Forms items) (+ 1 (fmt-cst-list-total (box-get items)))]))
 
 (define (fmt-cst-list-total [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) 0]
-    [(FmtCstListStepItem node rest)
+    [(FormatCstListStep.Empty) 0]
+    [(FormatCstListStep.Item node rest)
       (+ (fmt-cst-count node) (fmt-cst-list-total rest))]))
 
 (define (fmt-cst-comment-count [node : FormatCst]) : i64
   (match node
-    [(FmtCstAtom _) 0]
-    [(FmtCstComment _) 1]
-    [(FmtCstPrefix _ child) (fmt-cst-comment-count (box-get child))]
-    [(FmtCstList items) (fmt-cst-list-comment-count (box-get items))]
-    [(FmtCstBracketList items) (fmt-cst-list-comment-count (box-get items))]
-    [(FmtCstForms items) (fmt-cst-list-comment-count (box-get items))]))
+    [(FormatCst.Atom _) 0]
+    [(FormatCst.Comment _) 1]
+    [(FormatCst.Prefix _ child) (fmt-cst-comment-count (box-get child))]
+    [(FormatCst.List items) (fmt-cst-list-comment-count (box-get items))]
+    [(FormatCst.BracketList items) (fmt-cst-list-comment-count (box-get items))]
+    [(FormatCst.Forms items) (fmt-cst-list-comment-count (box-get items))]))
 
 (define (fmt-cst-list-comment-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) 0]
-    [(FmtCstListStepItem node rest)
+    [(FormatCstListStep.Empty) 0]
+    [(FormatCstListStep.Item node rest)
       (+ (fmt-cst-comment-count node) (fmt-cst-list-comment-count rest))]))
 
 (define (fmt-cst-bracket-count [node : FormatCst]) : i64
   (match node
-    [(FmtCstAtom _) 0]
-    [(FmtCstComment _) 0]
-    [(FmtCstPrefix _ child) (fmt-cst-bracket-count (box-get child))]
-    [(FmtCstList items) (fmt-cst-list-bracket-count (box-get items))]
-    [(FmtCstBracketList items)
+    [(FormatCst.Atom _) 0]
+    [(FormatCst.Comment _) 0]
+    [(FormatCst.Prefix _ child) (fmt-cst-bracket-count (box-get child))]
+    [(FormatCst.List items) (fmt-cst-list-bracket-count (box-get items))]
+    [(FormatCst.BracketList items)
       (+ 1 (fmt-cst-list-bracket-count (box-get items)))]
-    [(FmtCstForms items) (fmt-cst-list-bracket-count (box-get items))]))
+    [(FormatCst.Forms items) (fmt-cst-list-bracket-count (box-get items))]))
 
 (define (fmt-cst-list-bracket-count [items : FormatCstList]) : i64
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) 0]
-    [(FmtCstListStepItem node rest)
+    [(FormatCstListStep.Empty) 0]
+    [(FormatCstListStep.Item node rest)
       (+ (fmt-cst-bracket-count node) (fmt-cst-list-bracket-count rest))]))
 
 (define (fmt-unexpected-closing [tag : i64]) : bool
@@ -189,26 +190,27 @@
     (cond
       [(= tag (fmt-tag-end))
         (if (= stop-tag 0)
-          (OkFormatParseSeqEnd idx)
-          (ErrFormatParseSeqEnd
+          (ResultFormatParseSeqEnd.Ok idx)
+          (ResultFormatParseSeqEnd.Err
             (FormatSourceError
               "format cst: unclosed delimiter"
               (format-token-span stream idx))))]
-      [(and (!= stop-tag 0) (= tag stop-tag)) (OkFormatParseSeqEnd (+ idx 1))]
+      [(and (!= stop-tag 0) (= tag stop-tag))
+        (ResultFormatParseSeqEnd.Ok (+ idx 1))]
       [(fmt-unexpected-closing tag)
-        (ErrFormatParseSeqEnd
+        (ResultFormatParseSeqEnd.Err
           (FormatSourceError
             "format cst: unexpected closing delimiter"
             (format-token-span stream idx)))]
       [else
         (match (fmt-parse-one-result stream idx)
-          [(OkFormatParsedCst parsed)
+          [(ResultFormatParsedCst.Ok parsed)
             (match parsed
-              [(FmtParsedCst node next)
+              [(FormatParsedCst.Parsed node next)
                 (begin
                   (format-cst-vec-push! items node)
                   (fmt-parse-seq-into-result stream next stop-tag items))])]
-          [(ErrFormatParsedCst err) (ErrFormatParseSeqEnd err)])])))
+          [(ResultFormatParsedCst.Err err) (ResultFormatParseSeqEnd.Err err)])])))
 
 (define (fmt-parse-seq-result
   [stream : FormatTokenStream]
@@ -219,15 +221,17 @@
     (cond
       [(= tag (fmt-tag-end))
         (if (= stop-tag 0)
-          (OkFormatParsedCstList (FmtParsedCstList FmtCstNil idx))
-          (ErrFormatParsedCstList
+          (ResultFormatParsedCstList.Ok
+            (FormatParsedCstList.ParsedList FormatCstList.Nil idx))
+          (ResultFormatParsedCstList.Err
             (FormatSourceError
               "format cst: unclosed delimiter"
               (format-token-span stream idx))))]
       [(and (!= stop-tag 0) (= tag stop-tag))
-        (OkFormatParsedCstList (FmtParsedCstList FmtCstNil (+ idx 1)))]
+        (ResultFormatParsedCstList.Ok
+          (FormatParsedCstList.ParsedList FormatCstList.Nil (+ idx 1)))]
       [(fmt-unexpected-closing tag)
-        (ErrFormatParsedCstList
+        (ResultFormatParsedCstList.Err
           (FormatSourceError
             "format cst: unexpected closing delimiter"
             (format-token-span stream idx)))]
@@ -235,9 +239,9 @@
         (let
           [items : FormatCstVec (format-cst-vec-new)]
           (match (fmt-parse-one-result stream idx)
-            [(OkFormatParsedCst parsed)
+            [(ResultFormatParsedCst.Ok parsed)
               (match parsed
-                [(FmtParsedCst node next)
+                [(FormatParsedCst.Parsed node next)
                   (begin
                     (format-cst-vec-push! (&mut items) node)
                     (match (fmt-parse-seq-into-result
@@ -245,19 +249,24 @@
                       next
                       stop-tag
                       (&mut items))
-                      [(OkFormatParseSeqEnd final)
-                        (OkFormatParsedCstList
-                          (FmtParsedCstList (fmt-cst-list-from-vec items) final))]
-                      [(ErrFormatParseSeqEnd err) (ErrFormatParsedCstList err)]))])]
-            [(ErrFormatParsedCst err) (ErrFormatParsedCstList err)]))])))
+                      [(ResultFormatParseSeqEnd.Ok final)
+                        (ResultFormatParsedCstList.Ok
+                          (FormatParsedCstList.ParsedList
+                            (fmt-cst-list-from-vec items)
+                            final))]
+                      [(ResultFormatParseSeqEnd.Err err)
+                        (ResultFormatParsedCstList.Err err)]))])]
+            [(ResultFormatParsedCst.Err err)
+              (ResultFormatParsedCstList.Err err)]))])))
 
 (define (fmt-parse-seq
   [stream : FormatTokenStream]
   [idx : i64]
   [stop-tag : i64]) : FormatParsedCstList
   (match (fmt-parse-seq-result stream idx stop-tag)
-    [(OkFormatParsedCstList parsed) parsed]
-    [(ErrFormatParsedCstList err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatParsedCstList.Ok parsed) parsed]
+    [(ResultFormatParsedCstList.Err err)
+      (io.panic (format-source-error-message err))]))
 
 (define (fmt-parse-one-result [stream : FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
   (let
@@ -266,68 +275,79 @@
     (cond
       [(= tag (fmt-tag-lparen))
         (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rparen))
-          [(OkFormatParsedCstList parsed)
+          [(ResultFormatParsedCstList.Ok parsed)
             (match parsed
-              [(FmtParsedCstList items next)
-                (OkFormatParsedCst (FmtParsedCst (FmtCstList (box items)) next))])]
-          [(ErrFormatParsedCstList err) (ErrFormatParsedCst err)])]
+              [(FormatParsedCstList.ParsedList items next)
+                (ResultFormatParsedCst.Ok
+                  (FormatParsedCst.Parsed (FormatCst.List (box items)) next))])]
+          [(ResultFormatParsedCstList.Err err) (ResultFormatParsedCst.Err err)])]
       [(= tag (fmt-tag-lbracket))
         (match (fmt-parse-seq-result stream (+ idx 1) (fmt-tag-rbracket))
-          [(OkFormatParsedCstList parsed)
+          [(ResultFormatParsedCstList.Ok parsed)
             (match parsed
-              [(FmtParsedCstList items next)
-                (OkFormatParsedCst
-                  (FmtParsedCst (FmtCstBracketList (box items)) next))])]
-          [(ErrFormatParsedCstList err) (ErrFormatParsedCst err)])]
+              [(FormatParsedCstList.ParsedList items next)
+                (ResultFormatParsedCst.Ok
+                  (FormatParsedCst.Parsed
+                    (FormatCst.BracketList (box items))
+                    next))])]
+          [(ResultFormatParsedCstList.Err err) (ResultFormatParsedCst.Err err)])]
       [(= tag (fmt-tag-comment))
-        (OkFormatParsedCst
-          (FmtParsedCst (FmtCstComment (format-token-text tok)) (+ idx 1)))]
+        (ResultFormatParsedCst.Ok
+          (FormatParsedCst.Parsed
+            (FormatCst.Comment (format-token-text tok))
+            (+ idx 1)))]
       [(fmt-prefix-tag? tag)
         (match (fmt-parse-one-result stream (+ idx 1))
-          [(OkFormatParsedCst parsed)
+          [(ResultFormatParsedCst.Ok parsed)
             (match parsed
-              [(FmtParsedCst child next)
-                (OkFormatParsedCst
-                  (FmtParsedCst (FmtCstPrefix tok (box child)) next))])]
-          [(ErrFormatParsedCst err) (ErrFormatParsedCst err)])]
+              [(FormatParsedCst.Parsed child next)
+                (ResultFormatParsedCst.Ok
+                  (FormatParsedCst.Parsed
+                    (FormatCst.Prefix tok (box child))
+                    next))])]
+          [(ResultFormatParsedCst.Err err) (ResultFormatParsedCst.Err err)])]
       [(fmt-unexpected-closing tag)
-        (ErrFormatParsedCst
+        (ResultFormatParsedCst.Err
           (FormatSourceError
             "format cst: unexpected closing delimiter"
             (format-token-span stream idx)))]
       [(= tag (fmt-tag-end))
-        (ErrFormatParsedCst
+        (ResultFormatParsedCst.Err
           (FormatSourceError
             "format cst: unexpected end"
             (format-token-span stream idx)))]
-      [else (OkFormatParsedCst (FmtParsedCst (FmtCstAtom tok) (+ idx 1)))])))
+      [else
+        (ResultFormatParsedCst.Ok
+          (FormatParsedCst.Parsed (FormatCst.Atom tok) (+ idx 1)))])))
 
 (define (fmt-parse-one [stream : FormatTokenStream] [idx : i64]) : FormatParsedCst
   (match (fmt-parse-one-result stream idx)
-    [(OkFormatParsedCst parsed) parsed]
-    [(ErrFormatParsedCst err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatParsedCst.Ok parsed) parsed]
+    [(ResultFormatParsedCst.Err err)
+      (io.panic (format-source-error-message err))]))
 
 (define (parse-format-tokens-result [stream : FormatTokenStream]) : ResultFormatCst
   (match (fmt-parse-seq-result stream 0 0)
-    [(OkFormatParsedCstList parsed)
+    [(ResultFormatParsedCstList.Ok parsed)
       (match parsed
-        [(FmtParsedCstList items _) (OkFormatCst (FmtCstForms (box items)))])]
-    [(ErrFormatParsedCstList err) (ErrFormatCst err)]))
+        [(FormatParsedCstList.ParsedList items _)
+          (ResultFormatCst.Ok (FormatCst.Forms (box items)))])]
+    [(ResultFormatParsedCstList.Err err) (ResultFormatCst.Err err)]))
 
 (define (parse-format-tokens [stream : FormatTokenStream]) : FormatCst
   (match (parse-format-tokens-result stream)
-    [(OkFormatCst tree) tree]
-    [(ErrFormatCst err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatCst.Ok tree) tree]
+    [(ResultFormatCst.Err err) (io.panic (format-source-error-message err))]))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
   (match (format-lex-result src)
-    [(OkFormatTokenStream stream) (parse-format-tokens-result stream)]
-    [(ErrFormatTokenStream err) (ErrFormatCst err)]))
+    [(ResultFormatTokenStream.Ok stream) (parse-format-tokens-result stream)]
+    [(ResultFormatTokenStream.Err err) (ResultFormatCst.Err err)]))
 
 (define (parse-format-source [src : String]) : FormatCst
   (match (parse-format-source-result src)
-    [(OkFormatCst tree) tree]
-    [(ErrFormatCst err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatCst.Ok tree) tree]
+    [(ResultFormatCst.Err err) (io.panic (format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
   "(import \"std.tl\")
@@ -373,8 +393,8 @@
 
 (define (format-cst-error-location-ok?) : bool
   (match (parse-format-source-result "(define x\n  ]")
-    [(OkFormatCst _) false]
-    [(ErrFormatCst err)
+    [(ResultFormatCst.Ok _) false]
+    [(ResultFormatCst.Err err)
       (and
         (string.string-eq
           (format-source-error-message err)
@@ -384,31 +404,31 @@
 (define (format-cst-legacy-char-rejected-ok?) : bool
   (and
     (match (parse-format-source-result "#x'")
-      [(OkFormatCst _) false]
-      [(ErrFormatCst err)
+      [(ResultFormatCst.Ok _) false]
+      [(ResultFormatCst.Err err)
         (string.string-eq
           (format-source-error-message err)
           "format lexer: unexpected character")])
     (match (parse-format-source-result "#\\space'")
-      [(OkFormatCst _) false]
-      [(ErrFormatCst err)
+      [(ResultFormatCst.Ok _) false]
+      [(ResultFormatCst.Err err)
         (string.string-eq
           (format-source-error-message err)
           "format lexer: unexpected character")])))
 
 (define (format-cst-dense-storage-ok?) : bool
   (match (parse-format-source "(a b c)")
-    [(FmtCstForms forms)
+    [(FormatCst.Forms forms)
       (match (box-get forms)
-        [(FmtCstDense _ _ form-count)
+        [(FormatCstList.Dense _ _ form-count)
           (and
             (= form-count 1)
             (match (fmt-cst-list-step (box-get forms))
-              [(FmtCstListStepItem node _)
+              [(FormatCstListStep.Item node _)
                 (match node
-                  [(FmtCstList items)
+                  [(FormatCst.List items)
                     (match (box-get items)
-                      [(FmtCstDense _ _ item-count) (= item-count 3)]
+                      [(FormatCstList.Dense _ _ item-count) (= item-count 3)]
                       [_ false])]
                   [_ false])]
               [_ false]))]

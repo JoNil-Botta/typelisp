@@ -5028,11 +5028,10 @@ initializer propagates a recoverable failure. Panic/abort remains terminal and
 does not guarantee cleanup unless a future unwinding model explicitly says so.
 
 ```lisp test=ignore name=with-resource-recoverable-propagation reason="illustrative scoped cleanup with recoverable propagation; not a standalone program"
-(defstruct Handle (id i64))
+(import "stdlib/result.tl")
+(import (result i64 String) as result_i64_string)
 
-(defenum ResultI64
-  (OkI64 i64)
-  (ErrI64 String))
+(defstruct Handle (id i64))
 
 (define (open-handle) : Handle
   (Handle 1))
@@ -5040,10 +5039,10 @@ does not guarantee cleanup unless a future unwinding model explicitly says so.
 (define (close-handle [h : Handle]) : unit
   unit)
 
-(define (read-handle [h : Handle]) : ResultI64
-  (OkI64 (struct-get h id)))
+(define (read-handle [h : Handle]) : result_i64_string.Result
+  (result_i64_string.ok (struct-get h id)))
 
-(define (read-with-cleanup) : ResultI64
+(define (read-with-cleanup) : result_i64_string.Result
   (with ([h (open-handle) close-handle])
     (try (read-handle h))))
 ```
@@ -6314,36 +6313,34 @@ distinguish success from an error value. Matches must be exhaustive; omitted
 variants are rejected by the type checker.
 
 ```lisp test=compile name=monomorphic-option-result
+(import "stdlib/result.tl")
 (import "stdlib/str_cat.tl")
 (import "stdlib/string.tl")
+(import (result i64 String) as result_i64_string)
 
 (defenum MaybeI64
   (NoneI64)
   (SomeI64 i64))
-
-(defenum ResultI64
-  (OkI64 i64)
-  (ErrI64 String))
 
 (define (find-answer [name : String]) : MaybeI64
   (if (string-eq name "answer")
     (SomeI64 42)
     NoneI64))
 
-(define (read-small [text : String]) : ResultI64
+(define (read-small [text : String]) : result_i64_string.Result
   (if (string-eq text "7")
-    (OkI64 7)
-    (ErrI64 (str-cat "bad: " text))))
+    (result_i64_string.ok 7)
+    (result_i64_string.err (str-cat "bad: " text))))
 
 (define (maybe-score [m : MaybeI64]) : i64
   (match m
     [(SomeI64 value) value]
     [(NoneI64) 0]))
 
-(define (result-score [r : ResultI64]) : i64
+(define (result-score [r : result_i64_string.Result]) : i64
   (match r
-    [(OkI64 value) value]
-    [(ErrI64 message) (string-length message)]))
+    [(result_i64_string.Ok value) value]
+    [(result_i64_string.Err message) (string-length message)]))
 
 (define (main) : i64
   (+ (maybe-score (find-answer "answer"))
@@ -6376,41 +6373,34 @@ than generic traits or implicit conversions.
   non-exhaustive.
 
 ```lisp test=ignore name=result-try-success reason="try propagation awaits public test-mode coverage"
+(import "stdlib/result.tl")
 (import "stdlib/str_cat.tl")
+(import (result i64 String) as result_i64_string)
 
-(defenum ResultI64
-  (OkI64 i64)
-  (ErrI64 String))
-
-(define (read-small [text : String]) : ResultI64
+(define (read-small [text : String]) : result_i64_string.Result
   (if (string-eq text "7")
-    (OkI64 7)
-    (ErrI64 (str-cat "bad: " text))))
+    (result_i64_string.ok 7)
+    (result_i64_string.err (str-cat "bad: " text))))
 
-(define (read-plus-one [text : String]) : ResultI64
+(define (read-plus-one [text : String]) : result_i64_string.Result
   (let ([value : i64 (try (read-small text))])
-    (OkI64 (+ value 1))))
+    (result_i64_string.ok (+ value 1))))
 ```
 
 ```lisp test=ignore name=result-try-incompatible-error reason="negative propagation example; should be an expect-error once SPEC examples support this form"
+(import "stdlib/result.tl")
 (import "stdlib/str_cat.tl")
+(import (result i64 String) as result_i64_string)
+(import (result bool bool) as result_bool_bool)
 
-(defenum ResultI64
-  (OkI64 i64)
-  (ErrI64 String))
-
-(defenum ResultBool
-  (OkBool bool)
-  (ErrBool bool))
-
-(define (read-small [text : String]) : ResultI64
+(define (read-small [text : String]) : result_i64_string.Result
   (if (string-eq text "7")
-    (OkI64 7)
-    (ErrI64 (str-cat "bad: " text))))
+    (result_i64_string.ok 7)
+    (result_i64_string.err (str-cat "bad: " text))))
 
-(define (bad-propagation [text : String]) : ResultBool
+(define (bad-propagation [text : String]) : result_bool_bool.Result
   (let ([value : i64 (try (read-small text))])
-    (OkBool (> value 0))))
+    (result_bool_bool.ok (> value 0))))
 ```
 
 Panic remains separate from recoverable results. It aborts instead of producing
@@ -6419,23 +6409,21 @@ result-returning branch:
 
 ```lisp test=compile name=panic-vs-result
 (import "stdlib/io.tl")
+(import "stdlib/result.tl")
+(import (result i64 String) as result_i64_string)
 
-(defenum ResultI64
-  (OkI64 i64)
-  (ErrI64 String))
-
-(define (read-or-abort [ok : bool]) : ResultI64
+(define (read-or-abort [ok : bool]) : result_i64_string.Result
   (if ok
-    (OkI64 7)
+    (result_i64_string.ok 7)
     (panic "not recoverable")))
 ```
 
-Current implementation status: selfhost has explicit `comptime-decl` generated
-concrete Option/Result family declarations and helper `define`s through the
-generated-declaration registry. `(try expr)` supports the Result-like convention
-of a concrete enum with one `Ok*` payload variant and one `Err*` payload variant,
-and the Option-like convention of one `Some*` payload variant with one `None*`
-absence variant.
+Current implementation status: selfhost uses declaration-emitting stdlib module
+macros for concrete Option/Result modules. `(try expr)` supports generated
+`Ok`/`Err` result modules and the Result-like convention of a concrete enum
+with one `Ok*` payload variant and one `Err*` payload variant, plus the
+Option-like convention of one `Some*` payload variant with one `None*` absence
+variant.
 
 ---
 

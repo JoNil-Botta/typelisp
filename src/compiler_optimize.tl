@@ -3467,12 +3467,12 @@
         [_ false])]
     [(AstTypeCons ah at)
       (let
-        [ah : AstType (ty-node-get ah)]
+        [ah : AstType (ast-node-pool-reader-type-get ah)]
         [at : AstTypeList (box-get at)]
         (match b
           [(AstTypeCons bh bt)
             (let
-              [bh : AstType (ty-node-get bh)]
+              [bh : AstType (ast-node-pool-reader-type-get bh)]
               [bt : AstTypeList (box-get bt)]
               (and (opt-type-eq ah bh) (opt-type-list-eq at bt)))]
           [_ false]))]))
@@ -3578,7 +3578,9 @@
         [(AstTyFunc b-params b-ret)
           (and
             (opt-type-list-eq (box-get a-params) (box-get b-params))
-            (opt-type-eq (ty-node-get a-ret) (ty-node-get b-ret)))]
+            (opt-type-eq
+              (ast-node-pool-reader-type-get a-ret)
+              (ast-node-pool-reader-type-get b-ret)))]
         [_ false])]
     [(AstTyTuple a-items)
       (match b
@@ -3590,48 +3592,64 @@
         [(AstTyArray b-item b-len)
           (and
             (= a-len b-len)
-            (opt-type-eq (ty-node-get a-item) (ty-node-get b-item)))]
+            (opt-type-eq
+              (ast-node-pool-reader-type-get a-item)
+              (ast-node-pool-reader-type-get b-item)))]
         [_ false])]
     [(AstTyDynArray a-item)
       (match b
         [(AstTyDynArray b-item)
-          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
+          (opt-type-eq
+            (ast-node-pool-reader-type-get a-item)
+            (ast-node-pool-reader-type-get b-item))]
         [_ false])]
     [(AstTyBox a-item)
       (match b
         [(AstTyBox b-item)
-          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
+          (opt-type-eq
+            (ast-node-pool-reader-type-get a-item)
+            (ast-node-pool-reader-type-get b-item))]
         [_ false])]
     [(AstTyPtr a-item)
       (match b
         [(AstTyPtr b-item)
-          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
+          (opt-type-eq
+            (ast-node-pool-reader-type-get a-item)
+            (ast-node-pool-reader-type-get b-item))]
         [_ false])]
     [(AstTyMutPtr a-item)
       (match b
         [(AstTyMutPtr b-item)
-          (opt-type-eq (ty-node-get a-item) (ty-node-get b-item))]
+          (opt-type-eq
+            (ast-node-pool-reader-type-get a-item)
+            (ast-node-pool-reader-type-get b-item))]
         [_ false])]
     [(AstTyRef a-region a-inner)
       (match b
         [(AstTyRef b-region b-inner)
           (and
             (string.string-eq a-region b-region)
-            (opt-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
+            (opt-type-eq
+              (ast-node-pool-reader-type-get a-inner)
+              (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
     [(AstTyMutRef a-region a-inner)
       (match b
         [(AstTyMutRef b-region b-inner)
           (and
             (string.string-eq a-region b-region)
-            (opt-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
+            (opt-type-eq
+              (ast-node-pool-reader-type-get a-inner)
+              (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
     [(AstTyRegion a-region a-inner)
       (match b
         [(AstTyRegion b-region b-inner)
           (and
             (string.string-eq a-region b-region)
-            (opt-type-eq (ty-node-get a-inner) (ty-node-get b-inner)))]
+            (opt-type-eq
+              (ast-node-pool-reader-type-get a-inner)
+              (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
     [(AstTyEnum a-name)
       (match b
@@ -3712,7 +3730,7 @@
       (hash.combine
         1
         (hash.combine
-          (opt-type-hash (ty-node-get head))
+          (opt-type-hash (ast-node-pool-reader-type-get head))
           (opt-type-list-hash (box-get rest))))]))
 
 (define (opt-lifetime-list-hash [lifetimes : AstLifetimeList]) : i64
@@ -3751,34 +3769,40 @@
         19
         (hash.combine
           (opt-type-list-hash (box-get params))
-          (opt-type-hash (ty-node-get ret))))]
+          (opt-type-hash (ast-node-pool-reader-type-get ret))))]
     [(AstTyTuple items) (hash.combine 20 (opt-type-list-hash (box-get items)))]
     [(AstTyArray item len)
       (hash.combine
         21
-        (hash.combine (opt-type-hash (ty-node-get item)) (hash.i64 len)))]
-    [(AstTyDynArray item) (hash.combine 22 (opt-type-hash (ty-node-get item)))]
-    [(AstTyBox item) (hash.combine 23 (opt-type-hash (ty-node-get item)))]
-    [(AstTyPtr item) (hash.combine 24 (opt-type-hash (ty-node-get item)))]
-    [(AstTyMutPtr item) (hash.combine 25 (opt-type-hash (ty-node-get item)))]
+        (hash.combine
+          (opt-type-hash (ast-node-pool-reader-type-get item))
+          (hash.i64 len)))]
+    [(AstTyDynArray item)
+      (hash.combine 22 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+    [(AstTyBox item)
+      (hash.combine 23 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+    [(AstTyPtr item)
+      (hash.combine 24 (opt-type-hash (ast-node-pool-reader-type-get item)))]
+    [(AstTyMutPtr item)
+      (hash.combine 25 (opt-type-hash (ast-node-pool-reader-type-get item)))]
     [(AstTyRef region inner)
       (hash.combine
         26
         (hash.combine
           (hash.string-key (& region))
-          (opt-type-hash (ty-node-get inner))))]
+          (opt-type-hash (ast-node-pool-reader-type-get inner))))]
     [(AstTyMutRef region inner)
       (hash.combine
         27
         (hash.combine
           (hash.string-key (& region))
-          (opt-type-hash (ty-node-get inner))))]
+          (opt-type-hash (ast-node-pool-reader-type-get inner))))]
     [(AstTyRegion region inner)
       (hash.combine
         28
         (hash.combine
           (hash.string-key (& region))
-          (opt-type-hash (ty-node-get inner))))]
+          (opt-type-hash (ast-node-pool-reader-type-get inner))))]
     [(AstTyEnum name) (hash.combine 29 (hash.i64 name))]
     [(AstTyEnumArgs name lifetimes)
       (hash.combine
@@ -37268,7 +37292,8 @@
     [(AstTyMutPtr _) 8]
     [(AstTyRef _ _) 8]
     [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner) (opt-scratch-alloc-type-size (ty-node-get inner))]
+    [(AstTyRegion _ inner)
+      (opt-scratch-alloc-type-size (ast-node-pool-reader-type-get inner))]
     [(AstTyEnum _) 8]
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct _) 8]

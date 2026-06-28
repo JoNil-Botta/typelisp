@@ -977,22 +977,28 @@
                 (ast-node-pool-context-type-push pools-b (AstTyBool))
                 (ast-node-pool-context-type-push pools-b (AstTyChar))
                 (ast-node-pool-context-install! pools-b)
-                (and
-                  (> (ast-node-pool-context-type-len pools-a) 0)
-                  (match (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
-                    "tests/integration/calc.tl"
-                    lowered
-                    (BackendTargetLinux)
-                    true
-                    (BackendModeScalar)
-                    0
-                    true
-                    false)
-                    [(ResultCompilerDriver.Ok asm)
-                      (and
-                        (compiler-backend-string-contains? asm "calc")
-                        (compiler-backend-string-contains? asm "main"))]
-                    [(ResultCompilerDriver.Err _) false]))))]
+                (let
+                  [active-type-len-before : i64 (ty-node-pool-len)]
+                  [emitted : ResultCompilerDriver
+                    (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+                      "tests/integration/calc.tl"
+                      lowered
+                      (BackendTargetLinux)
+                      true
+                      (BackendModeScalar)
+                      1
+                      true
+                      false)]
+                  (and
+                    (> (ast-node-pool-context-type-len pools-a) 0)
+                    (= active-type-len-before 2)
+                    (= (ty-node-pool-len) active-type-len-before)
+                    (match emitted
+                      [(ResultCompilerDriver.Ok asm)
+                        (and
+                          (compiler-backend-string-contains? asm "calc")
+                          (compiler-backend-string-contains? asm "main"))]
+                      [(ResultCompilerDriver.Err _) false])))))]
           [(ResultCompilerDriverLowered.Err _) false])))))
 
 (define (compiler-driver-state-smoke-compile-entry

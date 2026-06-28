@@ -593,7 +593,7 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriver
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
@@ -605,7 +605,7 @@
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriver.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -653,7 +653,7 @@
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
@@ -665,7 +665,7 @@
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverBuffer.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -715,7 +715,7 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverObject
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
@@ -727,7 +727,7 @@
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverObject.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -776,7 +776,7 @@
   [opt-level : i64]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerDriverPic
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
@@ -788,7 +788,7 @@
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
             (compiler-driver-release-lowered-ir! opt-level)
-            (if (ty-node-pool-exhausted?)
+            (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverPic.Err
                 (box
                   (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
@@ -838,18 +838,23 @@
   [crt-entry : bool]) : ResultCompilerDriver
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry
-          crt-entry))]
+      (let
+        [out : ResultCompilerDriver
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry
+              crt-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
@@ -862,17 +867,22 @@
   [emit-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry))]
+      (let
+        [out : ResultCompilerDriverBuffer
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag)
       (ResultCompilerDriverBuffer.Err diag)]))
 
@@ -887,18 +897,23 @@
   [crt-entry : bool]) : ResultCompilerDriverObject
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry
-          crt-entry))]
+      (let
+        [out : ResultCompilerDriverObject
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry
+              crt-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag)
       (ResultCompilerDriverObject.Err diag)]))
 
@@ -913,18 +928,23 @@
   [crt-entry : bool]) : ResultCompilerDriverPic
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
-          input-path
-          program
-          spans
-          target
-          has-target
-          mode
-          opt-level
-          emit-entry
-          crt-entry))]
+      (let
+        [out : ResultCompilerDriverPic
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
+              input-path
+              program
+              spans
+              target
+              has-target
+              mode
+              opt-level
+              emit-entry
+              crt-entry))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriverPic.Err diag)]))
 
 ;; The implicit prelude prepended before every entry program. It is two
@@ -1353,7 +1373,7 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (if (ty-node-pool-exhausted?)
+              (if (ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -1396,7 +1416,7 @@
               (cfg
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
-              (if (ty-node-pool-exhausted?)
+              (if (ast-node-pool-reader-type-exhausted?)
                 (ResultCompilerDriverLowered.Err
                   (box
                     (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -1448,7 +1468,7 @@
                 (cfg
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
-                (if (ty-node-pool-exhausted?)
+                (if (ast-node-pool-reader-type-exhausted?)
                   (ResultCompilerDriverLowered.Err
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -1502,7 +1522,7 @@
                 (cfg
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
-                (if (ty-node-pool-exhausted?)
+                (if (ast-node-pool-reader-type-exhausted?)
                   (ResultCompilerDriverLowered.Err
                     (box
                       (compiler-driver-ty-node-pool-exhausted-diagnostic
@@ -2112,14 +2132,14 @@
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]
   [opt-level : i64]) : ResultCompilerDriver
-  (if (ty-node-pool-exhausted?)
+  (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (match (optimize-program-with-spans-and-level program spans opt-level)
       [(CompilerOptimizedProgram optimized _)
         (begin
           (compiler-driver-release-lowered-ir! opt-level)
-          (if (ty-node-pool-exhausted?)
+          (if (ast-node-pool-reader-type-exhausted?)
             (ResultCompilerDriver.Err
               (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
             (ResultCompilerDriver.Ok
@@ -2131,12 +2151,17 @@
   [opt-level : i64]) : ResultCompilerDriver
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
-      (begin
-        (compiler-driver-install-lowered-pools! pools)
-        (compiler-driver-emit-ir-summary-lowered-with-level
-          program
-          spans
-          opt-level))]
+      (let
+        [out : ResultCompilerDriver
+          (begin
+            (ast-node-pool-reader-use! pools)
+            (compiler-driver-emit-ir-summary-lowered-with-level
+              program
+              spans
+              opt-level))]
+        (begin
+          (ast-node-pool-reader-clear!)
+          out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level

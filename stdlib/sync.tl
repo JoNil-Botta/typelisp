@@ -30,6 +30,7 @@
 ;# ```
 (module stdlib.sync)
 
+(import stdlib.array)
 (import stdlib.thread)
 
 ;: Emit a generated bounded channel module for copyable scalar messages.
@@ -45,6 +46,7 @@
       ["i64"
         `(begin
           (module ,module-name)
+          (import stdlib.array as array_ops)
           (import stdlib.sync as sync)
           (defstruct Channel
             (slots-addr i64)
@@ -126,22 +128,40 @@
             [dst : (Array i64)]
             [offset : i64]) : unit
             (begin
-              (array-set! dst offset (struct-get channel slots-addr))
-              (array-set! dst (+ offset 1) (struct-get channel state-addr))
-              (array-set! dst (+ offset 2) (struct-get channel capacity))
-              (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-              (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-              (array-set! dst (+ offset 5) (struct-get channel items-handle))
-              (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+              (array_ops.array-set! dst offset (struct-get channel slots-addr))
+              (array_ops.array-set!
+                dst
+                (+ offset 1)
+                (struct-get channel state-addr))
+              (array_ops.array-set!
+                dst
+                (+ offset 2)
+                (struct-get channel capacity))
+              (array_ops.array-set!
+                dst
+                (+ offset 3)
+                (struct-get channel slots-bytes))
+              (array_ops.array-set!
+                dst
+                (+ offset 4)
+                (struct-get channel mutex-handle))
+              (array_ops.array-set!
+                dst
+                (+ offset 5)
+                (struct-get channel items-handle))
+              (array_ops.array-set!
+                dst
+                (+ offset 6)
+                (struct-get channel spaces-handle))))
           (define (load-raw [src : (Array i64)] [offset : i64]) : Channel
             (Channel
-              (array-ref src offset)
-              (array-ref src (+ offset 1))
-              (array-ref src (+ offset 2))
-              (array-ref src (+ offset 3))
-              (array-ref src (+ offset 4))
-              (array-ref src (+ offset 5))
-              (array-ref src (+ offset 6)))))]
+              (array_ops.array-ref src offset)
+              (array_ops.array-ref src (+ offset 1))
+              (array_ops.array-ref src (+ offset 2))
+              (array_ops.array-ref src (+ offset 3))
+              (array_ops.array-ref src (+ offset 4))
+              (array_ops.array-ref src (+ offset 5))
+              (array_ops.array-ref src (+ offset 6)))))]
       [_
         `(begin
           (module ,module-name))])))
@@ -159,6 +179,7 @@
       ["i64"
         `(begin
           (module ,module-name)
+          (import stdlib.array as array_ops)
           (import stdlib.sync as sync)
           (defstruct Mutex
             (value-addr i64)
@@ -285,14 +306,20 @@
             [dst : (Array i64)]
             [offset : i64]) : unit
             (begin
-              (array-set! dst offset (struct-get mutex value-addr))
-              (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
-              (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
+              (array_ops.array-set! dst offset (struct-get mutex value-addr))
+              (array_ops.array-set!
+                dst
+                (+ offset 1)
+                (struct-get mutex mutex-handle))
+              (array_ops.array-set!
+                dst
+                (+ offset 2)
+                (struct-get mutex control-addr))))
           (define (load-raw [src : (Array i64)] [offset : i64]) : Mutex
             (Mutex
-              (array-ref src offset)
-              (array-ref src (+ offset 1))
-              (array-ref src (+ offset 2)))))]
+              (array_ops.array-ref src offset)
+              (array_ops.array-ref src (+ offset 1))
+              (array_ops.array-ref src (+ offset 2)))))]
       [_
         `(begin
           (module ,module-name))])))
@@ -838,16 +865,16 @@
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get mutex value-addr))
-    (array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
-    (array-set! dst (+ offset 2) (struct-get mutex control-addr))))
+    (array.array-set! dst offset (struct-get mutex value-addr))
+    (array.array-set! dst (+ offset 1) (struct-get mutex mutex-handle))
+    (array.array-set! dst (+ offset 2) (struct-get mutex control-addr))))
 
 ;: Rebuild a mutex handle from a raw `i64` array at `offset`.
 (define (sync-i64-mutex-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Mutex
   (SyncI64Mutex
-    (array-ref src offset)
-    (array-ref src (+ offset 1))
-    (array-ref src (+ offset 2))))
+    (array.array-ref src offset)
+    (array.array-ref src (+ offset 1))
+    (array.array-ref src (+ offset 2))))
 
 ;: Return the next ring index for a channel with `capacity`.
 (define (sync-i64-channel-next-index [capacity : i64] [index : i64]) : i64
@@ -1032,24 +1059,24 @@
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get channel slots-addr))
-    (array-set! dst (+ offset 1) (struct-get channel state-addr))
-    (array-set! dst (+ offset 2) (struct-get channel capacity))
-    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-    (array-set! dst (+ offset 5) (struct-get channel items-handle))
-    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+    (array.array-set! dst offset (struct-get channel slots-addr))
+    (array.array-set! dst (+ offset 1) (struct-get channel state-addr))
+    (array.array-set! dst (+ offset 2) (struct-get channel capacity))
+    (array.array-set! dst (+ offset 3) (struct-get channel slots-bytes))
+    (array.array-set! dst (+ offset 4) (struct-get channel mutex-handle))
+    (array.array-set! dst (+ offset 5) (struct-get channel items-handle))
+    (array.array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
 (define (sync-i64-channel-load-raw [src : (Array i64)] [offset : i64]) : SyncI64Channel
   (SyncI64Channel
-    (array-ref src offset)
-    (array-ref src (+ offset 1))
-    (array-ref src (+ offset 2))
-    (array-ref src (+ offset 3))
-    (array-ref src (+ offset 4))
-    (array-ref src (+ offset 5))
-    (array-ref src (+ offset 6))))
+    (array.array-ref src offset)
+    (array.array-ref src (+ offset 1))
+    (array.array-ref src (+ offset 2))
+    (array.array-ref src (+ offset 3))
+    (array.array-ref src (+ offset 4))
+    (array.array-ref src (+ offset 5))
+    (array.array-ref src (+ offset 6))))
 
 ;: Return the next ring index for `channel`.
 (define (channel-i64-pair-next-index
@@ -1248,24 +1275,24 @@
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get channel slots-addr))
-    (array-set! dst (+ offset 1) (struct-get channel state-addr))
-    (array-set! dst (+ offset 2) (struct-get channel capacity))
-    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-    (array-set! dst (+ offset 5) (struct-get channel items-handle))
-    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+    (array.array-set! dst offset (struct-get channel slots-addr))
+    (array.array-set! dst (+ offset 1) (struct-get channel state-addr))
+    (array.array-set! dst (+ offset 2) (struct-get channel capacity))
+    (array.array-set! dst (+ offset 3) (struct-get channel slots-bytes))
+    (array.array-set! dst (+ offset 4) (struct-get channel mutex-handle))
+    (array.array-set! dst (+ offset 5) (struct-get channel items-handle))
+    (array.array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a pair channel handle from a raw `i64` array at `offset`.
 (define (channel-i64-pair-load-raw [src : (Array i64)] [offset : i64]) : ChannelI64PairChannel
   (ChannelI64PairChannel
-    (array-ref src offset)
-    (array-ref src (+ offset 1))
-    (array-ref src (+ offset 2))
-    (array-ref src (+ offset 3))
-    (array-ref src (+ offset 4))
-    (array-ref src (+ offset 5))
-    (array-ref src (+ offset 6))))
+    (array.array-ref src offset)
+    (array.array-ref src (+ offset 1))
+    (array.array-ref src (+ offset 2))
+    (array.array-ref src (+ offset 3))
+    (array.array-ref src (+ offset 4))
+    (array.array-ref src (+ offset 5))
+    (array.array-ref src (+ offset 6))))
 
 ;: Return the next ring index for `channel`.
 (define (channel-string-next-index [channel : ChannelString] [index : i64]) : i64
@@ -1449,24 +1476,24 @@
   [dst : (Array i64)]
   [offset : i64]) : unit
   (begin
-    (array-set! dst offset (struct-get channel slots-addr))
-    (array-set! dst (+ offset 1) (struct-get channel state-addr))
-    (array-set! dst (+ offset 2) (struct-get channel capacity))
-    (array-set! dst (+ offset 3) (struct-get channel slots-bytes))
-    (array-set! dst (+ offset 4) (struct-get channel mutex-handle))
-    (array-set! dst (+ offset 5) (struct-get channel items-handle))
-    (array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
+    (array.array-set! dst offset (struct-get channel slots-addr))
+    (array.array-set! dst (+ offset 1) (struct-get channel state-addr))
+    (array.array-set! dst (+ offset 2) (struct-get channel capacity))
+    (array.array-set! dst (+ offset 3) (struct-get channel slots-bytes))
+    (array.array-set! dst (+ offset 4) (struct-get channel mutex-handle))
+    (array.array-set! dst (+ offset 5) (struct-get channel items-handle))
+    (array.array-set! dst (+ offset 6) (struct-get channel spaces-handle))))
 
 ;: Rebuild a string channel handle from a raw `i64` array at `offset`.
 (define (channel-string-load-raw [src : (Array i64)] [offset : i64]) : ChannelString
   (ChannelString
-    (array-ref src offset)
-    (array-ref src (+ offset 1))
-    (array-ref src (+ offset 2))
-    (array-ref src (+ offset 3))
-    (array-ref src (+ offset 4))
-    (array-ref src (+ offset 5))
-    (array-ref src (+ offset 6))))
+    (array.array-ref src offset)
+    (array.array-ref src (+ offset 1))
+    (array.array-ref src (+ offset 2))
+    (array.array-ref src (+ offset 3))
+    (array.array-ref src (+ offset 4))
+    (array.array-ref src (+ offset 5))
+    (array.array-ref src (+ offset 6))))
 
 ;: Return true when creating an i64 channel with `capacity` succeeds.
 (define (sync-i64-channel-create-capacity-ok? [capacity : i64]) : bool

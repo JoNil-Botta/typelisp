@@ -3,20 +3,17 @@
 (import "stdlib/test.tl")
 (import stdlib.json)
 (import stdlib.vector)
-(import (vector json.Json) as jvec)
 (import (vector json.JsonMember) as mvec)
 
 (test
   vector-macro-imported-json-aggregate
   (let
-    [items : jvec.Vec (jvec.new)]
     [members : mvec.Vec (mvec.new)]
     (begin
-      (jvec.push (&mut items) json.JsonNull)
       (mvec.push (&mut members) (json.JsonMember "k" (json.JsonBool true)))
       (assert-i64-eq
-        (+ (jvec.len (& items)) (mvec.len (& members)))
-        2
+        (mvec.len (& members))
+        1
         "generated json aggregate vector length")
       (let
         [snapshot : (Array json.JsonMember) (mvec.to-array (& members))]

@@ -20,6 +20,8 @@
 ;# ```
 (module stdlib.string)
 
+(import stdlib.array)
+
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
 
@@ -194,7 +196,7 @@
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
   (let
-    [buf : (Array u8) (make-array u8 len)]
+    [buf : (Array u8) (array.make-array u8 len)]
     [src : (Ptr u8)
       (unsafe
         (string-data text))]
@@ -217,7 +219,7 @@
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
     [total-len : i64 (+ left-len right-len)]
-    [buf : (Array u8) (make-array u8 total-len)]
+    [buf : (Array u8) (array.make-array u8 total-len)]
     [left-src : (Ptr u8)
       (unsafe
         (string-data left))]
@@ -244,18 +246,18 @@
 ;: Return a fresh active-arena String by concatenating all owned strings in order.
 (define (string-concat-all [parts : (Array String)]) : String
   (let
-    [count : i64 (array-length parts)]
+    [count : i64 (array.array-length parts)]
     [len-index : i64 0]
     [total-len : i64 0]
     (begin
       (while (< len-index count)
         (let
-          [part : String (array-ref parts len-index)]
+          [part : String (array.array-ref parts len-index)]
           (begin
             (set! total-len (+ total-len (__tl_string_length part)))
             (set! len-index (+ len-index 1)))))
       (let
-        [buf : (Array u8) (make-array u8 total-len)]
+        [buf : (Array u8) (array.make-array u8 total-len)]
         [dst : (MutPtr u8)
           (unsafe
             (array-data buf))]
@@ -264,7 +266,7 @@
         (begin
           (while (< copy-index count)
             (let
-              [part : String (array-ref parts copy-index)]
+              [part : String (array.array-ref parts copy-index)]
               [len : i64 (__tl_string_length part)]
               (begin
                 (str-copy-bytes-into
@@ -284,7 +286,7 @@
   [index : i64]
   [value : String]) : (Array String)
   (begin
-    (array-set! parts index value)
+    (array.array-set! parts index value)
     parts))
 
 ;: Return a fresh active-arena String by concatenating three owned strings.
@@ -309,7 +311,7 @@
     [d-len : i64 (__tl_string_length d)]
     [e-len : i64 (__tl_string_length e)]
     [total-len : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
-    [buf : (Array u8) (make-array u8 total-len)]
+    [buf : (Array u8) (array.make-array u8 total-len)]
     [dst : (MutPtr u8)
       (unsafe
         (array-data buf))]
@@ -831,14 +833,14 @@
   test
   (define (string-test-with-nul) : String
     (let
-      [bytes : (Array u8) (make-array u8 3)]
+      [bytes : (Array u8) (array.make-array u8 3)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data bytes))]
       (begin
-        (array-set! bytes 0 (cast 'a' : u8))
-        (array-set! bytes 1 (cast 0 : u8))
-        (array-set! bytes 2 (cast 'b' : u8))
+        (array.array-set! bytes 0 (cast 'a' : u8))
+        (array.array-set! bytes 1 (cast 0 : u8))
+        (array.array-set! bytes 2 (cast 'b' : u8))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) 3))))))
 
@@ -881,20 +883,20 @@
 (cfg
   test
   (define (string-test-concat-all-empty) : String
-    (string-concat-all (make-array String 0))))
+    (string-concat-all (array.make-array String 0))))
 
 (cfg
   test
   (define (string-test-concat-all-many) : String
     (let
-      [parts : (Array String) (make-array String 6)]
+      [parts : (Array String) (array.make-array String 6)]
       (begin
-        (array-set! parts 0 "ab")
-        (array-set! parts 1 "")
-        (array-set! parts 2 "cd")
-        (array-set! parts 3 "ef")
-        (array-set! parts 4 "")
-        (array-set! parts 5 "gh")
+        (array.array-set! parts 0 "ab")
+        (array.array-set! parts 1 "")
+        (array.array-set! parts 2 "cd")
+        (array.array-set! parts 3 "ef")
+        (array.array-set! parts 4 "")
+        (array.array-set! parts 5 "gh")
         (string-concat-all parts)))))
 
 (cfg

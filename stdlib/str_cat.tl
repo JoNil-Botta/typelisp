@@ -74,7 +74,7 @@
                         `(stdlib.string.string-concat5 ,a ,b ,c ,d ,e)
                         `(stdlib.string.string-concat-all
                           (str-cat-pack
-                            (make-array
+                            (stdlib.array.make-array
                               String
                               ,(expr-int (expr-list-length args)))
                             0

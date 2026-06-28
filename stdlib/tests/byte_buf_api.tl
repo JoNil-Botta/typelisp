@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.byte_buf)
 (import stdlib.test)
 
@@ -65,39 +66,39 @@
 
 (define (assert-array-copy) : unit
   (let
-    [src : (Array u8) (make-array u8 4)]
+    [src : (Array u8) (array.make-array u8 4)]
     (begin
-      (array-set! src 0 (make-u8 1))
-      (array-set! src 1 (make-u8 0))
-      (array-set! src 2 (make-u8 200))
-      (array-set! src 3 (make-u8 255))
+      (array.array-set! src 0 (make-u8 1))
+      (array.array-set! src 1 (make-u8 0))
+      (array.array-set! src 2 (make-u8 200))
+      (array.array-set! src 3 (make-u8 255))
       (let
         [buf : byte_buf.ByteBuf (byte_buf.byte-buf-from-array src)]
         (begin
           (test.assert-i64-eq (byte_buf.byte-buf-len buf) 4 "from-array len")
-          (array-set! src 2 (make-u8 2))
+          (array.array-set! src 2 (make-u8 2))
           (assert-u8-eq (byte_buf.byte-buf-ref buf 2) 200 "from-array copies")
           (let
             [slice : (Array u8) (byte_buf.byte-buf-copy-range buf 1 2)]
             (begin
-              (test.assert-i64-eq (array-length slice) 2 "copy-range len")
-              (assert-u8-eq (array-ref slice 0) 0 "copy-range first")
-              (assert-u8-eq (array-ref slice 1) 200 "copy-range second")))
+              (test.assert-i64-eq (array.array-length slice) 2 "copy-range len")
+              (assert-u8-eq (array.array-ref slice 0) 0 "copy-range first")
+              (assert-u8-eq (array.array-ref slice 1) 200 "copy-range second")))
           (let
             [snap : (Array u8) (byte_buf.byte-buf-to-array buf)]
             (begin
-              (test.assert-i64-eq (array-length snap) 4 "to-array len")
-              (assert-u8-eq (array-ref snap 3) 255 "to-array last")
-              (array-set! snap 3 (make-u8 3))
+              (test.assert-i64-eq (array.array-length snap) 4 "to-array len")
+              (assert-u8-eq (array.array-ref snap 3) 255 "to-array last")
+              (array.array-set! snap 3 (make-u8 3))
               (assert-u8-eq (byte_buf.byte-buf-ref buf 3) 255 "to-array copies"))))))))
 
 (define (assert-mixed-append) : unit
   (let
-    [src : (Array u8) (make-array u8 3)]
+    [src : (Array u8) (array.make-array u8 3)]
     (begin
-      (array-set! src 0 (make-u8 65))
-      (array-set! src 1 (make-u8 66))
-      (array-set! src 2 (make-u8 67))
+      (array.array-set! src 0 (make-u8 65))
+      (array.array-set! src 1 (make-u8 66))
+      (array.array-set! src 2 (make-u8 67))
       (let
         [buf : byte_buf.ByteBuf
           (byte_buf.byte-buf-append-array-range
@@ -146,8 +147,8 @@
       (let
         [arr : (Array u8) (byte_buf.bytes-to-array middle)]
         (begin
-          (test.assert-i64-eq (array-length arr) 3 "bytes to-array len")
-          (assert-u8-eq (array-ref arr 2) 101 "bytes to-array last")))
+          (test.assert-i64-eq (array.array-length arr) 3 "bytes to-array len")
+          (assert-u8-eq (array.array-ref arr 2) 101 "bytes to-array last")))
       (let
         [copy : String (byte_buf.bytes-to-string middle)]
         [expected : String "cde"]
@@ -221,12 +222,12 @@
 
 (define (assert-legacy-public-api) : unit
   (let
-    [src : (Array u8) (make-array u8 4)]
+    [src : (Array u8) (array.make-array u8 4)]
     (begin
-      (array-set! src 0 (make-u8 65))
-      (array-set! src 1 (make-u8 0))
-      (array-set! src 2 (make-u8 128))
-      (array-set! src 3 (make-u8 255))
+      (array.array-set! src 0 (make-u8 65))
+      (array.array-set! src 1 (make-u8 0))
+      (array.array-set! src 2 (make-u8 128))
+      (array.array-set! src 3 (make-u8 255))
       (let
         [buf : byte_buf.ByteBuf
           (byte_buf.byte-buf-append-string
@@ -248,8 +249,8 @@
           (let
             [snap : (Array u8) (byte_buf.byte-buf-to-array buf)]
             (begin
-              (test.assert-i64-eq (array-length snap) 6 "snapshot len")
-              (array-set! snap 0 (make-u8 1))
+              (test.assert-i64-eq (array.array-length snap) 6 "snapshot len")
+              (array.array-set! snap 0 (make-u8 1))
               (assert-u8-eq (byte_buf.byte-buf-ref buf 0) 65 "snapshot copies")))
           (let
             [text-buf : byte_buf.ByteBuf (byte_buf.byte-buf-from-string "text")]

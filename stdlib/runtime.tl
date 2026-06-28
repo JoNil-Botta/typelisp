@@ -449,7 +449,7 @@
 ;: Zero `byte-count` bytes starting at `buf`. Zero eight bytes per iteration
 ;: over the 64-bit-aligned prefix, then a byte tail for the remainder. The
 ;: previous byte-at-a-time loop was the single largest zeroing cost in the
-;: self-compile (every `make-array` zero-fills its backing storage); writing
+;: self-compile (every `array.make-array` zero-fills its backing storage); writing
 ;: whole words cuts the loop trip count ~8x.
 (define (tl-runtime-array-zero [buf : (MutPtr u8)] [byte-count : i64])
   (:export-symbol "tl_array_zero") : unit

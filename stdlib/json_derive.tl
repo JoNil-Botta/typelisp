@@ -16,10 +16,7 @@
 (import stdlib.string)
 
 ;: Emit the JSON value expression for one struct field.
-(defmacro (json-derive-field-to-json
-  [T : type]
-  [index-expr : Expr]
-  [value : Expr]) : Expr
+(defmacro (field-to-json [T : type] [index-expr : Expr] [value : Expr]) : Expr
   (match index-expr
     [(ExprInt index)
       (let
@@ -58,7 +55,7 @@
         "json-derive: field index must be an integer literal")]))
 
 ;: Emit the object member list expression for struct fields.
-(defmacro (json-derive-members [T : type] [index-expr : Expr] [value : Expr]) : Expr
+(defmacro (members [T : type] [index-expr : Expr] [value : Expr]) : Expr
   (match index-expr
     [(ExprInt index)
       (if (>= index (struct-field-count T))
@@ -69,17 +66,14 @@
           [next-index : Expr (expr-int (+ index 1))]
           `(json.JsonMemberListCons
             ,field-key-expr
-            (stdlib.json_derive.json-derive-field-to-json
-              ,T
-              ,(expr-int index)
-              ,value)
-            (box (stdlib.json_derive.json-derive-members ,T ,next-index ,value)))))]
+            (stdlib.json_derive.field-to-json ,T ,(expr-int index) ,value)
+            (box (stdlib.json_derive.members ,T ,next-index ,value)))))]
     [_
       (comptime.comptime-error
         "json-derive: member index must be an integer literal")]))
 
 ;: Emit integer field parsing with generated range checks.
-(defmacro (json-derive-parse-int-field
+(defmacro (parse-int-field
   [T : type]
   [index-expr : Expr]
   [json-value : Expr]
@@ -144,7 +138,7 @@
         "json-derive: int parse index must be an integer literal")]))
 
 ;: Emit decode logic for one struct field.
-(defmacro (json-derive-parse-field
+(defmacro (parse-field
   [T : type]
   [index-expr : Expr]
   [value : Expr]
@@ -397,7 +391,7 @@
         "json-derive: parse index must be an integer literal")]))
 
 ;: Emit recursive decode logic for all struct fields.
-(defmacro (json-derive-parse-fields
+(defmacro (parse-fields
   [T : type]
   [index-expr : Expr]
   [value : Expr]
@@ -410,13 +404,13 @@
         (let
           [next-index : Expr (expr-int (+ index 1))]
           `(begin
-            (stdlib.json_derive.json-derive-parse-field
+            (stdlib.json_derive.parse-field
               ,T
               ,(expr-int index)
               ,value
               ,out
               ,err-ctor)
-            (stdlib.json_derive.json-derive-parse-fields
+            (stdlib.json_derive.parse-fields
               ,T
               ,next-index
               ,value
@@ -427,7 +421,7 @@
         "json-derive: parse-fields index must be an integer literal")]))
 
 ;: Emit derive imports needed for nested struct fields.
-(defmacro (json-derive-nested-imports [T : type] [index-expr : Expr]) : Decls
+(defmacro (nested-imports [T : type] [index-expr : Expr]) : Decls
   (match index-expr
     [(ExprInt index)
       (if (>= index (struct-field-count T))
@@ -443,9 +437,9 @@
                   (expr-var
                     (string-append "__json_nested_" (int->string index)))]
                 `(begin
-                  (stdlib.json_derive.json-derive-nested-imports ,T ,next-index)
+                  (stdlib.json_derive.nested-imports ,T ,next-index)
                   (import (json_derive.json-derive ,field-type) as ,nested-alias)))]
-            [_ `(stdlib.json_derive.json-derive-nested-imports ,T ,next-index)])))]
+            [_ `(stdlib.json_derive.nested-imports ,T ,next-index)])))]
     [_
       (comptime.comptime-error
         "json-derive: nested import index must be an integer literal")]))
@@ -467,7 +461,7 @@
           (import stdlib.json as json)
           (import stdlib.json_derive as json_derive)
           (import stdlib.string as string)
-          (json_derive.json-derive-nested-imports ,T 0)
+          (json_derive.nested-imports ,T 0)
           (defenum Result
             (Ok ,T)
             (Err String))
@@ -484,15 +478,14 @@
               [(Ok _) fallback]
               [(Err message) message]))
           (define (to-json [value : ,T]) : ,json-type
-            (json.JsonObject
-              (box (stdlib.json_derive.json-derive-members ,T 0 value))))
+            (json.JsonObject (box (stdlib.json_derive.members ,T 0 value))))
           (define (from-json [value : ,json-type]) : Result
             (match value
               [(json.JsonObject _)
                 (let
                   [__json_out : ,T (init : ,T)]
                   (begin
-                    (stdlib.json_derive.json-derive-parse-fields
+                    (stdlib.json_derive.parse-fields
                       ,T
                       0
                       value

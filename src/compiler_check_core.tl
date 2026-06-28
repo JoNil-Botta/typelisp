@@ -21,7 +21,7 @@
 (cfg
   compile-profile
   (define (compiler-check-profile-start) : unit
-    (set! compiler-check-profile-start-ms (profile.profile-now-ms))))
+    (set! compiler-check-profile-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -35,7 +35,7 @@
             "|"
             (string.string-append
               (string.int->string
-                (- (profile.profile-now-ms) compiler-check-profile-start-ms))
+                (- (profile.now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : SymI64Env
@@ -504,10 +504,10 @@
   "(import stdlib.profile)
 (define (main) : i64
   (begin
-    (profile.profile-alloc-reset-peak)
-    (+ (profile.profile-now-ms)
-       (+ (profile.profile-alloc-total)
-          (+ (profile.profile-alloc-live) (profile.profile-alloc-peak))))))")
+    (profile.alloc-reset-peak)
+    (+ (profile.now-ms)
+       (+ (profile.alloc-total)
+          (+ (profile.alloc-live) (profile.alloc-peak))))))")
 
 (define (compiler-check-private-dynamic-buffer-vector-source) : String
   "(import stdlib.vector)

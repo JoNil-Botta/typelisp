@@ -63,16 +63,16 @@
       result)))
 
 ;: Inline test helper that forces an IO caller-result test failure.
-(define (io-caller-result-test-fail) : unit
+(define (test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
 ;: Inline test assertion for owned string equality.
-(define (io-caller-result-test-string-eq [actual : String] [expected : String]) : unit
+(define (test-string-eq [actual : String] [expected : String]) : unit
   (if (string.string-eq actual expected)
     unit
-    (io-caller-result-test-fail)))
+    (test-fail)))
 
 (test
   io-caller-result-api
@@ -89,16 +89,12 @@
     (begin
       (if (read-file-or-result-borrowed? direct)
         unit
-        (io-caller-result-test-fail))
+        (test-fail))
       (if (read-file-or-result-owned? manual-owned)
         unit
-        (io-caller-result-test-fail))
+        (test-fail))
       (if (read-file-or-result-borrowed? manual-borrowed)
         unit
-        (io-caller-result-test-fail))
-      (io-caller-result-test-string-eq
-        (read-file-or-result-string direct)
-        "fallback")
-      (io-caller-result-test-string-eq
-        (read-file-or-result-string manual-owned)
-        "contents"))))
+        (test-fail))
+      (test-string-eq (read-file-or-result-string direct) "fallback")
+      (test-string-eq (read-file-or-result-string manual-owned) "contents"))))

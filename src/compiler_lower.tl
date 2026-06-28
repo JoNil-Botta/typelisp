@@ -481,20 +481,20 @@
   compile-profile
   (define (compiler-lower-profile-start) : unit
     (begin
-      (set! compiler-lower-profile-start-ms (profile.profile-now-ms))
-      (set! compiler-lower-profile-start-total (profile.profile-alloc-total))
-      (set! compiler-lower-profile-start-live (profile.profile-alloc-live))
-      (profile.profile-alloc-reset-peak))))
+      (set! compiler-lower-profile-start-ms (profile.now-ms))
+      (set! compiler-lower-profile-start-total (profile.alloc-total))
+      (set! compiler-lower-profile-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-lower-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile.profile-now-ms)]
-      [end-total : i64 (profile.profile-alloc-total)]
-      [end-live : i64 (profile.profile-alloc-live)]
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.profile-alloc-peak) compiler-lower-profile-start-live)]
+        (- (profile.alloc-peak) compiler-lower-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|lower."
@@ -516,7 +516,7 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-detail-start) : unit
-    (set! compiler-lower-profile-detail-start-ms (profile.profile-now-ms))))
+    (set! compiler-lower-profile-detail-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -525,7 +525,7 @@
     [name : String]) : unit
     (let
       [elapsed : i64
-        (- (profile.profile-now-ms) compiler-lower-profile-detail-start-ms)]
+        (- (profile.now-ms) compiler-lower-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -46627,10 +46627,10 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-dotted-import-string-call-source) : String
-  "(module pkg.string)
+  "(module `pkg.string-key)
 (define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (module pkg.args)
-(import pkg.string)
+(import `pkg.string-key)
 (defstruct ArgsOptionSpec (long String))
 (define (args-option-spec-long [spec : ArgsOptionSpec]) : String
   (struct-get spec long))
@@ -46646,7 +46646,9 @@
       (match lowered
         [(IrProgram _ functions _)
           (>
-            (lower-test-functions-call-count functions "pkg.string/string-eq")
+            (lower-test-functions-call-count
+              functions
+              "`pkg.string-key/string-eq")
             0)])]
     [(ErrCompilerLower _) false]))
 

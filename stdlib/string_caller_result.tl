@@ -117,18 +117,16 @@
         (string-replace-find-index text old)))))
 
 ;: Inline test helper that forces a caller-result string test failure.
-(define (string-caller-result-test-fail) : unit
+(define (test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
 ;: Inline test assertion for owned string equality.
-(define (string-caller-result-test-string-eq
-  [actual : String]
-  [expected : String]) : unit
+(define (test-string-eq [actual : String] [expected : String]) : unit
   (if (string.string-eq actual expected)
     unit
-    (string-caller-result-test-fail)))
+    (test-fail)))
 
 (test
   string-caller-result-api
@@ -153,22 +151,16 @@
     (begin
       (if (string-replace-result-borrowed? borrowed)
         unit
-        (string-caller-result-test-fail))
+        (test-fail))
       (if (string-replace-result-owned? owned-result)
         unit
-        (string-caller-result-test-fail))
-      (string-caller-result-test-string-eq
-        (string-replace-result-string borrowed)
-        "alpha")
-      (string-caller-result-test-string-eq
-        (string-replace-result-string owned-result)
-        "owned")
+        (test-fail))
+      (test-string-eq (string-replace-result-string borrowed) "alpha")
+      (test-string-eq (string-replace-result-string owned-result) "owned")
       (if (string-replace-result-borrowed? helper-borrowed)
         unit
-        (string-caller-result-test-fail))
+        (test-fail))
       (if (string-replace-result-owned? helper-owned)
         unit
-        (string-caller-result-test-fail))
-      (string-caller-result-test-string-eq
-        (string-replace-result-string helper-owned)
-        "alrena"))))
+        (test-fail))
+      (test-string-eq (string-replace-result-string helper-owned) "alrena"))))

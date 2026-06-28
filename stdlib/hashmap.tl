@@ -5,7 +5,7 @@
 ;# `HashMap<String,i64>` template chosen in #824/#825; this module requests
 ;# generated `StringStringMap`, `I64I64Map`, and `I64StringMap` families with the same
 ;# representation and API shape. String-key maps use the same string hash and
-;# equality rules as `hash-string`; i64-key maps normalize the scalar key
+;# equality rules as `hash.string-key`; i64-key maps normalize the scalar key
 ;# directly and compare with `=`.
 ;#
 ;# Public constructors and resizing round capacities up to a positive power of
@@ -26,11 +26,11 @@
 ;#
 ;# `stdlib/hashmap-family` generation keys include a key descriptor identity in
 ;# addition to key and value `type-key` strings. The built-in descriptors are:
-;# - `stdlib/hashmap/string-key-v1`: owned `String` keys, `hash-string`,
-;#   `hash-key-string-eq?`, borrowed key lookup/contains/remove wrappers, and
+;# - `stdlib/hashmap/string-key-v1`: owned `String` keys, `hash.string-key`,
+;#   `hash.key-string-eq?`, borrowed key lookup/contains/remove wrappers, and
 ;#   borrowed value lookup results tied to the map lifetime.
-;# - `stdlib/hashmap/i64-key-v1`: scalar `i64` keys, `hash-i64`,
-;#   `hash-key-i64-eq?`, no borrowed-key wrappers, and generated borrowed
+;# - `stdlib/hashmap/i64-key-v1`: scalar `i64` keys, `hash.i64`,
+;#   `hash.key-i64-eq?`, no borrowed-key wrappers, and generated borrowed
 ;#   value lookup results tied to the map lifetime.
 ;# - `stdlib/hashmap/aggregate-key-v1`: owned nominal struct/enum keys. Hashing
 ;#   and equality are derived from supported fields/payloads in declaration
@@ -764,7 +764,7 @@
 ;: `capacity` must be positive; the result is in `[0, capacity)`.
 (define (string-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
   (stdlib.hashmap.string-i64-map-normalized-bucket-index
-    (hash_mod.hash-normalize hash)
+    (hash_mod.normalize hash)
     capacity))
 
 ;: Advance a bucket index by one slot, wrapping around the table.
@@ -831,7 +831,7 @@
                 (set! walked (+ walked 1))))]
           [(StringI64MapOccupied slot-key _ slot-hash)
             (if (if (= slot-hash hash)
-              (hash_mod.hash-key-string-eq? (& slot-key) (& key))
+              (hash_mod.key-string-eq? (& slot-key) (& key))
               false)
               (return (StringI64MapProbeFound cursor))
               (let
@@ -849,7 +849,7 @@
 
 ;: Probe `slots` (a `capacity`-length open-addressing table) for `key` with the
 ;: precomputed `hash`. Returns where the key lives (`Found`), where it could be
-;: inserted (`Absent`), or `Full`. Callers compute `hash` with `hash-string`.
+;: inserted (`Absent`), or `Full`. Callers compute `hash` with `hash.string-key`.
 (define (string-i64-map-probe
   [slots : (Array StringI64MapSlot)]
   [capacity : i64]
@@ -894,7 +894,7 @@
                 (set! walked (+ walked 1))))]
           [(StringI64MapOccupied slot-key _ slot-hash)
             (if (if (= slot-hash hash)
-              (hash_mod.hash-key-string-eq? (& slot-key) key)
+              (hash_mod.key-string-eq? (& slot-key) key)
               false)
               (return (StringI64MapProbeFound cursor))
               (let
@@ -927,7 +927,7 @@
       0
       -1)))
 
-;: Probe when `hash` is already normalized, as produced by `hash-string` or
+;: Probe when `hash` is already normalized, as produced by `hash.string-key` or
 ;: copied from an occupied slot.
 (define (string-i64-map-probe-normalized
   [slots : (Array StringI64MapSlot)]
@@ -1075,7 +1075,7 @@
     (if (<= capacity 0)
       (StringI64MapMissing)
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1095,7 +1095,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key value slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (return (StringI64MapFound value))
                   (let
@@ -1122,7 +1122,7 @@
     (if (<= capacity 0)
       (StringI64MapMissing)
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1142,7 +1142,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key value slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (return (StringI64MapFound value))
                   (let
@@ -1167,7 +1167,7 @@
     (if (<= capacity 0)
       (StringI64MapMissing)
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1187,7 +1187,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key value slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (return (StringI64MapFound value))
                   (let
@@ -1227,7 +1227,7 @@
     (if (<= capacity 0)
       (stdlib.hashmap.string-i64-map-borrowed-value-missing map)
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1249,7 +1249,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (match (& (array-ref (struct-get map slots) cursor))
                     [(StringI64MapOccupied _ value _)
@@ -1285,7 +1285,7 @@
     (if (<= capacity 0)
       false
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1305,7 +1305,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (return true)
                   (let
@@ -1341,7 +1341,7 @@
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     [capacity : i64 (array-length slots)]
-    [hash : i64 (hash_mod.hash-string (& key))]
+    [hash : i64 (hash_mod.string-key (& key))]
     (if (<= capacity 0)
       (StringI64MapInsertFull map)
       (let
@@ -1387,7 +1387,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) (& key))
+                  (hash_mod.key-string-eq? (& slot-key) (& key))
                   false)
                   (begin
                     (array-set!
@@ -1431,7 +1431,7 @@
     (if (<= capacity 0)
       (StringI64MapRemoveMissing map)
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1451,7 +1451,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (begin
                     (array-set! slots cursor (StringI64MapTombstone))
@@ -1485,7 +1485,7 @@
   [value : i64]) : StringI64MapUpdateResult
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [hash : i64 (hash_mod.hash-string key)]
+    [hash : i64 (hash_mod.string-key key)]
     (match (stdlib.hashmap.string-i64-map-probe-borrowed
       slots
       (stdlib.hashmap.string-i64-map-capacity map)
@@ -1523,7 +1523,7 @@
     (if (<= capacity 0)
       false
       (let
-        [hash : i64 (hash_mod.hash-string key)]
+        [hash : i64 (hash_mod.string-key key)]
         [cursor : i64
           (stdlib.hashmap.string-i64-map-normalized-bucket-index hash capacity)]
         [walked : i64 0]
@@ -1543,7 +1543,7 @@
                     (set! walked (+ walked 1))))]
               [(StringI64MapOccupied slot-key _ slot-hash)
                 (if (if (= slot-hash hash)
-                  (hash_mod.hash-key-string-eq? (& slot-key) key)
+                  (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (begin
                     (array-set! slots cursor (StringI64MapTombstone))
@@ -1783,7 +1783,7 @@
       [slots : (&mut map (Array StringI64MapSlot))
         (stdlib.hashmap.string-i64-map-slots-mut map)]
       [capacity : i64 (array-length slots)]
-      [hash : i64 (hash_mod.hash-string (& key))]
+      [hash : i64 (hash_mod.string-key (& key))]
       (if (<= capacity 0)
         unit
         (let
@@ -1830,7 +1830,7 @@
                       (set! walked (+ walked 1))))]
                 [(StringI64MapOccupied slot-key _ slot-hash)
                   (if (if (= slot-hash hash)
-                    (hash_mod.hash-key-string-eq? (& slot-key) (& key))
+                    (hash_mod.key-string-eq? (& slot-key) (& key))
                     false)
                     (begin
                       (array-set! slots cursor (StringI64MapTombstone))
@@ -1871,7 +1871,7 @@
   [default-value : i64]) : StringI64MapEntryOrInsertResult
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [hash : i64 (hash_mod.hash-string (& key))]
+    [hash : i64 (hash_mod.string-key (& key))]
     (match (stdlib.hashmap.string-i64-map-probe-borrowed
       slots
       (stdlib.hashmap.string-i64-map-capacity map)
@@ -1911,7 +1911,7 @@
   (if (<= capacity 0)
     (StringI64MapMutEntryInfo -1 false "" 0)
     (let
-      [hash : i64 (hash_mod.hash-string key)]
+      [hash : i64 (hash_mod.string-key key)]
       [cursor : i64 (stdlib.hashmap.string-i64-map-bucket-index hash capacity)]
       [walked : i64 0]
       [found : i64 -1]
@@ -1924,7 +1924,7 @@
           (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
             [(StringI64MapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
-                (hash_mod.hash-key-string-eq? (& slot-key) key)
+                (hash_mod.key-string-eq? (& slot-key) key)
                 false)
                 (begin
                   (set! found cursor)
@@ -1954,7 +1954,7 @@
   (if (<= capacity 0)
     (StringI64MapMutEntryInfo -1 false "" 0)
     (let
-      [hash : i64 (hash_mod.hash-string key)]
+      [hash : i64 (hash_mod.string-key key)]
       [cursor : i64 (stdlib.hashmap.string-i64-map-bucket-index hash capacity)]
       [walked : i64 0]
       [found : i64 -1]
@@ -1967,7 +1967,7 @@
           (match (array-ref slots cursor)
             [(StringI64MapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
-                (hash_mod.hash-key-string-eq? (& slot-key) key)
+                (hash_mod.key-string-eq? (& slot-key) key)
                 false)
                 (begin
                   (set! found cursor)

@@ -1195,17 +1195,17 @@
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
   (match items
-    [(AstLifetimeNil) (hash.hash-combine seed 11)]
+    [(AstLifetimeNil) (hash.combine seed 11)]
     [(AstLifetimeCons name rest)
       (ty-lifetime-list-hash
         (box-get rest)
-        (hash.hash-combine seed (hash.hash-string (& name))))]))
+        (hash.combine seed (hash.string-key (& name))))]))
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
   (match items
-    [(AstTypeNil) (hash.hash-combine seed 13)]
+    [(AstTypeNil) (hash.combine seed 13)]
     [(AstTypeCons id rest)
-      (ty-type-list-hash (box-get rest) (hash.hash-combine seed id))]))
+      (ty-type-list-hash (box-get rest) (hash.combine seed id))]))
 
 (define (ty-node-hash-value [node : AstType]) : i64
   (match node
@@ -1229,35 +1229,28 @@
     [(AstTyExpr) 17]
     [(AstTyExprList) 18]
     [(AstTyFunc args ret)
-      (hash.hash-combine (ty-type-list-hash (box-get args) 19) ret)]
+      (hash.combine (ty-type-list-hash (box-get args) 19) ret)]
     [(AstTyTuple elems) (ty-type-list-hash (box-get elems) 20)]
-    [(AstTyArray elem count)
-      (hash.hash-combine (hash.hash-combine 21 elem) count)]
-    [(AstTyDynArray elem) (hash.hash-combine 22 elem)]
-    [(AstTyBox inner) (hash.hash-combine 23 inner)]
+    [(AstTyArray elem count) (hash.combine (hash.combine 21 elem) count)]
+    [(AstTyDynArray elem) (hash.combine 22 elem)]
+    [(AstTyBox inner) (hash.combine 23 inner)]
     [(AstTyRegion name inner)
-      (hash.hash-combine
-        (hash.hash-combine 24 (hash.hash-string (& name)))
-        inner)]
+      (hash.combine (hash.combine 24 (hash.string-key (& name))) inner)]
     [(AstTyRef name inner)
-      (hash.hash-combine
-        (hash.hash-combine 25 (hash.hash-string (& name)))
-        inner)]
+      (hash.combine (hash.combine 25 (hash.string-key (& name))) inner)]
     [(AstTyMutRef name inner)
-      (hash.hash-combine
-        (hash.hash-combine 26 (hash.hash-string (& name)))
-        inner)]
-    [(AstTyEnum name) (hash.hash-combine 27 name)]
+      (hash.combine (hash.combine 26 (hash.string-key (& name))) inner)]
+    [(AstTyEnum name) (hash.combine 27 name)]
     [(AstTyEnumArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash.hash-combine 28 name))]
-    [(AstTyStruct name) (hash.hash-combine 29 name)]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 28 name))]
+    [(AstTyStruct name) (hash.combine 29 name)]
     [(AstTyStructArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash.hash-combine 30 name))]
-    [(AstTyVar name) (hash.hash-combine 31 name)]
+      (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 30 name))]
+    [(AstTyVar name) (hash.combine 31 name)]
     [(AstTyVarArgs name lifetimes)
-      (ty-lifetime-list-hash (box-get lifetimes) (hash.hash-combine 32 name))]
-    [(AstTyPtr inner) (hash.hash-combine 33 inner)]
-    [(AstTyMutPtr inner) (hash.hash-combine 34 inner)]))
+      (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 32 name))]
+    [(AstTyPtr inner) (hash.combine 33 inner)]
+    [(AstTyMutPtr inner) (hash.combine 34 inner)]))
 
 (define (ty-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a

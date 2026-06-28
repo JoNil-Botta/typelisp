@@ -26116,7 +26116,7 @@
             (< (array-ref compiler-backend-scavenge-ctx-starts v) point)
             (< point (array-ref compiler-backend-scavenge-ctx-ends v))
             (compiler-backend-scavenge-var-holds?
-              compiler-backend-scavenge-ctx-assignments
+              compiler-backend-scavenge-ctx-assignment-index
               v
               reg))
             (set! hit true)
@@ -26207,7 +26207,7 @@
                     (compiler-backend-scavenge-check-instr
                       compiler-backend-scavenge-ctx-starts
                       compiler-backend-scavenge-ctx-ends
-                      compiler-backend-scavenge-ctx-assignments
+                      compiler-backend-scavenge-ctx-assignment-index
                       compiler-backend-scavenge-ctx-vars
                       function
                       (*
@@ -26924,11 +26924,10 @@
     ""))
 
 ;; ============================================================================
-;; Register scavenger -- STEP 1: a per-instruction FREE-REGISTER query computed
-;; on the FINAL post-rewrite IR (emit-blocks-list + assignments + slot-vars),
-;; built and self-checked behind --cfg scavenge-self-check but NOT yet used in
-;; emission (a normal build is byte-identical). The query is the foundation for
-;; handing the backend a guaranteed-free register instead of a fixed scratch.
+;; Register scavenger -- per-instruction occupied-register masks computed on the
+;; FINAL post-rewrite IR (emit-blocks-list + assignments + slot-vars). The
+;; backend uses this query to pick allocator-owned scratch registers, and
+;; --cfg scavenge-self-check verifies the masks against liveness.
 ;;
 ;; Point space matches compiler-reg-live-intervals EXACTLY: the global I-th
 ;; emitted instruction (block-list order, then instr-seq order) lives at point
@@ -26936,10 +26935,10 @@
 ;; by construction; the checks below catch any divergence loudly via panic.
 ;; Does var v occupy `reg` (the register itself, or either half of a pair)?
 (define (compiler-backend-scavenge-var-holds?
-  [assignments : CompilerRegAssignmentList]
+  [assignment-index : CompilerRegAssignmentIndex]
   [v : i64]
   [reg : String]) : bool
-  (match (compiler-reg-assignment-lookup assignments v)
+  (match (compiler-reg-assignment-index-lookup assignment-index v)
     [(CompilerRegSomeLocation loc)
       (match loc
         [(CompilerRegRegister home) (string-eq home reg)]
@@ -26948,57 +26947,289 @@
         [(CompilerRegRemat _) false])]
     [(CompilerRegNoLocation) false]))
 
-;; free-at-point? : is `reg` free at `point` (= 2*instruction-index)? Conservative
-;; via the coarse interval -- free iff NO var whose live interval contains `point`
-;; is assigned `reg`. Never reports free when a live var holds it -> sound.
-(define (compiler-backend-scavenge-free-at-point?
-  [starts : (Array i64)]
+(define (compiler-backend-scavenge-reg-bit [reg : String]) : i64
+  (cond
+    [(string-eq reg "%r9") 1]
+    [(string-eq reg "%rcx") 2]
+    [(string-eq reg "%rdx") 4]
+    [(string-eq reg "%r10") 8]
+    [(string-eq reg "%r11") 16]
+    [(string-eq reg "%r8") 32]
+    [(string-eq reg "%r12") 64]
+    [(string-eq reg "%r13") 128]
+    [(string-eq reg "%r14") 256]
+    [(string-eq reg "%r15") 512]
+    [(string-eq reg "%rbx") 1024]
+    [(string-eq reg "%xmm2") 2048]
+    [(string-eq reg "%xmm3") 4096]
+    [(string-eq reg "%xmm4") 8192]
+    [(string-eq reg "%xmm5") 16384]
+    [else 0]))
+
+(define compiler-backend-scavenge-all-reg-mask : i64
+  32767)
+
+(define (compiler-backend-scavenge-location-mask
+  [location : CompilerRegLocation]) : i64
+  (match location
+    [(CompilerRegRegister reg) (compiler-backend-scavenge-reg-bit reg)]
+    [(CompilerRegRegisterPair a b)
+      (bit-or
+        (compiler-backend-scavenge-reg-bit a)
+        (compiler-backend-scavenge-reg-bit b))]
+    [_ 0]))
+
+(define (compiler-backend-scavenge-exclude-mask
+  [exclude : (Array String)]
+  [n : i64]) : i64
+  (let
+    [i : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set!
+            mask
+            (bit-or
+              mask
+              (compiler-backend-scavenge-reg-bit (array-ref exclude i))))
+          (set! i (+ i 1))))
+      mask)))
+
+(define (compiler-backend-scavenge-occupancy-instr-count
   [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
-  [reg : String]) : bool
+  [vars : i64]) : i64
   (let
     [v : i64 0]
-    [free : bool true]
+    [max-end : i64 0]
     (begin
-      (while (and (< v vars) free)
+      (while (< v vars)
         (begin
-          (if (and
-            (>= (array-ref starts v) 0)
-            (<= (array-ref starts v) point)
-            (<= point (array-ref ends v))
-            (compiler-backend-scavenge-var-holds? assignments v reg))
-            (set! free false)
+          (if (>= (array-ref ends v) 0)
+            (let
+              [end-i : i64 (/ (array-ref ends v) 2)]
+              (if (> end-i max-end)
+                (set! max-end end-i)
+                unit))
             unit)
           (set! v (+ v 1))))
-      free)))
+      (+ max-end 1))))
 
-;; Scratch registers are live for the whole emitted instruction, not just its
-;; operand-use coordinate. The interval builder records direct uses/defs at P
-;; and live-through values at P+1, so a scratch must be free at both coordinates.
-(define (compiler-backend-scavenge-free-for-instr?
+(define (compiler-backend-scavenge-occupancy-add-range!
+  [adds : (Array i64)]
+  [removes : (Array i64)]
+  [start-i : i64]
+  [end-i : i64]
+  [mask : i64]) : unit
+  (begin
+    (array-set! adds start-i (bit-or (array-ref adds start-i) mask))
+    (array-set!
+      removes
+      (+ end-i 1)
+      (bit-or (array-ref removes (+ end-i 1)) mask))))
+
+(define (compiler-backend-scavenge-occupancy-build
   [starts : (Array i64)]
   [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [vars : i64]) : (Array i64)
+  (let
+    [instr-count : i64
+      (compiler-backend-scavenge-occupancy-instr-count ends vars)]
+    [event-count : i64 (+ instr-count 1)]
+    [adds : (Array i64) (make-array i64 event-count)]
+    [removes : (Array i64) (make-array i64 event-count)]
+    [out : (Array i64) (make-array i64 instr-count)]
+    [present : (Array i64) (struct-get assignment-index present)]
+    [items : (Array CompilerRegLocation) (struct-get assignment-index items)]
+    [limit : i64 (array-length present)]
+    [v : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array adds 0)
+      (compiler-reg-fill-i64-array removes 0)
+      (compiler-reg-fill-i64-array out 0)
+      (while (< v vars)
+        (begin
+          (if (and
+            (< v limit)
+            (not (= (array-ref present v) 0))
+            (>= (array-ref starts v) 0)
+            (>= (array-ref ends v) 0))
+            (let
+              [loc-mask : i64
+                (compiler-backend-scavenge-location-mask (array-ref items v))]
+              [start-i : i64 (/ (array-ref starts v) 2)]
+              [raw-end-i : i64 (/ (array-ref ends v) 2)]
+              [end-i : i64
+                (if (>= raw-end-i instr-count)
+                  (- instr-count 1)
+                  raw-end-i)]
+              (if (and (not (= loc-mask 0)) (<= start-i end-i))
+                (compiler-backend-scavenge-occupancy-add-range!
+                  adds
+                  removes
+                  start-i
+                  end-i
+                  loc-mask)
+                unit))
+            unit)
+          (set! v (+ v 1))))
+      (let
+        [i : i64 0]
+        [active : i64 0]
+        (begin
+          (while (< i instr-count)
+            (begin
+              (set!
+                active
+                (bit-and
+                  active
+                  (bit-xor
+                    compiler-backend-scavenge-all-reg-mask
+                    (array-ref removes i))))
+              (set! active (bit-or active (array-ref adds i)))
+              (array-set! out i active)
+              (set! i (+ i 1))))
+          out)))))
+
+(define (compiler-backend-scavenge-reg-free-in-mask?
+  [occupied-mask : i64]
   [reg : String]) : bool
-  (and
-    (compiler-backend-scavenge-free-at-point?
-      starts
-      ends
-      assignments
-      vars
-      point
-      reg)
-    (compiler-backend-scavenge-free-at-point?
-      starts
-      ends
-      assignments
-      vars
-      (+ point 1)
-      reg)))
+  (= (bit-and occupied-mask (compiler-backend-scavenge-reg-bit reg)) 0))
+
+(define (compiler-backend-var-register-home-index
+  [assignment-index : CompilerRegAssignmentIndex]
+  [var : i64]) : String
+  (match (compiler-reg-assignment-index-lookup assignment-index var)
+    [(CompilerRegSomeLocation location)
+      (match location
+        [(CompilerRegRegister r) r]
+        [(CompilerRegRegisterPair r _) r]
+        [_ ""])]
+    [_ ""]))
+
+(defstruct CompilerBackendScavengeAssignmentIndex
+  (index CompilerRegAssignmentIndex)
+  (plan-mask i64))
+
+(define (compiler-backend-scavenge-assignment-index-fill!
+  [assignments : CompilerRegAssignmentList]
+  [present : (Array i64)]
+  [items : (Array CompilerRegLocation)]
+  [mask : i64]) : i64
+  (match assignments
+    [(CompilerRegAssignmentNil) mask]
+    [(CompilerRegAssignmentCons item rest)
+      (match item
+        [(CompilerRegAssignment var location)
+          (compiler-backend-scavenge-assignment-index-fill!
+            (box-get rest)
+            present
+            items
+            (if (or
+              (< var 0)
+              (>= var (array-length present))
+              (not (= (array-ref present var) 0)))
+              mask
+              (let
+                [loc-mask : i64
+                  (compiler-backend-scavenge-location-mask location)]
+                (begin
+                  (array-set! present var 1)
+                  (array-set! items var location)
+                  (bit-or mask loc-mask)))))])]))
+
+(define (compiler-backend-scavenge-assignment-index-build
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : CompilerBackendScavengeAssignmentIndex
+  (let
+    [n : i64
+      (if (< vars 1)
+        1
+        vars)]
+    [present : (Array i64) (make-array i64 n)]
+    [items : (Array CompilerRegLocation) (make-array CompilerRegLocation n)]
+    (begin
+      (compiler-reg-fill-i64-array present 0)
+      (compiler-reg-fill-location-array items (CompilerRegSpill 0))
+      (let
+        [plan-mask : i64
+          (compiler-backend-scavenge-assignment-index-fill!
+            assignments
+            present
+            items
+            0)]
+        (CompilerBackendScavengeAssignmentIndex
+          (CompilerRegAssignmentIndex present items)
+          plan-mask)))))
+
+(define (compiler-backend-scavenge-remap-intervals
+  [remap : (Array i64)]
+  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
+  (match intervals
+    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
+    [(CompilerRegIntervalCons item rest)
+      (match item
+        [(CompilerRegInterval var start end)
+          (let
+            [new-var : i64 (compiler-reg-remap-id remap var)]
+            [tail : CompilerRegIntervalList
+              (compiler-backend-scavenge-remap-intervals remap (box-get rest))]
+            (if (< new-var 0)
+              tail
+              (compiler-reg-interval-cons
+                (CompilerRegInterval new-var start end)
+                tail)))])]))
+
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-free-at-point?
+    [starts : (Array i64)]
+    [ends : (Array i64)]
+    [assignment-index : CompilerRegAssignmentIndex]
+    [vars : i64]
+    [point : i64]
+    [reg : String]) : bool
+    (let
+      [v : i64 0]
+      [free : bool true]
+      (begin
+        (while (and (< v vars) free)
+          (begin
+            (if (and
+              (>= (array-ref starts v) 0)
+              (<= (array-ref starts v) point)
+              (<= point (array-ref ends v))
+              (compiler-backend-scavenge-var-holds? assignment-index v reg))
+              (set! free false)
+              unit)
+            (set! v (+ v 1))))
+        free))))
+
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-free-for-instr?
+    [starts : (Array i64)]
+    [ends : (Array i64)]
+    [assignment-index : CompilerRegAssignmentIndex]
+    [vars : i64]
+    [point : i64]
+    [reg : String]) : bool
+    (and
+      (compiler-backend-scavenge-free-at-point?
+        starts
+        ends
+        assignment-index
+        vars
+        point
+        reg)
+      (compiler-backend-scavenge-free-at-point?
+        starts
+        ends
+        assignment-index
+        vars
+        (+ point 1)
+        reg))))
 
 ;; Register scavenger context (step 15b). Holds the FINAL-IR per-var live
 ;; intervals + assignments for the function currently being emitted, so the
@@ -27012,88 +27243,126 @@
 (define (compiler-backend-scavenge-empty-assignments) : CompilerRegAssignmentList
   CompilerRegAssignmentNil)
 
-(define compiler-backend-scavenge-ctx-assignments : CompilerRegAssignmentList
-  (compiler-backend-scavenge-empty-assignments))
+(define compiler-backend-scavenge-ctx-assignment-index : CompilerRegAssignmentIndex
+  (compiler-reg-assignment-index-build
+    (compiler-backend-scavenge-empty-assignments)
+    1))
+(define compiler-backend-scavenge-ctx-plan-reg-mask : i64
+  0)
+(define compiler-backend-scavenge-ctx-occupied-masks : (Array i64)
+  (make-array i64 1))
 (define compiler-backend-scavenge-ctx-vars : i64
   0)
+
+(define (compiler-backend-scavenge-occupied-mask-at-point [point : i64]) : i64
+  (let
+    [masks : (Array i64) compiler-backend-scavenge-ctx-occupied-masks]
+    [idx : i64
+      (if (< point 0)
+        -1
+        (/ point 2))]
+    (if (and (>= idx 0) (< idx (array-length masks)))
+      (array-ref masks idx)
+      0)))
+
+(define (compiler-backend-set-scavenge-ctx-ready!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [plan-mask : i64]
+  [occupied-masks : (Array i64)]
+  [vars : i64]) : unit
+  (begin
+    (set! compiler-backend-scavenge-ctx-starts starts)
+    (set! compiler-backend-scavenge-ctx-ends ends)
+    (set! compiler-backend-scavenge-ctx-assignment-index assignment-index)
+    (set! compiler-backend-scavenge-ctx-plan-reg-mask plan-mask)
+    (set! compiler-backend-scavenge-ctx-occupied-masks occupied-masks)
+    (set! compiler-backend-scavenge-ctx-vars vars)))
+
+(define (compiler-backend-set-scavenge-ctx-index!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [plan-mask : i64]
+  [vars : i64]) : unit
+  (let
+    [occupied-masks : (Array i64)
+      (compiler-backend-scavenge-occupancy-build
+        starts
+        ends
+        assignment-index
+        vars)]
+    (compiler-backend-set-scavenge-ctx-ready!
+      starts
+      ends
+      assignment-index
+      plan-mask
+      occupied-masks
+      vars)))
 
 (define (compiler-backend-set-scavenge-ctx!
   [starts : (Array i64)]
   [ends : (Array i64)]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : unit
-  (begin
-    (set! compiler-backend-scavenge-ctx-starts starts)
-    (set! compiler-backend-scavenge-ctx-ends ends)
-    (set! compiler-backend-scavenge-ctx-assignments assignments)
-    (set! compiler-backend-scavenge-ctx-vars vars)))
-
-;; #FOUNDATION: seed each block's live-IN at its ENTRY point. The shared coarse
-;; interval build (compiler-reg-live-intervals-blocks-with-live, also used by the
-;; AVX plan so it must stay byte-identical) extends a value's interval to
-;; `point+1` when it is live-AFTER an instruction, but never seeds a block's
-;; live-IN at the block's FIRST point. A value live into a block that its first
-;; instruction does not use -- a parameter at the entry block (live in its ABI
-;; register from function entry), or a loop-carried value at a loop header
-;; reached by a back-edge -- therefore has a GAP at the block's entry point, and
-;; the scavenge free-register query FALSE-FREES its register there, clobbering a
-;; call-spanning / loop-carried value. This pass closes the gap by extending the
-;; first instruction's live-after set to the entry point (its uses + defs are
-;; already marked there by the main build, so the live-in is then fully covered).
-;; Sound: it only ever EXTENDS an interval, never shrinks one. The point walk
-;; mirrors compiler-reg-live-intervals-blocks-with-live EXACTLY (+2 per instr,
-;; IrBlockArray flattened first) so the entry points line up.
-(define (compiler-backend-scavenge-seed-block-liveins
-  [blocks : CompilerIrBlockList]
-  [liveness : CompilerFunctionLiveness]
-  [point : i64]
-  [starts : (Array i64)]
-  [ends : (Array i64)]) : i64
-  (match blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock label instrs)
-          (let
-            [live-afters : CompilerLiveInstrSetVec
-              (compiler-reg-live-intervals-find-afters liveness label)]
-            [after-items : (Array CompilerLiveI64Set)
-              (struct-get live-afters items)]
-            [count : i64 (struct-get instrs len)]
-            (begin
-              (if (> count 0)
-                (compiler-reg-extend-set-words
-                  starts
-                  ends
-                  (if (> (array-length after-items) 0)
-                    (array-ref after-items 0)
-                    (compiler-live-set-empty))
-                  0
-                  point)
-                unit)
-              (compiler-backend-scavenge-seed-block-liveins
-                (box-get rest)
-                liveness
-                (+ point (* 2 count))
-                starts
-                ends)))])]
-    [(IrBlockArray seq)
-      (compiler-backend-scavenge-seed-block-liveins
-        (compiler-ir-block-seq-to-list seq)
-        liveness
-        point
+  (match (compiler-backend-scavenge-assignment-index-build assignments vars)
+    [(CompilerBackendScavengeAssignmentIndex assignment-index plan-mask)
+      (compiler-backend-set-scavenge-ctx-index!
         starts
-        ends)]))
+        ends
+        assignment-index
+        plan-mask
+        vars)]))
 
-;; Same interval build as scavenge-self-check, installed UNCONDITIONALLY so the
-;; scavenge hook can read it during emission. Read-only -> no codegen change.
-(define (compiler-backend-scavenge-install-ctx!
-  [name : String]
-  [params : CompilerIrParamList]
-  [ret-ty : AstType]
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-seed-block-liveins
+    [blocks : CompilerIrBlockList]
+    [liveness : CompilerFunctionLiveness]
+    [point : i64]
+    [starts : (Array i64)]
+    [ends : (Array i64)]) : i64
+    (match blocks
+      [(IrBlockNil) point]
+      [(IrBlockCons block rest)
+        (match block
+          [(IrBlock label instrs)
+            (let
+              [live-afters : CompilerLiveInstrSetVec
+                (compiler-reg-live-intervals-find-afters liveness label)]
+              [after-items : (Array CompilerLiveI64Set)
+                (struct-get live-afters items)]
+              [count : i64 (struct-get instrs len)]
+              (begin
+                (if (> count 0)
+                  (compiler-reg-extend-set-words
+                    starts
+                    ends
+                    (if (> (array-length after-items) 0)
+                      (array-ref after-items 0)
+                      (compiler-live-set-empty))
+                    0
+                    point)
+                  unit)
+                (compiler-backend-scavenge-seed-block-liveins
+                  (box-get rest)
+                  liveness
+                  (+ point (* 2 count))
+                  starts
+                  ends)))])]
+      [(IrBlockArray seq)
+        (compiler-backend-scavenge-seed-block-liveins
+          (compiler-ir-block-seq-to-list seq)
+          liveness
+          point
+          starts
+          ends)])))
+
+(define (compiler-backend-scavenge-install-ctx-from-intervals!
   [slot-vars : i64]
-  [emit-blocks : CompilerIrBlockList]
-  [assignments : CompilerRegAssignmentList]) : unit
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalList]) : unit
   (begin
     (set! compiler-backend-emit-instr-post-base 0)
     (compiler-backend-scavenge-reset-callee!)
@@ -27103,29 +27372,26 @@
         (make-array i64 1)
         assignments
         0)
-      (let
-        [func : CompilerIrFunction
-          (IrFunction name params ret-ty slot-vars emit-blocks)]
-        [liveness : CompilerFunctionLiveness
-          (compiler-live-analyze-function func)]
-        [starts : (Array i64) (make-array i64 slot-vars)]
-        [ends : (Array i64) (make-array i64 slot-vars)]
-        (begin
-          (compiler-reg-fill-i64-array starts -1)
-          (compiler-reg-fill-i64-array ends -1)
-          (compiler-reg-live-intervals-blocks-with-live
-            emit-blocks
-            liveness
-            0
-            starts
-            ends)
-          (compiler-backend-scavenge-seed-block-liveins
-            emit-blocks
-            liveness
-            0
-            starts
-            ends)
-          (compiler-backend-set-scavenge-ctx! starts ends assignments slot-vars))))))
+      (match (compiler-backend-scavenge-assignment-index-build
+        assignments
+        slot-vars)
+        [(CompilerBackendScavengeAssignmentIndex assignment-index plan-mask)
+          (let
+            [interval-index : CompilerRegIntervalIndex
+              (compiler-reg-interval-index-build intervals slot-vars)]
+            [starts : (Array i64) (struct-get interval-index starts)]
+            [ends : (Array i64) (struct-get interval-index ends)]
+            (compiler-backend-set-scavenge-ctx-ready!
+              starts
+              ends
+              assignment-index
+              plan-mask
+              (compiler-backend-scavenge-occupancy-build
+                starts
+                ends
+                assignment-index
+                slot-vars)
+              slot-vars))]))))
 
 (define (compiler-backend-scavenge-excluded?
   [exclude : (Array String)]
@@ -27339,12 +27605,18 @@
       (array-set! a 10 "%rbx")
       a)))
 
+(define compiler-backend-scavenge-candidate-pool : (Array String)
+  (compiler-backend-scavenge-candidates))
+
 (define (compiler-backend-scavenge-rcx-candidates) : (Array String)
   (let
     [a : (Array String) (make-array String 1)]
     (begin
       (array-set! a 0 "%rcx")
       a)))
+
+(define compiler-backend-scavenge-rcx-candidate-pool : (Array String)
+  (compiler-backend-scavenge-rcx-candidates))
 
 (define (compiler-backend-scavenge-xmm-candidates) : (Array String)
   (let
@@ -27355,6 +27627,9 @@
       (array-set! a 2 "%xmm4")
       (array-set! a 3 "%xmm5")
       a)))
+
+(define compiler-backend-scavenge-xmm-candidate-pool : (Array String)
+  (compiler-backend-scavenge-xmm-candidates))
 
 (define (compiler-backend-callee-saved-reg? [reg : String]) : bool
   (or
@@ -27382,26 +27657,19 @@
 ;; callee register the allocator already pays to preserve, used as scratch only
 ;; where the freeness query certifies no live value occupies it.
 (define (compiler-backend-scavenge-candidate-ok?
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
-  [exclude : (Array String)]
-  [exclude-n : i64]
+  [occupied-mask : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
   [reg : String]) : bool
-  (and
-    (not (compiler-backend-scavenge-excluded? exclude exclude-n reg))
-    (or
-      (not (compiler-backend-callee-saved-reg? reg))
-      (compiler-backend-plan-uses-reg? assignments reg))
-    (compiler-backend-scavenge-free-for-instr?
-      starts
-      ends
-      assignments
-      vars
-      point
-      reg)))
+  (let
+    [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
+    (and
+      (not (= bit 0))
+      (= (bit-and exclude-mask bit) 0)
+      (or
+        (not (compiler-backend-callee-saved-reg? reg))
+        (not (= (bit-and plan-mask bit) 0)))
+      (= (bit-and occupied-mask bit) 0))))
 
 ;; Emergency scratch register when no candidate is free. Soundness rule: the
 ;; chosen reg's held value must NOT be an operand of the instruction -- emergency-
@@ -27419,25 +27687,16 @@
 ;; superset(5)+a few operand homes vs candidate count) -> fallback last resort.
 ;; Returns the first non-excluded candidate index, or -1 = "use the fallback".
 (define (compiler-backend-scavenge-emergency-cand-index
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
   [exclude : (Array String)]
   [exclude-n : i64]
+  [exclude-mask : i64]
+  [occupied-mask : i64]
   [fallback : String]
   [cands : (Array String)]
   [n : i64]) : i64
   (if (and
     (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-    (compiler-backend-scavenge-free-for-instr?
-      starts
-      ends
-      assignments
-      vars
-      point
-      fallback))
+    (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
     -1
     (let
       [i : i64 0]
@@ -27445,24 +27704,22 @@
       (begin
         (while (and (< i n) (< found 0))
           (begin
-            (if (not
-              (compiler-backend-scavenge-excluded?
-                exclude
-                exclude-n
-                (array-ref cands i)))
+            (if (=
+              (bit-and
+                exclude-mask
+                (compiler-backend-scavenge-reg-bit (array-ref cands i)))
+              0)
               (set! found i)
               unit)
             (set! i (+ i 1))))
         found))))
 
 (define (compiler-backend-scavenge-pick-iter
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
   [exclude : (Array String)]
   [exclude-n : i64]
+  [exclude-mask : i64]
+  [occupied-mask : i64]
+  [plan-mask : i64]
   [fallback : String]
   [cands : (Array String)]
   [i : i64]
@@ -27471,13 +27728,10 @@
     (let
       [emidx : i64
         (compiler-backend-scavenge-emergency-cand-index
-          starts
-          ends
-          assignments
-          vars
-          point
           exclude
           exclude-n
+          exclude-mask
+          occupied-mask
           fallback
           cands
           n)]
@@ -27504,13 +27758,9 @@
           (compiler-backend-emergency-add! (array-ref cands emidx))
           (array-ref cands emidx))))
     (if (compiler-backend-scavenge-candidate-ok?
-      starts
-      ends
-      assignments
-      vars
-      point
-      exclude
-      exclude-n
+      occupied-mask
+      exclude-mask
+      plan-mask
       (array-ref cands i))
       ;; A picked callee-saved register is, by candidate-ok?, one the plan already
       ;; saves -- so the prologue/epilogue (driven by the stable plan set) already
@@ -27518,13 +27768,11 @@
       ;; post-body save vs inline partial-set restores).
       (array-ref cands i)
       (compiler-backend-scavenge-pick-iter
-        starts
-        ends
-        assignments
-        vars
-        point
         exclude
         exclude-n
+        exclude-mask
+        occupied-mask
+        plan-mask
         fallback
         cands
         (+ i 1)
@@ -27534,72 +27782,54 @@
 ;; while the fallback is a reserved scratch), else the first usable pool
 ;; candidate, else `fallback` (degraded -- the freeness self-check flags this as
 ;; a no-free-register case).
-(define (compiler-backend-scavenge-pick
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
+(define (compiler-backend-scavenge-pick-with-mask
+  [occupied-mask : i64]
   [exclude : (Array String)]
   [exclude-n : i64]
   [fallback : String]) : String
-  (if (and
-    (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-    (compiler-backend-scavenge-free-for-instr?
-      starts
-      ends
-      assignments
-      vars
-      point
-      fallback))
-    fallback
-    (let
-      [cands : (Array String) (compiler-backend-scavenge-candidates)]
-      (compiler-backend-scavenge-pick-iter
-        starts
-        ends
-        assignments
-        vars
-        point
-        exclude
-        exclude-n
-        fallback
-        cands
-        0
-        (array-length cands)))))
+  (let
+    [exclude-mask : i64
+      (compiler-backend-scavenge-exclude-mask exclude exclude-n)]
+    (if (and
+      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
+      fallback
+      (let
+        [cands : (Array String) compiler-backend-scavenge-candidate-pool]
+        (compiler-backend-scavenge-pick-iter
+          exclude
+          exclude-n
+          exclude-mask
+          occupied-mask
+          compiler-backend-scavenge-ctx-plan-reg-mask
+          fallback
+          cands
+          0
+          (array-length cands))))))
 
-(define (compiler-backend-scavenge-pick-from
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
+(define (compiler-backend-scavenge-pick-from-mask
+  [occupied-mask : i64]
   [exclude : (Array String)]
   [exclude-n : i64]
   [fallback : String]
   [cands : (Array String)]) : String
-  (if (and
-    (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-    (compiler-backend-scavenge-free-for-instr?
-      starts
-      ends
-      assignments
-      vars
-      point
-      fallback))
-    fallback
-    (compiler-backend-scavenge-pick-iter
-      starts
-      ends
-      assignments
-      vars
-      point
-      exclude
-      exclude-n
+  (let
+    [exclude-mask : i64
+      (compiler-backend-scavenge-exclude-mask exclude exclude-n)]
+    (if (and
+      (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
       fallback
-      cands
-      0
-      (array-length cands))))
+      (compiler-backend-scavenge-pick-iter
+        exclude
+        exclude-n
+        exclude-mask
+        occupied-mask
+        compiler-backend-scavenge-ctx-plan-reg-mask
+        fallback
+        cands
+        0
+        (array-length cands)))))
 
 (define (compiler-backend-scavenge-xmm-reg
   [dst-var : i64]
@@ -27607,10 +27837,8 @@
   [exclude-n : i64]
   [fallback : String]) : String
   (let
-    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
-    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
     [vars : i64 compiler-backend-scavenge-ctx-vars]
     [point : i64
       (*
@@ -27620,7 +27848,7 @@
           compiler-backend-emit-current-count))]
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var vars))
-        (compiler-backend-var-register-home assignments dst-var)
+        (compiler-backend-var-register-home-index assignment-index dst-var)
         "")]
     [ex : (Array String)
       (if (string-eq dst-home "")
@@ -27631,56 +27859,51 @@
         exclude-n
         (+ exclude-n 1))]
     [reg : String
-      (compiler-backend-scavenge-pick-from
-        starts
-        ends
-        assignments
-        vars
-        point
+      (compiler-backend-scavenge-pick-from-mask
+        (compiler-backend-scavenge-occupied-mask-at-point point)
         ex
         ex-n
         fallback
-        (compiler-backend-scavenge-xmm-candidates))]
+        compiler-backend-scavenge-xmm-candidate-pool)]
     (begin
       (cfg
         scavenge-self-check
         (compiler-backend-scavenge-freeness-check!
-          starts
-          ends
-          assignments
+          compiler-backend-scavenge-ctx-starts
+          compiler-backend-scavenge-ctx-ends
+          assignment-index
           vars
           point
           reg)
         unit)
       reg)))
 
-;; Freeness self-check (cfg-gated): the picked register MUST be free at `point`.
-;; If not, the pick fell through to an OCCUPIED fallback (no free register found)
-;; -- a latent miscompile the coordinate check cannot see.
-(define (compiler-backend-scavenge-freeness-check!
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [point : i64]
-  [reg : String]) : unit
-  (if (or
-    (compiler-backend-scavenge-free-for-instr?
-      starts
-      ends
-      assignments
-      vars
-      point
-      reg)
-    compiler-backend-emergency-pending)
-    unit
-    (panic
-      (str-cat
-        "SCAVENGE-FREENESS-VIOLATION reg="
-        reg
-        " point="
-        (int->string point)
-        " -- pick returned an occupied register (no free scratch)"))))
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-freeness-check!
+    [starts : (Array i64)]
+    [ends : (Array i64)]
+    [assignment-index : CompilerRegAssignmentIndex]
+    [vars : i64]
+    [point : i64]
+    [reg : String]) : unit
+    (if (or
+      (compiler-backend-scavenge-free-for-instr?
+        starts
+        ends
+        assignment-index
+        vars
+        point
+        reg)
+      compiler-backend-emergency-pending)
+      unit
+      (panic
+        (str-cat
+          "SCAVENGE-FREENESS-VIOLATION reg="
+          reg
+          " point="
+          (int->string point)
+          " -- pick returned an occupied register (no free scratch)")))))
 
 ;; Return a register free at dst-var's def point (via the proven query),
 ;; excluding `exclude`, preferring `fallback`. If the preferred register is
@@ -27691,10 +27914,8 @@
   [exclude-n : i64]
   [fallback : String]) : String
   (let
-    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
-    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
     [vars : i64 compiler-backend-scavenge-ctx-vars]
     ;; Query at the emit POSITION (2*position), where this instruction's operands
     ;; are still live (their uses extend their intervals to this point) -- NOT
@@ -27711,7 +27932,7 @@
           compiler-backend-emit-current-count))]
     [dst-home : String
       (if (and (>= dst-var 0) (< dst-var vars))
-        (compiler-backend-var-register-home assignments dst-var)
+        (compiler-backend-var-register-home-index assignment-index dst-var)
         "")]
     [ex : (Array String)
       (if (string-eq dst-home "")
@@ -27722,12 +27943,8 @@
         exclude-n
         (+ exclude-n 1))]
     [reg : String
-      (compiler-backend-scavenge-pick
-        starts
-        ends
-        assignments
-        vars
-        point
+      (compiler-backend-scavenge-pick-with-mask
+        (compiler-backend-scavenge-occupied-mask-at-point point)
         ex
         ex-n
         fallback)]
@@ -27735,9 +27952,9 @@
       (cfg
         scavenge-self-check
         (compiler-backend-scavenge-freeness-check!
-          starts
-          ends
-          assignments
+          compiler-backend-scavenge-ctx-starts
+          compiler-backend-scavenge-ctx-ends
+          assignment-index
           vars
           point
           reg)
@@ -27753,11 +27970,6 @@
   [exclude-n : i64]
   [fallback : String]) : String
   (let
-    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
-    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
-    [vars : i64 compiler-backend-scavenge-ctx-vars]
     [point : i64
       (*
         2
@@ -27765,12 +27977,8 @@
           compiler-backend-emit-instr-post-base
           compiler-backend-emit-current-count))]
     [reg : String
-      (compiler-backend-scavenge-pick
-        starts
-        ends
-        assignments
-        vars
-        point
+      (compiler-backend-scavenge-pick-with-mask
+        (compiler-backend-scavenge-occupied-mask-at-point point)
         exclude
         exclude-n
         fallback)]
@@ -27778,10 +27986,10 @@
       (cfg
         scavenge-self-check
         (compiler-backend-scavenge-freeness-check!
-          starts
-          ends
-          assignments
-          vars
+          compiler-backend-scavenge-ctx-starts
+          compiler-backend-scavenge-ctx-ends
+          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-vars
           point
           reg)
         unit)
@@ -27791,11 +27999,6 @@
   [exclude : (Array String)]
   [exclude-n : i64]) : String
   (let
-    [starts : (Array i64) compiler-backend-scavenge-ctx-starts]
-    [ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
-    [vars : i64 compiler-backend-scavenge-ctx-vars]
     [point : i64
       (*
         2
@@ -27803,261 +28006,263 @@
           compiler-backend-emit-instr-post-base
           compiler-backend-emit-current-count))]
     [reg : String
-      (compiler-backend-scavenge-pick-from
-        starts
-        ends
-        assignments
-        vars
-        point
+      (compiler-backend-scavenge-pick-from-mask
+        (compiler-backend-scavenge-occupied-mask-at-point point)
         exclude
         exclude-n
         "%rcx"
-        (compiler-backend-scavenge-rcx-candidates))]
+        compiler-backend-scavenge-rcx-candidate-pool)]
     (begin
       (cfg
         scavenge-self-check
         (compiler-backend-scavenge-freeness-check!
-          starts
-          ends
-          assignments
-          vars
+          compiler-backend-scavenge-ctx-starts
+          compiler-backend-scavenge-ctx-ends
+          compiler-backend-scavenge-ctx-assignment-index
+          compiler-backend-scavenge-ctx-vars
           point
           reg)
         unit)
       reg)))
 
-;; Self-check one instruction at `point` (= 2*global-index): every var it USES
-;; must (a) have a live interval covering `point` -- which validates the walk
-;; counter matches the interval point space -- and (b) be reported OCCUPIED by
-;; free-at-point? on its assigned register, validating the query itself.
-(define (compiler-backend-scavenge-check-instr
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [name : String]
-  [point : i64]
-  [instr : CompilerIrInstr]
-  [live-after : CompilerLiveI64Set]) : unit
-  (let
-    [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
-    [v : i64 0]
-    (begin
-      (while (< v vars)
-        (begin
-          (if (compiler-live-set-contains? uses v)
-            (begin
-              (if (and
-                (>= (array-ref starts v) 0)
-                (<= (array-ref starts v) point)
-                (<= point (array-ref ends v)))
-                unit
-                (panic
-                  (str-cat
-                    "SCAVENGE-VIOLATION interval fn="
-                    name
-                    " point="
-                    (int->string point)
-                    " use-var="
-                    (int->string v)
-                    " iv=["
-                    (int->string (array-ref starts v))
-                    ","
-                    (int->string (array-ref ends v))
-                    "]")))
-              (match (compiler-reg-assignment-lookup assignments v)
-                [(CompilerRegSomeLocation loc)
-                  (match loc
-                    [(CompilerRegRegister home)
-                      (if (compiler-backend-scavenge-free-for-instr?
-                        starts
-                        ends
-                        assignments
-                        vars
-                        point
-                        home)
-                        (panic
-                          (str-cat
-                            "SCAVENGE-VIOLATION free fn="
-                            name
-                            " point="
-                            (int->string point)
-                            " use-var="
-                            (int->string v)
-                            " reg="
-                            home
-                            " wrongly-reported-free"))
-                        unit)]
-                    [(CompilerRegRegisterPair _ _) unit]
-                    [(CompilerRegSpill _) unit]
-                    [(CompilerRegRemat _) unit])]
-                [(CompilerRegNoLocation) unit]))
-            unit)
-          (set! v (+ v 1))))
-      ;; #FOUNDATION: the used-var loop above validates OPERAND homes; this
-      ;; second loop validates LIVE-THROUGH values (live-after but not used
-      ;; here). A value live ACROSS this instruction must be reported OCCUPIED
-      ;; on its register -- a scavenge querying `point` would otherwise pick it
-      ;; and clobber a call-spanning / loop-carried value. This is the class the
-      ;; old used-var-only self-check missed (its blind spot).
-      (let
-        [w : i64 0]
-        (while (< w vars)
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-check-instr
+    [starts : (Array i64)]
+    [ends : (Array i64)]
+    [assignment-index : CompilerRegAssignmentIndex]
+    [vars : i64]
+    [name : String]
+    [point : i64]
+    [instr : CompilerIrInstr]
+    [live-after : CompilerLiveI64Set]) : unit
+    (let
+      [uses : CompilerLiveI64Set (compiler-live-instr-uses instr)]
+      [v : i64 0]
+      (begin
+        (while (< v vars)
           (begin
-            (if (compiler-live-set-contains? live-after w)
-              (match (compiler-reg-assignment-lookup assignments w)
-                [(CompilerRegSomeLocation loc)
-                  (match loc
-                    [(CompilerRegRegister home)
-                      (if (compiler-backend-scavenge-free-for-instr?
-                        starts
-                        ends
-                        assignments
-                        vars
-                        point
-                        home)
-                        (panic
-                          (str-cat
-                            "SCAVENGE-LIVETHROUGH-VIOLATION fn="
-                            name
-                            " point="
-                            (int->string point)
-                            " live-var="
-                            (int->string w)
-                            " reg="
-                            home
-                            " WRONGLY-FREE iv=["
-                            (int->string (array-ref starts w))
-                            ","
-                            (int->string (array-ref ends w))
-                            "]"))
-                        unit)]
-                    [(CompilerRegRegisterPair _ _) unit]
-                    [(CompilerRegSpill _) unit]
-                    [(CompilerRegRemat _) unit])]
-                [(CompilerRegNoLocation) unit])
+            (if (compiler-live-set-contains? uses v)
+              (begin
+                (if (and
+                  (>= (array-ref starts v) 0)
+                  (<= (array-ref starts v) point)
+                  (<= point (array-ref ends v)))
+                  unit
+                  (panic
+                    (str-cat
+                      "SCAVENGE-VIOLATION interval fn="
+                      name
+                      " point="
+                      (int->string point)
+                      " use-var="
+                      (int->string v)
+                      " iv=["
+                      (int->string (array-ref starts v))
+                      ","
+                      (int->string (array-ref ends v))
+                      "]")))
+                (match (compiler-reg-assignment-index-lookup assignment-index v)
+                  [(CompilerRegSomeLocation loc)
+                    (match loc
+                      [(CompilerRegRegister home)
+                        (if (compiler-backend-scavenge-free-for-instr?
+                          starts
+                          ends
+                          assignment-index
+                          vars
+                          point
+                          home)
+                          (panic
+                            (str-cat
+                              "SCAVENGE-VIOLATION free fn="
+                              name
+                              " point="
+                              (int->string point)
+                              " use-var="
+                              (int->string v)
+                              " reg="
+                              home
+                              " wrongly-reported-free"))
+                          unit)]
+                      [(CompilerRegRegisterPair _ _) unit]
+                      [(CompilerRegSpill _) unit]
+                      [(CompilerRegRemat _) unit])]
+                  [(CompilerRegNoLocation) unit]))
               unit)
-            (set! w (+ w 1)))))
-      unit)))
+            (set! v (+ v 1))))
+        ;; #FOUNDATION: the used-var loop above validates OPERAND homes; this
+        ;; second loop validates LIVE-THROUGH values (live-after but not used
+        ;; here). A value live ACROSS this instruction must be reported OCCUPIED
+        ;; on its register -- a scavenge querying `point` would otherwise pick it
+        ;; and clobber a call-spanning / loop-carried value. This is the class the
+        ;; old used-var-only self-check missed (its blind spot).
+        (let
+          [w : i64 0]
+          (while (< w vars)
+            (begin
+              (if (compiler-live-set-contains? live-after w)
+                (match (compiler-reg-assignment-index-lookup assignment-index w)
+                  [(CompilerRegSomeLocation loc)
+                    (match loc
+                      [(CompilerRegRegister home)
+                        (if (compiler-backend-scavenge-free-for-instr?
+                          starts
+                          ends
+                          assignment-index
+                          vars
+                          point
+                          home)
+                          (panic
+                            (str-cat
+                              "SCAVENGE-LIVETHROUGH-VIOLATION fn="
+                              name
+                              " point="
+                              (int->string point)
+                              " live-var="
+                              (int->string w)
+                              " reg="
+                              home
+                              " WRONGLY-FREE iv=["
+                              (int->string (array-ref starts w))
+                              ","
+                              (int->string (array-ref ends w))
+                              "]"))
+                          unit)]
+                      [(CompilerRegRegisterPair _ _) unit]
+                      [(CompilerRegSpill _) unit]
+                      [(CompilerRegRemat _) unit])]
+                  [(CompilerRegNoLocation) unit])
+                unit)
+              (set! w (+ w 1)))))
+        unit))))
 
-(define (compiler-backend-scavenge-check-seq
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [name : String]
-  [instrs : CompilerIrInstrSeq]
-  [live-afters : CompilerLiveInstrSetVec]
-  [point : i64]) : i64
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [after-items : (Array CompilerLiveI64Set) (struct-get live-afters items)]
-    [index : i64 0]
-    [out : i64 point]
-    (begin
-      (while (< index count)
-        (begin
-          (compiler-backend-scavenge-check-instr
-            starts
-            ends
-            assignments
-            vars
-            name
-            out
-            (array-ref slots index)
-            (if (< index (array-length after-items))
-              (array-ref after-items index)
-              (compiler-live-set-empty)))
-          (set! out (+ out 2))
-          (set! index (+ index 1))))
-      out)))
-
-(define (compiler-backend-scavenge-check-blocks
-  [starts : (Array i64)]
-  [ends : (Array i64)]
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [name : String]
-  [liveness : CompilerFunctionLiveness]
-  [blocks : CompilerIrBlockList]
-  [point : i64]) : i64
-  (match blocks
-    [(IrBlockNil) point]
-    [(IrBlockCons block rest)
-      (match block
-        [(IrBlock label instrs)
-          (compiler-backend-scavenge-check-blocks
-            starts
-            ends
-            assignments
-            vars
-            name
-            liveness
-            (box-get rest)
-            (compiler-backend-scavenge-check-seq
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-check-seq
+    [starts : (Array i64)]
+    [ends : (Array i64)]
+    [assignment-index : CompilerRegAssignmentIndex]
+    [vars : i64]
+    [name : String]
+    [instrs : CompilerIrInstrSeq]
+    [live-afters : CompilerLiveInstrSetVec]
+    [point : i64]) : i64
+    (let
+      [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+      [count : i64 (struct-get instrs len)]
+      [after-items : (Array CompilerLiveI64Set) (struct-get live-afters items)]
+      [index : i64 0]
+      [out : i64 point]
+      (begin
+        (while (< index count)
+          (begin
+            (compiler-backend-scavenge-check-instr
               starts
               ends
-              assignments
+              assignment-index
               vars
               name
-              instrs
-              (compiler-reg-live-intervals-find-afters liveness label)
-              point))])]
-    [(IrBlockArray seq)
-      (compiler-backend-scavenge-check-blocks
-        starts
-        ends
-        assignments
-        vars
-        name
-        liveness
-        (compiler-ir-block-seq-to-list seq)
-        point)]))
+              out
+              (array-ref slots index)
+              (if (< index (array-length after-items))
+                (array-ref after-items index)
+                (compiler-live-set-empty)))
+            (set! out (+ out 2))
+            (set! index (+ index 1))))
+        out))))
 
-;; Build the per-var live intervals on the FINAL IR and self-check the query.
-;; cfg-gated -> inert/DCE'd in a normal build (byte-identical codegen).
-(define (compiler-backend-scavenge-self-check
-  [name : String]
-  [params : CompilerIrParamList]
-  [ret-ty : AstType]
-  [slot-vars : i64]
-  [emit-blocks : CompilerIrBlockList]
-  [assignments : CompilerRegAssignmentList]) : unit
-  (if (< slot-vars 1)
-    unit
-    (let
-      [func : CompilerIrFunction
-        (IrFunction name params ret-ty slot-vars emit-blocks)]
-      [liveness : CompilerFunctionLiveness
-        (compiler-live-analyze-function func)]
-      [starts : (Array i64) (make-array i64 slot-vars)]
-      [ends : (Array i64) (make-array i64 slot-vars)]
-      (begin
-        (compiler-reg-fill-i64-array starts -1)
-        (compiler-reg-fill-i64-array ends -1)
-        (compiler-reg-live-intervals-blocks-with-live
-          emit-blocks
-          liveness
-          0
-          starts
-          ends)
-        (compiler-backend-scavenge-seed-block-liveins
-          emit-blocks
-          liveness
-          0
-          starts
-          ends)
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-check-blocks
+    [starts : (Array i64)]
+    [ends : (Array i64)]
+    [assignment-index : CompilerRegAssignmentIndex]
+    [vars : i64]
+    [name : String]
+    [liveness : CompilerFunctionLiveness]
+    [blocks : CompilerIrBlockList]
+    [point : i64]) : i64
+    (match blocks
+      [(IrBlockNil) point]
+      [(IrBlockCons block rest)
+        (match block
+          [(IrBlock label instrs)
+            (compiler-backend-scavenge-check-blocks
+              starts
+              ends
+              assignment-index
+              vars
+              name
+              liveness
+              (box-get rest)
+              (compiler-backend-scavenge-check-seq
+                starts
+                ends
+                assignment-index
+                vars
+                name
+                instrs
+                (compiler-reg-live-intervals-find-afters liveness label)
+                point))])]
+      [(IrBlockArray seq)
         (compiler-backend-scavenge-check-blocks
           starts
           ends
-          assignments
-          slot-vars
+          assignment-index
+          vars
           name
           liveness
-          emit-blocks
-          0)
-        unit))))
+          (compiler-ir-block-seq-to-list seq)
+          point)])))
+
+;; Build the per-var live intervals on the FINAL IR and self-check the query.
+;; cfg-gated -> inert/DCE'd in a normal build (byte-identical codegen).
+(cfg
+  scavenge-self-check
+  (define (compiler-backend-scavenge-self-check
+    [name : String]
+    [params : CompilerIrParamList]
+    [ret-ty : AstType]
+    [slot-vars : i64]
+    [emit-blocks : CompilerIrBlockList]
+    [assignments : CompilerRegAssignmentList]) : unit
+    (if (< slot-vars 1)
+      unit
+      (let
+        [func : CompilerIrFunction
+          (IrFunction name params ret-ty slot-vars emit-blocks)]
+        [liveness : CompilerFunctionLiveness
+          (compiler-live-analyze-function func)]
+        [starts : (Array i64) (make-array i64 slot-vars)]
+        [ends : (Array i64) (make-array i64 slot-vars)]
+        [assignment-index : CompilerRegAssignmentIndex
+          (compiler-reg-assignment-index-build assignments slot-vars)]
+        (begin
+          (compiler-reg-fill-i64-array starts -1)
+          (compiler-reg-fill-i64-array ends -1)
+          (compiler-reg-live-intervals-blocks-with-live
+            emit-blocks
+            liveness
+            0
+            starts
+            ends)
+          (compiler-backend-scavenge-seed-block-liveins
+            emit-blocks
+            liveness
+            0
+            starts
+            ends)
+          (compiler-backend-scavenge-check-blocks
+            starts
+            ends
+            assignment-index
+            slot-vars
+            name
+            liveness
+            emit-blocks
+            0)
+          unit)))))
 
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
@@ -28239,6 +28444,14 @@
           (match coloring
             [(CompilerRegColoringNone) remat-vars]
             [(CompilerRegColoringRemap _ slots) slots])]
+        [scavenge-intervals : CompilerRegIntervalList
+          (match coloring
+            [(CompilerRegColoringNone)
+              (compiler-reg-plan-intervals remat-reg-plan)]
+            [(CompilerRegColoringRemap remap _)
+              (compiler-backend-scavenge-remap-intervals
+                remap
+                (compiler-reg-plan-intervals remat-reg-plan))])]
         [types : CompilerRegVarTypeList
           (match coloring
             [(CompilerRegColoringNone) plan-types]
@@ -28262,13 +28475,10 @@
           ;; indices >= slot-vars, so a slot-vars-sized ctx would miss them and the
           ;; free-register query would false-free their registers (e.g. a pooled %r8
           ;; holding a register var).
-          (compiler-backend-scavenge-install-ctx!
-            name
-            params
-            ret-ty
+          (compiler-backend-scavenge-install-ctx-from-intervals!
             remat-vars
-            emit-blocks-list
-            assignments)]
+            assignments
+            scavenge-intervals)]
         [_scavenge-self-check : unit
           (cfg
             scavenge-self-check

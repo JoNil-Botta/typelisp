@@ -21,6 +21,152 @@
     [(CompilerFloatSomeBits bits) bits]
     [(CompilerFloatNoBits) 0]))
 
+(define (compiler-backend-test-scavenge-seed-block-liveins
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]) : i64
+  (match blocks
+    [(IrBlockNil) point]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [live-afters : CompilerLiveInstrSetVec
+              (compiler-reg-live-intervals-find-afters liveness label)]
+            [after-items : (Array CompilerLiveI64Set)
+              (struct-get live-afters items)]
+            [count : i64 (struct-get instrs len)]
+            (begin
+              (if (> count 0)
+                (compiler-reg-extend-set-words
+                  starts
+                  ends
+                  (if (> (array-length after-items) 0)
+                    (array-ref after-items 0)
+                    (compiler-live-set-empty))
+                  0
+                  point)
+                unit)
+              (compiler-backend-test-scavenge-seed-block-liveins
+                (box-get rest)
+                liveness
+                (+ point (* 2 count))
+                starts
+                ends)))])]
+    [(IrBlockArray seq)
+      (compiler-backend-test-scavenge-seed-block-liveins
+        (compiler-ir-block-seq-to-list seq)
+        liveness
+        point
+        starts
+        ends)]))
+
+(define (compiler-backend-test-scavenge-install-ctx!
+  [name : String]
+  [params : CompilerIrParamList]
+  [ret-ty : AstType]
+  [slot-vars : i64]
+  [emit-blocks : CompilerIrBlockList]
+  [assignments : CompilerRegAssignmentList]) : unit
+  (begin
+    (set! compiler-backend-emit-instr-post-base 0)
+    (compiler-backend-scavenge-reset-callee!)
+    (if (< slot-vars 1)
+      (compiler-backend-set-scavenge-ctx!
+        (make-array i64 1)
+        (make-array i64 1)
+        assignments
+        0)
+      (let
+        [func : CompilerIrFunction
+          (IrFunction name params ret-ty slot-vars emit-blocks)]
+        [liveness : CompilerFunctionLiveness
+          (compiler-live-analyze-function func)]
+        [starts : (Array i64) (make-array i64 slot-vars)]
+        [ends : (Array i64) (make-array i64 slot-vars)]
+        (match (compiler-backend-scavenge-assignment-index-build
+          assignments
+          slot-vars)
+          [(CompilerBackendScavengeAssignmentIndex assignment-index plan-mask)
+            (begin
+              (compiler-reg-fill-i64-array starts -1)
+              (compiler-reg-fill-i64-array ends -1)
+              (compiler-reg-live-intervals-blocks-with-live
+                emit-blocks
+                liveness
+                0
+                starts
+                ends)
+              (compiler-backend-test-scavenge-seed-block-liveins
+                emit-blocks
+                liveness
+                0
+                starts
+                ends)
+              (compiler-backend-set-scavenge-ctx-ready!
+                starts
+                ends
+                assignment-index
+                plan-mask
+                (compiler-backend-scavenge-occupancy-build
+                  starts
+                  ends
+                  assignment-index
+                  slot-vars)
+                slot-vars))])))))
+
+(define (compiler-backend-scavenge-occupied-mask-for-instr
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [vars : i64]
+  [point : i64]) : i64
+  (let
+    [present : (Array i64) (struct-get assignment-index present)]
+    [items : (Array CompilerRegLocation) (struct-get assignment-index items)]
+    [limit : i64 (array-length present)]
+    [v : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< v vars)
+        (begin
+          (if (and
+            (< v limit)
+            (not (= (array-ref present v) 0))
+            (>= (array-ref starts v) 0)
+            (<= (array-ref starts v) (+ point 1))
+            (<= point (array-ref ends v)))
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-backend-scavenge-location-mask (array-ref items v))))
+            unit)
+          (set! v (+ v 1))))
+      mask)))
+
+(define (compiler-backend-scavenge-pick
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [vars : i64]
+  [point : i64]
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [fallback : String]) : String
+  (compiler-backend-scavenge-pick-with-mask
+    (compiler-backend-scavenge-occupied-mask-for-instr
+      starts
+      ends
+      assignment-index
+      vars
+      point)
+    exclude
+    exclude-n
+    fallback))
+
 (define (compiler-backend-test-float-type-eq? [a : AstType] [b : AstType]) : bool
   (match a
     [(AstTyF32)
@@ -2550,8 +2696,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -2563,7 +2712,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "indirect_c_call_shape"
           IrParamNil
           (AstTyI64)
@@ -2588,10 +2737,12 @@
         (compiler-diagnostic-at-start "" ""))]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -2666,8 +2817,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -2695,7 +2849,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "indirect_c_abi_store_result_shape"
           IrParamNil
           (AstTyUnit)
@@ -2720,10 +2874,12 @@
         (compiler-diagnostic-at-start "" ""))]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -2754,8 +2910,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -2777,7 +2936,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "cabi_return_store_r11_occupied_shape"
           IrParamNil
           (AstTyUnit)
@@ -2796,10 +2955,12 @@
         (not (compiler-backend-string-contains? asm "(%r11)")))]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -8366,8 +8527,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -8460,10 +8624,12 @@
           [hit : bool (compiler-backend-string-contains? asm needle)]
           [_restore : unit
             (begin
-              (compiler-backend-set-scavenge-ctx!
+              (compiler-backend-set-scavenge-ctx-ready!
                 prev-starts
                 prev-ends
-                prev-assignments
+                prev-assignment-index
+                prev-plan-mask
+                prev-occupied-masks
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
@@ -8489,10 +8655,12 @@
         (let
           [_restore : unit
             (begin
-              (compiler-backend-set-scavenge-ctx!
+              (compiler-backend-set-scavenge-ctx-ready!
                 prev-starts
                 prev-ends
-                prev-assignments
+                prev-assignment-index
+                prev-plan-mask
+                prev-occupied-masks
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
@@ -8522,8 +8690,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -8580,10 +8751,12 @@
         (let
           [_restore : unit
             (begin
-              (compiler-backend-set-scavenge-ctx!
+              (compiler-backend-set-scavenge-ctx-ready!
                 prev-starts
                 prev-ends
-                prev-assignments
+                prev-assignment-index
+                prev-plan-mask
+                prev-occupied-masks
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
@@ -8625,10 +8798,12 @@
         (let
           [_restore : unit
             (begin
-              (compiler-backend-set-scavenge-ctx!
+              (compiler-backend-set-scavenge-ctx-ready!
                 prev-starts
                 prev-ends
-                prev-assignments
+                prev-assignment-index
+                prev-plan-mask
+                prev-occupied-masks
                 prev-vars)
               (set! compiler-backend-emit-instr-post-base prev-post-base)
               (set! compiler-backend-emit-current-count prev-current-count)
@@ -9997,8 +10172,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -10028,7 +10206,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "gep_load_live_through"
           IrParamNil
           (AstTyI64)
@@ -10041,10 +10219,12 @@
       (compiler-backend-emit-test-instrs instrs assignments 8)]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -10148,8 +10328,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -10162,7 +10345,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "gep_load_multi_emergency"
           IrParamNil
           (AstTyI64)
@@ -10176,10 +10359,12 @@
       (compiler-backend-emit-test-instrs instrs assignments 40)]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count)
@@ -10226,8 +10411,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -10249,7 +10437,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "copy_bytes_live_through"
           IrParamNil
           (AstTyI64)
@@ -10262,10 +10450,12 @@
       (compiler-backend-emit-test-instrs instrs assignments 6)]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -10287,8 +10477,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -10316,7 +10509,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "copy_bytes_run_protect"
           IrParamNil
           (AstTyI64)
@@ -10329,10 +10522,12 @@
       (compiler-backend-emit-test-instrs instrs assignments 10)]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -12672,8 +12867,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -12708,10 +12906,12 @@
         (AstTyI64))]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -14500,8 +14700,11 @@
   (let
     [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
     [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
-    [prev-assignments : CompilerRegAssignmentList
-      compiler-backend-scavenge-ctx-assignments]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
     [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
@@ -14522,7 +14725,7 @@
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [_ctx : unit
       (begin
-        (compiler-backend-scavenge-install-ctx!
+        (compiler-backend-test-scavenge-install-ctx!
           "indirect_tail_call_r11_callee_shape"
           IrParamNil
           (AstTyI64)
@@ -14548,10 +14751,12 @@
         (compiler-diagnostic-at-start "" ""))]
     [_restore : unit
       (begin
-        (compiler-backend-set-scavenge-ctx!
+        (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
-          prev-assignments
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
           prev-vars)
         (set! compiler-backend-emit-instr-post-base prev-post-base)
         (set! compiler-backend-emit-current-count prev-current-count))]
@@ -15648,7 +15853,7 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          CompilerRegAssignmentNil
+          (compiler-reg-assignment-index-build CompilerRegAssignmentNil 1)
           0
           0
           (compiler-backend-scavenge-exclude-before-r10)
@@ -15659,7 +15864,7 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          CompilerRegAssignmentNil
+          (compiler-reg-assignment-index-build CompilerRegAssignmentNil 1)
           0
           0
           (compiler-backend-scavenge-exclude-before-r11)
@@ -15709,7 +15914,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            r10-free
+            (compiler-reg-assignment-index-build r10-free 5)
             5
             5
             (compiler-backend-binop-scavenge-exclude-build)
@@ -15720,7 +15925,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            r11-free
+            (compiler-reg-assignment-index-build r11-free 5)
             5
             5
             (compiler-backend-binop-scavenge-exclude-build)
@@ -15770,7 +15975,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            r10-free
+            (compiler-reg-assignment-index-build r10-free 5)
             5
             5
             (compiler-backend-scavenge-exclude-with "%r13")
@@ -15781,7 +15986,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            r11-free
+            (compiler-reg-assignment-index-build r11-free 5)
             5
             5
             (compiler-backend-scavenge-exclude-with "%r13")
@@ -15827,7 +16032,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            assignments
+            (compiler-reg-assignment-index-build assignments 7)
             7
             5
             (compiler-backend-scavenge-exclude-regs2 "%r13" "%r14")
@@ -15838,7 +16043,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            assignments
+            (compiler-reg-assignment-index-build assignments 7)
             7
             5
             (compiler-backend-scavenge-exclude-ops2
@@ -15852,7 +16057,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            assignments
+            (compiler-reg-assignment-index-build assignments 7)
             7
             5
             (compiler-backend-scavenge-exclude-ops2-r8
@@ -15872,7 +16077,7 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          CompilerRegAssignmentNil
+          (compiler-reg-assignment-index-build CompilerRegAssignmentNil 1)
           0
           0
           (compiler-backend-divmod-dividend-exclude "%r8")
@@ -15883,7 +16088,7 @@
         (compiler-backend-scavenge-pick
           starts
           ends
-          CompilerRegAssignmentNil
+          (compiler-reg-assignment-index-build CompilerRegAssignmentNil 1)
           0
           0
           (compiler-backend-divmod-mask-exclude "%r8" "%r10")
@@ -15913,7 +16118,7 @@
           (compiler-backend-scavenge-pick
             starts
             ends
-            assignments
+            (compiler-reg-assignment-index-build assignments 1)
             1
             5
             exclude
@@ -15932,6 +16137,104 @@
           (set! compiler-backend-emergency-pending-count 0)
           (set! compiler-backend-emergency-used-count 0)
           ok)))))
+
+(define (compiler-backend-scavenge-occupancy-cache-point-ok?
+  [masks : (Array i64)]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [assignment-index : CompilerRegAssignmentIndex]
+  [vars : i64]
+  [point : i64]) : bool
+  (let
+    [idx : i64 (/ point 2)]
+    [cached : i64
+      (if (and (>= idx 0) (< idx (array-length masks)))
+        (array-ref masks idx)
+        0)]
+    [scanned : i64
+      (compiler-backend-scavenge-occupied-mask-for-instr
+        starts
+        ends
+        assignment-index
+        vars
+        point)]
+    (= cached scanned)))
+
+(define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 4)]
+    [ends : (Array i64) (make-array i64 4)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r9"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%r10"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegisterPair "%r11" "%xmm2"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 3 (CompilerRegSpill 0))
+              CompilerRegAssignmentNil))))]
+    [assignment-index : CompilerRegAssignmentIndex
+      (compiler-reg-assignment-index-build assignments 4)]
+    (begin
+      (array-set! starts 0 0)
+      (array-set! ends 0 0)
+      (array-set! starts 1 3)
+      (array-set! ends 1 5)
+      (array-set! starts 2 4)
+      (array-set! ends 2 7)
+      (array-set! starts 3 0)
+      (array-set! ends 3 8)
+      (let
+        [masks : (Array i64)
+          (compiler-backend-scavenge-occupancy-build
+            starts
+            ends
+            assignment-index
+            4)]
+        (and
+          (= (array-length masks) 5)
+          (compiler-backend-scavenge-occupancy-cache-point-ok?
+            masks
+            starts
+            ends
+            assignment-index
+            4
+            0)
+          (compiler-backend-scavenge-occupancy-cache-point-ok?
+            masks
+            starts
+            ends
+            assignment-index
+            4
+            2)
+          (compiler-backend-scavenge-occupancy-cache-point-ok?
+            masks
+            starts
+            ends
+            assignment-index
+            4
+            4)
+          (compiler-backend-scavenge-occupancy-cache-point-ok?
+            masks
+            starts
+            ends
+            assignment-index
+            4
+            6)
+          (compiler-backend-scavenge-occupancy-cache-point-ok?
+            masks
+            starts
+            ends
+            assignment-index
+            4
+            8)
+          (= (array-ref masks 0) (compiler-backend-scavenge-reg-bit "%r9"))
+          (=
+            (array-ref masks 3)
+            (bit-or
+              (compiler-backend-scavenge-reg-bit "%r11")
+              (compiler-backend-scavenge-reg-bit "%xmm2"))))))))
 
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
@@ -16003,6 +16306,7 @@
         (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
+        (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)

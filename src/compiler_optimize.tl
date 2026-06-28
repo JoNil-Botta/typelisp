@@ -3929,85 +3929,6 @@
             (opt-call-args-array-eq av bv 0))]
         [_ false])]))
 
-(define (opt-spmd-backend-eq
-  [a : CompilerIrSpmdBackend]
-  [b : CompilerIrSpmdBackend]) : bool
-  (match a
-    [(IrSpmdBackendScalar)
-      (match b
-        [(IrSpmdBackendScalar) true]
-        [_ false])]
-    [(IrSpmdBackendAvx2)
-      (match b
-        [(IrSpmdBackendAvx2) true]
-        [_ false])]
-    [(IrSpmdBackendAvx512)
-      (match b
-        [(IrSpmdBackendAvx512) true]
-        [_ false])]))
-
-(define (opt-spmd-value-class-eq
-  [a : CompilerIrSpmdValueClass]
-  [b : CompilerIrSpmdValueClass]) : bool
-  (match a
-    [(IrSpmdValueUniform)
-      (match b
-        [(IrSpmdValueUniform) true]
-        [_ false])]
-    [(IrSpmdValueVarying)
-      (match b
-        [(IrSpmdValueVarying) true]
-        [_ false])]
-    [(IrSpmdValueMask)
-      (match b
-        [(IrSpmdValueMask) true]
-        [_ false])]))
-
-(define (opt-spmd-call-arg-eq
-  [a : CompilerIrSpmdCallArg]
-  [b : CompilerIrSpmdCallArg]) : bool
-  (match a
-    [(IrSpmdCallArg aclass avalue aty)
-      (match b
-        [(IrSpmdCallArg bclass bvalue bty)
-          (and
-            (opt-spmd-value-class-eq aclass bclass)
-            (opt-value-eq avalue bvalue)
-            (opt-type-eq aty bty))])]))
-
-(define (opt-spmd-call-args-eq
-  [a : CompilerIrSpmdCallArgList]
-  [b : CompilerIrSpmdCallArgList]) : bool
-  (match a
-    [(IrSpmdCallArgNil)
-      (match b
-        [(IrSpmdCallArgNil) true]
-        [_ false])]
-    [(IrSpmdCallArgCons aarg arest)
-      (match b
-        [(IrSpmdCallArgCons barg brest)
-          (and
-            (opt-spmd-call-arg-eq aarg barg)
-            (opt-spmd-call-args-eq (box-get arest) (box-get brest)))]
-        [_ false])]))
-
-(define (opt-spmd-call-result-eq
-  [a : CompilerIrSpmdCallResult]
-  [b : CompilerIrSpmdCallResult]) : bool
-  (match a
-    [(IrSpmdCallResultUnit)
-      (match b
-        [(IrSpmdCallResultUnit) true]
-        [_ false])]
-    [(IrSpmdCallResultValue adst aclass aty)
-      (match b
-        [(IrSpmdCallResultValue bdst bclass bty)
-          (and
-            (= adst bdst)
-            (opt-spmd-value-class-eq aclass bclass)
-            (opt-type-eq aty bty))]
-        [_ false])]))
-
 (define (opt-phi-input-eq
   [av : CompilerIrValue]
   [alabel : String]
@@ -4432,33 +4353,7 @@
                     (opt-call-args-eq aargs bargs)
                     (opt-c-abi-return-slot-list-eq aslots bslots))])]
             [_ false])])]
-    [(IrInstrSpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload
-            acallee
-            abackend
-            alanes
-            aactive-mask
-            aargs
-            aresult)
-          (match b
-            [(IrInstrSpmdCall other-payload-box)
-              (match (box-get other-payload-box)
-                [(CompilerIrInstrSpmdCallPayload
-                    bcallee
-                    bbackend
-                    blanes
-                    bactive-mask
-                    bargs
-                    bresult)
-                  (and
-                    (string.string-eq acallee bcallee)
-                    (opt-spmd-backend-eq abackend bbackend)
-                    (= alanes blanes)
-                    (opt-value-eq aactive-mask bactive-mask)
-                    (opt-spmd-call-args-eq aargs bargs)
-                    (opt-spmd-call-result-eq aresult bresult))])]
-            [_ false])])]
+    [(IrInstrSpmdCall _) false]
     [(IrInstrTailCall aname aargs aty)
       (match b
         [(IrInstrTailCall bname bargs bty)

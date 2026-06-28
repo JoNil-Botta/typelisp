@@ -1,5 +1,7 @@
 ;; compiler_float.tl - Compiler-facing wrappers for deterministic float helpers.
 (import stdlib.io)
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 (import "compiler_ast_types.tl")
 
 (defenum CompilerFloatMaybeF64
@@ -16,10 +18,6 @@
   (CompilerFiniteCastInputChar char)
   (CompilerFiniteCastInputF64 f64)
   (CompilerFiniteCastInputF32 f64))
-
-(defenum CompilerFiniteCastMaybeI64
-  (CompilerFiniteCastNoI64)
-  (CompilerFiniteCastSomeI64 i64))
 
 (defenum CompilerFiniteCastResult
   (CompilerFiniteCastNoResult)
@@ -107,17 +105,16 @@
 
 (define (compiler-finite-cast-input-to-i64
   [input : CompilerFiniteCastInput]
-  [from-ty : AstType]) : CompilerFiniteCastMaybeI64
+  [from-ty : AstType]) : option_i64.Option
   (if (compiler-finite-cast-int-or-char-type? from-ty)
     (match input
       [(CompilerFiniteCastInputI64 value)
-        (CompilerFiniteCastSomeI64
-          (compiler-finite-cast-normalize-i64 value from-ty))]
+        (option_i64.Some (compiler-finite-cast-normalize-i64 value from-ty))]
       [(CompilerFiniteCastInputChar value)
-        (CompilerFiniteCastSomeI64
+        (option_i64.Some
           (compiler-finite-cast-normalize-i64 (cast value : i64) from-ty))]
-      [_ (CompilerFiniteCastNoI64)])
-    (CompilerFiniteCastNoI64)))
+      [_ (option_i64.None)])
+    (option_i64.None)))
 
 (define (compiler-finite-cast-input-to-f64
   [input : CompilerFiniteCastInput]
@@ -279,13 +276,13 @@
   [to-ty : AstType]) : CompilerFiniteCastResult
   (if (compiler-finite-cast-int-or-char-type? from-ty)
     (match (compiler-finite-cast-input-to-i64 input from-ty)
-      [(CompilerFiniteCastSomeI64 n)
+      [(option_i64.Some n)
         (if (compiler-finite-cast-int-or-char-type? to-ty)
           (compiler-finite-cast-int-to-int-result n to-ty)
           (if (compiler-finite-cast-float-type? to-ty)
             (compiler-finite-cast-int-to-float-result n from-ty to-ty)
             (CompilerFiniteCastNoResult)))]
-      [(CompilerFiniteCastNoI64) (CompilerFiniteCastNoResult)])
+      [(option_i64.None) (CompilerFiniteCastNoResult)])
     (if (compiler-finite-cast-float-type? from-ty)
       (match (compiler-finite-cast-input-to-f64 input from-ty)
         [(CompilerFloatSomeF64 n)

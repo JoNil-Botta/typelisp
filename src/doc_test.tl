@@ -20,6 +20,8 @@
 (import "build_run_core.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (defenum DocTestExpectation
   (Pass)
@@ -71,10 +73,6 @@
 
 (defenum DocTestCodeCollect
   (Collect i64 String DocTestLineList bool))
-
-(defenum DocTestMaybeI64
-  (No String)
-  (Some i64))
 
 (defenum DocTestMaybeOutput
   (No String)
@@ -330,12 +328,12 @@
       (- code 48)
       -1)))
 
-(define (doc-test-parse-i64 [text : String]) : DocTestMaybeI64
+(define (doc-test-parse-i64 [text : String]) : option_i64.Option
   (let
     [trimmed : String (doc-test-trim text)]
     [n : i64 (string.string-length trimmed)]
     (if (= n 0)
-      (DocTestMaybeI64.No "expected integer")
+      option_i64.None
       (let
         [i : i64 0]
         [sign : i64 1]
@@ -360,8 +358,8 @@
                   (set! value (+ (* value 10) digit))
                   (set! i (+ i 1))))))
           (if ok
-            (DocTestMaybeI64.Some (* sign value))
-            (DocTestMaybeI64.No "expected integer")))))))
+            (option_i64.Some (* sign value))
+            option_i64.None))))))
 
 (define (doc-test-decode-output-literal [text : String]) : DocTestMaybeOutput
   (let
@@ -696,7 +694,7 @@
             (doc-test-line-number line)
             "duplicate doctest-exit metadata"))
         (match (doc-test-parse-i64 text)
-          [(DocTestMaybeI64.Some parsed)
+          [(option_i64.Some parsed)
             (DocTestRunMetadata.Metadata
               true
               parsed
@@ -705,7 +703,7 @@
               has-stderr
               expected-stderr
               errors)]
-          [(DocTestMaybeI64.No _)
+          [option_i64.None
             (doc-test-run-metadata-append-error
               (DocTestRunMetadata.Metadata
                 true

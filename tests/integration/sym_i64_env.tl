@@ -4,6 +4,8 @@
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
 (import "sym_i64_env_core.tl")
 (import "compiler_intern.tl")
+(import "stdlib/option.tl")
+(import (option i64) as option_i64)
 
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit
   (begin
@@ -44,8 +46,8 @@
         (check-true (sym-i64-contains e "a") "single-hit-contains")
         (check-equal
           (match (sym-i64-lookup e "a")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           10
           "single-hit-value")))
     ; Miss after single bind
@@ -58,8 +60,8 @@
         (sym-i64-bind (sym-i64-bind (sym-i64-empty) "a" 10) "a" 20)]
       (check-equal
         (match (sym-i64-lookup e "a")
-          [(SomeI64 v) v]
-          [(NoneI64) 0])
+          [(option_i64.Some v) v]
+          [(option_i64.None) 0])
         20
         "shadow-newest"))
     ; Saved outer env preserved after inner bind
@@ -69,21 +71,21 @@
       (begin
         (check-equal
           (match (sym-i64-lookup outer "a")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           10
           "outer-preserved-a")
         (check-false (sym-i64-contains outer "b") "outer-no-b")
         (check-equal
           (match (sym-i64-lookup inner "a")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           10
           "inner-sees-a")
         (check-equal
           (match (sym-i64-lookup inner "b")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           20
           "inner-sees-b")))
     ; Substring-built key lookup
@@ -106,20 +108,20 @@
       (begin
         (check-equal
           (match (sym-i64-lookup e "x")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           1
           "chain-x")
         (check-equal
           (match (sym-i64-lookup e "y")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           2
           "chain-y")
         (check-equal
           (match (sym-i64-lookup e "z")
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           3
           "chain-z")))
     ; Intern-id API
@@ -131,8 +133,8 @@
         (check-true (sym-i64-contains e "id-key") "id-key-string-contains")
         (check-equal
           (match (sym-i64-lookup-id e id)
-            [(SomeI64 v) v]
-            [(NoneI64) 0])
+            [(option_i64.Some v) v]
+            [(option_i64.None) 0])
           88
           "id-key-value")))
     (print-string "All sym-i64-env tests passed.\n")

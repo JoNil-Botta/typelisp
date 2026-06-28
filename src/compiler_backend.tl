@@ -7597,7 +7597,8 @@
   [ty : AstType]
   [rhs : String]
   [lhs : String]
-  [setcc : String]) : String
+  [setcc : String]
+  [result-reg : String]) : String
   (string.string-append
     (str_cat.str-cat
       "    cmp"
@@ -7607,7 +7608,16 @@
       ", ")
     (string.string-append
       lhs
-      (str_cat.str-cat "\n    " setcc " %al\n    movzbl %al, %eax\n" ""))))
+      (str_cat.str-cat
+        "\n    "
+        setcc
+        " "
+        (compiler-backend-reg-part (string-copy result-reg) 1)
+        "\n    movzbl "
+        (compiler-backend-reg-part (string-copy result-reg) 1)
+        ", "
+        (compiler-backend-reg-part (string-copy result-reg) 4)
+        "\n"))))
 
 (define (compiler-backend-binop-cmp-set-reg-asm
   [ty : AstType]
@@ -8600,8 +8610,8 @@
       [(IrBinMod) (compiler-backend-binop-divmod-asm ty true rhs-reg)]
       [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false rhs-reg)]
       [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true rhs-reg)]
-      [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete")]
-      [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne")]
+      [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete" "%rax")]
+      [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne" "%rax")]
       [(IrBinLt)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8609,7 +8619,8 @@
           lhs
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
-            "setl"))]
+            "setl")
+          "%rax")]
       [(IrBinLe)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8617,7 +8628,8 @@
           lhs
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
-            "setle"))]
+            "setle")
+          "%rax")]
       [(IrBinGt)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8625,7 +8637,8 @@
           lhs
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
-            "setg"))]
+            "setg")
+          "%rax")]
       [(IrBinGe)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8633,7 +8646,8 @@
           lhs
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
-            "setge"))]
+            "setge")
+          "%rax")]
       [(IrBinAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
       [(IrBinOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
       [(IrBinBitAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
@@ -8649,22 +8663,38 @@
           lhs
           rhs-reg)])))
 
-(define (compiler-backend-binop-test-zero-asm [ty : AstType] [setcc : String]) : String
+(define (compiler-backend-binop-test-zero-asm
+  [ty : AstType]
+  [setcc : String]
+  [staging-reg : String]
+  [result-reg : String]) : String
   (let
-    [lhs : String (compiler-backend-sized-reg "%rax" ty)]
+    [lhs : String (compiler-backend-sized-reg staging-reg ty)]
     (string.string-append
       (compiler-backend-binop-reg-asm "test" ty lhs lhs)
-      (str_cat.str-cat "    " setcc " %al\n    movzbl %al, %eax\n" ""))))
+      (str_cat.str-cat
+        "    "
+        setcc
+        " "
+        (compiler-backend-reg-part (string-copy result-reg) 1)
+        "\n    movzbl "
+        (compiler-backend-reg-part (string-copy result-reg) 1)
+        ", "
+        (compiler-backend-reg-part (string-copy result-reg) 4)
+        "\n"))))
 
 (define (compiler-backend-binop-immediate-cmp-asm
   [ty : AstType]
   [imm : String]
-  [setcc : String]) : String
+  [setcc : String]
+  [staging-reg : String]
+  [result-reg : String]) : String
   (compiler-backend-binop-cmp-set-asm
     ty
     imm
-    (compiler-backend-sized-reg "%rax" ty)
-    setcc))
+    (compiler-backend-sized-reg staging-reg ty)
+    setcc
+    result-reg))
 
 (define (compiler-backend-binop-immediate-shift-asm
   [mnemonic : String]
@@ -8984,13 +9014,13 @@
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
-          (compiler-backend-binop-test-zero-asm ty "sete")
-          (compiler-backend-binop-immediate-cmp-asm ty imm "sete")))]
+          (compiler-backend-binop-test-zero-asm ty "sete" "%rax" "%rax")
+          (compiler-backend-binop-immediate-cmp-asm ty imm "sete" "%rax" "%rax")))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
-          (compiler-backend-binop-test-zero-asm ty "setne")
-          (compiler-backend-binop-immediate-cmp-asm ty imm "setne")))]
+          (compiler-backend-binop-test-zero-asm ty "setne" "%rax" "%rax")
+          (compiler-backend-binop-immediate-cmp-asm ty imm "setne" "%rax" "%rax")))]
     [(IrBinLt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -8998,7 +9028,9 @@
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
-            "setl")))]
+            "setl")
+          "%rax"
+          "%rax"))]
     [(IrBinLe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -9006,7 +9038,9 @@
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
-            "setle")))]
+            "setle")
+          "%rax"
+          "%rax"))]
     [(IrBinGt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -9014,7 +9048,9 @@
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
-            "setg")))]
+            "setg")
+          "%rax"
+          "%rax"))]
     [(IrBinGe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -9022,7 +9058,9 @@
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
-            "setge")))]
+            "setge")
+          "%rax"
+          "%rax"))]
     [(IrBinAnd)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg))]
@@ -9569,14 +9607,16 @@
           ty
           rhs
           (compiler-backend-sized-reg staging-reg ty)
-          "sete"))]
+          "sete"
+          "%rax"))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
           (compiler-backend-sized-reg staging-reg ty)
-          "setne"))]
+          "setne"
+          "%rax"))]
     [(IrBinLt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9585,7 +9625,8 @@
           (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
-            "setl")))]
+            "setl")
+          "%rax"))]
     [(IrBinLe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9594,7 +9635,8 @@
           (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
-            "setle")))]
+            "setle")
+          "%rax"))]
     [(IrBinGt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9603,7 +9645,8 @@
           (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
-            "setg")))]
+            "setg")
+          "%rax"))]
     [(IrBinGe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9612,7 +9655,8 @@
           (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
-            "setge")))]
+            "setge")
+          "%rax"))]
     [(IrBinAnd)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm

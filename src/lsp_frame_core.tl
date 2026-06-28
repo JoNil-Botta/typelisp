@@ -44,38 +44,38 @@
   (string.string-concat3 (lsp-str4 a b c d) (lsp-str3 e f g) ""))
 
 (defenum LspFrameRead
-  (LspFrameOk String)
-  (LspFrameEof)
-  (LspFrameErr String))
+  (Ok String)
+  (Eof)
+  (Err String))
 
 (defenum LspLengthParse
-  (LspLengthIgnore)
-  (LspLengthOk i64)
-  (LspLengthErr String))
+  (Ignore)
+  (Ok i64)
+  (Err String))
 
 (defenum LspStringResult
-  (OkLspString String)
-  (ErrLspString String))
+  (Ok String)
+  (Err String))
 
 (defenum LspUriPath
-  (OkLspUriPath String)
-  (ErrLspUriPath String))
+  (Ok String)
+  (Err String))
 
 (defenum LspJsonText
-  (OkLspJsonText String)
-  (MissingLspJsonText))
+  (Ok String)
+  (Missing))
 
 (defenum LspDocumentLookup
-  (FoundLspDocument String String String)
-  (MissingLspDocument))
+  (Found String String String)
+  (Missing))
 
 (defenum LspDocumentDeclsLookup
-  (FoundLspDocumentDecls String String String LspDeclList)
-  (MissingLspDocumentDecls))
+  (Found String String String LspDeclList)
+  (Missing))
 
 (defenum LspHandleResult
-  (LspContinue LspDocuments)
-  (LspExit LspDocuments))
+  (Continue LspDocuments)
+  (Exit LspDocuments))
 
 (defstruct LspLineCol
   (line i64)
@@ -87,32 +87,32 @@
   (col i64))
 
 (defenum LspDefLocation
-  (FoundDefLoc String i64 i64 i64)
-  (MissingDefLoc))
+  (Found String i64 i64 i64)
+  (Missing))
 
 (defenum LspImportTarget
-  (FoundLspImportTarget String i64 i64)
-  (MissingLspImportTarget))
+  (Found String i64 i64)
+  (Missing))
 
 (defenum LspDefSource
-  (FoundDefSource String i64)
-  (MissingDefSource))
+  (Found String i64)
+  (Missing))
 
 (defenum LspVariantHit
-  (FoundVariant String String)
-  (MissingVariant))
+  (Found String String)
+  (Missing))
 
 (defenum LspEditResult
-  (OkLspEdit String)
-  (ErrLspEdit String))
+  (Ok String)
+  (Err String))
 
 (defenum LspFunctionList
-  (OkLspFunctionList (Array String))
-  (ErrLspFunctionList String))
+  (Ok (Array String))
+  (Err String))
 
 (defenum LspValidationResult
-  (ValidLspForms)
-  (InvalidLspForms i64 i64 String String))
+  (Valid)
+  (Invalid i64 i64 String String))
 
 (define (lsp-frame-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -205,10 +205,10 @@
         (let
           [n : i64 (string.string->int value)]
           (if (< n 0)
-            (LspLengthErr "lsp: invalid Content-Length")
-            (LspLengthOk n)))
-        (LspLengthErr "lsp: invalid Content-Length")))
-    LspLengthIgnore))
+            (LspLengthParse.Err "lsp: invalid Content-Length")
+            (LspLengthParse.Ok n)))
+        (LspLengthParse.Err "lsp: invalid Content-Length")))
+    LspLengthParse.Ignore))
 
 (define (lsp-frame-read-message) : LspFrameRead
   (let
@@ -237,9 +237,9 @@
               (begin
                 (set! saw-header true)
                 (match (lsp-frame-parse-content-length line)
-                  [(LspLengthIgnore) unit]
-                  [(LspLengthOk n) (set! content-length n)]
-                  [(LspLengthErr message)
+                  [(LspLengthParse.Ignore) unit]
+                  [(LspLengthParse.Ok n) (set! content-length n)]
+                  [(LspLengthParse.Err message)
                     (begin
                       (set! err message)
                       (set! has-error true)
@@ -249,17 +249,17 @@
               (begin
                 (set! saw-header true)
                 (match (lsp-frame-parse-content-length line)
-                  [(LspLengthIgnore) unit]
-                  [(LspLengthOk n) (set! content-length n)]
-                  [(LspLengthErr message)
+                  [(LspLengthParse.Ignore) unit]
+                  [(LspLengthParse.Ok n) (set! content-length n)]
+                  [(LspLengthParse.Err message)
                     (begin
                       (set! err message)
                       (set! has-error true)
                       (set! done true))]))))))
       (cond
-        [clean-eof LspFrameEof]
-        [has-error (LspFrameErr err)]
-        [(< content-length 0) (LspFrameErr "lsp: missing Content-Length")]
+        [clean-eof LspFrameRead.Eof]
+        [has-error (LspFrameRead.Err err)]
+        [(< content-length 0) (LspFrameRead.Err "lsp: missing Content-Length")]
         [else
           (let
             [payload-read : io.StdinRead (io.stdin-read-bytes content-length)]
@@ -267,8 +267,8 @@
             (if (and
               (io.stdin-read-eof? payload-read)
               (< (string.string-length payload) content-length))
-              (LspFrameErr "lsp: truncated payload")
-              (LspFrameOk payload)))]))))
+              (LspFrameRead.Err "lsp: truncated payload")
+              (LspFrameRead.Ok payload)))]))))
 
 (define (lsp-frame-stdout-write [text : String]) : unit
   (io.stdout-write (& text)))
@@ -354,17 +354,17 @@
   (match (json.json-object-get value (& key))
     [(json.JsonFound field)
       (match field
-        [(json.JsonString text) (OkLspJsonText text)]
-        [_ MissingLspJsonText])]
-    [(json.JsonMissing) MissingLspJsonText]))
+        [(json.JsonString text) (LspJsonText.Ok text)]
+        [_ LspJsonText.Missing])]
+    [(json.JsonMissing) LspJsonText.Missing]))
 
 (define (lsp-json-string-field-default
   [value : json.Json]
   [key : String]
   [fallback : String]) : String
   (match (lsp-json-string-field value key)
-    [(OkLspJsonText text) text]
-    [(MissingLspJsonText) fallback]))
+    [(LspJsonText.Ok text) text]
+    [(LspJsonText.Missing) fallback]))
 
 (define (lsp-write-json [value : json.Json]) : unit
   (lsp-frame-write-body (json.json-stringify value)))
@@ -545,27 +545,27 @@
       (let
         [doc : LspDocument
           (lsp-documents-get (& docs) index (lsp-document-fallback))]
-        (FoundLspDocument
+        (LspDocumentLookup.Found
           (struct-get doc path)
           (struct-get doc text)
           (struct-get doc diagnostic-uri)))
-      MissingLspDocument)))
+      LspDocumentLookup.Missing)))
 
 (define (lsp-documents-smoke-add [docs : LspDocuments] [uri : String]) : LspDocuments
   (lsp-documents-set docs uri uri uri uri))
 
 (define (lsp-documents-smoke-missing? [docs : LspDocuments] [uri : String]) : bool
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ _ _) false]
-    [(MissingLspDocument) true]))
+    [(LspDocumentLookup.Found _ _ _) false]
+    [(LspDocumentLookup.Missing) true]))
 
 (define (lsp-documents-smoke-text-eq?
   [docs : LspDocuments]
   [uri : String]
   [expected-text : String]) : bool
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ text _) (string.string-eq text expected-text)]
-    [(MissingLspDocument) false]))
+    [(LspDocumentLookup.Found _ text _) (string.string-eq text expected-text)]
+    [(LspDocumentLookup.Missing) false]))
 
 (define (lsp-documents-cache-bound-smoke-ok?) : bool
   (let
@@ -659,8 +659,8 @@
               (set! i (+ i 1))))
           (set! i n)))
       (if (not has-error)
-        (OkLspString out)
-        (ErrLspString err)))))
+        (LspStringResult.Ok out)
+        (LspStringResult.Err err)))))
 
 (define (lsp-uri-path-strip-windows-leading-slash [path : String]) : String
   (let
@@ -676,14 +676,14 @@
   (if (lsp-frame-starts-with? uri "file://")
     (match (lsp-percent-decode
       (string.substring uri 7 (- (string.string-length uri) 7)))
-      [(OkLspString decoded)
+      [(LspStringResult.Ok decoded)
         (let
           [path : String (lsp-uri-path-strip-windows-leading-slash decoded)]
           (if (> (string.string-length path) 0)
-            (OkLspUriPath path)
-            (ErrLspUriPath "unsupported TypeLisp LSP URI: empty file path")))]
-      [(ErrLspString message) (ErrLspUriPath message)])
-    (ErrLspUriPath "unsupported TypeLisp LSP URI: expected file:// URI")))
+            (LspUriPath.Ok path)
+            (LspUriPath.Err "unsupported TypeLisp LSP URI: empty file path")))]
+      [(LspStringResult.Err message) (LspUriPath.Err message)])
+    (LspUriPath.Err "unsupported TypeLisp LSP URI: expected file:// URI")))
 
 (define (lsp-uri-safe-code? [code : i64]) : bool
   (or
@@ -883,13 +883,13 @@
   [diag : CompilerDiagnostic]
   [want : String]) : bool
   (match (lsp-json-string-field (lsp-compiler-diagnostic diag) "code")
-    [(OkLspJsonText code) (string.string-eq code want)]
-    [(MissingLspJsonText) false]))
+    [(LspJsonText.Ok code) (string.string-eq code want)]
+    [(LspJsonText.Missing) false]))
 
 (define (lsp-compiler-diagnostic-uncoded-ok? [diag : CompilerDiagnostic]) : bool
   (match (lsp-json-string-field (lsp-compiler-diagnostic diag) "code")
-    [(OkLspJsonText _) false]
-    [(MissingLspJsonText) true]))
+    [(LspJsonText.Ok _) false]
+    [(LspJsonText.Missing) true]))
 
 (cfg
   test
@@ -939,8 +939,8 @@
 
 (define (lsp-validate-forms-line-context-ok?) : bool
   (match (lsp-validate-forms-result "(let [x : badtype] 1)")
-    [(ValidLspForms) false]
-    [(InvalidLspForms line col msg ctx)
+    [(LspValidationResult.Valid) false]
+    [(LspValidationResult.Invalid line col msg ctx)
       (and
         (= line 1)
         (= col 1)
@@ -1017,18 +1017,18 @@
   [uri : String]
   [next-diagnostic-uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ _ old-diagnostic-uri)
+    [(LspDocumentLookup.Found _ _ old-diagnostic-uri)
       (if (or
         (string.string-eq old-diagnostic-uri "")
         (string.string-eq old-diagnostic-uri uri)
         (string.string-eq old-diagnostic-uri next-diagnostic-uri))
         unit
         (lsp-publish-diagnostics old-diagnostic-uri json.JsonListNil))]
-    [(MissingLspDocument) unit]))
+    [(LspDocumentLookup.Missing) unit]))
 
 (define (lsp-clear-close-diagnostics [docs : LspDocuments] [uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ _ old-diagnostic-uri)
+    [(LspDocumentLookup.Found _ _ old-diagnostic-uri)
       (begin
         (lsp-publish-diagnostics uri json.JsonListNil)
         (if (or
@@ -1036,7 +1036,7 @@
           (string.string-eq old-diagnostic-uri uri))
           unit
           (lsp-publish-diagnostics old-diagnostic-uri json.JsonListNil)))]
-    [(MissingLspDocument) (lsp-publish-diagnostics uri json.JsonListNil)]))
+    [(LspDocumentLookup.Missing) (lsp-publish-diagnostics uri json.JsonListNil)]))
 
 ;; --------------------------------------------------------------------------
 ;; Lint findings as diagnostics (Warning severity), published for the open
@@ -1143,10 +1143,10 @@
         (match value
           [(json.JsonArray items)
             (match (box-get items)
-              [(json.JsonListNil) MissingLspJsonText]
+              [(json.JsonListNil) LspJsonText.Missing]
               [(json.JsonListCons first _) (lsp-json-string-field first "text")])]
-          [_ MissingLspJsonText])]
-      [(json.JsonMissing) MissingLspJsonText])))
+          [_ LspJsonText.Missing])]
+      [(json.JsonMissing) LspJsonText.Missing])))
 
 (define (lsp-did-open
   [params : json.Json]
@@ -1157,24 +1157,24 @@
     (match (json.json-object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (let
               [text : String (lsp-json-string-field-default document "text" "")]
               (match (lsp-file-uri-to-path uri)
-                [(OkLspUriPath path)
+                [(LspUriPath.Ok path)
                   (let
                     [diagnostic-uri : String
                       (lsp-analyze-document uri path text stdlib-roots)]
                     (begin
                       (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                      (LspContinue
+                      (LspHandleResult.Continue
                         (lsp-documents-set docs uri path text diagnostic-uri))))]
-                [(ErrLspUriPath message)
+                [(LspUriPath.Err message)
                   (begin
                     (lsp-publish-uri-diagnostic uri message)
-                    (LspContinue docs))]))]
-          [(MissingLspJsonText) (LspContinue docs)])]
-      [(json.JsonMissing) (LspContinue docs)])))
+                    (LspHandleResult.Continue docs))]))]
+          [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
+      [(json.JsonMissing) (LspHandleResult.Continue docs)])))
 
 (define (lsp-did-change
   [params : json.Json]
@@ -1185,31 +1185,31 @@
     (match (json.json-object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (match (lsp-first-change-text params)
-              [(OkLspJsonText text)
+              [(LspJsonText.Ok text)
                 (match (lsp-file-uri-to-path uri)
-                  [(OkLspUriPath path)
+                  [(LspUriPath.Ok path)
                     (let
                       [diagnostic-uri : String
                         (lsp-analyze-document uri path text stdlib-roots)]
                       (begin
                         (lsp-clear-stale-diagnostic docs uri diagnostic-uri)
-                        (LspContinue
+                        (LspHandleResult.Continue
                           (lsp-documents-set docs uri path text diagnostic-uri))))]
-                  [(ErrLspUriPath message)
+                  [(LspUriPath.Err message)
                     (begin
                       (lsp-publish-uri-diagnostic uri message)
-                      (LspContinue docs))])]
-              [(MissingLspJsonText)
+                      (LspHandleResult.Continue docs))])]
+              [(LspJsonText.Missing)
                 (match (lsp-documents-lookup docs uri)
-                  [(FoundLspDocument path text _)
+                  [(LspDocumentLookup.Found path text _)
                     (begin
                       (lsp-analyze-document uri path text stdlib-roots)
-                      (LspContinue docs))]
-                  [(MissingLspDocument) (LspContinue docs)])])]
-          [(MissingLspJsonText) (LspContinue docs)])]
-      [(json.JsonMissing) (LspContinue docs)])))
+                      (LspHandleResult.Continue docs))]
+                  [(LspDocumentLookup.Missing) (LspHandleResult.Continue docs)])])]
+          [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
+      [(json.JsonMissing) (LspHandleResult.Continue docs)])))
 
 (define (lsp-did-close [params : json.Json] [docs : LspDocuments]) : LspHandleResult
   (let
@@ -1217,12 +1217,12 @@
     (match (json.json-object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (begin
               (lsp-clear-close-diagnostics docs uri)
-              (LspContinue (lsp-documents-remove docs uri)))]
-          [(MissingLspJsonText) (LspContinue docs)])]
-      [(json.JsonMissing) (LspContinue docs)])))
+              (LspHandleResult.Continue (lsp-documents-remove docs uri)))]
+          [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
+      [(json.JsonMissing) (LspHandleResult.Continue docs)])))
 
 ;; --------------------------------------------------------------------------
 ;; Go-to-definition (textDocument/definition).
@@ -1577,7 +1577,7 @@
   [needle : String]) : LspDefLocation
   (let
     [lc : LspLineCol (lsp-line-col-at-offset text off)]
-    (FoundDefLoc
+    (LspDefLocation.Found
       uri
       (struct-get lc line)
       (struct-get lc col)
@@ -1589,7 +1589,7 @@
   [needle : String]
   [idx : i64]) : LspDefLocation
   (if (>= idx (lsp-documents-len (& docs)))
-    MissingDefLoc
+    LspDefLocation.Missing
     (let
       [doc : LspDocument
         (lsp-documents-get (& docs) idx (lsp-document-fallback))]
@@ -1662,7 +1662,7 @@
   (let
     [n : i64 (string.string-length text)]
     (if (>= operand-start n)
-      MissingLspImportTarget
+      LspImportTarget.Missing
       (let
         [c : char (string.string-ref text operand-start)]
         (cond
@@ -1682,7 +1682,7 @@
                     path
                     spec
                     stdlib-roots))]
-              (FoundLspImportTarget resolved content-start content-end))]
+              (LspImportTarget.Found resolved content-start content-end))]
           [(lsp-ident-char? c)
             (let
               [module-end : i64 (lsp-scan-ident text operand-start n)]
@@ -1692,15 +1692,15 @@
                   operand-start
                   (- module-end operand-start))]
               (if (lsp-dotted-import-name-valid? module-name)
-                (FoundLspImportTarget
+                (LspImportTarget.Found
                   (lsp-resolve-module-import-target
                     path
                     module-name
                     stdlib-roots)
                   operand-start
                   module-end)
-                MissingLspImportTarget))]
-          [else MissingLspImportTarget])))))
+                LspImportTarget.Missing))]
+          [else LspImportTarget.Missing])))))
 
 ;; Collect every import target from the document, skipping strings and comments
 ;; so embedded source never yields a false import.
@@ -1736,11 +1736,11 @@
                       path
                       stdlib-roots
                       operand-start)
-                      [(FoundLspImportTarget resolved _ end)
+                      [(LspImportTarget.Found resolved _ end)
                         (begin
                           (set! out (vector.string-vec-push out resolved))
                           (set! i end))]
-                      [(MissingLspImportTarget) (set! i (+ i 1))]))
+                      [(LspImportTarget.Missing) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       out)))
@@ -1753,13 +1753,13 @@
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
-    [target : LspImportTarget MissingLspImportTarget]
+    [target : LspImportTarget LspImportTarget.Missing]
     (begin
       (while (and
         (< i n)
         (match target
-          [(FoundLspImportTarget _ _ _) false]
-          [(MissingLspImportTarget) true]))
+          [(LspImportTarget.Found _ _ _) false]
+          [(LspImportTarget.Missing) true]))
         (let
           [c : char (string.string-ref text i)]
           (cond
@@ -1782,15 +1782,15 @@
                       path
                       stdlib-roots
                       operand-start)
-                      [(FoundLspImportTarget resolved start end)
+                      [(LspImportTarget.Found resolved start end)
                         (begin
                           (if (and (>= off start) (< off end))
                             (set!
                               target
-                              (FoundLspImportTarget resolved start end))
+                              (LspImportTarget.Found resolved start end))
                             unit)
                           (set! i end))]
-                      [(MissingLspImportTarget) (set! i (+ i 1))]))
+                      [(LspImportTarget.Missing) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       target)))
@@ -1889,7 +1889,7 @@
   [needle : String]
   [idx : i64]) : LspDefLocation
   (if (>= idx (vector.string-vec-len (struct-get set paths)))
-    MissingDefLoc
+    LspDefLocation.Missing
     (let
       [src : String (vector.string-vec-get (struct-get set texts) idx "")]
       [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
@@ -1916,9 +1916,9 @@
     (if (>= off 0)
       (lsp-def-loc-from current-uri current-text off needle)
       (match (lsp-find-definition-in-docs docs current-uri needle 0)
-        [(FoundDefLoc def-uri def-line def-col def-len)
-          (FoundDefLoc def-uri def-line def-col def-len)]
-        [(MissingDefLoc)
+        [(LspDefLocation.Found def-uri def-line def-col def-len)
+          (LspDefLocation.Found def-uri def-line def-col def-len)]
+        [(LspDefLocation.Missing)
           (lsp-find-definition-in-modules
             (lsp-transitive-modules current-path current-text stdlib-roots)
             needle
@@ -1960,7 +1960,7 @@
   [docs : LspDocuments]
   [stdlib-roots : vector.StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
@@ -1969,7 +1969,7 @@
           (lsp-import-target-at-offset text path stdlib-roots off)]
         [sym : String (lsp-symbol-at-offset text off)]
         (match import-target
-          [(FoundLspImportTarget resolved _ _)
+          [(LspImportTarget.Found resolved _ _)
             (lsp-write-response
               id
               (lsp-definition-location
@@ -1977,7 +1977,7 @@
                 1
                 1
                 1))]
-          [(MissingLspImportTarget)
+          [(LspImportTarget.Missing)
             (if (string.string-eq sym "")
               (lsp-write-response id json.JsonNull)
               (match (lsp-find-definition
@@ -1987,12 +1987,12 @@
                 text
                 stdlib-roots
                 (lsp-symbol-base sym))
-                [(FoundDefLoc def-uri def-line def-col def-len)
+                [(LspDefLocation.Found def-uri def-line def-col def-len)
                   (lsp-write-response
                     id
                     (lsp-definition-location def-uri def-line def-col def-len))]
-                [(MissingDefLoc) (lsp-write-response id json.JsonNull)]))]))]
-    [(MissingLspDocument) (lsp-write-response id json.JsonNull)]))
+                [(LspDefLocation.Missing) (lsp-write-response id json.JsonNull)]))]))]
+    [(LspDocumentLookup.Missing) (lsp-write-response id json.JsonNull)]))
 
 (define (lsp-handle-definition
   [id : json.Json]
@@ -2004,14 +2004,14 @@
     (match (json.json-object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (let
               [pos-key : String "position"]
               (match (json.json-object-get params (& pos-key))
                 [(json.JsonFound position)
                   (lsp-definition-respond id uri position docs stdlib-roots)]
                 [(json.JsonMissing) (lsp-write-response id json.JsonNull)]))]
-          [(MissingLspJsonText) (lsp-write-response id json.JsonNull)])]
+          [(LspJsonText.Missing) (lsp-write-response id json.JsonNull)])]
       [(json.JsonMissing) (lsp-write-response id json.JsonNull)])))
 
 (define (lsp-definition-smoke-basic?) : bool
@@ -2029,8 +2029,9 @@
         src
         (vector.string-vec-new)
         (lsp-symbol-base sym))
-        [(FoundDefLoc _ line col len) (and (= line 1) (= col 10) (= len 3))]
-        [(MissingDefLoc) false]))))
+        [(LspDefLocation.Found _ line col len)
+          (and (= line 1) (= col 10) (= len 3))]
+        [(LspDefLocation.Missing) false]))))
 
 (define (lsp-definition-smoke-skips-strings?) : bool
   (let
@@ -2043,8 +2044,8 @@
       src
       (vector.string-vec-new)
       "decoy")
-      [(FoundDefLoc _ _ _ _) false]
-      [(MissingDefLoc) true])))
+      [(LspDefLocation.Found _ _ _ _) false]
+      [(LspDefLocation.Missing) true])))
 
 (define (lsp-definition-smoke-skips-char-literals?) : bool
   (let
@@ -2057,8 +2058,9 @@
       src
       (vector.string-vec-new)
       "target")
-      [(FoundDefLoc _ line col len) (and (= line 3) (= col 10) (= len 6))]
-      [(MissingDefLoc) false])))
+      [(LspDefLocation.Found _ line col len)
+        (and (= line 3) (= col 10) (= len 6))]
+      [(LspDefLocation.Missing) false])))
 
 (define (lsp-definition-smoke-qualified-base?) : bool
   (and
@@ -2081,13 +2083,13 @@
         src
         (vector.string-vec-new)
         (lsp-symbol-base sym))
-        [(FoundDefLoc def-uri line _ len)
+        [(LspDefLocation.Found def-uri line _ len)
           (and
             (not (string.string-eq def-uri "file:///stdlib/io.tl"))
             (string.string-contains (& def-uri) (& stdlib-suffix))
             (> line 0)
             (= len 5))]
-        [(MissingDefLoc) false]))))
+        [(LspDefLocation.Missing) false]))))
 
 (define (lsp-definition-smoke-ok?) : bool
   (and
@@ -2312,7 +2314,7 @@
   [docs : LspDocuments]
   [stdlib-roots : vector.StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [start-line : i64 (lsp-inlay-range-line range "start" 0)]
         [end-line : i64 (lsp-inlay-range-line range "end" 1000000000)]
@@ -2326,7 +2328,7 @@
             (begin
               (tc-inlay-hints-disable!)
               (lsp-write-response id (lsp-json-array hints))))))]
-    [(MissingLspDocument)
+    [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-handle-inlay
@@ -2339,7 +2341,7 @@
     (match (json.json-object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (let
               [range-key : String "range"]
               (match (json.json-object-get params (& range-key))
@@ -2347,7 +2349,7 @@
                   (lsp-inlay-respond id uri range docs stdlib-roots)]
                 [(json.JsonMissing)
                   (lsp-write-response id (lsp-json-array json.JsonListNil))]))]
-          [(MissingLspJsonText)
+          [(LspJsonText.Missing)
             (lsp-write-response id (lsp-json-array json.JsonListNil))])]
       [(json.JsonMissing)
         (lsp-write-response id (lsp-json-array json.JsonListNil))])))
@@ -2377,24 +2379,24 @@
   [uri : String]
   [docs : LspDocuments]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument _ text _)
+    [(LspDocumentLookup.Found _ text _)
       (match (format-rules-render-source-width-result text 80)
-        [(OkFormatString formatted)
+        [(ResultFormatString.Ok formatted)
           (lsp-write-response
             id
             (lsp-json-array
               (lsp-json-list-cons
                 (lsp-formatting-edit text formatted)
                 json.JsonListNil)))]
-        [(ErrFormatString _)
+        [(ResultFormatString.Err _)
           (lsp-write-response id (lsp-json-array json.JsonListNil))])]
-    [(MissingLspDocument)
+    [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-format-edit-text [text : String]) : String
   (match (format-rules-render-source-width-result text 80)
-    [(OkFormatString formatted) formatted]
-    [(ErrFormatString _) text]))
+    [(ResultFormatString.Ok formatted) formatted]
+    [(ResultFormatString.Err _) text]))
 
 (define (lsp-handle-formatting
   [id : json.Json]
@@ -2405,8 +2407,8 @@
     (match (json.json-object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri) (lsp-formatting-respond id uri docs)]
-          [(MissingLspJsonText)
+          [(LspJsonText.Ok uri) (lsp-formatting-respond id uri docs)]
+          [(LspJsonText.Missing)
             (lsp-write-response id (lsp-json-array json.JsonListNil))])]
       [(json.JsonMissing)
         (lsp-write-response id (lsp-json-array json.JsonListNil))])))
@@ -2504,14 +2506,14 @@
     (if (= i n)
       false
       (match (lsp-validate-forms-result text)
-        [(ValidLspForms) true]
-        [(InvalidLspForms _ _ _ _) false]))))
+        [(LspValidationResult.Valid) true]
+        [(LspValidationResult.Invalid _ _ _ _) false]))))
 
 ;; Return a formatted error message, or empty string if valid.
 (define (lsp-validate-forms-error [text : String]) : String
   (match (lsp-validate-forms-result text)
-    [(ValidLspForms) ""]
-    [(InvalidLspForms line col msg ctx)
+    [(LspValidationResult.Valid) ""]
+    [(LspValidationResult.Invalid line col msg ctx)
       (lsp-str7
         msg
         " at line "
@@ -2549,26 +2551,26 @@
 ;; or InvalidLspForms with line, col, message, and context on failure.
 (define (lsp-validate-forms-result [text : String]) : LspValidationResult
   (match (lex-spanned-result text)
-    [(ErrSpannedTokens err)
+    [(ResultSpannedTokens.Err err)
       (let
         [span : SourceSpan (source-error-span err)]
         [line : i64 (span-start-line span)]
         [col : i64 (span-start-col span)]
         [msg : String (source-error-message err)]
-        (InvalidLspForms line col msg (lsp-line-at text line)))]
-    [(OkSpannedTokens toks)
+        (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
+    [(ResultSpannedTokens.Ok toks)
       (let
         [cur : (Array i64) (make-array i64 1)]
         [dispatch : SymI64Env (compiler-parse-dispatch-env)]
         [done : bool false]
-        [result : LspValidationResult ValidLspForms]
+        [result : LspValidationResult LspValidationResult.Valid]
         (begin
           (array-set! cur 0 0)
           (while (and
             (not done)
             (not (= (peek-spanned-tag toks cur) (tag-end))))
             (match (read-form-spanned-result toks cur)
-              [(ErrSpannedSexpr err)
+              [(ResultSpannedSexpr.Err err)
                 (let
                   [span : SourceSpan (source-error-span err)]
                   [line : i64 (span-start-line span)]
@@ -2577,9 +2579,13 @@
                   (begin
                     (set!
                       result
-                      (InvalidLspForms line col msg (lsp-line-at text line)))
+                      (LspValidationResult.Invalid
+                        line
+                        col
+                        msg
+                        (lsp-line-at text line)))
                     (set! done true)))]
-              [(OkSpannedSexpr sexpr)
+              [(ResultSpannedSexpr.Ok sexpr)
                 (match (parse-ast-decl-maybe dispatch sexpr)
                   [(ErrAstMaybeDecl msg)
                     (match (parse-ast-expr dispatch sexpr)
@@ -2591,7 +2597,7 @@
                           (begin
                             (set!
                               result
-                              (InvalidLspForms
+                              (LspValidationResult.Invalid
                                 line
                                 col
                                 msg
@@ -2608,7 +2614,7 @@
                           (begin
                             (set!
                               result
-                              (InvalidLspForms
+                              (LspValidationResult.Invalid
                                 line
                                 col
                                 msg
@@ -2723,7 +2729,7 @@
   [needle : String]
   [idx : i64]) : LspDefSource
   (if (>= idx (lsp-documents-len (& docs)))
-    MissingDefSource
+    LspDefSource.Missing
     (let
       [doc : LspDocument
         (lsp-documents-get (& docs) idx (lsp-document-fallback))]
@@ -2733,7 +2739,7 @@
           [doc-text : String (struct-get doc text)]
           [off : i64 (lsp-find-def-form-in doc-text needle)]
           (if (>= off 0)
-            (FoundDefSource doc-text off)
+            (LspDefSource.Found doc-text off)
             (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))))))))
 
 (define (lsp-hover-resolve-in-modules
@@ -2741,12 +2747,12 @@
   [needle : String]
   [idx : i64]) : LspDefSource
   (if (>= idx (vector.string-vec-len (struct-get set paths)))
-    MissingDefSource
+    LspDefSource.Missing
     (let
       [src : String (vector.string-vec-get (struct-get set texts) idx "")]
       [off : i64 (lsp-find-def-form-in src needle)]
       (if (>= off 0)
-        (FoundDefSource src off)
+        (LspDefSource.Found src off)
         (lsp-hover-resolve-in-modules set needle (+ idx 1))))))
 
 (define (lsp-hover-resolve
@@ -2759,10 +2765,10 @@
   (let
     [off : i64 (lsp-find-def-form-in current-text needle)]
     (if (>= off 0)
-      (FoundDefSource current-text off)
+      (LspDefSource.Found current-text off)
       (match (lsp-hover-resolve-in-docs docs current-uri needle 0)
-        [(FoundDefSource src form-off) (FoundDefSource src form-off)]
-        [(MissingDefSource)
+        [(LspDefSource.Found src form-off) (LspDefSource.Found src form-off)]
+        [(LspDefSource.Missing)
           (lsp-hover-resolve-in-modules
             (lsp-transitive-modules current-path current-text stdlib-roots)
             needle
@@ -2972,8 +2978,8 @@
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       (if found
-        (FoundVariant enum-name variant-form)
-        MissingVariant))))
+        (LspVariantHit.Found enum-name variant-form)
+        LspVariantHit.Missing))))
 
 (define (lsp-resolve-variant-in-docs
   [docs : LspDocuments]
@@ -2981,16 +2987,16 @@
   [needle : String]
   [idx : i64]) : LspVariantHit
   (if (>= idx (lsp-documents-len (& docs)))
-    MissingVariant
+    LspVariantHit.Missing
     (let
       [doc : LspDocument
         (lsp-documents-get (& docs) idx (lsp-document-fallback))]
       (if (string.string-eq (struct-get doc uri) current-uri)
         (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))
         (match (lsp-enum-of-variant (struct-get doc text) needle)
-          [(FoundVariant enum-name variant-form)
-            (FoundVariant enum-name variant-form)]
-          [(MissingVariant)
+          [(LspVariantHit.Found enum-name variant-form)
+            (LspVariantHit.Found enum-name variant-form)]
+          [(LspVariantHit.Missing)
             (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))])))))
 
 (define (lsp-resolve-variant-in-modules
@@ -2998,13 +3004,14 @@
   [needle : String]
   [idx : i64]) : LspVariantHit
   (if (>= idx (vector.string-vec-len (struct-get set paths)))
-    MissingVariant
+    LspVariantHit.Missing
     (match (lsp-enum-of-variant
       (vector.string-vec-get (struct-get set texts) idx "")
       needle)
-      [(FoundVariant enum-name variant-form)
-        (FoundVariant enum-name variant-form)]
-      [(MissingVariant) (lsp-resolve-variant-in-modules set needle (+ idx 1))])))
+      [(LspVariantHit.Found enum-name variant-form)
+        (LspVariantHit.Found enum-name variant-form)]
+      [(LspVariantHit.Missing)
+        (lsp-resolve-variant-in-modules set needle (+ idx 1))])))
 
 ;; Find the enum/variant in the current document, other open documents, then
 ;; imported modules (same reach as go-to-definition).
@@ -3016,13 +3023,13 @@
   [stdlib-roots : vector.StringVec]
   [needle : String]) : LspVariantHit
   (match (lsp-enum-of-variant current-text needle)
-    [(FoundVariant enum-name variant-form)
-      (FoundVariant enum-name variant-form)]
-    [(MissingVariant)
+    [(LspVariantHit.Found enum-name variant-form)
+      (LspVariantHit.Found enum-name variant-form)]
+    [(LspVariantHit.Missing)
       (match (lsp-resolve-variant-in-docs docs current-uri needle 0)
-        [(FoundVariant enum-name variant-form)
-          (FoundVariant enum-name variant-form)]
-        [(MissingVariant)
+        [(LspVariantHit.Found enum-name variant-form)
+          (LspVariantHit.Found enum-name variant-form)]
+        [(LspVariantHit.Missing)
           (lsp-resolve-variant-in-modules
             (lsp-transitive-modules current-path current-text stdlib-roots)
             needle
@@ -3242,7 +3249,7 @@
   [docs : LspDocuments]
   [stdlib-roots : vector.StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
@@ -3281,7 +3288,7 @@
                   text
                   stdlib-roots
                   needle)
-                  [(FoundDefSource def-text form-off)
+                  [(LspDefSource.Found def-text form-off)
                     (lsp-write-response
                       id
                       (lsp-hover-result
@@ -3291,7 +3298,7 @@
                         line0
                         char0
                         (string.string-length sym)))]
-                  [(MissingDefSource)
+                  [(LspDefSource.Missing)
                     (match (lsp-resolve-variant
                       docs
                       uri
@@ -3299,7 +3306,7 @@
                       text
                       stdlib-roots
                       needle)
-                      [(FoundVariant enum-name variant-form)
+                      [(LspVariantHit.Found enum-name variant-form)
                         (lsp-write-response
                           id
                           (lsp-hover-result
@@ -3311,8 +3318,9 @@
                             line0
                             char0
                             (string.string-length sym)))]
-                      [(MissingVariant) (lsp-write-response id json.JsonNull)])]))))))]
-    [(MissingLspDocument) (lsp-write-response id json.JsonNull)]))
+                      [(LspVariantHit.Missing)
+                        (lsp-write-response id json.JsonNull)])]))))))]
+    [(LspDocumentLookup.Missing) (lsp-write-response id json.JsonNull)]))
 
 (define (lsp-handle-hover
   [id : json.Json]
@@ -3324,14 +3332,14 @@
     (match (json.json-object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (let
               [pos-key : String "position"]
               (match (json.json-object-get params (& pos-key))
                 [(json.JsonFound position)
                   (lsp-hover-respond id uri position docs stdlib-roots)]
                 [(json.JsonMissing) (lsp-write-response id json.JsonNull)]))]
-          [(MissingLspJsonText) (lsp-write-response id json.JsonNull)])]
+          [(LspJsonText.Missing) (lsp-write-response id json.JsonNull)])]
       [(json.JsonMissing) (lsp-write-response id json.JsonNull)])))
 
 ;; --------------------------------------------------------------------------
@@ -3388,7 +3396,7 @@
                       path
                       stdlib-roots
                       operand-start)
-                      [(FoundLspImportTarget resolved start end)
+                      [(LspImportTarget.Found resolved start end)
                         (begin
                           (set!
                             acc
@@ -3396,7 +3404,7 @@
                               (lsp-document-link-json text resolved start end)
                               acc))
                           (set! i end))]
-                      [(MissingLspImportTarget) (set! i (+ i 1))]))
+                      [(LspImportTarget.Missing) (set! i (+ i 1))]))
                   (set! i (+ i 1))))]
             [else (set! i (+ i 1))])))
       acc)))
@@ -3407,11 +3415,11 @@
   [docs : LspDocuments]
   [stdlib-roots : vector.StringVec]) : unit
   (match (lsp-documents-lookup docs uri)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (lsp-write-response
         id
         (lsp-json-array (lsp-document-links text path stdlib-roots)))]
-    [(MissingLspDocument)
+    [(LspDocumentLookup.Missing)
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-handle-document-link
@@ -3424,9 +3432,9 @@
     (match (json.json-object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (lsp-document-link-respond id uri docs stdlib-roots)]
-          [(MissingLspJsonText)
+          [(LspJsonText.Missing)
             (lsp-write-response id (lsp-json-array json.JsonListNil))])]
       [(json.JsonMissing)
         (lsp-write-response id (lsp-json-array json.JsonListNil))])))
@@ -3519,9 +3527,9 @@
     (match (json.json-object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri) (lsp-documents-lookup docs uri)]
-          [(MissingLspJsonText) MissingLspDocument])]
-      [(json.JsonMissing) MissingLspDocument])))
+          [(LspJsonText.Ok uri) (lsp-documents-lookup docs uri)]
+          [(LspJsonText.Missing) LspDocumentLookup.Missing])]
+      [(json.JsonMissing) LspDocumentLookup.Missing])))
 
 (define (lsp-get-document-decls [params : json.Json] [docs : LspDocuments]) : LspDocumentDeclsLookup
   (let
@@ -3529,21 +3537,21 @@
     (match (json.json-object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
-          [(OkLspJsonText uri)
+          [(LspJsonText.Ok uri)
             (let
               [idx : i64 (lsp-documents-find-index docs uri)]
               (if (>= idx 0)
                 (let
                   [doc : LspDocument
                     (lsp-documents-get (& docs) idx (lsp-document-fallback))]
-                  (FoundLspDocumentDecls
+                  (LspDocumentDeclsLookup.Found
                     (struct-get doc path)
                     (struct-get doc text)
                     (struct-get doc diagnostic-uri)
                     (lsp-document-decls doc docs)))
-                MissingLspDocumentDecls))]
-          [(MissingLspJsonText) MissingLspDocumentDecls])]
-      [(json.JsonMissing) MissingLspDocumentDecls])))
+                LspDocumentDeclsLookup.Missing))]
+          [(LspJsonText.Missing) LspDocumentDeclsLookup.Missing])]
+      [(json.JsonMissing) LspDocumentDeclsLookup.Missing])))
 
 ;; Helper: get cached decls or scan and cache them
 (define (lsp-document-decls-cache-on-current-arena
@@ -3671,16 +3679,16 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [items : json.JsonList (lsp-decls-to-name-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
-          (LspContinue docs)))]
-    [(MissingLspDocumentDecls)
+          (LspHandleResult.Continue docs)))]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/astDump - Return full declaration metadata
 (define (lsp-handle-tl-ast-dump
@@ -3688,16 +3696,16 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [items : json.JsonList (lsp-decls-to-json-list decls 0)]
         (begin
           (lsp-write-response id (lsp-json-array items))
-          (LspContinue docs)))]
-    [(MissingLspDocumentDecls)
+          (LspHandleResult.Continue docs)))]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/findPosition - Find the name position {line, character} of a top-level form
 (define (lsp-handle-tl-find-position
@@ -3705,9 +3713,9 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
-        [(OkLspJsonText name)
+        [(LspJsonText.Ok name)
           (let
             [kind-param : String
               (lsp-json-string-field-default params "kind" "")]
@@ -3743,18 +3751,18 @@
                       (lsp-json-number (- result-line 1))
                       "character"
                       (lsp-json-number (- result-col 1))))
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (begin
                   (lsp-write-error id -32600 "Form not found")
-                  (LspContinue docs)))))]
-        [(MissingLspJsonText)
+                  (LspHandleResult.Continue docs)))))]
+        [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing name parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocumentDecls)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/replace - legacy method name routed to position-based replacement
 ;; tl/deleteFunction - legacy method name routed to position-based deletion
@@ -3816,8 +3824,8 @@
           (lsp-find-and-extract-name text line col))]
       [(json.JsonMissing)
         (match (lsp-json-string-field params "name")
-          [(OkLspJsonText name) name]
-          [(MissingLspJsonText) ""])])))
+          [(LspJsonText.Ok name) name]
+          [(LspJsonText.Missing) ""])])))
 
 (define (lsp-decl-list-find-name [decls : LspDeclList] [name : String]) : i64
   (let
@@ -3848,7 +3856,7 @@
           (json.JsonBool true)
           "text"
           (json.JsonString formatted)))
-      (LspContinue docs))))
+      (LspHandleResult.Continue docs))))
 
 (define (lsp-structural-move-after-destination
   [id : json.Json]
@@ -3864,15 +3872,15 @@
       [(= found-idx -1)
         (begin
           (lsp-write-error id -32600 "Declaration not found")
-          (LspContinue docs))]
+          (LspHandleResult.Continue docs))]
       [(= dest-idx -1)
         (begin
           (lsp-write-error id -32600 "Destination declaration not found")
-          (LspContinue docs))]
+          (LspHandleResult.Continue docs))]
       [(= found-idx dest-idx)
         (begin
           (lsp-write-error id -32600 "Cannot move declaration to itself")
-          (LspContinue docs))]
+          (LspHandleResult.Continue docs))]
       [else
         (let
           [found-entry : LspDeclEntry
@@ -3902,11 +3910,11 @@
       [(= found-idx -1)
         (begin
           (lsp-write-error id -32600 "Declaration not found")
-          (LspContinue docs))]
+          (LspHandleResult.Continue docs))]
       [(or (< target-idx 0) (>= target-idx n) (= target-idx -1))
         (begin
           (lsp-write-error id -32600 "Invalid direction or cannot move further")
-          (LspContinue docs))]
+          (LspHandleResult.Continue docs))]
       [else
         (let
           [found-entry : LspDeclEntry
@@ -3948,15 +3956,15 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [name : String (lsp-structural-move-name params text)]
         (if (= (string.string-length name) 0)
           (begin
             (lsp-write-error id -32600 "Missing name or position parameter")
-            (LspContinue docs))
+            (LspHandleResult.Continue docs))
           (match (lsp-json-string-field params "destination")
-            [(OkLspJsonText destination)
+            [(LspJsonText.Ok destination)
               (lsp-structural-move-after-destination
                 id
                 docs
@@ -3964,9 +3972,9 @@
                 decls
                 name
                 destination)]
-            [(MissingLspJsonText)
+            [(LspJsonText.Missing)
               (match (lsp-json-string-field params "direction")
-                [(OkLspJsonText direction)
+                [(LspJsonText.Ok direction)
                   (lsp-structural-move-direction
                     id
                     docs
@@ -3974,17 +3982,17 @@
                     decls
                     name
                     direction)]
-                [(MissingLspJsonText)
+                [(LspJsonText.Missing)
                   (begin
                     (lsp-write-error
                       id
                       -32600
                       "Missing direction or destination parameter")
-                    (LspContinue docs))])])))]
-    [(MissingLspDocumentDecls)
+                    (LspHandleResult.Continue docs))])])))]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/expandMacro - Find the form at cursor position and return its text
 ;; For now, returns the top-level form by name.
@@ -3994,9 +4002,9 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
-        [(OkLspJsonText name)
+        [(LspJsonText.Ok name)
           (let
             [i : i64 0]
             [n : i64 (lsp-decl-list-len (& decls))]
@@ -4012,7 +4020,7 @@
               (if (= found-idx -1)
                 (begin
                   (lsp-write-error id -32600 "Form not found")
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (let
                   [entry : LspDeclEntry
                     (lsp-decl-list-get
@@ -4039,15 +4047,15 @@
                         (json.JsonBool true)
                         "text"
                         (json.JsonString result)))
-                    (LspContinue docs))))))]
-        [(MissingLspJsonText)
+                    (LspHandleResult.Continue docs))))))]
+        [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing name parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocumentDecls)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/check - Typecheck a document and return success/error JSON response
 (define (lsp-handle-tl-check
@@ -4058,29 +4066,29 @@
   (let
     [uri : String
       (match (lsp-json-string-field params "uri")
-        [(OkLspJsonText u) u]
-        [(MissingLspJsonText)
+        [(LspJsonText.Ok u) u]
+        [(LspJsonText.Missing)
           (let
             [td-key : String "textDocument"]
             (match (json.json-object-get params (& td-key))
               [(json.JsonFound document)
                 (match (lsp-json-string-field document "uri")
-                  [(OkLspJsonText u) u]
-                  [(MissingLspJsonText) ""])]
+                  [(LspJsonText.Ok u) u]
+                  [(LspJsonText.Missing) ""])]
               [(json.JsonMissing) ""]))])]
     (if (string.string-eq uri "")
       (begin
         (lsp-write-error id -32600 "Missing uri parameter")
-        (LspContinue docs))
+        (LspHandleResult.Continue docs))
       (match (lsp-documents-lookup docs uri)
-        [(FoundLspDocument path text _)
+        [(LspDocumentLookup.Found path text _)
           (match (compiler-check-source-with-roots path text stdlib-roots)
             [(ResultCompilerCheck.Ok _)
               (begin
                 (lsp-write-response
                   id
                   (lsp-json-object1 "success" (json.JsonBool true)))
-                (LspContinue docs))]
+                (LspHandleResult.Continue docs))]
             [(ResultCompilerCheck.Err diag)
               (begin
                 (lsp-write-response
@@ -4091,10 +4099,10 @@
                     "error"
                     (json.JsonString
                       (compiler-diagnostic-message (box-get diag)))))
-                (LspContinue docs))])]
-        [(MissingLspDocument)
+                (LspHandleResult.Continue docs))])]
+        [(LspDocumentLookup.Missing)
           (match (lsp-file-uri-to-path uri)
-            [(OkLspUriPath path)
+            [(LspUriPath.Ok path)
               (let
                 [text : String (io.read-file-or (& path) "")]
                 (if (string.string-eq text "")
@@ -4106,7 +4114,7 @@
                         (json.JsonBool false)
                         "error"
                         (json.JsonString "Could not read document")))
-                    (LspContinue docs))
+                    (LspHandleResult.Continue docs))
                   (match (compiler-check-source-with-roots
                     path
                     text
@@ -4116,7 +4124,7 @@
                         (lsp-write-response
                           id
                           (lsp-json-object1 "success" (json.JsonBool true)))
-                        (LspContinue docs))]
+                        (LspHandleResult.Continue docs))]
                     [(ResultCompilerCheck.Err diag)
                       (begin
                         (lsp-write-response
@@ -4127,8 +4135,8 @@
                             "error"
                             (json.JsonString
                               (compiler-diagnostic-message (box-get diag)))))
-                        (LspContinue docs))])))]
-            [(ErrLspUriPath message)
+                        (LspHandleResult.Continue docs))])))]
+            [(LspUriPath.Err message)
               (begin
                 (lsp-write-response
                   id
@@ -4137,7 +4145,7 @@
                     (json.JsonBool false)
                     "error"
                     (json.JsonString message)))
-                (LspContinue docs))])]))))
+                (LspHandleResult.Continue docs))])]))))
 
 (define (lsp-nearest-inlay-hint-index [line1 : i64] [col1 : i64]) : i64
   (let
@@ -4175,7 +4183,7 @@
   [docs : LspDocuments]
   [stdlib-roots : vector.StringVec]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
         (match (json.json-object-get params (& pos-key))
@@ -4213,7 +4221,7 @@
                                 "error"
                                 (json.JsonString
                                   "No type information at this position")))
-                            (LspContinue docs))
+                            (LspHandleResult.Continue docs))
                           (begin
                             (lsp-write-response
                               id
@@ -4222,7 +4230,7 @@
                                 (json.JsonBool true)
                                 "type"
                                 (json.JsonString bind-type)))
-                            (LspContinue docs))))
+                            (LspHandleResult.Continue docs))))
                       (let
                         [found-type : String (tc-inlay-hint-type-at found-idx)]
                         (begin
@@ -4233,15 +4241,15 @@
                               (json.JsonBool true)
                               "type"
                               (json.JsonString found-type)))
-                          (LspContinue docs))))))))]
+                          (LspHandleResult.Continue docs))))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; Helper: find all word-bounded occurrences of name in text
 (define (lsp-find-references-in-text
@@ -4279,13 +4287,13 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument _ text _)
+    [(LspDocumentLookup.Found _ text _)
       (let
         [name-from-field : LspJsonText (lsp-json-string-field params "name")]
         [name : String
           (match name-from-field
-            [(OkLspJsonText n) n]
-            [(MissingLspJsonText)
+            [(LspJsonText.Ok n) n]
+            [(LspJsonText.Missing)
               (let
                 [pos-key : String "position"]
                 (match (json.json-object-get params (& pos-key))
@@ -4301,7 +4309,7 @@
         (if (string.string-eq name "")
           (begin
             (lsp-write-error id -32600 "Missing name or position parameter")
-            (LspContinue docs))
+            (LspHandleResult.Continue docs))
           (let
             [refs : json.JsonList
               (lsp-find-references-in-text
@@ -4318,11 +4326,11 @@
                   (json.JsonBool true)
                   "references"
                   (lsp-json-array refs)))
-              (LspContinue docs)))))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs)))))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-tl-source-file-name? [entry : String]) : bool
   (let
@@ -4355,19 +4363,19 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-json-string-field params "name")
-    [(OkLspJsonText name)
+    [(LspJsonText.Ok name)
       (if (string.string-eq name "")
         (begin
           (lsp-write-error id -32600 "name cannot be empty")
-          (LspContinue docs))
+          (LspHandleResult.Continue docs))
         (let
           [td-key : String "textDocument"]
           (match (json.json-object-get params (& td-key))
             [(json.JsonFound document)
               (match (lsp-json-string-field document "uri")
-                [(OkLspJsonText uri)
+                [(LspJsonText.Ok uri)
                   (match (lsp-file-uri-to-path uri)
-                    [(OkLspUriPath path)
+                    [(LspUriPath.Ok path)
                       (match (fs.try-read-dir-vec (& path))
                         [(fs.OkIoStringVec entries)
                           (let
@@ -4415,7 +4423,7 @@
                                   (json.JsonBool true)
                                   "results"
                                   (lsp-json-array results)))
-                              (LspContinue docs)))]
+                              (LspHandleResult.Continue docs)))]
                         [(fs.ErrIoStringVec message)
                           (begin
                             (lsp-write-error
@@ -4424,26 +4432,26 @@
                               (lsp-str2
                                 "Failed to read directory: "
                                 (io.io-error-message message)))
-                            (LspContinue docs))])]
-                    [(ErrLspUriPath message)
+                            (LspHandleResult.Continue docs))])]
+                    [(LspUriPath.Err message)
                       (begin
                         (lsp-write-error id -32600 message)
-                        (LspContinue docs))])]
-                [(MissingLspJsonText)
+                        (LspHandleResult.Continue docs))])]
+                [(LspJsonText.Missing)
                   (begin
                     (lsp-write-error
                       id
                       -32600
                       "Missing uri in textDocument parameter")
-                    (LspContinue docs))])]
+                    (LspHandleResult.Continue docs))])]
             [(json.JsonMissing)
               (begin
                 (lsp-write-error id -32600 "Missing textDocument parameter")
-                (LspContinue docs))])))]
-    [(MissingLspJsonText)
+                (LspHandleResult.Continue docs))])))]
+    [(LspJsonText.Missing)
       (begin
         (lsp-write-error id -32600 "Missing name parameter")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/evalAtPoint - Evaluate expression at cursor
 (define (lsp-handle-tl-eval-at-point
@@ -4451,11 +4459,11 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
-        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
+        [result : LspEditResult (LspEditResult.Err "Not yet implemented")]
         (match result
-          [(OkLspEdit new-text)
+          [(LspEditResult.Ok new-text)
             (begin
               (lsp-write-response
                 id
@@ -4464,15 +4472,15 @@
                   (json.JsonBool true)
                   "text"
                   (json.JsonString new-text)))
-              (LspContinue docs))]
-          [(ErrLspEdit message)
+              (LspHandleResult.Continue docs))]
+          [(LspEditResult.Err message)
             (begin
               (lsp-write-error id -32600 message)
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/signatureHelp - Parameter types for function at cursor
 (define (lsp-handle-tl-signature-help
@@ -4480,11 +4488,11 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
-        [result : LspEditResult (ErrLspEdit "Not yet implemented")]
+        [result : LspEditResult (LspEditResult.Err "Not yet implemented")]
         (match result
-          [(OkLspEdit new-text)
+          [(LspEditResult.Ok new-text)
             (begin
               (lsp-write-response
                 id
@@ -4493,15 +4501,15 @@
                   (json.JsonBool true)
                   "text"
                   (json.JsonString new-text)))
-              (LspContinue docs))]
-          [(ErrLspEdit message)
+              (LspHandleResult.Continue docs))]
+          [(LspEditResult.Err message)
             (begin
               (lsp-write-error id -32600 message)
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/appendFunction - Append a form at the end of the file
 (define (lsp-handle-tl-append-function
@@ -4509,9 +4517,9 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
-        [(OkLspJsonText new-text)
+        [(LspJsonText.Ok new-text)
           (if (not (lsp-text-is-valid-forms new-text))
             (begin
               (lsp-write-error
@@ -4520,7 +4528,7 @@
                 (lsp-str2
                   "newText is not valid form(s): "
                   (lsp-validate-forms-error new-text)))
-              (LspContinue docs))
+              (LspHandleResult.Continue docs))
             (let
               [n : i64 (lsp-decl-list-len (& decls))]
               [result : String ""]
@@ -4552,15 +4560,15 @@
                         (json.JsonBool true)
                         "text"
                         (json.JsonString formatted)))
-                    (LspContinue docs))))))]
-        [(MissingLspJsonText)
+                    (LspHandleResult.Continue docs))))))]
+        [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocumentDecls)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/replaceBody - legacy method name routed to position-based body replacement
 (define (lsp-handle-message
@@ -4568,10 +4576,10 @@
   [docs : LspDocuments]
   [stdlib-roots : vector.StringVec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
-    [(OkLspJsonText method)
+    [(LspJsonText.Ok method)
       (let
         [handled : bool false]
-        [result : LspHandleResult (LspContinue docs)]
+        [result : LspHandleResult (LspHandleResult.Continue docs)]
         (begin
           (if (and (not handled) (string.string-eq method "initialize"))
             (begin
@@ -4582,12 +4590,12 @@
                   [(json.JsonFound id)
                     (lsp-write-response id (lsp-initialize-result))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.string-eq method "initialized"))
             (begin
               (set! handled true)
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.string-eq method "shutdown"))
             (begin
@@ -4597,12 +4605,12 @@
                 (match (json.json-object-get message (& key))
                   [(json.JsonFound id) (lsp-write-response id json.JsonNull)]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.string-eq method "exit"))
             (begin
               (set! handled true)
-              (set! result (LspExit docs)))
+              (set! result (LspHandleResult.Exit docs)))
             unit)
           (if (and
             (not handled)
@@ -4614,7 +4622,8 @@
                 (match (json.json-object-get message (& key))
                   [(json.JsonFound params)
                     (set! result (lsp-did-open params docs stdlib-roots))]
-                  [(json.JsonMissing) (set! result (LspContinue docs))])))
+                  [(json.JsonMissing)
+                    (set! result (LspHandleResult.Continue docs))])))
             unit)
           (if (and
             (not handled)
@@ -4626,7 +4635,8 @@
                 (match (json.json-object-get message (& key))
                   [(json.JsonFound params)
                     (set! result (lsp-did-change params docs stdlib-roots))]
-                  [(json.JsonMissing) (set! result (LspContinue docs))])))
+                  [(json.JsonMissing)
+                    (set! result (LspHandleResult.Continue docs))])))
             unit)
           (if (and
             (not handled)
@@ -4638,7 +4648,8 @@
                 (match (json.json-object-get message (& key))
                   [(json.JsonFound params)
                     (set! result (lsp-did-close params docs))]
-                  [(json.JsonMissing) (set! result (LspContinue docs))])))
+                  [(json.JsonMissing)
+                    (set! result (LspHandleResult.Continue docs))])))
             unit)
           (if (and
             (not handled)
@@ -4657,7 +4668,7 @@
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and
             (not handled)
@@ -4669,7 +4680,7 @@
                 (match (json.json-object-get message (& id-key))
                   [(json.JsonFound id) (lsp-completion-respond id docs)]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and
             (not handled)
@@ -4690,7 +4701,7 @@
                             id
                             (lsp-json-array json.JsonListNil))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and
             (not handled)
@@ -4711,7 +4722,7 @@
                             id
                             (lsp-json-array json.JsonListNil))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and (not handled) (string.string-eq method "textDocument/hover"))
             (begin
@@ -4728,7 +4739,7 @@
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (and
             (not handled)
@@ -4749,7 +4760,7 @@
                             id
                             (lsp-json-array json.JsonListNil))]))]
                   [(json.JsonMissing) unit]))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           (if (not handled)
             (begin
@@ -4770,10 +4781,10 @@
                       (set! lsp-document-cache-arena old-cache-arena)
                       (unsafe
                         (arena.tl_arena_destroy scratch-head))))))
-              (set! result (LspContinue docs)))
+              (set! result (LspHandleResult.Continue docs)))
             unit)
           result))]
-    [(MissingLspJsonText) (LspContinue docs)]))
+    [(LspJsonText.Missing) (LspHandleResult.Continue docs)]))
 
 (define (lsp-known-tool-method? [method : String]) : bool
   (or
@@ -5002,20 +5013,20 @@
       (lsp-frame-session-cache-enable!)
       (while (not done)
         (match (lsp-frame-read-message)
-          [(LspFrameOk payload)
+          [(LspFrameRead.Ok payload)
             (let
               [text : String payload]
               (match (json.json-parse (& text))
                 [(json.OkJson message)
                   (match (lsp-handle-message message docs stdlib-roots)
-                    [(LspContinue next-docs) (set! docs next-docs)]
-                    [(LspExit next-docs)
+                    [(LspHandleResult.Continue next-docs) (set! docs next-docs)]
+                    [(LspHandleResult.Exit next-docs)
                       (begin
                         (set! docs next-docs)
                         (set! done true))])]
                 [(json.ErrJson message) (lsp-write-parse-error message)]))]
-          [(LspFrameEof) (set! done true)]
-          [(LspFrameErr message)
+          [(LspFrameRead.Eof) (set! done true)]
+          [(LspFrameRead.Err message)
             (begin
               (lsp-write-parse-error message)
               (lsp-frame-stderr-write message)
@@ -5061,7 +5072,7 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [old-name : String
           (let
@@ -5075,22 +5086,22 @@
                   (lsp-find-and-extract-name text line col))]
               [(json.JsonMissing)
                 (match (lsp-json-string-field params "oldName")
-                  [(OkLspJsonText n) n]
-                  [(MissingLspJsonText) ""])]))]
+                  [(LspJsonText.Ok n) n]
+                  [(LspJsonText.Missing) ""])]))]
         (if (= (string.string-length old-name) 0)
           (begin
             (lsp-write-error id -32600 "Missing oldName or position parameter")
-            (LspContinue docs))
+            (LspHandleResult.Continue docs))
           (match (lsp-json-string-field params "newName")
-            [(OkLspJsonText new-name)
+            [(LspJsonText.Ok new-name)
               (if (string.string-eq old-name "")
                 (begin
                   (lsp-write-error id -32600 "oldName cannot be empty")
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (if (string.string-eq new-name "")
                   (begin
                     (lsp-write-error id -32600 "newName cannot be empty")
-                    (LspContinue docs))
+                    (LspHandleResult.Continue docs))
                   (let
                     [result : String
                       (lsp-replace-all-words text old-name new-name)]
@@ -5103,34 +5114,34 @@
                           (json.JsonBool true)
                           "text"
                           (json.JsonString formatted)))
-                      (LspContinue docs)))))]
-            [(MissingLspJsonText)
+                      (LspHandleResult.Continue docs)))))]
+            [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing newName parameter")
-                (LspContinue docs))])))]
-    [(MissingLspDocument)
+                (LspHandleResult.Continue docs))])))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-handle-tl-replace-pattern
   [id : json.Json]
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
-        [(OkLspJsonText name)
+        [(LspJsonText.Ok name)
           (match (lsp-json-string-field params "oldPattern")
-            [(OkLspJsonText old-pattern)
+            [(LspJsonText.Ok old-pattern)
               (begin
                 (when
                   (string.string-eq old-pattern "")
                   (begin
                     (lsp-write-error id -32600 "oldPattern cannot be empty")
-                    (return (LspContinue docs))))
+                    (return (LspHandleResult.Continue docs))))
                 (match (lsp-json-string-field params "newPattern")
-                  [(OkLspJsonText new-pattern)
+                  [(LspJsonText.Ok new-pattern)
                     (let
                       [i : i64 0]
                       [n : i64 (lsp-decl-list-len (& decls))]
@@ -5253,7 +5264,7 @@
                                 unit))))
                         (if found
                           (if (string.string-eq result "")
-                            (LspContinue docs)
+                            (LspHandleResult.Continue docs)
                             (let
                               [formatted : String (lsp-format-edit-text result)]
                               (begin
@@ -5264,26 +5275,26 @@
                                     (json.JsonBool true)
                                     "text"
                                     (json.JsonString formatted)))
-                                (LspContinue docs))))
+                                (LspHandleResult.Continue docs))))
                           (begin
                             (lsp-write-error id -32600 "Declaration not found")
-                            (LspContinue docs)))))]
-                  [(MissingLspJsonText)
+                            (LspHandleResult.Continue docs)))))]
+                  [(LspJsonText.Missing)
                     (begin
                       (lsp-write-error id -32600 "Missing newPattern parameter")
-                      (LspContinue docs))]))]
-            [(MissingLspJsonText)
+                      (LspHandleResult.Continue docs))]))]
+            [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing oldPattern parameter")
-                (LspContinue docs))])]
-        [(MissingLspJsonText)
+                (LspHandleResult.Continue docs))])]
+        [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing name parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocumentDecls)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-replace-body-text-with-decls
   [text : String]
@@ -5363,12 +5374,12 @@
             (begin
               (set! i (+ i 1))
               unit))))
-      (unless found (return (ErrLspEdit "Declaration not found")))
-      (unless (string.string-eq err "") (return (ErrLspEdit err)))
+      (unless found (return (LspEditResult.Err "Declaration not found")))
+      (unless (string.string-eq err "") (return (LspEditResult.Err err)))
       (when
         (string.string-eq result "")
-        (return (ErrLspEdit "replaceBody: unknown error")))
-      (OkLspEdit result))))
+        (return (LspEditResult.Err "replaceBody: unknown error")))
+      (LspEditResult.Ok result))))
 
 (define (lsp-replace-body-text
   [text : String]
@@ -5386,7 +5397,7 @@
   [new-pattern : String]
   [decls : LspDeclList]) : LspEditResult
   (if (string.string-eq old-pattern "")
-    (ErrLspEdit "oldPattern cannot be empty")
+    (LspEditResult.Err "oldPattern cannot be empty")
     (let
       [i : i64 0]
       [n : i64 (lsp-decl-list-len (& decls))]
@@ -5470,12 +5481,12 @@
               (begin
                 (set! i (+ i 1))
                 unit))))
-        (unless found (return (ErrLspEdit "Declaration not found")))
-        (unless (string.string-eq err "") (return (ErrLspEdit err)))
+        (unless found (return (LspEditResult.Err "Declaration not found")))
+        (unless (string.string-eq err "") (return (LspEditResult.Err err)))
         (when
           (string.string-eq result "")
-          (return (ErrLspEdit "replacePattern: unknown error")))
-        (OkLspEdit result)))))
+          (return (LspEditResult.Err "replacePattern: unknown error")))
+        (LspEditResult.Ok result)))))
 
 (define (lsp-replace-pattern-text
   [text : String]
@@ -5498,7 +5509,7 @@
   [new-text : String]
   [decls : LspDeclList]) : LspEditResult
   (if (not (lsp-text-is-valid-forms new-text))
-    (ErrLspEdit
+    (LspEditResult.Err
       (lsp-str2
         "newText is not valid form(s): "
         (lsp-validate-forms-error new-text)))
@@ -5529,8 +5540,8 @@
                 (set! i (+ i 1))
                 unit))))
         (if found
-          (OkLspEdit result)
-          (ErrLspEdit "Declaration not found"))))))
+          (LspEditResult.Ok result)
+          (LspEditResult.Err "Declaration not found"))))))
 
 (define (lsp-structural-replace-text
   [text : String]
@@ -5547,7 +5558,7 @@
     [n : i64 (string.string-length text)]
     [old-len : i64 (string.string-length old-text)]
     (if (string.string-eq old-text "")
-      (ErrLspEdit "oldText cannot be empty")
+      (LspEditResult.Err "oldText cannot be empty")
       (let
         [first-byte : char (string.string-ref old-text 0)]
         [i : i64 0]
@@ -5570,18 +5581,18 @@
                     (set! i (+ idx 1)))
                   (set! i (+ limit 1))))))
           (if (= matches 0)
-            (ErrLspEdit "oldText not found in document")
+            (LspEditResult.Err "oldText not found in document")
             (if (> matches 1)
-              (ErrLspEdit "oldText occurs more than once in document")
+              (LspEditResult.Err "oldText occurs more than once in document")
               (let
                 [replaced : String
                   (string.string-replace text old-text new-text)]
                 (if (not (lsp-text-is-valid-forms replaced))
-                  (ErrLspEdit
+                  (LspEditResult.Err
                     (lsp-str2
                       "Patch produces invalid form(s): "
                       (lsp-validate-forms-error replaced)))
-                  (OkLspEdit replaced))))))))))
+                  (LspEditResult.Ok replaced))))))))))
 
 ;; tl/patch - Handler for find-and-replace patch
 (define (lsp-handle-tl-patch
@@ -5589,13 +5600,13 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (match (lsp-json-string-field params "oldText")
-        [(OkLspJsonText old-text)
+        [(LspJsonText.Ok old-text)
           (match (lsp-json-string-field params "newText")
-            [(OkLspJsonText new-text)
+            [(LspJsonText.Ok new-text)
               (match (lsp-patch-text text old-text new-text)
-                [(OkLspEdit replaced)
+                [(LspEditResult.Ok replaced)
                   (let
                     [formatted : String (lsp-format-edit-text replaced)]
                     (begin
@@ -5606,55 +5617,57 @@
                           (json.JsonBool true)
                           "text"
                           (json.JsonString formatted)))
-                      (LspContinue docs)))]
-                [(ErrLspEdit message)
+                      (LspHandleResult.Continue docs)))]
+                [(LspEditResult.Err message)
                   (begin
                     (lsp-write-error id -32600 message)
-                    (LspContinue docs))])]
-            [(MissingLspJsonText)
+                    (LspHandleResult.Continue docs))])]
+            [(LspJsonText.Missing)
               (begin
                 (lsp-write-error id -32600 "Missing newText parameter")
-                (LspContinue docs))])]
-        [(MissingLspJsonText)
+                (LspHandleResult.Continue docs))])]
+        [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing oldText parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocument)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-patch-text-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)"]
     (match (lsp-patch-text text "1" "2")
-      [(OkLspEdit replaced)
+      [(LspEditResult.Ok replaced)
         (string.string-eq replaced "(define (foo) : i64 2)")]
-      [(ErrLspEdit _) false])))
+      [(LspEditResult.Err _) false])))
 
 (define (lsp-patch-text-duplicate-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 1)"]
     [needle : String "more than once"]
     (match (lsp-patch-text text "1" "2")
-      [(OkLspEdit _) false]
-      [(ErrLspEdit message) (string.string-contains (& message) (& needle))])))
+      [(LspEditResult.Ok _) false]
+      [(LspEditResult.Err message)
+        (string.string-contains (& message) (& needle))])))
 
 (define (lsp-patch-text-invalid-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)"]
     [needle : String "invalid form"]
     (match (lsp-patch-text text "1)" "1")
-      [(OkLspEdit _) false]
-      [(ErrLspEdit message) (string.string-contains (& message) (& needle))])))
+      [(LspEditResult.Ok _) false]
+      [(LspEditResult.Err message)
+        (string.string-contains (& message) (& needle))])))
 
 (define (lsp-patch-text-first-byte-collisions-ok?) : bool
   (let
     [text : String "(define (aaaaa) : i64 1)\n(define (abc) : i64 2)"]
     [expected : String "(define (aaaaa) : i64 1)\n(define (renamed) : i64 2)"]
     (match (lsp-patch-text text "abc" "renamed")
-      [(OkLspEdit replaced) (string.string-eq replaced expected)]
-      [(ErrLspEdit _) false])))
+      [(LspEditResult.Ok replaced) (string.string-eq replaced expected)]
+      [(LspEditResult.Err _) false])))
 
 (test
   lsp-patch-text-smoke
@@ -5797,20 +5810,20 @@
   [col : i64]
   [new-text : String]) : LspEditResult
   (if (or (< line 0) (< col 0))
-    (OkLspEdit text)
+    (LspEditResult.Ok text)
     (let
       [offset : i64 (lsp-offset-at-position text line col)]
       (if (>= offset (string.string-length text))
-        (OkLspEdit text)
+        (LspEditResult.Ok text)
         (let
           [form-start : i64 (lsp-find-top-level-form-at-offset text offset)]
           (if (= form-start -1)
-            (OkLspEdit text)
+            (LspEditResult.Ok text)
             (let
               [form-end : i64 (lsp-find-form-end-at-offset text form-start)]
               (if (or (= form-end -1) (<= form-end offset))
-                (OkLspEdit text)
-                (OkLspEdit
+                (LspEditResult.Ok text)
+                (LspEditResult.Ok
                   (lsp-edit-range-at-offset text form-start form-end new-text))))))))))
 
 ;; tl/replaceAt - Replace form at position (line, character)
@@ -5819,19 +5832,19 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
         (match (json.json-object-get params (& pos-key))
           [(json.JsonFound position)
             (match (lsp-json-string-field params "newText")
-              [(OkLspJsonText new-text)
+              [(LspJsonText.Ok new-text)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
                   [col : i64
                     (lsp-json-int-field-default position "character" 0)]
                   (match (lsp-replace-form-at-position text line col new-text)
-                    [(OkLspEdit replaced)
+                    [(LspEditResult.Ok replaced)
                       (let
                         [formatted : String (lsp-format-edit-text replaced)]
                         (begin
@@ -5842,23 +5855,23 @@
                               (json.JsonBool true)
                               "text"
                               (json.JsonString formatted)))
-                          (LspContinue docs)))]
-                    [(ErrLspEdit message)
+                          (LspHandleResult.Continue docs)))]
+                    [(LspEditResult.Err message)
                       (begin
                         (lsp-write-error id -32600 message)
-                        (LspContinue docs))]))]
-              [(MissingLspJsonText)
+                        (LspHandleResult.Continue docs))]))]
+              [(LspJsonText.Missing)
                 (begin
                   (lsp-write-error id -32600 "Missing newText parameter")
-                  (LspContinue docs))])]
+                  (LspHandleResult.Continue docs))])]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; Find the start of the outer form enclosing the form at start.
 ;; outer = 0 means return start itself.
@@ -5910,7 +5923,7 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
         (match (json.json-object-get params (& pos-key))
@@ -5921,13 +5934,13 @@
               (if (or (< line 0) (< col 0))
                 (begin
                   (lsp-write-error id -32600 "No form found at position")
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (let
                   [offset : i64 (lsp-offset-at-position text line col)]
                   (if (>= offset (string.string-length text))
                     (begin
                       (lsp-write-error id -32600 "No form found at position")
-                      (LspContinue docs))
+                      (LspHandleResult.Continue docs))
                     (let
                       [form-start : i64
                         (lsp-find-top-level-form-at-offset text offset)]
@@ -5937,7 +5950,7 @@
                             id
                             -32600
                             "No form found at position")
-                          (LspContinue docs))
+                          (LspHandleResult.Continue docs))
                         (let
                           [form-end : i64
                             (lsp-find-form-end-at-offset text form-start)]
@@ -5947,7 +5960,7 @@
                                 id
                                 -32600
                                 "No form found at position")
-                              (LspContinue docs))
+                              (LspHandleResult.Continue docs))
                             (let
                               [before : String
                                 (string.substring text 0 form-start)]
@@ -5967,15 +5980,15 @@
                                     (json.JsonBool true)
                                     "text"
                                     (json.JsonString formatted)))
-                                (LspContinue docs)))))))))))]
+                                (LspHandleResult.Continue docs)))))))))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/insertAfter - Insert a new form after the form at a given position
 (define (lsp-handle-tl-insert-after
@@ -5983,9 +5996,9 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (match (lsp-json-string-field params "newText")
-        [(OkLspJsonText new-text)
+        [(LspJsonText.Ok new-text)
           (let
             [pos-key : String "position"]
             (match (json.json-object-get params (& pos-key))
@@ -5997,7 +6010,7 @@
                   (if (or (< line 0) (< col 0))
                     (begin
                       (lsp-write-error id -32600 "No form found at position")
-                      (LspContinue docs))
+                      (LspHandleResult.Continue docs))
                     (let
                       [offset : i64 (lsp-offset-at-position text line col)]
                       (if (>= offset (string.string-length text))
@@ -6006,7 +6019,7 @@
                             id
                             -32600
                             "No form found at position")
-                          (LspContinue docs))
+                          (LspHandleResult.Continue docs))
                         (let
                           [form-start : i64
                             (lsp-find-top-level-form-at-offset text offset)]
@@ -6016,7 +6029,7 @@
                                 id
                                 -32600
                                 "No form found at position")
-                              (LspContinue docs))
+                              (LspHandleResult.Continue docs))
                             (let
                               [form-end : i64
                                 (lsp-find-form-end-at-offset text form-start)]
@@ -6026,7 +6039,7 @@
                                     id
                                     -32600
                                     "No form found at position")
-                                  (LspContinue docs))
+                                  (LspHandleResult.Continue docs))
                                 (let
                                   [before : String
                                     (string.substring text 0 form-end)]
@@ -6047,19 +6060,19 @@
                                         (json.JsonBool true)
                                         "text"
                                         (json.JsonString formatted)))
-                                    (LspContinue docs)))))))))))]
+                                    (LspHandleResult.Continue docs)))))))))))]
               [(json.JsonMissing)
                 (begin
                   (lsp-write-error id -32600 "Missing position parameter")
-                  (LspContinue docs))]))]
-        [(MissingLspJsonText)
+                  (LspHandleResult.Continue docs))]))]
+        [(LspJsonText.Missing)
           (begin
             (lsp-write-error id -32600 "Missing newText parameter")
-            (LspContinue docs))])]
-    [(MissingLspDocument)
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-is-whitespace [c : char]) : bool
   (lsp-ws? c))
@@ -6143,7 +6156,7 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [pos-key : String "position"]
         (match (json.json-object-get params (& pos-key))
@@ -6158,15 +6171,15 @@
                     id
                     -32600
                     "Could not extract function name at position")
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (match (lsp-json-string-field params "newBody")
-                  [(OkLspJsonText new-body)
+                  [(LspJsonText.Ok new-body)
                     (match (lsp-replace-body-text-with-decls
                       text
                       name
                       new-body
                       decls)
-                      [(OkLspEdit replaced)
+                      [(LspEditResult.Ok replaced)
                         (let
                           [formatted : String (lsp-format-edit-text replaced)]
                           (begin
@@ -6177,33 +6190,33 @@
                                 (json.JsonBool true)
                                 "text"
                                 (json.JsonString formatted)))
-                            (LspContinue docs)))]
-                      [(ErrLspEdit message)
+                            (LspHandleResult.Continue docs)))]
+                      [(LspEditResult.Err message)
                         (begin
                           (lsp-write-error id -32600 message)
-                          (LspContinue docs))])]
-                  [(MissingLspJsonText)
+                          (LspHandleResult.Continue docs))])]
+                  [(LspJsonText.Missing)
                     (begin
                       (lsp-write-error id -32600 "Missing newBody parameter")
-                      (LspContinue docs))])))]
+                      (LspHandleResult.Continue docs))])))]
           [(json.JsonMissing)
             (match (lsp-json-string-field params "name")
-              [(OkLspJsonText name)
+              [(LspJsonText.Ok name)
                 (if (= (string.string-length name) 0)
                   (begin
                     (lsp-write-error
                       id
                       -32600
                       "Missing name or position parameter")
-                    (LspContinue docs))
+                    (LspHandleResult.Continue docs))
                   (match (lsp-json-string-field params "newBody")
-                    [(OkLspJsonText new-body)
+                    [(LspJsonText.Ok new-body)
                       (match (lsp-replace-body-text-with-decls
                         text
                         name
                         new-body
                         decls)
-                        [(OkLspEdit replaced)
+                        [(LspEditResult.Ok replaced)
                           (let
                             [formatted : String (lsp-format-edit-text replaced)]
                             (begin
@@ -6214,26 +6227,26 @@
                                   (json.JsonBool true)
                                   "text"
                                   (json.JsonString formatted)))
-                              (LspContinue docs)))]
-                        [(ErrLspEdit message)
+                              (LspHandleResult.Continue docs)))]
+                        [(LspEditResult.Err message)
                           (begin
                             (lsp-write-error id -32600 message)
-                            (LspContinue docs))])]
-                    [(MissingLspJsonText)
+                            (LspHandleResult.Continue docs))])]
+                    [(LspJsonText.Missing)
                       (begin
                         (lsp-write-error id -32600 "Missing newBody parameter")
-                        (LspContinue docs))]))]
-              [(MissingLspJsonText)
+                        (LspHandleResult.Continue docs))]))]
+              [(LspJsonText.Missing)
                 (begin
                   (lsp-write-error
                     id
                     -32600
                     "Missing name or position parameter")
-                  (LspContinue docs))])]))]
-    [(MissingLspDocumentDecls)
+                  (LspHandleResult.Continue docs))])]))]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/replacePattern - Replace pattern in function at a given position
 (define (lsp-handle-tl-replace-pattern-at
@@ -6241,7 +6254,7 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
-    [(FoundLspDocumentDecls path text _ decls)
+    [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [pos-key : String "position"]
         (match (json.json-object-get params (& pos-key))
@@ -6256,18 +6269,18 @@
                     id
                     -32600
                     "Could not extract function name at position")
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (match (lsp-json-string-field params "oldPattern")
-                  [(OkLspJsonText old-pattern)
+                  [(LspJsonText.Ok old-pattern)
                     (match (lsp-json-string-field params "newPattern")
-                      [(OkLspJsonText new-pattern)
+                      [(LspJsonText.Ok new-pattern)
                         (match (lsp-replace-pattern-text-with-decls
                           text
                           name
                           old-pattern
                           new-pattern
                           decls)
-                          [(OkLspEdit replaced)
+                          [(LspEditResult.Ok replaced)
                             (let
                               [formatted : String
                                 (lsp-format-edit-text replaced)]
@@ -6279,30 +6292,30 @@
                                     (json.JsonBool true)
                                     "text"
                                     (json.JsonString formatted)))
-                                (LspContinue docs)))]
-                          [(ErrLspEdit message)
+                                (LspHandleResult.Continue docs)))]
+                          [(LspEditResult.Err message)
                             (begin
                               (lsp-write-error id -32600 message)
-                              (LspContinue docs))])]
-                      [(MissingLspJsonText)
+                              (LspHandleResult.Continue docs))])]
+                      [(LspJsonText.Missing)
                         (begin
                           (lsp-write-error
                             id
                             -32600
                             "Missing newPattern parameter")
-                          (LspContinue docs))])]
-                  [(MissingLspJsonText)
+                          (LspHandleResult.Continue docs))])]
+                  [(LspJsonText.Missing)
                     (begin
                       (lsp-write-error id -32600 "Missing oldPattern parameter")
-                      (LspContinue docs))])))]
+                      (LspHandleResult.Continue docs))])))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspContinue docs))]))]
-    [(MissingLspDocumentDecls)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentDeclsLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/read - Read the form at a given position
 (define (lsp-handle-tl-read-form-at
@@ -6310,7 +6323,7 @@
   [params : json.Json]
   [docs : LspDocuments]) : LspHandleResult
   (match (lsp-get-document params docs)
-    [(FoundLspDocument path text _)
+    [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
         (match (json.json-object-get params (& pos-key))
@@ -6324,7 +6337,7 @@
               (if (= (string.string-length form-text) 0)
                 (begin
                   (lsp-write-error id -32600 "No form found at position")
-                  (LspContinue docs))
+                  (LspHandleResult.Continue docs))
                 (begin
                   (lsp-write-response
                     id
@@ -6333,25 +6346,25 @@
                       (json.JsonBool true)
                       "form"
                       (json.JsonString form-text)))
-                  (LspContinue docs))))]
+                  (LspHandleResult.Continue docs))))]
           [(json.JsonMissing)
             (begin
               (lsp-write-error id -32600 "Missing position parameter")
-              (LspContinue docs))]))]
-    [(MissingLspDocument)
+              (LspHandleResult.Continue docs))]))]
+    [(LspDocumentLookup.Missing)
       (begin
         (lsp-write-error id -32600 "Document not found")
-        (LspContinue docs))]))
+        (LspHandleResult.Continue docs))]))
 
 (define (lsp-replace-form-at-position-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
     (match (lsp-replace-form-at-position text 1 5 "(define (baz) : i64 3)")
-      [(OkLspEdit replaced)
+      [(LspEditResult.Ok replaced)
         (string.string-eq
           replaced
           "(define (foo) : i64 1)\n(define (baz) : i64 3)")]
-      [(ErrLspEdit _) false])))
+      [(LspEditResult.Err _) false])))
 
 (define (lsp-find-top-level-form-at-offset-smoke-ok?) : bool
   (let
@@ -6372,18 +6385,18 @@
   (let
     [text : String "(define (foo) : i64\n  (+ 1 2))\n(define (bar) : i64 3)"]
     (match (lsp-replace-form-at-position text 1 4 "(define (baz) : i64 4)")
-      [(OkLspEdit replaced)
+      [(LspEditResult.Ok replaced)
         (string.string-eq
           replaced
           "(define (baz) : i64 4)\n(define (bar) : i64 3)")]
-      [(ErrLspEdit _) false])))
+      [(LspEditResult.Err _) false])))
 
 (define (lsp-replace-form-at-position-noop-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)"]
     (match (lsp-replace-form-at-position text 0 22 "(define (bad) : i64 0)")
-      [(OkLspEdit replaced) (string.string-eq replaced text)]
-      [(ErrLspEdit _) false])))
+      [(LspEditResult.Ok replaced) (string.string-eq replaced text)]
+      [(LspEditResult.Err _) false])))
 
 (test
   lsp-replace-form-at-position-smoke

@@ -268,11 +268,11 @@
 
 (define (clean-package-from-path [manifest-path : String] [dry-run : bool]) : i64
   (match (build-load-manifest manifest-path)
-    [(ErrBuildManifest message)
+    [(ResultBuildManifest.Err message)
       (begin
         (io.print-error (string.string-append "Error: " message))
         1)]
-    [(OkBuildManifest manifest)
+    [(ResultBuildManifest.Ok manifest)
       (let
         [manifest-dir : String (compiler-load-dirname manifest-path)]
         [name : String (struct-get manifest name)]

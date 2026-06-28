@@ -26,12 +26,12 @@
     [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
     [graph : String
       (doc-html-render-module-graph
-        (DocModuleCons
-          (DocModule "smoke<&>.tl" docs)
+        (DocModuleList.Cons
+          (DocModule.Module "smoke<&>.tl" docs)
           (box
-            (DocModuleCons
-              (DocModule "second.tl" second-docs)
-              (box DocModuleNil)))))]
+            (DocModuleList.Cons
+              (DocModule.Module "second.tl" second-docs)
+              (box DocModuleList.Nil)))))]
     (if (and
       (doc-html-require-contains
         page

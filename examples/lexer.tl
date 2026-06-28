@@ -31,15 +31,15 @@
 (import stdlib.vector)
 
 (defenum Token
-  (TIdent String)
-  (TInt i64)
-  (TPlus)
-  (TMinus)
-  (TStar)
-  (TSlash)
-  (TLParen)
-  (TRParen)
-  (TEnd))
+  (Ident String)
+  (Int i64)
+  (Plus)
+  (Minus)
+  (Star)
+  (Slash)
+  (LParen)
+  (RParen)
+  (End))
 
 (import (vector.vector Token) as token_vec)
 
@@ -47,15 +47,15 @@
 ;; Token enum, including the String-payload `TIdent` variant.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(TIdent _) 0]
-    [(TInt _) 1]
-    [(TPlus) 2]
-    [(TMinus) 3]
-    [(TStar) 4]
-    [(TSlash) 5]
-    [(TLParen) 6]
-    [(TRParen) 7]
-    [(TEnd) 8]))
+    [(Token.Ident _) 0]
+    [(Token.Int _) 1]
+    [(Token.Plus) 2]
+    [(Token.Minus) 3]
+    [(Token.Star) 4]
+    [(Token.Slash) 5]
+    [(Token.LParen) 6]
+    [(Token.RParen) 7]
+    [(Token.End) 8]))
 
 ;; ASCII code point of a char, e.g. the digit char `7` -> 55.
 (define (code [c : char]) : i64
@@ -90,12 +90,12 @@
 ;; unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
-    [(= c '+') TPlus]
-    [(= c '-') TMinus]
-    [(= c '*') TStar]
-    [(= c '/') TSlash]
-    [(= c '(') TLParen]
-    [(= c ')') TRParen]
+    [(= c '+') Token.Plus]
+    [(= c '-') Token.Minus]
+    [(= c '*') Token.Star]
+    [(= c '/') Token.Slash]
+    [(= c '(') Token.LParen]
+    [(= c ')') Token.RParen]
     [else (panic "lexer: unexpected character")]))
 
 ;; Return the end index (exclusive) of the identifier that starts at `start`
@@ -111,22 +111,22 @@
 ;; Slice the identifier lexeme [start, end) out of `src` and wrap it in a real
 ;; `(TIdent text)` token.
 (define (ident-token [src : String] [start : i64] [end : i64]) : Token
-  (TIdent (substring src start (- end start))))
+  (Token.Ident (substring src start (- end start))))
 
 ;; Length of the String payload of a `TIdent` token (0 for any other token):
 ;; projects the payload back out of the enum in a `match` arm, the way a parser
 ;; consuming the token stream would.
 (define (ident-text-length [t : Token]) : i64
   (match t
-    [(TIdent s) (string-length s)]
-    [(TInt _) 0]
-    [(TPlus) 0]
-    [(TMinus) 0]
-    [(TStar) 0]
-    [(TSlash) 0]
-    [(TLParen) 0]
-    [(TRParen) 0]
-    [(TEnd) 0]))
+    [(Token.Ident s) (string-length s)]
+    [(Token.Int _) 0]
+    [(Token.Plus) 0]
+    [(Token.Minus) 0]
+    [(Token.Star) 0]
+    [(Token.Slash) 0]
+    [(Token.LParen) 0]
+    [(Token.RParen) 0]
+    [(Token.End) 0]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
 ;; token count. The loop is exactly the shape of a real lexer: a cursor over the
@@ -161,7 +161,7 @@
                     (begin
                       (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                       (set! i (+ i 1))))
-                  (token_vec.push toks (TInt acc))
+                  (token_vec.push toks (Token.Int acc))
                   (set! count (+ count 1))))]
             [else
               (begin
@@ -169,7 +169,7 @@
                 (set! count (+ count 1))
                 (set! i (+ i 1)))])))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (token_vec.push toks TEnd)
+      (token_vec.push toks Token.End)
       count)))
 
 ;; Lex the sample `"foo - 3 * (12 / 4)"` (exercises every operator `- * /` and
@@ -184,4 +184,4 @@
   (let
     [toks : token_vec.Vec (token_vec.with-capacity 16)]
     [count : i64 (lex "foo - 3 * (12 / 4)" (&mut toks))]
-    (+ count (ident-text-length (token_vec.get (& toks) 0 TEnd)))))
+    (+ count (ident-text-length (token_vec.get (& toks) 0 Token.End)))))

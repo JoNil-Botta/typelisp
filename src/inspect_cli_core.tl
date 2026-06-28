@@ -128,11 +128,11 @@ Summary:
           (let
             [bytes : (Array u8) (tlci-string->bytes contents)]
             (match (tlci-parse-image bytes)
-              [(ErrTlciImage message)
+              [(ResultTlciImage.Err message)
                 (begin
                   (io.print-error (str_cat.str-cat "inspect: " message "\n"))
                   1)]
-              [(OkTlciImage image)
+              [(ResultTlciImage.Ok image)
                 (begin
                   (io.print-string (tlci-inspect-render bytes image))
                   0)]))]))))

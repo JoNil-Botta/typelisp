@@ -43,7 +43,7 @@
         (lint-smoke-string-concat-source)
         (lint-findings-empty))
       0)
-      [(LintSomeFinding finding)
+      [(LintMaybeFinding.Some finding)
         (if (and
           (= (struct-get finding depth) 0)
           (string.string-eq
@@ -51,7 +51,7 @@
             (lint-rule-deprecated-string-concat-id)))
           unit
           (panic "lint: string-concat finding should carry default metadata"))]
-      [(LintNoFinding)
+      [(LintMaybeFinding.No)
         (panic "lint: string-concat call should produce a finding")])
     (if (=
       (lint-findings-count
@@ -74,22 +74,22 @@
         (lint-smoke-nested-string-append-source)
         (lint-findings-empty))
       1)
-      [(LintSomeFinding finding)
+      [(LintMaybeFinding.Some finding)
         (if (= (struct-get finding depth) 1)
           unit
           (panic "lint: nested string append should carry chain depth"))]
-      [(LintNoFinding)
+      [(LintMaybeFinding.No)
         (panic "lint: nested string append should produce a chain finding")])
     (match (lint-findings-get
       (lint-deprecated-string-concat-scan
         (lint-smoke-loop-string-append-source)
         (lint-findings-empty))
       0)
-      [(LintSomeFinding finding)
+      [(LintMaybeFinding.Some finding)
         (if (= (struct-get finding depth) 2)
           unit
           (panic "lint: loop string append should carry loop depth"))]
-      [(LintNoFinding)
+      [(LintMaybeFinding.No)
         (panic "lint: loop string append should produce a finding")])
     42))
 
@@ -123,7 +123,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [span : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -136,7 +136,7 @@
               (= (struct-get span start-line) 23))
               unit
               (panic "lint: nested str-cat finding metadata mismatch")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (panic "lint: spanned nested str-cat should produce a finding")])
       (if (=
         (lint-findings-count

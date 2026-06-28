@@ -555,15 +555,15 @@
 
 (define (doc-html-item-nav-entries [items : DocItemList]) : String
   (match items
-    [(DocItemNil) ""]
-    [(DocItemCons item rest)
+    [(DocItemList.Nil) ""]
+    [(DocItemList.Cons item rest)
       (string.string-append
         (doc-html-item-nav-entry item)
         (doc-html-item-nav-entries (box-get rest)))]))
 
 (define (doc-html-item-nav [items : DocItemList]) : String
   (match items
-    [(DocItemNil) ""]
+    [(DocItemList.Nil) ""]
     [_
       (str_cat.str-cat
         "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
@@ -594,15 +594,16 @@
 
 (define (doc-html-item-list [items : DocItemList]) : String
   (match items
-    [(DocItemNil) ""]
-    [(DocItemCons item rest)
+    [(DocItemList.Nil) ""]
+    [(DocItemList.Cons item rest)
       (string.string-append
         (doc-html-item item)
         (doc-html-item-list (box-get rest)))]))
 
 (define (doc-html-items [items : DocItemList]) : String
   (match items
-    [(DocItemNil) "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"]
+    [(DocItemList.Nil)
+      "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"]
     [_ (doc-html-item-list items)]))
 
 (define (doc-html-module-nav-entry [module : DocModule]) : String
@@ -618,15 +619,15 @@
 
 (define (doc-html-module-nav-entries [modules : DocModuleList]) : String
   (match modules
-    [(DocModuleNil) ""]
-    [(DocModuleCons module rest)
+    [(DocModuleList.Nil) ""]
+    [(DocModuleList.Cons module rest)
       (string.string-append
         (doc-html-module-nav-entry module)
         (doc-html-module-nav-entries (box-get rest)))]))
 
 (define (doc-html-module-nav [modules : DocModuleList]) : String
   (match modules
-    [(DocModuleNil) "<p class=\"tl-doc-empty\">No modules.</p>\n"]
+    [(DocModuleList.Nil) "<p class=\"tl-doc-empty\">No modules.</p>\n"]
     [_
       (str_cat.str-cat
         "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
@@ -658,8 +659,8 @@
 
 (define (doc-html-module-sections [modules : DocModuleList]) : String
   (match modules
-    [(DocModuleNil) ""]
-    [(DocModuleCons module rest)
+    [(DocModuleList.Nil) ""]
+    [(DocModuleList.Cons module rest)
       (string.string-append
         (doc-html-module-section module)
         (doc-html-module-sections (box-get rest)))]))
@@ -671,7 +672,7 @@
       (doc-html-page-open title)
       (doc-html-header "TypeLisp API" path)
       "<main>\n"
-      (doc-html-module-section (DocModule path docs))
+      (doc-html-module-section (DocModule.Module path docs))
       "</main>\n"
       (doc-html-page-close))))
 

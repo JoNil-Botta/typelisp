@@ -31,20 +31,20 @@
   (AList (Box Sexpr)))
 
 (defenum Sexpr
-  (SNil)
-  (SCons SexprAtom (Box Sexpr)))
+  (Nil)
+  (Cons SexprAtom (Box Sexpr)))
 
 ;; sexpr-head ("car") / sexpr-tail ("cdr"): argument-spine projections. These
 ;; remain single-level (the spine is a flat cons list); the symbol projection
 ;; that USED to be a third helper is now the nested pattern in `eval-sexpr`.
 (define (sexpr-head [s : Sexpr]) : SexprAtom
   (match s
-    [(SCons h _) h]
+    [(Sexpr.Cons h _) h]
     [_ (panic "eval: car of a non-cons")]))
 
 (define (sexpr-tail [s : Sexpr]) : Sexpr
   (match s
-    [(SCons _ t) (box-get t)]
+    [(Sexpr.Cons _ t) (box-get t)]
     [_ (panic "eval: cdr of a non-cons")]))
 
 (define (eval-atom [a : SexprAtom]) : i64
@@ -59,7 +59,7 @@
   (match s
     ;; Nested pattern: head must itself be `(ASym name)`. Binds `name : String`
     ;; (one level down) and `rest : (Box Sexpr)` together.
-    [(SCons (ASym name) rest)
+    [(Sexpr.Cons (ASym name) rest)
       (let
         [args : Sexpr (box-get rest)]
         [arg1 : SexprAtom (sexpr-head args)]
@@ -81,11 +81,11 @@
 (define (main) : i64
   (let
     [inner : Sexpr
-      (SCons
+      (Sexpr.Cons
         (ASym "*")
-        (box (SCons (AInt 2) (box (SCons (AInt 3) (box SNil))))))]
+        (box (Sexpr.Cons (AInt 2) (box (Sexpr.Cons (AInt 3) (box Sexpr.Nil))))))]
     [prog : Sexpr
-      (SCons
+      (Sexpr.Cons
         (ASym "+")
-        (box (SCons (AInt 1) (box (SCons (AList (box inner)) (box SNil))))))]
+        (box (Sexpr.Cons (AInt 1) (box (Sexpr.Cons (AList (box inner)) (box Sexpr.Nil))))))]
     (eval-sexpr prog)))

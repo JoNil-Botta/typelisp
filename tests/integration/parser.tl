@@ -48,14 +48,14 @@
 (import (vector.vector i64) as i64vec)
 
 (defenum Token
-  (TInt i64)
-  (TPlus)
-  (TMinus)
-  (TStar)
-  (TSlash)
-  (TLParen)
-  (TRParen)
-  (TEnd))
+  (Int i64)
+  (Plus)
+  (Minus)
+  (Star)
+  (Slash)
+  (LParen)
+  (RParen)
+  (End))
 
 ;; The real recursive AST: an integer literal, or a binary node over two
 ;; sub-expressions for each of the four arithmetic operators.
@@ -70,27 +70,27 @@
 ;; the lexer would agree on kinds. Exercises `match` over every Token variant.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(TInt _) 1]
-    [(TPlus) 2]
-    [(TMinus) 3]
-    [(TStar) 4]
-    [(TSlash) 5]
-    [(TLParen) 6]
-    [(TRParen) 7]
-    [(TEnd) 8]))
+    [(Token.Int _) 1]
+    [(Token.Plus) 2]
+    [(Token.Minus) 3]
+    [(Token.Star) 4]
+    [(Token.Slash) 5]
+    [(Token.LParen) 6]
+    [(Token.RParen) 7]
+    [(Token.End) 8]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the payload
 ;; back out of the enum in a `match` arm, the way the cursor reads operands.
 (define (token-int [t : Token]) : i64
   (match t
-    [(TInt v) v]
-    [(TPlus) 0]
-    [(TMinus) 0]
-    [(TStar) 0]
-    [(TSlash) 0]
-    [(TLParen) 0]
-    [(TRParen) 0]
-    [(TEnd) 0]))
+    [(Token.Int v) v]
+    [(Token.Plus) 0]
+    [(Token.Minus) 0]
+    [(Token.Star) 0]
+    [(Token.Slash) 0]
+    [(Token.LParen) 0]
+    [(Token.RParen) 0]
+    [(Token.End) 0]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 (define (tag-int) : i64
@@ -248,21 +248,21 @@
 ;; TInt(4) TEnd.
 (define (build-sample-tags [tags : (&mut tags i64vec.Vec)]) : i64
   (begin
-    (i64vec.push tags (token-tag (TInt 2)))
-    (i64vec.push tags (token-tag TPlus))
-    (i64vec.push tags (token-tag (TInt 3)))
-    (i64vec.push tags (token-tag TStar))
-    (i64vec.push tags (token-tag (TInt 4)))
-    (i64vec.push tags (token-tag TEnd))
+    (i64vec.push tags (token-tag (Token.Int 2)))
+    (i64vec.push tags (token-tag Token.Plus))
+    (i64vec.push tags (token-tag (Token.Int 3)))
+    (i64vec.push tags (token-tag Token.Star))
+    (i64vec.push tags (token-tag (Token.Int 4)))
+    (i64vec.push tags (token-tag Token.End))
     6))
 
 (define (build-sample-vals [vals : (&mut vals i64vec.Vec)]) : i64
   (begin
-    (i64vec.push vals (token-int (TInt 2)))
+    (i64vec.push vals (token-int (Token.Int 2)))
     (i64vec.push vals 0)
-    (i64vec.push vals (token-int (TInt 3)))
+    (i64vec.push vals (token-int (Token.Int 3)))
     (i64vec.push vals 0)
-    (i64vec.push vals (token-int (TInt 4)))
+    (i64vec.push vals (token-int (Token.Int 4)))
     (i64vec.push vals 0)
     6))
 

@@ -7143,7 +7143,9 @@
 ;; a configured `--stdlib-root` (root fallback) (#1074).
 (define (compiler-load-stdlib-root-fallback-ok?) : bool
   (begin
-    (io.write-file "target/cl_srf_mod.tl" "(module srf.mod)
+    (io.write-file
+      "target/cl_srf_mod.tl"
+      "(module srf.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_srf_entry.tl"
@@ -7162,7 +7164,9 @@
 ;; candidate wins, so a missing leading root is skipped (#1074).
 (define (compiler-load-stdlib-searched-root-ok?) : bool
   (begin
-    (io.write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
+    (io.write-file
+      "target/cl_ssr_mod.tl"
+      "(module ssr.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_ssr_entry.tl"
@@ -7464,11 +7468,11 @@
 ;: Extract a single `"value"` from a field tail `("value")`.
 (define (compiler-load-manifest-string-value [ftail : Sexpr] [fname : String]) : ResultPkgString
   (match ftail
-    [(SCons vhead vrest)
+    [(Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(SStr val)
+        [(Sexpr.Str val)
           (match (box-get vrest)
-            [(SNil) (ResultPkgString.Ok val)]
+            [(Sexpr.Nil) (ResultPkgString.Ok val)]
             [_
               (ResultPkgString.Err
                 (string.string-append
@@ -7490,16 +7494,16 @@
   [address : String]
   [pin-form : Sexpr]) : ResultPkgString
   (match pin-form
-    [(SCons pin-kind-node pin-tail)
+    [(Sexpr.Cons pin-kind-node pin-tail)
       (match (box-get pin-kind-node)
-        [(SSym pin-kind)
+        [(Sexpr.Sym pin-kind)
           (if (compiler-load-github-pin-kind-valid? pin-kind)
             (match (box-get pin-tail)
-              [(SCons pin-value-node end)
+              [(Sexpr.Cons pin-value-node end)
                 (match (box-get end)
-                  [(SNil)
+                  [(Sexpr.Nil)
                     (match (box-get pin-value-node)
-                      [(SStr pin-value)
+                      [(Sexpr.Str pin-value)
                         (if (string.string-eq pin-value "")
                           (ResultPkgString.Err
                             (string.string-append
@@ -7558,13 +7562,13 @@
   [alias : String]
   [source-tail : Sexpr]) : ResultPkgString
   (match source-tail
-    [(SCons address-node after-address)
+    [(Sexpr.Cons address-node after-address)
       (match (box-get address-node)
-        [(SStr address)
+        [(Sexpr.Str address)
           (match (box-get after-address)
-            [(SCons pin-form end)
+            [(Sexpr.Cons pin-form end)
               (match (box-get end)
-                [(SNil)
+                [(Sexpr.Nil)
                   (compiler-load-manifest-github-pin
                     alias
                     address
@@ -7602,14 +7606,14 @@
   [etail : Sexpr]
   [alias : String]) : ResultPkgString
   (match etail
-    [(SCons vhead vrest)
+    [(Sexpr.Cons vhead vrest)
       (match (box-get vrest)
-        [(SNil)
+        [(Sexpr.Nil)
           (match (box-get vhead)
-            [(SStr path) (ResultPkgString.Ok path)]
-            [(SCons source-kind-node source-tail)
+            [(Sexpr.Str path) (ResultPkgString.Ok path)]
+            [(Sexpr.Cons source-kind-node source-tail)
               (match (box-get source-kind-node)
-                [(SSym source-kind)
+                [(Sexpr.Sym source-kind)
                   (if (string.string-eq source-kind "github")
                     (compiler-load-manifest-github-value
                       alias
@@ -7659,12 +7663,12 @@
 
 (define (compiler-load-manifest-kind-value [ftail : Sexpr]) : ResultCompilerPkgKind
   (match ftail
-    [(SCons vhead vrest)
+    [(Sexpr.Cons vhead vrest)
       (match (box-get vrest)
-        [(SNil)
+        [(Sexpr.Nil)
           (match (box-get vhead)
-            [(SStr val) (compiler-load-manifest-kind-token val)]
-            [(SSym val) (compiler-load-manifest-kind-token val)]
+            [(Sexpr.Str val) (compiler-load-manifest-kind-token val)]
+            [(Sexpr.Sym val) (compiler-load-manifest-kind-token val)]
             [_
               (ResultCompilerPkgKind.Err
                 "manifest field `kind` must have a string or symbol value")])]
@@ -7705,12 +7709,12 @@
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDeps
   (match entries
-    [(SNil) (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
-    [(SCons entry rest)
+    [(Sexpr.Nil) (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
+    [(Sexpr.Cons entry rest)
       (match (box-get entry)
-        [(SCons ehead etail)
+        [(Sexpr.Cons ehead etail)
           (match (box-get ehead)
-            [(SSym alias)
+            [(Sexpr.Sym alias)
               (match (compiler-load-manifest-dependency-value
                 (box-get etail)
                 alias)
@@ -7839,16 +7843,16 @@
   [fname : String]
   [acc : vector.StringVec]) : ResultPkgStrVec
   (match values
-    [(SNil)
+    [(Sexpr.Nil)
       (if (= (vector.string-vec-len acc) 0)
         (ResultPkgStrVec.Err
           (string.string-append
             "`link` field `"
             (string.string-append fname "` requires at least one value")))
         (ResultPkgStrVec.Ok acc))]
-    [(SCons vhead vrest)
+    [(Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(SStr val)
+        [(Sexpr.Str val)
           (if (string.string-eq val "")
             (ResultPkgStrVec.Err
               (string.string-append
@@ -7898,12 +7902,12 @@
   [entries : Sexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
   (match entries
-    [(SNil) (ResultCompilerPkgLink.Ok acc)]
-    [(SCons entry rest)
+    [(Sexpr.Nil) (ResultCompilerPkgLink.Ok acc)]
+    [(Sexpr.Cons entry rest)
       (match (box-get entry)
-        [(SCons ehead etail)
+        [(Sexpr.Cons ehead etail)
           (match (box-get ehead)
-            [(SSym fname)
+            [(Sexpr.Sym fname)
               (match (compiler-load-manifest-link-values
                 (box-get etail)
                 fname
@@ -7965,7 +7969,7 @@
   [has-link : bool]
   [link : CompilerPkgLink]) : ResultCompilerPkgManifest
   (match fields
-    [(SNil)
+    [(Sexpr.Nil)
       (let
         [final-entry : String
           (if has-entry
@@ -7996,11 +8000,11 @@
           [else
             (ResultCompilerPkgManifest.Ok
               (CompilerPkgManifest name version kind final-entry deps link))]))]
-    [(SCons field rest)
+    [(Sexpr.Cons field rest)
       (match (box-get field)
-        [(SCons fhead ftail)
+        [(Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(SSym fname)
+            [(Sexpr.Sym fname)
               (cond
                 [(string.string-eq fname "dependencies")
                   (if has-deps
@@ -8158,9 +8162,9 @@
 ;: Parse the top-level `(package ...)` form.
 (define (compiler-load-manifest-from-form [form : Sexpr]) : ResultCompilerPkgManifest
   (match form
-    [(SCons head rest)
+    [(Sexpr.Cons head rest)
       (match (box-get head)
-        [(SSym s)
+        [(Sexpr.Sym s)
           (if (string.string-eq s "package")
             (compiler-load-manifest-fields
               (box-get rest)
@@ -8186,15 +8190,15 @@
 
 (define (compiler-load-manifest-fields-have? [fields : Sexpr] [target : String]) : bool
   (match fields
-    [(SNil) false]
-    [(SCons field rest)
+    [(Sexpr.Nil) false]
+    [(Sexpr.Cons field rest)
       (let
         [tail-has : bool
           (compiler-load-manifest-fields-have? (box-get rest) target)]
         (match (box-get field)
-          [(SCons fhead _)
+          [(Sexpr.Cons fhead _)
             (match (box-get fhead)
-              [(SSym name) (or (string.string-eq name target) tail-has)]
+              [(Sexpr.Sym name) (or (string.string-eq name target) tail-has)]
               [_ tail-has])]
           [_ tail-has]))]
     [_ false]))
@@ -8203,9 +8207,9 @@
   [form : Sexpr]
   [target : String]) : bool
   (match form
-    [(SCons head rest)
+    [(Sexpr.Cons head rest)
       (match (box-get head)
-        [(SSym s)
+        [(Sexpr.Sym s)
           (if (string.string-eq s "package")
             (compiler-load-manifest-fields-have? (box-get rest) target)
             false)]
@@ -8303,15 +8307,15 @@
   (begin
     (sp-node-pool-reset!)
     (match (lex-spanned-result source)
-      [(ErrSpannedTokens err)
+      [(ResultSpannedTokens.Err err)
         (ResultCompilerPkgManifestDiagnostic.Err
           (box (compiler-load-manifest-source-error-diagnostic path err)))]
-      [(OkSpannedTokens toks)
+      [(ResultSpannedTokens.Ok toks)
         (match (read-spanned-result toks)
-          [(ErrSpannedSexpr err)
+          [(ResultSpannedSexpr.Err err)
             (ResultCompilerPkgManifestDiagnostic.Err
               (box (compiler-load-manifest-source-error-diagnostic path err)))]
-          [(OkSpannedSexpr form)
+          [(ResultSpannedSexpr.Ok form)
             (compiler-load-parse-manifest-form-diagnostic path form)])])))
 
 (define (compiler-load-parse-manifest-diagnostic-infer-kind
@@ -8320,15 +8324,15 @@
   (begin
     (sp-node-pool-reset!)
     (match (lex-spanned-result source)
-      [(ErrSpannedTokens err)
+      [(ResultSpannedTokens.Err err)
         (ResultCompilerPkgManifestDiagnostic.Err
           (box (compiler-load-manifest-source-error-diagnostic path err)))]
-      [(OkSpannedTokens toks)
+      [(ResultSpannedTokens.Ok toks)
         (match (read-spanned-result toks)
-          [(ErrSpannedSexpr err)
+          [(ResultSpannedSexpr.Err err)
             (ResultCompilerPkgManifestDiagnostic.Err
               (box (compiler-load-manifest-source-error-diagnostic path err)))]
-          [(OkSpannedSexpr form)
+          [(ResultSpannedSexpr.Ok form)
             (compiler-load-parse-manifest-form-diagnostic-infer-kind path form)])])))
 
 ;: Parse a manifest source string into a structured manifest. This compatibility

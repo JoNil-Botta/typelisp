@@ -22,16 +22,16 @@
 (import stdlib.str_cat)
 
 (defenum DocTestExpectation
-  (DocTestExpectPass)
-  (DocTestExpectError)
-  (DocTestExpectRun i64 String String))
+  (Pass)
+  (Error)
+  (Run i64 String String))
 
 (defenum DocTestFenceMode
-  (DocTestFenceCheck DocTestExpectation)
-  (DocTestFenceRun))
+  (Check DocTestExpectation)
+  (Run))
 
 (defenum DocTestLine
-  (DocTestLine i64 String))
+  (Line i64 String))
 
 (comptime-decl
   (:generated vector-family DocTestLineList "DocTestLine")
@@ -40,7 +40,7 @@
     (len i64)))
 
 (defenum DocTestExample
-  (DocTestExample i64 i64 DocTestExpectation String))
+  (Example i64 i64 DocTestExpectation String))
 
 (comptime-decl
   (:generated vector-family DocTestExampleList "DocTestExample")
@@ -49,7 +49,7 @@
     (len i64)))
 
 (defenum DocTestError
-  (DocTestError i64 String))
+  (Error i64 String))
 
 (comptime-decl
   (:generated vector-family DocTestErrorList "DocTestError")
@@ -58,37 +58,37 @@
     (len i64)))
 
 (defenum DocTestExtraction
-  (DocTestExtraction DocTestExampleList DocTestErrorList))
+  (Extraction DocTestExampleList DocTestErrorList))
 
 (defenum DocTestMaybeString
-  (DocTestNoString)
-  (DocTestSomeString String))
+  (No)
+  (Some String))
 
 (defenum DocTestFenceInfo
-  (DocTestFenceIgnore)
-  (DocTestFenceTypeLisp DocTestFenceMode)
-  (DocTestFenceMalformed DocTestError))
+  (Ignore)
+  (TypeLisp DocTestFenceMode)
+  (Malformed DocTestError))
 
 (defenum DocTestCodeCollect
-  (DocTestCodeCollect i64 String DocTestLineList bool))
+  (Collect i64 String DocTestLineList bool))
 
 (defenum DocTestMaybeI64
-  (DocTestNoI64 String)
-  (DocTestSomeI64 i64))
+  (No String)
+  (Some i64))
 
 (defenum DocTestMaybeOutput
-  (DocTestNoOutput String)
-  (DocTestSomeOutput String))
+  (No String)
+  (Some String))
 
 (defenum DocTestRunMetadata
-  (DocTestRunMetadata bool i64 bool String bool String DocTestErrorList))
+  (Metadata bool i64 bool String bool String DocTestErrorList))
 
 (defenum DocTestRunMetadataParse
-  (DocTestRunMetadataOk DocTestExpectation)
-  (DocTestRunMetadataErr DocTestErrorList))
+  (Ok DocTestExpectation)
+  (Err DocTestErrorList))
 
 (defenum DocTestScanState
-  (DocTestScanState DocTestExampleList DocTestErrorList i64))
+  (State DocTestExampleList DocTestErrorList i64))
 
 (define (doc-test-line-list-empty) : DocTestLineList
   (DocTestLineList (make-array DocTestLine 0) 0))
@@ -165,68 +165,68 @@
 
 (define (doc-test-line-number [line : DocTestLine]) : i64
   (match line
-    [(DocTestLine line-number _) line-number]))
+    [(DocTestLine.Line line-number _) line-number]))
 
 (define (doc-test-line-text [line : DocTestLine]) : String
   (match line
-    [(DocTestLine _ text) text]))
+    [(DocTestLine.Line _ text) text]))
 
 (define (doc-test-example-index [example : DocTestExample]) : i64
   (match example
-    [(DocTestExample index _ _ _) index]))
+    [(DocTestExample.Example index _ _ _) index]))
 
 (define (doc-test-example-source-line [example : DocTestExample]) : i64
   (match example
-    [(DocTestExample _ source-line _ _) source-line]))
+    [(DocTestExample.Example _ source-line _ _) source-line]))
 
 (define (doc-test-example-expectation [example : DocTestExample]) : DocTestExpectation
   (match example
-    [(DocTestExample _ _ expectation _) expectation]))
+    [(DocTestExample.Example _ _ expectation _) expectation]))
 
 (define (doc-test-example-code [example : DocTestExample]) : String
   (match example
-    [(DocTestExample _ _ _ code) code]))
+    [(DocTestExample.Example _ _ _ code) code]))
 
 (define (doc-test-error-line [err : DocTestError]) : i64
   (match err
-    [(DocTestError line-number _) line-number]))
+    [(DocTestError.Error line-number _) line-number]))
 
 (define (doc-test-error-message [err : DocTestError]) : String
   (match err
-    [(DocTestError _ message) message]))
+    [(DocTestError.Error _ message) message]))
 
 (define (doc-test-extraction-examples [extraction : DocTestExtraction]) : DocTestExampleList
   (match extraction
-    [(DocTestExtraction examples _) examples]))
+    [(DocTestExtraction.Extraction examples _) examples]))
 
 (define (doc-test-extraction-errors [extraction : DocTestExtraction]) : DocTestErrorList
   (match extraction
-    [(DocTestExtraction _ errors) errors]))
+    [(DocTestExtraction.Extraction _ errors) errors]))
 
 (define (doc-test-expectation-error? [expectation : DocTestExpectation]) : bool
   (match expectation
-    [(DocTestExpectPass) false]
-    [(DocTestExpectError) true]
-    [(DocTestExpectRun _ _ _) false]))
+    [(DocTestExpectation.Pass) false]
+    [(DocTestExpectation.Error) true]
+    [(DocTestExpectation.Run _ _ _) false]))
 
 (define (doc-test-expectation-run? [expectation : DocTestExpectation]) : bool
   (match expectation
-    [(DocTestExpectRun _ _ _) true]
+    [(DocTestExpectation.Run _ _ _) true]
     [_ false]))
 
 (define (doc-test-expectation-run-exit [expectation : DocTestExpectation]) : i64
   (match expectation
-    [(DocTestExpectRun expected-exit _ _) expected-exit]
+    [(DocTestExpectation.Run expected-exit _ _) expected-exit]
     [_ -1]))
 
 (define (doc-test-expectation-run-stdout [expectation : DocTestExpectation]) : String
   (match expectation
-    [(DocTestExpectRun _ expected-stdout _) expected-stdout]
+    [(DocTestExpectation.Run _ expected-stdout _) expected-stdout]
     [_ ""]))
 
 (define (doc-test-expectation-run-stderr [expectation : DocTestExpectation]) : String
   (match expectation
-    [(DocTestExpectRun _ _ expected-stderr) expected-stderr]
+    [(DocTestExpectation.Run _ _ expected-stderr) expected-stderr]
     [_ ""]))
 
 (define (doc-test-space? [c : char]) : bool
@@ -335,7 +335,7 @@
     [trimmed : String (doc-test-trim text)]
     [n : i64 (string.string-length trimmed)]
     (if (= n 0)
-      (DocTestNoI64 "expected integer")
+      (DocTestMaybeI64.No "expected integer")
       (let
         [i : i64 0]
         [sign : i64 1]
@@ -360,8 +360,8 @@
                   (set! value (+ (* value 10) digit))
                   (set! i (+ i 1))))))
           (if ok
-            (DocTestSomeI64 (* sign value))
-            (DocTestNoI64 "expected integer")))))))
+            (DocTestMaybeI64.Some (* sign value))
+            (DocTestMaybeI64.No "expected integer")))))))
 
 (define (doc-test-decode-output-literal [text : String]) : DocTestMaybeOutput
   (let
@@ -408,18 +408,18 @@
                 (string.string-concat3 out (string.substring text i 1) ""))
               (set! i (+ i 1))))))
       (if (= (string.string-length message) 0)
-        (DocTestSomeOutput out)
-        (DocTestNoOutput message)))))
+        (DocTestMaybeOutput.Some out)
+        (DocTestMaybeOutput.No message)))))
 
 (define (doc-test-parse-output-spec [text : String]) : DocTestMaybeOutput
   (let
     [trimmed : String (doc-test-trim text)]
     (if (string.string-eq trimmed "-")
-      (DocTestSomeOutput "")
+      (DocTestMaybeOutput.Some "")
       (if (doc-test-string-prefix? trimmed "literal:")
         (doc-test-decode-output-literal
           (string.substring trimmed 8 (- (string.string-length trimmed) 8)))
-        (DocTestNoOutput
+        (DocTestMaybeOutput.No
           "doctest output metadata must be '-' or 'literal:<escaped text>'")))))
 
 (define (doc-test-string-blank? [text : String]) : bool
@@ -490,11 +490,11 @@
           (string.substring trimmed prefix-len (- trimmed-len prefix-len))]
         (if (> (string.string-length body) 0)
           (if (= (string.string-ref body 0) ' ')
-            (DocTestSomeString
+            (DocTestMaybeString.Some
               (string.substring body 1 (- (string.string-length body) 1)))
-            (DocTestSomeString body))
-          (DocTestSomeString body)))
-      (DocTestNoString))))
+            (DocTestMaybeString.Some body))
+          (DocTestMaybeString.Some body)))
+      (DocTestMaybeString.No))))
 
 (define (doc-test-module-doc-comment-body [line : String]) : DocTestMaybeString
   (doc-test-doc-comment-body-with-prefix line ";#"))
@@ -538,7 +538,7 @@
   (let
     [trimmed : String (doc-test-trim-left text)]
     (if (= (string.string-length trimmed) 0)
-      (DocTestFenceTypeLisp mode)
+      (DocTestFenceInfo.TypeLisp mode)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
         [option : String (string.substring trimmed 0 end)]
@@ -546,32 +546,32 @@
           (string.substring trimmed end (- (string.string-length trimmed) end))]
         (if (string.string-eq option "expect-error")
           (match mode
-            [(DocTestFenceRun)
-              (DocTestFenceMalformed
-                (DocTestError
+            [(DocTestFenceMode.Run)
+              (DocTestFenceInfo.Malformed
+                (DocTestError.Error
                   line-number
                   "TypeLisp doctest options `run` and `expect-error` cannot be combined"))]
-            [(DocTestFenceCheck _)
+            [(DocTestFenceMode.Check _)
               (doc-test-parse-fence-options
                 rest
                 line-number
-                (DocTestFenceCheck (DocTestExpectError)))])
+                (DocTestFenceMode.Check (DocTestExpectation.Error)))])
           (if (string.string-eq option "run")
             (match mode
-              [(DocTestFenceRun)
+              [(DocTestFenceMode.Run)
                 (doc-test-parse-fence-options rest line-number mode)]
-              [(DocTestFenceCheck expectation)
+              [(DocTestFenceMode.Check expectation)
                 (if (doc-test-expectation-error? expectation)
-                  (DocTestFenceMalformed
-                    (DocTestError
+                  (DocTestFenceInfo.Malformed
+                    (DocTestError.Error
                       line-number
                       "TypeLisp doctest options `run` and `expect-error` cannot be combined"))
                   (doc-test-parse-fence-options
                     rest
                     line-number
-                    (DocTestFenceRun)))])
-            (DocTestFenceMalformed
-              (DocTestError
+                    (DocTestFenceMode.Run)))])
+            (DocTestFenceInfo.Malformed
+              (DocTestError.Error
                 line-number
                 (str_cat.str-cat
                   "unsupported TypeLisp doctest option `"
@@ -582,7 +582,7 @@
   (let
     [trimmed : String (doc-test-trim-left info)]
     (if (= (string.string-length trimmed) 0)
-      (DocTestFenceIgnore)
+      (DocTestFenceInfo.Ignore)
       (let
         [end : i64 (doc-test-word-end trimmed 0)]
         [language : String (string.substring trimmed 0 end)]
@@ -594,8 +594,8 @@
           (doc-test-parse-fence-options
             rest
             line-number
-            (DocTestFenceCheck (DocTestExpectPass)))
-          (DocTestFenceIgnore))))))
+            (DocTestFenceMode.Check (DocTestExpectation.Pass)))
+          (DocTestFenceInfo.Ignore))))))
 
 (define (doc-test-skip-ignored-fence-from
   [lines : DocTestLineList]
@@ -616,13 +616,17 @@
   [code : String]
   [collected : DocTestLineList]) : DocTestCodeCollect
   (if (>= index (doc-test-line-list-count lines))
-    (DocTestCodeCollect (doc-test-line-list-count lines) code collected false)
+    (DocTestCodeCollect.Collect
+      (doc-test-line-list-count lines)
+      code
+      collected
+      false)
     (let
       [line : DocTestLine (doc-test-line-list-ref lines index)]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
-        (DocTestCodeCollect (+ index 1) code collected true)
+        (DocTestCodeCollect.Collect (+ index 1) code collected true)
         (doc-test-collect-code-inner
           lines
           (+ index 1)
@@ -638,13 +642,13 @@
   (let
     [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
     (if (doc-test-string-prefix? trimmed prefix)
-      (DocTestSomeString
+      (DocTestMaybeString.Some
         (doc-test-trim
           (string.substring
             trimmed
             (string.string-length prefix)
             (- (string.string-length trimmed) (string.string-length prefix)))))
-      (DocTestNoString))))
+      (DocTestMaybeString.No))))
 
 (define (doc-test-metadata-line? [line : DocTestLine]) : bool
   (doc-test-string-prefix?
@@ -655,7 +659,7 @@
   [metadata : DocTestRunMetadata]
   [err : DocTestError]) : DocTestRunMetadata
   (match metadata
-    [(DocTestRunMetadata
+    [(DocTestRunMetadata.Metadata
         has-exit
         expected-exit
         has-stdout
@@ -663,7 +667,7 @@
         has-stderr
         expected-stderr
         errors)
-      (DocTestRunMetadata
+      (DocTestRunMetadata.Metadata
         has-exit
         expected-exit
         has-stdout
@@ -677,7 +681,7 @@
   [line : DocTestLine]
   [text : String]) : DocTestRunMetadata
   (match metadata
-    [(DocTestRunMetadata
+    [(DocTestRunMetadata.Metadata
         has-exit
         expected-exit
         has-stdout
@@ -688,12 +692,12 @@
       (if has-exit
         (doc-test-run-metadata-append-error
           metadata
-          (DocTestError
+          (DocTestError.Error
             (doc-test-line-number line)
             "duplicate doctest-exit metadata"))
         (match (doc-test-parse-i64 text)
-          [(DocTestSomeI64 parsed)
-            (DocTestRunMetadata
+          [(DocTestMaybeI64.Some parsed)
+            (DocTestRunMetadata.Metadata
               true
               parsed
               has-stdout
@@ -701,9 +705,9 @@
               has-stderr
               expected-stderr
               errors)]
-          [(DocTestNoI64 _)
+          [(DocTestMaybeI64.No _)
             (doc-test-run-metadata-append-error
-              (DocTestRunMetadata
+              (DocTestRunMetadata.Metadata
                 true
                 expected-exit
                 has-stdout
@@ -711,7 +715,7 @@
                 has-stderr
                 expected-stderr
                 errors)
-              (DocTestError
+              (DocTestError.Error
                 (doc-test-line-number line)
                 "doctest-exit metadata must be an integer"))]))]))
 
@@ -720,7 +724,7 @@
   [line : DocTestLine]
   [text : String]) : DocTestRunMetadata
   (match metadata
-    [(DocTestRunMetadata
+    [(DocTestRunMetadata.Metadata
         has-exit
         expected-exit
         has-stdout
@@ -731,12 +735,12 @@
       (if has-stdout
         (doc-test-run-metadata-append-error
           metadata
-          (DocTestError
+          (DocTestError.Error
             (doc-test-line-number line)
             "duplicate doctest-stdout metadata"))
         (match (doc-test-parse-output-spec text)
-          [(DocTestSomeOutput parsed)
-            (DocTestRunMetadata
+          [(DocTestMaybeOutput.Some parsed)
+            (DocTestRunMetadata.Metadata
               has-exit
               expected-exit
               true
@@ -744,17 +748,17 @@
               has-stderr
               expected-stderr
               errors)]
-          [(DocTestNoOutput message)
+          [(DocTestMaybeOutput.No message)
             (doc-test-run-metadata-append-error
               metadata
-              (DocTestError (doc-test-line-number line) message))]))]))
+              (DocTestError.Error (doc-test-line-number line) message))]))]))
 
 (define (doc-test-run-metadata-set-stderr
   [metadata : DocTestRunMetadata]
   [line : DocTestLine]
   [text : String]) : DocTestRunMetadata
   (match metadata
-    [(DocTestRunMetadata
+    [(DocTestRunMetadata.Metadata
         has-exit
         expected-exit
         has-stdout
@@ -765,12 +769,12 @@
       (if has-stderr
         (doc-test-run-metadata-append-error
           metadata
-          (DocTestError
+          (DocTestError.Error
             (doc-test-line-number line)
             "duplicate doctest-stderr metadata"))
         (match (doc-test-parse-output-spec text)
-          [(DocTestSomeOutput parsed)
-            (DocTestRunMetadata
+          [(DocTestMaybeOutput.Some parsed)
+            (DocTestRunMetadata.Metadata
               has-exit
               expected-exit
               has-stdout
@@ -778,30 +782,30 @@
               true
               parsed
               errors)]
-          [(DocTestNoOutput message)
+          [(DocTestMaybeOutput.No message)
             (doc-test-run-metadata-append-error
               metadata
-              (DocTestError (doc-test-line-number line) message))]))]))
+              (DocTestError.Error (doc-test-line-number line) message))]))]))
 
 (define (doc-test-run-metadata-parse-line
   [metadata : DocTestRunMetadata]
   [line : DocTestLine]) : DocTestRunMetadata
   (match (doc-test-metadata-value line ";; doctest-exit:")
-    [(DocTestSomeString value)
+    [(DocTestMaybeString.Some value)
       (doc-test-run-metadata-set-exit metadata line value)]
-    [(DocTestNoString)
+    [(DocTestMaybeString.No)
       (match (doc-test-metadata-value line ";; doctest-stdout:")
-        [(DocTestSomeString value)
+        [(DocTestMaybeString.Some value)
           (doc-test-run-metadata-set-stdout metadata line value)]
-        [(DocTestNoString)
+        [(DocTestMaybeString.No)
           (match (doc-test-metadata-value line ";; doctest-stderr:")
-            [(DocTestSomeString value)
+            [(DocTestMaybeString.Some value)
               (doc-test-run-metadata-set-stderr metadata line value)]
-            [(DocTestNoString)
+            [(DocTestMaybeString.No)
               (if (doc-test-metadata-line? line)
                 (doc-test-run-metadata-append-error
                   metadata
-                  (DocTestError
+                  (DocTestError.Error
                     (doc-test-line-number line)
                     "unsupported runnable doctest metadata"))
                 metadata)])])]))
@@ -829,8 +833,15 @@
   [lines : DocTestLineList]) : DocTestRunMetadataParse
   (match (doc-test-run-metadata-parse-lines
     lines
-    (DocTestRunMetadata false 0 false "" false "" (doc-test-error-list-empty)))
-    [(DocTestRunMetadata
+    (DocTestRunMetadata.Metadata
+      false
+      0
+      false
+      ""
+      false
+      ""
+      (doc-test-error-list-empty)))
+    [(DocTestRunMetadata.Metadata
         has-exit
         expected-exit
         _
@@ -844,13 +855,16 @@
             errors
             (doc-test-error-list-append
               errors
-              (DocTestError
+              (DocTestError.Error
                 source-line
                 "runnable TypeLisp doctest requires doctest-exit metadata")))]
         (if (= (doc-test-error-list-count all-errors) 0)
-          (DocTestRunMetadataOk
-            (DocTestExpectRun expected-exit expected-stdout expected-stderr))
-          (DocTestRunMetadataErr all-errors)))]))
+          (DocTestRunMetadataParse.Ok
+            (DocTestExpectation.Run
+              expected-exit
+              expected-stdout
+              expected-stderr))
+          (DocTestRunMetadataParse.Err all-errors)))]))
 
 (define (doc-test-scan-type-lisp-fence
   [lines : DocTestLineList]
@@ -859,56 +873,64 @@
   [source-line : i64]
   [mode : DocTestFenceMode]) : DocTestScanState
   (match (doc-test-collect-code lines index)
-    [(DocTestCodeCollect remaining code code-lines closed)
+    [(DocTestCodeCollect.Collect remaining code code-lines closed)
       (match state
-        [(DocTestScanState examples errors next-index)
+        [(DocTestScanState.State examples errors next-index)
           (if closed
             (if (doc-test-string-blank? code)
               (doc-test-scan-doc-block-from
                 lines
                 remaining
-                (DocTestScanState
+                (DocTestScanState.State
                   examples
                   (doc-test-error-list-append
                     errors
-                    (DocTestError source-line "empty TypeLisp doctest fence"))
+                    (DocTestError.Error
+                      source-line
+                      "empty TypeLisp doctest fence"))
                   next-index))
               (doc-test-scan-doc-block-from
                 lines
                 remaining
                 (match mode
-                  [(DocTestFenceCheck expectation)
-                    (DocTestScanState
+                  [(DocTestFenceMode.Check expectation)
+                    (DocTestScanState.State
                       (doc-test-example-list-append
                         examples
-                        (DocTestExample next-index source-line expectation code))
+                        (DocTestExample.Example
+                          next-index
+                          source-line
+                          expectation
+                          code))
                       errors
                       (+ next-index 1))]
-                  [(DocTestFenceRun)
+                  [(DocTestFenceMode.Run)
                     (match (doc-test-parse-run-metadata source-line code-lines)
-                      [(DocTestRunMetadataOk expectation)
-                        (DocTestScanState
+                      [(DocTestRunMetadataParse.Ok expectation)
+                        (DocTestScanState.State
                           (doc-test-example-list-append
                             examples
-                            (DocTestExample
+                            (DocTestExample.Example
                               next-index
                               source-line
                               expectation
                               code))
                           errors
                           (+ next-index 1))]
-                      [(DocTestRunMetadataErr metadata-errors)
-                        (DocTestScanState
+                      [(DocTestRunMetadataParse.Err metadata-errors)
+                        (DocTestScanState.State
                           examples
                           (doc-test-error-list-append-all
                             errors
                             metadata-errors)
                           next-index)])])))
-            (DocTestScanState
+            (DocTestScanState.State
               examples
               (doc-test-error-list-append
                 errors
-                (DocTestError source-line "unterminated TypeLisp doctest fence"))
+                (DocTestError.Error
+                  source-line
+                  "unterminated TypeLisp doctest fence"))
               next-index))])]))
 
 (define (doc-test-scan-doc-block-from
@@ -925,22 +947,22 @@
           [info : String
             (string.substring trimmed 3 (- (string.string-length trimmed) 3))]
           (match (doc-test-parse-fence-info info (doc-test-line-number line))
-            [(DocTestFenceIgnore)
+            [(DocTestFenceInfo.Ignore)
               (doc-test-scan-doc-block-from
                 lines
                 (doc-test-skip-ignored-fence-from lines (+ index 1))
                 state)]
-            [(DocTestFenceMalformed err)
+            [(DocTestFenceInfo.Malformed err)
               (match state
-                [(DocTestScanState examples errors next-index)
+                [(DocTestScanState.State examples errors next-index)
                   (doc-test-scan-doc-block-from
                     lines
                     (doc-test-skip-ignored-fence-from lines (+ index 1))
-                    (DocTestScanState
+                    (DocTestScanState.State
                       examples
                       (doc-test-error-list-append errors err)
                       next-index))])]
-            [(DocTestFenceTypeLisp expectation)
+            [(DocTestFenceInfo.TypeLisp expectation)
               (doc-test-scan-type-lisp-fence
                 lines
                 (+ index 1)
@@ -962,7 +984,7 @@
     [module-lines : DocTestLineList (doc-test-line-list-empty)]
     [pending-lines : DocTestLineList (doc-test-line-list-empty)]
     [state : DocTestScanState
-      (DocTestScanState
+      (DocTestScanState.State
         (doc-test-example-list-empty)
         (doc-test-error-list-empty)
         1)]
@@ -973,28 +995,28 @@
           [line : String (string.substring src pos (- line-end pos))]
           (begin
             (match (doc-test-module-doc-comment-body line)
-              [(DocTestSomeString body)
+              [(DocTestMaybeString.Some body)
                 (begin
                   (set! pending-lines (doc-test-line-list-empty))
                   (set!
                     module-lines
                     (doc-test-line-list-push
                       module-lines
-                      (DocTestLine line-number body))))]
-              [(DocTestNoString)
+                      (DocTestLine.Line line-number body))))]
+              [(DocTestMaybeString.No)
                 (if (doc-test-string-blank? line)
                   unit
                   (begin
                     (set! state (doc-test-scan-doc-block module-lines state))
                     (set! module-lines (doc-test-line-list-empty))
                     (match (doc-test-item-doc-comment-body line)
-                      [(DocTestSomeString body)
+                      [(DocTestMaybeString.Some body)
                         (set!
                           pending-lines
                           (doc-test-line-list-push
                             pending-lines
-                            (DocTestLine line-number body)))]
-                      [(DocTestNoString)
+                            (DocTestLine.Line line-number body)))]
+                      [(DocTestMaybeString.No)
                         (if (doc-test-supported-item-declaration? line)
                           (begin
                             (set!
@@ -1006,8 +1028,8 @@
             (set! line-number (+ line-number 1)))))
       (set! state (doc-test-scan-doc-block module-lines state))
       (match state
-        [(DocTestScanState examples errors _)
-          (DocTestExtraction examples errors)]))))
+        [(DocTestScanState.State examples errors _)
+          (DocTestExtraction.Extraction examples errors)]))))
 
 (define (doc-test-extract-file [path : String]) : DocTestExtraction
   (doc-test-extract-source (io.read-file path)))
@@ -1018,7 +1040,7 @@
 ;; example), and a human-readable reason (the rendered diagnostic when one is
 ;; available).
 (defenum DocTestRunFailure
-  (DocTestRunFailure String i64 i64 String))
+  (Failure String i64 i64 String))
 
 (comptime-decl
   (:generated vector-family DocTestRunFailureList "DocTestRunFailure")
@@ -1028,35 +1050,35 @@
 
 ;; Outcome of running a source: how many examples were checked and which failed.
 (defenum DocTestRunReport
-  (DocTestRunReport i64 DocTestRunFailureList))
+  (Report i64 DocTestRunFailureList))
 
 (defenum DocTestMaybeFailure
-  (DocTestNoFailure)
-  (DocTestSomeFailure DocTestRunFailure))
+  (No)
+  (Some DocTestRunFailure))
 
 (define (doc-test-run-failure-path [failure : DocTestRunFailure]) : String
   (match failure
-    [(DocTestRunFailure path _ _ _) path]))
+    [(DocTestRunFailure.Failure path _ _ _) path]))
 
 (define (doc-test-run-failure-line [failure : DocTestRunFailure]) : i64
   (match failure
-    [(DocTestRunFailure _ line _ _) line]))
+    [(DocTestRunFailure.Failure _ line _ _) line]))
 
 (define (doc-test-run-failure-index [failure : DocTestRunFailure]) : i64
   (match failure
-    [(DocTestRunFailure _ _ index _) index]))
+    [(DocTestRunFailure.Failure _ _ index _) index]))
 
 (define (doc-test-run-failure-message [failure : DocTestRunFailure]) : String
   (match failure
-    [(DocTestRunFailure _ _ _ message) message]))
+    [(DocTestRunFailure.Failure _ _ _ message) message]))
 
 (define (doc-test-run-report-count [report : DocTestRunReport]) : i64
   (match report
-    [(DocTestRunReport count _) count]))
+    [(DocTestRunReport.Report count _) count]))
 
 (define (doc-test-run-report-failures [report : DocTestRunReport]) : DocTestRunFailureList
   (match report
-    [(DocTestRunReport _ failures) failures]))
+    [(DocTestRunReport.Report _ failures) failures]))
 
 (define (doc-test-run-failure-list-empty) : DocTestRunFailureList
   (DocTestRunFailureList (make-array DocTestRunFailure 0) 0))
@@ -1094,7 +1116,7 @@
 ;; message so the public CLI text matches the stage0 Rust runner.
 (define (doc-test-run-failure-render [failure : DocTestRunFailure]) : String
   (match failure
-    [(DocTestRunFailure path line index message)
+    [(DocTestRunFailure.Failure path line index message)
       (let
         [location : String
           (string.string-append
@@ -1346,11 +1368,11 @@
   (match (process.process-output command)
     [(process.OkProcessOutput output)
       (if (process.process-success? output)
-        SourceToolCommandOk
-        (SourceToolCommandErr
+        SourceToolCommandStatus.Ok
+        (SourceToolCommandStatus.Err
           (doc-test-command-output-message role target command output)))]
     [(process.ErrProcessOutput error)
-      (SourceToolCommandErr
+      (SourceToolCommandStatus.Err
         (string.string-append
           "Error: failed to run "
           (string.string-append
@@ -1424,7 +1446,8 @@
   [source-line : i64]
   [index : i64]
   [message : String]) : DocTestMaybeFailure
-  (DocTestSomeFailure (DocTestRunFailure path source-line index message)))
+  (DocTestMaybeFailure.Some
+    (DocTestRunFailure.Failure path source-line index message)))
 
 (define (doc-test-run-runnable-process-output
   [path : String]
@@ -1444,7 +1467,7 @@
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
         (if (doc-test-runnable-output-matches? expectation target output)
-          (DocTestNoFailure)
+          (DocTestMaybeFailure.No)
           (doc-test-runnable-failure
             path
             source-line
@@ -1472,7 +1495,7 @@
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
   (match (doc-test-assemble-and-link-captured target asm-path obj-path bin-path)
-    [(SourceToolCommandErr message)
+    [(SourceToolCommandStatus.Err message)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
         (doc-test-runnable-failure
@@ -1480,7 +1503,7 @@
           source-line
           index
           (doc-test-runnable-build-message index message)))]
-    [(SourceToolCommandOk)
+    [(SourceToolCommandStatus.Ok)
       (doc-test-run-runnable-process-output
         path
         source-line
@@ -1507,7 +1530,7 @@
     asm-path
     asm
     "doctest: failed to write assembly artifact")
-    [(SourceToolCommandErr message)
+    [(SourceToolCommandStatus.Err message)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
         (doc-test-runnable-failure
@@ -1515,7 +1538,7 @@
           source-line
           index
           (doc-test-runnable-build-message index message)))]
-    [(SourceToolCommandOk)
+    [(SourceToolCommandStatus.Ok)
       (doc-test-link-and-run-runnable
         path
         source-line
@@ -1581,8 +1604,8 @@
             target
             temp-dir)]
         [(ResultSourceToolString.Err message)
-          (DocTestSomeFailure
-            (DocTestRunFailure
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
               path
               source-line
               index
@@ -1591,8 +1614,8 @@
                 (string.string-append
                   "doctest: failed to create temp dir: "
                   message))))])
-      (DocTestSomeFailure
-        (DocTestRunFailure
+      (DocTestMaybeFailure.Some
+        (DocTestRunFailure.Failure
           path
           source-line
           index
@@ -1626,18 +1649,18 @@
       stdlib-roots)
       [(ResultCompilerCheck.Ok _)
         (if expect-error
-          (DocTestSomeFailure
-            (DocTestRunFailure
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
               path
               source-line
               index
               (doc-test-unexpected-pass-message index)))
-          (DocTestNoFailure))]
+          (DocTestMaybeFailure.No))]
       [(ResultCompilerCheck.Err diag)
         (if expect-error
-          (DocTestNoFailure)
-          (DocTestSomeFailure
-            (DocTestRunFailure
+          (DocTestMaybeFailure.No)
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
               path
               source-line
               index
@@ -1663,18 +1686,18 @@
       deps)
       [(ResultCompilerCheck.Ok _)
         (if expect-error
-          (DocTestSomeFailure
-            (DocTestRunFailure
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
               path
               source-line
               index
               (doc-test-unexpected-pass-message index)))
-          (DocTestNoFailure))]
+          (DocTestMaybeFailure.No))]
       [(ResultCompilerCheck.Err diag)
         (if expect-error
-          (DocTestNoFailure)
-          (DocTestSomeFailure
-            (DocTestRunFailure
+          (DocTestMaybeFailure.No)
+          (DocTestMaybeFailure.Some
+            (DocTestRunFailure.Failure
               path
               source-line
               index
@@ -1712,14 +1735,14 @@
     (let
       [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-check-example-with-roots path example stdlib-roots)
-        [(DocTestNoFailure)
+        [(DocTestMaybeFailure.No)
           (doc-test-run-examples-with-roots-from
             path
             examples
             (+ index 1)
             failures
             stdlib-roots)]
-        [(DocTestSomeFailure failure)
+        [(DocTestMaybeFailure.Some failure)
           (doc-test-run-examples-with-roots-from
             path
             examples
@@ -1745,14 +1768,14 @@
     (let
       [example : DocTestExample (doc-test-example-list-ref examples index)]
       (match (doc-test-typecheck-example-with-roots path example stdlib-roots)
-        [(DocTestNoFailure)
+        [(DocTestMaybeFailure.No)
           (doc-test-typecheck-examples-with-roots-from
             path
             examples
             (+ index 1)
             failures
             stdlib-roots)]
-        [(DocTestSomeFailure failure)
+        [(DocTestMaybeFailure.Some failure)
           (doc-test-typecheck-examples-with-roots-from
             path
             examples
@@ -1790,7 +1813,7 @@
         stdlib-roots
         manifest-dir
         deps)
-        [(DocTestNoFailure)
+        [(DocTestMaybeFailure.No)
           (doc-test-typecheck-package-examples-with-roots-from
             path
             examples
@@ -1799,7 +1822,7 @@
             stdlib-roots
             manifest-dir
             deps)]
-        [(DocTestSomeFailure failure)
+        [(DocTestMaybeFailure.Some failure)
           (doc-test-typecheck-package-examples-with-roots-from
             path
             examples
@@ -1842,7 +1865,7 @@
         (+ index 1)
         (doc-test-run-failure-list-append
           failures
-          (DocTestRunFailure
+          (DocTestRunFailure.Failure
             path
             (doc-test-error-line err)
             -1
@@ -1865,8 +1888,8 @@
   [source : String]
   [stdlib-roots : vector.StringVec]) : DocTestRunReport
   (match (doc-test-extract-source source)
-    [(DocTestExtraction examples errors)
-      (DocTestRunReport
+    [(DocTestExtraction.Extraction examples errors)
+      (DocTestRunReport.Report
         (doc-test-example-list-count examples)
         (doc-test-run-examples-with-roots
           path
@@ -1893,8 +1916,8 @@
   [source : String]
   [stdlib-roots : vector.StringVec]) : DocTestRunReport
   (match (doc-test-extract-source source)
-    [(DocTestExtraction examples errors)
-      (DocTestRunReport
+    [(DocTestExtraction.Extraction examples errors)
+      (DocTestRunReport.Report
         (doc-test-example-list-count examples)
         (doc-test-typecheck-examples-with-roots
           path
@@ -1912,8 +1935,8 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (doc-test-extract-source source)
-    [(DocTestExtraction examples errors)
-      (DocTestRunReport
+    [(DocTestExtraction.Extraction examples errors)
+      (DocTestRunReport.Report
         (doc-test-example-list-count examples)
         (doc-test-typecheck-package-examples-with-roots
           path
@@ -1986,7 +2009,7 @@
   [count : i64]) : DocTestRunReport
   (match paths
     [(AstDeclPathNil)
-      (DocTestRunReport count (doc-test-run-failure-list-empty))]
+      (DocTestRunReport.Report count (doc-test-run-failure-list-empty))]
     [(AstDeclPathCons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
@@ -2054,7 +2077,8 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (io.try-read-file (& path))
-    [(io.ErrIoString _) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
+    [(io.ErrIoString _)
+      (DocTestRunReport.Report 0 (doc-test-run-failure-list-empty))]
     [(io.OkIoString text)
       (doc-test-typecheck-package-source-with-roots
         path
@@ -2105,7 +2129,7 @@
 ;; rendered failure.
 (define (doc-test-run-report-render [report : DocTestRunReport]) : String
   (match report
-    [(DocTestRunReport count failures)
+    [(DocTestRunReport.Report count failures)
       (if (= (doc-test-run-failure-list-count failures) 0)
         (string.string-append
           "Doc tests passed: "
@@ -2243,7 +2267,7 @@
       (= (doc-test-example-source-line example) source-line)
       (return false))
     (match (doc-test-example-expectation example)
-      [(DocTestExpectRun actual-exit actual-stdout actual-stderr)
+      [(DocTestExpectation.Run actual-exit actual-stdout actual-stderr)
         (begin
           (unless (= actual-exit expected-exit) (return false))
           (unless
@@ -2321,7 +2345,7 @@
 
 (define (doc-test-ordinary-comments-ok?) : bool
   (match (doc-test-extract-source (doc-test-ordinary-comment-source))
-    [(DocTestExtraction ordinary-examples ordinary-errors)
+    [(DocTestExtraction.Extraction ordinary-examples ordinary-errors)
       (if (= (doc-test-example-list-count ordinary-examples) 0)
         (= (doc-test-error-list-count ordinary-errors) 0)
         false)]))
@@ -2335,7 +2359,7 @@
 
 (define (doc-test-legacy-item-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-legacy-item-source))
-    [(DocTestExtraction examples errors)
+    [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless (= (doc-test-error-list-count errors) 0) (return false))
         (unless (= (doc-test-example-list-count examples) 1) (return false))
@@ -2347,7 +2371,7 @@
 
 (define (doc-test-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-malformed-source))
-    [(DocTestExtraction malformed-examples malformed-errors)
+    [(DocTestExtraction.Extraction malformed-examples malformed-errors)
       (if (= (doc-test-example-list-count malformed-examples) 0)
         (if (= (doc-test-error-list-count malformed-errors) 3)
           (doc-test-malformed-errors-ok? malformed-errors)
@@ -2356,7 +2380,7 @@
 
 (define (doc-test-runnable-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-runnable-source))
-    [(DocTestExtraction examples errors)
+    [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless (= (doc-test-error-list-count errors) 0) (return false))
         (unless (= (doc-test-example-list-count examples) 2) (return false))
@@ -2385,7 +2409,7 @@
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
   (match (doc-test-extract-source (doc-test-runnable-malformed-source))
-    [(DocTestExtraction examples errors)
+    [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless (= (doc-test-example-list-count examples) 0) (return false))
         (unless (= (doc-test-error-list-count errors) 5) (return false))
@@ -2405,7 +2429,7 @@
 
 (define (doc-test-smoke) : i64
   (match (doc-test-extract-source (doc-test-smoke-source))
-    [(DocTestExtraction examples errors)
+    [(DocTestExtraction.Extraction examples errors)
       (begin
         (unless
           (= (doc-test-error-list-count errors) 0)
@@ -2721,7 +2745,7 @@
   (let
     [rendered : String
       (doc-test-run-failure-render
-        (DocTestRunFailure
+        (DocTestRunFailure.Failure
           "docs/bad.tl"
           4
           2

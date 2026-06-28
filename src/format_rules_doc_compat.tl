@@ -33,19 +33,19 @@
 
 (define (format-rules-inline-tail-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node rest)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node rest)
       (doc-append
         (format-rules-space (format-rules-cst-doc node))
         (format-rules-inline-tail-doc rest))]))
 
 (define (format-rules-hard-tail-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node tail)
       (if (format-rules-node-colon? node)
         (match (fmt-cst-list-step tail)
-          [(FmtCstListStepItem next after-next)
+          [(FormatCstListStep.Item next after-next)
             (if (format-rules-node-comment? next)
               (doc-append
                 (doc-hard-line)
@@ -81,11 +81,11 @@
   [previous-comment : bool]
   [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node tail)
       (if (format-rules-node-colon? node)
         (match (fmt-cst-list-step tail)
-          [(FmtCstListStepItem next after-next)
+          [(FormatCstListStep.Item next after-next)
             (if (format-rules-node-comment? next)
               (doc-append
                 (format-rules-tail-separator previous-comment node)
@@ -119,8 +119,8 @@
 
 (define (format-rules-list-items-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node tail)
       (doc-append
         (format-rules-cst-doc node)
         (if (fmt-cst-list-empty? tail)
@@ -173,8 +173,9 @@
   [head : String]
   [rest : FormatCstList]) : Doc
   (match (fmt-cst-list-step rest)
-    [(FmtCstListStepEmpty) (format-rules-inline-form-doc head FmtCstNil)]
-    [(FmtCstListStepItem first tail)
+    [(FormatCstListStep.Empty)
+      (format-rules-inline-form-doc head FormatCstList.Nil)]
+    [(FormatCstListStep.Item first tail)
       (format-rules-first-line-form-doc head first tail)]))
 
 (define (format-rules-let-binding-annotated-doc
@@ -211,15 +212,15 @@
 
 (define (format-rules-let-item-list-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepItem name after-name)
+    [(FormatCstListStep.Item name after-name)
       (match (fmt-cst-list-step after-name)
-        [(FmtCstListStepItem second after-second)
+        [(FormatCstListStep.Item second after-second)
           (match (fmt-cst-list-step after-second)
-            [(FmtCstListStepEmpty)
+            [(FormatCstListStep.Empty)
               (format-rules-let-binding-unannotated-doc name second)]
-            [(FmtCstListStepItem typ after-typ)
+            [(FormatCstListStep.Item typ after-typ)
               (match (fmt-cst-list-step after-typ)
-                [(FmtCstListStepItem init after-init)
+                [(FormatCstListStep.Item init after-init)
                   (if (fmt-cst-list-empty? after-init)
                     (if (format-rules-node-colon? second)
                       (format-rules-let-binding-annotated-doc
@@ -236,13 +237,14 @@
 
 (define (format-rules-let-item-doc [node : FormatCst]) : Doc
   (match node
-    [(FmtCstBracketList items) (format-rules-let-item-list-doc (box-get items))]
+    [(FormatCst.BracketList items)
+      (format-rules-let-item-list-doc (box-get items))]
     [_ (format-rules-cst-doc node)]))
 
 (define (format-rules-let-tail-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node tail)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node tail)
       (doc-append
         (doc-hard-line)
         (doc-append
@@ -319,12 +321,12 @@
 
 (define (format-rules-define-doc [rest : FormatCstList]) : Doc
   (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem target after-target)
+    [(FormatCstListStep.Item target after-target)
       (match (fmt-cst-list-step after-target)
-        [(FmtCstListStepItem second after-second)
+        [(FormatCstListStep.Item second after-second)
           (if (format-rules-node-colon? second)
             (match (fmt-cst-list-step after-second)
-              [(FmtCstListStepItem typ body)
+              [(FormatCstListStep.Item typ body)
                 (if (fmt-cst-list-empty? body)
                   (format-rules-first-or-line-form-doc "define" rest)
                   (format-rules-signature-annotated-doc
@@ -336,10 +338,10 @@
               [_ (format-rules-first-or-line-form-doc "define" rest)])
             (if (format-rules-node-colon-list? second)
               (match (fmt-cst-list-step after-second)
-                [(FmtCstListStepItem colon after-colon)
+                [(FormatCstListStep.Item colon after-colon)
                   (if (format-rules-node-colon? colon)
                     (match (fmt-cst-list-step after-colon)
-                      [(FmtCstListStepItem typ body)
+                      [(FormatCstListStep.Item typ body)
                         (if (fmt-cst-list-empty? body)
                           (format-rules-first-or-line-form-doc "define" rest)
                           (format-rules-define-metadata-annotated-doc
@@ -357,12 +359,12 @@
 
 (define (format-rules-defmacro-doc [rest : FormatCstList]) : Doc
   (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem target after-target)
+    [(FormatCstListStep.Item target after-target)
       (match (fmt-cst-list-step after-target)
-        [(FmtCstListStepItem colon after-colon)
+        [(FormatCstListStep.Item colon after-colon)
           (if (format-rules-node-colon? colon)
             (match (fmt-cst-list-step after-colon)
-              [(FmtCstListStepItem typ body)
+              [(FormatCstListStep.Item typ body)
                 (if (fmt-cst-list-empty? body)
                   (format-rules-first-or-line-form-doc "defmacro" rest)
                   (format-rules-signature-annotated-doc
@@ -378,12 +380,12 @@
 
 (define (format-rules-lambda-doc [rest : FormatCstList]) : Doc
   (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem target after-target)
+    [(FormatCstListStep.Item target after-target)
       (match (fmt-cst-list-step after-target)
-        [(FmtCstListStepItem colon after-colon)
+        [(FormatCstListStep.Item colon after-colon)
           (if (format-rules-node-colon? colon)
             (match (fmt-cst-list-step after-colon)
-              [(FmtCstListStepItem typ body)
+              [(FormatCstListStep.Item typ body)
                 (if (fmt-cst-list-empty? body)
                   (format-rules-first-or-line-form-doc "lambda" rest)
                   (format-rules-signature-annotated-doc
@@ -426,29 +428,34 @@
         (format-rules-line-form-doc "unsafe" rest)]
       [(string-eq head-name "match")
         (format-rules-first-or-line-form-doc "match" rest)]
-      [else (format-rules-delimited-doc "(" (FmtCstCons head (box rest)) ")")])))
+      [else
+        (format-rules-delimited-doc
+          "("
+          (FormatCstList.Cons head (box rest))
+          ")")])))
 
 (define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
   (match (fmt-cst-list-step rest)
-    [(FmtCstListStepItem key tail)
+    [(FormatCstListStep.Item key tail)
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
           (format-rules-inline-form-doc (string-append ":" name) tail)
           (format-rules-delimited-doc
             "("
-            (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
+            (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
             ")")))]
     [_
       (format-rules-delimited-doc
         "("
-        (FmtCstCons (FmtCstAtom (FmtColon)) (box rest))
+        (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
         ")")]))
 
 (define (format-rules-list-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (format-rules-delimited-doc "(" FmtCstNil ")")]
-    [(FmtCstListStepItem head rest)
+    [(FormatCstListStep.Empty)
+      (format-rules-delimited-doc "(" FormatCstList.Nil ")")]
+    [(FormatCstListStep.Item head rest)
       (if (format-rules-node-colon? head)
         (format-rules-colon-list-doc rest)
         (format-rules-special-list-doc head rest))]))
@@ -457,8 +464,8 @@
   [previous : FormatCst]
   [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node rest)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node rest)
       (doc-append
         (format-rules-forms-separator previous node)
         (doc-append
@@ -467,24 +474,24 @@
 
 (define (format-rules-forms-doc [items : FormatCstList]) : Doc
   (match (fmt-cst-list-step items)
-    [(FmtCstListStepEmpty) (doc-empty)]
-    [(FmtCstListStepItem node rest)
+    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Item node rest)
       (doc-append
         (format-rules-cst-doc node)
         (format-rules-forms-tail-doc node rest))]))
 
 (define (format-rules-cst-doc [node : FormatCst]) : Doc
   (match node
-    [(FmtCstAtom tok) (doc-text (format-token-text tok))]
-    [(FmtCstComment text) (doc-text text)]
-    [(FmtCstPrefix tok child)
+    [(FormatCst.Atom tok) (doc-text (format-token-text tok))]
+    [(FormatCst.Comment text) (doc-text text)]
+    [(FormatCst.Prefix tok child)
       (doc-append
         (doc-text (format-token-text tok))
         (format-rules-cst-doc (box-get child)))]
-    [(FmtCstList items) (format-rules-list-doc (box-get items))]
-    [(FmtCstBracketList items)
+    [(FormatCst.List items) (format-rules-list-doc (box-get items))]
+    [(FormatCst.BracketList items)
       (format-rules-delimited-doc "[" (box-get items) "]")]
-    [(FmtCstForms items) (format-rules-forms-doc (box-get items))]))
+    [(FormatCst.Forms items) (format-rules-forms-doc (box-get items))]))
 
 (define (format-rules-source-doc [src : String]) : Doc
   (format-rules-cst-doc (parse-format-source src)))

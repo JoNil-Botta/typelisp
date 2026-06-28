@@ -18,31 +18,31 @@
 (import stdlib.string)
 
 (defenum DocMaybeString
-  (DocNoString)
-  (DocSomeString String))
+  (No)
+  (Some String))
 
 (defenum DocTestCliConfig
-  (DocTestCliFileConfig vector.StringVec vector.StringVec)
-  (DocTestCliPackageConfig String bool vector.StringVec))
+  (File vector.StringVec vector.StringVec)
+  (Package String bool vector.StringVec))
 
 (defenum ResultDocTestBatchPaths
-  (OkDocTestBatchPaths vector.StringVec)
-  (ErrDocTestBatchPaths String))
+  (Ok vector.StringVec)
+  (Err String))
 
 (defenum ResultDocTestCliConfig
-  (OkDocTestCliConfig DocTestCliConfig)
-  (ErrDocTestCliConfig String))
+  (Ok DocTestCliConfig)
+  (Err String))
 
 (define doc-test-prefix-cache-stats : bool
   false)
 
 (defenum DocDefaultCliConfig
-  (DocDefaultCliExplicitConfig vector.StringVec DocMaybeString vector.StringVec)
-  (DocDefaultCliPackageConfig String bool String))
+  (Explicit vector.StringVec DocMaybeString vector.StringVec)
+  (Package String bool String))
 
 (defenum ResultDocDefaultCliConfig
-  (OkDocDefaultCliConfig DocDefaultCliConfig)
-  (ErrDocDefaultCliConfig String))
+  (Ok DocDefaultCliConfig)
+  (Err String))
 
 (define (doc-print-wrote [output-path : String]) : unit
   (io.print-string
@@ -58,29 +58,29 @@
       0)))
 
 (define (doc-cli-module-cons [module : DocModule] [rest : DocModuleList]) : DocModuleList
-  (DocModuleCons module (box rest)))
+  (DocModuleList.Cons module (box rest)))
 
 (define (doc-read-modules [idx : i64] [end : i64]) : DocModuleList
   (if (>= idx end)
-    DocModuleNil
+    DocModuleList.Nil
     (doc-cli-module-cons
-      (DocModule (io.arg idx) (doc-extract-file (io.arg idx)))
+      (DocModule.Module (io.arg idx) (doc-extract-file (io.arg idx)))
       (doc-read-modules (+ idx 1) end))))
 
 (define (doc-module-list-count [modules : DocModuleList]) : i64
   (match modules
-    [(DocModuleNil) 0]
-    [(DocModuleCons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
+    [(DocModuleList.Nil) 0]
+    [(DocModuleList.Cons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
 
 (define (doc-modules-from-string-vec-from
   [paths : vector.StringVec]
   [index : i64]) : DocModuleList
   (if (>= index (vector.string-vec-len paths))
-    DocModuleNil
+    DocModuleList.Nil
     (let
       [path : String (vector.string-vec-get paths index "")]
       (doc-cli-module-cons
-        (DocModule path (doc-extract-file path))
+        (DocModule.Module path (doc-extract-file path))
         (doc-modules-from-string-vec-from paths (+ index 1))))))
 
 (define (doc-modules-from-string-vec [paths : vector.StringVec]) : DocModuleList
@@ -88,14 +88,14 @@
 
 (define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
   (match paths
-    [(AstDeclPathNil) DocModuleNil]
+    [(AstDeclPathNil) DocModuleList.Nil]
     [(AstDeclPathCons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         (if (sym-i64-contains seen path)
           (doc-modules-from-paths rest seen)
           (doc-cli-module-cons
-            (DocModule path (doc-extract-file path))
+            (DocModule.Module path (doc-extract-file path))
             (doc-modules-from-paths rest (sym-i64-bind seen path 1)))))]))
 
 (define (doc-render-loaded-markdown
@@ -135,11 +135,11 @@
   [has-manifest : bool]
   [output-path : String]) : i64
   (match (package-source-discover-for "doc" manifest-path has-manifest)
-    [(ErrPackageSourceSet message)
+    [(ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         1)]
-    [(OkPackageSourceSet source-set)
+    [(ResultPackageSourceSet.Ok source-set)
       (begin
         (io.write-file
           output-path
@@ -200,11 +200,11 @@
   [index : i64]
   [last-index : i64]) : DocModuleList
   (if (>= index last-index)
-    DocModuleNil
+    DocModuleList.Nil
     (let
       [path : String (vector.string-vec-get paths index "")]
       (doc-cli-module-cons
-        (DocModule path (doc-extract-file path))
+        (DocModule.Module path (doc-extract-file path))
         (doc-modules-from-input-paths-before-last paths (+ index 1) last-index)))))
 
 (define (doc-generate-module-graph-from-input-paths [paths : vector.StringVec]) : i64
@@ -270,9 +270,9 @@
 (define (doc-test-batch-paths [list-path : String]) : ResultDocTestBatchPaths
   (match (io.try-read-file (& list-path))
     [(io.OkIoString text)
-      (OkDocTestBatchPaths (doc-test-batch-paths-from-text text))]
+      (ResultDocTestBatchPaths.Ok (doc-test-batch-paths-from-text text))]
     [(io.ErrIoString error)
-      (ErrDocTestBatchPaths
+      (ResultDocTestBatchPaths.Err
         (string.string-append
           "doc: failed to read --batch list file: "
           (io.io-error-message error)))]))
@@ -284,29 +284,35 @@
   [stdlib-roots : vector.StringVec]
   [batch-list : DocMaybeString]) : ResultDocTestCliConfig
   (match batch-list
-    [(DocSomeString list-path)
+    [(DocMaybeString.Some list-path)
       (if has-manifest
-        (ErrDocTestCliConfig "doc: cannot combine --batch with --manifest-path")
+        (ResultDocTestCliConfig.Err
+          "doc: cannot combine --batch with --manifest-path")
         (if (not (vector.string-vec-is-empty? input-paths))
-          (ErrDocTestCliConfig "doc: cannot combine input paths with --batch")
+          (ResultDocTestCliConfig.Err
+            "doc: cannot combine input paths with --batch")
           (match (doc-test-batch-paths list-path)
-            [(OkDocTestBatchPaths paths)
+            [(ResultDocTestBatchPaths.Ok paths)
               (if (vector.string-vec-is-empty? paths)
-                (ErrDocTestCliConfig "doc: --batch list is empty")
-                (OkDocTestCliConfig (DocTestCliFileConfig paths stdlib-roots)))]
-            [(ErrDocTestBatchPaths message) (ErrDocTestCliConfig message)])))]
-    [(DocNoString)
+                (ResultDocTestCliConfig.Err "doc: --batch list is empty")
+                (ResultDocTestCliConfig.Ok
+                  (DocTestCliConfig.File paths stdlib-roots)))]
+            [(ResultDocTestBatchPaths.Err message)
+              (ResultDocTestCliConfig.Err message)])))]
+    [(DocMaybeString.No)
       (cond
         [doc-test-prefix-cache-stats
-          (ErrDocTestCliConfig "doc: --prefix-cache-stats requires --batch")]
+          (ResultDocTestCliConfig.Err
+            "doc: --prefix-cache-stats requires --batch")]
         [(vector.string-vec-is-empty? input-paths)
-          (OkDocTestCliConfig
-            (DocTestCliPackageConfig manifest-path has-manifest stdlib-roots))]
+          (ResultDocTestCliConfig.Ok
+            (DocTestCliConfig.Package manifest-path has-manifest stdlib-roots))]
         [has-manifest
-          (ErrDocTestCliConfig
+          (ResultDocTestCliConfig.Err
             "doc: cannot combine input paths with --manifest-path")]
         [else
-          (OkDocTestCliConfig (DocTestCliFileConfig input-paths stdlib-roots))])]))
+          (ResultDocTestCliConfig.Ok
+            (DocTestCliConfig.File input-paths stdlib-roots))])]))
 
 (define (doc-test-parse-options
   [idx : i64]
@@ -328,7 +334,7 @@
       (cond
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrDocTestCliConfig "doc: --stdlib-root requires a value")
+            (ResultDocTestCliConfig.Err "doc: --stdlib-root requires a value")
             (doc-test-parse-options
               (+ idx 2)
               count
@@ -339,9 +345,9 @@
               batch-list))]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
-            (ErrDocTestCliConfig "doc: --manifest-path requires a value")
+            (ResultDocTestCliConfig.Err "doc: --manifest-path requires a value")
             (if has-manifest
-              (ErrDocTestCliConfig "doc: duplicate --manifest-path")
+              (ResultDocTestCliConfig.Err "doc: duplicate --manifest-path")
               (doc-test-parse-options
                 (+ idx 2)
                 count
@@ -352,10 +358,11 @@
                 batch-list)))]
         [(string.string-eq current "--batch")
           (if (>= (+ idx 1) count)
-            (ErrDocTestCliConfig "doc: --batch requires a value")
+            (ResultDocTestCliConfig.Err "doc: --batch requires a value")
             (match batch-list
-              [(DocSomeString _) (ErrDocTestCliConfig "doc: duplicate --batch")]
-              [(DocNoString)
+              [(DocMaybeString.Some _)
+                (ResultDocTestCliConfig.Err "doc: duplicate --batch")]
+              [(DocMaybeString.No)
                 (doc-test-parse-options
                   (+ idx 2)
                   count
@@ -363,7 +370,7 @@
                   manifest-path
                   has-manifest
                   stdlib-roots
-                  (DocSomeString (io.arg (+ idx 1))))]))]
+                  (DocMaybeString.Some (io.arg (+ idx 1))))]))]
         [(string.string-eq current "--prefix-cache-stats")
           (begin
             (set! doc-test-prefix-cache-stats true)
@@ -376,7 +383,7 @@
               stdlib-roots
               batch-list))]
         [(doc-flag? current)
-          (ErrDocTestCliConfig
+          (ResultDocTestCliConfig.Err
             (string.string-append "doc: unknown flag " current))]
         [else
           (doc-test-parse-options
@@ -398,7 +405,7 @@
       ""
       false
       (vector.string-vec-new)
-      (DocNoString))))
+      (DocMaybeString.No))))
 
 (define (doc-test-files-from
   [input-paths : vector.StringVec]
@@ -468,11 +475,11 @@
   [has-manifest : bool]
   [stdlib-roots : vector.StringVec]) : i64
   (match (package-source-discover-for "doc" manifest-path has-manifest)
-    [(ErrPackageSourceSet message)
+    [(ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         1)]
-    [(OkPackageSourceSet source-set)
+    [(ResultPackageSourceSet.Ok source-set)
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
 
 (define (doc-default-config-finish
@@ -483,19 +490,19 @@
   [stdlib-roots : vector.StringVec]) : ResultDocDefaultCliConfig
   (if (vector.string-vec-is-empty? input-paths)
     (match output-path
-      [(DocSomeString out)
-        (OkDocDefaultCliConfig
-          (DocDefaultCliPackageConfig manifest-path has-manifest out))]
-      [(DocNoString)
+      [(DocMaybeString.Some out)
+        (ResultDocDefaultCliConfig.Ok
+          (DocDefaultCliConfig.Package manifest-path has-manifest out))]
+      [(DocMaybeString.No)
         (if has-manifest
-          (ErrDocDefaultCliConfig
+          (ResultDocDefaultCliConfig.Err
             "doc: package documentation requires -o <out.md>")
-          (ErrDocDefaultCliConfig "doc: expected input and output paths"))])
+          (ResultDocDefaultCliConfig.Err "doc: expected input and output paths"))])
     (if has-manifest
-      (ErrDocDefaultCliConfig
+      (ResultDocDefaultCliConfig.Err
         "doc: cannot combine input paths with --manifest-path")
-      (OkDocDefaultCliConfig
-        (DocDefaultCliExplicitConfig input-paths output-path stdlib-roots)))))
+      (ResultDocDefaultCliConfig.Ok
+        (DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots)))))
 
 (define (doc-default-parse-options
   [idx : i64]
@@ -516,20 +523,22 @@
       (cond
         [(string.string-eq current "-o")
           (if (>= (+ idx 1) count)
-            (ErrDocDefaultCliConfig "doc: -o requires a value")
+            (ResultDocDefaultCliConfig.Err "doc: -o requires a value")
             (match output-path
-              [(DocSomeString _) (ErrDocDefaultCliConfig "doc: duplicate -o")]
-              [(DocNoString)
+              [(DocMaybeString.Some _)
+                (ResultDocDefaultCliConfig.Err "doc: duplicate -o")]
+              [(DocMaybeString.No)
                 (doc-default-parse-options
                   (+ idx 2)
                   count
                   input-paths
-                  (DocSomeString (io.arg (+ idx 1)))
+                  (DocMaybeString.Some (io.arg (+ idx 1)))
                   manifest-path
                   stdlib-roots)]))]
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrDocDefaultCliConfig "doc: --stdlib-root requires a value")
+            (ResultDocDefaultCliConfig.Err
+              "doc: --stdlib-root requires a value")
             (doc-default-parse-options
               (+ idx 2)
               count
@@ -539,9 +548,10 @@
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
-            (ErrDocDefaultCliConfig "doc: --manifest-path requires a value")
+            (ResultDocDefaultCliConfig.Err
+              "doc: --manifest-path requires a value")
             (if (not (string.string-eq manifest-path ""))
-              (ErrDocDefaultCliConfig "doc: duplicate --manifest-path")
+              (ResultDocDefaultCliConfig.Err "doc: duplicate --manifest-path")
               (doc-default-parse-options
                 (+ idx 2)
                 count
@@ -550,7 +560,7 @@
                 (io.arg (+ idx 1))
                 stdlib-roots)))]
         [(doc-flag? current)
-          (ErrDocDefaultCliConfig
+          (ResultDocDefaultCliConfig.Err
             (string.string-append "doc: unknown flag " current))]
         [else
           (doc-default-parse-options
@@ -566,7 +576,7 @@
     base
     count
     (vector.string-vec-new)
-    (DocNoString)
+    (DocMaybeString.No)
     ""
     (vector.string-vec-new)))
 
@@ -590,14 +600,14 @@
   [output-path : DocMaybeString]
   [stdlib-roots : vector.StringVec]) : i64
   (match output-path
-    [(DocSomeString out)
+    [(DocMaybeString.Some out)
       (if (vector.string-vec-is-empty? input-paths)
         (doc-invalid-args)
         (doc-generate-loaded-file
           (vector.string-vec-get input-paths 0 "")
           out
           stdlib-roots))]
-    [(DocNoString)
+    [(DocMaybeString.No)
       (let
         [path-count : i64 (vector.string-vec-len input-paths)]
         (if (= path-count 2)
@@ -632,9 +642,9 @@
     (compiler-load-session-cache-enable!)
     (compiler-load-session-program-cache-disable!)
     (match (doc-test-config-from base (arg-count))
-      [(OkDocTestCliConfig config)
+      [(ResultDocTestCliConfig.Ok config)
         (match config
-          [(DocTestCliFileConfig input-paths stdlib-roots)
+          [(DocTestCliConfig.File input-paths stdlib-roots)
             (let
               [status : i64
                 (begin
@@ -651,9 +661,9 @@
                   (tc-prefix-snapshot-cache-print-stats "doc-test-batch")
                   unit)
                 status))]
-          [(DocTestCliPackageConfig manifest-path has-manifest stdlib-roots)
+          [(DocTestCliConfig.Package manifest-path has-manifest stdlib-roots)
             (doc-test-package manifest-path has-manifest stdlib-roots)])]
-      [(ErrDocTestCliConfig message)
+      [(ResultDocTestCliConfig.Err message)
         (begin
           (io.print-error message)
           1)])))
@@ -675,13 +685,13 @@
 
 (define (doc-main-default [base : i64]) : i64
   (match (doc-default-config-from base (arg-count))
-    [(OkDocDefaultCliConfig config)
+    [(ResultDocDefaultCliConfig.Ok config)
       (match config
-        [(DocDefaultCliExplicitConfig input-paths output-path stdlib-roots)
+        [(DocDefaultCliConfig.Explicit input-paths output-path stdlib-roots)
           (doc-run-explicit-default input-paths output-path stdlib-roots)]
-        [(DocDefaultCliPackageConfig manifest-path has-manifest output-path)
+        [(DocDefaultCliConfig.Package manifest-path has-manifest output-path)
           (doc-generate-package manifest-path has-manifest output-path)])]
-    [(ErrDocDefaultCliConfig message)
+    [(ResultDocDefaultCliConfig.Err message)
       (begin
         (io.print-error message)
         1)]))

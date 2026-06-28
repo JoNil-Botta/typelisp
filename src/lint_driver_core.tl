@@ -17,12 +17,12 @@
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.
 (defenum SelfhostLintConfig
-  (SelfhostLintFileConfig vector.StringVec vector.StringVec bool bool bool)
-  (SelfhostLintPackageConfig String bool vector.StringVec bool bool bool))
+  (File vector.StringVec vector.StringVec bool bool bool)
+  (Package String bool vector.StringVec bool bool bool))
 
 (defenum ResultSelfhostLintConfig
-  (OkSelfhostLintConfig SelfhostLintConfig)
-  (ErrSelfhostLintConfig String))
+  (Ok SelfhostLintConfig)
+  (Err String))
 
 (define (selfhost-lint-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -36,8 +36,8 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : ResultSelfhostLintConfig
   (if (vector.string-vec-is-empty? input-paths)
-    (OkSelfhostLintConfig
-      (SelfhostLintPackageConfig
+    (ResultSelfhostLintConfig.Ok
+      (SelfhostLintConfig.Package
         manifest-path
         has-manifest
         stdlib-roots
@@ -45,10 +45,10 @@
         deprecated-string-concat
         redundant-function-name))
     (if has-manifest
-      (ErrSelfhostLintConfig
+      (ResultSelfhostLintConfig.Err
         "selfhost-lint: cannot combine input paths with --manifest-path")
-      (OkSelfhostLintConfig
-        (SelfhostLintFileConfig
+      (ResultSelfhostLintConfig.Ok
+        (SelfhostLintConfig.File
           input-paths
           stdlib-roots
           enforcing
@@ -112,7 +112,7 @@
             true)]
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrSelfhostLintConfig
+            (ResultSelfhostLintConfig.Err
               "selfhost-lint: --stdlib-root requires a value")
             (selfhost-lint-parse-options
               (+ idx 2)
@@ -126,10 +126,11 @@
               redundant-function-name))]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
-            (ErrSelfhostLintConfig
+            (ResultSelfhostLintConfig.Err
               "selfhost-lint: --manifest-path requires a value")
             (if has-manifest
-              (ErrSelfhostLintConfig "selfhost-lint: duplicate --manifest-path")
+              (ResultSelfhostLintConfig.Err
+                "selfhost-lint: duplicate --manifest-path")
               (selfhost-lint-parse-options
                 (+ idx 2)
                 count
@@ -141,7 +142,7 @@
                 deprecated-string-concat
                 redundant-function-name)))]
         [(selfhost-lint-flag? current)
-          (ErrSelfhostLintConfig
+          (ResultSelfhostLintConfig.Err
             (string.string-append "selfhost-lint: unknown flag " current))]
         [else
           (selfhost-lint-parse-options
@@ -2082,11 +2083,11 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : i64
   (match (package-source-discover-for "lint" manifest-path has-manifest)
-    [(ErrPackageSourceSet message)
+    [(ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         1)]
-    [(OkPackageSourceSet source-set)
+    [(ResultPackageSourceSet.Ok source-set)
       (let
         [sources : vector.StringVec (struct-get source-set sources)]
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
@@ -2105,9 +2106,9 @@
 ;; Run the `lint` command over arguments starting at `start`.
 (define (selfhost-lint-run-from [start : i64] [count : i64]) : i64
   (match (selfhost-lint-config-from start count)
-    [(OkSelfhostLintConfig config)
+    [(ResultSelfhostLintConfig.Ok config)
       (match config
-        [(SelfhostLintFileConfig
+        [(SelfhostLintConfig.File
             input-paths
             stdlib-roots
             enforcing
@@ -2121,7 +2122,7 @@
             redundant-function-name
             (> (vector.string-vec-len input-paths) 1)
             0)]
-        [(SelfhostLintPackageConfig
+        [(SelfhostLintConfig.Package
             manifest-path
             has-manifest
             stdlib-roots
@@ -2135,7 +2136,7 @@
             enforcing
             deprecated-string-concat
             redundant-function-name)])]
-    [(ErrSelfhostLintConfig message)
+    [(ResultSelfhostLintConfig.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         2)]))
@@ -2513,7 +2514,7 @@
   (if (>= index (lint-findings-count findings))
     count
     (match (lint-findings-get findings index)
-      [(LintSomeFinding finding)
+      [(LintMaybeFinding.Some finding)
         (selfhost-lint-findings-rule-count-from
           findings
           rule-id
@@ -2521,7 +2522,7 @@
           (if (string.string-eq (struct-get finding rule-id) rule-id)
             (+ count 1)
             count))]
-      [(LintNoFinding)
+      [(LintMaybeFinding.No)
         (selfhost-lint-findings-rule-count-from
           findings
           rule-id
@@ -2543,7 +2544,7 @@
 
 (define (selfhost-lint-unused-import-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -2552,7 +2553,7 @@
           (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-unused-import-id))))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unused-imports-self-test) : i64
   (let
@@ -2770,7 +2771,7 @@
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.
 (define (selfhost-lint-reported-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -2779,11 +2780,11 @@
           (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-nested-if-ladder-id))))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-nested-let-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -2791,11 +2792,11 @@
           (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-nested-let-id))))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-return-path-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -2804,11 +2805,11 @@
           (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unit-if-finding-ok? [findings : LintFindings]) : bool
   (match (lint-findings-get findings 0)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -2817,13 +2818,13 @@
           (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-unit-if-guard-id))))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-cascading-and-or-finding-ok?
   [findings : LintFindings]
   [message : String]) : bool
   (match (lint-findings-get findings 0)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -2833,22 +2834,22 @@
             (struct-get finding rule-id)
             (lint-rule-cascading-and-or-id))
           (string.string-eq (struct-get finding message) message)))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
   (if (= (lint-findings-count findings) 2)
     (match (lint-findings-get findings 1)
-      [(LintSomeFinding rendered-first)
+      [(LintMaybeFinding.Some rendered-first)
         (match (lint-findings-get findings 0)
-          [(LintSomeFinding rendered-second)
+          [(LintMaybeFinding.Some rendered-second)
             (let
               [first-span : AstSourceSpan (struct-get rendered-first span)]
               [second-span : AstSourceSpan (struct-get rendered-second span)]
               (and
                 (= (struct-get first-span start-line) 11)
                 (= (struct-get second-span start-line) 2)))]
-          [(LintNoFinding) false])]
-      [(LintNoFinding) false])
+          [(LintMaybeFinding.No) false])]
+      [(LintMaybeFinding.No) false])
     false))
 
 (define (compiler-lint-driver-self-test) : i64

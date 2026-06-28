@@ -29,41 +29,41 @@
 ;; The token kinds the calculator surface needs: integer literals, the four
 ;; binary operators, parentheses, and an end-of-stream sentinel.
 (defenum Token
-  (TInt i64)
-  (TPlus)
-  (TMinus)
-  (TStar)
-  (TSlash)
-  (TLParen)
-  (TRParen)
-  (TEnd))
+  (Int i64)
+  (Plus)
+  (Minus)
+  (Star)
+  (Slash)
+  (LParen)
+  (RParen)
+  (End))
 
 ;; Numeric tag for a token kind: the parser's cursor classifies the token under
 ;; it by tag. Exercises `match` over every Token variant - and proves an
 ;; imported `defenum`'s `match` works across the import boundary.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(TInt _) 1]
-    [(TPlus) 2]
-    [(TMinus) 3]
-    [(TStar) 4]
-    [(TSlash) 5]
-    [(TLParen) 6]
-    [(TRParen) 7]
-    [(TEnd) 8]))
+    [(Token.Int _) 1]
+    [(Token.Plus) 2]
+    [(Token.Minus) 3]
+    [(Token.Star) 4]
+    [(Token.Slash) 5]
+    [(Token.LParen) 6]
+    [(Token.RParen) 7]
+    [(Token.End) 8]))
 
 ;; Integer payload of a TInt token (0 for any other kind): projects the operand
 ;; back out of the enum, the way the parser reads a literal.
 (define (token-int [t : Token]) : i64
   (match t
-    [(TInt v) v]
-    [(TPlus) 0]
-    [(TMinus) 0]
-    [(TStar) 0]
-    [(TSlash) 0]
-    [(TLParen) 0]
-    [(TRParen) 0]
-    [(TEnd) 0]))
+    [(Token.Int v) v]
+    [(Token.Plus) 0]
+    [(Token.Minus) 0]
+    [(Token.Star) 0]
+    [(Token.Slash) 0]
+    [(Token.LParen) 0]
+    [(Token.RParen) 0]
+    [(Token.End) 0]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 ;; The parser compares a token's tag against these to drive its descent.

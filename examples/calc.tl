@@ -100,12 +100,12 @@
 ;; yields unit and never returns.
 (define (single-token [c : char]) : Token
   (cond
-    [(= c '+') TPlus]
-    [(= c '-') TMinus]
-    [(= c '*') TStar]
-    [(= c '/') TSlash]
-    [(= c '(') TLParen]
-    [(= c ')') TRParen]
+    [(= c '+') Token.Plus]
+    [(= c '-') Token.Minus]
+    [(= c '*') Token.Star]
+    [(= c '/') Token.Slash]
+    [(= c '(') Token.LParen]
+    [(= c ')') Token.RParen]
     [else (panic "lexer: unexpected character")]))
 
 ;; Lex `src`, appending each emitted `Token` value into `toks` and returning the
@@ -134,14 +134,14 @@
                     (begin
                       (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
                       (set! i (+ i 1))))
-                  (tokvec.push toks (TInt acc))
+                  (tokvec.push toks (Token.Int acc))
                   (set! count (+ count 1))))
               (begin
                 (tokvec.push toks (single-token c))
                 (set! count (+ count 1))
                 (set! i (+ i 1)))))))
       ;; A real lexer terminates the stream; record the sentinel too.
-      (tokvec.push toks TEnd)
+      (tokvec.push toks Token.End)
       count)))
 
 ;; ============================ Parser ======================================
@@ -163,11 +163,11 @@
 
 ;; Kind tag of the token under the cursor.
 (define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
-  (token-tag (tokvec.get toks (cur-pos cur) TEnd)))
+  (token-tag (tokvec.get toks (cur-pos cur) Token.End)))
 
 ;; Integer value of the token under the cursor (meaningful only for TInt).
 (define (current-val [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
-  (token-int (tokvec.get toks (cur-pos cur) TEnd)))
+  (token-int (tokvec.get toks (cur-pos cur) Token.End)))
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (Array i64 1)]) : unit

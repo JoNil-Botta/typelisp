@@ -21,12 +21,12 @@
   (sources vector.StringVec))
 
 (defenum ResultPackageSourceSet
-  (OkPackageSourceSet PackageSourceSet)
-  (ErrPackageSourceSet String))
+  (Ok PackageSourceSet)
+  (Err String))
 
 (defenum ResultPackageSourceList
-  (OkPackageSourceList vector.StringVec)
-  (ErrPackageSourceList String))
+  (Ok vector.StringVec)
+  (Err String))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -117,7 +117,7 @@
       path
       (io.read-file path))
       [(ResultCompilerPkgManifestDiagnostic.Err diag)
-        (ErrPackageSourceSet
+        (ResultPackageSourceSet.Err
           (str_cat.str-cat
             "invalid package manifest '"
             (compiler-diagnostic-path (box-get diag))
@@ -125,13 +125,13 @@
               "': "
               (compiler-diagnostic-message (box-get diag)))))]
       [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
-        (OkPackageSourceSet
+        (ResultPackageSourceSet.Ok
           (PackageSourceSet
             path
             (package-source-manifest-dir path)
             manifest
             (vector.string-vec-new)))])
-    (ErrPackageSourceSet
+    (ResultPackageSourceSet.Err
       (str_cat.str-cat "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
@@ -145,7 +145,7 @@
         (package-source-discover-manifest-up "" 256))]
     (match resolved
       [(CompilerLoadNoPath)
-        (ErrPackageSourceSet
+        (ResultPackageSourceSet.Err
           (string.string-append
             command
             ": could not find typelisp.pkg from '.' or any parent directory"))]
@@ -265,7 +265,7 @@
   [command : String]
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
-  (ErrPackageSourceList
+  (ResultPackageSourceList.Err
     (str_cat.str-cat
       (string.string-append command ": failed to inspect package path '")
       path
@@ -275,7 +275,7 @@
   [command : String]
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
-  (ErrPackageSourceList
+  (ResultPackageSourceList.Err
     (str_cat.str-cat
       (string.string-append command ": failed to read package directory '")
       path
@@ -319,7 +319,7 @@
     (match (fs.try-read-dir (& dir))
       [(fs.ErrIoStringVec error)
         (if (or (io.io-error-not-found? error) (io.io-error-unsupported? error))
-          (OkPackageSourceList acc)
+          (ResultPackageSourceList.Ok acc)
           (package-source-read-dir-error command dir error))]
       [(fs.OkIoStringVec entries)
         (package-source-scan-entries
@@ -337,7 +337,7 @@
     (match (fs.try-read-dir (& root))
       [(fs.ErrIoStringVec error)
         (if (io.io-error-unsupported? error)
-          (OkPackageSourceList (package-source-entry-vec source-set))
+          (ResultPackageSourceList.Ok (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
       [(fs.OkIoStringVec entries)
         (package-source-scan-entries
@@ -354,7 +354,7 @@
   [name : String]
   [acc : vector.StringVec]) : ResultPackageSourceList
   (if (package-source-skip-dir? name)
-    (OkPackageSourceList acc)
+    (ResultPackageSourceList.Ok acc)
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
@@ -366,14 +366,14 @@
             [kind : fs.FsFileKind (fs.fs-metadata-kind metadata)]
             (if (fs.fs-file-kind-directory? kind)
               (if (package-source-dir-has-manifest? child-path)
-                (OkPackageSourceList acc)
+                (ResultPackageSourceList.Ok acc)
                 (package-source-scan-dir command root child-relative acc))
               (if (package-source-include-file? child-path metadata)
-                (OkPackageSourceList
+                (ResultPackageSourceList.Ok
                   (package-source-vec-insert
                     acc
                     (compiler-load-normalize-path child-path)))
-                (OkPackageSourceList acc))))]))))
+                (ResultPackageSourceList.Ok acc))))]))))
 
 (define (package-source-scan-entries-from
   [command : String]
@@ -383,15 +383,16 @@
   [index : i64]
   [acc : vector.StringVec]) : ResultPackageSourceList
   (if (>= index (vector.string-vec-len entries))
-    (OkPackageSourceList acc)
+    (ResultPackageSourceList.Ok acc)
     (match (package-source-scan-one
       command
       root
       relative
       (vector.string-vec-get entries index "")
       acc)
-      [(ErrPackageSourceList message) (ErrPackageSourceList message)]
-      [(OkPackageSourceList next)
+      [(ResultPackageSourceList.Err message)
+        (ResultPackageSourceList.Err message)]
+      [(ResultPackageSourceList.Ok next)
         (package-source-scan-entries-from
           command
           root
@@ -413,20 +414,21 @@
   [manifest-path : String]
   [has-manifest : bool]) : ResultPackageSourceSet
   (match (package-source-resolve-manifest command manifest-path has-manifest)
-    [(ErrPackageSourceSet message) (ErrPackageSourceSet message)]
-    [(OkPackageSourceSet base)
+    [(ResultPackageSourceSet.Err message) (ResultPackageSourceSet.Err message)]
+    [(ResultPackageSourceSet.Ok base)
       (match (package-source-scan-root command base)
-        [(ErrPackageSourceList message) (ErrPackageSourceSet message)]
-        [(OkPackageSourceList sources)
+        [(ResultPackageSourceList.Err message)
+          (ResultPackageSourceSet.Err message)]
+        [(ResultPackageSourceList.Ok sources)
           (if (= (vector.string-vec-len sources) 0)
-            (ErrPackageSourceSet
+            (ResultPackageSourceSet.Err
               (str_cat.str-cat
                 (string.string-append
                   command
                   ": no TypeLisp source files found in package '")
                 (struct-get base manifest-path)
                 "'"))
-            (OkPackageSourceSet
+            (ResultPackageSourceSet.Ok
               (PackageSourceSet
                 (struct-get base manifest-path)
                 (struct-get base manifest-dir)

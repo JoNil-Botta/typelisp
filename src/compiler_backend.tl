@@ -8610,8 +8610,8 @@
       [(IrBinMod) (compiler-backend-binop-divmod-asm ty true rhs-reg)]
       [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false rhs-reg)]
       [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true rhs-reg)]
-      [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete" "%rax")]
-      [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne" "%rax")]
+      [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete" staging-reg)]
+      [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne" staging-reg)]
       [(IrBinLt)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8620,7 +8620,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")
-          "%rax")]
+          staging-reg)]
       [(IrBinLe)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8629,7 +8629,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")
-          "%rax")]
+          staging-reg)]
       [(IrBinGt)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8638,7 +8638,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")
-          "%rax")]
+          staging-reg)]
       [(IrBinGe)
         (compiler-backend-binop-cmp-set-asm
           ty
@@ -8647,7 +8647,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")
-          "%rax")]
+          staging-reg)]
       [(IrBinAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
       [(IrBinOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
       [(IrBinBitAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
@@ -9014,8 +9014,8 @@
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
-          (compiler-backend-binop-test-zero-asm ty "sete" "%rax" "%rax")
-          (compiler-backend-binop-immediate-cmp-asm ty imm "sete" "%rax" "%rax")))]
+          (compiler-backend-binop-test-zero-asm ty "sete" staging-reg result-reg)
+          (compiler-backend-binop-immediate-cmp-asm ty imm "sete" staging-reg result-reg)))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
@@ -9029,8 +9029,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")
-          "%rax"
-          "%rax"))]
+          staging-reg
+          result-reg))]
     [(IrBinLe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -9039,8 +9039,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")
-          "%rax"
-          "%rax"))]
+          staging-reg
+          result-reg))]
     [(IrBinGt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -9049,8 +9049,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")
-          "%rax"
-          "%rax"))]
+          staging-reg
+          result-reg))]
     [(IrBinGe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-cmp-asm
@@ -9059,8 +9059,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")
-          "%rax"
-          "%rax"))]
+          staging-reg
+          result-reg))]
     [(IrBinAnd)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg))]
@@ -9608,7 +9608,7 @@
           rhs
           (compiler-backend-sized-reg staging-reg ty)
           "sete"
-          "%rax"))]
+          staging-reg))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9616,7 +9616,7 @@
           rhs
           (compiler-backend-sized-reg staging-reg ty)
           "setne"
-          "%rax"))]
+          staging-reg))]
     [(IrBinLt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9626,7 +9626,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")
-          "%rax"))]
+          staging-reg))]
     [(IrBinLe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9636,7 +9636,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")
-          "%rax"))]
+          staging-reg))]
     [(IrBinGt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9646,7 +9646,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")
-          "%rax"))]
+          staging-reg))]
     [(IrBinGe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
@@ -9656,7 +9656,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")
-          "%rax"))]
+          staging-reg))]
     [(IrBinAnd)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm
@@ -10143,10 +10143,25 @@
                               (ErrCompilerBackend message)])]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)])))))])])
+        (let
+          [staging : String
+            (match op
+              [(IrBinDiv) "%rax"]
+              [(IrBinMod) "%rax"]
+              [(IrBinSafeDiv) "%rax"]
+              [(IrBinSafeMod) "%rax"]
+              [_
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-scavenge-exclude-regs2
+                    (compiler-backend-value-scalar-register assignments rhs)
+                    "")
+                  7
+                  "%rax")])]
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs
-          "%rax")
+          staging)
           [(OkCompilerBackend lhs-asm)
             (match (compiler-backend-binop-literal-divmod-asm-dst
               op
@@ -10162,7 +10177,7 @@
                       (compiler-backend-emit-store-typed-var-with-plan
                         assignments
                         dst
-                        "%rax"
+                        staging
                         ty))))]
               [(CompilerBackendNoAsm)
                 (match (compiler-backend-immediate-operand rhs)
@@ -10171,8 +10186,8 @@
                       op
                       imm
                       operand-ty
-                      "%rax"
-                      "%rax")
+                      staging
+                      staging)
                       [(CompilerBackendSomeAsm op-asm)
                         (OkCompilerBackend
                           (string.string-append
@@ -10182,16 +10197,17 @@
                               (compiler-backend-emit-store-typed-var-with-plan
                                 assignments
                                 dst
-                                "%rax"
+                                staging
                                 ty))))]
                       [(CompilerBackendNoAsm)
                         (let
                           [scav-rhs : String
                             (compiler-backend-scavenge-reg
                               dst
-                              (compiler-backend-binop-scavenge-exclude-for-op
-                                op)
-                              5
+                              (compiler-backend-scavenge-exclude-regs2
+                                staging
+                                "")
+                              7
                               "%r8")]
                           (match (compiler-backend-emit-load-value-with-plan
                             assignments
@@ -10208,11 +10224,11 @@
                                         op
                                         operand-ty
                                         scav-rhs
-                                        "%rax")
+                                        staging)
                                       (compiler-backend-emit-store-typed-var-with-plan
                                         assignments
                                         dst
-                                        "%rax"
+                                        staging
                                         ty)))))]
                             [(ErrCompilerBackend message)
                               (ErrCompilerBackend message)]))])]
@@ -10225,7 +10241,7 @@
                           op
                           operand-ty
                           rhs-address
-                          "%rax")
+                          staging)
                           [(CompilerBackendSomeAsm op-asm)
                             (OkCompilerBackend
                               (string.string-append
@@ -10235,16 +10251,17 @@
                                   (compiler-backend-emit-store-typed-var-with-plan
                                     assignments
                                     dst
-                                    "%rax"
+                                    staging
                                     ty))))]
                           [(CompilerBackendNoAsm)
                             (let
                               [scav-rhs : String
                                 (compiler-backend-scavenge-reg
                                   dst
-                                  (compiler-backend-binop-scavenge-exclude-for-op
-                                    op)
-                                  5
+                                  (compiler-backend-scavenge-exclude-regs2
+                                    staging
+                                    "")
+                                  7
                                   "%r8")]
                               (match (compiler-backend-emit-load-value-with-plan
                                 assignments
@@ -10261,11 +10278,11 @@
                                             op
                                             operand-ty
                                             scav-rhs
-                                            "%rax")
+                                            staging)
                                           (compiler-backend-emit-store-typed-var-with-plan
                                             assignments
                                             dst
-                                            "%rax"
+                                            staging
                                             ty)))))]
                                 [(ErrCompilerBackend message)
                                   (ErrCompilerBackend message)]))])
@@ -10287,18 +10304,19 @@
                           [scav-rhs : String
                             (compiler-backend-scavenge-reg
                               dst
-                              (compiler-backend-binop-scavenge-exclude-for-op
-                                op)
-                              5
+                              (compiler-backend-scavenge-exclude-regs2
+                                staging
+                                "")
+                              7
                               "%r8")]
                           (match (if (if (string-eq rhs-reg "")
                             false
-                            (not (string.string-eq rhs-reg "%rax")))
+                            (not (string.string-eq rhs-reg staging)))
                             (compiler-backend-binop-source-asm
                               op
                               operand-ty
                               (compiler-backend-sized-reg rhs-reg operand-ty)
-                              "%rax")
+                              staging)
                             (CompilerBackendNoAsm))
                             [(CompilerBackendSomeAsm op-asm)
                               (OkCompilerBackend
@@ -10309,7 +10327,7 @@
                                     (compiler-backend-emit-store-typed-var-with-plan
                                       assignments
                                       dst
-                                      "%rax"
+                                      staging
                                       ty))))]
                             [(CompilerBackendNoAsm)
                               (match (compiler-backend-emit-load-value-with-plan
@@ -10327,15 +10345,15 @@
                                             op
                                             operand-ty
                                             scav-rhs
-                                            "%rax")
+                                            staging)
                                           (compiler-backend-emit-store-typed-var-with-plan
                                             assignments
                                             dst
-                                            "%rax"
+                                            staging
                                             ty)))))]
                                 [(ErrCompilerBackend message)
                                   (ErrCompilerBackend message)])]))))])])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))
 
 (define (compiler-backend-empty-assignments?
   [assignments : CompilerRegAssignmentList]) : bool
@@ -10830,11 +10848,15 @@
                             rhs
                             rhs-reg)
                             [(OkCompilerBackend rhs-asm)
+                              ;; %rax-pool: load rhs (into rhs-reg, which the
+                              ;; reserved-set scavenge keeps != lhs-home and !=
+                              ;; %rax) BEFORE lhs->%rax, so an rhs homed in %rax
+                              ;; is captured before the lhs staging overwrites it.
                               (OkCompilerBackend
                                 (string-append
-                                  lhs-asm
+                                  rhs-asm
                                   (string-append
-                                    rhs-asm
+                                    lhs-asm
                                     (string-append
                                       (compiler-backend-binop-asm
                                         op
@@ -10856,11 +10878,12 @@
                         rhs
                         rhs-reg)
                         [(OkCompilerBackend rhs-asm)
+                          ;; %rax-pool: load rhs before lhs->%rax (see above).
                           (OkCompilerBackend
                             (string-append
-                              lhs-asm
+                              rhs-asm
                               (string-append
-                                rhs-asm
+                                lhs-asm
                                 (string-append
                                   (compiler-backend-binop-asm
                                     op
@@ -10947,19 +10970,25 @@
   [true-label : String]
   [false-label : String]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
-  (match (compiler-backend-emit-load-value-with-plan assignments cond "%rax")
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
-        (string.string-append
-          load
+  (let
+    [test-reg : String
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-binop-scavenge-exclude-build)
+        5
+        "%rax")]
+    (match (compiler-backend-emit-load-value-with-plan assignments cond test-reg)
+      [(OkCompilerBackend load)
+        (OkCompilerBackend
           (string.string-append
-            "    testq %rax, %rax\n"
-            (compiler-backend-emit-branch-jumps
-              function
-              true-label
-              false-label
-              fallthrough))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+            load
+            (string.string-append
+              (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
+              (compiler-backend-emit-branch-jumps
+                function
+                true-label
+                false-label
+                fallthrough))))]
+      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-branch
   [assignments : CompilerRegAssignmentList]
@@ -11004,15 +11033,21 @@
                 false-label
                 fallthrough)))))]
     [_
+      (let
+        [test-reg : String
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-binop-scavenge-exclude-build)
+            5
+            "%rax")]
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         cond
-        "%rax")
+        test-reg)
         [(OkCompilerBackend load)
           (OkCompilerBackend
             (str_cat.str-cat
               load
-              "    testq %rax, %rax\n"
+              (str_cat.str-cat "    testq " test-reg ", " test-reg "\n")
               (if (compiler-backend-jump-target-is-fallthrough?
                 false-label
                 fallthrough)
@@ -11037,7 +11072,7 @@
                     "\n    jmp "
                     (compiler-backend-asm-label function false-label)
                     "\n")))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
 
 (define (compiler-backend-compare-op? [op : CompilerIrBinOp]) : bool
   (match op
@@ -11349,10 +11384,16 @@
               lhs-address
               false
               "")
+            (let
+              [lhs-stage : String
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-binop-scavenge-exclude-build)
+                  5
+                  "%rax")]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               lhs
-              "%rax")
+              lhs-stage)
               [(OkCompilerBackend lhs-asm)
                 (compiler-backend-emit-compare-branch-with-lhs-operand
                   assignments
@@ -11366,10 +11407,10 @@
                   true-jcc
                   false-jcc
                   lhs-asm
-                  (compiler-backend-sized-reg "%rax" ty)
+                  (compiler-backend-sized-reg lhs-stage ty)
                   true
-                  "")]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))))
+                  lhs-stage)]
+              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))))
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
   (and
@@ -11636,10 +11677,6 @@
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
     [index-reg : String
       (compiler-backend-value-scalar-register-home assignments index)]
-    [index-operand : String
-      (if (string.string-eq index-reg "")
-        "%rax"
-        index-reg)]
     ;; Length-load scratch: exclude the index home because the cmp reads index
     ;; vs length.
     [scav-len : String
@@ -11647,11 +11684,23 @@
         (compiler-backend-scavenge-exclude-with index-reg)
         6
         "%r9")]
+    ;; A constant index materializes into a reserved-set-aware scavenged register
+    ;; distinct from the length scratch -- NOT a hardcoded %rax, which (now that
+    ;; %rax is pooled) collided with a length loaded into %rax: `movq 8(%r10),%rax`
+    ;; then `xorl %eax,%eax` clobbered the length, so `cmpq %rax,%rax` always
+    ;; tripped the bounds check (false OOB abort).
+    [index-operand : String
+      (if (string.string-eq index-reg "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-with scav-len)
+          6
+          "%r10")
+        index-reg)]
     (if (string-eq index-reg "")
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         index
-        "%rax")
+        index-operand)
         [(OkCompilerBackend index-asm)
           (let
             [length-operand : String
@@ -19827,18 +19876,31 @@
           "backend: syscall is only supported on the linux-x86_64 target")))
     (let
       [count : i64 (compiler-backend-call-args-count args)]
-      (match (compiler-backend-emit-syscall-loads assignments args 0 count)
-        [(OkCompilerBackend load-asm)
-          (OkCompilerBackend
-            (string.string-append
-              load-asm
-              (string.string-append
-                "    syscall\n"
-                (compiler-backend-emit-store-typed-var-with-plan
-                  assignments
-                  dst
-                  "%rax"
-                  (AstTyI64)))))]
+      ;; Syscall-number-last: load the args (positions 1..n) into their kernel ABI
+      ;; registers FIRST, then the syscall number into %rax LAST. Now that %rax is
+      ;; pooled an arg value may be homed in %rax; loading the number (position 0)
+      ;; first would clobber it before it reaches its arg register -- e.g. access:
+      ;; `movl $21,%eax` overwriting a path homed in %rax, so %rdi got 21 -> ENOSYS.
+      (match (compiler-backend-emit-syscall-loads assignments args 1 count)
+        [(OkCompilerBackend args-asm)
+          (match (compiler-backend-emit-load-value-with-plan
+            assignments
+            (compiler-backend-call-arg-at args 0)
+            "%rax")
+            [(OkCompilerBackend num-asm)
+              (OkCompilerBackend
+                (string.string-append
+                  args-asm
+                  (string.string-append
+                    num-asm
+                    (string.string-append
+                      "    syscall\n"
+                      (compiler-backend-emit-store-typed-var-with-plan
+                        assignments
+                        dst
+                        "%rax"
+                        (AstTyI64))))))]
+            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-switch-phi-target-message) : String

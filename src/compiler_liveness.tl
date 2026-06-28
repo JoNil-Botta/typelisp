@@ -548,6 +548,22 @@
     [(IrCallArgsTwo a b) (compiler-live-values2-vars a b)]
     [(IrCallArgsArray values) (compiler-live-call-args-array-vars values 0)]))
 
+(define (compiler-live-spmd-call-args-vars [args : CompilerIrSpmdCallArgList]) : CompilerLiveI64Set
+  (match args
+    [(IrSpmdCallArgNil) (compiler-live-set-empty)]
+    [(IrSpmdCallArgCons arg rest)
+      (match arg
+        [(IrSpmdCallArg _ value _)
+          (compiler-live-value-vars-into
+            (compiler-live-spmd-call-args-vars (box-get rest))
+            value)])]))
+
+(define (compiler-live-spmd-call-result-defs
+  [result : CompilerIrSpmdCallResult]) : CompilerLiveI64Set
+  (match result
+    [(IrSpmdCallResultUnit) (compiler-live-set-empty)]
+    [(IrSpmdCallResultValue dst _ _) (compiler-live-set1 dst)]))
+
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
     [(IrNoValue) (compiler-live-set-empty)]
@@ -646,6 +662,12 @@
               (compiler-live-call-args-vars args)
               base)
             func)])]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+          (compiler-live-value-vars-into
+            (compiler-live-spmd-call-args-vars args)
+            active-mask)])]
     [(IrInstrTailCall _ args _) (compiler-live-call-args-vars args)]
     [(IrInstrStore _ value _) (compiler-live-value-vars value)]
     [(IrInstrBranch cond _ _) (compiler-live-value-vars cond)]
@@ -701,6 +723,10 @@
     [(IrInstrCall dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirect dst _ _ _) (compiler-live-set1 dst)]
     [(IrInstrCallIndirectC dst _ _ _) (compiler-live-set1 dst)]
+    [(IrInstrSpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+          (compiler-live-spmd-call-result-defs result)])]
     [(IrInstrPhi dst _ _) (compiler-live-set1 dst)]
     [(IrInstrPack dst _ _) (compiler-live-set1 dst)]
     [(IrInstrWord dst _ _ _) (compiler-live-set1 dst)]

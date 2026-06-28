@@ -15,6 +15,7 @@
 (import "compiler_ast_types.tl")
 (import stdlib.hashmap)
 (import stdlib.string)
+(cfg test (import stdlib.test))
 
 (defstruct CloneNameSet
   (map hashmap.StringI64Map))
@@ -82,6 +83,22 @@
     (if (string.string-eq module "")
       local
       (string.string-append (string.string-append module "/") local))))
+
+(define (clone-short-list-variant-name? [variant-name : String]) : bool
+  (or
+    (string.string-eq variant-name "Nil")
+    (string.string-eq variant-name "Cons")))
+
+(define (clone-list-variant-reference-name
+  [type-name : String]
+  [variant-name : String]) : String
+  (if (clone-short-list-variant-name? variant-name)
+    (let
+      [type-base : String (clone-type-name-base type-name)]
+      (if (string.string-eq type-base variant-name)
+        variant-name
+        (string.string-append (string.string-append type-base ".") variant-name)))
+    variant-name))
 
 (define (clone-name-set-empty) : CloneNameSet
   (CloneNameSet (hashmap.string-i64-map-with-capacity 8)))
@@ -815,13 +832,28 @@
   [acc : AstDeclList]) : AstDeclList
   (match (clone-list-shape pools variants name)
     [(CloneListShape.IsList nil-ctor cons-ctor boxed-tail)
-      (ast-decl-cons
-        (clone-list-entry-decl pools name nil-ctor)
+      (let
+        [qualified-nil : String
+          (clone-list-variant-reference-name name nil-ctor)]
+        [qualified-cons : String
+          (clone-list-variant-reference-name name cons-ctor)]
         (ast-decl-cons
-          (clone-list-acc-decl pools name nil-ctor cons-ctor boxed-tail)
+          (clone-list-entry-decl pools name qualified-nil)
           (ast-decl-cons
-            (clone-list-rev-decl pools name nil-ctor cons-ctor boxed-tail)
-            acc)))]
+            (clone-list-acc-decl
+              pools
+              name
+              qualified-nil
+              qualified-cons
+              boxed-tail)
+            (ast-decl-cons
+              (clone-list-rev-decl
+                pools
+                name
+                qualified-nil
+                qualified-cons
+                boxed-tail)
+              acc))))]
     [(CloneListShape.NotList)
       (ast-decl-cons
         (clone-make-helper-decl
@@ -831,6 +863,152 @@
             (clone-expr-push pools (AstExprVar (intern "x")))
             (clone-variant-arms pools variants)))
         acc)]))
+
+(cfg
+  test
+  (define (clone-test-id-name? [name : i64] [want : String]) : bool
+    (string.string-eq (intern-str name) want)))
+
+(cfg
+  test
+  (define (clone-test-pattern-list-name-count
+    [patterns : AstPatternList]
+    [want : String]) : i64
+    (match patterns
+      [(AstPatternNil) 0]
+      [(AstPatternCons head rest)
+        (+
+          (clone-test-pattern-name-count (box-get head) want)
+          (clone-test-pattern-list-name-count (box-get rest) want))])))
+
+(cfg
+  test
+  (define (clone-test-pattern-name-count [pattern : AstPattern] [want : String]) : i64
+    (match pattern
+      [(AstPatTuple items)
+        (clone-test-pattern-list-name-count (box-get items) want)]
+      [(AstPatVariant name items)
+        (+
+          (if (clone-test-id-name? name want)
+            1
+            0)
+          (clone-test-pattern-list-name-count (box-get items) want))]
+      [_ 0])))
+
+(cfg
+  test
+  (define (clone-test-expr-list-name-count
+    [pools : AstNodePoolContext]
+    [exprs : AstExprList]
+    [want : String]) : i64
+    (match exprs
+      [(AstExprNil) 0]
+      [(AstExprCons head rest)
+        (+
+          (clone-test-expr-name-count pools head want)
+          (clone-test-expr-list-name-count pools (box-get rest) want))])))
+
+(cfg
+  test
+  (define (clone-test-match-arm-list-name-count
+    [pools : AstNodePoolContext]
+    [arms : AstMatchArmList]
+    [want : String]) : i64
+    (match arms
+      [(AstMatchArmNil) 0]
+      [(AstMatchArmCons arm rest)
+        (match arm
+          [(AstMatchArm pattern body)
+            (+
+              (clone-test-pattern-name-count pattern want)
+              (+
+                (clone-test-expr-name-count pools body want)
+                (clone-test-match-arm-list-name-count pools (box-get rest) want)))])])))
+
+(cfg
+  test
+  (define (clone-test-expr-name-count
+    [pools : AstNodePoolContext]
+    [expr-id : i64]
+    [want : String]) : i64
+    (match (ast-node-pool-context-expr-get pools expr-id)
+      [(AstExprVar name)
+        (if (clone-test-id-name? name want)
+          1
+          0)]
+      [(AstExprCall callee args)
+        (+
+          (clone-test-expr-name-count pools callee want)
+          (clone-test-expr-list-name-count pools args want))]
+      [(AstExprMatch match-box)
+        (match (box-get match-box)
+          [(AstMatch scrutinee arms)
+            (+
+              (clone-test-expr-name-count pools scrutinee want)
+              (clone-test-match-arm-list-name-count pools arms want))])]
+      [(AstExprBox inner) (clone-test-expr-name-count pools inner want)]
+      [(AstExprBoxGet inner) (clone-test-expr-name-count pools inner want)]
+      [_ 0])))
+
+(cfg
+  test
+  (define (clone-test-decl-list-name-count
+    [pools : AstNodePoolContext]
+    [decls : AstDeclList]
+    [want : String]) : i64
+    (match decls
+      [(AstDeclNil) 0]
+      [(AstDeclCons decl rest)
+        (+
+          (match decl
+            [(AstDeclDefFn _ _ _ body _)
+              (clone-test-expr-name-count pools body want)]
+            [_ 0])
+          (clone-test-decl-list-name-count pools (box-get rest) want))])))
+
+(cfg
+  test
+  (define (clone-test-short-list-variants) : AstVariantDefList
+    (let
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      [tail-ty : AstType
+        (ast-ty-box-with-pools pools (AstTyVar (intern "CloneShortList")))]
+      [cons-fields : AstTypeList
+        (ast-type-cons-with-pools
+          pools
+          (AstTyI64)
+          (ast-type-cons-with-pools pools tail-ty AstTypeNil))]
+      (AstVariantDefCons
+        (AstVariantDef (intern "Nil") AstTypeNil AstVariantPayloadCleanupNil)
+        (box
+          (AstVariantDefCons
+            (AstVariantDef
+              (intern "Cons")
+              cons-fields
+              AstVariantPayloadCleanupNil)
+            (box AstVariantDefNil)))))))
+
+(cfg
+  test
+  (define (clone-qualified-short-list-generation-ok?) : bool
+    (let
+      [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+      [decls : AstDeclList
+        (clone-emit-enum-clone
+          pools
+          "CloneShortList"
+          (clone-test-short-list-variants)
+          AstDeclNil)]
+      (and
+        (> (clone-test-decl-list-name-count pools decls "CloneShortList.Nil") 0)
+        (>
+          (clone-test-decl-list-name-count pools decls "CloneShortList.Cons")
+          0)
+        (= (clone-test-decl-list-name-count pools decls "Nil") 0)
+        (= (clone-test-decl-list-name-count pools decls "Cons") 0)
+        (string.string-eq
+          (clone-list-variant-reference-name "SelfNamed" "SelfNamed")
+          "SelfNamed")))))
 
 ;; Generate clone$ helpers for every clone-able enum/struct, prepended in order.
 (define (clone-prepend-generated-decls-in-module
@@ -1320,3 +1498,11 @@
     (begin
       (ast-node-pool-context-install! pools)
       out)))
+
+(cfg
+  test
+  (test
+    clone-qualified-short-list-variants
+    (test.assert-true
+      (clone-qualified-short-list-generation-ok?)
+      "clone: short list variants should be generated as enum-qualified names")))

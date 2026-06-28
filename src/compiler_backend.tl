@@ -12110,29 +12110,6 @@
       (compiler-backend-param-register-exclude-fill params assignments out 0)
       out)))
 
-;; Superset + all callee-saved + one extra: the scavenge may only pick a
-;; caller-saved pool register (r9 today) or fall back, never an on-demand
-;; callee-save. Used by the dynamic-index base scavenge: pooling a callee-saved
-;; base actively exposes a pre-existing on-demand-callee-save corruption bug
-;; (frame grows post-body but some frame-relative state is fixed pre-body), so
-;; the base is restricted to caller-saved registers until that is fixed.
-(define (compiler-backend-scavenge-exclude-caller-only [extra : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 11)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
-      (array-set! a 5 "%r12")
-      (array-set! a 6 "%r13")
-      (array-set! a 7 "%r14")
-      (array-set! a 8 "%r15")
-      (array-set! a 9 "%rbx")
-      (array-set! a 10 extra)
-      a)))
-
 ;; The fixed-register exclude superset [rax,rdx,rcx] PLUS one more already-chosen
 ;; register (so a second scavenge at the same point avoids it). Pooled scratch
 ;; registers such as r10/r11 stay available unless the caller passes one as
@@ -12193,37 +12170,7 @@
       (array-set! a 5 extra2)
       a)))
 
-;; Like scavenge-exclude-with but ALSO reserves %r8. Used where a later index or
-;; copy scratch falls back to %r8: an active base/src scavenge must not pick %r8
-;; (a candidate) or, under register pressure, the later %r8 fallback would
-;; collide with it.
-(define (compiler-backend-scavenge-exclude-with-r8 [extra : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 7)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r8")
-      (array-set! a 4 "%rax")
-      (array-set! a 5 "%rax")
-      (array-set! a 6 extra)
-      a)))
-
-(define (compiler-backend-scavenge-exclude-with-r8-r11
-  [extra : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 6)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r8")
-      (array-set! a 4 "%r11")
-      (array-set! a 5 extra)
-      a)))
-
-;; Like scavenge-exclude-ops2 but also reserves %r8 (see scavenge-exclude-with-r8).
+;; Like scavenge-exclude-ops2 but also reserves %r8 for a later fallback scratch.
 (define (compiler-backend-scavenge-exclude-ops2-r8
   [assignments : CompilerRegAssignmentList]
   [v1 : CompilerIrValue]

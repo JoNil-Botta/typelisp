@@ -127,9 +127,14 @@
   (CompilerBackendNoVectorMemFold)
   (CompilerBackendSomeVectorMemFold CompilerIrValue))
 
+;; BackendPhiSourceTemp carries the location its saved value lives in while the
+;; cycle is being broken: "" = the %rsp stack (pushq/popq), or a register name
+;; (e.g. "%r10") when the outermost cycle break scavenged a free GP register
+;; instead of staging on the stack. The single Temp consumer reads it back from
+;; that location.
 (defenum CompilerBackendPhiSource
   (BackendPhiSourceValue CompilerIrValue)
-  (BackendPhiSourceTemp))
+  (BackendPhiSourceTemp String))
 
 (defenum CompilerBackendPhiCopy
   (BackendPhiCopy i64 CompilerBackendPhiSource AstType))
@@ -17091,7 +17096,7 @@
         [(IrValueVar found)
           (compiler-backend-vars-same-home? assignments found dst)]
         [_ false])]
-    [(BackendPhiSourceTemp) false]))
+    [(BackendPhiSourceTemp _) false]))
 
 (define (compiler-backend-phi-copy-source-uses-home?
   [assignments : CompilerRegAssignmentList]
@@ -17148,24 +17153,28 @@
               copy
               (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)))])]))
 
+;; `loc` is the staging location threaded into the Temp this break creates: ""
+;; for the stack, or a register name when the outermost break scavenged one.
 (define (compiler-backend-phi-source-replace-home
   [assignments : CompilerRegAssignmentList]
   [source : CompilerBackendPhiSource]
-  [dst : i64]) : CompilerBackendPhiSource
+  [dst : i64]
+  [loc : String]) : CompilerBackendPhiSource
   (match source
     [(BackendPhiSourceValue value)
       (match value
         [(IrValueVar found)
           (if (compiler-backend-vars-same-home? assignments found dst)
-            (BackendPhiSourceTemp)
+            (BackendPhiSourceTemp loc)
             source)]
         [_ source])]
-    [(BackendPhiSourceTemp) source]))
+    [(BackendPhiSourceTemp _) source]))
 
 (define (compiler-backend-phi-copy-list-replace-source-home
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopyList]
-  [dst-home-var : i64]) : CompilerBackendPhiCopyList
+  [dst-home-var : i64]
+  [loc : String]) : CompilerBackendPhiCopyList
   (match copies
     [(BackendPhiCopyNil) BackendPhiCopyNil]
     [(BackendPhiCopyCons copy rest)
@@ -17177,12 +17186,14 @@
               (compiler-backend-phi-source-replace-home
                 assignments
                 source
-                dst-home-var)
+                dst-home-var
+                loc)
               ty)
             (compiler-backend-phi-copy-list-replace-source-home
               assignments
               (box-get rest)
-              dst-home-var))])]))
+              dst-home-var
+              loc))])]))
 
 (define (compiler-backend-phi-source-is-var?
   [source : CompilerBackendPhiSource]
@@ -17192,7 +17203,7 @@
       (match value
         [(IrValueVar id) (= id var)]
         [_ false])]
-    [(BackendPhiSourceTemp) false]))
+    [(BackendPhiSourceTemp _) false]))
 
 (define (compiler-backend-phi-source-replace-var
   [source : CompilerBackendPhiSource]
@@ -17240,6 +17251,16 @@
 ;; an unblocked copy until the Temp is consumed). That makes a register-free STACK
 ;; swap sound: save the cycle-entry dst on %rsp, restore it into the single Temp
 ;; consumer, and keep the bracket balanced across the intervening cycle moves.
+;;
+;; #phi-temp-reg: the OUTERMOST scalar-int break upgrades that stack swap to a
+;; register swap when a free GP register exists. phi-temp-pick-reg scavenges a
+;; register that is (a) FREE in the occupancy mask at the phi-copy emit point --
+;; so it homes no live-through value -- and (b) NOT a dst-home of any copy in the
+;; break list -- so no cycle move overwrites it while the Temp is outstanding.
+;; The save becomes `movq dst-home, R` and the consumer's restore `movq R, home`,
+;; eliminating the pushq/popq pair. Only the outermost break uses a register
+;; (outer-active gate): any nested break -- and every float/group break -- falls
+;; back to the stack, which is LIFO-balanced and never touches R.
 (define (compiler-backend-phi-temp-home-operand
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]) : ResultCompilerBackend
@@ -17425,6 +17446,163 @@
             (compiler-backend-emit-phi-float-temp-restore operand ty)
             (str-cat "    popq " operand "\n")))]
       [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+
+;; #phi-temp-reg save/restore: stage the cycle-entry dst's old value in a free GP
+;; register instead of on the stack. `reg` is guaranteed (by phi-temp-pick-reg)
+;; to home no live value and to be no copy's dst-home, so the bracketed
+;; `movq dst-home, reg` ... `movq reg, consumer-home` is sound across the cycle.
+(define (compiler-backend-emit-phi-temp-save-reg
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]) : ResultCompilerBackend
+  (match (compiler-backend-phi-temp-home-operand assignments dst)
+    [(OkCompilerBackend operand)
+      (OkCompilerBackend (str-cat "    movq " operand ", " reg "\n"))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+(define (compiler-backend-emit-phi-temp-restore-reg
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]) : ResultCompilerBackend
+  (match (compiler-backend-phi-temp-home-operand assignments dst)
+    [(OkCompilerBackend operand)
+      (OkCompilerBackend (str-cat "    movq " reg ", " operand "\n"))]
+    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+
+;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled or
+;; %rax/%rsi/%rdi dst contributes 0 (reg-bit is 0 for untracked regs), which is
+;; correct: those cannot collide with a candidate-pool scratch register.
+(define (compiler-backend-phi-copy-list-dst-home-mask
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]) : i64
+  (match copies
+    [(BackendPhiCopyNil) 0]
+    [(BackendPhiCopyCons copy rest)
+      (match copy
+        [(BackendPhiCopy dst _ _)
+          (bit-or
+            (compiler-backend-scavenge-reg-bit
+              (compiler-backend-var-register-home assignments dst))
+            (compiler-backend-phi-copy-list-dst-home-mask
+              assignments
+              (box-get rest)))])]))
+
+(define (compiler-backend-phi-temp-pick-reg-iter
+  [occupied-mask : i64]
+  [exclude-mask : i64]
+  [plan-mask : i64]
+  [cands : (Array String)]
+  [i : i64]
+  [n : i64]) : String
+  (if (>= i n)
+    ""
+    (if (compiler-backend-scavenge-candidate-ok?
+      occupied-mask
+      exclude-mask
+      plan-mask
+      (array-ref cands i))
+      (array-ref cands i)
+      (compiler-backend-phi-temp-pick-reg-iter
+        occupied-mask
+        exclude-mask
+        plan-mask
+        cands
+        (+ i 1)
+        n))))
+
+;; Scavenge a GP register usable as the cycle-break Temp staging slot, or "" if
+;; none. candidate-ok? certifies the register is free in the occupancy mask at the
+;; phi-copy emit point (homes no live-through value) and is callee-save-sound; the
+;; dst-home mask additionally rules out any register a copy would overwrite. This
+;; is the same occupancy query the float phi-temp scratch already uses here, so
+;; the emit position is a valid scavenge point.
+(define (compiler-backend-phi-temp-pick-reg
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]) : String
+  (let
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [occupied-mask : i64
+      (compiler-backend-scavenge-occupied-mask-at-point point)]
+    [exclude-mask : i64
+      (compiler-backend-phi-copy-list-dst-home-mask assignments copies)]
+    [cands : (Array String) compiler-backend-scavenge-candidate-pool]
+    [reg : String
+      (compiler-backend-phi-temp-pick-reg-iter
+        occupied-mask
+        exclude-mask
+        compiler-backend-scavenge-ctx-plan-reg-mask
+        cands
+        0
+        (array-length cands))]
+    (begin
+      ;; Same freeness self-check the sibling scavengers run: prove the picked
+      ;; register really is free at this point (a no-op for "" / sound picks).
+      (cfg
+        scavenge-self-check
+        (if (string-eq reg "")
+          unit
+          (compiler-backend-scavenge-freeness-check!
+            compiler-backend-scavenge-ctx-starts
+            compiler-backend-scavenge-ctx-ends
+            compiler-backend-scavenge-ctx-assignment-index
+            compiler-backend-scavenge-ctx-vars
+            point
+            reg))
+        unit)
+      reg)))
+
+;; A copy is "register-swappable" when emitting it scavenges NO register: it is a
+;; scalar-int copy (no float/group word staging) whose dst is register-homed and
+;; whose source is a register-homed var. emit-phi-var-source-direct's dst-register
+;; branch then emits a single direct `movq src, dst` with no scratch. A break list
+;; in which EVERY copy is register-swappable can stage its Temp in a scavenged
+;; register: nothing in the cycle body ever touches that register, so it survives
+;; intact from the save `movq` to the consumer's restore `movq` -- exactly as the
+;; stack slot did. Spilled (mem->mem), float, group, immediate, or remat copies
+;; can scavenge a bounce register and so keep using the untouchable stack slot.
+(define (compiler-backend-phi-copy-reg-swappable?
+  [assignments : CompilerRegAssignmentList]
+  [copy : CompilerBackendPhiCopy]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match copy
+    [(BackendPhiCopy dst source ty)
+      (and
+        (not (compiler-backend-float-type? ty))
+        (not (compiler-backend-group-type? program-index ty))
+        (not (string-eq
+          (compiler-backend-var-register-home assignments dst)
+          ""))
+        (match source
+          [(BackendPhiSourceValue value)
+            (match value
+              [(IrValueVar v)
+                (not (string-eq
+                  (compiler-backend-var-register-home assignments v)
+                  ""))]
+              [_ false])]
+          [(BackendPhiSourceTemp _) true]))]))
+
+(define (compiler-backend-phi-copy-list-reg-swappable?
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match copies
+    [(BackendPhiCopyNil) true]
+    [(BackendPhiCopyCons copy rest)
+      (and
+        (compiler-backend-phi-copy-reg-swappable?
+          assignments
+          copy
+          program-index)
+        (compiler-backend-phi-copy-list-reg-swappable?
+          assignments
+          (box-get rest)
+          program-index))]))
 
 (define (compiler-backend-emit-phi-source-load-store
   [assignments : CompilerRegAssignmentList]
@@ -17621,13 +17799,15 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match source
-    [(BackendPhiSourceTemp)
-      (compiler-backend-emit-phi-temp-restore
-        assignments
-        dst
-        ty
-        program-index
-        vars)]
+    [(BackendPhiSourceTemp loc)
+      (if (string-eq loc "")
+        (compiler-backend-emit-phi-temp-restore
+          assignments
+          dst
+          ty
+          program-index
+          vars)
+        (compiler-backend-emit-phi-temp-restore-reg assignments dst loc))]
     [(BackendPhiSourceValue value)
       (if (compiler-backend-phi-same-home? assignments dst value)
         (OkCompilerBackend "")
@@ -17708,11 +17888,16 @@
         program-index
         vars)]))
 
+;; `outer-active` is true once an outer register-or-stack cycle break is in
+;; progress, gating nested breaks to the stack (see #phi-temp-reg). The unblocked
+;; drain threads it through unchanged (a save may still be outstanding); each
+;; break sets it true for the rest of the edge.
 (define (compiler-backend-emit-phi-copy-list
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopyList]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [outer-active : bool]) : ResultCompilerBackend
   (match copies
     [(BackendPhiCopyNil) (OkCompilerBackend "")]
     [(BackendPhiCopyCons first _)
@@ -17733,7 +17918,8 @@
                     assignments
                     (compiler-backend-phi-copy-list-remove-dst copies dst)
                     program-index
-                    vars)
+                    vars
+                    outer-active)
                     [(OkCompilerBackend tail)
                       (OkCompilerBackend (string.string-append head tail))]
                     [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
@@ -17741,38 +17927,57 @@
         [(BackendNoPhiCopy)
           (match first
             [(BackendPhiCopy dst source ty)
-              (match (compiler-backend-emit-phi-temp-save
-                assignments
-                dst
-                ty
-                program-index
-                vars)
-                [(OkCompilerBackend save)
-                  (match (compiler-backend-emit-phi-source-to-var
+              ;; Only the OUTERMOST break may scavenge a register, and only when
+              ;; every copy in the break list is register-swappable (so no cycle
+              ;; move scavenges a scratch that could clobber the Temp register).
+              ;; Nested breaks, and any list with a spilled/float/group/immediate
+              ;; copy, stay on the untouchable stack slot.
+              (let
+                [reg : String
+                  (if (and
+                    (not outer-active)
+                    (compiler-backend-phi-copy-list-reg-swappable?
+                      assignments
+                      copies
+                      program-index))
+                    (compiler-backend-phi-temp-pick-reg assignments copies)
+                    "")]
+                (match (if (string-eq reg "")
+                  (compiler-backend-emit-phi-temp-save
                     assignments
                     dst
-                    source
                     ty
                     program-index
                     vars)
-                    [(OkCompilerBackend head)
-                      (match (compiler-backend-emit-phi-copy-list
-                        assignments
-                        (compiler-backend-phi-copy-list-replace-source-home
+                  (compiler-backend-emit-phi-temp-save-reg assignments dst reg))
+                  [(OkCompilerBackend save)
+                    (match (compiler-backend-emit-phi-source-to-var
+                      assignments
+                      dst
+                      source
+                      ty
+                      program-index
+                      vars)
+                      [(OkCompilerBackend head)
+                        (match (compiler-backend-emit-phi-copy-list
                           assignments
-                          (compiler-backend-phi-copy-list-remove-dst copies dst)
-                          dst)
-                        program-index
-                        vars)
-                        [(OkCompilerBackend tail)
-                          (OkCompilerBackend
-                            (string.string-append
-                              save
-                              (string.string-append head tail)))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])]))
+                          (compiler-backend-phi-copy-list-replace-source-home
+                            assignments
+                            (compiler-backend-phi-copy-list-remove-dst copies dst)
+                            dst
+                            reg)
+                          program-index
+                          vars
+                          true)
+                          [(OkCompilerBackend tail)
+                            (OkCompilerBackend
+                              (string.string-append
+                                save
+                                (string.string-append head tail)))]
+                          [(ErrCompilerBackend message)
+                            (ErrCompilerBackend message)])]
+                      [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))])])]))
 
 (define (compiler-backend-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -17845,7 +18050,8 @@
         assignments
         copies
         program-index
-        vars)]
+        vars
+        false)]
     [(ErrBackendPhiCopies message)
       (ErrCompilerBackend (box (compiler-diagnostic-at-start "" message)))]))
 
@@ -17924,7 +18130,8 @@
                       moved-dst
                       moved-src)
                     program-index
-                    vars)
+                    vars
+                    false)
                   (OkCompilerBackend ""))]
               [(ErrBackendPhiCopies message)
                 (ErrCompilerBackend

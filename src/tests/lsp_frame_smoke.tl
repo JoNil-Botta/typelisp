@@ -95,6 +95,18 @@
             (string.string-contains (& rendered) (& range-key))))]
       [(ResultFormatString.Err _) false])))
 
+(define (lsp-format-edit-text-smoke-ok?) : bool
+  (let
+    [messy : String "(define   (f)  :  i64   (+ 1   2))"]
+    [invalid : String "(define (f) : i64"]
+    [formatted : String (lsp-format-edit-text messy)]
+    [fallback : String (lsp-format-edit-text invalid)]
+    [sig : String "(define (f) : i64"]
+    (and
+      (string.string-contains (& formatted) (& sig))
+      (not (string.string-eq formatted messy))
+      (string.string-eq fallback invalid))))
+
 (define (lsp-check-smoke-ok?) : bool
   (let
     [ok-src : String "(define (main) : i64 42)"]
@@ -239,6 +251,7 @@
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))
         (unless (lsp-formatting-smoke-ok?) (return 8))
+        (unless (lsp-format-edit-text-smoke-ok?) (return 14))
         (unless (lsp-check-smoke-ok?) (return 9))
         (unless (lsp-get-type-smoke-ok?) (return 10))
         (unless (lsp-find-references-smoke-ok?) (return 11))

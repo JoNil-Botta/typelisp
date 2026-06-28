@@ -174,9 +174,15 @@
   (OkCompilerLoadSurfaceSummary CompilerLoadSurfaceSummary)
   (ErrCompilerLoadSurfaceSummary (Box CompilerDiagnostic)))
 
+(defenum CompilerLoadMaybeSurfaceSummary
+  (CompilerLoadNoSurfaceSummary)
+  (CompilerLoadSomeSurfaceSummary CompilerLoadSurfaceSummary))
+
 (define compiler-load-active-surface-summaries : CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryNil))
 (define compiler-load-surface-summary-load-depth : i64
+  0)
+(define compiler-load-lazy-import-skip-record-count : i64
   0)
 
 (defenum CompilerLoadPreludeCacheLookup
@@ -1021,6 +1027,174 @@
 
 (define (compiler-load-string-contains? [text : String] [needle : String]) : bool
   (compiler-load-string-contains-from? text needle 0))
+
+(define (compiler-load-symbol-char? [c : char]) : bool
+  (let
+    [code : i64 (cast c : i64)]
+    (cond
+      [(and (>= code 97) (<= code 122)) true]
+      [(and (>= code 65) (<= code 90)) true]
+      [(and (>= code 48) (<= code 57)) true]
+      [(= code 45) true]
+      [(= code 95) true]
+      [(= code 33) true]
+      [(and (>= code 37) (<= code 38)) true]
+      [(= code 42) true]
+      [(= code 43) true]
+      [(= code 46) true]
+      [(= code 47) true]
+      [(= code 58) true]
+      [(and (>= code 60) (<= code 63)) true]
+      [else false])))
+
+(define (compiler-load-source-index-at-line-col
+  [source : String]
+  [line : i64]
+  [col : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [idx : i64 0]
+    [cur-line : i64 1]
+    [cur-col : i64 1]
+    (begin
+      (while (and
+        (< idx n)
+        (or (< cur-line line) (and (= cur-line line) (< cur-col col))))
+        (let
+          [c : char (string.string-ref source idx)]
+          (begin
+            (if (= c '\n')
+              (begin
+                (set! cur-line (+ cur-line 1))
+                (set! cur-col 1))
+              (set! cur-col (+ cur-col 1)))
+            (set! idx (+ idx 1)))))
+      idx)))
+
+(define (compiler-load-source-scan-start
+  [span : AstSourceSpan]
+  [source : String]) : i64
+  (compiler-load-source-index-at-line-col
+    source
+    (struct-get span end-line)
+    (struct-get span end-col)))
+
+(define (compiler-load-source-name-before-ok? [source : String] [idx : i64]) : bool
+  (or
+    (<= idx 0)
+    (not (compiler-load-symbol-char? (string.string-ref source (- idx 1))))))
+
+(define (compiler-load-source-name-after-ok? [source : String] [end : i64]) : bool
+  (or
+    (>= end (string.string-length source))
+    (not (compiler-load-symbol-char? (string.string-ref source end)))))
+
+(define (compiler-load-source-name-token-at?
+  [source : String]
+  [name : String]
+  [idx : i64]) : bool
+  (let
+    [end : i64 (+ idx (string.string-length name))]
+    (and
+      (compiler-load-source-name-before-ok? source idx)
+      (compiler-load-string-prefix-at? source name idx)
+      (compiler-load-source-name-after-ok? source end))))
+
+(define (compiler-load-source-has-name-token-from?
+  [source : String]
+  [name : String]
+  [start : i64]) : bool
+  (let
+    [n : i64 (string.string-length source)]
+    [name-len : i64 (string.string-length name)]
+    (if (= name-len 0)
+      false
+      (let
+        [name-first : char (string.string-ref name 0)]
+        [idx : i64 start]
+        [found : bool false]
+        (begin
+          (while (and (not found) (<= (+ idx name-len) n))
+            (if (and
+              (= (string.string-ref source idx) name-first)
+              (compiler-load-source-name-token-at? source name idx))
+              (set! found true)
+              (set! idx (+ idx 1))))
+          found)))))
+
+(define (compiler-load-source-alias-after-ok? [source : String] [end : i64]) : bool
+  (if (>= end (string.string-length source))
+    true
+    (let
+      [c : char (string.string-ref source end)]
+      (or (= c '.') (= c '/') (not (compiler-load-symbol-char? c))))))
+
+(define (compiler-load-source-alias-token-at?
+  [source : String]
+  [alias : String]
+  [idx : i64]) : bool
+  (let
+    [end : i64 (+ idx (string.string-length alias))]
+    (and
+      (compiler-load-source-name-before-ok? source idx)
+      (compiler-load-string-prefix-at? source alias idx)
+      (compiler-load-source-alias-after-ok? source end))))
+
+(define (compiler-load-source-has-alias-token-from?
+  [source : String]
+  [alias : String]
+  [start : i64]) : bool
+  (let
+    [n : i64 (string.string-length source)]
+    [alias-len : i64 (string.string-length alias)]
+    (if (= alias-len 0)
+      false
+      (let
+        [alias-first : char (string.string-ref alias 0)]
+        [idx : i64 start]
+        [found : bool false]
+        (begin
+          (while (and (not found) (<= (+ idx alias-len) n))
+            (if (and
+              (= (string.string-ref source idx) alias-first)
+              (compiler-load-source-alias-token-at? source alias idx))
+              (set! found true)
+              (set! idx (+ idx 1))))
+          found)))))
+
+(define (compiler-load-source-for-lazy-scan [path : String]) : CompilerLoadMaybeString
+  (if (io.file-exists? path)
+    (CompilerLoadSomeString (io.read-file path))
+    (match (compiler-load-embedded-stdlib-source-for-path path)
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (CompilerLoadSomeString source)]
+      [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoString)])))
+
+(define (compiler-load-lazy-env-disabled? [name : String]) : bool
+  (match (env.env-get (& name))
+    [(env.EnvSomeString value)
+      (or
+        (string.string-eq value "0")
+        (string.string-eq value "false")
+        (string.string-eq value "off"))]
+    [(env.EnvNoString) false]))
+
+(define (compiler-load-lazy-imports-enabled?) : bool
+  (not
+    (or
+      (compiler-load-lazy-env-disabled? "TYPELISP_LAZY_IMPORTS")
+      (compiler-load-lazy-env-disabled? "TYPELISP_LAZY_DOTTED_IMPORTS"))))
+
+(define (compiler-load-prelude-importer? [path : String]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    (or
+      (string.string-eq
+        normalized
+        (compiler-load-normalize-path "stdlib/runtime.tl"))
+      (string.string-eq
+        normalized
+        (compiler-load-normalize-path compiler-load-core-macro-prelude-path)))))
 
 (define (compiler-load-stdlib-import? [path : String]) : bool
   (compiler-load-string-prefix-at? path "stdlib/" 0))
@@ -2042,7 +2216,11 @@
               alias))))]))
 
 (define (compiler-load-surface-summaries-reset!) : unit
-  (set! compiler-load-active-surface-summaries (CompilerLoadSurfaceSummaryNil)))
+  (begin
+    (set!
+      compiler-load-active-surface-summaries
+      (CompilerLoadSurfaceSummaryNil))
+    (set! compiler-load-lazy-import-skip-record-count 0)))
 
 (define (compiler-load-surface-summary-load-enter!) : unit
   (begin
@@ -2061,6 +2239,14 @@
 (define (compiler-load-surface-summaries) : CompilerLoadSurfaceSummaryList
   compiler-load-active-surface-summaries)
 
+(define (compiler-load-lazy-import-skip-count) : i64
+  compiler-load-lazy-import-skip-record-count)
+
+(define (compiler-load-lazy-import-record-skip!) : unit
+  (set!
+    compiler-load-lazy-import-skip-record-count
+    (+ compiler-load-lazy-import-skip-record-count 1)))
+
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
   (set!
@@ -2068,6 +2254,158 @@
     (CompilerLoadSurfaceSummaryCons
       summary
       (box compiler-load-active-surface-summaries))))
+
+(define (compiler-load-surface-summary-find-source-in
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [source-path : String]) : CompilerLoadMaybeSurfaceSummary
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadNoSurfaceSummary)]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (if (string.string-eq (struct-get summary source-path) source-path)
+        (CompilerLoadSomeSurfaceSummary summary)
+        (compiler-load-surface-summary-find-source-in
+          (box-get rest)
+          source-path))]))
+
+(define (compiler-load-surface-summary-find-source [source-path : String]) : CompilerLoadMaybeSurfaceSummary
+  (compiler-load-surface-summary-find-source-in
+    compiler-load-active-surface-summaries
+    (compiler-load-normalize-path source-path)))
+
+(define (compiler-load-surface-summary-decl-requires-eager?
+  [decl : CompilerLoadSurfaceDecl]) : bool
+  (or
+    (match (struct-get decl kind)
+      [(CompilerLoadSurfaceExtern) true]
+      [_ false])
+    (struct-get decl has-cleanup)
+    (struct-get decl has-export)
+    (struct-get decl has-generated-meta)))
+
+(define (compiler-load-surface-summary-decls-require-eager?
+  [decls : CompilerLoadSurfaceDeclList]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (or
+        (compiler-load-surface-summary-decl-requires-eager? decl)
+        (compiler-load-surface-summary-decls-require-eager? (box-get rest)))]))
+
+(define (compiler-load-surface-summary-requires-eager?
+  [summary : CompilerLoadSurfaceSummary]) : bool
+  (or
+    (struct-get summary has-tests)
+    (struct-get summary has-export-metadata)
+    (struct-get summary has-generated-decls)
+    (struct-get summary has-decl-emitting-macro)
+    (compiler-load-surface-summary-decls-require-eager?
+      (struct-get summary decls))))
+
+(define (compiler-load-lazy-variant-name-used?
+  [variant : AstVariantDef]
+  [source : String]
+  [start : i64]) : bool
+  (match variant
+    [(AstVariantDef name _ _)
+      (compiler-load-source-has-name-token-from? source (intern-str name) start)]))
+
+(define (compiler-load-lazy-variant-list-name-used?
+  [variants : AstVariantDefList]
+  [source : String]
+  [start : i64]) : bool
+  (match variants
+    [(AstVariantDefNil) false]
+    [(AstVariantDefCons variant rest)
+      (or
+        (compiler-load-lazy-variant-name-used? variant source start)
+        (compiler-load-lazy-variant-list-name-used? (box-get rest) source start))]))
+
+(define (compiler-load-lazy-surface-signature-name-used?
+  [signature : CompilerLoadSurfaceSignature]
+  [source : String]
+  [start : i64]) : bool
+  (match signature
+    [(CompilerLoadSurfaceEnumSignature _ _ variants)
+      (compiler-load-lazy-variant-list-name-used? variants source start)]
+    [_ false]))
+
+(define (compiler-load-lazy-surface-decl-name-used?
+  [decl : CompilerLoadSurfaceDecl]
+  [source : String]
+  [start : i64]) : bool
+  (or
+    (compiler-load-source-has-name-token-from?
+      source
+      (struct-get decl name)
+      start)
+    (compiler-load-lazy-surface-signature-name-used?
+      (struct-get decl signature)
+      source
+      start)))
+
+(define (compiler-load-lazy-surface-decls-name-used?
+  [decls : CompilerLoadSurfaceDeclList]
+  [source : String]
+  [start : i64]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (or
+        (compiler-load-lazy-surface-decl-name-used? decl source start)
+        (compiler-load-lazy-surface-decls-name-used?
+          (box-get rest)
+          source
+          start))]))
+
+(define (compiler-load-lazy-module-used-after?
+  [importer-path : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [alias : String]
+  [span : AstSourceSpan]
+  [include-direct-names : bool]) : bool
+  (match (compiler-load-source-for-lazy-scan importer-path)
+    [(CompilerLoadNoString) true]
+    [(CompilerLoadSomeString source)
+      (let
+        [start : i64 (compiler-load-source-scan-start span source)]
+        (if (compiler-load-source-has-alias-token-from? source alias start)
+          true
+          (if include-direct-names
+            (compiler-load-lazy-surface-decls-name-used?
+              (struct-get summary decls)
+              source
+              start)
+            false)))]))
+
+(define (compiler-load-lazy-import-skip?
+  [importer-path : String]
+  [kind : AstImportKind]
+  [resolved : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]) : bool
+  (if (or
+    (not (compiler-load-lazy-imports-enabled?))
+    (compiler-load-prelude-importer? importer-path))
+    false
+    (match (compiler-load-surface-summary-find-source resolved)
+      [(CompilerLoadNoSurfaceSummary) false]
+      [(CompilerLoadSomeSurfaceSummary summary)
+        (if (compiler-load-surface-summary-requires-eager? summary)
+          false
+          (match kind
+            [(AstImportModule)
+              (match alias
+                [(AstSomeImportAlias alias-name)
+                  (not
+                    (compiler-load-lazy-module-used-after?
+                      importer-path
+                      summary
+                      alias-name
+                      span
+                      (not (compiler-load-stdlib-import? resolved))))]
+                [(AstNoImportAlias) false])]
+            [(AstImportPath) false]
+            [_ false]))])))
 
 (define (compiler-load-surface-zero-span) : AstSourceSpan
   (AstSourceSpan 0 0 0 0))
@@ -2725,7 +3063,7 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclImport
-              (AstImportSpec kind import-path expected-module alias _))
+              (AstImportSpec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                 rest
@@ -2769,62 +3107,97 @@
                         imported-paths
                         imported-modules
                         import-seen)
-                      (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                        rest
-                        importer-path
-                        importer-module
-                        importer-source-module
-                        import-seen
-                        stdlib-roots
-                        import-root
-                        cfgs
-                        pools)
-                        [(OkCompilerLoadWithPaths
-                            rest-decls
-                            rest-paths
-                            rest-modules
-                            rest-seen)
-                          (let
-                            [after-import-expected : AstMaybeModuleName
-                              (compiler-load-after-import-expected-module
-                                kind
-                                expected-module
-                                alias
-                                imported-decls)]
-                            [after-import-alias : AstMaybeImportAlias
-                              (compiler-load-after-import-alias
-                                kind
-                                expected-module
-                                alias
-                                imported-decls)]
-                            (OkCompilerLoadWithPaths
-                              (compiler-load-decl-list-append
-                                imported-decls
-                                (compiler-load-decls-after-import
+                      (let
+                        [lazy-skip : bool
+                          (compiler-load-lazy-import-skip?
+                            importer-path
+                            kind
+                            resolved
+                            alias
+                            span)]
+                        [after-import-seen : SymI64Env
+                          (if lazy-skip
+                            seen
+                            import-seen)]
+                        (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                          rest
+                          importer-path
+                          importer-module
+                          importer-source-module
+                          after-import-seen
+                          stdlib-roots
+                          import-root
+                          cfgs
+                          pools)
+                          [(OkCompilerLoadWithPaths
+                              rest-decls
+                              rest-paths
+                              rest-modules
+                              rest-seen)
+                            (let
+                              [after-import-expected : AstMaybeModuleName
+                                (compiler-load-after-import-expected-module
                                   kind
-                                  resolved
-                                  after-import-expected
-                                  after-import-alias
-                                  importer-source-module
-                                  imported-decls
-                                  rest-decls))
-                              (compiler-load-decl-path-list-append
-                                imported-paths
-                                (compiler-load-paths-after-import
-                                  importer-path
-                                  after-import-alias
-                                  imported-decls
-                                  rest-paths))
-                              (compiler-load-decl-module-list-append
-                                imported-modules
-                                (compiler-load-modules-after-import
-                                  importer-module
-                                  after-import-alias
-                                  imported-decls
-                                  rest-modules))
-                              rest-seen))]
-                        [(ErrCompilerLoadWithPaths diag)
-                          (ErrCompilerLoadWithPaths diag)])]
+                                  expected-module
+                                  alias
+                                  imported-decls)]
+                              [after-import-alias : AstMaybeImportAlias
+                                (compiler-load-after-import-alias
+                                  kind
+                                  expected-module
+                                  alias
+                                  imported-decls)]
+                              (if lazy-skip
+                                (begin
+                                  (compiler-load-lazy-import-record-skip!)
+                                  (OkCompilerLoadWithPaths
+                                    (compiler-load-decls-after-import
+                                      kind
+                                      resolved
+                                      after-import-expected
+                                      after-import-alias
+                                      importer-source-module
+                                      AstDeclNil
+                                      rest-decls)
+                                    (compiler-load-paths-after-import
+                                      importer-path
+                                      after-import-alias
+                                      AstDeclNil
+                                      rest-paths)
+                                    (compiler-load-modules-after-import
+                                      importer-module
+                                      after-import-alias
+                                      AstDeclNil
+                                      rest-modules)
+                                    rest-seen))
+                                (OkCompilerLoadWithPaths
+                                  (compiler-load-decl-list-append
+                                    imported-decls
+                                    (compiler-load-decls-after-import
+                                      kind
+                                      resolved
+                                      after-import-expected
+                                      after-import-alias
+                                      importer-source-module
+                                      imported-decls
+                                      rest-decls))
+                                  (compiler-load-decl-path-list-append
+                                    imported-paths
+                                    (compiler-load-paths-after-import
+                                      importer-path
+                                      after-import-alias
+                                      imported-decls
+                                      rest-paths))
+                                  (compiler-load-decl-module-list-append
+                                    imported-modules
+                                    (compiler-load-modules-after-import
+                                      importer-module
+                                      after-import-alias
+                                      imported-decls
+                                      rest-modules))
+                                  rest-seen)))]
+                          [(ErrCompilerLoadWithPaths diag)
+                            (ErrCompilerLoadWithPaths diag)]))]
                     [(ErrCompilerLoadWithPaths diag)
                       (ErrCompilerLoadWithPaths diag)])]
                 [(ErrPkgResolve message)
@@ -4648,7 +5021,7 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDeclImport
-              (AstImportSpec kind import-path expected-module alias _))
+              (AstImportSpec kind import-path expected-module alias span))
             (if (compiler-load-macro-import-kind? kind)
               (match (compiler-load-package-decls-with-module-and-roots
                 rest
@@ -4680,87 +5053,127 @@
                 manifest-dir
                 deps)
                 [(OkPkgResolve resolved)
-                  (match (if (compiler-load-package-import-externs?
-                    kind
-                    import-path
-                    deps)
-                    (compiler-load-package-externs-from-import
-                      resolved
-                      seen
-                      stdlib-roots
-                      expected-module
-                      cfgs)
-                    (compiler-load-package-file-with-paths-and-roots-expect
-                      resolved
-                      seen
-                      stdlib-roots
-                      expected-module
-                      manifest-dir
-                      deps
-                      cfgs))
-                    [(OkCompilerLoadWithPaths
-                        imported-decls
-                        imported-paths
-                        imported-modules
-                        import-seen)
-                      (match (compiler-load-package-decls-with-module-and-roots
-                        rest
-                        importer-path
-                        importer-module
-                        importer-source-module
-                        import-seen
+                  (let
+                    [package-externs : bool
+                      (compiler-load-package-import-externs?
+                        kind
+                        import-path
+                        deps)]
+                    (match (if package-externs
+                      (compiler-load-package-externs-from-import
+                        resolved
+                        seen
                         stdlib-roots
+                        expected-module
+                        cfgs)
+                      (compiler-load-package-file-with-paths-and-roots-expect
+                        resolved
+                        seen
+                        stdlib-roots
+                        expected-module
                         manifest-dir
                         deps
-                        cfgs)
-                        [(OkCompilerLoadWithPaths
-                            rest-decls
-                            rest-paths
-                            rest-modules
-                            rest-seen)
-                          (let
-                            [after-import-expected : AstMaybeModuleName
-                              (compiler-load-after-import-expected-module
+                        cfgs))
+                      [(OkCompilerLoadWithPaths
+                          imported-decls
+                          imported-paths
+                          imported-modules
+                          import-seen)
+                        (let
+                          [lazy-skip : bool
+                            (and
+                              (not package-externs)
+                              (compiler-load-lazy-import-skip?
+                                importer-path
                                 kind
-                                expected-module
+                                resolved
                                 alias
-                                imported-decls)]
-                            [after-import-alias : AstMaybeImportAlias
-                              (compiler-load-after-import-alias
-                                kind
-                                expected-module
-                                alias
-                                imported-decls)]
-                            (OkCompilerLoadWithPaths
-                              (compiler-load-decl-list-append
-                                imported-decls
-                                (compiler-load-decls-after-import
-                                  kind
-                                  resolved
-                                  after-import-expected
-                                  after-import-alias
-                                  importer-source-module
-                                  imported-decls
-                                  rest-decls))
-                              (compiler-load-decl-path-list-append
-                                imported-paths
-                                (compiler-load-paths-after-import
-                                  importer-path
-                                  after-import-alias
-                                  imported-decls
-                                  rest-paths))
-                              (compiler-load-decl-module-list-append
-                                imported-modules
-                                (compiler-load-modules-after-import
-                                  importer-module
-                                  after-import-alias
-                                  imported-decls
-                                  rest-modules))
-                              rest-seen))]
-                        [(ErrCompilerLoadWithPaths diag)
-                          (ErrCompilerLoadWithPaths diag)])]
-                    [(ErrCompilerLoadWithPaths diag)
-                      (ErrCompilerLoadWithPaths diag)])]
+                                span))]
+                          [after-import-seen : SymI64Env
+                            (if lazy-skip
+                              seen
+                              import-seen)]
+                          (match (compiler-load-package-decls-with-module-and-roots
+                            rest
+                            importer-path
+                            importer-module
+                            importer-source-module
+                            after-import-seen
+                            stdlib-roots
+                            manifest-dir
+                            deps
+                            cfgs)
+                            [(OkCompilerLoadWithPaths
+                                rest-decls
+                                rest-paths
+                                rest-modules
+                                rest-seen)
+                              (let
+                                [after-import-expected : AstMaybeModuleName
+                                  (compiler-load-after-import-expected-module
+                                    kind
+                                    expected-module
+                                    alias
+                                    imported-decls)]
+                                [after-import-alias : AstMaybeImportAlias
+                                  (compiler-load-after-import-alias
+                                    kind
+                                    expected-module
+                                    alias
+                                    imported-decls)]
+                                (if lazy-skip
+                                  (begin
+                                    (compiler-load-lazy-import-record-skip!)
+                                    (OkCompilerLoadWithPaths
+                                      (compiler-load-decls-after-import
+                                        kind
+                                        resolved
+                                        after-import-expected
+                                        after-import-alias
+                                        importer-source-module
+                                        AstDeclNil
+                                        rest-decls)
+                                      (compiler-load-paths-after-import
+                                        importer-path
+                                        after-import-alias
+                                        AstDeclNil
+                                        rest-paths)
+                                      (compiler-load-modules-after-import
+                                        importer-module
+                                        after-import-alias
+                                        AstDeclNil
+                                        rest-modules)
+                                      rest-seen))
+                                  (OkCompilerLoadWithPaths
+                                    (compiler-load-decl-list-append
+                                      imported-decls
+                                      (compiler-load-decls-after-import
+                                        kind
+                                        resolved
+                                        after-import-expected
+                                        after-import-alias
+                                        importer-source-module
+                                        imported-decls
+                                        rest-decls))
+                                    (compiler-load-decl-path-list-append
+                                      imported-paths
+                                      (compiler-load-paths-after-import
+                                        importer-path
+                                        after-import-alias
+                                        imported-decls
+                                        rest-paths))
+                                    (compiler-load-decl-module-list-append
+                                      imported-modules
+                                      (compiler-load-modules-after-import
+                                        importer-module
+                                        after-import-alias
+                                        imported-decls
+                                        rest-modules))
+                                    rest-seen)))]
+                            [(ErrCompilerLoadWithPaths diag)
+                              (ErrCompilerLoadWithPaths diag)]))]
+                      [(ErrCompilerLoadWithPaths diag)
+                        (ErrCompilerLoadWithPaths diag)]))]
                 [(ErrPkgResolve message)
                   (ErrCompilerLoadWithPaths
                     (box (compiler-diagnostic-at-start importer-path message)))]))]

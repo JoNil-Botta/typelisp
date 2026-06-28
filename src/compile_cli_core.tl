@@ -29,21 +29,21 @@
 ;; Pair-shaped batch entries stay as a list until aggregate-element vector
 ;; support makes a generated entry vector cleaner than parallel StringVecs.
 (defenum CompileCliBatchEntryList
-  (CompileCliBatchEntryNil)
-  (CompileCliBatchEntryCons String String (Box CompileCliBatchEntryList)))
+  (Nil)
+  (Cons String String (Box CompileCliBatchEntryList)))
 
 (defenum ResultCompileCliBatchEntryList
-  (OkCompileCliBatchEntryList CompileCliBatchEntryList)
-  (ErrCompileCliBatchEntryList i64))
+  (Ok CompileCliBatchEntryList)
+  (Err i64))
 
 (define (compile-cli-batch-entry-cons
   [input-path : String]
   [output-path : String]
   [rest : CompileCliBatchEntryList]) : CompileCliBatchEntryList
-  (CompileCliBatchEntryCons input-path output-path (box rest)))
+  (CompileCliBatchEntryList.Cons input-path output-path (box rest)))
 
 (defenum CompileCliConfig
-  (CompileCliConfig
+  (Config
     String
     String
     bool
@@ -56,7 +56,7 @@
     i64))
 
 (defenum CompileCliBatchConfig
-  (CompileCliBatchConfig
+  (Config
     String
     bool
     CompilerBackendTarget
@@ -67,27 +67,27 @@
     bool))
 
 (defenum ResultCompileCliConfig
-  (OkCompileCliConfig CompileCliConfig)
-  (ErrCompileCliConfig String))
+  (Ok CompileCliConfig)
+  (Err String))
 
 (defenum ResultCompileCliBatchConfig
-  (OkCompileCliBatchConfig CompileCliBatchConfig)
-  (ErrCompileCliBatchConfig String))
+  (Ok CompileCliBatchConfig)
+  (Err String))
 
 (defenum CompileCliAction
-  (CompileCliRun CompileCliConfig)
-  (CompileCliBatch CompileCliBatchConfig)
-  (CompileCliCheck String vector.StringVec)
-  (CompileCliHelp)
-  (CompileCliError String))
+  (Run CompileCliConfig)
+  (Batch CompileCliBatchConfig)
+  (Check String vector.StringVec)
+  (Help)
+  (Error String))
 
 (defenum ResultCompileCliCheckConfig
-  (OkCompileCliCheckConfig String vector.StringVec)
-  (ErrCompileCliCheckConfig String))
+  (Ok String vector.StringVec)
+  (Err String))
 
 (defenum ResultCompileCliTarget
-  (OkCompileCliTarget CompilerBackendTarget)
-  (ErrCompileCliTarget String))
+  (Ok CompilerBackendTarget)
+  (Err String))
 
 (define (compile-cli-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -145,12 +145,12 @@
   (if (or
     (string.string-eq value "linux-x86_64")
     (string.string-eq value "linux_x86_64"))
-    (OkCompileCliTarget (BackendTargetLinux))
+    (ResultCompileCliTarget.Ok (BackendTargetLinux))
     (if (or
       (string.string-eq value "windows-x86_64")
       (string.string-eq value "windows_x86_64"))
-      (OkCompileCliTarget (BackendTargetWindows))
-      (ErrCompileCliTarget (compile-cli-unknown-target value)))))
+      (ResultCompileCliTarget.Ok (BackendTargetWindows))
+      (ResultCompileCliTarget.Err (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
   (str_cat.str-cat
@@ -160,19 +160,19 @@
 
 ;; `--backend-mode` parity with Rust (which accepts scalar/avx2/avx512).
 (defenum ResultCompileCliBackendMode
-  (OkCompileCliBackendMode CompilerBackendMode)
-  (ErrCompileCliBackendMode String))
+  (Ok CompilerBackendMode)
+  (Err String))
 
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
   (cond
     [(string.string-eq value "scalar")
-      (OkCompileCliBackendMode (BackendModeScalar))]
+      (ResultCompileCliBackendMode.Ok (BackendModeScalar))]
     [(string.string-eq value "avx2")
-      (OkCompileCliBackendMode (BackendModeAvx2))]
+      (ResultCompileCliBackendMode.Ok (BackendModeAvx2))]
     [(string.string-eq value "avx512")
-      (OkCompileCliBackendMode (BackendModeAvx512))]
+      (ResultCompileCliBackendMode.Ok (BackendModeAvx512))]
     [else
-      (ErrCompileCliBackendMode
+      (ResultCompileCliBackendMode.Err
         (str_cat.str-cat
           "Error: unknown backend mode '"
           value
@@ -195,9 +195,10 @@
   [backend-mode : CompilerBackendMode]) : ResultCompileCliConfig
   (if (>= idx count)
     (if (and emit-ir pic)
-      (ErrCompileCliConfig "compile: --pic cannot be combined with --emit-ir")
-      (OkCompileCliConfig
-        (CompileCliConfig
+      (ResultCompileCliConfig.Err
+        "compile: --pic cannot be combined with --emit-ir")
+      (ResultCompileCliConfig.Ok
+        (CompileCliConfig.Config
           input-path
           (if (and emit-ir (not has-output))
             (compile-cli-default-ir-output input-path)
@@ -215,9 +216,10 @@
       (cond
         [(string.string-eq current "-o")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliConfig "compile: -o requires a value")
+            (ResultCompileCliConfig.Err "compile: -o requires a value")
             (if has-output
-              (ErrCompileCliConfig "compile: -o was provided more than once")
+              (ResultCompileCliConfig.Err
+                "compile: -o was provided more than once")
               (compile-cli-parse-options
                 (+ idx 2)
                 count
@@ -235,7 +237,8 @@
                 backend-mode)))]
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliConfig "compile: --stdlib-root requires a value")
+            (ResultCompileCliConfig.Err
+              "compile: --stdlib-root requires a value")
             (compile-cli-parse-options
               (+ idx 2)
               count
@@ -253,7 +256,7 @@
               backend-mode))]
         [(string.string-eq current "--cfg")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliConfig "compile: --cfg requires a value")
+            (ResultCompileCliConfig.Err "compile: --cfg requires a value")
             (compile-cli-parse-options
               (+ idx 2)
               count
@@ -271,12 +274,12 @@
               backend-mode))]
         [(string.string-eq current "--target")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliConfig "compile: --target requires a value")
+            (ResultCompileCliConfig.Err "compile: --target requires a value")
             (if has-target
-              (ErrCompileCliConfig
+              (ResultCompileCliConfig.Err
                 "compile: --target was provided more than once")
               (match (compile-cli-target (io.arg (+ idx 1)))
-                [(OkCompileCliTarget parsed-target)
+                [(ResultCompileCliTarget.Ok parsed-target)
                   (compile-cli-parse-options
                     (+ idx 2)
                     count
@@ -292,12 +295,13 @@
                     has-opt-level
                     opt-level
                     backend-mode)]
-                [(ErrCompileCliTarget message) (ErrCompileCliConfig message)])))]
+                [(ResultCompileCliTarget.Err message)
+                  (ResultCompileCliConfig.Err message)])))]
         [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliConfig "compile: --opt-level requires a value")
+            (ResultCompileCliConfig.Err "compile: --opt-level requires a value")
             (if has-opt-level
-              (ErrCompileCliConfig
+              (ResultCompileCliConfig.Err
                 "compile: --opt-level was provided more than once")
               (let
                 [value : String (io.arg (+ idx 1))]
@@ -319,12 +323,14 @@
                       parsed-level
                       backend-mode)]
                   [(ErrCompilerOptimizeLevel)
-                    (ErrCompileCliConfig (compile-cli-invalid-opt-level value))]))))]
+                    (ResultCompileCliConfig.Err
+                      (compile-cli-invalid-opt-level value))]))))]
         [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliConfig "compile: --backend-mode requires a value")
+            (ResultCompileCliConfig.Err
+              "compile: --backend-mode requires a value")
             (match (compile-cli-backend-mode (io.arg (+ idx 1)))
-              [(OkCompileCliBackendMode parsed-mode)
+              [(ResultCompileCliBackendMode.Ok parsed-mode)
                 (compile-cli-parse-options
                   (+ idx 2)
                   count
@@ -340,7 +346,8 @@
                   has-opt-level
                   opt-level
                   parsed-mode)]
-              [(ErrCompileCliBackendMode message) (ErrCompileCliConfig message)]))]
+              [(ResultCompileCliBackendMode.Err message)
+                (ResultCompileCliConfig.Err message)]))]
         [(string.string-eq current "--pic")
           (compile-cli-parse-options
             (+ idx 1)
@@ -375,9 +382,9 @@
             backend-mode)]
         [else
           (if (compile-cli-flag? current)
-            (ErrCompileCliConfig
+            (ResultCompileCliConfig.Err
               (string.string-append "compile: unknown flag " current))
-            (ErrCompileCliConfig
+            (ResultCompileCliConfig.Err
               (string.string-append "compile: unexpected argument " current)))]))))
 
 (define (compile-cli-batch-parse-options
@@ -393,8 +400,8 @@
   [backend-mode : CompilerBackendMode]
   [prefix-cache-stats : bool]) : ResultCompileCliBatchConfig
   (if (>= idx count)
-    (OkCompileCliBatchConfig
-      (CompileCliBatchConfig
+    (ResultCompileCliBatchConfig.Ok
+      (CompileCliBatchConfig.Config
         batch-path
         has-target
         target
@@ -407,16 +414,18 @@
       [current : String (io.arg idx)]
       (cond
         [(string.string-eq current "-o")
-          (ErrCompileCliBatchConfig
+          (ResultCompileCliBatchConfig.Err
             "compile: --batch reads output paths from the batch file")]
         [(string.string-eq current "--emit-ir")
-          (ErrCompileCliBatchConfig
+          (ResultCompileCliBatchConfig.Err
             "compile: --batch does not support --emit-ir")]
         [(string.string-eq current "--pic")
-          (ErrCompileCliBatchConfig "compile: --batch does not support --pic")]
+          (ResultCompileCliBatchConfig.Err
+            "compile: --batch does not support --pic")]
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliBatchConfig "compile: --stdlib-root requires a value")
+            (ResultCompileCliBatchConfig.Err
+              "compile: --stdlib-root requires a value")
             (compile-cli-batch-parse-options
               (+ idx 2)
               count
@@ -431,7 +440,7 @@
               prefix-cache-stats))]
         [(string.string-eq current "--cfg")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliBatchConfig "compile: --cfg requires a value")
+            (ResultCompileCliBatchConfig.Err "compile: --cfg requires a value")
             (compile-cli-batch-parse-options
               (+ idx 2)
               count
@@ -446,12 +455,13 @@
               prefix-cache-stats))]
         [(string.string-eq current "--target")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliBatchConfig "compile: --target requires a value")
+            (ResultCompileCliBatchConfig.Err
+              "compile: --target requires a value")
             (if has-target
-              (ErrCompileCliBatchConfig
+              (ResultCompileCliBatchConfig.Err
                 "compile: --target was provided more than once")
               (match (compile-cli-target (io.arg (+ idx 1)))
-                [(OkCompileCliTarget parsed-target)
+                [(ResultCompileCliTarget.Ok parsed-target)
                   (compile-cli-batch-parse-options
                     (+ idx 2)
                     count
@@ -464,13 +474,14 @@
                     opt-level
                     backend-mode
                     prefix-cache-stats)]
-                [(ErrCompileCliTarget message)
-                  (ErrCompileCliBatchConfig message)])))]
+                [(ResultCompileCliTarget.Err message)
+                  (ResultCompileCliBatchConfig.Err message)])))]
         [(string.string-eq current "--opt-level")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliBatchConfig "compile: --opt-level requires a value")
+            (ResultCompileCliBatchConfig.Err
+              "compile: --opt-level requires a value")
             (if has-opt-level
-              (ErrCompileCliBatchConfig
+              (ResultCompileCliBatchConfig.Err
                 "compile: --opt-level was provided more than once")
               (let
                 [value : String (io.arg (+ idx 1))]
@@ -489,14 +500,14 @@
                       backend-mode
                       prefix-cache-stats)]
                   [(ErrCompilerOptimizeLevel)
-                    (ErrCompileCliBatchConfig
+                    (ResultCompileCliBatchConfig.Err
                       (compile-cli-invalid-opt-level value))]))))]
         [(string.string-eq current "--backend-mode")
           (if (>= (+ idx 1) count)
-            (ErrCompileCliBatchConfig
+            (ResultCompileCliBatchConfig.Err
               "compile: --backend-mode requires a value")
             (match (compile-cli-backend-mode (io.arg (+ idx 1)))
-              [(OkCompileCliBackendMode parsed-mode)
+              [(ResultCompileCliBackendMode.Ok parsed-mode)
                 (compile-cli-batch-parse-options
                   (+ idx 2)
                   count
@@ -509,8 +520,8 @@
                   opt-level
                   parsed-mode
                   prefix-cache-stats)]
-              [(ErrCompileCliBackendMode message)
-                (ErrCompileCliBatchConfig message)]))]
+              [(ResultCompileCliBackendMode.Err message)
+                (ResultCompileCliBatchConfig.Err message)]))]
         [(string.string-eq current "--prefix-cache-stats")
           (compile-cli-batch-parse-options
             (+ idx 1)
@@ -526,18 +537,19 @@
             true)]
         [else
           (if (compile-cli-flag? current)
-            (ErrCompileCliBatchConfig
+            (ResultCompileCliBatchConfig.Err
               (string.string-append "compile: unknown flag " current))
-            (ErrCompileCliBatchConfig
+            (ResultCompileCliBatchConfig.Err
               (string.string-append "compile: unexpected argument " current)))]))))
 
 (define (compile-cli-config-from [input-idx : i64] [count : i64]) : ResultCompileCliConfig
   (if (>= input-idx count)
-    (ErrCompileCliConfig "compile: expected source path")
+    (ResultCompileCliConfig.Err "compile: expected source path")
     (let
       [input-path : String (io.arg input-idx)]
       (if (compile-cli-flag? input-path)
-        (ErrCompileCliConfig "compile: expected source path before flags")
+        (ResultCompileCliConfig.Err
+          "compile: expected source path before flags")
         (compile-cli-parse-options
           (+ input-idx 1)
           count
@@ -559,11 +571,12 @@
 
 (define (compile-cli-batch-config-from [batch-path-idx : i64] [count : i64]) : ResultCompileCliBatchConfig
   (if (>= batch-path-idx count)
-    (ErrCompileCliBatchConfig "compile: --batch requires a list file")
+    (ResultCompileCliBatchConfig.Err "compile: --batch requires a list file")
     (let
       [batch-path : String (io.arg batch-path-idx)]
       (if (compile-cli-flag? batch-path)
-        (ErrCompileCliBatchConfig "compile: --batch requires a list file")
+        (ResultCompileCliBatchConfig.Err
+          "compile: --batch requires a list file")
         (compile-cli-batch-parse-options
           (+ batch-path-idx 1)
           count
@@ -580,11 +593,12 @@
 (define (compile-cli-command-action [count : i64]) : CompileCliAction
   (if (and (> count 2) (string.string-eq (io.arg 2) "--batch"))
     (match (compile-cli-batch-config-from 3 count)
-      [(OkCompileCliBatchConfig config) (CompileCliBatch config)]
-      [(ErrCompileCliBatchConfig message) (CompileCliError message)])
+      [(ResultCompileCliBatchConfig.Ok config) (CompileCliAction.Batch config)]
+      [(ResultCompileCliBatchConfig.Err message)
+        (CompileCliAction.Error message)])
     (match (compile-cli-command-config count)
-      [(OkCompileCliConfig config) (CompileCliRun config)]
-      [(ErrCompileCliConfig message) (CompileCliError message)])))
+      [(ResultCompileCliConfig.Ok config) (CompileCliAction.Run config)]
+      [(ResultCompileCliConfig.Err message) (CompileCliAction.Error message)])))
 
 (define (compile-cli-check-parse-options
   [idx : i64]
@@ -592,12 +606,13 @@
   [input-path : String]
   [stdlib-roots : vector.StringVec]) : ResultCompileCliCheckConfig
   (if (>= idx count)
-    (OkCompileCliCheckConfig input-path stdlib-roots)
+    (ResultCompileCliCheckConfig.Ok input-path stdlib-roots)
     (let
       [current : String (io.arg idx)]
       (if (string.string-eq current "--stdlib-root")
         (if (>= (+ idx 1) count)
-          (ErrCompileCliCheckConfig "Error: --stdlib-root requires a value")
+          (ResultCompileCliCheckConfig.Err
+            "Error: --stdlib-root requires a value")
           (compile-cli-check-parse-options
             (+ idx 2)
             count
@@ -617,7 +632,7 @@
   [count : i64]
   [missing-message : String]) : ResultCompileCliCheckConfig
   (if (>= input-idx count)
-    (ErrCompileCliCheckConfig missing-message)
+    (ResultCompileCliCheckConfig.Err missing-message)
     (compile-cli-check-parse-options
       (+ input-idx 1)
       count
@@ -632,7 +647,7 @@
 
 (define (compile-cli-dispatch [count : i64]) : CompileCliAction
   (if (< count 2)
-    (CompileCliError
+    (CompileCliAction.Error
       (compile-cli-message-with-usage "typelisp: expected command"))
     (let
       [command : String (io.arg 1)]
@@ -641,16 +656,17 @@
             (string.string-eq command "help")
             (string.string-eq command "--help")
             (string.string-eq command "-h"))
-          (CompileCliHelp)]
+          (CompileCliAction.Help)]
         [(string.string-eq command "compile")
           (compile-cli-command-action count)]
         [(string.string-eq command "check")
           (match (compile-cli-top-level-check-config count)
-            [(OkCompileCliCheckConfig input-path roots)
-              (CompileCliCheck input-path roots)]
-            [(ErrCompileCliCheckConfig message) (CompileCliError message)])]
+            [(ResultCompileCliCheckConfig.Ok input-path roots)
+              (CompileCliAction.Check input-path roots)]
+            [(ResultCompileCliCheckConfig.Err message)
+              (CompileCliAction.Error message)])]
         [else
-          (CompileCliError
+          (CompileCliAction.Error
             (compile-cli-message-with-usage
               (string.string-append "Unknown command: " command)))]))))
 
@@ -765,8 +781,8 @@
   [stdlib-roots : vector.StringVec]
   [cfg-names : vector.StringVec]) : i64
   (match entries
-    [(CompileCliBatchEntryNil) 0]
-    [(CompileCliBatchEntryCons input-path _ rest)
+    [(CompileCliBatchEntryList.Nil) 0]
+    [(CompileCliBatchEntryList.Cons input-path _ rest)
       (let
         [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
         [status : i64
@@ -843,7 +859,7 @@
   [line : i64]
   [n : i64]) : ResultCompileCliBatchEntryList
   (if (>= start n)
-    (OkCompileCliBatchEntryList CompileCliBatchEntryNil)
+    (ResultCompileCliBatchEntryList.Ok CompileCliBatchEntryList.Nil)
     (let
       [line-end : i64 (compile-cli-batch-line-end text start n)]
       [next-start : i64 (compile-cli-batch-next-line text line-end n)]
@@ -852,15 +868,15 @@
         (let
           [sep : i64 (compile-cli-batch-find-separator text start line-end)]
           (if (< sep 0)
-            (ErrCompileCliBatchEntryList
+            (ResultCompileCliBatchEntryList.Err
               (compile-cli-batch-line-error line "expected input|output"))
             (let
               [output-start : i64 (+ sep 1)]
               (if (= start sep)
-                (ErrCompileCliBatchEntryList
+                (ResultCompileCliBatchEntryList.Err
                   (compile-cli-batch-line-error line "missing input path"))
                 (if (= output-start line-end)
-                  (ErrCompileCliBatchEntryList
+                  (ResultCompileCliBatchEntryList.Err
                     (compile-cli-batch-line-error line "missing output path"))
                   (let
                     [input-path : String
@@ -875,14 +891,14 @@
                       next-start
                       (+ line 1)
                       n)
-                      [(OkCompileCliBatchEntryList rest)
-                        (OkCompileCliBatchEntryList
+                      [(ResultCompileCliBatchEntryList.Ok rest)
+                        (ResultCompileCliBatchEntryList.Ok
                           (compile-cli-batch-entry-cons
                             input-path
                             output-path
                             rest))]
-                      [(ErrCompileCliBatchEntryList status)
-                        (ErrCompileCliBatchEntryList status)])))))))))))
+                      [(ResultCompileCliBatchEntryList.Err status)
+                        (ResultCompileCliBatchEntryList.Err status)])))))))))))
 
 (define (compile-cli-run-batch-entries
   [state : CompilerDriverState]
@@ -894,8 +910,8 @@
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
   (match entries
-    [(CompileCliBatchEntryNil) 0]
-    [(CompileCliBatchEntryCons input-path output-path rest)
+    [(CompileCliBatchEntryList.Nil) 0]
+    [(CompileCliBatchEntryList.Cons input-path output-path rest)
       (let
         ;; Each batch entry gets a destroyable scratch arena, not just a
         ;; lexical rewind region. Rewinds intentionally retain overflow chunks
@@ -950,7 +966,7 @@
     start
     line
     (string.string-length text))
-    [(OkCompileCliBatchEntryList entries)
+    [(ResultCompileCliBatchEntryList.Ok entries)
       (let
         [inline-test-status : i64
           (compile-cli-run-batch-inline-tests
@@ -969,7 +985,7 @@
             backend-mode
             opt-level)
           inline-test-status))]
-    [(ErrCompileCliBatchEntryList status) status]))
+    [(ResultCompileCliBatchEntryList.Err status) status]))
 
 (define (compile-cli-run-batch [config : CompileCliBatchConfig]) : i64
   (let
@@ -977,7 +993,7 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-new-for-compile))]
     (match config
-      [(CompileCliBatchConfig
+      [(CompileCliBatchConfig.Config
           batch-path
           has-target
           target
@@ -1012,9 +1028,9 @@
 
 (define (compile-cli-run [count : i64]) : i64
   (match (compile-cli-dispatch count)
-    [(CompileCliRun config)
+    [(CompileCliAction.Run config)
       (match config
-        [(CompileCliConfig
+        [(CompileCliConfig.Config
             input-path
             output-path
             emit-ir
@@ -1038,8 +1054,8 @@
             backend-mode
             opt-level
             true)])]
-    [(CompileCliBatch config) (compile-cli-run-batch config)]
-    [(CompileCliCheck input-path stdlib-roots)
+    [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
+    [(CompileCliAction.Check input-path stdlib-roots)
       (match (compiler-check-file-with-roots input-path stdlib-roots)
         [(ResultCompilerCheck.Ok _)
           (let
@@ -1063,11 +1079,11 @@
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             1)])]
-    [(CompileCliHelp)
+    [(CompileCliAction.Help)
       (begin
         (io.print-error (compile-cli-usage))
         0)]
-    [(CompileCliError message)
+    [(CompileCliAction.Error message)
       (begin
         (io.print-error message)
         1)]))

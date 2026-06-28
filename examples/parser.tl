@@ -19,14 +19,14 @@
 ;; AST representation (refs #13/#27): a REAL recursive `Expr` tree.
 ;; --------------------------------------------------------------------------
 ;; The AST is the natural recursive enum
-;;   (defenum Expr (ENum i64) (EAdd Expr Expr) (ESub Expr Expr)
-;;                 (EMul Expr Expr) (EDiv Expr Expr))
+;;   (defenum Expr (Num i64) (Add Expr Expr) (Sub Expr Expr)
+;;                 (Mul Expr Expr) (Div Expr Expr))
 ;; where each binary variant's payload holds two `Expr` children. Recursive enum
 ;; payloads landed in #111 (heap-pointer indirection, refs #13): each `Expr`
 ;; child is an 8-byte heap pointer, so the layout is finite and every
 ;; constructor that escapes via a return is promoted onto the heap. `parse-expr`
-;; folds left-associative `EAdd`/`ESub` nodes over the terms produced by
-;; `parse-term`, which in turn folds left-associative `EMul`/`EDiv` nodes over
+;; folds left-associative `Expr.Add`/`Expr.Sub` nodes over the terms produced by
+;; `parse-term`, which in turn folds left-associative `Expr.Mul`/`Expr.Div` nodes over
 ;; the factors produced by `parse-factor`; a recursive `eval` walks the tree
 ;; with a `match`. This is a genuine tree-walking interpreter, validating
 ;; recursive enums end-to-end.
@@ -41,7 +41,7 @@
 ;;
 ;; Token stream representation (mirrors `lexer.tl`): the tokens are stored as a
 ;; parallel pair of generated `i64` vectors - a tag vector (the Token kind, via
-;; `token-tag`) and a value vector (the integer payload of a `TInt`, else 0) -
+;; `token-tag`) and a value vector (the integer payload of `Token.Int`, else 0) -
 ;; so the cursor is a plain `i64` index the helpers advance.
 (import stdlib.array)
 (import "stdlib/io.tl")
@@ -49,49 +49,49 @@
 (import (vector.vector i64) as i64vec)
 
 (defenum Token
-  (TInt i64)
-  (TPlus)
-  (TMinus)
-  (TStar)
-  (TSlash)
-  (TLParen)
-  (TRParen)
-  (TEnd))
+  (Int i64)
+  (Plus)
+  (Minus)
+  (Star)
+  (Slash)
+  (LParen)
+  (RParen)
+  (End))
 
 ;; The real recursive AST: an integer literal, or a binary node over two
 ;; sub-expressions for each of the four arithmetic operators.
 (defenum Expr
-  (ENum i64)
-  (EAdd (Box Expr) (Box Expr))
-  (ESub (Box Expr) (Box Expr))
-  (EMul (Box Expr) (Box Expr))
-  (EDiv (Box Expr) (Box Expr)))
+  (Num i64)
+  (Add (Box Expr) (Box Expr))
+  (Sub (Box Expr) (Box Expr))
+  (Mul (Box Expr) (Box Expr))
+  (Div (Box Expr) (Box Expr)))
 
 ;; Numeric tag for a token kind, matching the lexer's encoding so a parser fed by
 ;; the lexer would agree on kinds. Exercises `match` over every Token variant.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(TInt _) 1]
-    [(TPlus) 2]
-    [(TMinus) 3]
-    [(TStar) 4]
-    [(TSlash) 5]
-    [(TLParen) 6]
-    [(TRParen) 7]
-    [(TEnd) 8]))
+    [(Token.Int _) 1]
+    [(Token.Plus) 2]
+    [(Token.Minus) 3]
+    [(Token.Star) 4]
+    [(Token.Slash) 5]
+    [(Token.LParen) 6]
+    [(Token.RParen) 7]
+    [(Token.End) 8]))
 
-;; Integer payload of a TInt token (0 for any other kind): projects the payload
+;; Integer payload of `Token.Int` (0 for any other kind): projects the payload
 ;; back out of the enum in a `match` arm, the way the cursor reads operands.
 (define (token-int [t : Token]) : i64
   (match t
-    [(TInt v) v]
-    [(TPlus) 0]
-    [(TMinus) 0]
-    [(TStar) 0]
-    [(TSlash) 0]
-    [(TLParen) 0]
-    [(TRParen) 0]
-    [(TEnd) 0]))
+    [(Token.Int v) v]
+    [(Token.Plus) 0]
+    [(Token.Minus) 0]
+    [(Token.Star) 0]
+    [(Token.Slash) 0]
+    [(Token.LParen) 0]
+    [(Token.RParen) 0]
+    [(Token.End) 0]))
 
 ;; ---- Token-kind tag constants (kept in sync with `token-tag`). ----
 (define (tag-int) : i64
@@ -129,7 +129,7 @@
 (define (current-tag [tags : (& tags i64vec.Vec)] [cur : (Array i64 1)]) : i64
   (i64vec.get tags (cur-pos cur) (tag-end)))
 
-;; Integer value of the token under the cursor (meaningful only for TInt).
+;; Integer value of the token under the cursor (meaningful only for `Token.Int`).
 (define (current-val [vals : (& vals i64vec.Vec)] [cur : (Array i64 1)]) : i64
   (i64vec.get vals (cur-pos cur) 0))
 
@@ -161,12 +161,12 @@
   (let
     [t : i64 (current-tag tags cur)]
     (if (= t (tag-int))
-      ;; A literal: build (ENum v) and consume the TInt token.
+      ;; A literal: build `(Expr.Num v)` and consume the `Token.Int` token.
       (let
         [v : i64 (current-val vals cur)]
         (begin
           (advance cur)
-          (ENum v)))
+          (Expr.Num v)))
       (if (= t (tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
@@ -180,9 +180,9 @@
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
 ;; Parse a factor, then while the next token is '*' or '/', consume it, parse the
-;; next factor, and fold the accumulated tree into a new `(EMul acc rhs)` /
-;; `(EDiv acc rhs)` node - giving left-associative, higher-precedence `*`/`/`:
-;; `2 * 3 * 4` parses to `(EMul (EMul 2 3) 4)`.
+;; next factor, and fold the accumulated tree into a new `Expr.Mul` /
+;; `Expr.Div` node - giving left-associative, higher-precedence `*`/`/`:
+;; `2 * 3 * 4` parses to `(Expr.Mul (Expr.Mul 2 3) 4)`.
 (define (parse-term
   [tags : (& tags i64vec.Vec)]
   [vals : (& vals i64vec.Vec)]
@@ -196,17 +196,17 @@
         (if (= (current-tag tags cur) (tag-star))
           (begin
             (advance cur)
-            (set! acc (EMul (box acc) (box (parse-factor tags vals cur)))))
+            (set! acc (Expr.Mul (box acc) (box (parse-factor tags vals cur)))))
           (begin
             (advance cur)
-            (set! acc (EDiv (box acc) (box (parse-factor tags vals cur)))))))
+            (set! acc (Expr.Div (box acc) (box (parse-factor tags vals cur)))))))
       acc)))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
 ;; Parse a term, then while the next token is '+' or '-', consume it, parse the
-;; next term, and fold the accumulated tree into a new `(EAdd acc rhs)` /
-;; `(ESub acc rhs)` node - giving left-associative `+`/`-`: `1 + 2 + 3` parses to
-;; `(EAdd (EAdd 1 2) 3)`. Because each `term` is a full `*`/`/` chain, the tree
+;; next term, and fold the accumulated tree into a new `Expr.Add` /
+;; `Expr.Sub` node - giving left-associative `+`/`-`: `1 + 2 + 3` parses to
+;; `(Expr.Add (Expr.Add 1 2) 3)`. Because each `term` is a full `*`/`/` chain, the tree
 ;; shape gives `*`/`/` higher precedence than `+`/`-`.
 (define (parse-expr
   [tags : (& tags i64vec.Vec)]
@@ -221,52 +221,52 @@
         (if (= (current-tag tags cur) (tag-plus))
           (begin
             (advance cur)
-            (set! acc (EAdd (box acc) (box (parse-term tags vals cur)))))
+            (set! acc (Expr.Add (box acc) (box (parse-term tags vals cur)))))
           (begin
             (advance cur)
-            (set! acc (ESub (box acc) (box (parse-term tags vals cur)))))))
+            (set! acc (Expr.Sub (box acc) (box (parse-term tags vals cur)))))))
       acc)))
 
 ;; ---- Evaluator: a recursive tree walk over the real `Expr` AST. ----
-;; `ENum` yields its literal; each binary node recurses into both children and
+;; `Expr.Num` yields its literal; each binary node recurses into both children and
 ;; combines them with the matching arithmetic op (`/` is integer division). The
 ;; bound recursive payloads (`a`/`b`) are pointers to the child enums, passed
 ;; straight back into `eval`.
 (define (eval [e : Expr]) : i64
   (match e
-    [(ENum n) n]
-    [(EAdd a b) (+ (eval (box-get a)) (eval (box-get b)))]
-    [(ESub a b) (- (eval (box-get a)) (eval (box-get b)))]
-    [(EMul a b) (* (eval (box-get a)) (eval (box-get b)))]
-    [(EDiv a b) (/ (eval (box-get a)) (eval (box-get b)))]))
+    [(Expr.Num n) n]
+    [(Expr.Add a b) (+ (eval (box-get a)) (eval (box-get b)))]
+    [(Expr.Sub a b) (- (eval (box-get a)) (eval (box-get b)))]
+    [(Expr.Mul a b) (* (eval (box-get a)) (eval (box-get b)))]
+    [(Expr.Div a b) (/ (eval (box-get a)) (eval (box-get b)))]))
 
 ;; ---- Build the token stream for the sample "2 + 3 * 4" by hand. ----
 ;; (A lexer would produce this; here we construct the parallel vectors directly
-;; so the parser is exercised in isolation.) Tokens: TInt(2) TPlus TInt(3) TStar
-;; TInt(4) TEnd.
+;; so the parser is exercised in isolation.) Tokens: Token.Int(2), Token.Plus,
+;; Token.Int(3), Token.Star, Token.Int(4), Token.End.
 (define (build-sample-tags [tags : (&mut tags i64vec.Vec)]) : i64
   (begin
-    (i64vec.push tags (token-tag (TInt 2)))
-    (i64vec.push tags (token-tag TPlus))
-    (i64vec.push tags (token-tag (TInt 3)))
-    (i64vec.push tags (token-tag TStar))
-    (i64vec.push tags (token-tag (TInt 4)))
-    (i64vec.push tags (token-tag TEnd))
+    (i64vec.push tags (token-tag (Token.Int 2)))
+    (i64vec.push tags (token-tag Token.Plus))
+    (i64vec.push tags (token-tag (Token.Int 3)))
+    (i64vec.push tags (token-tag Token.Star))
+    (i64vec.push tags (token-tag (Token.Int 4)))
+    (i64vec.push tags (token-tag Token.End))
     6))
 
 (define (build-sample-vals [vals : (&mut vals i64vec.Vec)]) : i64
   (begin
-    (i64vec.push vals (token-int (TInt 2)))
+    (i64vec.push vals (token-int (Token.Int 2)))
     (i64vec.push vals 0)
-    (i64vec.push vals (token-int (TInt 3)))
+    (i64vec.push vals (token-int (Token.Int 3)))
     (i64vec.push vals 0)
-    (i64vec.push vals (token-int (TInt 4)))
+    (i64vec.push vals (token-int (Token.Int 4)))
     (i64vec.push vals 0)
     6))
 
 ;; Parse and evaluate "2 + 3 * 4":
-;;   - parse-expr builds the real Expr tree (EAdd (ENum 2) (EMul (ENum 3)
-;;     (ENum 4))) - `*` binds tighter than `+`, so the multiplication is the
+;;   - parse-expr builds the real Expr tree `(Expr.Add (Expr.Num 2)
+;;     (Expr.Mul (Expr.Num 3) (Expr.Num 4)))` - `*` binds tighter than `+`, so the multiplication is the
 ;;     right child of the addition rather than `(2 + 3) * 4`.
 ;;   - eval recursively folds it to 2 + (3 * 4) = 14 (NOT (2 + 3) * 4 = 20),
 ;;     proving the parser honours precedence.

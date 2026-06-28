@@ -8,19 +8,19 @@
 (import stdlib.string)
 
 (defenum DocModule
-  (DocModule String DocExtraction))
+  (Module String DocExtraction))
 
 (defenum DocModuleList
-  (DocModuleNil)
-  (DocModuleCons DocModule (Box DocModuleList)))
+  (Nil)
+  (Cons DocModule (Box DocModuleList)))
 
 (define (doc-module-path [module : DocModule]) : String
   (match module
-    [(DocModule path _) path]))
+    [(DocModule.Module path _) path]))
 
 (define (doc-module-docs [module : DocModule]) : DocExtraction
   (match module
-    [(DocModule _ docs) docs]))
+    [(DocModule.Module _ docs) docs]))
 
 (define (doc-render-code [c : char]) : i64
   (cast c : i64))
@@ -132,15 +132,15 @@
 
 (define (doc-render-item-list [items : DocItemList]) : String
   (match items
-    [(DocItemNil) ""]
-    [(DocItemCons item rest)
+    [(DocItemList.Nil) ""]
+    [(DocItemList.Cons item rest)
       (string.string-append
         (doc-render-item item)
         (doc-render-item-list (box-get rest)))]))
 
 (define (doc-render-items [items : DocItemList]) : String
   (match items
-    [(DocItemNil) "_No documented declarations._\n"]
+    [(DocItemList.Nil) "_No documented declarations._\n"]
     [_ (doc-render-item-list items)]))
 
 (define (doc-render-markdown [docs : DocExtraction]) : String
@@ -165,8 +165,8 @@
 
 (define (doc-render-module-nav [modules : DocModuleList]) : String
   (match modules
-    [(DocModuleNil) ""]
-    [(DocModuleCons module rest)
+    [(DocModuleList.Nil) ""]
+    [(DocModuleList.Cons module rest)
       (string.string-append
         (doc-render-module-nav-item module)
         (doc-render-module-nav (box-get rest)))]))
@@ -195,8 +195,8 @@
 
 (define (doc-render-module-sections [modules : DocModuleList]) : String
   (match modules
-    [(DocModuleNil) ""]
-    [(DocModuleCons module rest)
+    [(DocModuleList.Nil) ""]
+    [(DocModuleList.Cons module rest)
       (string.string-append
         (doc-render-module-section module)
         (doc-render-module-sections (box-get rest)))]))
@@ -225,8 +225,8 @@
 
 ;: Enum docs mention variants.
 (defenum MaybeNumber
-  (NoNumber)
-  (SomeNumber i64))
+  (No)
+  (Some i64))
 
 ;: Struct docs mention fields.
 (defstruct Point
@@ -284,8 +284,8 @@ Kind: defenum
 
 ```typelisp
 (defenum MaybeNumber
-  (NoNumber)
-  (SomeNumber i64))
+  (No)
+  (Some i64))
 ```
 
 Enum docs mention variants.

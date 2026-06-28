@@ -12,12 +12,12 @@
 (import stdlib.string)
 
 (defenum SelfhostCheckConfig
-  (SelfhostCheckFileConfig String vector.StringVec)
-  (SelfhostCheckPackageConfig String bool vector.StringVec))
+  (File String vector.StringVec)
+  (Package String bool vector.StringVec))
 
 (defenum ResultSelfhostCheckConfig
-  (OkSelfhostCheckConfig SelfhostCheckConfig)
-  (ErrSelfhostCheckConfig String))
+  (Ok SelfhostCheckConfig)
+  (Err String))
 
 (define (selfhost-check-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -30,11 +30,12 @@
   [stdlib-roots : vector.StringVec]) : ResultSelfhostCheckConfig
   (if has-input
     (if has-manifest
-      (ErrSelfhostCheckConfig
+      (ResultSelfhostCheckConfig.Err
         "selfhost-check: cannot combine input path with --manifest-path")
-      (OkSelfhostCheckConfig (SelfhostCheckFileConfig input-path stdlib-roots)))
-    (OkSelfhostCheckConfig
-      (SelfhostCheckPackageConfig manifest-path has-manifest stdlib-roots))))
+      (ResultSelfhostCheckConfig.Ok
+        (SelfhostCheckConfig.File input-path stdlib-roots)))
+    (ResultSelfhostCheckConfig.Ok
+      (SelfhostCheckConfig.Package manifest-path has-manifest stdlib-roots))))
 
 (define (selfhost-check-parse-args
   [idx : i64]
@@ -56,7 +57,7 @@
       (cond
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrSelfhostCheckConfig
+            (ResultSelfhostCheckConfig.Err
               "selfhost-check: --stdlib-root requires a value")
             (selfhost-check-parse-args
               (+ idx 2)
@@ -68,10 +69,10 @@
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
-            (ErrSelfhostCheckConfig
+            (ResultSelfhostCheckConfig.Err
               "selfhost-check: --manifest-path requires a value")
             (if has-manifest
-              (ErrSelfhostCheckConfig
+              (ResultSelfhostCheckConfig.Err
                 "selfhost-check: duplicate --manifest-path")
               (selfhost-check-parse-args
                 (+ idx 2)
@@ -82,10 +83,10 @@
                 true
                 stdlib-roots)))]
         [(selfhost-check-flag? current)
-          (ErrSelfhostCheckConfig
+          (ResultSelfhostCheckConfig.Err
             (string.string-append "selfhost-check: unknown flag " current))]
         [has-input
-          (ErrSelfhostCheckConfig
+          (ResultSelfhostCheckConfig.Err
             (string.string-append
               "selfhost-check: unexpected argument "
               current))]
@@ -179,11 +180,11 @@
   [has-manifest : bool]
   [stdlib-roots : vector.StringVec]) : i64
   (match (package-source-discover-for "check" manifest-path has-manifest)
-    [(ErrPackageSourceSet message)
+    [(ResultPackageSourceSet.Err message)
       (begin
         (io.print-error message)
         1)]
-    [(OkPackageSourceSet source-set)
+    [(ResultPackageSourceSet.Ok source-set)
       (let
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [manifest-dir : String (struct-get source-set manifest-dir)]
@@ -231,13 +232,13 @@
 ;; Run the `check` command over arguments starting at `start`.
 (define (selfhost-check-run-from [start : i64] [count : i64]) : i64
   (match (selfhost-check-config-from start count)
-    [(OkSelfhostCheckConfig config)
+    [(ResultSelfhostCheckConfig.Ok config)
       (match config
-        [(SelfhostCheckFileConfig input-path stdlib-roots)
+        [(SelfhostCheckConfig.File input-path stdlib-roots)
           (selfhost-check-file input-path stdlib-roots)]
-        [(SelfhostCheckPackageConfig manifest-path has-manifest stdlib-roots)
+        [(SelfhostCheckConfig.Package manifest-path has-manifest stdlib-roots)
           (selfhost-check-package manifest-path has-manifest stdlib-roots)])]
-    [(ErrSelfhostCheckConfig message)
+    [(ResultSelfhostCheckConfig.Err message)
       (begin
         (io.print-error message)
         1)]))

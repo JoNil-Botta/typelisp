@@ -7,22 +7,22 @@
 (import stdlib.string)
 
 (defenum FormatToken
-  (FmtLParen)
-  (FmtRParen)
-  (FmtLBracket)
-  (FmtRBracket)
-  (FmtColon)
-  (FmtQuote)
-  (FmtBacktick)
-  (FmtDot)
-  (FmtComma)
-  (FmtCommaAt)
-  (FmtInt String)
-  (FmtSymbol String)
-  (FmtString String)
-  (FmtChar String)
-  (FmtComment String)
-  (FmtEnd))
+  (LParen)
+  (RParen)
+  (LBracket)
+  (RBracket)
+  (Colon)
+  (Quote)
+  (Backtick)
+  (Dot)
+  (Comma)
+  (CommaAt)
+  (Int String)
+  (Symbol String)
+  (String String)
+  (Char String)
+  (Comment String)
+  (End))
 
 (defstruct FormatSourceSpan
   (start-line i64)
@@ -45,17 +45,17 @@
   (col i64))
 
 (defenum ResultFormatTokenStream
-  (OkFormatTokenStream FormatTokenStream)
-  (ErrFormatTokenStream FormatSourceError))
+  (Ok FormatTokenStream)
+  (Err FormatSourceError))
 
 (defenum ResultFmtI64
-  (OkFmtI64 i64)
-  (ErrFmtI64 FormatSourceError))
+  (Ok i64)
+  (Err FormatSourceError))
 
 (defenum ResultFmtMaybeCharEnd
-  (NoFmtCharEnd)
-  (OkFmtCharEnd i64)
-  (ErrFmtCharEnd FormatSourceError))
+  (No)
+  (Ok i64)
+  (Err FormatSourceError))
 
 (define (fmt-tag-lparen) : i64
   1)
@@ -107,41 +107,41 @@
 
 (define (format-token-tag [tok : FormatToken]) : i64
   (match tok
-    [(FmtLParen) (fmt-tag-lparen)]
-    [(FmtRParen) (fmt-tag-rparen)]
-    [(FmtLBracket) (fmt-tag-lbracket)]
-    [(FmtRBracket) (fmt-tag-rbracket)]
-    [(FmtColon) (fmt-tag-colon)]
-    [(FmtQuote) (fmt-tag-quote)]
-    [(FmtBacktick) (fmt-tag-backtick)]
-    [(FmtDot) (fmt-tag-dot)]
-    [(FmtComma) (fmt-tag-comma)]
-    [(FmtCommaAt) (fmt-tag-comma-at)]
-    [(FmtInt _) (fmt-tag-int)]
-    [(FmtSymbol _) (fmt-tag-symbol)]
-    [(FmtString _) (fmt-tag-string)]
-    [(FmtChar _) (fmt-tag-char)]
-    [(FmtComment _) (fmt-tag-comment)]
-    [(FmtEnd) (fmt-tag-end)]))
+    [(FormatToken.LParen) (fmt-tag-lparen)]
+    [(FormatToken.RParen) (fmt-tag-rparen)]
+    [(FormatToken.LBracket) (fmt-tag-lbracket)]
+    [(FormatToken.RBracket) (fmt-tag-rbracket)]
+    [(FormatToken.Colon) (fmt-tag-colon)]
+    [(FormatToken.Quote) (fmt-tag-quote)]
+    [(FormatToken.Backtick) (fmt-tag-backtick)]
+    [(FormatToken.Dot) (fmt-tag-dot)]
+    [(FormatToken.Comma) (fmt-tag-comma)]
+    [(FormatToken.CommaAt) (fmt-tag-comma-at)]
+    [(FormatToken.Int _) (fmt-tag-int)]
+    [(FormatToken.Symbol _) (fmt-tag-symbol)]
+    [(FormatToken.String _) (fmt-tag-string)]
+    [(FormatToken.Char _) (fmt-tag-char)]
+    [(FormatToken.Comment _) (fmt-tag-comment)]
+    [(FormatToken.End) (fmt-tag-end)]))
 
 (define (format-token-text [tok : FormatToken]) : String
   (match tok
-    [(FmtLParen) "("]
-    [(FmtRParen) ")"]
-    [(FmtLBracket) "["]
-    [(FmtRBracket) "]"]
-    [(FmtColon) ":"]
-    [(FmtQuote) "'"]
-    [(FmtBacktick) "`"]
-    [(FmtDot) "."]
-    [(FmtComma) ","]
-    [(FmtCommaAt) ",@"]
-    [(FmtInt text) text]
-    [(FmtSymbol text) text]
-    [(FmtString text) text]
-    [(FmtChar text) text]
-    [(FmtComment text) text]
-    [(FmtEnd) ""]))
+    [(FormatToken.LParen) "("]
+    [(FormatToken.RParen) ")"]
+    [(FormatToken.LBracket) "["]
+    [(FormatToken.RBracket) "]"]
+    [(FormatToken.Colon) ":"]
+    [(FormatToken.Quote) "'"]
+    [(FormatToken.Backtick) "`"]
+    [(FormatToken.Dot) "."]
+    [(FormatToken.Comma) ","]
+    [(FormatToken.CommaAt) ",@"]
+    [(FormatToken.Int text) text]
+    [(FormatToken.Symbol text) text]
+    [(FormatToken.String text) text]
+    [(FormatToken.Char text) text]
+    [(FormatToken.Comment text) text]
+    [(FormatToken.End) ""]))
 
 (define (format-token-at [stream : FormatTokenStream] [idx : i64]) : FormatToken
   (array-ref (struct-get stream tokens) idx))
@@ -402,7 +402,7 @@
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (fmt-scan-based-int-end data value-start n base)]
     (if (= end value-start)
-      (ErrFmtI64
+      (ResultFmtI64.Err
         (fmt-source-error-at
           src
           start
@@ -410,12 +410,12 @@
       (if (if (< end n)
         (fmt-char-class? (fmt-source-byte-bounds-proven data end) 4)
         false)
-        (ErrFmtI64
+        (ResultFmtI64.Err
           (fmt-source-error-at
             src
             start
             "format lexer: malformed integer literal"))
-        (OkFmtI64 end)))))
+        (ResultFmtI64.Ok end)))))
 
 (define (fmt-scan-prefixed-number-end
   [src : String]
@@ -423,8 +423,8 @@
   [start : i64]
   [n : i64]) : i64
   (match (fmt-scan-prefixed-number-end-result src data start n)
-    [(OkFmtI64 end) end]
-    [(ErrFmtI64 err) (io.panic (format-source-error-message err))]))
+    [(ResultFmtI64.Ok end) end]
+    [(ResultFmtI64.Err err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-scan-decimal-number-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -456,7 +456,7 @@
   [n : i64]) : ResultFmtI64
   (if (fmt-number-prefixed? data start n)
     (fmt-scan-prefixed-number-end-result src data start n)
-    (OkFmtI64 (fmt-scan-decimal-number-end data start n))))
+    (ResultFmtI64.Ok (fmt-scan-decimal-number-end data start n))))
 
 (define (fmt-scan-number-end
   [src : String]
@@ -464,8 +464,8 @@
   [start : i64]
   [n : i64]) : i64
   (match (fmt-scan-number-end-result src data start n)
-    [(OkFmtI64 end) end]
-    [(ErrFmtI64 err) (io.panic (format-source-error-message err))]))
+    [(ResultFmtI64.Ok end) end]
+    [(ResultFmtI64.Err err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-scan-symbol-end [data : (Ptr u8)] [start : i64] [n : i64]) : i64
   (let
@@ -522,12 +522,12 @@
                   (set! keep false))]
               [else (set! j (+ j 1))]))
           (return
-            (ErrFmtI64
+            (ResultFmtI64.Err
               (fmt-source-error-at
                 src
                 (- start 1)
                 "format lexer: unterminated string literal")))))
-      (OkFmtI64 j))))
+      (ResultFmtI64.Ok j))))
 
 (define (fmt-scan-string-end
   [src : String]
@@ -535,8 +535,8 @@
   [start : i64]
   [n : i64]) : i64
   (match (fmt-scan-string-end-result src data start n)
-    [(OkFmtI64 end) end]
-    [(ErrFmtI64 err) (io.panic (format-source-error-message err))]))
+    [(ResultFmtI64.Ok end) end]
+    [(ResultFmtI64.Err err) (io.panic (format-source-error-message err))]))
 
 (define (fmt-apostrophe-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -548,10 +548,10 @@
   [n : i64]) : ResultFmtMaybeCharEnd
   (if (< idx n)
     (if (= (fmt-source-byte-bounds-proven data idx) '\'')
-      (OkFmtCharEnd (+ idx 1))
-      (ErrFmtCharEnd
+      (ResultFmtMaybeCharEnd.Ok (+ idx 1))
+      (ResultFmtMaybeCharEnd.Err
         (fmt-source-error-at src idx "format lexer: expected ' after character")))
-    (ErrFmtCharEnd
+    (ResultFmtMaybeCharEnd.Err
       (fmt-source-error-at
         src
         (- idx 1)
@@ -573,24 +573,25 @@
               (if (fmt-apostrophe-escape?
                 (fmt-source-byte-bounds-proven data esc-idx))
                 (fmt-char-close-error src data (+ start 3) n)
-                (ErrFmtCharEnd
+                (ResultFmtMaybeCharEnd.Err
                   (fmt-source-error-at
                     src
                     esc-idx
                     "format lexer: unknown character escape")))
-              (ErrFmtCharEnd
+              (ResultFmtMaybeCharEnd.Err
                 (fmt-source-error-at
                   src
                   start
                   "format lexer: unterminated character literal"))))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (NoFmtCharEnd)]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r'))
+          (ResultFmtMaybeCharEnd.No)]
         [else
           (if (< (+ start 2) n)
             (if (= (fmt-source-byte-bounds-proven data (+ start 2)) '\'')
-              (OkFmtCharEnd (+ start 3))
-              (NoFmtCharEnd))
-            (NoFmtCharEnd))]))
-    (NoFmtCharEnd)))
+              (ResultFmtMaybeCharEnd.Ok (+ start 3))
+              (ResultFmtMaybeCharEnd.No))
+            (ResultFmtMaybeCharEnd.No))]))
+    (ResultFmtMaybeCharEnd.No)))
 
 (define (fmt-store-token
   [tokens : (Array FormatToken)]
@@ -643,7 +644,7 @@
     [tokens : (Array FormatToken) (make-array FormatToken 1)]
     [starts : (Array i64) (make-array i64 1)]
     (begin
-      (fmt-store-token tokens starts 0 0 (FmtEnd))
+      (fmt-store-token tokens starts 0 0 (FormatToken.End))
       (FormatTokenStream "" tokens starts 1))))
 
 (define (format-lex-result [src : String]) : ResultFormatTokenStream
@@ -683,108 +684,131 @@
                       starts
                       count
                       i
-                      (FmtComment (string.substring src i (- end i))))
+                      (FormatToken.Comment (string.substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [(= c '(')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtLParen))
+                  (fmt-store-token tokens starts count i (FormatToken.LParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ')')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtRParen))
+                  (fmt-store-token tokens starts count i (FormatToken.RParen))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c '[')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtLBracket))
+                  (fmt-store-token tokens starts count i (FormatToken.LBracket))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ']')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtRBracket))
+                  (fmt-store-token tokens starts count i (FormatToken.RBracket))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ':')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtColon))
+                  (fmt-store-token tokens starts count i (FormatToken.Colon))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c '\'')
                 (match (fmt-scan-apostrophe-char-end-result src data i n)
-                  [(OkFmtCharEnd end)
+                  [(ResultFmtMaybeCharEnd.Ok end)
                     (begin
                       (fmt-store-token
                         tokens
                         starts
                         count
                         i
-                        (FmtChar (string.substring src i (- end i))))
+                        (FormatToken.Char (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
-                  [(ErrFmtCharEnd err) (return (ErrFormatTokenStream err))]
-                  [(NoFmtCharEnd)
+                  [(ResultFmtMaybeCharEnd.Err err)
+                    (return (ResultFormatTokenStream.Err err))]
+                  [(ResultFmtMaybeCharEnd.No)
                     (begin
-                      (fmt-store-token tokens starts count i (FmtQuote))
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FormatToken.Quote))
                       (set! count (+ count 1))
                       (set! i (+ i 1)))])]
               [(= c '`')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtBacktick))
+                  (fmt-store-token tokens starts count i (FormatToken.Backtick))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(fmt-starts-ellipsis data i n)
                 (begin
-                  (fmt-store-token tokens starts count i (FmtSymbol "..."))
+                  (fmt-store-token
+                    tokens
+                    starts
+                    count
+                    i
+                    (FormatToken.Symbol "..."))
                   (set! count (+ count 1))
                   (set! i (+ i 3)))]
               [(= c '.')
                 (begin
-                  (fmt-store-token tokens starts count i (FmtDot))
+                  (fmt-store-token tokens starts count i (FormatToken.Dot))
                   (set! count (+ count 1))
                   (set! i (+ i 1)))]
               [(= c ',')
                 (if (< (+ i 1) n)
                   (if (= (fmt-source-byte-bounds-proven data (+ i 1)) '@')
                     (begin
-                      (fmt-store-token tokens starts count i (FmtCommaAt))
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FormatToken.CommaAt))
                       (set! count (+ count 1))
                       (set! i (+ i 2)))
                     (begin
-                      (fmt-store-token tokens starts count i (FmtComma))
+                      (fmt-store-token
+                        tokens
+                        starts
+                        count
+                        i
+                        (FormatToken.Comma))
                       (set! count (+ count 1))
                       (set! i (+ i 1))))
                   (begin
-                    (fmt-store-token tokens starts count i (FmtComma))
+                    (fmt-store-token tokens starts count i (FormatToken.Comma))
                     (set! count (+ count 1))
                     (set! i (+ i 1))))]
               [(= c '"')
                 (match (fmt-scan-string-end-result src data (+ i 1) n)
-                  [(OkFmtI64 end)
+                  [(ResultFmtI64.Ok end)
                     (begin
                       (fmt-store-token
                         tokens
                         starts
                         count
                         i
-                        (FmtString (string.substring src i (- end i))))
+                        (FormatToken.String (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
-                  [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
+                  [(ResultFmtI64.Err err)
+                    (return (ResultFormatTokenStream.Err err))])]
               [(fmt-starts-number data i n)
                 (match (fmt-scan-number-end-result src data i n)
-                  [(OkFmtI64 end)
+                  [(ResultFmtI64.Ok end)
                     (begin
                       (fmt-store-token
                         tokens
                         starts
                         count
                         i
-                        (FmtInt (string.substring src i (- end i))))
+                        (FormatToken.Int (string.substring src i (- end i))))
                       (set! count (+ count 1))
                       (set! i end))]
-                  [(ErrFmtI64 err) (return (ErrFormatTokenStream err))])]
+                  [(ResultFmtI64.Err err)
+                    (return (ResultFormatTokenStream.Err err))])]
               [(fmt-char-class? c 4)
                 (let
                   [end : i64 (fmt-scan-symbol-end data i n)]
@@ -794,12 +818,12 @@
                       starts
                       count
                       i
-                      (FmtSymbol (string.substring src i (- end i))))
+                      (FormatToken.Symbol (string.substring src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end)))]
               [else
                 (return
-                  (ErrFormatTokenStream
+                  (ResultFormatTokenStream.Err
                     (fmt-source-error-at
                       src
                       i
@@ -812,10 +836,12 @@
             (set! starts (fmt-grow-i64-array starts count newcap))
             (set! cap newcap)))
         unit)
-      (fmt-store-token tokens starts count n (FmtEnd))
-      (OkFormatTokenStream (FormatTokenStream src tokens starts (+ count 1))))))
+      (fmt-store-token tokens starts count n (FormatToken.End))
+      (ResultFormatTokenStream.Ok
+        (FormatTokenStream src tokens starts (+ count 1))))))
 
 (define (format-lex [src : String]) : FormatTokenStream
   (match (format-lex-result src)
-    [(OkFormatTokenStream stream) stream]
-    [(ErrFormatTokenStream err) (io.panic (format-source-error-message err))]))
+    [(ResultFormatTokenStream.Ok stream) stream]
+    [(ResultFormatTokenStream.Err err)
+      (io.panic (format-source-error-message err))]))

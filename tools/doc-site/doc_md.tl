@@ -17,35 +17,35 @@
 (import (vector String) as svec)
 
 (defenum MdTableRow
-  (MdTableRow svec.Vec))
+  (Row svec.Vec))
 
 (vector-family MdTableRow MdTableRowList md-table-row-list)
 
 (defenum MdBlock
-  (MdHeading i64 String)
-  (MdParagraph String)
-  (MdBlockquote svec.Vec)
-  (MdBulletList svec.Vec)
-  (MdNumberedList svec.Vec)
-  (MdCodeFence String String String)
-  (MdTable svec.Vec MdTableRowList)
-  (MdBlank))
+  (Heading i64 String)
+  (Paragraph String)
+  (Blockquote svec.Vec)
+  (BulletList svec.Vec)
+  (NumberedList svec.Vec)
+  (CodeFence String String String)
+  (Table svec.Vec MdTableRowList)
+  (Blank))
 
 (vector-family MdBlock MdBlockList md-block-list)
 
 (defenum MdScanBlock
-  (MdScanBlock i64 MdBlock))
+  (Block i64 MdBlock))
 
 (defenum MdScanRows
-  (MdScanRows i64 MdTableRowList))
+  (Rows i64 MdTableRowList))
 
 (defenum MdMaybeBlock
-  (MdNoBlock)
-  (MdSomeBlock MdBlock))
+  (No)
+  (Some MdBlock))
 
 (defenum MdMaybeString
-  (MdNoString)
-  (MdSomeString String))
+  (No)
+  (Some String))
 
 (define (md-table-row-list-empty) : MdTableRowList
   (md-table-row-list-new))
@@ -54,7 +54,7 @@
   (md-table-row-list-len (& items)))
 
 (define (md-table-row-list-ref [items : MdTableRowList] [index : i64]) : MdTableRow
-  (md-table-row-list-get (& items) index (MdTableRow (svec.new))))
+  (md-table-row-list-get (& items) index (MdTableRow.Row (svec.new))))
 
 (define (md-block-list-empty) : MdBlockList
   (md-block-list-new))
@@ -69,16 +69,16 @@
   (if (if (>= index 0)
     (< index (svec.len (& items)))
     false)
-    (MdSomeString (svec.get (& items) index ""))
-    MdNoString))
+    (MdMaybeString.Some (svec.get (& items) index ""))
+    MdMaybeString.No))
 
 (define (md-string-list-ref-eq?
   [items : svec.Vec]
   [index : i64]
   [expected : String]) : bool
   (match (md-string-list-ref items index)
-    [(MdSomeString actual) (string-eq actual expected)]
-    [(MdNoString) false]))
+    [(MdMaybeString.Some actual) (string-eq actual expected)]
+    [(MdMaybeString.No) false]))
 
 (define (md-string-list-eq2?
   [items : svec.Vec]
@@ -94,7 +94,7 @@
   [first : String]
   [second : String]) : bool
   (match row
-    [(MdTableRow cells) (md-string-list-eq2? cells first second)]))
+    [(MdTableRow.Row cells) (md-string-list-eq2? cells first second)]))
 
 (define (md-table-row-list-eq1?
   [rows : MdTableRowList]
@@ -108,8 +108,8 @@
   (if (if (>= index 0)
     (< index (md-block-list-count items))
     false)
-    (MdSomeBlock (md-block-list-get (& items) index MdBlank))
-    MdNoBlock))
+    (MdMaybeBlock.Some (md-block-list-get (& items) index MdBlock.Blank))
+    MdMaybeBlock.No))
 
 (define (md-check-heading?
   [blocks : MdBlockList]
@@ -117,31 +117,31 @@
   [level : i64]
   [text : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdHeading actual-level actual-text)
+        [(MdBlock.Heading actual-level actual-text)
           (and (= actual-level level) (string-eq actual-text text))]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-blank? [blocks : MdBlockList] [index : i64]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdBlank) true]
+        [(MdBlock.Blank) true]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-paragraph?
   [blocks : MdBlockList]
   [index : i64]
   [text : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdParagraph actual) (string-eq actual text)]
+        [(MdBlock.Paragraph actual) (string-eq actual text)]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-blockquote2?
   [blocks : MdBlockList]
@@ -149,11 +149,11 @@
   [first : String]
   [second : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdBlockquote lines) (md-string-list-eq2? lines first second)]
+        [(MdBlock.Blockquote lines) (md-string-list-eq2? lines first second)]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-bullet-list2?
   [blocks : MdBlockList]
@@ -161,11 +161,11 @@
   [first : String]
   [second : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdBulletList items) (md-string-list-eq2? items first second)]
+        [(MdBlock.BulletList items) (md-string-list-eq2? items first second)]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-numbered-list2?
   [blocks : MdBlockList]
@@ -173,11 +173,11 @@
   [first : String]
   [second : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdNumberedList items) (md-string-list-eq2? items first second)]
+        [(MdBlock.NumberedList items) (md-string-list-eq2? items first second)]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-code-fence?
   [blocks : MdBlockList]
@@ -186,15 +186,15 @@
   [meta : String]
   [body : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdCodeFence actual-lang actual-meta actual-body)
+        [(MdBlock.CodeFence actual-lang actual-meta actual-body)
           (and
             (string-eq actual-lang lang)
             (string-eq actual-meta meta)
             (string-eq actual-body body))]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-check-table1?
   [blocks : MdBlockList]
@@ -204,14 +204,14 @@
   [row-first : String]
   [row-second : String]) : bool
   (match (md-block-list-ref blocks index)
-    [(MdSomeBlock block)
+    [(MdMaybeBlock.Some block)
       (match block
-        [(MdTable header rows)
+        [(MdBlock.Table header rows)
           (and
             (md-string-list-eq2? header header-first header-second)
             (md-table-row-list-eq1? rows row-first row-second))]
         [_ false])]
-    [(MdNoBlock) false]))
+    [(MdMaybeBlock.No) false]))
 
 (define (md-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -535,9 +535,12 @@
             (begin
               (set! body (string-concat3 body body-line "\n"))
               (set! scan-pos body-next)))))
-      (MdScanBlock
+      (MdScanBlock.Block
         scan-pos
-        (MdCodeFence (md-code-info-lang info) (md-code-info-meta info) body)))))
+        (MdBlock.CodeFence
+          (md-code-info-lang info)
+          (md-code-info-meta info)
+          body)))))
 
 (define (md-scan-blockquote [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -555,7 +558,7 @@
               (svec.push (&mut items) (md-blockquote-text line))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanBlock scan-pos (MdBlockquote items)))))
+      (MdScanBlock.Block scan-pos (MdBlock.Blockquote items)))))
 
 (define (md-scan-bullet-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -573,7 +576,7 @@
               (svec.push (&mut items) (md-bullet-text line))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanBlock scan-pos (MdBulletList items)))))
+      (MdScanBlock.Block scan-pos (MdBlock.BulletList items)))))
 
 (define (md-scan-numbered-list [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -591,7 +594,7 @@
               (svec.push (&mut items) (md-numbered-text line))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanBlock scan-pos (MdNumberedList items)))))
+      (MdScanBlock.Block scan-pos (MdBlock.NumberedList items)))))
 
 (define (md-scan-table-rows [src : String] [pos : i64] [n : i64]) : MdScanRows
   (let
@@ -608,10 +611,10 @@
             (begin
               (md-table-row-list-push
                 (&mut rows)
-                (MdTableRow (md-split-pipe-row line)))
+                (MdTableRow.Row (md-split-pipe-row line)))
               (set! scan-pos next))
             (set! done true))))
-      (MdScanRows scan-pos rows))))
+      (MdScanRows.Rows scan-pos rows))))
 
 (define (md-scan-table [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -621,8 +624,10 @@
     [delimiter-end : i64 (md-line-end src delimiter-pos n)]
     [body-pos : i64 (md-next-line-start src delimiter-end n)]
     (match (md-scan-table-rows src body-pos n)
-      [(MdScanRows next rows)
-        (MdScanBlock next (MdTable (md-split-pipe-row header-line) rows))])))
+      [(MdScanRows.Rows next rows)
+        (MdScanBlock.Block
+          next
+          (MdBlock.Table (md-split-pipe-row header-line) rows))])))
 
 (define (md-scan-paragraph [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -644,7 +649,7 @@
                   (md-trim line)
                   (str-cat text " " (md-trim line))))
               (set! scan-pos next)))))
-      (MdScanBlock scan-pos (MdParagraph text)))))
+      (MdScanBlock.Block scan-pos (MdBlock.Paragraph text)))))
 
 (define (md-scan-block-at [src : String] [pos : i64] [n : i64]) : MdScanBlock
   (let
@@ -653,10 +658,12 @@
     [next : i64 (md-next-line-start src line-end n)]
     [level : i64 (md-heading-level line)]
     (cond
-      [(md-blank-line? line) (MdScanBlock next (MdBlank))]
+      [(md-blank-line? line) (MdScanBlock.Block next (MdBlock.Blank))]
       [(md-code-fence-start? line) (md-scan-code-fence src pos n)]
       [(> level 0)
-        (MdScanBlock next (MdHeading level (md-heading-text line level)))]
+        (MdScanBlock.Block
+          next
+          (MdBlock.Heading level (md-heading-text line level)))]
       [(md-table-start-at? src pos n) (md-scan-table src pos n)]
       [(md-blockquote-start? line) (md-scan-blockquote src pos n)]
       [(md-bullet-start? line) (md-scan-bullet-list src pos n)]
@@ -671,7 +678,7 @@
     (begin
       (while (< pos n)
         (match (md-scan-block-at src pos n)
-          [(MdScanBlock next block)
+          [(MdScanBlock.Block next block)
             (begin
               (md-block-list-push (&mut blocks) block)
               (set! pos next))]))
@@ -886,7 +893,7 @@
 
 (define (md-render-table-row [row : MdTableRow]) : String
   (match row
-    [(MdTableRow cells)
+    [(MdTableRow.Row cells)
       (str-cat "<tr>" (md-render-table-data-cells cells) "</tr>\n")]))
 
 (define (md-render-table-rows-from [rows : MdTableRowList] [index : i64]) : String
@@ -909,20 +916,20 @@
 
 (define (md-render-block [block : MdBlock]) : String
   (match block
-    [(MdHeading level text) (md-render-heading level text)]
-    [(MdParagraph text) (md-render-paragraph text)]
-    [(MdBlockquote lines) (md-render-blockquote lines)]
-    [(MdBulletList items) (md-render-bullet-list items)]
-    [(MdNumberedList items) (md-render-numbered-list items)]
-    [(MdCodeFence lang meta body) (md-render-code-fence lang meta body)]
-    [(MdTable header rows) (md-render-table header rows)]
-    [(MdBlank) ""]))
+    [(MdBlock.Heading level text) (md-render-heading level text)]
+    [(MdBlock.Paragraph text) (md-render-paragraph text)]
+    [(MdBlock.Blockquote lines) (md-render-blockquote lines)]
+    [(MdBlock.BulletList items) (md-render-bullet-list items)]
+    [(MdBlock.NumberedList items) (md-render-numbered-list items)]
+    [(MdBlock.CodeFence lang meta body) (md-render-code-fence lang meta body)]
+    [(MdBlock.Table header rows) (md-render-table header rows)]
+    [(MdBlock.Blank) ""]))
 
 (define (md-render-blocks-from [blocks : MdBlockList] [index : i64]) : String
   (if (>= index (md-block-list-count blocks))
     ""
     (str-cat
-      (md-render-block (md-block-list-get (& blocks) index MdBlank))
+      (md-render-block (md-block-list-get (& blocks) index MdBlock.Blank))
       (md-render-blocks-from blocks (+ index 1)))))
 
 (define (md-render-blocks [blocks : MdBlockList]) : String
@@ -980,7 +987,7 @@
         (return 109))
       (unless
         (md-string-contains?
-          (md-render-block (MdHeading 6 "Deep Heading"))
+          (md-render-block (MdBlock.Heading 6 "Deep Heading"))
           "<h6 id=\"tl-Deep-32Heading\">Deep Heading</h6>\n")
         (return 110))
       (unless

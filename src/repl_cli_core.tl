@@ -33,19 +33,19 @@
 (import stdlib.string)
 
 (defenum ReplTypeCommand
-  (ReplNoTypeCommand)
-  (ReplTypeCommandExpr String))
+  (No)
+  (Expr String))
 
 (defenum ReplLineResult
-  (ReplLineResult String String))
+  (Line String String))
 
 (defenum ResultReplString
-  (OkReplString String)
-  (ErrReplString String))
+  (Ok String)
+  (Err String))
 
 (defenum ResultReplDeclList
-  (OkReplDeclList AstDeclList)
-  (ErrReplDeclList String))
+  (Ok AstDeclList)
+  (Err String))
 
 (define (repl-banner) : String
   "TypeLisp REPL. Type .help for commands.\n")
@@ -151,11 +151,11 @@
 (define (repl-type-command [line : String]) : ReplTypeCommand
   (if (repl-string-prefix? line ".type")
     (if (= (string.string-length line) 5)
-      (ReplTypeCommandExpr "")
+      (ReplTypeCommand.Expr "")
       (if (repl-space? (string.string-ref line 5))
-        (ReplTypeCommandExpr (repl-trim-left-from line 5))
-        (ReplNoTypeCommand)))
-    (ReplNoTypeCommand)))
+        (ReplTypeCommand.Expr (repl-trim-left-from line 5))
+        (ReplTypeCommand.No)))
+    (ReplTypeCommand.No)))
 
 (define (repl-type-list-render-spaced [types : AstTypeList]) : String
   (match types
@@ -379,38 +379,38 @@
 (define (repl-display-body [ty : AstType] [expr-source : String]) : ResultReplString
   (match ty
     [(AstTyI64)
-      (OkReplString
+      (ResultReplString.Ok
         (string.string-append
           "(io.print\n"
           (string.string-append expr-source "\n)")))]
     [(AstTyI32)
-      (OkReplString
+      (ResultReplString.Ok
         (string.string-append
           "(io.print\n(cast\n"
           (string.string-append expr-source "\n: i64)\n)")))]
     [(AstTyBool)
-      (OkReplString
+      (ResultReplString.Ok
         (string.string-append
           "(io.print-bool\n"
           (string.string-append expr-source "\n)")))]
     [(AstTyF64)
-      (OkReplString
+      (ResultReplString.Ok
         (string.string-append
           "(__tl_repl_print_f64\n"
           (string.string-append expr-source "\n)")))]
     [(AstTyChar)
-      (OkReplString
+      (ResultReplString.Ok
         (string.string-append
           "(__tl_repl_print_char\n"
           (string.string-append expr-source "\n)")))]
     [(AstTyString)
-      (OkReplString
+      (ResultReplString.Ok
         (string.string-append
           "(begin\n  (io.print-string\n"
           (string.string-append expr-source "\n  )\n  (io.print-newline))")))]
-    [(AstTyUnit) (OkReplString expr-source)]
+    [(AstTyUnit) (ResultReplString.Ok expr-source)]
     [_
-      (ErrReplString
+      (ResultReplString.Err
         (string.string-append
           "Error: cannot display a value of type "
           (repl-type-render ty)))]))
@@ -425,8 +425,8 @@
   [expr-source : String]
   [ty : AstType]) : ResultReplString
   (match (repl-display-body ty expr-source)
-    [(OkReplString body)
-      (OkReplString
+    [(ResultReplString.Ok body)
+      (ResultReplString.Ok
         (string.string-append
           "(import stdlib.io)\n(import stdlib.string)\n"
           (string.string-append
@@ -436,7 +436,7 @@
               (string.string-append
                 (repl-display-helpers-source ty)
                 (repl-scratch-main-source body))))))]
-    [(ErrReplString message) (ErrReplString message)]))
+    [(ResultReplString.Err message) (ResultReplString.Err message)]))
 
 (define (repl-clean-scratch-source [temp-dir : String] [source-path : String]) : unit
   (begin
@@ -452,14 +452,15 @@
     (repl-session-source-path)
     session-source
     (sym-i64-empty))
-    [(ResultCompilerLoad.Ok decls _) (OkReplDeclList decls)]
+    [(ResultCompilerLoad.Ok decls _) (ResultReplDeclList.Ok decls)]
     [(ResultCompilerLoad.Err diag)
-      (ErrReplDeclList (compiler-diagnostic-message (box-get diag)))]))
+      (ResultReplDeclList.Err (compiler-diagnostic-message (box-get diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : ResultCompilerTypecheck
   (match (repl-load-session-decls session-source)
-    [(OkReplDeclList decls) (typecheck-compiler-program (ast-program decls))]
-    [(ErrReplDeclList message)
+    [(ResultReplDeclList.Ok decls)
+      (typecheck-compiler-program (ast-program decls))]
+    [(ResultReplDeclList.Err message)
       (ErrCompilerTypecheck (box (tc-diag-at-start message)))]))
 
 (define (repl-report-run-status [status : i64]) : unit
@@ -481,11 +482,11 @@
           source-path
           source
           "repl: failed to write scratch source")
-          [(SourceToolCommandErr message)
+          [(SourceToolCommandStatus.Err message)
             (begin
               (repl-print-error-line message)
               (repl-clean-scratch-source temp-dir source-path))]
-          [(SourceToolCommandOk)
+          [(SourceToolCommandStatus.Ok)
             (let
               [status : i64
                 (source-tool-run-source-in-temp
@@ -512,16 +513,16 @@
   [expr-source : String]
   [expr : AstExpr]) : unit
   (match (repl-load-session-decls session-source)
-    [(OkReplDeclList decls)
+    [(ResultReplDeclList.Ok decls)
       (match (typecheck-compiler-repl-expr decls expr)
         [(OkTcType ty)
           (match (repl-scratch-source session-source expr-source ty)
-            [(OkReplString scratch-source)
+            [(ResultReplString.Ok scratch-source)
               (repl-run-scratch-source scratch-source)]
-            [(ErrReplString message) (repl-print-error-line message)])]
+            [(ResultReplString.Err message) (repl-print-error-line message)])]
         [(ErrTcType message)
           (repl-print-error-line (string.string-append "Error: " message))])]
-    [(ErrReplDeclList message)
+    [(ResultReplDeclList.Err message)
       (repl-print-error-line (string.string-append "Error: " message))]))
 
 (define (repl-handle-type-command
@@ -537,13 +538,13 @@
               "Error: .type expects an expression, got a declaration")]
           [(AstReplExpr expr)
             (match (repl-load-session-decls session-source)
-              [(OkReplDeclList decls)
+              [(ResultReplDeclList.Ok decls)
                 (match (typecheck-compiler-repl-expr decls (ast-node-get expr))
                   [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
                   [(ErrTcType message)
                     (repl-print-error-line
                       (string.string-append "Error: " message))])]
-              [(ErrReplDeclList message)
+              [(ResultReplDeclList.Err message)
                 (repl-print-error-line (string.string-append "Error: " message))])])]
       [(ErrAstReplItem message)
         (repl-print-error-line (string.string-append "Error: " message))])))
@@ -778,8 +779,8 @@
   (let
     [next-pending : String (repl-append-pending pending line)]
     (if (repl-input-complete? next-pending)
-      (ReplLineResult (repl-handle-input session-source next-pending) "")
-      (ReplLineResult session-source next-pending))))
+      (ReplLineResult.Line (repl-handle-input session-source next-pending) "")
+      (ReplLineResult.Line session-source next-pending))))
 
 ;; Handle one non-`.exit` command line. When a multiline input is pending, all
 ;; following lines are treated as source until the form is complete.
@@ -789,23 +790,23 @@
   [line : String]) : ReplLineResult
   (if (string.string-eq pending "")
     (if (string.string-eq line "")
-      (ReplLineResult session-source "")
+      (ReplLineResult.Line session-source "")
       (match (repl-type-command line)
-        [(ReplTypeCommandExpr expr-source)
+        [(ReplTypeCommand.Expr expr-source)
           (begin
             (repl-handle-type-command session-source expr-source)
-            (ReplLineResult session-source ""))]
-        [(ReplNoTypeCommand)
+            (ReplLineResult.Line session-source ""))]
+        [(ReplTypeCommand.No)
           (if (string.string-eq line ".help")
             (begin
               (repl-stdout-write (repl-help-text))
-              (ReplLineResult session-source ""))
+              (ReplLineResult.Line session-source ""))
             (if (repl-dot-command? line)
               (begin
                 (repl-stderr-write
                   (string.string-append "Unknown REPL command: " line))
                 (repl-stderr-write "\nType .help for commands.\n")
-                (ReplLineResult session-source ""))
+                (ReplLineResult.Line session-source ""))
               (repl-handle-source-line session-source pending line)))]))
     (repl-handle-source-line session-source pending line)))
 
@@ -837,7 +838,7 @@
               (not (io.stdin-read-eof? line-read)))
               (repl-loop session-source "")
               (match (repl-handle-line session-source pending line)
-                [(ReplLineResult next-session next-pending)
+                [(ReplLineResult.Line next-session next-pending)
                   (repl-loop next-session next-pending)]))))))))
 
 (define (repl-run) : i64
@@ -859,9 +860,9 @@
   (let
     [legacy-newline-call : String "(print-newline"]
     (match (repl-scratch-source "" expr-source ty)
-      [(OkReplString source)
+      [(ResultReplString.Ok source)
         (not (string.string-contains (& source) (& legacy-newline-call)))]
-      [(ErrReplString _) false])))
+      [(ResultReplString.Err _) false])))
 
 (define (repl-scratch-source-stdlib-imports-ok?) : bool
   (let
@@ -870,7 +871,7 @@
     [legacy-tl-import : String "stdlib/tl"]
     [legacy-io-import : String "stdlib/io.tl"]
     (match (repl-scratch-source "" "1" (AstTyI64))
-      [(OkReplString source)
+      [(ResultReplString.Ok source)
         (and
           (string.string-contains (& source) (& io-import))
           (string.string-contains (& source) (& string-import))
@@ -881,7 +882,7 @@
           (repl-scratch-source-no-unqualified-print-newline?
             "\"hi\""
             (AstTyString)))]
-      [(ErrReplString _) false])))
+      [(ResultReplString.Err _) false])))
 
 (test
   repl-scratch-source-stdlib-imports

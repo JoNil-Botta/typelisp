@@ -1,6 +1,6 @@
 (defenum Token
-  (TIdent String)
-  (TEnd))
+  (Ident String)
+  (End))
 
 (define (op-score [op : String]) : i64
   (match op
@@ -10,10 +10,10 @@
 
 (define (token-score [token : Token]) : i64
   (match token
-    [(TIdent "if") 12]
-    [(TIdent "else") 20]
-    [(TIdent _) 5]
-    [(TEnd) 0]))
+    [(Token.Ident "if") 12]
+    [(Token.Ident "else") 20]
+    [(Token.Ident _) 5]
+    [(Token.End) 0]))
 
 (define (main) : i64
   (+
@@ -21,7 +21,7 @@
     (+
       (op-score "/")
       (+
-        (token-score (TIdent "if"))
+        (token-score (Token.Ident "if"))
         (+
-          (token-score (TIdent "while"))
-          (+ (token-score (TEnd)) (op-score "*")))))))
+          (token-score (Token.Ident "while"))
+          (+ (token-score (Token.End)) (op-score "*")))))))

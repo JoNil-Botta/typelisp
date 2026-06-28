@@ -285,7 +285,7 @@
   [index : i64]
   [depth : i64]) : bool
   (match (lint-findings-get findings index)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
@@ -294,20 +294,20 @@
           (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-deprecated-string-concat-id))))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-finding-rule-ok?
   [findings : LintFindings]
   [index : i64]
   [rule-id : String]) : bool
   (match (lint-findings-get findings index)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (> (struct-get fspan start-line) 0)
           (string.string-eq (struct-get finding rule-id) rule-id)))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-finding-rule-line-ok?
   [findings : LintFindings]
@@ -315,13 +315,13 @@
   [rule-id : String]
   [line : i64]) : bool
   (match (lint-findings-get findings index)
-    [(LintSomeFinding finding)
+    [(LintMaybeFinding.Some finding)
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get fspan start-line) line)
           (string.string-eq (struct-get finding rule-id) rule-id)))]
-    [(LintNoFinding) false]))
+    [(LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
   (let

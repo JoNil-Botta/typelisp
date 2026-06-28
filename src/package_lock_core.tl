@@ -17,8 +17,8 @@
   (commit String))
 
 (defenum PackageLockEntryList
-  (PackageLockEntryNil)
-  (PackageLockEntryCons PackageLockEntry (Box PackageLockEntryList)))
+  (Nil)
+  (Cons PackageLockEntry (Box PackageLockEntryList)))
 
 (defstruct PackageLockFile
   (version String)
@@ -29,32 +29,32 @@
   (value String))
 
 (defenum PackageLockMaybeEntry
-  (PackageLockNoEntry)
-  (PackageLockSomeEntry PackageLockEntry))
+  (No)
+  (Some PackageLockEntry))
 
 (defenum ResultPackageLockString
-  (OkPackageLockString String)
-  (ErrPackageLockString String))
+  (Ok String)
+  (Err String))
 
 (defenum ResultPackageLockPinKind
-  (OkPackageLockPinKind PackageCachePinKind)
-  (ErrPackageLockPinKind String))
+  (Ok PackageCachePinKind)
+  (Err String))
 
 (defenum ResultPackageLockPin
-  (OkPackageLockPin PackageLockPin)
-  (ErrPackageLockPin String))
+  (Ok PackageLockPin)
+  (Err String))
 
 (defenum ResultPackageLockEntry
-  (OkPackageLockEntry PackageLockEntry)
-  (ErrPackageLockEntry String))
+  (Ok PackageLockEntry)
+  (Err String))
 
 (defenum ResultPackageLockEntryList
-  (OkPackageLockEntryList PackageLockEntryList)
-  (ErrPackageLockEntryList String))
+  (Ok PackageLockEntryList)
+  (Err String))
 
 (defenum ResultPackageLockFile
-  (OkPackageLockFile PackageLockFile)
-  (ErrPackageLockFile String))
+  (Ok PackageLockFile)
+  (Err String))
 
 (define package-lock-version : String
   "v1")
@@ -113,30 +113,30 @@
 
 (define (package-lock-entry-list-count [entries : PackageLockEntryList]) : i64
   (match entries
-    [(PackageLockEntryNil) 0]
-    [(PackageLockEntryCons _ rest)
+    [(PackageLockEntryList.Nil) 0]
+    [(PackageLockEntryList.Cons _ rest)
       (+ 1 (package-lock-entry-list-count (box-get rest)))]))
 
 (define (package-lock-entry-list-lookup
   [entries : PackageLockEntryList]
   [alias : String]) : PackageLockMaybeEntry
   (match entries
-    [(PackageLockEntryNil) (PackageLockNoEntry)]
-    [(PackageLockEntryCons entry rest)
+    [(PackageLockEntryList.Nil) (PackageLockMaybeEntry.No)]
+    [(PackageLockEntryList.Cons entry rest)
       (if (string.string-eq (struct-get entry alias) alias)
-        (PackageLockSomeEntry entry)
+        (PackageLockMaybeEntry.Some entry)
         (package-lock-entry-list-lookup (box-get rest) alias))]))
 
 (define (package-lock-entry-list-insert
   [entries : PackageLockEntryList]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (match entries
-    [(PackageLockEntryNil)
-      (OkPackageLockEntryList
-        (PackageLockEntryCons entry (box PackageLockEntryNil)))]
-    [(PackageLockEntryCons head rest)
+    [(PackageLockEntryList.Nil)
+      (ResultPackageLockEntryList.Ok
+        (PackageLockEntryList.Cons entry (box PackageLockEntryList.Nil)))]
+    [(PackageLockEntryList.Cons head rest)
       (if (string.string-eq (struct-get head alias) (struct-get entry alias))
-        (ErrPackageLockEntryList
+        (ResultPackageLockEntryList.Err
           (str_cat.str-cat
             "package-lock: duplicate dependency alias `"
             (struct-get entry alias)
@@ -144,34 +144,36 @@
         (if (package-lock-string-less?
           (struct-get entry alias)
           (struct-get head alias))
-          (OkPackageLockEntryList (PackageLockEntryCons entry (box entries)))
+          (ResultPackageLockEntryList.Ok
+            (PackageLockEntryList.Cons entry (box entries)))
           (match (package-lock-entry-list-insert (box-get rest) entry)
-            [(ErrPackageLockEntryList message)
-              (ErrPackageLockEntryList message)]
-            [(OkPackageLockEntryList next)
-              (OkPackageLockEntryList (PackageLockEntryCons head (box next)))])))]))
+            [(ResultPackageLockEntryList.Err message)
+              (ResultPackageLockEntryList.Err message)]
+            [(ResultPackageLockEntryList.Ok next)
+              (ResultPackageLockEntryList.Ok
+                (PackageLockEntryList.Cons head (box next)))])))]))
 
 (define (package-lock-field-string-value [ftail : Sexpr] [fname : String]) : ResultPackageLockString
   (match ftail
-    [(SCons vhead vrest)
+    [(Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(SStr val)
+        [(Sexpr.Str val)
           (match (box-get vrest)
-            [(SNil) (OkPackageLockString val)]
+            [(Sexpr.Nil) (ResultPackageLockString.Ok val)]
             [_
-              (ErrPackageLockString
+              (ResultPackageLockString.Err
                 (str_cat.str-cat
                   "package-lock: field `"
                   fname
                   "` takes a single string value"))])]
         [_
-          (ErrPackageLockString
+          (ResultPackageLockString.Err
             (str_cat.str-cat
               "package-lock: field `"
               fname
               "` must have a string value"))])]
     [_
-      (ErrPackageLockString
+      (ResultPackageLockString.Err
         (str_cat.str-cat
           "package-lock: field `"
           fname
@@ -179,36 +181,39 @@
 
 (define (package-lock-parse-pin-kind [value : String]) : ResultPackageLockPinKind
   (cond
-    [(string.string-eq value "rev") (OkPackageLockPinKind (PackageCachePinRev))]
-    [(string.string-eq value "tag") (OkPackageLockPinKind (PackageCachePinTag))]
+    [(string.string-eq value "rev")
+      (ResultPackageLockPinKind.Ok (PackageCachePinKind.Rev))]
+    [(string.string-eq value "tag")
+      (ResultPackageLockPinKind.Ok (PackageCachePinKind.Tag))]
     [(string.string-eq value "branch")
-      (OkPackageLockPinKind (PackageCachePinBranch))]
+      (ResultPackageLockPinKind.Ok (PackageCachePinKind.Branch))]
     [else
-      (ErrPackageLockPinKind
+      (ResultPackageLockPinKind.Err
         "package-lock: pin kind must be `rev`, `tag`, or `branch`")]))
 
 (define (package-lock-pin-shape-error) : ResultPackageLockPin
-  (ErrPackageLockPin "package-lock: pin must be `(rev|tag|branch \"value\")`"))
+  (ResultPackageLockPin.Err
+    "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
 (define (package-lock-pin-form [form : Sexpr]) : ResultPackageLockPin
   (match form
-    [(SCons kind-node kind-tail)
+    [(Sexpr.Cons kind-node kind-tail)
       (match (box-get kind-node)
-        [(SSym kind-name)
+        [(Sexpr.Sym kind-name)
           (match (box-get kind-tail)
-            [(SCons value-node end)
+            [(Sexpr.Cons value-node end)
               (match (box-get end)
-                [(SNil)
+                [(Sexpr.Nil)
                   (match (box-get value-node)
-                    [(SStr pin-value)
+                    [(Sexpr.Str pin-value)
                       (if (string.string-eq pin-value "")
-                        (ErrPackageLockPin
+                        (ResultPackageLockPin.Err
                           "package-lock: pin value must not be empty")
                         (match (package-lock-parse-pin-kind kind-name)
-                          [(ErrPackageLockPinKind message)
-                            (ErrPackageLockPin message)]
-                          [(OkPackageLockPinKind pin-kind)
-                            (OkPackageLockPin
+                          [(ResultPackageLockPinKind.Err message)
+                            (ResultPackageLockPin.Err message)]
+                          [(ResultPackageLockPinKind.Ok pin-kind)
+                            (ResultPackageLockPin.Ok
                               (PackageLockPin pin-kind pin-value))]))]
                     [_ (package-lock-pin-shape-error)])]
                 [_ (package-lock-pin-shape-error)])]
@@ -218,11 +223,12 @@
 
 (define (package-lock-field-pin-value [ftail : Sexpr]) : ResultPackageLockPin
   (match ftail
-    [(SCons pin-form after-pin)
+    [(Sexpr.Cons pin-form after-pin)
       (match (box-get after-pin)
-        [(SNil) (package-lock-pin-form (box-get pin-form))]
-        [_ (ErrPackageLockPin "package-lock: field `pin` takes one value")])]
-    [_ (ErrPackageLockPin "package-lock: field `pin` takes one value")]))
+        [(Sexpr.Nil) (package-lock-pin-form (box-get pin-form))]
+        [_
+          (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")])]
+    [_ (ResultPackageLockPin.Err "package-lock: field `pin` takes one value")]))
 
 (define (package-lock-entry-fields
   [fields : Sexpr]
@@ -236,50 +242,51 @@
   [commit : String]
   [has-commit : bool]) : ResultPackageLockEntry
   (match fields
-    [(SNil)
+    [(Sexpr.Nil)
       (cond
         [(not has-alias)
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency missing required field `alias`")]
         [(not has-url)
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency missing required field `url`")]
         [(not has-pin)
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency missing required field `pin`")]
         [(not has-commit)
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency missing required field `commit`")]
         [(string.string-eq alias "")
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency alias must not be empty")]
         [(not (package-lock-alias-token-valid? alias))
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string.string-eq url "")
-          (ErrPackageLockEntry "package-lock: dependency url must not be empty")]
+          (ResultPackageLockEntry.Err
+            "package-lock: dependency url must not be empty")]
         [(string.string-eq commit "")
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency commit must not be empty")]
         [else
-          (OkPackageLockEntry
+          (ResultPackageLockEntry.Ok
             (PackageLockEntry alias url pin-kind pin-value commit))])]
-    [(SCons field rest)
+    [(Sexpr.Cons field rest)
       (match (box-get field)
-        [(SCons fhead ftail)
+        [(Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(SSym fname)
+            [(Sexpr.Sym fname)
               (cond
                 [(string.string-eq fname "alias")
                   (if has-alias
-                    (ErrPackageLockEntry
+                    (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `alias`")
                     (match (package-lock-field-string-value
                       (box-get ftail)
                       fname)
-                      [(ErrPackageLockString message)
-                        (ErrPackageLockEntry message)]
-                      [(OkPackageLockString value)
+                      [(ResultPackageLockString.Err message)
+                        (ResultPackageLockEntry.Err message)]
+                      [(ResultPackageLockString.Ok value)
                         (package-lock-entry-fields
                           (box-get rest)
                           value
@@ -293,14 +300,14 @@
                           has-commit)]))]
                 [(string.string-eq fname "url")
                   (if has-url
-                    (ErrPackageLockEntry
+                    (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `url`")
                     (match (package-lock-field-string-value
                       (box-get ftail)
                       fname)
-                      [(ErrPackageLockString message)
-                        (ErrPackageLockEntry message)]
-                      [(OkPackageLockString value)
+                      [(ResultPackageLockString.Err message)
+                        (ResultPackageLockEntry.Err message)]
+                      [(ResultPackageLockString.Ok value)
                         (package-lock-entry-fields
                           (box-get rest)
                           alias
@@ -314,12 +321,12 @@
                           has-commit)]))]
                 [(string.string-eq fname "pin")
                   (if has-pin
-                    (ErrPackageLockEntry
+                    (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `pin`")
                     (match (package-lock-field-pin-value (box-get ftail))
-                      [(ErrPackageLockPin message)
-                        (ErrPackageLockEntry message)]
-                      [(OkPackageLockPin pin)
+                      [(ResultPackageLockPin.Err message)
+                        (ResultPackageLockEntry.Err message)]
+                      [(ResultPackageLockPin.Ok pin)
                         (package-lock-entry-fields
                           (box-get rest)
                           alias
@@ -333,14 +340,14 @@
                           has-commit)]))]
                 [(string.string-eq fname "commit")
                   (if has-commit
-                    (ErrPackageLockEntry
+                    (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `commit`")
                     (match (package-lock-field-string-value
                       (box-get ftail)
                       fname)
-                      [(ErrPackageLockString message)
-                        (ErrPackageLockEntry message)]
-                      [(OkPackageLockString value)
+                      [(ResultPackageLockString.Err message)
+                        (ResultPackageLockEntry.Err message)]
+                      [(ResultPackageLockString.Ok value)
                         (package-lock-entry-fields
                           (box-get rest)
                           alias
@@ -353,23 +360,26 @@
                           value
                           true)]))]
                 [else
-                  (ErrPackageLockEntry
+                  (ResultPackageLockEntry.Err
                     (str_cat.str-cat
                       "package-lock: unknown dependency field `"
                       fname
                       "`"))])]
             [_
-              (ErrPackageLockEntry
+              (ResultPackageLockEntry.Err
                 "package-lock: dependency fields must start with a field name")])]
         [_
-          (ErrPackageLockEntry "package-lock: dependency fields must be lists")])]
-    [_ (ErrPackageLockEntry "package-lock: dependency fields must be lists")]))
+          (ResultPackageLockEntry.Err
+            "package-lock: dependency fields must be lists")])]
+    [_
+      (ResultPackageLockEntry.Err
+        "package-lock: dependency fields must be lists")]))
 
 (define (package-lock-entry-from-form [form : Sexpr]) : ResultPackageLockEntry
   (match form
-    [(SCons head rest)
+    [(Sexpr.Cons head rest)
       (match (box-get head)
-        [(SSym name)
+        [(Sexpr.Sym name)
           (if (string.string-eq name "dependency")
             (package-lock-entry-fields
               (box-get rest)
@@ -377,34 +387,37 @@
               false
               ""
               false
-              (PackageCachePinRev)
+              (PackageCachePinKind.Rev)
               ""
               false
               ""
               false)
-            (ErrPackageLockEntry
+            (ResultPackageLockEntry.Err
               "package-lock: dependency entries must start with `dependency`"))]
         [_
-          (ErrPackageLockEntry
+          (ResultPackageLockEntry.Err
             "package-lock: dependency entries must start with `dependency`")])]
-    [_ (ErrPackageLockEntry "package-lock: dependency entries must be lists")]))
+    [_
+      (ResultPackageLockEntry.Err
+        "package-lock: dependency entries must be lists")]))
 
 (define (package-lock-dependencies-entries
   [entries : Sexpr]
   [acc : PackageLockEntryList]) : ResultPackageLockEntryList
   (match entries
-    [(SNil) (OkPackageLockEntryList acc)]
-    [(SCons entry rest)
+    [(Sexpr.Nil) (ResultPackageLockEntryList.Ok acc)]
+    [(Sexpr.Cons entry rest)
       (match (package-lock-entry-from-form (box-get entry))
-        [(ErrPackageLockEntry message) (ErrPackageLockEntryList message)]
-        [(OkPackageLockEntry parsed)
+        [(ResultPackageLockEntry.Err message)
+          (ResultPackageLockEntryList.Err message)]
+        [(ResultPackageLockEntry.Ok parsed)
           (match (package-lock-entry-list-insert acc parsed)
-            [(ErrPackageLockEntryList message)
-              (ErrPackageLockEntryList message)]
-            [(OkPackageLockEntryList next)
+            [(ResultPackageLockEntryList.Err message)
+              (ResultPackageLockEntryList.Err message)]
+            [(ResultPackageLockEntryList.Ok next)
               (package-lock-dependencies-entries (box-get rest) next)])])]
     [_
-      (ErrPackageLockEntryList
+      (ResultPackageLockEntryList.Err
         "package-lock: `dependencies` must contain dependency lists")]))
 
 (define (package-lock-fields
@@ -414,29 +427,31 @@
   [entries : PackageLockEntryList]
   [has-deps : bool]) : ResultPackageLockFile
   (match fields
-    [(SNil)
+    [(Sexpr.Nil)
       (cond
         [(not has-version)
-          (ErrPackageLockFile "package-lock: missing required field `version`")]
+          (ResultPackageLockFile.Err
+            "package-lock: missing required field `version`")]
         [(not (string.string-eq version package-lock-version))
-          (ErrPackageLockFile
+          (ResultPackageLockFile.Err
             (str_cat.str-cat "package-lock: unsupported version `" version "`"))]
         [(not has-deps)
-          (ErrPackageLockFile
+          (ResultPackageLockFile.Err
             "package-lock: missing required field `dependencies`")]
-        [else (OkPackageLockFile (PackageLockFile version entries))])]
-    [(SCons field rest)
+        [else (ResultPackageLockFile.Ok (PackageLockFile version entries))])]
+    [(Sexpr.Cons field rest)
       (match (box-get field)
-        [(SCons fhead ftail)
+        [(Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(SSym fname)
+            [(Sexpr.Sym fname)
               (if (string.string-eq fname "version")
                 (if has-version
-                  (ErrPackageLockFile "package-lock: duplicate field `version`")
+                  (ResultPackageLockFile.Err
+                    "package-lock: duplicate field `version`")
                   (match (package-lock-field-string-value (box-get ftail) fname)
-                    [(ErrPackageLockString message)
-                      (ErrPackageLockFile message)]
-                    [(OkPackageLockString value)
+                    [(ResultPackageLockString.Err message)
+                      (ResultPackageLockFile.Err message)]
+                    [(ResultPackageLockString.Ok value)
                       (package-lock-fields
                         (box-get rest)
                         value
@@ -445,54 +460,55 @@
                         has-deps)]))
                 (if (string.string-eq fname "dependencies")
                   (if has-deps
-                    (ErrPackageLockFile
+                    (ResultPackageLockFile.Err
                       "package-lock: duplicate field `dependencies`")
                     (match (package-lock-dependencies-entries
                       (box-get ftail)
-                      (PackageLockEntryNil))
-                      [(ErrPackageLockEntryList message)
-                        (ErrPackageLockFile message)]
-                      [(OkPackageLockEntryList parsed)
+                      (PackageLockEntryList.Nil))
+                      [(ResultPackageLockEntryList.Err message)
+                        (ResultPackageLockFile.Err message)]
+                      [(ResultPackageLockEntryList.Ok parsed)
                         (package-lock-fields
                           (box-get rest)
                           version
                           has-version
                           parsed
                           true)]))
-                  (ErrPackageLockFile
+                  (ResultPackageLockFile.Err
                     (str_cat.str-cat "package-lock: unknown field `" fname "`"))))]
             [_
-              (ErrPackageLockFile
+              (ResultPackageLockFile.Err
                 "package-lock: fields must start with a field name")])]
-        [_ (ErrPackageLockFile "package-lock: fields must be lists")])]
-    [_ (ErrPackageLockFile "package-lock: fields must be lists")]))
+        [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")])]
+    [_ (ResultPackageLockFile.Err "package-lock: fields must be lists")]))
 
 (define (package-lock-from-form [form : Sexpr]) : ResultPackageLockFile
   (match form
-    [(SCons head rest)
+    [(Sexpr.Cons head rest)
       (match (box-get head)
-        [(SSym name)
+        [(Sexpr.Sym name)
           (if (string.string-eq name "typelisp-lock")
             (package-lock-fields
               (box-get rest)
               ""
               false
-              (PackageLockEntryNil)
+              (PackageLockEntryList.Nil)
               false)
-            (ErrPackageLockFile
+            (ResultPackageLockFile.Err
               (str_cat.str-cat "expected `typelisp-lock` form, got `" name "`")))]
         [_
-          (ErrPackageLockFile
+          (ResultPackageLockFile.Err
             "package-lock: lockfile must start with `typelisp-lock`")])]
     [_
-      (ErrPackageLockFile
+      (ResultPackageLockFile.Err
         "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 
 (define (package-lock-parse [source : String]) : ResultPackageLockFile
   (match (read-result (lex source))
-    [(ErrSexpr message)
-      (ErrPackageLockFile (string.string-append "package-lock: " message))]
-    [(OkSexpr form) (package-lock-from-form form)]))
+    [(ResultSexpr.Err message)
+      (ResultPackageLockFile.Err
+        (string.string-append "package-lock: " message))]
+    [(ResultSexpr.Ok form) (package-lock-from-form form)]))
 
 (define (package-lock-quote-text) : String
   "\"")
@@ -607,8 +623,8 @@
 
 (define (package-lock-emit-entries [entries : PackageLockEntryList]) : String
   (match entries
-    [(PackageLockEntryNil) ""]
-    [(PackageLockEntryCons entry rest)
+    [(PackageLockEntryList.Nil) ""]
+    [(PackageLockEntryList.Cons entry rest)
       (string.string-append
         (package-lock-emit-entry entry)
         (package-lock-emit-entries (box-get rest)))]))
@@ -662,14 +678,14 @@
   [pin-value : String]
   [commit : String]) : bool
   (match (package-lock-entry-list-lookup entries alias)
-    [(PackageLockNoEntry) false]
-    [(PackageLockSomeEntry entry)
+    [(PackageLockMaybeEntry.No) false]
+    [(PackageLockMaybeEntry.Some entry)
       (package-lock-entry-matches? entry alias url kind pin-value commit)]))
 
 (define (package-lock-valid-parse-ok?) : bool
   (match (package-lock-parse (package-lock-valid-source))
-    [(ErrPackageLockFile _) false]
-    [(OkPackageLockFile lock)
+    [(ResultPackageLockFile.Err _) false]
+    [(ResultPackageLockFile.Ok lock)
       (let
         [entries : PackageLockEntryList (struct-get lock entries)]
         (and
@@ -679,32 +695,32 @@
             entries
             "alpha"
             "https://github.com/owner/alpha.git"
-            (PackageCachePinBranch)
+            (PackageCachePinKind.Branch)
             "main"
             "1111111111111111111111111111111111111111")
           (package-lock-list-has-entry?
             entries
             "zeta"
             "https://github.com/owner/zeta.git"
-            (PackageCachePinRev)
+            (PackageCachePinKind.Rev)
             "abcdef0123456789abcdef0123456789abcdef01"
             "abcdef0123456789abcdef0123456789abcdef01")))]))
 
 (define (package-lock-emit-stable-ok?) : bool
   (match (package-lock-parse (package-lock-valid-source))
-    [(ErrPackageLockFile _) false]
-    [(OkPackageLockFile lock)
+    [(ResultPackageLockFile.Err _) false]
+    [(ResultPackageLockFile.Ok lock)
       (string.string-eq
         (package-lock-emit lock)
         (package-lock-expected-emitted))]))
 
 (define (package-lock-round-trip-ok?) : bool
   (match (package-lock-parse (package-lock-valid-source))
-    [(ErrPackageLockFile _) false]
-    [(OkPackageLockFile lock)
+    [(ResultPackageLockFile.Err _) false]
+    [(ResultPackageLockFile.Ok lock)
       (match (package-lock-parse (package-lock-emit lock))
-        [(ErrPackageLockFile _) false]
-        [(OkPackageLockFile again)
+        [(ResultPackageLockFile.Err _) false]
+        [(ResultPackageLockFile.Ok again)
           (let
             [entries : PackageLockEntryList (struct-get again entries)]
             (and
@@ -713,21 +729,21 @@
                 entries
                 "alpha"
                 "https://github.com/owner/alpha.git"
-                (PackageCachePinBranch)
+                (PackageCachePinKind.Branch)
                 "main"
                 "1111111111111111111111111111111111111111")
               (package-lock-list-has-entry?
                 entries
                 "zeta"
                 "https://github.com/owner/zeta.git"
-                (PackageCachePinRev)
+                (PackageCachePinKind.Rev)
                 "abcdef0123456789abcdef0123456789abcdef01"
                 "abcdef0123456789abcdef0123456789abcdef01")))])]))
 
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
   (match (package-lock-parse source)
-    [(ErrPackageLockFile message) (string.string-eq message expected)]
-    [(OkPackageLockFile _) false]))
+    [(ResultPackageLockFile.Err message) (string.string-eq message expected)]
+    [(ResultPackageLockFile.Ok _) false]))
 
 (define (package-lock-rejections-ok?) : bool
   (and

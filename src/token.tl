@@ -21,33 +21,35 @@
 ;;   - The imported `defenum Token` defines ONE nominal type. The importer's
 ;;     `Token` parameters/locals and the `Token` values its lexer constructs all
 ;;     refer to that same type - there is no per-module enum identity.
-;;   - The constructors (`TLParen`, `TInt`, `TSym`, ...) and the accessors'
-;;     `match` arms defined here are usable from the importer as if local.
+;;   - The constructors (`Token.LParen`, `Token.Int`, `Token.Sym`, ...) and the
+;;     accessors' `match` arms defined here are usable from the importer as if
+;;     local.
 ;;   - Because this module declares no `main`, concatenation yields exactly one
 ;;     `main` (the importer's) - no duplicate-symbol clash.
 ;; The token kinds TypeLisp's s-expression surface needs: an opening paren, a
 ;; closing paren, an integer or float literal, a symbol (any operator / keyword / name -
 ;; carries an interned lexeme id), a string literal (`"..."`, carries the
 ;; sliced inner text), a character literal (`'x'`, carries the char),
-;; and an end-of-stream sentinel. `TStr`, `TChar`, and `TFloat` are appended last so the
-;; existing variants/tags keep their stable ordering for every importer.
+;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
+;; are appended last so the existing variants/tags keep their stable ordering
+;; for every importer.
 (import "compiler_intern.tl")
 
 (defenum Token
-  (TLParen)
-  (TRParen)
-  (TInt i64 String)
-  (TSym i64)
-  (TEnd)
-  (TStr String)
-  (TChar char)
-  (TFloat String)
-  (TLBracket)
-  (TRBracket)
-  (TQuote)
-  (TBacktick)
-  (TComma)
-  (TCommaAt))
+  (LParen)
+  (RParen)
+  (Int i64 String)
+  (Sym i64)
+  (End)
+  (Str String)
+  (Char char)
+  (Float String)
+  (LBracket)
+  (RBracket)
+  (Quote)
+  (Backtick)
+  (Comma)
+  (CommaAt))
 
 ;; Source locations are 1-based line/column pairs. The end position is
 ;; exclusive, so a one-character token at line 1 column 1 spans 1:1 -> 1:2.
@@ -100,179 +102,179 @@
 
 ;; Numeric tag for a token kind: a parser's cursor classifies the token under it
 ;; by tag. Exercises `match` over every Token variant, including the
-;; i64-payload `TSym` and the source-preserving `TInt`.
+;; i64-payload `Token.Sym` and the source-preserving `Token.Int`.
 (define (token-tag [t : Token]) : i64
   (match t
-    [(TLParen) 1]
-    [(TRParen) 2]
-    [(TInt _ _) 3]
-    [(TSym _) 4]
-    [(TEnd) 5]
-    [(TStr _) 6]
-    [(TChar _) 7]
-    [(TFloat _) 8]
-    [(TLBracket) 9]
-    [(TRBracket) 10]
-    [(TQuote) 11]
-    [(TBacktick) 12]
-    [(TComma) 13]
-    [(TCommaAt) 14]))
+    [(Token.LParen) 1]
+    [(Token.RParen) 2]
+    [(Token.Int _ _) 3]
+    [(Token.Sym _) 4]
+    [(Token.End) 5]
+    [(Token.Str _) 6]
+    [(Token.Char _) 7]
+    [(Token.Float _) 8]
+    [(Token.LBracket) 9]
+    [(Token.RBracket) 10]
+    [(Token.Quote) 11]
+    [(Token.Backtick) 12]
+    [(Token.Comma) 13]
+    [(Token.CommaAt) 14]))
 
-;; Integer payload of a TInt token (0 for any other kind): projects the literal
+;; Integer payload of `Token.Int` (0 for any other kind): projects the literal
 ;; value back out of the enum, the way a parser reads a numeric literal.
 (define (token-int [t : Token]) : i64
   (match t
-    [(TLParen) 0]
-    [(TRParen) 0]
-    [(TInt v _) v]
-    [(TSym _) 0]
-    [(TEnd) 0]
-    [(TStr _) 0]
-    [(TChar _) 0]
-    [(TFloat _) 0]
-    [(TLBracket) 0]
-    [(TRBracket) 0]
-    [(TQuote) 0]
-    [(TBacktick) 0]
-    [(TComma) 0]
-    [(TCommaAt) 0]))
+    [(Token.LParen) 0]
+    [(Token.RParen) 0]
+    [(Token.Int v _) v]
+    [(Token.Sym _) 0]
+    [(Token.End) 0]
+    [(Token.Str _) 0]
+    [(Token.Char _) 0]
+    [(Token.Float _) 0]
+    [(Token.LBracket) 0]
+    [(Token.RBracket) 0]
+    [(Token.Quote) 0]
+    [(Token.Backtick) 0]
+    [(Token.Comma) 0]
+    [(Token.CommaAt) 0]))
 
-;; Original source spelling of a TInt token (empty string for any other kind).
+;; Original source spelling of `Token.Int` (empty string for any other kind).
 (define (token-int-text [t : Token]) : String
   (match t
-    [(TLParen) ""]
-    [(TRParen) ""]
-    [(TInt _ text) text]
-    [(TSym _) ""]
-    [(TEnd) ""]
-    [(TStr _) ""]
-    [(TChar _) ""]
-    [(TFloat _) ""]
-    [(TLBracket) ""]
-    [(TRBracket) ""]
-    [(TQuote) ""]
-    [(TBacktick) ""]
-    [(TComma) ""]
-    [(TCommaAt) ""]))
+    [(Token.LParen) ""]
+    [(Token.RParen) ""]
+    [(Token.Int _ text) text]
+    [(Token.Sym _) ""]
+    [(Token.End) ""]
+    [(Token.Str _) ""]
+    [(Token.Char _) ""]
+    [(Token.Float _) ""]
+    [(Token.LBracket) ""]
+    [(Token.RBracket) ""]
+    [(Token.Quote) ""]
+    [(Token.Backtick) ""]
+    [(Token.Comma) ""]
+    [(Token.CommaAt) ""]))
 
-;; Symbol intern id of a TSym token (-1 for any other kind): exposes the compact
+;; Symbol intern id of `Token.Sym` (-1 for any other kind): exposes the compact
 ;; lexer representation to callers that can stay id-native.
 (define (token-sym-id [t : Token]) : i64
   (match t
-    [(TLParen) -1]
-    [(TRParen) -1]
-    [(TInt _ _) -1]
-    [(TSym id) id]
-    [(TEnd) -1]
-    [(TStr _) -1]
-    [(TChar _) -1]
-    [(TFloat _) -1]
-    [(TLBracket) -1]
-    [(TRBracket) -1]
-    [(TQuote) -1]
-    [(TBacktick) -1]
-    [(TComma) -1]
-    [(TCommaAt) -1]))
+    [(Token.LParen) -1]
+    [(Token.RParen) -1]
+    [(Token.Int _ _) -1]
+    [(Token.Sym id) id]
+    [(Token.End) -1]
+    [(Token.Str _) -1]
+    [(Token.Char _) -1]
+    [(Token.Float _) -1]
+    [(Token.LBracket) -1]
+    [(Token.RBracket) -1]
+    [(Token.Quote) -1]
+    [(Token.Backtick) -1]
+    [(Token.Comma) -1]
+    [(Token.CommaAt) -1]))
 
-;; Symbol text of a TSym token (the empty string for any other kind): resolves
+;; Symbol text of `Token.Sym` (the empty string for any other kind): resolves
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
 (define (token-sym [t : Token]) : String
   (match t
-    [(TLParen) ""]
-    [(TRParen) ""]
-    [(TInt _ _) ""]
-    [(TSym id) (intern-str id)]
-    [(TEnd) ""]
-    [(TStr _) ""]
-    [(TChar _) ""]
-    [(TFloat _) ""]
-    [(TLBracket) ""]
-    [(TRBracket) ""]
-    [(TQuote) ""]
-    [(TBacktick) ""]
-    [(TComma) ""]
-    [(TCommaAt) ""]))
+    [(Token.LParen) ""]
+    [(Token.RParen) ""]
+    [(Token.Int _ _) ""]
+    [(Token.Sym id) (intern-str id)]
+    [(Token.End) ""]
+    [(Token.Str _) ""]
+    [(Token.Char _) ""]
+    [(Token.Float _) ""]
+    [(Token.LBracket) ""]
+    [(Token.RBracket) ""]
+    [(Token.Quote) ""]
+    [(Token.Backtick) ""]
+    [(Token.Comma) ""]
+    [(Token.CommaAt) ""]))
 
-;; String text of a TStr token (the empty string for any other kind): projects
+;; String text of `Token.Str` (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
-;; parser reads a string-literal datum. Distinct from `token-sym` so a `TStr`
-;; and a `TSym` with the same characters stay distinguishable.
+;; parser reads a string-literal datum. Distinct from `token-sym` so a
+;; `Token.Str` and a `Token.Sym` with the same characters stay distinguishable.
 (define (token-str [t : Token]) : String
   (match t
-    [(TLParen) ""]
-    [(TRParen) ""]
-    [(TInt _ _) ""]
-    [(TSym _) ""]
-    [(TEnd) ""]
-    [(TStr s) s]
-    [(TChar _) ""]
-    [(TFloat _) ""]
-    [(TLBracket) ""]
-    [(TRBracket) ""]
-    [(TQuote) ""]
-    [(TBacktick) ""]
-    [(TComma) ""]
-    [(TCommaAt) ""]))
+    [(Token.LParen) ""]
+    [(Token.RParen) ""]
+    [(Token.Int _ _) ""]
+    [(Token.Sym _) ""]
+    [(Token.End) ""]
+    [(Token.Str s) s]
+    [(Token.Char _) ""]
+    [(Token.Float _) ""]
+    [(Token.LBracket) ""]
+    [(Token.RBracket) ""]
+    [(Token.Quote) ""]
+    [(Token.Backtick) ""]
+    [(Token.Comma) ""]
+    [(Token.CommaAt) ""]))
 
-;; Float literal text of a TFloat token (the empty string for any other kind):
+;; Float literal text of `Token.Float` (the empty string for any other kind):
 ;; the selfhost frontend carries source spelling until backend emission, so it
 ;; does not need a string->f64 primitive.
 (define (token-float [t : Token]) : String
   (match t
-    [(TLParen) ""]
-    [(TRParen) ""]
-    [(TInt _ _) ""]
-    [(TSym _) ""]
-    [(TEnd) ""]
-    [(TStr _) ""]
-    [(TChar _) ""]
-    [(TFloat s) s]
-    [(TLBracket) ""]
-    [(TRBracket) ""]
-    [(TQuote) ""]
-    [(TBacktick) ""]
-    [(TComma) ""]
-    [(TCommaAt) ""]))
+    [(Token.LParen) ""]
+    [(Token.RParen) ""]
+    [(Token.Int _ _) ""]
+    [(Token.Sym _) ""]
+    [(Token.End) ""]
+    [(Token.Str _) ""]
+    [(Token.Char _) ""]
+    [(Token.Float s) s]
+    [(Token.LBracket) ""]
+    [(Token.RBracket) ""]
+    [(Token.Quote) ""]
+    [(Token.Backtick) ""]
+    [(Token.Comma) ""]
+    [(Token.CommaAt) ""]))
 
-;; Character payload of a TChar token (NUL for any other kind): projects the
+;; Character payload of `Token.Char` (NUL for any other kind): projects the
 ;; read character back out of the enum while keeping char atoms distinct from
 ;; symbols, ints, and strings.
 (define (token-char [t : Token]) : char
   (match t
-    [(TLParen) '\0']
-    [(TRParen) '\0']
-    [(TInt _ _) '\0']
-    [(TSym _) '\0']
-    [(TEnd) '\0']
-    [(TStr _) '\0']
-    [(TChar c) c]
-    [(TFloat _) '\0']
-    [(TLBracket) '\0']
-    [(TRBracket) '\0']
-    [(TQuote) '\0']
-    [(TBacktick) '\0']
-    [(TComma) '\0']
-    [(TCommaAt) '\0']))
+    [(Token.LParen) '\0']
+    [(Token.RParen) '\0']
+    [(Token.Int _ _) '\0']
+    [(Token.Sym _) '\0']
+    [(Token.End) '\0']
+    [(Token.Str _) '\0']
+    [(Token.Char c) c]
+    [(Token.Float _) '\0']
+    [(Token.LBracket) '\0']
+    [(Token.RBracket) '\0']
+    [(Token.Quote) '\0']
+    [(Token.Backtick) '\0']
+    [(Token.Comma) '\0']
+    [(Token.CommaAt) '\0']))
 
 ;; A token paired with the 1-based source line and column where its lexeme
 ;; begins (#599). The reader/parser recover positions from these so later
-;; diagnostics can point at the originating source location. `TEnd` carries the
-;; position one past the last character. This is additive: the plain `Token`
+;; diagnostics can point at the originating source location. `Token.End` carries
+;; the position one past the last character. This is additive: the plain `Token`
 ;; stream and its accessors are unchanged, so existing callers keep working.
 (defenum SpannedToken
-  (SpannedToken Token i64 i64))
+  (Spanned Token i64 i64))
 
 (define (spanned-token-tok [s : SpannedToken]) : Token
   (match s
-    [(SpannedToken t _ _) t]))
+    [(SpannedToken.Spanned t _ _) t]))
 
 (define (spanned-token-line [s : SpannedToken]) : i64
   (match s
-    [(SpannedToken _ line _) line]))
+    [(SpannedToken.Spanned _ line _) line]))
 
 (define (spanned-token-col [s : SpannedToken]) : i64
   (match s
-    [(SpannedToken _ _ col) col]))
+    [(SpannedToken.Spanned _ _ col) col]))
 
 (define (spanned-token-token [s : SpannedToken]) : Token
   (spanned-token-tok s))

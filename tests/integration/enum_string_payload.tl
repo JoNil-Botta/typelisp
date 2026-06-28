@@ -7,20 +7,20 @@
 (import "stdlib/string.tl")
 
 (defenum Token
-  (TIdent String)
-  (TEnd))
+  (Ident String)
+  (End))
 
 ;; Construct a String-payload variant and return it. The returned enum and its
 ;; String payload are both heap-promoted so they outlive this frame.
 (define (mk [s : String]) : Token
-  (TIdent s))
+  (Token.Ident s))
 
 ;; Match the variant and bind its String payload back out at type String, then
 ;; measure it. The `TEnd` arm proves the dispatch is by tag.
 (define (ident-length [t : Token]) : i64
   (match t
-    [(TIdent s) (string-length s)]
-    [(TEnd) 0]))
+    [(Token.Ident s) (string-length s)]
+    [(Token.End) 0]))
 
 ;; (TIdent "hello") -> bind "hello" -> length 5.
 (define (main) : i64

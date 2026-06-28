@@ -10,16 +10,16 @@
 (import stdlib.string)
 
 (defenum FmtConfig
-  (FmtFileConfig bool vector.StringVec)
-  (FmtPackageConfig bool String bool))
+  (File bool vector.StringVec)
+  (Package bool String bool))
 
 (defenum ResultFmtConfig
-  (OkFmtConfig FmtConfig)
-  (ErrFmtConfig String))
+  (Ok FmtConfig)
+  (Err String))
 
 (defenum ResultFmtWrite
-  (OkFmtWrite)
-  (ErrFmtWrite String))
+  (Ok)
+  (Err String))
 
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
   (string.string-append
@@ -30,13 +30,14 @@
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
   (match (io.try-write-file (& path) (& formatted))
-    [(io.OkIoUnit) OkFmtWrite]
-    [(io.ErrIoUnit error) (ErrFmtWrite (fmt-write-error-message path error))]))
+    [(io.OkIoUnit) ResultFmtWrite.Ok]
+    [(io.ErrIoUnit error)
+      (ResultFmtWrite.Err (fmt-write-error-message path error))]))
 
 (define (fmt-write-formatted-file [path : String] [formatted : String]) : i64
   (match (fmt-try-write-formatted-file path formatted)
-    [(OkFmtWrite) 0]
-    [(ErrFmtWrite message)
+    [(ResultFmtWrite.Ok) 0]
+    [(ResultFmtWrite.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         1)]))
@@ -59,8 +60,8 @@
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
   (match (fmt-try-write-formatted-file "" "(define x 1)\n")
-    [(OkFmtWrite) (io.panic "fmt write unexpectedly succeeded")]
-    [(ErrFmtWrite message)
+    [(ResultFmtWrite.Ok) (io.panic "fmt write unexpectedly succeeded")]
+    [(ResultFmtWrite.Err message)
       (if (string.string-eq message "fmt: failed to write : io: invalid path: ")
         unit
         (io.panic (string.string-copy message)))]))
@@ -68,8 +69,8 @@
 (test
   fmt-parse-diagnostic-includes-path-line-and-column
   (match (format-rules-render-source-width-result "(define x\n  ]" 80)
-    [(OkFormatString _) (io.panic "fmt parse unexpectedly succeeded")]
-    [(ErrFormatString err)
+    [(ResultFormatString.Ok _) (io.panic "fmt parse unexpectedly succeeded")]
+    [(ResultFormatString.Err err)
       (let
         [message : String (fmt-source-error-message "bad.tl" err)]
         (if (string.string-eq
@@ -80,8 +81,8 @@
 
 (define (fmt-malformed-int-error? [source : String]) : bool
   (match (format-rules-render-source-width-result source 80)
-    [(OkFormatString _) false]
-    [(ErrFormatString err)
+    [(ResultFormatString.Ok _) false]
+    [(ResultFormatString.Err err)
       (string.string-eq
         (format-source-error-message err)
         "format lexer: malformed integer literal")]))
@@ -105,10 +106,11 @@
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (vector.string-vec-is-empty? paths)
-    (OkFmtConfig (FmtPackageConfig check manifest-path has-manifest))
+    (ResultFmtConfig.Ok (FmtConfig.Package check manifest-path has-manifest))
     (if has-manifest
-      (ErrFmtConfig "fmt: cannot combine input paths with --manifest-path")
-      (OkFmtConfig (FmtFileConfig check paths)))))
+      (ResultFmtConfig.Err
+        "fmt: cannot combine input paths with --manifest-path")
+      (ResultFmtConfig.Ok (FmtConfig.File check paths)))))
 
 (define (fmt-parse-args
   [idx : i64]
@@ -126,9 +128,9 @@
           (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)]
         [(string.string-eq current "--manifest-path")
           (if (>= (+ idx 1) count)
-            (ErrFmtConfig "fmt: --manifest-path requires a value")
+            (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
             (if has-manifest
-              (ErrFmtConfig "fmt: duplicate --manifest-path")
+              (ResultFmtConfig.Err "fmt: duplicate --manifest-path")
               (fmt-parse-args
                 (+ idx 2)
                 count
@@ -138,7 +140,7 @@
                 true)))]
         [(string.string-eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
-            (ErrFmtConfig "fmt: --stdlib-root requires a value")
+            (ResultFmtConfig.Err "fmt: --stdlib-root requires a value")
             (fmt-parse-args
               (+ idx 2)
               count
@@ -147,7 +149,8 @@
               manifest-path
               has-manifest))]
         [(fmt-flag? current)
-          (ErrFmtConfig (string.string-append "fmt: unknown flag " current))]
+          (ResultFmtConfig.Err
+            (string.string-append "fmt: unknown flag " current))]
         [else
           (fmt-parse-args
             (+ idx 1)
@@ -164,7 +167,7 @@
   (let
     [source : String (io.read-file path)]
     (match (format-rules-render-source-width-result source 80)
-      [(OkFormatString formatted)
+      [(ResultFormatString.Ok formatted)
         (if check
           (if (string.string-eq source formatted)
             0
@@ -177,7 +180,7 @@
           (if (string.string-eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
-      [(ErrFormatString err)
+      [(ResultFormatString.Err err)
         (begin
           (io.print-error
             (string.string-append (fmt-source-error-message path err) "\n"))
@@ -209,23 +212,23 @@
   [manifest-path : String]
   [has-manifest : bool]) : i64
   (match (package-source-discover-for "fmt" manifest-path has-manifest)
-    [(ErrPackageSourceSet message)
+    [(ResultPackageSourceSet.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         1)]
-    [(OkPackageSourceSet source-set)
+    [(ResultPackageSourceSet.Ok source-set)
       (fmt-files check (struct-get source-set sources) 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.
 (define (fmt-run-from [start : i64] [count : i64]) : i64
   (match (fmt-config-from start count)
-    [(OkFmtConfig config)
+    [(ResultFmtConfig.Ok config)
       (match config
-        [(FmtFileConfig check paths) (fmt-files check paths 0)]
-        [(FmtPackageConfig check manifest-path has-manifest)
+        [(FmtConfig.File check paths) (fmt-files check paths 0)]
+        [(FmtConfig.Package check manifest-path has-manifest)
           (fmt-package check manifest-path has-manifest)])]
-    [(ErrFmtConfig message)
+    [(ResultFmtConfig.Err message)
       (begin
         (io.print-error (string.string-append message "\n"))
         1)]))

@@ -200,12 +200,12 @@
 
 ;: Immutable list of registered rules.
 (defenum LintRuleList
-  (LintRuleNil)
-  (LintRuleCons LintRule (Box LintRuleList)))
+  (Nil)
+  (Cons LintRule (Box LintRuleList)))
 
 (defenum LintMaybeRule
-  (LintRuleNotFound)
-  (LintRuleFound LintRule))
+  (NotFound)
+  (Found LintRule))
 
 (define (lint-rule-nested-if-ladder) : LintRule
   (LintRule
@@ -316,7 +316,7 @@
     (lint-rule-unused-unsafe-suggestion)))
 
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
-  (LintRuleCons rule (box rest)))
+  (LintRuleList.Cons rule (box rest)))
 
 ;: Small registry for lint metadata. New rules plug into this list and the
 ;: shared lookup helpers without requiring public driver edits.
@@ -357,14 +357,14 @@
                                     (lint-rule-unused-variable)
                                     (lint-rule-cons
                                       (lint-rule-unused-unsafe)
-                                      LintRuleNil)))))))))))))))))))
+                                      LintRuleList.Nil)))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
-    [(LintRuleNil) LintRuleNotFound]
-    [(LintRuleCons rule rest)
+    [(LintRuleList.Nil) LintMaybeRule.NotFound]
+    [(LintRuleList.Cons rule rest)
       (if (string.string-eq (struct-get rule rule-id) rule-id)
-        (LintRuleFound rule)
+        (LintMaybeRule.Found rule)
         (lint-rule-find-in (box-get rest) rule-id))]))
 
 (define (lint-rule-find [rule-id : String]) : LintMaybeRule
@@ -373,14 +373,14 @@
 ;: Rule registry message lookup. Unknown ids return the empty string.
 (define (lint-rule-message [rule-id : String]) : String
   (match (lint-rule-find rule-id)
-    [(LintRuleFound rule) (struct-get rule message)]
-    [(LintRuleNotFound) ""]))
+    [(LintMaybeRule.Found rule) (struct-get rule message)]
+    [(LintMaybeRule.NotFound) ""]))
 
 ;: Rule registry suggestion lookup. Unknown ids return the empty string.
 (define (lint-rule-suggestion [rule-id : String]) : String
   (match (lint-rule-find rule-id)
-    [(LintRuleFound rule) (struct-get rule suggestion)]
-    [(LintRuleNotFound) ""]))
+    [(LintMaybeRule.Found rule) (struct-get rule suggestion)]
+    [(LintMaybeRule.NotFound) ""]))
 
 ;: Growable findings buffer. The backing array stores findings in discovery
 ;: order; the CLI renders from the end to preserve the historical output order.
@@ -389,8 +389,8 @@
   (len i64))
 
 (defenum LintMaybeFinding
-  (LintNoFinding)
-  (LintSomeFinding LintFinding))
+  (No)
+  (Some LintFinding))
 
 (define (lint-findings-slots [items : LintFindings]) : (Array LintFinding)
   (struct-get items slots))
@@ -451,8 +451,8 @@
   (if (if (>= index 0)
     (< index (lint-findings-count items))
     false)
-    (LintSomeFinding (lint-findings-ref items index))
-    (LintNoFinding)))
+    (LintMaybeFinding.Some (lint-findings-ref items index))
+    (LintMaybeFinding.No)))
 
 ;: Default nested-`if`-ladder depth threshold (an else-chain of this many `if`s
 ;: or more is flagged).
@@ -1157,8 +1157,8 @@
   [source : String]
   [acc : LintFindings]) : LintFindings
   (match (lex-spanned-result source)
-    [(ErrSpannedTokens _) acc]
-    [(OkSpannedTokens toks)
+    [(ResultSpannedTokens.Err _) acc]
+    [(ResultSpannedTokens.Ok toks)
       (let
         [i : i64 0]
         [done : bool false]
@@ -2180,22 +2180,20 @@
             [_ acc])))]))
 
 (defenum LintNameList
-  (LintNameNil)
-  (LintNameCons String (Box LintNameList)))
+  (Nil)
+  (Cons String (Box LintNameList)))
 
 (defstruct LintPendingAssignment
   (name String)
   (span AstSourceSpan))
 
 (defenum LintPendingAssignmentList
-  (LintPendingAssignmentNil)
-  (LintPendingAssignmentCons
-    LintPendingAssignment
-    (Box LintPendingAssignmentList)))
+  (Nil)
+  (Cons LintPendingAssignment (Box LintPendingAssignmentList)))
 
 (defenum LintMaybePendingAssignment
-  (LintNoPendingAssignment)
-  (LintSomePendingAssignment LintPendingAssignment))
+  (No)
+  (Some LintPendingAssignment))
 
 (defstruct LintUnusedAssignmentState
   (locals LintNameList)
@@ -2204,8 +2202,8 @@
 
 (define (lint-name-list-contains? [items : LintNameList] [name : String]) : bool
   (match items
-    [(LintNameNil) false]
-    [(LintNameCons head rest)
+    [(LintNameList.Nil) false]
+    [(LintNameList.Cons head rest)
       (if (string.string-eq head name)
         true
         (lint-name-list-contains? (box-get rest) name))]))
@@ -2213,7 +2211,7 @@
 (define (lint-name-list-add [items : LintNameList] [name : String]) : LintNameList
   (if (lint-name-list-contains? items name)
     items
-    (LintNameCons name (box items))))
+    (LintNameList.Cons name (box items))))
 
 (define (lint-param-list-add-locals
   [params : AstParamList]
@@ -2243,23 +2241,23 @@
   [items : LintPendingAssignmentList]
   [name : String]) : LintMaybePendingAssignment
   (match items
-    [(LintPendingAssignmentNil) LintNoPendingAssignment]
-    [(LintPendingAssignmentCons item rest)
+    [(LintPendingAssignmentList.Nil) LintMaybePendingAssignment.No]
+    [(LintPendingAssignmentList.Cons item rest)
       (if (string.string-eq (struct-get item name) name)
-        (LintSomePendingAssignment item)
+        (LintMaybePendingAssignment.Some item)
         (lint-pending-assignment-find (box-get rest) name))]))
 
 (define (lint-pending-assignment-remove
   [items : LintPendingAssignmentList]
   [name : String]) : LintPendingAssignmentList
   (match items
-    [(LintPendingAssignmentNil) LintPendingAssignmentNil]
-    [(LintPendingAssignmentCons item rest)
+    [(LintPendingAssignmentList.Nil) LintPendingAssignmentList.Nil]
+    [(LintPendingAssignmentList.Cons item rest)
       (let
         [rest-items : LintPendingAssignmentList (box-get rest)]
         (if (string.string-eq (struct-get item name) name)
           (lint-pending-assignment-remove rest-items name)
-          (LintPendingAssignmentCons
+          (LintPendingAssignmentList.Cons
             item
             (box (lint-pending-assignment-remove rest-items name)))))]))
 
@@ -2267,7 +2265,7 @@
   [items : LintPendingAssignmentList]
   [name : String]
   [span : AstSourceSpan]) : LintPendingAssignmentList
-  (LintPendingAssignmentCons
+  (LintPendingAssignmentList.Cons
     (LintPendingAssignment name span)
     (box (lint-pending-assignment-remove items name))))
 
@@ -2303,8 +2301,8 @@
           (lint-pending-assignment-find (struct-get state pending) name)]
         [next-findings : LintFindings
           (match found
-            [(LintNoPendingAssignment) (struct-get state findings)]
-            [(LintSomePendingAssignment pending)
+            [(LintMaybePendingAssignment.No) (struct-get state findings)]
+            [(LintMaybePendingAssignment.Some pending)
               (lint-findings-add
                 (lint-unused-assignment-finding name (struct-get pending span))
                 (struct-get state findings))])]
@@ -2323,7 +2321,7 @@
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (lint-unused-assignment-state-with
     state
-    LintPendingAssignmentNil
+    LintPendingAssignmentList.Nil
     (struct-get state findings)))
 
 (define (lint-unused-assignment-with-locals
@@ -2686,7 +2684,7 @@
         span)]
     (LintUnusedAssignmentState
       (struct-get state locals)
-      LintPendingAssignmentNil
+      LintPendingAssignmentList.Nil
       (struct-get inner findings))))
 
 (define (lint-unused-assignment-expr
@@ -2728,7 +2726,7 @@
 (define (lint-unused-assignment-state-empty
   [locals : LintNameList]
   [acc : LintFindings]) : LintUnusedAssignmentState
-  (LintUnusedAssignmentState locals LintPendingAssignmentNil acc))
+  (LintUnusedAssignmentState locals LintPendingAssignmentList.Nil acc))
 
 (define (lint-unused-assignments-in-decl [decl : AstDecl] [acc : LintFindings]) : LintFindings
   (match decl
@@ -2736,7 +2734,7 @@
       (struct-get
         (lint-unused-assignment-expr
           (ast-node-get body)
-          (lint-unused-assignment-state-empty LintNameNil acc)
+          (lint-unused-assignment-state-empty LintNameList.Nil acc)
           (lint-no-span))
         findings)]
     [(AstDeclDefFn _ params _ body _)
@@ -2744,7 +2742,7 @@
         (lint-unused-assignment-expr
           (ast-node-get body)
           (lint-unused-assignment-state-empty
-            (lint-param-list-add-locals params LintNameNil)
+            (lint-param-list-add-locals params LintNameList.Nil)
             acc)
           (lint-no-span))
         findings)]
@@ -2753,7 +2751,7 @@
         (lint-unused-assignment-expr
           (ast-node-get body)
           (lint-unused-assignment-state-empty
-            (lint-macro-param-list-add-locals params LintNameNil)
+            (lint-macro-param-list-add-locals params LintNameList.Nil)
             acc)
           (lint-no-span))
         findings)]
@@ -2761,7 +2759,7 @@
       (struct-get
         (lint-unused-assignment-expr
           (ast-node-get body)
-          (lint-unused-assignment-state-empty LintNameNil acc)
+          (lint-unused-assignment-state-empty LintNameList.Nil acc)
           (lint-no-span))
         findings)]
     [(AstDeclUnsafe inner)
@@ -2791,16 +2789,12 @@
   (reportable bool))
 
 (defenum LintUnusedVariableBindingList
-  (LintUnusedVariableBindingNil)
-  (LintUnusedVariableBindingCons
-    LintUnusedVariableBinding
-    (Box LintUnusedVariableBindingList)))
+  (Nil)
+  (Cons LintUnusedVariableBinding (Box LintUnusedVariableBindingList)))
 
 (defenum LintUnusedVariableFrameList
-  (LintUnusedVariableFrameNil)
-  (LintUnusedVariableFrameCons
-    LintUnusedVariableBindingList
-    (Box LintUnusedVariableFrameList)))
+  (Nil)
+  (Cons LintUnusedVariableBindingList (Box LintUnusedVariableFrameList)))
 
 (defstruct LintUnusedVariableMarkBindingsResult
   (bindings LintUnusedVariableBindingList)
@@ -3291,7 +3285,7 @@
 (define (lint-unused-variable-binding-cons
   [head : LintUnusedVariableBinding]
   [rest : LintUnusedVariableBindingList]) : LintUnusedVariableBindingList
-  (LintUnusedVariableBindingCons head (box rest)))
+  (LintUnusedVariableBindingList.Cons head (box rest)))
 
 (define (lint-unused-variable-state-with
   [state : LintUnusedVariableState]
@@ -3311,9 +3305,11 @@
   [bindings : LintUnusedVariableBindingList]
   [name : String]) : LintUnusedVariableMarkBindingsResult
   (match bindings
-    [(LintUnusedVariableBindingNil)
-      (LintUnusedVariableMarkBindingsResult LintUnusedVariableBindingNil false)]
-    [(LintUnusedVariableBindingCons binding rest)
+    [(LintUnusedVariableBindingList.Nil)
+      (LintUnusedVariableMarkBindingsResult
+        LintUnusedVariableBindingList.Nil
+        false)]
+    [(LintUnusedVariableBindingList.Cons binding rest)
       (if (string.string-eq (struct-get binding name) name)
         (LintUnusedVariableMarkBindingsResult
           (lint-unused-variable-binding-cons
@@ -3333,15 +3329,15 @@
   [frames : LintUnusedVariableFrameList]
   [name : String]) : LintUnusedVariableMarkFramesResult
   (match frames
-    [(LintUnusedVariableFrameNil)
-      (LintUnusedVariableMarkFramesResult LintUnusedVariableFrameNil false)]
-    [(LintUnusedVariableFrameCons bindings rest)
+    [(LintUnusedVariableFrameList.Nil)
+      (LintUnusedVariableMarkFramesResult LintUnusedVariableFrameList.Nil false)]
+    [(LintUnusedVariableFrameList.Cons bindings rest)
       (let
         [marked-bindings : LintUnusedVariableMarkBindingsResult
           (lint-unused-variable-mark-bindings bindings name)]
         (if (struct-get marked-bindings found)
           (LintUnusedVariableMarkFramesResult
-            (LintUnusedVariableFrameCons
+            (LintUnusedVariableFrameList.Cons
               (struct-get marked-bindings bindings)
               rest)
             true)
@@ -3349,7 +3345,7 @@
             [marked-rest : LintUnusedVariableMarkFramesResult
               (lint-unused-variable-mark-frames (box-get rest) name)]
             (LintUnusedVariableMarkFramesResult
-              (LintUnusedVariableFrameCons
+              (LintUnusedVariableFrameList.Cons
                 bindings
                 (box (struct-get marked-rest frames)))
               (struct-get marked-rest found)))))]))
@@ -3404,19 +3400,19 @@
   [state : LintUnusedVariableState]
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableState
   (match (struct-get state frames)
-    [(LintUnusedVariableFrameNil)
+    [(LintUnusedVariableFrameList.Nil)
       (lint-unused-variable-state-with
         state
-        (LintUnusedVariableFrameCons
+        (LintUnusedVariableFrameList.Cons
           (lint-unused-variable-binding-cons
             binding
-            LintUnusedVariableBindingNil)
-          (box LintUnusedVariableFrameNil))
+            LintUnusedVariableBindingList.Nil)
+          (box LintUnusedVariableFrameList.Nil))
         (struct-get state findings))]
-    [(LintUnusedVariableFrameCons bindings rest)
+    [(LintUnusedVariableFrameList.Cons bindings rest)
       (lint-unused-variable-state-with
         state
-        (LintUnusedVariableFrameCons
+        (LintUnusedVariableFrameList.Cons
           (lint-unused-variable-binding-cons binding bindings)
           rest)
         (struct-get state findings))]))
@@ -3426,15 +3422,15 @@
   [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableState
   (lint-unused-variable-state-with
     state
-    (LintUnusedVariableFrameCons bindings (box (struct-get state frames)))
+    (LintUnusedVariableFrameList.Cons bindings (box (struct-get state frames)))
     (struct-get state findings)))
 
 (define (lint-unused-variable-report-bindings
   [bindings : LintUnusedVariableBindingList]
   [findings : LintFindings]) : LintFindings
   (match bindings
-    [(LintUnusedVariableBindingNil) findings]
-    [(LintUnusedVariableBindingCons binding rest)
+    [(LintUnusedVariableBindingList.Nil) findings]
+    [(LintUnusedVariableBindingList.Cons binding rest)
       (let
         [next : LintFindings
           (if (and
@@ -3451,8 +3447,8 @@
 
 (define (lint-unused-variable-pop-frame [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match (struct-get state frames)
-    [(LintUnusedVariableFrameNil) state]
-    [(LintUnusedVariableFrameCons bindings rest)
+    [(LintUnusedVariableFrameList.Nil) state]
+    [(LintUnusedVariableFrameList.Cons bindings rest)
       (lint-unused-variable-state-with
         state
         (box-get rest)
@@ -3468,7 +3464,7 @@
   [reportable : bool]) : LintUnusedVariableBindingBuild
   (match params
     [(AstParamNil)
-      (LintUnusedVariableBindingBuild LintUnusedVariableBindingNil cursor)]
+      (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)]
     [(AstParamCons param rest)
       (match param
         [(AstParam name _ _)
@@ -3500,7 +3496,7 @@
   [reportable : bool]) : LintUnusedVariableBindingBuild
   (match params
     [(AstMacroParamNil)
-      (LintUnusedVariableBindingBuild LintUnusedVariableBindingNil cursor)]
+      (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)]
     [(AstMacroParamCons param rest)
       (match param
         [(AstMacroParam name _ _)
@@ -3982,7 +3978,7 @@
           0
           start))]
     [with-frame : LintUnusedVariableState
-      (lint-unused-variable-push-frame state LintUnusedVariableBindingNil)]
+      (lint-unused-variable-push-frame state LintUnusedVariableBindingList.Nil)]
     [with-bindings : LintUnusedVariableState
       (lint-unused-variable-let-bindings bindings with-frame cursor)]
     [with-body : LintUnusedVariableState
@@ -4024,7 +4020,7 @@
             [with-frame : LintUnusedVariableState
               (lint-unused-variable-push-frame
                 state
-                LintUnusedVariableBindingNil)]
+                LintUnusedVariableBindingList.Nil)]
             [with-pattern : LintUnusedVariableState
               (lint-unused-variable-pattern-bindings pattern with-frame)]
             [with-body : LintUnusedVariableState
@@ -4076,7 +4072,7 @@
         state
         (lint-unused-variable-binding-cons
           (lint-unused-variable-binding (intern-str name) span false)
-          LintUnusedVariableBindingNil))]
+          LintUnusedVariableBindingList.Nil))]
     [with-body : LintUnusedVariableState
       (lint-unused-variable-expr body with-frame span)]
     (lint-unused-variable-pop-frame with-body)))
@@ -4095,7 +4091,7 @@
           (lint-unused-variable-binding (intern-str index) span false)
           (lint-unused-variable-binding-cons
             (lint-unused-variable-binding (intern-str prefix) span false)
-            LintUnusedVariableBindingNil)))]
+            LintUnusedVariableBindingList.Nil)))]
     [with-body : LintUnusedVariableState
       (lint-unused-variable-expr body with-frame span)]
     (lint-unused-variable-pop-frame with-body)))
@@ -4305,7 +4301,7 @@
             [with-frame : LintUnusedVariableState
               (lint-unused-variable-push-frame
                 state
-                LintUnusedVariableBindingNil)]
+                LintUnusedVariableBindingList.Nil)]
             [with-bindings : LintUnusedVariableState
               (lint-unused-variable-resource-bindings bindings with-frame)]
             [with-body : LintUnusedVariableState
@@ -4453,7 +4449,7 @@
       (lint-unused-variable-param-bindings params source cursor body-span true)]
     [state : LintUnusedVariableState
       (lint-unused-variable-push-frame
-        (LintUnusedVariableState source LintUnusedVariableFrameNil acc)
+        (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc)
         (struct-get built bindings))]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
@@ -4488,7 +4484,7 @@
         true)]
     [state : LintUnusedVariableState
       (lint-unused-variable-push-frame
-        (LintUnusedVariableState source LintUnusedVariableFrameNil acc)
+        (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc)
         (struct-get built bindings))]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
@@ -4509,7 +4505,7 @@
           (ast-node-get body)
           (lint-unused-variable-maybe-type
             maybe-ty
-            (LintUnusedVariableState source LintUnusedVariableFrameNil acc))
+            (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc))
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDeclDefFn name params ret body _)
@@ -4534,7 +4530,7 @@
       (struct-get
         (lint-unused-variable-expr
           (ast-node-get body)
-          (LintUnusedVariableState source LintUnusedVariableFrameNil acc)
+          (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc)
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDeclUnsafe inner)
@@ -5933,7 +5929,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (if (and
             (= (struct-get finding depth) 3)
             (string.string-eq
@@ -5942,7 +5938,7 @@
             unit
             (io.panic
               "lint: 3-deep ladder finding should carry rule id and depth"))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: 3-deep ladder should produce a finding")])
       ;; a 2-deep ladder is NOT flagged at threshold 3
       (if (=
@@ -5986,13 +5982,13 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (if (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))
             unit
             (io.panic "lint: return-path chain should report its rule id"))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: return-path chain should produce a finding")])
       (if (=
         (lint-findings-count
@@ -6009,13 +6005,13 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (if (string.string-eq
             (struct-get finding rule-id)
             (lint-rule-unit-if-guard-id))
             unit
             (io.panic "lint: unit-if guard should report its rule id"))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: unit-if guard should produce a finding")])
       (if (=
         (lint-findings-count
@@ -6077,7 +6073,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6088,7 +6084,7 @@
               unit
               (io.panic
                 "lint: single-begin finding should carry rule id and span")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: spanned single begin should produce a finding")])
       ;; ... and into let-binding initializers
       (if (=
@@ -6117,7 +6113,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6128,7 +6124,7 @@
               unit
               (io.panic
                 "lint: spanned ladder finding should carry rule id and span")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: spanned ladder should produce a finding")])
       (if (=
         (lint-findings-count
@@ -6163,7 +6159,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6174,7 +6170,7 @@
               unit
               (io.panic
                 "lint: nested-let finding should carry rule id and span")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: spanned nested let should produce a finding")])
       (if (=
         (lint-findings-count
@@ -6227,7 +6223,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6241,7 +6237,7 @@
                 "cascading and: prefer flat n-ary form (and x y z)"))
               unit
               (io.panic "lint: cascading-and-or finding metadata mismatch")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: spanned and cascade should produce a finding")])
       (match (lint-findings-get
         (lint-test-walk
@@ -6249,7 +6245,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (if (string.string-eq
             (struct-get finding message)
             (string.string-append
@@ -6257,7 +6253,7 @@
               (string.string-append "core/and" " x y z)")))
             unit
             (io.panic "lint: core/and cascade should preserve callee spelling"))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: core/and cascade should produce a finding")])
       (if (=
         (lint-findings-count
@@ -6274,7 +6270,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6284,7 +6280,7 @@
                 (lint-rule-no-effect-id)))
               unit
               (io.panic "lint: no-effect finding should carry rule id and span")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic
             "lint: discarded variable should produce a no-effect finding")])
       (if (=
@@ -6366,7 +6362,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6377,7 +6373,7 @@
               unit
               (io.panic
                 "lint: unreachable-code finding should carry rule id and span")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic "lint: unreachable-code should produce a finding")])
       (if (=
         (lint-findings-count
@@ -6413,7 +6409,7 @@
           (lint-default-ladder-threshold)
           (lint-findings-empty))
         0)
-        [(LintSomeFinding finding)
+        [(LintMaybeFinding.Some finding)
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
@@ -6424,7 +6420,7 @@
               unit
               (io.panic
                 "lint: redundant divergence padding finding should carry rule id and span")))]
-        [(LintNoFinding)
+        [(LintMaybeFinding.No)
           (io.panic
             "lint: redundant divergence padding should produce a finding")])
       (if (=
@@ -6457,7 +6453,7 @@
         unit
         (io.panic "lint: nested-if-ladder message should be registered"))
       (match (lint-rule-find (lint-rule-nested-if-ladder-id))
-        [(LintRuleFound rule)
+        [(LintMaybeRule.Found rule)
           (if (and
             (string.string-eq
               (struct-get rule rule-id)
@@ -6471,7 +6467,7 @@
             unit
             (io.panic
               "lint: nested-if-ladder registry entry should match metadata"))]
-        [(LintRuleNotFound)
+        [(LintMaybeRule.NotFound)
           (io.panic "lint: nested-if-ladder should be registered")])
       (if (string.string-eq
         (lint-rule-suggestion (lint-rule-nested-let-id))
@@ -6594,6 +6590,7 @@
         unit
         (io.panic "lint: unknown rule should have no message"))
       (match (lint-rule-find "unknown-rule")
-        [(LintRuleNotFound) unit]
-        [(LintRuleFound _) (io.panic "lint: unknown rule should not be found")])
+        [(LintMaybeRule.NotFound) unit]
+        [(LintMaybeRule.Found _)
+          (io.panic "lint: unknown rule should not be found")])
       42)))

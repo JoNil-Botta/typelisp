@@ -12,8 +12,8 @@
 (import stdlib.vector)
 
 (defenum SourceToolCommandStatus
-  (SourceToolCommandOk)
-  (SourceToolCommandErr String))
+  (Ok)
+  (Err String))
 
 (defenum ResultSourceToolCommand
   (Ok process.ProcessCommand)
@@ -24,9 +24,9 @@
   (Err String))
 
 (defenum SourceToolDirectObjectStatus
-  (SourceToolDirectObjectOk)
-  (SourceToolDirectObjectUnavailable String)
-  (SourceToolDirectObjectErr String))
+  (Ok)
+  (Unavailable String)
+  (Err String))
 
 (defenum ResultSourceToolTarget
   (Ok CompilerBackendTarget)
@@ -1058,9 +1058,9 @@
   [contents : String]
   [context : String]) : SourceToolCommandStatus
   (match (io.try-write-file (& path) (& contents))
-    [(io.OkIoUnit) SourceToolCommandOk]
+    [(io.OkIoUnit) SourceToolCommandStatus.Ok]
     [(io.ErrIoUnit error)
-      (SourceToolCommandErr
+      (SourceToolCommandStatus.Err
         (str_cat.str-cat context ": " (io.io-error-message error)))]))
 
 (define (source-tool-forward-output [output : process.ProcessOutput]) : unit
@@ -1081,8 +1081,8 @@
         (begin
           (source-tool-forward-output output)
           (if (process.process-success? output)
-            SourceToolCommandOk
-            (SourceToolCommandErr
+            SourceToolCommandStatus.Ok
+            (SourceToolCommandStatus.Err
               (str_cat.str-cat
                 "Error: "
                 role
@@ -1093,7 +1093,7 @@
                 " with status "
                 (string.int->string (process.process-output-status output))))))]
       [(process.ErrProcessOutput error)
-        (SourceToolCommandErr
+        (SourceToolCommandStatus.Err
           (str_cat.str-cat
             "Error: failed to run "
             role
@@ -1537,7 +1537,8 @@
       (match (source-tool-windows-linker-command obj-path bin-path link-inputs)
         [(ResultSourceToolCommand.Ok command)
           (source-tool-run-command "linker" target command)]
-        [(ResultSourceToolCommand.Err message) (SourceToolCommandErr message)])]))
+        [(ResultSourceToolCommand.Err message)
+          (SourceToolCommandStatus.Err message)])]))
 
 (define (source-tool-archive
   [target : CompilerBackendTarget]
@@ -1553,7 +1554,8 @@
       (match (source-tool-windows-archiver-command obj-path archive-path)
         [(ResultSourceToolCommand.Ok command)
           (source-tool-run-command "archiver" target command)]
-        [(ResultSourceToolCommand.Err message) (SourceToolCommandErr message)])]))
+        [(ResultSourceToolCommand.Err message)
+          (SourceToolCommandStatus.Err message)])]))
 
 (define (source-tool-assemble-and-link
   [target : CompilerBackendTarget]
@@ -1562,9 +1564,10 @@
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match (source-tool-assemble target asm-path obj-path)
-    [(SourceToolCommandOk)
+    [(SourceToolCommandStatus.Ok)
       (source-tool-link target obj-path bin-path link-inputs)]
-    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
+    [(SourceToolCommandStatus.Err message)
+      (SourceToolCommandStatus.Err message)]))
 
 (define (source-tool-assemble-and-archive
   [target : CompilerBackendTarget]
@@ -1572,8 +1575,10 @@
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
   (match (source-tool-assemble target asm-path obj-path)
-    [(SourceToolCommandOk) (source-tool-archive target obj-path archive-path)]
-    [(SourceToolCommandErr message) (SourceToolCommandErr message)]))
+    [(SourceToolCommandStatus.Ok)
+      (source-tool-archive target obj-path archive-path)]
+    [(SourceToolCommandStatus.Err message)
+      (SourceToolCommandStatus.Err message)]))
 
 (define (source-tool-write-direct-object-and-link
   [obj-path : String]
@@ -1583,11 +1588,13 @@
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
-    [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)]
-    [(SourceToolCommandOk)
+    [(SourceToolCommandStatus.Err message)
+      (SourceToolDirectObjectStatus.Err message)]
+    [(SourceToolCommandStatus.Ok)
       (match (source-tool-link target obj-path bin-path link-inputs)
-        [(SourceToolCommandOk) SourceToolDirectObjectOk]
-        [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)])]))
+        [(SourceToolCommandStatus.Ok) SourceToolDirectObjectStatus.Ok]
+        [(SourceToolCommandStatus.Err message)
+          (SourceToolDirectObjectStatus.Err message)])]))
 
 (define (source-tool-write-direct-object-and-archive
   [obj-path : String]
@@ -1596,11 +1603,13 @@
   [obj : String]
   [context : String]) : SourceToolDirectObjectStatus
   (match (source-tool-write-file obj-path obj context)
-    [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)]
-    [(SourceToolCommandOk)
+    [(SourceToolCommandStatus.Err message)
+      (SourceToolDirectObjectStatus.Err message)]
+    [(SourceToolCommandStatus.Ok)
       (match (source-tool-archive target obj-path archive-path)
-        [(SourceToolCommandOk) SourceToolDirectObjectOk]
-        [(SourceToolCommandErr message) (SourceToolDirectObjectErr message)])]))
+        [(SourceToolCommandStatus.Ok) SourceToolDirectObjectStatus.Ok]
+        [(SourceToolCommandStatus.Err message)
+          (SourceToolDirectObjectStatus.Err message)])]))
 
 (define (source-tool-try-windows-direct-object-and-link
   [source : String]
@@ -1632,8 +1641,8 @@
           obj
           "source-tool: failed to write direct object artifact")]
       [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectUnavailable message)])
-    (SourceToolDirectObjectUnavailable "windows direct object disabled")))
+        (SourceToolDirectObjectStatus.Unavailable message)])
+    (SourceToolDirectObjectStatus.Unavailable "windows direct object disabled")))
 
 (define (source-tool-try-linux-direct-object-and-link
   [source : String]
@@ -1665,8 +1674,8 @@
           obj
           "source-tool: failed to write direct object artifact")]
       [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectUnavailable message)])
-    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
+        (SourceToolDirectObjectStatus.Unavailable message)])
+    (SourceToolDirectObjectStatus.Unavailable "linux direct object disabled")))
 
 (define (source-tool-try-lowered-windows-direct-object-and-link
   [source : String]
@@ -1695,8 +1704,8 @@
           obj
           "test: failed to write direct object artifact")]
       [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectUnavailable message)])
-    (SourceToolDirectObjectUnavailable "windows direct object disabled")))
+        (SourceToolDirectObjectStatus.Unavailable message)])
+    (SourceToolDirectObjectStatus.Unavailable "windows direct object disabled")))
 
 (define (source-tool-try-lowered-linux-direct-object-and-link
   [source : String]
@@ -1726,8 +1735,8 @@
           obj
           "test: failed to write direct object artifact")]
       [(ResultSourceToolString.Err message)
-        (SourceToolDirectObjectUnavailable message)])
-    (SourceToolDirectObjectUnavailable "linux direct object disabled")))
+        (SourceToolDirectObjectStatus.Unavailable message)])
+    (SourceToolDirectObjectStatus.Unavailable "linux direct object disabled")))
 
 (define (source-tool-write-assembly-and-link
   [target : CompilerBackendTarget]
@@ -1738,8 +1747,9 @@
   [asm : String]
   [write-context : String]) : SourceToolCommandStatus
   (match (source-tool-write-file asm-path asm write-context)
-    [(SourceToolCommandErr message) (SourceToolCommandErr message)]
-    [(SourceToolCommandOk)
+    [(SourceToolCommandStatus.Err message)
+      (SourceToolCommandStatus.Err message)]
+    [(SourceToolCommandStatus.Ok)
       (source-tool-assemble-and-link
         target
         asm-path
@@ -1767,7 +1777,7 @@
     mode
     cfgs
     link-inputs)
-    [(ResultSourceToolString.Err message) (SourceToolCommandErr message)]
+    [(ResultSourceToolString.Err message) (SourceToolCommandStatus.Err message)]
     [(ResultSourceToolString.Ok asm)
       (source-tool-write-assembly-and-link
         target
@@ -1800,9 +1810,10 @@
     link-inputs
     obj-path
     bin-path)
-    [(SourceToolDirectObjectOk) SourceToolCommandOk]
-    [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
-    [(SourceToolDirectObjectUnavailable _)
+    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
+    [(SourceToolDirectObjectStatus.Err message)
+      (SourceToolCommandStatus.Err message)]
+    [(SourceToolDirectObjectStatus.Unavailable _)
       (match (source-tool-try-windows-direct-object-and-link
         source
         target
@@ -1813,9 +1824,10 @@
         link-inputs
         obj-path
         bin-path)
-        [(SourceToolDirectObjectOk) SourceToolCommandOk]
-        [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
-        [(SourceToolDirectObjectUnavailable _)
+        [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
+        [(SourceToolDirectObjectStatus.Err message)
+          (SourceToolCommandStatus.Err message)]
+        [(SourceToolDirectObjectStatus.Unavailable _)
           (source-tool-emit-assembly-and-link
             source
             target
@@ -1849,9 +1861,10 @@
     link-inputs
     obj-path
     bin-path)
-    [(SourceToolDirectObjectOk) SourceToolCommandOk]
-    [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
-    [(SourceToolDirectObjectUnavailable _)
+    [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
+    [(SourceToolDirectObjectStatus.Err message)
+      (SourceToolCommandStatus.Err message)]
+    [(SourceToolDirectObjectStatus.Unavailable _)
       (match (source-tool-try-lowered-windows-direct-object-and-link
         source
         program
@@ -1861,9 +1874,10 @@
         link-inputs
         obj-path
         bin-path)
-        [(SourceToolDirectObjectOk) SourceToolCommandOk]
-        [(SourceToolDirectObjectErr message) (SourceToolCommandErr message)]
-        [(SourceToolDirectObjectUnavailable _)
+        [(SourceToolDirectObjectStatus.Ok) SourceToolCommandStatus.Ok]
+        [(SourceToolDirectObjectStatus.Err message)
+          (SourceToolCommandStatus.Err message)]
+        [(SourceToolDirectObjectStatus.Unavailable _)
           (match (compiler-driver-emit-lowered-with-level
             source
             program
@@ -1881,7 +1895,8 @@
                 (source-tool-augment-assembly-for-target asm target)
                 write-context)]
             [(ResultCompilerDriver.Err diag)
-              (SourceToolCommandErr (compiler-diagnostic-render (box-get diag)))])])]))
+              (SourceToolCommandStatus.Err
+                (compiler-diagnostic-render (box-get diag)))])])]))
 
 (define (source-tool-build-source-in-temp
   [source : String]
@@ -1925,7 +1940,7 @@
             obj-path
             bin-path
             "build: failed to write assembly artifact")
-            [(SourceToolCommandErr message)
+            [(SourceToolCommandStatus.Err message)
               (begin
                 (io.print-error message)
                 (source-tool-clean-temp
@@ -1935,7 +1950,7 @@
                   bin-path
                   false)
                 1)]
-            [(SourceToolCommandOk)
+            [(SourceToolCommandStatus.Ok)
               (begin
                 (io.print-string
                   (string.string-append
@@ -2026,7 +2041,7 @@
             obj-path
             bin-path
             "run: failed to write assembly artifact")
-            [(SourceToolCommandErr message)
+            [(SourceToolCommandStatus.Err message)
               (begin
                 (io.print-error message)
                 (source-tool-clean-temp
@@ -2036,7 +2051,7 @@
                   bin-path
                   true)
                 1)]
-            [(SourceToolCommandOk)
+            [(SourceToolCommandStatus.Ok)
               (match (source-tool-run-executable bin-path target runtime-args)
                 [(process.OkProcessOutput output)
                   (let

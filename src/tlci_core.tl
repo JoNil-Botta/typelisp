@@ -36,20 +36,20 @@
   (symbols (Array u8)))
 
 (defenum ResultTlciString
-  (OkTlciString String)
-  (ErrTlciString String))
+  (Ok String)
+  (Err String))
 
 (defenum ResultTlciMetadata
-  (OkTlciMetadata TlciMetadata)
-  (ErrTlciMetadata String))
+  (Ok TlciMetadata)
+  (Err String))
 
 (defenum ResultTlciImage
-  (OkTlciImage TlciImage)
-  (ErrTlciImage String))
+  (Ok TlciImage)
+  (Err String))
 
 (defenum ResultTlciBytes
-  (OkTlciBytes (Array u8))
-  (ErrTlciBytes String))
+  (Ok (Array u8))
+  (Err String))
 
 (defstruct TlciHostCallbackTable
   (magic i64)
@@ -72,8 +72,8 @@
   (macro-entry-count i64))
 
 (defenum ResultTlciHostAbi
-  (OkTlciHostAbi)
-  (ErrTlciHostAbi String))
+  (Ok)
+  (Err String))
 
 (define tlci-format-version : i64
   1)
@@ -276,51 +276,55 @@
 (define (tlci-validate-host-callback-table [table : TlciHostCallbackTable]) : ResultTlciHostAbi
   (cond
     [(not (= (struct-get table magic) tlci-host-callback-table-magic))
-      (ErrTlciHostAbi "tlci host ABI: bad host callback table magic")]
+      (ResultTlciHostAbi.Err "tlci host ABI: bad host callback table magic")]
     [(not (= (struct-get table abi-version) tlci-host-abi-version))
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         (tlci-host-abi-version-error (struct-get table abi-version)))]
     [(< (struct-get table byte-size) tlci-host-callback-table-size)
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table byte-size is smaller than v1")]
     [(not (= (struct-get table reserved0) 0))
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved0 must be zero")]
     [(not (= (struct-get table reserved1) 0))
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         "tlci host ABI: host callback table reserved1 must be zero")]
     [(= (struct-get table invoke-callback) 0)
-      (ErrTlciHostAbi "tlci host ABI: host invoke callback must be nonzero")]
+      (ResultTlciHostAbi.Err
+        "tlci host ABI: host invoke callback must be nonzero")]
     [(= (struct-get table abort-callback) 0)
-      (ErrTlciHostAbi "tlci host ABI: host abort callback must be nonzero")]
-    [else (OkTlciHostAbi)]))
+      (ResultTlciHostAbi.Err
+        "tlci host ABI: host abort callback must be nonzero")]
+    [else (ResultTlciHostAbi.Ok)]))
 
 (define (tlci-validate-image-registration
   [registration : TlciImageRegistration]) : ResultTlciHostAbi
   (cond
     [(not (= (struct-get registration magic) tlci-image-registration-magic))
-      (ErrTlciHostAbi "tlci host ABI: bad image registration magic")]
+      (ResultTlciHostAbi.Err "tlci host ABI: bad image registration magic")]
     [(not (= (struct-get registration abi-version) tlci-host-abi-version))
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         (tlci-host-abi-version-error (struct-get registration abi-version)))]
     [(< (struct-get registration byte-size) tlci-image-registration-size)
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         "tlci host ABI: image registration byte-size is smaller than v1")]
     [(not (= (struct-get registration reserved0) 0))
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         "tlci host ABI: image registration reserved0 must be zero")]
     [(not (= (struct-get registration reserved1) 0))
-      (ErrTlciHostAbi
+      (ResultTlciHostAbi.Err
         "tlci host ABI: image registration reserved1 must be zero")]
     [(and
         (= (struct-get registration macro-entry-table) 0)
         (not (= (struct-get registration macro-entry-count) 0)))
-      (ErrTlciHostAbi "tlci host ABI: macro entry count requires a table")]
+      (ResultTlciHostAbi.Err
+        "tlci host ABI: macro entry count requires a table")]
     [(and
         (not (= (struct-get registration macro-entry-table) 0))
         (= (struct-get registration macro-entry-count) 0))
-      (ErrTlciHostAbi "tlci host ABI: macro entry table requires a count")]
-    [else (OkTlciHostAbi)]))
+      (ResultTlciHostAbi.Err
+        "tlci host ABI: macro entry table requires a count")]
+    [else (ResultTlciHostAbi.Ok)]))
 
 (define (tlci-empty-bytes) : (Array u8)
   (make-array u8 0))
@@ -509,25 +513,25 @@
 
 (define (tlci-field-string-value [ftail : Sexpr] [fname : String]) : ResultTlciString
   (match ftail
-    [(SCons vhead vrest)
+    [(Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(SStr val)
+        [(Sexpr.Str val)
           (match (box-get vrest)
-            [(SNil) (OkTlciString val)]
+            [(Sexpr.Nil) (ResultTlciString.Ok val)]
             [_
-              (ErrTlciString
+              (ResultTlciString.Err
                 (str_cat.str-cat
                   "tlci metadata: field `"
                   fname
                   "` takes one string value"))])]
         [_
-          (ErrTlciString
+          (ResultTlciString.Err
             (str_cat.str-cat
               "tlci metadata: field `"
               fname
               "` must be a string"))])]
     [_
-      (ErrTlciString
+      (ResultTlciString.Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-package-fields
@@ -537,32 +541,36 @@
   [version : String]
   [has-version : bool]) : ResultTlciMetadata
   (match fields
-    [(SNil)
+    [(Sexpr.Nil)
       (cond
         [(not has-name)
-          (ErrTlciMetadata
+          (ResultTlciMetadata.Err
             "tlci metadata: package missing required field `name`")]
         [(not has-version)
-          (ErrTlciMetadata
+          (ResultTlciMetadata.Err
             "tlci metadata: package missing required field `version`")]
         [(string.string-eq name "")
-          (ErrTlciMetadata "tlci metadata: package name must not be empty")]
+          (ResultTlciMetadata.Err
+            "tlci metadata: package name must not be empty")]
         [(string.string-eq version "")
-          (ErrTlciMetadata "tlci metadata: package version must not be empty")]
+          (ResultTlciMetadata.Err
+            "tlci metadata: package version must not be empty")]
         [else
-          (OkTlciMetadata (TlciMetadata tlci-metadata-version name version))])]
-    [(SCons field rest)
+          (ResultTlciMetadata.Ok
+            (TlciMetadata tlci-metadata-version name version))])]
+    [(Sexpr.Cons field rest)
       (match (box-get field)
-        [(SCons fhead ftail)
+        [(Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(SSym fname)
+            [(Sexpr.Sym fname)
               (if (string.string-eq fname "name")
                 (if has-name
-                  (ErrTlciMetadata
+                  (ResultTlciMetadata.Err
                     "tlci metadata: duplicate package field `name`")
                   (match (tlci-field-string-value (box-get ftail) fname)
-                    [(ErrTlciString message) (ErrTlciMetadata message)]
-                    [(OkTlciString value)
+                    [(ResultTlciString.Err message)
+                      (ResultTlciMetadata.Err message)]
+                    [(ResultTlciString.Ok value)
                       (tlci-package-fields
                         (box-get rest)
                         value
@@ -571,27 +579,29 @@
                         has-version)]))
                 (if (string.string-eq fname "version")
                   (if has-version
-                    (ErrTlciMetadata
+                    (ResultTlciMetadata.Err
                       "tlci metadata: duplicate package field `version`")
                     (match (tlci-field-string-value (box-get ftail) fname)
-                      [(ErrTlciString message) (ErrTlciMetadata message)]
-                      [(OkTlciString value)
+                      [(ResultTlciString.Err message)
+                        (ResultTlciMetadata.Err message)]
+                      [(ResultTlciString.Ok value)
                         (tlci-package-fields
                           (box-get rest)
                           name
                           has-name
                           value
                           true)]))
-                  (ErrTlciMetadata
+                  (ResultTlciMetadata.Err
                     (str_cat.str-cat
                       "tlci metadata: unknown package field `"
                       fname
                       "`"))))]
             [_
-              (ErrTlciMetadata
+              (ResultTlciMetadata.Err
                 "tlci metadata: package fields must start with a name")])]
-        [_ (ErrTlciMetadata "tlci metadata: package fields must be lists")])]
-    [_ (ErrTlciMetadata "tlci metadata: package fields must be lists")]))
+        [_
+          (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")])]
+    [_ (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")]))
 
 (define (tlci-package-from-field [ftail : Sexpr]) : ResultTlciMetadata
   (tlci-package-fields ftail "" false "" false))
@@ -604,29 +614,34 @@
   [package-version : String]
   [has-package : bool]) : ResultTlciMetadata
   (match fields
-    [(SNil)
+    [(Sexpr.Nil)
       (cond
         [(not has-version)
-          (ErrTlciMetadata "tlci metadata: missing required field `version`")]
+          (ResultTlciMetadata.Err
+            "tlci metadata: missing required field `version`")]
         [(not (string.string-eq version tlci-metadata-version))
-          (ErrTlciMetadata
+          (ResultTlciMetadata.Err
             (str_cat.str-cat "tlci metadata: unsupported version `" version "`"))]
         [(not has-package)
-          (ErrTlciMetadata "tlci metadata: missing required field `package`")]
+          (ResultTlciMetadata.Err
+            "tlci metadata: missing required field `package`")]
         [else
-          (OkTlciMetadata (TlciMetadata version package-name package-version))])]
-    [(SCons field rest)
+          (ResultTlciMetadata.Ok
+            (TlciMetadata version package-name package-version))])]
+    [(Sexpr.Cons field rest)
       (match (box-get field)
-        [(SCons fhead ftail)
+        [(Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(SSym fname)
+            [(Sexpr.Sym fname)
               (cond
                 [(string.string-eq fname "version")
                   (if has-version
-                    (ErrTlciMetadata "tlci metadata: duplicate field `version`")
+                    (ResultTlciMetadata.Err
+                      "tlci metadata: duplicate field `version`")
                     (match (tlci-field-string-value (box-get ftail) fname)
-                      [(ErrTlciString message) (ErrTlciMetadata message)]
-                      [(OkTlciString value)
+                      [(ResultTlciString.Err message)
+                        (ResultTlciMetadata.Err message)]
+                      [(ResultTlciString.Ok value)
                         (tlci-metadata-fields
                           (box-get rest)
                           value
@@ -636,10 +651,12 @@
                           has-package)]))]
                 [(string.string-eq fname "package")
                   (if has-package
-                    (ErrTlciMetadata "tlci metadata: duplicate field `package`")
+                    (ResultTlciMetadata.Err
+                      "tlci metadata: duplicate field `package`")
                     (match (tlci-package-from-field (box-get ftail))
-                      [(ErrTlciMetadata message) (ErrTlciMetadata message)]
-                      [(OkTlciMetadata parsed)
+                      [(ResultTlciMetadata.Err message)
+                        (ResultTlciMetadata.Err message)]
+                      [(ResultTlciMetadata.Ok parsed)
                         (tlci-metadata-fields
                           (box-get rest)
                           version
@@ -648,37 +665,38 @@
                           (struct-get parsed package-version)
                           true)]))]
                 [else
-                  (ErrTlciMetadata
+                  (ResultTlciMetadata.Err
                     (str_cat.str-cat "tlci metadata: unknown field `" fname "`"))])]
             [_
-              (ErrTlciMetadata
+              (ResultTlciMetadata.Err
                 "tlci metadata: fields must start with a field name")])]
-        [_ (ErrTlciMetadata "tlci metadata: fields must be lists")])]
-    [_ (ErrTlciMetadata "tlci metadata: fields must be lists")]))
+        [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")])]
+    [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")]))
 
 (define (tlci-metadata-from-form [form : Sexpr]) : ResultTlciMetadata
   (match form
-    [(SCons head rest)
+    [(Sexpr.Cons head rest)
       (match (box-get head)
-        [(SSym name)
+        [(Sexpr.Sym name)
           (if (string.string-eq name "typelisp-tlci-metadata")
             (tlci-metadata-fields (box-get rest) "" false "" "" false)
-            (ErrTlciMetadata
+            (ResultTlciMetadata.Err
               (str_cat.str-cat
                 "expected `typelisp-tlci-metadata` form, got `"
                 name
                 "`")))]
         [_
-          (ErrTlciMetadata
+          (ResultTlciMetadata.Err
             "tlci metadata: form must start with `typelisp-tlci-metadata`")])]
     [_
-      (ErrTlciMetadata "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
+      (ResultTlciMetadata.Err
+        "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
   (match (read-result (lex source))
-    [(ErrSexpr message)
-      (ErrTlciMetadata (string.string-append "tlci metadata: " message))]
-    [(OkSexpr form) (tlci-metadata-from-form form)]))
+    [(ResultSexpr.Err message)
+      (ResultTlciMetadata.Err (string.string-append "tlci metadata: " message))]
+    [(ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
 
 (define (tlci-quote-text) : String
   "\"")
@@ -743,28 +761,28 @@
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond
     [(string.string-eq (struct-get image compiler-build-hash) "")
-      (ErrTlciBytes "tlci: compiler build hash must not be empty")]
+      (ResultTlciBytes.Err "tlci: compiler build hash must not be empty")]
     [(not
         (=
           (%
             (array-length (struct-get image fixups))
             tlci-section-fixup-record-size)
           0))
-      (ErrTlciBytes "tlci: malformed fixup table length")]
+      (ResultTlciBytes.Err "tlci: malformed fixup table length")]
     [(not
         (=
           (%
             (array-length (struct-get image entries))
             tlci-section-entry-record-size)
           0))
-      (ErrTlciBytes "tlci: malformed entry table length")]
+      (ResultTlciBytes.Err "tlci: malformed entry table length")]
     [(not
         (=
           (%
             (array-length (struct-get image symbols))
             tlci-section-symbol-record-size)
           0))
-      (ErrTlciBytes "tlci: malformed symbol table length")]
+      (ResultTlciBytes.Err "tlci: malformed symbol table length")]
     [else
       (let
         [compiler-hash-bytes : (Array u8)
@@ -850,7 +868,7 @@
               (tlci-append-bytes! out (struct-get image symbols)))
             unit)
           (tlci-set-u64! out tlci-hash-field-offset (tlci-content-hash out))
-          (OkTlciBytes out)))]))
+          (ResultTlciBytes.Ok out)))]))
 
 (define (tlci-section-range-ok? [file-size : i64] [offset : i64] [len : i64]) : bool
   (if (= len 0)
@@ -868,15 +886,16 @@
   (= (% len record-size) 0))
 
 (define (tlci-section-error [name : String]) : ResultTlciImage
-  (ErrTlciImage (str_cat.str-cat "tlci: section `" name "` extends past end")))
+  (ResultTlciImage.Err
+    (str_cat.str-cat "tlci: section `" name "` extends past end")))
 
 (define (tlci-parse-image [bytes : (Array u8)]) : ResultTlciImage
   (let
     [actual-size : i64 (array-length bytes)]
     (if (< actual-size tlci-header-size)
-      (ErrTlciImage "tlci: truncated header")
+      (ResultTlciImage.Err "tlci: truncated header")
       (if (not (tlci-magic-ok? bytes))
-        (ErrTlciImage "tlci: bad magic")
+        (ResultTlciImage.Err "tlci: bad magic")
         (let
           [version : i64 (tlci-read-u64 bytes 8)]
           [host-arch : i64 (tlci-read-u64 bytes 16)]
@@ -913,22 +932,25 @@
             (tlci-section-end entries-end symbols-offset symbols-len)]
           (cond
             [(not (= version tlci-format-version))
-              (ErrTlciImage
+              (ResultTlciImage.Err
                 (str_cat.str-cat
                   "tlci: unsupported format version "
                   (string.int->string version)))]
             [(not (= host-arch tlci-host-arch-x86-64))
-              (ErrTlciImage "tlci: unsupported host arch")]
+              (ResultTlciImage.Err "tlci: unsupported host arch")]
             [(not (= callback-abi tlci-callback-abi-version))
-              (ErrTlciImage "tlci: unsupported callback ABI version")]
+              (ResultTlciImage.Err "tlci: unsupported callback ABI version")]
             [(not (= declared-size actual-size))
-              (ErrTlciImage "tlci: file size field does not match input length")]
+              (ResultTlciImage.Err
+                "tlci: file size field does not match input length")]
             [(not (tlci-section-range-ok? actual-size hash-offset hash-len))
               (tlci-section-error "compiler-build-hash")]
             [(= hash-len 0)
-              (ErrTlciImage "tlci: compiler build hash must not be empty")]
+              (ResultTlciImage.Err
+                "tlci: compiler build hash must not be empty")]
             [(not (= hash-offset tlci-header-size))
-              (ErrTlciImage "tlci: compiler build hash must start after header")]
+              (ResultTlciImage.Err
+                "tlci: compiler build hash must start after header")]
             [(not
                 (tlci-section-range-ok?
                   actual-size
@@ -936,68 +958,75 @@
                   metadata-len))
               (tlci-section-error "metadata")]
             [(= metadata-len 0)
-              (ErrTlciImage "tlci: metadata section must not be empty")]
+              (ResultTlciImage.Err "tlci: metadata section must not be empty")]
             [(not (tlci-section-aligned? metadata-offset metadata-len 8))
-              (ErrTlciImage "tlci: metadata section must be 8-byte aligned")]
+              (ResultTlciImage.Err
+                "tlci: metadata section must be 8-byte aligned")]
             [(not (tlci-section-ordered? hash-end metadata-offset metadata-len))
-              (ErrTlciImage "tlci: metadata section overlaps previous section")]
+              (ResultTlciImage.Err
+                "tlci: metadata section overlaps previous section")]
             [(not (tlci-section-range-ok? actual-size rodata-offset rodata-len))
               (tlci-section-error "rodata")]
             [(not
                 (tlci-section-aligned? rodata-offset rodata-len tlci-page-align))
-              (ErrTlciImage "tlci: rodata section must be page-aligned")]
+              (ResultTlciImage.Err "tlci: rodata section must be page-aligned")]
             [(not (tlci-section-ordered? metadata-end rodata-offset rodata-len))
-              (ErrTlciImage "tlci: rodata section overlaps previous section")]
+              (ResultTlciImage.Err
+                "tlci: rodata section overlaps previous section")]
             [(not (tlci-section-range-ok? actual-size code-offset code-len))
               (tlci-section-error "code")]
             [(not (tlci-section-aligned? code-offset code-len tlci-page-align))
-              (ErrTlciImage "tlci: code section must be page-aligned")]
+              (ResultTlciImage.Err "tlci: code section must be page-aligned")]
             [(not (tlci-section-ordered? rodata-end code-offset code-len))
-              (ErrTlciImage "tlci: code section overlaps previous section")]
+              (ResultTlciImage.Err
+                "tlci: code section overlaps previous section")]
             [(not (tlci-section-range-ok? actual-size fixups-offset fixups-len))
               (tlci-section-error "fixups")]
             [(not (tlci-section-aligned? fixups-offset fixups-len 8))
-              (ErrTlciImage "tlci: fixup table must be 8-byte aligned")]
+              (ResultTlciImage.Err "tlci: fixup table must be 8-byte aligned")]
             [(not (tlci-section-ordered? code-end fixups-offset fixups-len))
-              (ErrTlciImage "tlci: fixup table overlaps previous section")]
+              (ResultTlciImage.Err
+                "tlci: fixup table overlaps previous section")]
             [(not
                 (tlci-section-range-ok? actual-size entries-offset entries-len))
               (tlci-section-error "entries")]
             [(not (tlci-section-aligned? entries-offset entries-len 8))
-              (ErrTlciImage "tlci: entry table must be 8-byte aligned")]
+              (ResultTlciImage.Err "tlci: entry table must be 8-byte aligned")]
             [(not (tlci-section-ordered? fixups-end entries-offset entries-len))
-              (ErrTlciImage "tlci: entry table overlaps previous section")]
+              (ResultTlciImage.Err
+                "tlci: entry table overlaps previous section")]
             [(not
                 (tlci-section-range-ok? actual-size symbols-offset symbols-len))
               (tlci-section-error "symbols")]
             [(not (tlci-section-aligned? symbols-offset symbols-len 8))
-              (ErrTlciImage "tlci: symbol table must be 8-byte aligned")]
+              (ResultTlciImage.Err "tlci: symbol table must be 8-byte aligned")]
             [(not
                 (tlci-section-ordered? entries-end symbols-offset symbols-len))
-              (ErrTlciImage "tlci: symbol table overlaps previous section")]
+              (ResultTlciImage.Err
+                "tlci: symbol table overlaps previous section")]
             [(not
                 (tlci-table-len-ok? fixups-len tlci-section-fixup-record-size))
-              (ErrTlciImage "tlci: malformed fixup table length")]
+              (ResultTlciImage.Err "tlci: malformed fixup table length")]
             [(not
                 (tlci-table-len-ok? entries-len tlci-section-entry-record-size))
-              (ErrTlciImage "tlci: malformed entry table length")]
+              (ResultTlciImage.Err "tlci: malformed entry table length")]
             [(not
                 (tlci-table-len-ok? symbols-len tlci-section-symbol-record-size))
-              (ErrTlciImage "tlci: malformed symbol table length")]
+              (ResultTlciImage.Err "tlci: malformed symbol table length")]
             [(not (= declared-size content-end))
-              (ErrTlciImage "tlci: file has trailing bytes")]
+              (ResultTlciImage.Err "tlci: file has trailing bytes")]
             [(not (= expected-hash (tlci-content-hash bytes)))
-              (ErrTlciImage "tlci: content hash mismatch")]
+              (ResultTlciImage.Err "tlci: content hash mismatch")]
             [else
               (let
                 [metadata-text : String
                   (tlci-bytes->string bytes metadata-offset metadata-len)]
                 (match (tlci-metadata-parse metadata-text)
-                  [(ErrTlciMetadata message)
-                    (ErrTlciImage
+                  [(ResultTlciMetadata.Err message)
+                    (ResultTlciImage.Err
                       (str_cat.str-cat "tlci: malformed metadata: " message))]
-                  [(OkTlciMetadata metadata)
-                    (OkTlciImage
+                  [(ResultTlciMetadata.Ok metadata)
+                    (ResultTlciImage.Ok
                       (TlciImage
                         host-arch
                         callback-abi
@@ -1090,8 +1119,8 @@
   [result : ResultTlciHostAbi]
   [expected : String]) : bool
   (match result
-    [(ErrTlciHostAbi message) (string.string-eq message expected)]
-    [(OkTlciHostAbi) false]))
+    [(ResultTlciHostAbi.Err message) (string.string-eq message expected)]
+    [(ResultTlciHostAbi.Ok) false]))
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
@@ -1187,11 +1216,11 @@
     (tlci-test-host-abi-layout-ok?)
     (tlci-test-host-callback-op-layout-ok?)
     (match (tlci-validate-host-callback-table (tlci-test-host-callback-table))
-      [(OkTlciHostAbi) true]
-      [(ErrTlciHostAbi _) false])
+      [(ResultTlciHostAbi.Ok) true]
+      [(ResultTlciHostAbi.Err _) false])
     (match (tlci-validate-image-registration (tlci-test-image-registration))
-      [(OkTlciHostAbi) true]
-      [(ErrTlciHostAbi _) false])
+      [(ResultTlciHostAbi.Ok) true]
+      [(ResultTlciHostAbi.Err _) false])
     (tlci-test-host-abi-rejects?
       (tlci-validate-host-callback-table
         (TlciHostCallbackTable
@@ -1315,21 +1344,21 @@
 
 (define (tlci-test-parse-round-trip? [image : TlciImage]) : bool
   (match (tlci-emit-image image)
-    [(ErrTlciBytes _) false]
-    [(OkTlciBytes bytes)
+    [(ResultTlciBytes.Err _) false]
+    [(ResultTlciBytes.Ok bytes)
       (match (tlci-parse-image bytes)
-        [(ErrTlciImage _) false]
-        [(OkTlciImage parsed)
+        [(ResultTlciImage.Err _) false]
+        [(ResultTlciImage.Ok parsed)
           (match (tlci-emit-image parsed)
-            [(ErrTlciBytes _) false]
-            [(OkTlciBytes again) (tlci-bytes-eq? bytes again)])])]))
+            [(ResultTlciBytes.Err _) false]
+            [(ResultTlciBytes.Ok again) (tlci-bytes-eq? bytes again)])])]))
 
 (define (tlci-test-metadata-emit-parse?) : bool
   (let
     [source : String (tlci-metadata-emit (tlci-test-metadata))]
     (match (tlci-metadata-parse source)
-      [(ErrTlciMetadata _) false]
-      [(OkTlciMetadata parsed)
+      [(ResultTlciMetadata.Err _) false]
+      [(ResultTlciMetadata.Ok parsed)
         (and
           (string.string-eq (struct-get parsed version) "v1")
           (string.string-eq (struct-get parsed package-name) "demo")
@@ -1337,18 +1366,18 @@
 
 (define (tlci-test-metadata-rejects? [source : String] [expected : String]) : bool
   (match (tlci-metadata-parse source)
-    [(ErrTlciMetadata message) (string.string-eq message expected)]
-    [(OkTlciMetadata _) false]))
+    [(ResultTlciMetadata.Err message) (string.string-eq message expected)]
+    [(ResultTlciMetadata.Ok _) false]))
 
 (define (tlci-test-parse-rejects? [bytes : (Array u8)] [expected : String]) : bool
   (match (tlci-parse-image bytes)
-    [(ErrTlciImage message) (string.string-eq message expected)]
-    [(OkTlciImage _) false]))
+    [(ResultTlciImage.Err message) (string.string-eq message expected)]
+    [(ResultTlciImage.Ok _) false]))
 
 (define (tlci-test-emit-rejects? [image : TlciImage] [expected : String]) : bool
   (match (tlci-emit-image image)
-    [(ErrTlciBytes message) (string.string-eq message expected)]
-    [(OkTlciBytes _) false]))
+    [(ResultTlciBytes.Err message) (string.string-eq message expected)]
+    [(ResultTlciBytes.Ok _) false]))
 
 (define (tlci-test-corrupt-byte
   [bytes : (Array u8)]
@@ -1362,8 +1391,8 @@
 
 (define (tlci-test-rejections-ok?) : bool
   (match (tlci-emit-image (tlci-test-metadata-only-image))
-    [(ErrTlciBytes _) false]
-    [(OkTlciBytes bytes)
+    [(ResultTlciBytes.Err _) false]
+    [(ResultTlciBytes.Ok bytes)
       (and
         (tlci-test-parse-rejects?
           (tlci-test-corrupt-byte bytes 0 0)

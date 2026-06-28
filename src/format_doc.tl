@@ -19,58 +19,58 @@
   (string.string-concat3 left middle right))
 
 (defenum Doc
-  (DEmpty)
-  (DText String)
-  (DSoftLine)
-  (DHardLine)
-  (DConcat (Box Doc) (Box Doc))
-  (DNest i64 (Box Doc))
-  (DGroup (Box Doc)))
+  (Empty)
+  (Text String)
+  (SoftLine)
+  (HardLine)
+  (Concat (Box Doc) (Box Doc))
+  (Nest i64 (Box Doc))
+  (Group (Box Doc)))
 
 (defenum RenderedDoc
   (Rendered String i64))
 
 (define (doc-empty) : Doc
-  (DEmpty))
+  (Doc.Empty))
 
 (define (doc-empty? [doc : Doc]) : bool
   (match doc
-    [(DEmpty) true]
+    [(Doc.Empty) true]
     [_ false]))
 
 (define (doc-text [text : String]) : Doc
-  (DText text))
+  (Doc.Text text))
 
 (define (doc-soft-line) : Doc
-  (DSoftLine))
+  (Doc.SoftLine))
 
 (define (doc-hard-line) : Doc
-  (DHardLine))
+  (Doc.HardLine))
 
 (define (doc-append [left : Doc] [right : Doc]) : Doc
   (match left
-    [(DEmpty) right]
+    [(Doc.Empty) right]
     [_
       (match right
-        [(DEmpty) left]
-        [_ (DConcat (box left) (box right))])]))
+        [(Doc.Empty) left]
+        [_ (Doc.Concat (box left) (box right))])]))
 
 (define (doc-nest [indent : i64] [doc : Doc]) : Doc
-  (DNest indent (box doc)))
+  (Doc.Nest indent (box doc)))
 
 (define (doc-group [doc : Doc]) : Doc
-  (DGroup (box doc)))
+  (Doc.Group (box doc)))
 
 (define (flat-width [doc : Doc]) : i64
   (match doc
-    [(DEmpty) 0]
-    [(DText text) (fmt-len text)]
-    [(DSoftLine) 1]
-    [(DHardLine) 1000000]
-    [(DConcat left right)
+    [(Doc.Empty) 0]
+    [(Doc.Text text) (fmt-len text)]
+    [(Doc.SoftLine) 1]
+    [(Doc.HardLine) 1000000]
+    [(Doc.Concat left right)
       (+ (flat-width (box-get left)) (flat-width (box-get right)))]
-    [(DNest _ inner) (flat-width (box-get inner))]
-    [(DGroup inner) (flat-width (box-get inner))]))
+    [(Doc.Nest _ inner) (flat-width (box-get inner))]
+    [(Doc.Group inner) (flat-width (box-get inner))]))
 
 ;; Add the flat width of `doc` to `acc`, but stop descending as soon as the
 ;; running total exceeds `limit`: once a subtree is over budget the rest is left
@@ -84,31 +84,31 @@
   (if (> acc limit)
     acc
     (match doc
-      [(DEmpty) acc]
-      [(DText text) (+ acc (fmt-len text))]
-      [(DSoftLine) (+ acc 1)]
-      [(DHardLine) (+ acc 1000000)]
-      [(DConcat left right)
+      [(Doc.Empty) acc]
+      [(Doc.Text text) (+ acc (fmt-len text))]
+      [(Doc.SoftLine) (+ acc 1)]
+      [(Doc.HardLine) (+ acc 1000000)]
+      [(Doc.Concat left right)
         (flat-width-capped
           (box-get right)
           (flat-width-capped (box-get left) acc limit)
           limit)]
-      [(DNest _ inner) (flat-width-capped (box-get inner) acc limit)]
-      [(DGroup inner) (flat-width-capped (box-get inner) acc limit)])))
+      [(Doc.Nest _ inner) (flat-width-capped (box-get inner) acc limit)]
+      [(Doc.Group inner) (flat-width-capped (box-get inner) acc limit)])))
 
 (define (fits-flat [doc : Doc] [remaining : i64]) : bool
   (<= (flat-width-capped doc 0 remaining) remaining))
 
 (define (rendered-text [result : RenderedDoc]) : String
   (match result
-    [(Rendered text _) text]))
+    [(RenderedDoc.Rendered text _) text]))
 
 (define (rendered-col [result : RenderedDoc]) : i64
   (match result
-    [(Rendered _ col) col]))
+    [(RenderedDoc.Rendered _ col) col]))
 
 (define (render-newline [indent : i64]) : RenderedDoc
-  (Rendered (fmt-cat "\n" (spaces indent)) indent))
+  (RenderedDoc.Rendered (fmt-cat "\n" (spaces indent)) indent))
 
 ;; Render `doc` by appending into `buf` in place, returning the resulting column.
 ;; The buffer is owned by `render-doc-width` and threaded by reference, so the
@@ -122,14 +122,14 @@
   [flat : bool]
   [buf : FmtRenderBuf]) : i64
   (match doc
-    [(DEmpty) col]
-    [(DText text)
+    [(Doc.Empty) col]
+    [(Doc.Text text)
       (let
         [text-width : i64 (fmt-len text)]
         (begin
           (fmt-render-buf-append buf text)
           (+ col text-width)))]
-    [(DSoftLine)
+    [(Doc.SoftLine)
       (if flat
         (begin
           (fmt-render-buf-append buf " ")
@@ -137,18 +137,18 @@
         (begin
           (render-newline-into! buf indent)
           indent))]
-    [(DHardLine)
+    [(Doc.HardLine)
       (begin
         (render-newline-into! buf indent)
         indent)]
-    [(DConcat left right)
+    [(Doc.Concat left right)
       (let
         [left-col : i64
           (render-doc-into (box-get left) width indent col flat buf)]
         (render-doc-into (box-get right) width indent left-col flat buf))]
-    [(DNest extra inner)
+    [(Doc.Nest extra inner)
       (render-doc-into (box-get inner) width (+ indent extra) col flat buf)]
-    [(DGroup inner)
+    [(Doc.Group inner)
       (if (fits-flat (box-get inner) (- width col))
         (render-doc-into (box-get inner) width indent col true buf)
         (render-doc-into (box-get inner) width indent col false buf))]))
@@ -160,22 +160,22 @@
   [col : i64]
   [flat : bool]) : RenderedDoc
   (match doc
-    [(DEmpty) (Rendered "" col)]
-    [(DText text) (Rendered text (+ col (fmt-len text)))]
-    [(DSoftLine)
+    [(Doc.Empty) (RenderedDoc.Rendered "" col)]
+    [(Doc.Text text) (RenderedDoc.Rendered text (+ col (fmt-len text)))]
+    [(Doc.SoftLine)
       (if flat
-        (Rendered " " (+ col 1))
+        (RenderedDoc.Rendered " " (+ col 1))
         (render-newline indent))]
-    [(DHardLine) (render-newline indent)]
-    [(DConcat left right)
+    [(Doc.HardLine) (render-newline indent)]
+    [(Doc.Concat left right)
       (match (render-doc-in (box-get left) width indent col flat)
-        [(Rendered left-text left-col)
+        [(RenderedDoc.Rendered left-text left-col)
           (match (render-doc-in (box-get right) width indent left-col flat)
-            [(Rendered right-text right-col)
-              (Rendered (fmt-cat left-text right-text) right-col)])])]
-    [(DNest extra inner)
+            [(RenderedDoc.Rendered right-text right-col)
+              (RenderedDoc.Rendered (fmt-cat left-text right-text) right-col)])])]
+    [(Doc.Nest extra inner)
       (render-doc-in (box-get inner) width (+ indent extra) col flat)]
-    [(DGroup inner)
+    [(Doc.Group inner)
       (if (fits-flat (box-get inner) (- width col))
         (render-doc-in (box-get inner) width indent col true)
         (render-doc-in (box-get inner) width indent col false))]))

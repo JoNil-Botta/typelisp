@@ -9,8 +9,8 @@
   (items (Array String)))
 
 (defenum StringList
-  (SNil)
-  (SCons String (Box StringList)))
+  (Nil)
+  (Cons String (Box StringList)))
 
 (define (score-bool [ok : bool]) : i64
   (if ok
@@ -19,8 +19,9 @@
 
 (define (list-score [items : StringList]) : i64
   (match items
-    [SNil 0]
-    [(SCons head tail) (+ (string-length head) (list-score (box-get tail)))]))
+    [StringList.Nil 0]
+    [(StringList.Cons head tail)
+      (+ (string-length head) (list-score (box-get tail)))]))
 
 (define (bundle-score [bundle : Bundle]) : i64
   (+
@@ -49,9 +50,9 @@
     items))
 
 (define (make-list) : StringList
-  (SCons
+  (StringList.Cons
     (string-append "a" "a")
-    (box (SCons (string-append "b" "bb") (box SNil)))))
+    (box (StringList.Cons (string-append "b" "bb") (box StringList.Nil)))))
 
 (define (copy-from-scratch [home : Arena] [scratch : Arena]) : i64
   (begin

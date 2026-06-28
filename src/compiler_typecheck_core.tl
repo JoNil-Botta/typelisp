@@ -46393,7 +46393,11 @@
                                     (set! cur-module next-module)
                                     (set! cur-decls rest)
                                     (set! cur-paths rest-paths)
-                                    (set! cur-index (+ cur-index 1))
+                                    (set!
+                                      cur-index
+                                      (+
+                                        cur-index
+                                        (ast-decl-list-count expanded)))
                                     (set! batched-inert-splice? true))]
                                 [(ErrTcEnv message)
                                   (begin
@@ -46493,7 +46497,9 @@
                               (macro-decls-final-module expanded cur-module))
                             (set! cur-decls rest)
                             (set! cur-paths rest-paths)
-                            (set! cur-index (+ cur-index 1)))]
+                            (set!
+                              cur-index
+                              (+ cur-index (ast-decl-list-count expanded))))]
                         [(ErrMacroDeclExpansion diag)
                           (begin
                             (set! result (ErrMacroDeclsWithPaths diag))
@@ -47165,7 +47171,9 @@
                             cur-module))
                         (set! cur-decls rest)
                         (set! cur-paths rest-paths)
-                        (set! cur-index (+ cur-index 1)))]
+                        (set!
+                          cur-index
+                          (+ cur-index (ast-decl-list-count materialized-decls))))]
                     [(ErrMacroMaterializeImport diag)
                       (begin
                         (set! result (ErrMacroMaterializeImport diag))

@@ -20114,6 +20114,19 @@
         instr
         func-diag
         "")]
+    ;; Sound-scavenger: reserve this instruction's operand + result homes so the
+    ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
+    [_reserved-mask : i64
+      (begin
+        (set! compiler-backend-current-instr-reserved-mask
+          (compiler-backend-live-set-home-mask
+            assignments
+            (compiler-live-instr-defs instr)
+            (compiler-backend-live-set-home-mask
+              assignments
+              (compiler-live-instr-uses instr)
+              0)))
+        compiler-backend-current-instr-reserved-mask)]
     (match instr
       [(IrInstrMov dst src ty)
         (match (compiler-backend-emit-mov
@@ -21268,6 +21281,19 @@
         instr
         func-diag
         "")]
+    ;; Sound-scavenger: reserve this instruction's operand + result homes so the
+    ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
+    [_reserved-mask : i64
+      (begin
+        (set! compiler-backend-current-instr-reserved-mask
+          (compiler-backend-live-set-home-mask
+            assignments
+            (compiler-live-instr-defs instr)
+            (compiler-backend-live-set-home-mask
+              assignments
+              (compiler-live-instr-uses instr)
+              0)))
+        compiler-backend-current-instr-reserved-mask)]
     (match instr
       [(IrInstrCall dst name args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
@@ -27864,6 +27890,47 @@
 ;; of the plan (stable, order-independent) and still gives the scavenger every
 ;; callee register the allocator already pays to preserve, used as scratch only
 ;; where the freeness query certifies no live value occupies it.
+;; Sound-scavenger reserved mask (LLVM RegScavenger model): the pooled-register
+;; homes of the CURRENT instruction's operand (use) + result (def) vars. The
+;; scavenge must NEVER return one of these as scratch -- it would clobber an
+;; operand the instruction reads, or the result it writes (the dst reads "free"
+;; at the scavenge point but must still be reserved). Set once per instruction
+;; at the emission dispatcher; consulted in candidate-ok? AND the emergency tier.
+(define compiler-backend-current-instr-reserved-mask : i64 0)
+
+;; OR the pooled-register-home bit of every var in `set` into `acc`. reg-bit is
+;; 0 for spilled/ABI-only regs, so only allocatable homes get reserved.
+(define (compiler-backend-live-set-home-mask
+  [assignments : CompilerRegAssignmentList]
+  [set : CompilerLiveI64Set]
+  [acc : i64]) : i64
+  (let
+    [wc : i64 (compiler-live-set-word-count set)]
+    [bits : i64 (compiler-live-set-word-bits)]
+    [w : i64 0]
+    [mask : i64 acc]
+    (begin
+      (while (< w wc)
+        (let
+          [word : i64 (compiler-live-set-word-at set w)]
+          [base : i64 (* w bits)]
+          [b : i64 0]
+          (begin
+            (if (= word 0)
+              unit
+              (while (< b bits)
+                (begin
+                  (if (= (bit-and word (shl 1 b)) 0)
+                    unit
+                    (set! mask
+                      (bit-or
+                        mask
+                        (compiler-backend-scavenge-reg-bit
+                          (compiler-backend-var-register-home assignments (+ base b))))))
+                  (set! b (+ b 1)))))
+            (set! w (+ w 1)))))
+      mask)))
+
 (define (compiler-backend-scavenge-candidate-ok?
   [occupied-mask : i64]
   [exclude-mask : i64]
@@ -27873,7 +27940,9 @@
     [bit : i64 (compiler-backend-scavenge-reg-bit reg)]
     (and
       (not (= bit 0))
-      (= (bit-and exclude-mask bit) 0)
+      (= (bit-and
+        (bit-or exclude-mask compiler-backend-current-instr-reserved-mask)
+        bit) 0)
       (or
         (not (compiler-backend-callee-saved-reg? reg))
         (not (= (bit-and plan-mask bit) 0)))
@@ -27904,7 +27973,10 @@
   [n : i64]) : i64
   (if (and
     (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-    (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
+    (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
+    (= (bit-and
+      compiler-backend-current-instr-reserved-mask
+      (compiler-backend-scavenge-reg-bit fallback)) 0))
     -1
     (let
       [i : i64 0]
@@ -27914,7 +27986,7 @@
           (begin
             (if (=
               (bit-and
-                exclude-mask
+                (bit-or exclude-mask compiler-backend-current-instr-reserved-mask)
                 (compiler-backend-scavenge-reg-bit (array-ref cands i)))
               0)
               (set! found i)

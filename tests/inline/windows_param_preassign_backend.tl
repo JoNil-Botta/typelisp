@@ -10,70 +10,90 @@
 
 (define (win-param-preassign-globals) : CompilerIrGlobalList
   (compiler-ir-global-cons
-    (IrGlobal "win_pa" (AstTyI64) (IrValueI64 0))
+    (CompilerIrGlobal.Global "win_pa" (AstTyI64) (CompilerIrValue.I64 0))
     (compiler-ir-global-cons
-      (IrGlobal "win_pb" (AstTyI64) (IrValueI64 0))
+      (CompilerIrGlobal.Global "win_pb" (AstTyI64) (CompilerIrValue.I64 0))
       (compiler-ir-global-cons
-        (IrGlobal "win_pc" (AstTyI64) (IrValueI64 0))
+        (CompilerIrGlobal.Global "win_pc" (AstTyI64) (CompilerIrValue.I64 0))
         (compiler-ir-global-cons
-          (IrGlobal "win_pd" (AstTyI64) (IrValueI64 0))
-          IrGlobalNil)))))
+          (CompilerIrGlobal.Global "win_pd" (AstTyI64) (CompilerIrValue.I64 0))
+          CompilerIrGlobalList.Nil)))))
 
 (define (win-param-preassign-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "win_param_preassign"
     (compiler-ir-param-cons
-      (IrParam "a" (AstTyI64) 0)
+      (CompilerIrParam.Param "a" (AstTyI64) 0)
       (compiler-ir-param-cons
-        (IrParam "b" (AstTyI64) 1)
+        (CompilerIrParam.Param "b" (AstTyI64) 1)
         (compiler-ir-param-cons
-          (IrParam "c" (AstTyI64) 2)
-          (compiler-ir-param-cons (IrParam "d" (AstTyI64) 3) IrParamNil))))
+          (CompilerIrParam.Param "c" (AstTyI64) 2)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "d" (AstTyI64) 3)
+            IrParamNil))))
     (AstTyUnit)
     4
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrStore "win_pa" (IrValueVar 0) (AstTyI64))
+          (CompilerIrInstr.Store "win_pa" (CompilerIrValue.Var 0) (AstTyI64))
           (compiler-ir-instr-cons
-            (IrInstrStore "win_pb" (IrValueVar 1) (AstTyI64))
+            (CompilerIrInstr.Store "win_pb" (CompilerIrValue.Var 1) (AstTyI64))
             (compiler-ir-instr-cons
-              (IrInstrStore "win_pc" (IrValueVar 2) (AstTyI64))
+              (CompilerIrInstr.Store
+                "win_pc"
+                (CompilerIrValue.Var 2)
+                (AstTyI64))
               (compiler-ir-instr-cons
-                (IrInstrStore "win_pd" (IrValueVar 3) (AstTyI64))
-                (compiler-ir-instr-cons (IrInstrReturn IrNoValue) IrInstrNil))))))
-      IrBlockNil)))
+                (CompilerIrInstr.Store
+                  "win_pd"
+                  (CompilerIrValue.Var 3)
+                  (AstTyI64))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil))))))
+      CompilerIrBlockList.Nil)))
 
 (define (win-param-preassign-program) : CompilerIrProgram
-  (IrProgram
+  (CompilerIrProgram.Program
     (win-param-preassign-globals)
-    (compiler-ir-function-cons (win-param-preassign-function) IrFunctionNil)
-    IrExternNil))
+    (compiler-ir-function-cons
+      (win-param-preassign-function)
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
 
 (define (win-param-preassign-safe-div-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "win_param_safe_div"
     (compiler-ir-param-cons
-      (IrParam "a" (AstTyI64) 0)
-      (compiler-ir-param-cons (IrParam "b" (AstTyI64) 1) IrParamNil))
+      (CompilerIrParam.Param "a" (AstTyI64) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "b" (AstTyI64) 1)
+        IrParamNil))
     (AstTyI64)
     3
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (IrInstrBinOp 2 IrBinSafeDiv (IrValueI64 8) (IrValueI64 2) (AstTyI64))
+          (CompilerIrInstr.BinOp
+            2
+            CompilerIrBinOp.SafeDiv
+            (CompilerIrValue.I64 8)
+            (CompilerIrValue.I64 2)
+            (AstTyI64))
           (compiler-ir-instr-cons
-            (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-            IrInstrNil)))
-      IrBlockNil)))
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
 
 (define (win-param-preassign-safe-div-regalloc-ok?) : bool
   (match (compiler-reg-plan-function-scalar-for-abi
-    CompilerRegAbiWindows
+    CompilerRegTargetAbi.Windows
     (win-param-preassign-safe-div-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _)
       (and
         (compiler-live-set-contains? ineligible 1)
         (compiler-reg-unassigned? assignments 1))]))
@@ -83,11 +103,11 @@
     (compiler-backend-set-scalar-registers! true)
     (match (compiler-backend-emit-program-target-with-mode
       (win-param-preassign-program)
-      (BackendTargetWindows)
-      (BackendModeScalar)
+      (CompilerBackendTarget.Windows)
+      (CompilerBackendMode.Scalar)
       (compiler-source-spans-empty)
       false)
-      [(OkCompilerBackend asm)
+      [(ResultCompilerBackend.Ok asm)
         (let
           [ok : bool
             (and
@@ -113,7 +133,7 @@
           (begin
             (compiler-backend-set-scalar-registers! false)
             ok))]
-      [(ErrCompilerBackend _)
+      [(ResultCompilerBackend.Err _)
         (begin
           (compiler-backend-set-scalar-registers! false)
           false)])))

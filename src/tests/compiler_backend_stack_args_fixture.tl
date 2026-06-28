@@ -7,10 +7,10 @@
 
 (define (compiler-backend-stack-args-fixture-for-name [target-name : String]) : ResultCompilerBackend
   (if (string.string-eq target-name "linux-x86_64")
-    (compiler-backend-stack-args-fixture-emit (BackendTargetLinux))
+    (compiler-backend-stack-args-fixture-emit (CompilerBackendTarget.Linux))
     (if (string.string-eq target-name "windows-x86_64")
-      (compiler-backend-stack-args-fixture-emit (BackendTargetWindows))
-      (ErrCompilerBackend
+      (compiler-backend-stack-args-fixture-emit (CompilerBackendTarget.Windows))
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -28,11 +28,11 @@
           "linux-x86_64"
           (io.arg 2))]
       (match (compiler-backend-stack-args-fixture-for-name target-name)
-        [(OkCompilerBackend asm)
+        [(ResultCompilerBackend.Ok asm)
           (begin
             (io.write-file (io.arg 1) asm)
             0)]
-        [(ErrCompilerBackend diag)
+        [(ResultCompilerBackend.Err diag)
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             1)]))))

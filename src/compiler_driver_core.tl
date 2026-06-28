@@ -448,18 +448,18 @@
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]) : CompilerLowerMode
   (match mode
-    [(BackendModeAvx2)
+    [(CompilerBackendMode.Avx2)
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
-        [(BackendTargetWindows) (CompilerLowerWindowsAvx2)])]
-    [(BackendModeAvx512)
+        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxAvx2)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsAvx2)])]
+    [(CompilerBackendMode.Avx512)
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
-        [(BackendTargetWindows) (CompilerLowerWindowsAvx512)])]
+        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxAvx512)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsAvx512)])]
     [_
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
-        [(BackendTargetWindows) (CompilerLowerWindowsScalar)])]))
+        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxScalar)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsScalar)])]))
 
 (define (compiler-driver-enable-linux-cfgs [cfgs : SymI64Env]) : SymI64Env
   (compiler-cfg-enable
@@ -495,8 +495,9 @@
   [cfgs : SymI64Env]) : SymI64Env
   (compiler-driver-enable-language-cfgs
     (match target
-      [(BackendTargetLinux) (compiler-driver-enable-linux-cfgs cfgs)]
-      [(BackendTargetWindows) (compiler-driver-enable-windows-cfgs cfgs)])))
+      [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
+      [(CompilerBackendTarget.Windows)
+        (compiler-driver-enable-windows-cfgs cfgs)])))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]
@@ -542,7 +543,7 @@
     spans
     target
     has-target
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     opt-level
     emit-entry))
 
@@ -599,7 +600,7 @@
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -622,18 +623,18 @@
                     crt-entry)
                   (compiler-backend-emit-program-target-with-mode-and-crt
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(OkCompilerBackend asm)
+                  [(ResultCompilerBackend.Ok asm)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (ResultCompilerDriver.Ok asm))]
-                  [(ErrCompilerBackend diag)
+                  [(ResultCompilerBackend.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -659,7 +660,7 @@
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -681,11 +682,11 @@
                     emit-entry)
                   (compiler-backend-emit-program-target-with-mode-buffer
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry))
-                  [(OkCompilerBackendBuffer buf)
+                  [(ResultCompilerBackendBuffer.Ok buf)
                     (let
                       [peepholed : text_buf.TextBuf
                         (compiler-backend-peephole-text-buf buf)]
@@ -694,7 +695,7 @@
                           compile-profile
                           (compiler-driver-profile-finish-phase "backend"))
                         (ResultCompilerDriverBuffer.Ok peepholed)))]
-                  [(ErrCompilerBackendBuffer diag)
+                  [(ResultCompilerBackendBuffer.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -721,7 +722,7 @@
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -744,18 +745,18 @@
                     crt-entry)
                   (compiler-backend-emit-program-object-image-target-with-mode-and-crt
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(OkCompilerBackendObject image)
+                  [(ResultCompilerBackendObject.Ok image)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (ResultCompilerDriverObject.Ok image))]
-                  [(ErrCompilerBackendObject diag)
+                  [(ResultCompilerBackendObject.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -782,7 +783,7 @@
     (begin
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
-        [(CompilerOptimizedProgram optimized optimized-spans)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -805,18 +806,18 @@
                     crt-entry)
                   (compiler-backend-emit-program-pic-target-with-mode-and-crt
                     optimized
-                    (BackendTargetLinux)
+                    (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(OkCompilerBackendPic output)
+                  [(ResultCompilerBackendPic.Ok output)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
                       (ResultCompilerDriverPic.Ok output))]
-                  [(ErrCompilerBackendPic diag)
+                  [(ResultCompilerBackendPic.Err diag)
                     (begin
                       (cfg
                         compile-profile
@@ -1575,7 +1576,7 @@
     has-target
     stdlib-roots
     opt-level
-    (BackendModeScalar)))
+    (CompilerBackendMode.Scalar)))
 
 (define (compiler-driver-emit-file-with-target-roots-level-and-mode
   [input-path : String]
@@ -1826,7 +1827,7 @@
     has-target
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     manifest-dir
     package-owner
     deps
@@ -2136,7 +2137,7 @@
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (match (optimize-program-with-spans-and-level program spans opt-level)
-      [(CompilerOptimizedProgram optimized _)
+      [(CompilerOptimizedProgram.Program optimized _)
         (begin
           (compiler-driver-release-lowered-ir! opt-level)
           (if (ast-node-pool-reader-type-exhausted?)
@@ -2217,21 +2218,24 @@
   [cfgs : SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
     input-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     cfgs))
 
 (define (compiler-driver-emit-file [input-path : String]) : ResultCompilerDriver
-  (compiler-driver-emit-file-with-target input-path (BackendTargetLinux) false))
+  (compiler-driver-emit-file-with-target
+    input-path
+    (CompilerBackendTarget.Linux)
+    false))
 
 (define (compiler-driver-emit-file-with-roots
   [input-path : String]
   [stdlib-roots : vector.StringVec]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-and-roots
     input-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots))
 
@@ -2241,7 +2245,7 @@
   [opt-level : i64]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-and-level
     input-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     opt-level))
@@ -2403,11 +2407,11 @@
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     (vector.string-vec-new)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots
@@ -2417,11 +2421,11 @@
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-and-level
@@ -2432,11 +2436,11 @@
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-with-roots-level-and-mode
@@ -2448,7 +2452,7 @@
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     false
     stdlib-roots
     opt-level
@@ -2466,7 +2470,7 @@
     true
     (vector.string-vec-new)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots
@@ -2481,7 +2485,7 @@
     true
     stdlib-roots
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-and-level
@@ -2497,7 +2501,7 @@
     true
     stdlib-roots
     opt-level
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty)))
 
 (define (compiler-driver-compile-file-for-target-with-roots-level-and-mode

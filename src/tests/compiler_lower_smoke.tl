@@ -75,10 +75,12 @@
       (vector.string-vec-push (vector.string-vec-new) "stdlib")]
     (match (compiler-driver-load-and-lower-escaping
       "stdlib/args.tl"
-      (BackendTargetLinux)
+      (CompilerBackendTarget.Linux)
       roots
-      (BackendModeScalar)
-      (compiler-driver-target-cfgs (BackendTargetLinux) (compiler-cfg-empty)))
+      (CompilerBackendMode.Scalar)
+      (compiler-driver-target-cfgs
+        (CompilerBackendTarget.Linux)
+        (compiler-cfg-empty)))
       [(ResultCompilerDriverLowered.Ok _ _ _) true]
       [(ResultCompilerDriverLowered.Err _) false])))
 
@@ -121,10 +123,10 @@
         (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source))
       (match (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         path
-        (BackendTargetLinux)
+        (CompilerBackendTarget.Linux)
         roots
         0
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         (compiler-cfg-empty))
         [(ResultCompilerDriver.Ok _) true]
         [(ResultCompilerDriver.Err diag)
@@ -141,11 +143,11 @@
       (compiler-driver-reset-file-state!)
       (match (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
         path
-        (BackendTargetLinux)
+        (CompilerBackendTarget.Linux)
         true
         roots
         0
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         (compiler-cfg-empty))
         [(ResultCompilerDriverBuffer.Ok buf)
           (let
@@ -187,7 +189,7 @@
         AstDeclPathNil)
         [(OkCompilerLower lowered _)
           (match lowered
-            [(IrProgram _ functions _)
+            [(CompilerIrProgram.Program _ functions _)
               (begin
                 (unless
                   (lower-test-function-defined? functions "main")

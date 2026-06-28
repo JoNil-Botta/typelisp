@@ -378,7 +378,7 @@
               (let
                 [value : String (io.arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
-                  [(OkCompilerOptimizeLevel parsed-level)
+                  [(ResultCompilerOptimizeLevel.Ok parsed-level)
                     (tltest-parse-options
                       (+ idx 2)
                       count
@@ -393,7 +393,7 @@
                       parsed-level
                       test-mode
                       batch-list)]
-                  [(ErrCompilerOptimizeLevel)
+                  [(ResultCompilerOptimizeLevel.Err)
                     (ResultTestConfig.Err (tltest-invalid-opt-level value))]))))]
         [(string.string-eq current "--prefix-cache-stats")
           (begin
@@ -802,8 +802,8 @@
 
 (define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
   (match target
-    [(BackendTargetLinux) (tltest-linux-print-runtime-write-decl)]
-    [(BackendTargetWindows) (tltest-windows-print-runtime-write-decl)]))
+    [(CompilerBackendTarget.Linux) (tltest-linux-print-runtime-write-decl)]
+    [(CompilerBackendTarget.Windows) (tltest-windows-print-runtime-write-decl)]))
 
 (define (tltest-print-param-list) : AstParamList
   (ast-param-cons
@@ -848,11 +848,11 @@
         [decls : AstDeclList (box-get decls-box)]
         (ast-program
           (match target
-            [(BackendTargetLinux)
+            [(CompilerBackendTarget.Linux)
               (ast-decl-cons
                 (tltest-print-runtime-write-decl target)
                 (ast-decl-cons (tltest-print-runtime-print-decl) decls))]
-            [(BackendTargetWindows)
+            [(CompilerBackendTarget.Windows)
               (ast-decl-cons
                 (tltest-windows-get-std-handle-decl)
                 (ast-decl-cons
@@ -874,8 +874,10 @@
   [target : CompilerBackendTarget]
   [paths : AstDeclPathList]) : AstDeclPathList
   (match target
-    [(BackendTargetLinux) (tltest-paths-with-print-runtime-count 2 paths)]
-    [(BackendTargetWindows) (tltest-paths-with-print-runtime-count 4 paths)]))
+    [(CompilerBackendTarget.Linux)
+      (tltest-paths-with-print-runtime-count 2 paths)]
+    [(CompilerBackendTarget.Windows)
+      (tltest-paths-with-print-runtime-count 4 paths)]))
 
 (define (tltest-main-exprs-from
   [tests : (Array InlineTest)]
@@ -2797,14 +2799,14 @@
   [funcs : CompilerIrFunctionList]
   [base : String]) : bool
   (match funcs
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name _ _ _ _)
+        [(CompilerIrFunction.Function name _ _ _ _)
           (if (string.string-contains (& name) (& base))
             true
             (tltest-function-base-defined? (box-get rest) base))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (tltest-function-base-defined?
         (compiler-ir-function-seq-to-list seq)
         base)]))
@@ -2824,7 +2826,7 @@
     (tltest-typecheck-cache-scope roots target))
     [(OkCompilerLower lowered _)
       (match lowered
-        [(IrProgram _ functions _)
+        [(CompilerIrProgram.Program _ functions _)
           (tltest-function-base-defined? functions "clone$Pair")])]
     [(ErrCompilerLower _) false]))
 
@@ -2868,7 +2870,7 @@
       (let
         [source : String (source-tool-fs-path-join dir "nested_vector.tl")]
         [roots : vector.StringVec (tltest-roots-for-self-test)]
-        [target : CompilerBackendTarget (BackendTargetLinux)]
+        [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (io.write-file source (tltest-nested-module-macro-vector-source))
           (match (compiler-driver-load-file-with-runtime
@@ -2920,7 +2922,7 @@
             "tltest"
             (compiler-pkg-deps-empty)
             true
-            (tltest-cfgs (BackendTargetLinux)))
+            (tltest-cfgs (CompilerBackendTarget.Linux)))
             [(ResultCompilerLoadWithPaths.Err _) false]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (let
@@ -2942,7 +2944,7 @@
       (let
         [source : String (source-tool-fs-path-join dir "io_run.tl")]
         [roots : vector.StringVec (tltest-roots-for-self-test)]
-        [target : CompilerBackendTarget (BackendTargetLinux)]
+        [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (tltest-inline-reset-load-state!)
           (io.write-file
@@ -3138,10 +3140,10 @@
     (tltest-stdlib-env-fixture-source? "stdlib\\tests\\env_api.tl")
     (not (tltest-stdlib-env-fixture-source? "stdlib/process.tl"))
     (string.string-eq
-      (tltest-stdlib-env-fixture-path (BackendTargetWindows))
+      (tltest-stdlib-env-fixture-path (CompilerBackendTarget.Windows))
       "one;two;three")
     (string.string-eq
-      (tltest-stdlib-env-fixture-path (BackendTargetLinux))
+      (tltest-stdlib-env-fixture-path (CompilerBackendTarget.Linux))
       "one:two:three")))
 
 (test

@@ -8,12 +8,12 @@
       (ir-spmd-call-arg-cons
         (IrSpmdCallArg
           (IrSpmdValueUniform)
-          (IrValueVar 21)
+          (CompilerIrValue.Var 21)
           (compiler-live-i64-ty))
         (ir-spmd-call-arg-cons
           (IrSpmdCallArg
             (IrSpmdValueVarying)
-            (IrValueVar 22)
+            (CompilerIrValue.Var 22)
             (compiler-live-i64-ty))
           IrSpmdCallArgNil))]
     [instr : CompilerIrInstr
@@ -21,7 +21,7 @@
         "helper"
         (IrSpmdBackendAvx512)
         8
-        (IrValueVar 20)
+        (CompilerIrValue.Var 20)
         args
         (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (compiler-live-i64-ty)))]
     (and

@@ -496,7 +496,7 @@
                   (vector.string-vec-new)
                   (process.process-args-empty)
                   (compiler-optimize-default-level)
-                  (BackendModeScalar)
+                  (CompilerBackendMode.Scalar)
                   (source-tool-link-inputs-empty)
                   temp-dir)]
               (begin

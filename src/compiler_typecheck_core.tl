@@ -16,6 +16,7 @@
 (import stdlib.string)
 (import stdlib.str_cat)
 (cfg compile-profile (import stdlib.profile))
+(cfg test (import stdlib.test))
 
 ;; TcTypeCache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
@@ -36157,8 +36158,27 @@
   (Ok AstDeclList AstDeclPathList)
   (Err (Box CompilerDiagnostic)))
 
+(defenum MacroFollowupCause
+  (MacroFollowupImportPlaceholder)
+  (MacroFollowupExpandedDecl)
+  (MacroFollowupBlockedAfterInertSplice)
+  (MacroFollowupGeneratedImport)
+  (MacroFollowupModulePlaceholder))
+
+(defstruct MacroFollowupWork
+  (start-index i64)
+  (end-index i64)
+  (start-path String)
+  (end-path String)
+  (module String)
+  (cause MacroFollowupCause))
+
+(defenum MacroFollowupWorkList
+  (MacroFollowupWorkNil)
+  (MacroFollowupWorkCons MacroFollowupWork (Box MacroFollowupWorkList)))
+
 (defenum ResultMacroDeclsWithPaths
-  (Ok AstDeclList AstDeclPathList bool)
+  (Ok AstDeclList AstDeclPathList MacroFollowupWorkList)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpand
@@ -36166,7 +36186,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroExpandPass
-  (Ok AstProgram AstDeclPathList bool)
+  (Ok AstProgram AstDeclPathList MacroFollowupWorkList)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroValue
@@ -36324,6 +36344,205 @@
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
   (macro-decl-path-list-reverse-into (macro-decl-path-list-reverse left) right))
+
+(define (macro-followup-work-list-empty? [items : MacroFollowupWorkList]) : bool
+  (match items
+    [(MacroFollowupWorkNil) true]
+    [(MacroFollowupWorkCons _ _) false]))
+
+(define (macro-followup-work-cons
+  [head : MacroFollowupWork]
+  [rest : MacroFollowupWorkList]) : MacroFollowupWorkList
+  (MacroFollowupWorkCons head (box rest)))
+
+(define (macro-followup-work-list-reverse-into
+  [items : MacroFollowupWorkList]
+  [out : MacroFollowupWorkList]) : MacroFollowupWorkList
+  (let
+    [cursor : MacroFollowupWorkList items]
+    [result : MacroFollowupWorkList out]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(MacroFollowupWorkNil) (set! done true)]
+          [(MacroFollowupWorkCons head rest)
+            (begin
+              (set! result (macro-followup-work-cons head result))
+              (set! cursor (box-get rest)))]))
+      result)))
+
+(define (macro-followup-work-list-reverse [items : MacroFollowupWorkList]) : MacroFollowupWorkList
+  (macro-followup-work-list-reverse-into items MacroFollowupWorkNil))
+
+(define (macro-followup-path-list-first
+  [paths : AstDeclPathList]
+  [fallback : String]) : String
+  (match paths
+    [(AstDeclPathNil) fallback]
+    [(AstDeclPathCons path _) path]))
+
+(define (macro-followup-path-list-last
+  [paths : AstDeclPathList]
+  [fallback : String]) : String
+  (match paths
+    [(AstDeclPathNil) fallback]
+    [(AstDeclPathCons path rest)
+      (macro-followup-path-list-last (box-get rest) path)]))
+
+(define (macro-followup-work-at
+  [start-index : i64]
+  [end-index : i64]
+  [start-path : String]
+  [end-path : String]
+  [module : String]
+  [cause : MacroFollowupCause]) : MacroFollowupWorkList
+  (macro-followup-work-cons
+    (MacroFollowupWork start-index end-index start-path end-path module cause)
+    MacroFollowupWorkNil))
+
+(define (macro-followup-work-for-decls
+  [start-index : i64]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [module : String]
+  [cause : MacroFollowupCause]) : MacroFollowupWorkList
+  (let
+    [start-path : String (macro-followup-path-list-first paths "")]
+    [end-path : String (macro-followup-path-list-last paths start-path)]
+    [end-index : i64 (+ start-index (ast-decl-list-count decls))]
+    (macro-followup-work-at
+      start-index
+      end-index
+      start-path
+      end-path
+      module
+      cause)))
+
+(cfg
+  test
+  (define (macro-followup-test-cause-code [cause : MacroFollowupCause]) : i64
+    (match cause
+      [(MacroFollowupImportPlaceholder) 1]
+      [(MacroFollowupExpandedDecl) 2]
+      [(MacroFollowupBlockedAfterInertSplice) 3]
+      [(MacroFollowupGeneratedImport) 4]
+      [(MacroFollowupModulePlaceholder) 5])))
+
+(cfg
+  test
+  (define (macro-followup-test-head [items : MacroFollowupWorkList]) : MacroFollowupWork
+    (match items
+      [(MacroFollowupWorkCons work _) work]
+      [(MacroFollowupWorkNil)
+        (begin
+          (test.assert-true false "expected follow-up work")
+          (MacroFollowupWork 0 0 "" "" "" MacroFollowupGeneratedImport))])))
+
+(cfg
+  test
+  (test
+    macro-followup-generated-import-work-metadata
+    (let
+      [decls : AstDeclList
+        (ast-decl-cons (ast-decl-module "generated.module") AstDeclNil)]
+      [paths : AstDeclPathList
+        (ast-decl-path-cons "generated.tl" AstDeclPathNil)]
+      [items : MacroFollowupWorkList
+        (macro-followup-work-for-decls
+          2
+          decls
+          paths
+          "owner.module"
+          MacroFollowupGeneratedImport)]
+      [work : MacroFollowupWork (macro-followup-test-head items)]
+      [actual-start-path : String (struct-get work start-path)]
+      [actual-end-path : String (struct-get work end-path)]
+      [expected-path : String "generated.tl"]
+      [actual-module : String (struct-get work module)]
+      [expected-module : String "owner.module"]
+      (begin
+        (test.assert-false
+          (macro-followup-work-list-empty? items)
+          "generated import work should be present")
+        (test.assert-i64-eq
+          (struct-get work start-index)
+          2
+          "generated import work start")
+        (test.assert-i64-eq
+          (struct-get work end-index)
+          3
+          "generated import work end")
+        (test.assert-string-eq
+          (& actual-start-path)
+          (& expected-path)
+          "generated import start path")
+        (test.assert-string-eq
+          (& actual-end-path)
+          (& expected-path)
+          "generated import end path")
+        (test.assert-string-eq
+          (& actual-module)
+          (& expected-module)
+          "generated import module")
+        (test.assert-i64-eq
+          (macro-followup-test-cause-code (struct-get work cause))
+          4
+          "generated import cause")))))
+
+(cfg
+  test
+  (test
+    macro-followup-module-placeholder-work-metadata
+    (let
+      [span : AstSourceSpan (AstSourceSpan 1 1 1 1)]
+      [placeholder : AstDecl
+        (AstDeclImport
+          (AstImportSpec
+            (AstImportMacroDecls 0 AstNoModuleName)
+            "stdlib/vector.tl"
+            AstNoModuleName
+            AstNoImportAlias
+            span))]
+      [decls : AstDeclList
+        (ast-decl-cons
+          (ast-decl-module "owner.module")
+          (ast-decl-cons placeholder AstDeclNil))]
+      [paths : AstDeclPathList
+        (ast-decl-path-cons
+          "owner.tl"
+          (ast-decl-path-cons "owner.tl" AstDeclPathNil))]
+      [items : MacroFollowupWorkList
+        (macro-module-placeholder-followup-work-list decls paths)]
+      [work : MacroFollowupWork (macro-followup-test-head items)]
+      [actual-path : String (struct-get work start-path)]
+      [expected-path : String "owner.tl"]
+      [actual-module : String (struct-get work module)]
+      [expected-module : String "owner.module"]
+      (begin
+        (test.assert-false
+          (macro-followup-work-list-empty? items)
+          "module placeholder work should be present")
+        (test.assert-i64-eq
+          (struct-get work start-index)
+          1
+          "module placeholder work start")
+        (test.assert-i64-eq
+          (struct-get work end-index)
+          2
+          "module placeholder work end")
+        (test.assert-string-eq
+          (& actual-path)
+          (& expected-path)
+          "module placeholder path")
+        (test.assert-string-eq
+          (& actual-module)
+          (& expected-module)
+          "module placeholder module")
+        (test.assert-i64-eq
+          (macro-followup-test-cause-code (struct-get work cause))
+          5
+          "module placeholder cause")))))
 
 (define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
   (match decls
@@ -37588,8 +37807,8 @@
         (macro-paths-for-decls body decl-path)
         target-module
         false)
-        [(ResultMacroDeclsWithPaths.Ok expanded _ needs-followup?)
-          (if needs-followup?
+        [(ResultMacroDeclsWithPaths.Ok expanded _ followup-work)
+          (if (not (macro-followup-work-list-empty? followup-work))
             (macro-generated-key-body-for-compare
               ctx
               top-env
@@ -46223,6 +46442,7 @@
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String module]
+    [cur-index : i64 0]
     [cur-top-env : TcTypeEnv top-env]
     [out-rev : AstDeclList AstDeclNil]
     [out-paths-rev : AstDeclPathList AstDeclPathNil]
@@ -46244,7 +46464,7 @@
                 (ResultMacroDeclsWithPaths.Ok
                   (macro-decl-list-reverse out-rev)
                   (macro-decl-path-list-reverse out-paths-rev)
-                  false))
+                  MacroFollowupWorkNil))
               (set! done true))]
           [(AstDeclCons decl rest)
             (let
@@ -46269,6 +46489,7 @@
                       (ast-decl-path-cons decl-path out-paths-rev))
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
+                    (set! cur-index (+ cur-index 1))
                     (set! cur-module (intern-str next-module)))]
                 [_
                   (cond
@@ -46291,7 +46512,13 @@
                             (macro-decl-path-list-append
                               (macro-decl-path-list-reverse out-paths-rev)
                               cur-paths)
-                            true))
+                            (macro-followup-work-at
+                              cur-index
+                              (+ cur-index 1)
+                              decl-path
+                              decl-path
+                              cur-module
+                              MacroFollowupImportPlaceholder)))
                         (set! done true))]
                     [(macro-decl-import-placeholder? decl)
                       (match (macro-expand-decl-with-path
@@ -46329,6 +46556,11 @@
                                     (set! cur-module next-module)
                                     (set! cur-decls rest)
                                     (set! cur-paths rest-paths)
+                                    (set!
+                                      cur-index
+                                      (+
+                                        cur-index
+                                        (ast-decl-list-count expanded)))
                                     (set! batched-inert-splice? true))]
                                 [(ErrTcEnv message)
                                   (begin
@@ -46350,7 +46582,12 @@
                                       (macro-decl-path-list-append
                                         expanded-paths
                                         rest-paths))
-                                    true))
+                                    (macro-followup-work-for-decls
+                                      cur-index
+                                      expanded
+                                      expanded-paths
+                                      cur-module
+                                      MacroFollowupExpandedDecl)))
                                 (set! done true))))]
                         [(ResultMacroDeclExpansion.Err diag)
                           (begin
@@ -46375,7 +46612,13 @@
                             (macro-decl-path-list-append
                               (macro-decl-path-list-reverse out-paths-rev)
                               cur-paths)
-                            true))
+                            (macro-followup-work-at
+                              cur-index
+                              (+ cur-index 1)
+                              decl-path
+                              decl-path
+                              cur-module
+                              MacroFollowupBlockedAfterInertSplice)))
                         (set! done true))]
                     [(and can-share (macro-decl-cannot-fire? decl))
                       ;; Predict-skip: a macro-free value decl can never fire a
@@ -46392,7 +46635,8 @@
                           out-paths-rev
                           (ast-decl-path-cons decl-path out-paths-rev))
                         (set! cur-decls rest)
-                        (set! cur-paths rest-paths))]
+                        (set! cur-paths rest-paths)
+                        (set! cur-index (+ cur-index 1)))]
                     [else
                       (match (macro-expand-decl-with-path
                         ctx
@@ -46415,7 +46659,10 @@
                               cur-module
                               (macro-decls-final-module expanded cur-module))
                             (set! cur-decls rest)
-                            (set! cur-paths rest-paths))]
+                            (set! cur-paths rest-paths)
+                            (set!
+                              cur-index
+                              (+ cur-index (ast-decl-list-count expanded))))]
                         [(ResultMacroDeclExpansion.Err diag)
                           (begin
                             (set! result (ResultMacroDeclsWithPaths.Err diag))
@@ -46560,6 +46807,54 @@
         (macro-decl-has-module-placeholder? decl)
         (macro-program-has-module-placeholder? (box-get rest)))]))
 
+(define (macro-module-placeholder-followup-work-list-in
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [module : String]
+  [index : i64]) : MacroFollowupWorkList
+  (match decls
+    [(AstDeclNil) MacroFollowupWorkNil]
+    [(AstDeclCons decl rest-box)
+      (let
+        [rest : AstDeclList (box-get rest-box)]
+        [decl-path : String
+          (match paths
+            [(AstDeclPathCons path _) path]
+            [(AstDeclPathNil) ""])]
+        [rest-paths : AstDeclPathList
+          (match paths
+            [(AstDeclPathCons _ path-rest)
+              (let
+                [path-rest : AstDeclPathList (box-get path-rest)]
+                path-rest)]
+            [(AstDeclPathNil) AstDeclPathNil])]
+        [next-module : String
+          (match decl
+            [(AstDeclModule name) (intern-str name)]
+            [_ module])]
+        [tail : MacroFollowupWorkList
+          (macro-module-placeholder-followup-work-list-in
+            rest
+            rest-paths
+            next-module
+            (+ index 1))]
+        (if (macro-decl-has-module-placeholder? decl)
+          (macro-followup-work-cons
+            (MacroFollowupWork
+              index
+              (+ index 1)
+              decl-path
+              decl-path
+              module
+              MacroFollowupModulePlaceholder)
+            tail)
+          tail))]))
+
+(define (macro-module-placeholder-followup-work-list
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : MacroFollowupWorkList
+  (macro-module-placeholder-followup-work-list-in decls paths "" 0))
+
 (define (macro-decl-module-placeholder-count [decl : AstDecl]) : i64
   (match decl
     [(AstDeclImport (AstImportSpec kind _ _ _ _))
@@ -46696,7 +46991,7 @@
                                         [(ResultMacroDeclsWithPaths.Ok
                                             ndecls
                                             npaths
-                                            needs-followup?)
+                                            followup-work)
                                           (begin
                                             (tc-context-capture-active-pools!
                                               ctx)
@@ -46710,7 +47005,7 @@
                                             (ResultMacroExpandPass.Ok
                                               (ast-program ndecls)
                                               npaths
-                                              needs-followup?))]
+                                              followup-work))]
                                         [(ResultMacroDeclsWithPaths.Err diag)
                                           (begin
                                             (tc-context-capture-active-pools!
@@ -46734,7 +47029,7 @@
                           (box (tc-diag-at-start message)))])]
                   [(ResultCompilerSymbols.Err message)
                     (ResultMacroExpandPass.Err (box (tc-diag-at-start message)))]))
-              (ResultMacroExpandPass.Ok program paths false))))])))
+              (ResultMacroExpandPass.Ok program paths MacroFollowupWorkNil))))])))
 
 (define (macro-expand-program-pass-with-paths-and-pools
   [program : AstProgram]
@@ -46782,7 +47077,7 @@
     AstDecl))
 
 (defenum ResultMacroMaterializeImport
-  (Ok AstDeclList AstDeclPathList SymI64Env bool)
+  (Ok AstDeclList AstDeclPathList SymI64Env MacroFollowupWorkList)
   (Err (Box CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
@@ -46856,6 +47151,7 @@
   [decl : AstDecl]
   [decl-path : String]
   [module : String]
+  [decl-index : i64]
   [seen : SymI64Env]
   [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]
@@ -46866,7 +47162,7 @@
         (ast-decl-cons decl AstDeclNil)
         (ast-decl-path-cons decl-path AstDeclPathNil)
         seen
-        false)]
+        MacroFollowupWorkNil)]
     [(MacroMaybeGeneratedNormalImport.Some
         kind
         import-path
@@ -46924,11 +47220,20 @@
                       after-import-alias
                       imported-decls
                       AstDeclPathNil)]
+                  [materialized-decls : AstDeclList
+                    (macro-decl-list-append imported-decls tail-decls)]
+                  [materialized-paths : AstDeclPathList
+                    (macro-decl-path-list-append imported-paths tail-paths)]
                   (ResultMacroMaterializeImport.Ok
-                    (macro-decl-list-append imported-decls tail-decls)
-                    (macro-decl-path-list-append imported-paths tail-paths)
+                    materialized-decls
+                    materialized-paths
                     next-seen
-                    true))]
+                    (macro-followup-work-for-decls
+                      decl-index
+                      materialized-decls
+                      materialized-paths
+                      module
+                      MacroFollowupGeneratedImport)))]
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultMacroMaterializeImport.Err diag)])]
           [(ResultPkgResolve.Err message)
@@ -46946,9 +47251,10 @@
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String ""]
+    [cur-index : i64 0]
     [out-rev : AstDeclList AstDeclNil]
     [out-paths-rev : AstDeclPathList AstDeclPathNil]
-    [changed : bool false]
+    [work-rev : MacroFollowupWorkList MacroFollowupWorkNil]
     [result : ResultMacroMaterializeImport
       (ResultMacroMaterializeImport.Err
         (box
@@ -46965,7 +47271,7 @@
                   (macro-decl-list-reverse out-rev)
                   (macro-decl-path-list-reverse out-paths-rev)
                   seen
-                  changed))
+                  (macro-followup-work-list-reverse work-rev)))
               (set! done true))]
           [(AstDeclCons decl rest-box)
             (let
@@ -46990,12 +47296,14 @@
                       (ast-decl-path-cons decl-path out-paths-rev))
                     (set! cur-module (intern-str next-module))
                     (set! cur-decls rest)
-                    (set! cur-paths rest-paths))]
+                    (set! cur-paths rest-paths)
+                    (set! cur-index (+ cur-index 1)))]
                 [_
                   (match (macro-materialize-generated-import
                     decl
                     decl-path
                     cur-module
+                    cur-index
                     seen
                     stdlib-roots
                     cfgs
@@ -47004,7 +47312,7 @@
                         materialized-decls
                         materialized-paths
                         next-seen
-                        materialized?)
+                        materialized-work)
                       (begin
                         (set!
                           out-rev
@@ -47017,14 +47325,21 @@
                             materialized-paths
                             out-paths-rev))
                         (set! seen next-seen)
-                        (set! changed (or changed materialized?))
+                        (set!
+                          work-rev
+                          (macro-followup-work-list-reverse-into
+                            materialized-work
+                            work-rev))
                         (set!
                           cur-module
                           (macro-decls-final-module
                             materialized-decls
                             cur-module))
                         (set! cur-decls rest)
-                        (set! cur-paths rest-paths))]
+                        (set! cur-paths rest-paths)
+                        (set!
+                          cur-index
+                          (+ cur-index (ast-decl-list-count materialized-decls))))]
                     [(ResultMacroMaterializeImport.Err diag)
                       (begin
                         (set! result (ResultMacroMaterializeImport.Err diag))
@@ -47064,7 +47379,7 @@
         program
         paths
         pools)
-        [(ResultMacroExpandPass.Ok expanded expanded-paths needs-followup?)
+        [(ResultMacroExpandPass.Ok expanded expanded-paths pass-followup-work)
           (match (macro-materialize-generated-imports
             expanded
             expanded-paths
@@ -47075,7 +47390,7 @@
                 materialized-decls
                 materialized-paths
                 _
-                materialized-imports?)
+                materialized-followup-work)
               (let
                 [materialized : AstProgram (ast-program materialized-decls)]
                 [normalized-result : ResultGenProgramWithPaths
@@ -47092,24 +47407,38 @@
                       [(AstProgram decls-box)
                         (let
                           [decls : AstDeclList (box-get decls-box)]
-                          [has-module-placeholders : bool
-                            (macro-program-has-module-placeholder? decls)]
+                          [module-placeholder-work : MacroFollowupWorkList
+                            (macro-module-placeholder-followup-work-list
+                              decls
+                              normalized-paths)]
+                          [has-pass-followup : bool
+                            (not
+                              (macro-followup-work-list-empty?
+                                pass-followup-work))]
+                          [has-materialized-followup : bool
+                            (not
+                              (macro-followup-work-list-empty?
+                                materialized-followup-work))]
+                          [has-module-placeholder-followup : bool
+                            (not
+                              (macro-followup-work-list-empty?
+                                module-placeholder-work))]
                           (if (or
-                            needs-followup?
-                            materialized-imports?
-                            has-module-placeholders)
+                            has-pass-followup
+                            has-materialized-followup
+                            has-module-placeholder-followup)
                             (begin
-                              (if needs-followup?
+                              (if has-pass-followup
                                 (cfg
                                   compile-profile
                                   (compiler-tc-macro-profile-note-followup-needs-followup))
                                 unit)
-                              (if materialized-imports?
+                              (if has-materialized-followup
                                 (cfg
                                   compile-profile
                                   (compiler-tc-macro-profile-note-followup-generated-imports))
                                 unit)
-                              (if has-module-placeholders
+                              (if has-module-placeholder-followup
                                 (cfg
                                   compile-profile
                                   (compiler-tc-macro-profile-note-followup-module-placeholders))

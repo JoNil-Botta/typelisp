@@ -150,18 +150,19 @@
   [record : CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(ObjectDataLabel _) offset]
-    [(ObjectDataAlign align) (compiler-object-elf-align-offset offset align)]
-    [(ObjectDataBytes bytes)
+    [(CompilerObjectDataRecord.Label _) offset]
+    [(CompilerObjectDataRecord.Align align)
+      (compiler-object-elf-align-offset offset align)]
+    [(CompilerObjectDataRecord.Bytes bytes)
       (+ offset (compiler-object-elf-string-length bytes))]
-    [(ObjectDataString text)
+    [(CompilerObjectDataRecord.String text)
       (+ offset (+ (compiler-object-elf-string-length text) 1))]
-    [(ObjectDataF64 _) (+ offset 8)]
-    [(ObjectDataF32 _) (+ offset 4)]
-    [(ObjectDataI64 _) (+ offset 8)]
-    [(ObjectDataZero count) (+ offset count)]
-    [(ObjectDataSymbolAddress _) (+ offset 8)]
-    [(ObjectDataSymbolRva32 _) (+ offset 4)]))
+    [(CompilerObjectDataRecord.F64 _) (+ offset 8)]
+    [(CompilerObjectDataRecord.F32 _) (+ offset 4)]
+    [(CompilerObjectDataRecord.I64 _) (+ offset 8)]
+    [(CompilerObjectDataRecord.Zero count) (+ offset count)]
+    [(CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
+    [(CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-object-elf-data-records-size-from
   [records : CompilerObjectDataRecordList]
@@ -187,53 +188,55 @@
 
 (define (compiler-object-elf-instr-size [instr : CompilerObjectX64Instr]) : i64
   (match instr
-    [(ObjectX64Label _) 0]
-    [(ObjectX64Call _) 5]
-    [(ObjectX64TailCall _) 5]
-    [(ObjectX64Jump _) 5]
-    [(ObjectX64Ja _) 6]
-    [(ObjectX64Branch _ _) 14]
-    [(ObjectX64LoadRip _) 7]
-    [(ObjectX64LoadRipAddress _) 7]
-    [(ObjectX64LoadRipAddressR11 _) 7]
-    [(ObjectX64StoreRip _) 7]
-    [(ObjectX64SubRspImm8 _) 4]
-    [(ObjectX64MovRcxRip _) 7]
-    [(ObjectX64MovRdxRip _) 7]
-    [(ObjectX64LoadRipAddressRdx _) 7]
-    [(ObjectX64StoreR14Rip _) 7]
-    [(ObjectX64StoreR15Rip _) 7]
-    [(ObjectX64AddRcxRip _) 7]
-    [(ObjectX64MovRcxRax) 3]
-    [(ObjectX64XorpdRip _) 8]
-    [(ObjectX64Bytes bytes) (compiler-object-elf-string-length bytes)]
-    [(ObjectX64Raw bytes) (compiler-object-elf-string-length bytes)]
+    [(CompilerObjectX64Instr.Label _) 0]
+    [(CompilerObjectX64Instr.Call _) 5]
+    [(CompilerObjectX64Instr.TailCall _) 5]
+    [(CompilerObjectX64Instr.Jump _) 5]
+    [(CompilerObjectX64Instr.Ja _) 6]
+    [(CompilerObjectX64Instr.Branch _ _) 14]
+    [(CompilerObjectX64Instr.LoadRip _) 7]
+    [(CompilerObjectX64Instr.LoadRipAddress _) 7]
+    [(CompilerObjectX64Instr.LoadRipAddressR11 _) 7]
+    [(CompilerObjectX64Instr.StoreRip _) 7]
+    [(CompilerObjectX64Instr.SubRspImm8 _) 4]
+    [(CompilerObjectX64Instr.MovRcxRip _) 7]
+    [(CompilerObjectX64Instr.MovRdxRip _) 7]
+    [(CompilerObjectX64Instr.LoadRipAddressRdx _) 7]
+    [(CompilerObjectX64Instr.StoreR14Rip _) 7]
+    [(CompilerObjectX64Instr.StoreR15Rip _) 7]
+    [(CompilerObjectX64Instr.AddRcxRip _) 7]
+    [(CompilerObjectX64Instr.MovRcxRax) 3]
+    [(CompilerObjectX64Instr.XorpdRip _) 8]
+    [(CompilerObjectX64Instr.Bytes bytes)
+      (compiler-object-elf-string-length bytes)]
+    [(CompilerObjectX64Instr.Raw bytes)
+      (compiler-object-elf-string-length bytes)]
     [_ 0]))
 
 (define (compiler-object-elf-instr-relocation-count
   [instr : CompilerObjectX64Instr]) : i64
   (match instr
-    [(ObjectX64Label _) 0]
-    [(ObjectX64Call _) 1]
-    [(ObjectX64TailCall _) 1]
-    [(ObjectX64Jump _) 1]
-    [(ObjectX64Ja _) 1]
-    [(ObjectX64Branch _ _) 2]
-    [(ObjectX64LoadRip _) 1]
-    [(ObjectX64LoadRipAddress _) 1]
-    [(ObjectX64LoadRipAddressR11 _) 1]
-    [(ObjectX64StoreRip _) 1]
-    [(ObjectX64SubRspImm8 _) 0]
-    [(ObjectX64MovRcxRip _) 1]
-    [(ObjectX64MovRdxRip _) 1]
-    [(ObjectX64LoadRipAddressRdx _) 1]
-    [(ObjectX64StoreR14Rip _) 1]
-    [(ObjectX64StoreR15Rip _) 1]
-    [(ObjectX64AddRcxRip _) 1]
-    [(ObjectX64MovRcxRax) 0]
-    [(ObjectX64XorpdRip _) 1]
-    [(ObjectX64Bytes _) 0]
-    [(ObjectX64Raw _) 0]))
+    [(CompilerObjectX64Instr.Label _) 0]
+    [(CompilerObjectX64Instr.Call _) 1]
+    [(CompilerObjectX64Instr.TailCall _) 1]
+    [(CompilerObjectX64Instr.Jump _) 1]
+    [(CompilerObjectX64Instr.Ja _) 1]
+    [(CompilerObjectX64Instr.Branch _ _) 2]
+    [(CompilerObjectX64Instr.LoadRip _) 1]
+    [(CompilerObjectX64Instr.LoadRipAddress _) 1]
+    [(CompilerObjectX64Instr.LoadRipAddressR11 _) 1]
+    [(CompilerObjectX64Instr.StoreRip _) 1]
+    [(CompilerObjectX64Instr.SubRspImm8 _) 0]
+    [(CompilerObjectX64Instr.MovRcxRip _) 1]
+    [(CompilerObjectX64Instr.MovRdxRip _) 1]
+    [(CompilerObjectX64Instr.LoadRipAddressRdx _) 1]
+    [(CompilerObjectX64Instr.StoreR14Rip _) 1]
+    [(CompilerObjectX64Instr.StoreR15Rip _) 1]
+    [(CompilerObjectX64Instr.AddRcxRip _) 1]
+    [(CompilerObjectX64Instr.MovRcxRax) 0]
+    [(CompilerObjectX64Instr.XorpdRip _) 1]
+    [(CompilerObjectX64Instr.Bytes _) 0]
+    [(CompilerObjectX64Instr.Raw _) 0]))
 
 (define (compiler-object-elf-instrs-relocation-count
   [instrs : CompilerObjectX64InstrList]) : i64
@@ -279,40 +282,41 @@
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : i64
   (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(ObjectSection _ data instrs)
+    [(CompilerObjectSection.Section _ data instrs)
       (match kind
-        [(ObjectSectionText) (compiler-object-elf-instrs-size instrs)]
+        [(CompilerObjectSectionKind.Text)
+          (compiler-object-elf-instrs-size instrs)]
         [_ (compiler-object-elf-data-records-size data)])]))
 
 (define (compiler-object-elf-section-raw-size
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionBss) 0]
+    [(CompilerObjectSectionKind.Bss) 0]
     [_ (compiler-object-elf-section-virtual-size image kind)]))
 
 (define (compiler-object-elf-text-relocation-kind-supported?
   [kind : CompilerObjectRelocationKind]) : bool
   (match kind
-    [(ObjectRelocCall) true]
-    [(ObjectRelocTailCall) true]
-    [(ObjectRelocRipValue) true]
-    [(ObjectRelocRipAddress) true]
-    [(ObjectRelocBranch) true]
+    [(CompilerObjectRelocationKind.Call) true]
+    [(CompilerObjectRelocationKind.TailCall) true]
+    [(CompilerObjectRelocationKind.RipValue) true]
+    [(CompilerObjectRelocationKind.RipAddress) true]
+    [(CompilerObjectRelocationKind.Branch) true]
     [_ false]))
 
 (define (compiler-object-elf-data-relocation-kind-supported?
   [kind : CompilerObjectRelocationKind]) : bool
   (match kind
-    [(ObjectRelocAbs64) true]
+    [(CompilerObjectRelocationKind.Abs64) true]
     [_ false]))
 
 (define (compiler-object-elf-relocation-supported?
   [reloc : CompilerObjectRelocation]) : bool
   (match reloc
-    [(ObjectRelocation section _ kind _)
+    [(CompilerObjectRelocation.Relocation section _ kind _)
       (match section
-        [(ObjectSectionText)
+        [(CompilerObjectSectionKind.Text)
           (compiler-object-elf-text-relocation-kind-supported? kind)]
         [_ (compiler-object-elf-data-relocation-kind-supported? kind)])]))
 
@@ -339,27 +343,29 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-instr-list-ref instrs index)
-          [(ObjectX64Label _) (set! index (+ index 1))]
-          [(ObjectX64Call _) (set! index (+ index 1))]
-          [(ObjectX64TailCall _) (set! index (+ index 1))]
-          [(ObjectX64Jump _) (set! index (+ index 1))]
-          [(ObjectX64Ja _) (set! index (+ index 1))]
-          [(ObjectX64Branch _ _) (set! index (+ index 1))]
-          [(ObjectX64LoadRip _) (set! index (+ index 1))]
-          [(ObjectX64LoadRipAddress _) (set! index (+ index 1))]
-          [(ObjectX64LoadRipAddressR11 _) (set! index (+ index 1))]
-          [(ObjectX64StoreRip _) (set! index (+ index 1))]
-          [(ObjectX64SubRspImm8 _) (set! index (+ index 1))]
-          [(ObjectX64MovRcxRip _) (set! index (+ index 1))]
-          [(ObjectX64MovRdxRip _) (set! index (+ index 1))]
-          [(ObjectX64LoadRipAddressRdx _) (set! index (+ index 1))]
-          [(ObjectX64StoreR14Rip _) (set! index (+ index 1))]
-          [(ObjectX64StoreR15Rip _) (set! index (+ index 1))]
-          [(ObjectX64AddRcxRip _) (set! index (+ index 1))]
-          [(ObjectX64MovRcxRax) (set! index (+ index 1))]
-          [(ObjectX64XorpdRip _) (set! index (+ index 1))]
-          [(ObjectX64Bytes _) (set! index (+ index 1))]
-          [(ObjectX64Raw _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Call _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.TailCall _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Jump _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Ja _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Branch _ _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.LoadRip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.LoadRipAddress _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.LoadRipAddressR11 _)
+            (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.StoreRip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.SubRspImm8 _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.MovRcxRip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.MovRdxRip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.LoadRipAddressRdx _)
+            (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.StoreR14Rip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.StoreR15Rip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.AddRcxRip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.MovRcxRax) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.XorpdRip _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Bytes _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Raw _) (set! index (+ index 1))]
           [_ (set! ok false)]))
       ok)))
 
@@ -372,12 +378,12 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-section-list-ref sections index)
-          [(ObjectSection kind _ instrs)
+          [(CompilerObjectSection.Section kind _ instrs)
             (if (and
               (match kind
-                [(ObjectSectionPdata) false]
-                [(ObjectSectionXdata) false]
-                [(ObjectSectionRsrc) false]
+                [(CompilerObjectSectionKind.Pdata) false]
+                [(CompilerObjectSectionKind.Xdata) false]
+                [(CompilerObjectSectionKind.Rsrc) false]
                 [_ true])
               (compiler-object-elf-instrs-supported? instrs))
               (set! index (+ index 1))
@@ -387,7 +393,7 @@
 (define (compiler-object-elf-symbol-binding-local?
   [binding : CompilerObjectSymbolBinding]) : bool
   (match binding
-    [(ObjectSymbolLocal) true]
+    [(CompilerObjectSymbolBinding.Local) true]
     [_ false]))
 
 (define (compiler-object-elf-local-symbol-count
@@ -400,7 +406,7 @@
       (while (< index count)
         (begin
           (match (compiler-object-symbol-list-ref symbols index)
-            [(ObjectSymbol _ binding _ _)
+            [(CompilerObjectSymbol.Symbol _ binding _ _)
               (if (compiler-object-elf-symbol-binding-local? binding)
                 (set! total (+ total 1))
                 unit)])
@@ -420,7 +426,7 @@
     (begin
       (while (and (not done) (< slot count))
         (match (compiler-object-symbol-list-ref symbols slot)
-          [(ObjectSymbol found binding _ _)
+          [(CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (if (string.string-eq found name)
                 (begin
@@ -445,7 +451,7 @@
     (begin
       (while (and (not done) (< slot count))
         (match (compiler-object-symbol-list-ref symbols slot)
-          [(ObjectSymbol found binding _ _)
+          [(CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (set! slot (+ slot 1))
               (if (string.string-eq found name)
@@ -486,7 +492,7 @@
           [record : CompilerObjectDataRecord
             (compiler-object-data-record-list-ref records index)]
           (match record
-            [(ObjectDataLabel found)
+            [(CompilerObjectDataRecord.Label found)
               (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
@@ -516,7 +522,7 @@
           [instr : CompilerObjectX64Instr
             (compiler-object-instr-list-ref instrs index)]
           (match instr
-            [(ObjectX64Label found)
+            [(CompilerObjectX64Instr.Label found)
               (if (string.string-eq found label)
                 (begin
                   (set! result cur-offset)
@@ -535,9 +541,9 @@
   [kind : CompilerObjectSectionKind]
   [label : String]) : i64
   (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(ObjectSection _ data instrs)
+    [(CompilerObjectSection.Section _ data instrs)
       (match kind
-        [(ObjectSectionText)
+        [(CompilerObjectSectionKind.Text)
           (compiler-object-elf-instr-label-offset-from instrs label 0)]
         [_ (compiler-object-elf-data-label-offset-from data label 0)])]))
 
@@ -551,7 +557,7 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-relocation-list-ref relocs index)
-          [(ObjectRelocation section site _ target)
+          [(CompilerObjectRelocation.Relocation section site _ target)
             (if (and
               (>=
                 (compiler-object-elf-section-label-offset image section site)
@@ -571,92 +577,92 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-instr-list-ref instrs index)
-          [(ObjectX64Label _) (set! index (+ index 1))]
-          [(ObjectX64Call target)
+          [(CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Call target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64TailCall target)
+          [(CompilerObjectX64Instr.TailCall target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64Jump target)
+          [(CompilerObjectX64Instr.Jump target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64Ja target)
+          [(CompilerObjectX64Instr.Ja target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64Branch true-target false-target)
+          [(CompilerObjectX64Instr.Branch true-target false-target)
             (if (and
               (>= (compiler-object-elf-symbol-index image true-target) 0)
               (>= (compiler-object-elf-symbol-index image false-target) 0))
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64LoadRip target)
+          [(CompilerObjectX64Instr.LoadRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64LoadRipAddress target)
+          [(CompilerObjectX64Instr.LoadRipAddress target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64LoadRipAddressR11 target)
+          [(CompilerObjectX64Instr.LoadRipAddressR11 target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64StoreRip target)
+          [(CompilerObjectX64Instr.StoreRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64SubRspImm8 _) (set! index (+ index 1))]
-          [(ObjectX64MovRcxRip target)
+          [(CompilerObjectX64Instr.SubRspImm8 _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.MovRcxRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64MovRdxRip target)
+          [(CompilerObjectX64Instr.MovRdxRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64LoadRipAddressRdx target)
+          [(CompilerObjectX64Instr.LoadRipAddressRdx target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64StoreR14Rip target)
+          [(CompilerObjectX64Instr.StoreR14Rip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64StoreR15Rip target)
+          [(CompilerObjectX64Instr.StoreR15Rip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64AddRcxRip target)
+          [(CompilerObjectX64Instr.AddRcxRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64MovRcxRax) (set! index (+ index 1))]
-          [(ObjectX64XorpdRip target)
+          [(CompilerObjectX64Instr.MovRcxRax) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.XorpdRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(ObjectX64Bytes _) (set! index (+ index 1))]
-          [(ObjectX64Raw _) (set! index (+ index 1))]))
+          [(CompilerObjectX64Instr.Bytes _) (set! index (+ index 1))]
+          [(CompilerObjectX64Instr.Raw _) (set! index (+ index 1))]))
       ok)))
 
 (define (compiler-object-elf-text-targets-known? [image : CompilerObjectImage]) : bool
   (match (compiler-object-section-list-find
     (struct-get image sections)
-    (ObjectSectionText))
-    [(ObjectSection _ _ instrs)
+    (CompilerObjectSectionKind.Text))
+    [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instr-targets-known? image instrs)]))
 
 (define (compiler-object-elf-text-instr-relocation-count
   [image : CompilerObjectImage]) : i64
   (match (compiler-object-section-list-find
     (struct-get image sections)
-    (ObjectSectionText))
-    [(ObjectSection _ _ instrs)
+    (CompilerObjectSectionKind.Text))
+    [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instrs-relocation-count instrs)]))
 
 (define (compiler-object-elf-text-relocation-count-matches?
@@ -664,7 +670,7 @@
   (=
     (compiler-object-elf-relocation-count
       (struct-get image relocations)
-      (ObjectSectionText))
+      (CompilerObjectSectionKind.Text))
     (compiler-object-elf-text-instr-relocation-count image)))
 
 (define (compiler-object-elf-image-supported? [image : CompilerObjectImage]) : bool
@@ -689,7 +695,7 @@
       (while (< index count)
         (begin
           (match (compiler-object-relocation-list-ref relocs index)
-            [(ObjectRelocation section _ _ _)
+            [(CompilerObjectRelocation.Relocation section _ _ _)
               (if (compiler-object-section-kind-eq? section kind)
                 (set! total (+ total 1))
                 unit)])
@@ -700,7 +706,7 @@
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionText)
+    [(CompilerObjectSectionKind.Text)
       (compiler-object-elf-text-instr-relocation-count image)]
     [_
       (compiler-object-elf-relocation-count (struct-get image relocations) kind)]))
@@ -728,7 +734,7 @@
       (while (< index count)
         (begin
           (match (compiler-object-symbol-list-ref symbols index)
-            [(ObjectSymbol name _ _ _)
+            [(CompilerObjectSymbol.Symbol name _ _ _)
               (set!
                 total
                 (+ total (+ (compiler-object-elf-string-length name) 1)))])
@@ -769,21 +775,27 @@
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-text-offset image)
-      (compiler-object-elf-section-raw-size image (ObjectSectionText)))
+      (compiler-object-elf-section-raw-size
+        image
+        (CompilerObjectSectionKind.Text)))
     8))
 
 (define (compiler-object-elf-rodata-offset [image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-data-offset image)
-      (compiler-object-elf-section-raw-size image (ObjectSectionData)))
+      (compiler-object-elf-section-raw-size
+        image
+        (CompilerObjectSectionKind.Data)))
     8))
 
 (define (compiler-object-elf-bss-offset [image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rodata-offset image)
-      (compiler-object-elf-section-raw-size image (ObjectSectionRodata)))
+      (compiler-object-elf-section-raw-size
+        image
+        (CompilerObjectSectionKind.Rodata)))
     8))
 
 (define (compiler-object-elf-rela-text-offset [image : CompilerObjectImage]) : i64
@@ -793,28 +805,36 @@
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-text-offset image)
-      (compiler-object-elf-relocation-section-size image (ObjectSectionText)))
+      (compiler-object-elf-relocation-section-size
+        image
+        (CompilerObjectSectionKind.Text)))
     8))
 
 (define (compiler-object-elf-rela-rodata-offset [image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-data-offset image)
-      (compiler-object-elf-relocation-section-size image (ObjectSectionData)))
+      (compiler-object-elf-relocation-section-size
+        image
+        (CompilerObjectSectionKind.Data)))
     8))
 
 (define (compiler-object-elf-rela-bss-offset [image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-rodata-offset image)
-      (compiler-object-elf-relocation-section-size image (ObjectSectionRodata)))
+      (compiler-object-elf-relocation-section-size
+        image
+        (CompilerObjectSectionKind.Rodata)))
     8))
 
 (define (compiler-object-elf-symtab-offset [image : CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-bss-offset image)
-      (compiler-object-elf-relocation-section-size image (ObjectSectionBss)))
+      (compiler-object-elf-relocation-section-size
+        image
+        (CompilerObjectSectionKind.Bss)))
     8))
 
 (define (compiler-object-elf-strtab-offset [image : CompilerObjectImage]) : i64
@@ -837,37 +857,43 @@
 
 (define (compiler-object-elf-section-index [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionText) compiler-object-elf-section-text-index]
-    [(ObjectSectionData) compiler-object-elf-section-data-index]
-    [(ObjectSectionRodata) compiler-object-elf-section-rodata-index]
-    [(ObjectSectionBss) compiler-object-elf-section-bss-index]
-    [(ObjectSectionPdata) compiler-object-elf-section-null-index]
-    [(ObjectSectionXdata) compiler-object-elf-section-null-index]
-    [(ObjectSectionRsrc) compiler-object-elf-section-null-index]))
+    [(CompilerObjectSectionKind.Text) compiler-object-elf-section-text-index]
+    [(CompilerObjectSectionKind.Data) compiler-object-elf-section-data-index]
+    [(CompilerObjectSectionKind.Rodata)
+      compiler-object-elf-section-rodata-index]
+    [(CompilerObjectSectionKind.Bss) compiler-object-elf-section-bss-index]
+    [(CompilerObjectSectionKind.Pdata) compiler-object-elf-section-null-index]
+    [(CompilerObjectSectionKind.Xdata) compiler-object-elf-section-null-index]
+    [(CompilerObjectSectionKind.Rsrc) compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-section-file-offset
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionText) (compiler-object-elf-text-offset image)]
-    [(ObjectSectionData) (compiler-object-elf-data-offset image)]
-    [(ObjectSectionRodata) (compiler-object-elf-rodata-offset image)]
-    [(ObjectSectionBss) (compiler-object-elf-bss-offset image)]
-    [(ObjectSectionPdata) 0]
-    [(ObjectSectionXdata) 0]
-    [(ObjectSectionRsrc) 0]))
+    [(CompilerObjectSectionKind.Text) (compiler-object-elf-text-offset image)]
+    [(CompilerObjectSectionKind.Data) (compiler-object-elf-data-offset image)]
+    [(CompilerObjectSectionKind.Rodata)
+      (compiler-object-elf-rodata-offset image)]
+    [(CompilerObjectSectionKind.Bss) (compiler-object-elf-bss-offset image)]
+    [(CompilerObjectSectionKind.Pdata) 0]
+    [(CompilerObjectSectionKind.Xdata) 0]
+    [(CompilerObjectSectionKind.Rsrc) 0]))
 
 (define (compiler-object-elf-relocation-section-offset
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionText) (compiler-object-elf-rela-text-offset image)]
-    [(ObjectSectionData) (compiler-object-elf-rela-data-offset image)]
-    [(ObjectSectionRodata) (compiler-object-elf-rela-rodata-offset image)]
-    [(ObjectSectionBss) (compiler-object-elf-rela-bss-offset image)]
-    [(ObjectSectionPdata) 0]
-    [(ObjectSectionXdata) 0]
-    [(ObjectSectionRsrc) 0]))
+    [(CompilerObjectSectionKind.Text)
+      (compiler-object-elf-rela-text-offset image)]
+    [(CompilerObjectSectionKind.Data)
+      (compiler-object-elf-rela-data-offset image)]
+    [(CompilerObjectSectionKind.Rodata)
+      (compiler-object-elf-rela-rodata-offset image)]
+    [(CompilerObjectSectionKind.Bss)
+      (compiler-object-elf-rela-bss-offset image)]
+    [(CompilerObjectSectionKind.Pdata) 0]
+    [(CompilerObjectSectionKind.Xdata) 0]
+    [(CompilerObjectSectionKind.Rsrc) 0]))
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
   (cond
@@ -922,43 +948,43 @@
   [record : CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(ObjectDataLabel _) offset]
-    [(ObjectDataAlign align)
+    [(CompilerObjectDataRecord.Label _) offset]
+    [(CompilerObjectDataRecord.Align align)
       (let
         [aligned : i64 (compiler-object-elf-align-offset offset align)]
         (begin
           (compiler-object-elf-push-zeroes! out (- aligned offset))
           aligned))]
-    [(ObjectDataBytes bytes)
+    [(CompilerObjectDataRecord.Bytes bytes)
       (begin
         (compiler-object-elf-push-string-bytes! out bytes)
         (+ offset (compiler-object-elf-string-length bytes)))]
-    [(ObjectDataString text)
+    [(CompilerObjectDataRecord.String text)
       (begin
         (compiler-object-elf-push-string-bytes! out text)
         (compiler-object-elf-push-u8! out 0)
         (+ offset (+ (compiler-object-elf-string-length text) 1)))]
-    [(ObjectDataF64 bits)
+    [(CompilerObjectDataRecord.F64 bits)
       (begin
         (compiler-object-elf-push-u64! out bits)
         (+ offset 8))]
-    [(ObjectDataF32 bits)
+    [(CompilerObjectDataRecord.F32 bits)
       (begin
         (compiler-object-elf-push-u32! out (cast bits : i64))
         (+ offset 4))]
-    [(ObjectDataI64 value)
+    [(CompilerObjectDataRecord.I64 value)
       (begin
         (compiler-object-elf-push-i64! out value)
         (+ offset 8))]
-    [(ObjectDataZero count)
+    [(CompilerObjectDataRecord.Zero count)
       (begin
         (compiler-object-elf-push-zeroes! out count)
         (+ offset count))]
-    [(ObjectDataSymbolAddress _)
+    [(CompilerObjectDataRecord.SymbolAddress _)
       (begin
         (compiler-object-elf-push-i64! out 0)
         (+ offset 8))]
-    [(ObjectDataSymbolRva32 _)
+    [(CompilerObjectDataRecord.SymbolRva32 _)
       (begin
         (compiler-object-elf-push-u32! out 0)
         (+ offset 4))]))
@@ -990,25 +1016,25 @@
   [out : (Array u8)]
   [instr : CompilerObjectX64Instr]) : unit
   (match instr
-    [(ObjectX64Label _) unit]
-    [(ObjectX64Call _)
+    [(CompilerObjectX64Instr.Label _) unit]
+    [(CompilerObjectX64Instr.Call _)
       (begin
         (compiler-object-elf-push-u8! out 0xe8)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64TailCall _)
+    [(CompilerObjectX64Instr.TailCall _)
       (begin
         (compiler-object-elf-push-u8! out 0xe9)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64Jump _)
+    [(CompilerObjectX64Instr.Jump _)
       (begin
         (compiler-object-elf-push-u8! out 0xe9)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64Ja _)
+    [(CompilerObjectX64Instr.Ja _)
       (begin
         (compiler-object-elf-push-u8! out 0x0f)
         (compiler-object-elf-push-u8! out 0x87)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64Branch _ _)
+    [(CompilerObjectX64Instr.Branch _ _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x85)
@@ -1018,86 +1044,88 @@
         (compiler-object-elf-push-rel32-placeholder! out)
         (compiler-object-elf-push-u8! out 0xe9)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64LoadRip _)
+    [(CompilerObjectX64Instr.LoadRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64LoadRipAddress _)
+    [(CompilerObjectX64Instr.LoadRipAddress _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8d)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64LoadRipAddressR11 _)
+    [(CompilerObjectX64Instr.LoadRipAddressR11 _)
       (begin
         (compiler-object-elf-push-u8! out 0x4c)
         (compiler-object-elf-push-u8! out 0x8d)
         (compiler-object-elf-push-u8! out 0x1d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64StoreRip _)
+    [(CompilerObjectX64Instr.StoreRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64SubRspImm8 imm)
+    [(CompilerObjectX64Instr.SubRspImm8 imm)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x83)
         (compiler-object-elf-push-u8! out 0xec)
         (compiler-object-elf-push-u8! out imm))]
-    [(ObjectX64MovRcxRip _)
+    [(CompilerObjectX64Instr.MovRcxRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x0d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64MovRdxRip _)
+    [(CompilerObjectX64Instr.MovRdxRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x15)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64LoadRipAddressRdx _)
+    [(CompilerObjectX64Instr.LoadRipAddressRdx _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8d)
         (compiler-object-elf-push-u8! out 0x15)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64StoreR14Rip _)
+    [(CompilerObjectX64Instr.StoreR14Rip _)
       (begin
         (compiler-object-elf-push-u8! out 0x4c)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0x35)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64StoreR15Rip _)
+    [(CompilerObjectX64Instr.StoreR15Rip _)
       (begin
         (compiler-object-elf-push-u8! out 0x4c)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0x3d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64AddRcxRip _)
+    [(CompilerObjectX64Instr.AddRcxRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x01)
         (compiler-object-elf-push-u8! out 0x0d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64MovRcxRax)
+    [(CompilerObjectX64Instr.MovRcxRax)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0xc1))]
-    [(ObjectX64XorpdRip _)
+    [(CompilerObjectX64Instr.XorpdRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x66)
         (compiler-object-elf-push-u8! out 0x0f)
         (compiler-object-elf-push-u8! out 0x57)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(ObjectX64Bytes bytes) (compiler-object-elf-push-string-bytes! out bytes)]
-    [(ObjectX64Raw bytes) (compiler-object-elf-push-string-bytes! out bytes)]
+    [(CompilerObjectX64Instr.Bytes bytes)
+      (compiler-object-elf-push-string-bytes! out bytes)]
+    [(CompilerObjectX64Instr.Raw bytes)
+      (compiler-object-elf-push-string-bytes! out bytes)]
     [_ unit]))
 
 (define (compiler-object-elf-render-instrs!
@@ -1120,9 +1148,10 @@
   [image : CompilerObjectImage]
   [kind : CompilerObjectSectionKind]) : unit
   (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(ObjectSection _ data instrs)
+    [(CompilerObjectSection.Section _ data instrs)
       (match kind
-        [(ObjectSectionText) (compiler-object-elf-render-instrs! out instrs)]
+        [(CompilerObjectSectionKind.Text)
+          (compiler-object-elf-render-instrs! out instrs)]
         [_
           (begin
             (compiler-object-elf-render-data-records! out data 0)
@@ -1135,35 +1164,45 @@
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-text-offset image))
-    (compiler-object-elf-render-section! out image (ObjectSectionText))
+    (compiler-object-elf-render-section!
+      out
+      image
+      (CompilerObjectSectionKind.Text))
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-data-offset image))
-    (compiler-object-elf-render-section! out image (ObjectSectionData))
+    (compiler-object-elf-render-section!
+      out
+      image
+      (CompilerObjectSectionKind.Data))
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-rodata-offset image))
-    (compiler-object-elf-render-section! out image (ObjectSectionRodata))))
+    (compiler-object-elf-render-section!
+      out
+      image
+      (CompilerObjectSectionKind.Rodata))))
 
 (define (compiler-object-elf-relocation-type
   [kind : CompilerObjectRelocationKind]) : i64
   (match kind
-    [(ObjectRelocCall) compiler-object-elf-r-x86-64-plt32]
-    [(ObjectRelocTailCall) compiler-object-elf-r-x86-64-plt32]
-    [(ObjectRelocAbs64) compiler-object-elf-r-x86-64-64]
-    [(ObjectRelocRipValue) compiler-object-elf-r-x86-64-pc32]
-    [(ObjectRelocRipAddress) compiler-object-elf-r-x86-64-pc32]
-    [(ObjectRelocBranch) compiler-object-elf-r-x86-64-pc32]
+    [(CompilerObjectRelocationKind.Call) compiler-object-elf-r-x86-64-plt32]
+    [(CompilerObjectRelocationKind.TailCall) compiler-object-elf-r-x86-64-plt32]
+    [(CompilerObjectRelocationKind.Abs64) compiler-object-elf-r-x86-64-64]
+    [(CompilerObjectRelocationKind.RipValue) compiler-object-elf-r-x86-64-pc32]
+    [(CompilerObjectRelocationKind.RipAddress)
+      compiler-object-elf-r-x86-64-pc32]
+    [(CompilerObjectRelocationKind.Branch) compiler-object-elf-r-x86-64-pc32]
     [_ 0]))
 
 (define (compiler-object-elf-relocation-addend
   [kind : CompilerObjectRelocationKind]) : i64
   (match kind
-    [(ObjectRelocCall) -4]
-    [(ObjectRelocTailCall) -4]
-    [(ObjectRelocRipValue) -4]
-    [(ObjectRelocRipAddress) -4]
-    [(ObjectRelocBranch) -4]
+    [(CompilerObjectRelocationKind.Call) -4]
+    [(CompilerObjectRelocationKind.TailCall) -4]
+    [(CompilerObjectRelocationKind.RipValue) -4]
+    [(CompilerObjectRelocationKind.RipAddress) -4]
+    [(CompilerObjectRelocationKind.Branch) -4]
     [_ 0]))
 
 (define (compiler-object-elf-render-relocation-record!
@@ -1188,7 +1227,7 @@
   [image : CompilerObjectImage]
   [reloc : CompilerObjectRelocation]) : unit
   (match reloc
-    [(ObjectRelocation section site kind target)
+    [(CompilerObjectRelocation.Relocation section site kind target)
       (compiler-object-elf-render-relocation-record!
         out
         image
@@ -1212,130 +1251,130 @@
             (compiler-object-instr-list-ref instrs index)]
           (begin
             (match instr
-              [(ObjectX64Label _) unit]
-              [(ObjectX64Call target)
+              [(CompilerObjectX64Instr.Label _) unit]
+              [(CompilerObjectX64Instr.Call target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 1)
-                  (ObjectRelocCall)
+                  (CompilerObjectRelocationKind.Call)
                   target)]
-              [(ObjectX64TailCall target)
+              [(CompilerObjectX64Instr.TailCall target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 1)
-                  (ObjectRelocTailCall)
+                  (CompilerObjectRelocationKind.TailCall)
                   target)]
-              [(ObjectX64Jump target)
+              [(CompilerObjectX64Instr.Jump target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 1)
-                  (ObjectRelocBranch)
+                  (CompilerObjectRelocationKind.Branch)
                   target)]
-              [(ObjectX64Ja target)
+              [(CompilerObjectX64Instr.Ja target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 2)
-                  (ObjectRelocBranch)
+                  (CompilerObjectRelocationKind.Branch)
                   target)]
-              [(ObjectX64Branch true-target false-target)
+              [(CompilerObjectX64Instr.Branch true-target false-target)
                 (begin
                   (compiler-object-elf-render-relocation-record!
                     out
                     image
                     (+ cur-offset 5)
-                    (ObjectRelocBranch)
+                    (CompilerObjectRelocationKind.Branch)
                     true-target)
                   (compiler-object-elf-render-relocation-record!
                     out
                     image
                     (+ cur-offset 10)
-                    (ObjectRelocBranch)
+                    (CompilerObjectRelocationKind.Branch)
                     false-target))]
-              [(ObjectX64LoadRip target)
+              [(CompilerObjectX64Instr.LoadRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipValue)
+                  (CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(ObjectX64LoadRipAddress target)
+              [(CompilerObjectX64Instr.LoadRipAddress target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64LoadRipAddressR11 target)
+              [(CompilerObjectX64Instr.LoadRipAddressR11 target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64StoreRip target)
+              [(CompilerObjectX64Instr.StoreRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64SubRspImm8 _) unit]
-              [(ObjectX64MovRcxRip target)
+              [(CompilerObjectX64Instr.SubRspImm8 _) unit]
+              [(CompilerObjectX64Instr.MovRcxRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipValue)
+                  (CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(ObjectX64MovRdxRip target)
+              [(CompilerObjectX64Instr.MovRdxRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipValue)
+                  (CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(ObjectX64LoadRipAddressRdx target)
+              [(CompilerObjectX64Instr.LoadRipAddressRdx target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64StoreR14Rip target)
+              [(CompilerObjectX64Instr.StoreR14Rip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64StoreR15Rip target)
+              [(CompilerObjectX64Instr.StoreR15Rip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64AddRcxRip target)
+              [(CompilerObjectX64Instr.AddRcxRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (ObjectRelocRipAddress)
+                  (CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(ObjectX64MovRcxRax) unit]
-              [(ObjectX64XorpdRip target)
+              [(CompilerObjectX64Instr.MovRcxRax) unit]
+              [(CompilerObjectX64Instr.XorpdRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 4)
-                  (ObjectRelocRipValue)
+                  (CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(ObjectX64Bytes _) unit]
-              [(ObjectX64Raw _) unit])
+              [(CompilerObjectX64Instr.Bytes _) unit]
+              [(CompilerObjectX64Instr.Raw _) unit])
             (set!
               cur-offset
               (+ cur-offset (compiler-object-elf-instr-size instr)))
@@ -1347,8 +1386,8 @@
   [image : CompilerObjectImage]) : unit
   (match (compiler-object-section-list-find
     (struct-get image sections)
-    (ObjectSectionText))
-    [(ObjectSection _ _ instrs)
+    (CompilerObjectSectionKind.Text))
+    [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-render-text-instr-relocations! out image instrs 0)]))
 
 (define (compiler-object-elf-render-relocations-for-section!
@@ -1366,7 +1405,7 @@
             (compiler-object-relocation-list-ref relocs index)]
           (begin
             (match reloc
-              [(ObjectRelocation section _ _ _)
+              [(CompilerObjectRelocation.Relocation section _ _ _)
                 (if (compiler-object-section-kind-eq? section kind)
                   (compiler-object-elf-render-relocation! out image reloc)
                   unit)])
@@ -1382,7 +1421,7 @@
       out
       (compiler-object-elf-relocation-section-offset image kind))
     (match kind
-      [(ObjectSectionText)
+      [(CompilerObjectSectionKind.Text)
         (compiler-object-elf-render-text-relocations! out image)]
       [_
         (compiler-object-elf-render-relocations-for-section!
@@ -1404,7 +1443,7 @@
     (begin
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
-          [(ObjectSymbol found _ _ _)
+          [(CompilerObjectSymbol.Symbol found _ _ _)
             (if (string.string-eq found name)
               (begin
                 (set! result cur-offset)
@@ -1427,14 +1466,14 @@
 (define (compiler-object-elf-symbol-binding
   [binding : CompilerObjectSymbolBinding]) : i64
   (match binding
-    [(ObjectSymbolLocal) 0]
+    [(CompilerObjectSymbolBinding.Local) 0]
     [_ 1]))
 
 (define (compiler-object-elf-symbol-type [kind : CompilerObjectSymbolKind]) : i64
   (match kind
-    [(ObjectSymbolFunction) 2]
-    [(ObjectSymbolRuntime) 2]
-    [(ObjectSymbolData) 1]
+    [(CompilerObjectSymbolKind.Function) 2]
+    [(CompilerObjectSymbolKind.Runtime) 2]
+    [(CompilerObjectSymbolKind.Data) 1]
     [_ 0]))
 
 (define (compiler-object-elf-symbol-info
@@ -1447,16 +1486,17 @@
 (define (compiler-object-elf-symbol-section-index
   [section : CompilerObjectMaybeSection]) : i64
   (match section
-    [(ObjectNoSection) 0]
-    [(ObjectSomeSection kind) (compiler-object-elf-section-index kind)]))
+    [(CompilerObjectMaybeSection.No) 0]
+    [(CompilerObjectMaybeSection.Some kind)
+      (compiler-object-elf-section-index kind)]))
 
 (define (compiler-object-elf-symbol-value
   [image : CompilerObjectImage]
   [name : String]
   [section : CompilerObjectMaybeSection]) : i64
   (match section
-    [(ObjectNoSection) 0]
-    [(ObjectSomeSection kind)
+    [(CompilerObjectMaybeSection.No) 0]
+    [(CompilerObjectMaybeSection.Some kind)
       (let
         [offset : i64
           (compiler-object-elf-section-label-offset image kind name)]
@@ -1472,7 +1512,7 @@
   [image : CompilerObjectImage]
   [symbol : CompilerObjectSymbol]) : unit
   (match symbol
-    [(ObjectSymbol name binding kind section)
+    [(CompilerObjectSymbol.Symbol name binding kind section)
       (begin
         (compiler-object-elf-push-u32!
           out
@@ -1504,7 +1544,7 @@
             (compiler-object-symbol-list-ref symbols index)]
           (begin
             (match symbol
-              [(ObjectSymbol _ binding _ _)
+              [(CompilerObjectSymbol.Symbol _ binding _ _)
                 (if (=
                   (compiler-object-elf-symbol-binding-local? binding)
                   want-local)
@@ -1542,7 +1582,7 @@
       (while (< index count)
         (begin
           (match (compiler-object-symbol-list-ref symbols index)
-            [(ObjectSymbol name _ _ _)
+            [(CompilerObjectSymbol.Symbol name _ _ _)
               (begin
                 (compiler-object-elf-push-string-bytes! out name)
                 (compiler-object-elf-push-u8! out 0))])
@@ -1567,16 +1607,16 @@
 
 (define (compiler-object-elf-section-flags [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionText)
+    [(CompilerObjectSectionKind.Text)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-execinstr)]
-    [(ObjectSectionData)
+    [(CompilerObjectSectionKind.Data)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
-    [(ObjectSectionRodata) compiler-object-elf-shf-alloc]
-    [(ObjectSectionBss)
+    [(CompilerObjectSectionKind.Rodata) compiler-object-elf-shf-alloc]
+    [(CompilerObjectSectionKind.Bss)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
-    [(ObjectSectionPdata) 0]
-    [(ObjectSectionXdata) 0]
-    [(ObjectSectionRsrc) 0]))
+    [(CompilerObjectSectionKind.Pdata) 0]
+    [(CompilerObjectSectionKind.Xdata) 0]
+    [(CompilerObjectSectionKind.Rsrc) 0]))
 
 (define (compiler-object-elf-push-section-header!
   [out : (Array u8)]
@@ -1612,7 +1652,7 @@
       out
       (compiler-object-elf-section-name-offset index)
       (match kind
-        [(ObjectSectionBss) compiler-object-elf-sht-nobits]
+        [(CompilerObjectSectionKind.Bss) compiler-object-elf-sht-nobits]
         [_ compiler-object-elf-sht-progbits])
       (compiler-object-elf-section-flags kind)
       0
@@ -1621,20 +1661,23 @@
       0
       0
       (match kind
-        [(ObjectSectionText) 16]
+        [(CompilerObjectSectionKind.Text) 16]
         [_ 8])
       0)))
 
 (define (compiler-object-elf-rela-section-index
   [kind : CompilerObjectSectionKind]) : i64
   (match kind
-    [(ObjectSectionText) compiler-object-elf-section-rela-text-index]
-    [(ObjectSectionData) compiler-object-elf-section-rela-data-index]
-    [(ObjectSectionRodata) compiler-object-elf-section-rela-rodata-index]
-    [(ObjectSectionBss) compiler-object-elf-section-rela-bss-index]
-    [(ObjectSectionPdata) compiler-object-elf-section-null-index]
-    [(ObjectSectionXdata) compiler-object-elf-section-null-index]
-    [(ObjectSectionRsrc) compiler-object-elf-section-null-index]))
+    [(CompilerObjectSectionKind.Text)
+      compiler-object-elf-section-rela-text-index]
+    [(CompilerObjectSectionKind.Data)
+      compiler-object-elf-section-rela-data-index]
+    [(CompilerObjectSectionKind.Rodata)
+      compiler-object-elf-section-rela-rodata-index]
+    [(CompilerObjectSectionKind.Bss) compiler-object-elf-section-rela-bss-index]
+    [(CompilerObjectSectionKind.Pdata) compiler-object-elf-section-null-index]
+    [(CompilerObjectSectionKind.Xdata) compiler-object-elf-section-null-index]
+    [(CompilerObjectSectionKind.Rsrc) compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-push-rela-section-header!
   [out : (Array u8)]
@@ -1677,29 +1720,35 @@
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (ObjectSectionText))
+      (CompilerObjectSectionKind.Text))
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (ObjectSectionData))
+      (CompilerObjectSectionKind.Data))
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (ObjectSectionRodata))
-    (compiler-object-elf-push-load-section-header! out image (ObjectSectionBss))
+      (CompilerObjectSectionKind.Rodata))
+    (compiler-object-elf-push-load-section-header!
+      out
+      image
+      (CompilerObjectSectionKind.Bss))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (ObjectSectionText))
+      (CompilerObjectSectionKind.Text))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (ObjectSectionData))
+      (CompilerObjectSectionKind.Data))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (ObjectSectionRodata))
-    (compiler-object-elf-push-rela-section-header! out image (ObjectSectionBss))
+      (CompilerObjectSectionKind.Rodata))
+    (compiler-object-elf-push-rela-section-header!
+      out
+      image
+      (CompilerObjectSectionKind.Bss))
     (compiler-object-elf-push-section-header!
       out
       (compiler-object-elf-section-name-offset
@@ -1769,19 +1818,19 @@
         (compiler-object-elf-render-relocation-section!
           out
           image
-          (ObjectSectionText))
+          (CompilerObjectSectionKind.Text))
         (compiler-object-elf-render-relocation-section!
           out
           image
-          (ObjectSectionData))
+          (CompilerObjectSectionKind.Data))
         (compiler-object-elf-render-relocation-section!
           out
           image
-          (ObjectSectionRodata))
+          (CompilerObjectSectionKind.Rodata))
         (compiler-object-elf-render-relocation-section!
           out
           image
-          (ObjectSectionBss))
+          (CompilerObjectSectionKind.Bss))
         (compiler-object-elf-render-symbol-table! out image)
         (compiler-object-elf-render-string-tables! out image)
         (compiler-object-elf-push-section-headers! out image)
@@ -1894,252 +1943,267 @@
 
 (define (compiler-object-elf-text-smoke-instrs) : CompilerObjectX64InstrList
   (compiler-object-instr-cons
-    (ObjectX64Label "_tl_text")
+    (CompilerObjectX64Instr.Label "_tl_text")
     (compiler-object-instr-cons
-      (ObjectX64Call "foreign_exact")
+      (CompilerObjectX64Instr.Call "foreign_exact")
       (compiler-object-instr-cons
-        (ObjectX64LoadRip "_tl_cell")
+        (CompilerObjectX64Instr.LoadRip "_tl_cell")
         (compiler-object-instr-cons
-          (ObjectX64LoadRipAddress "_tl_message")
+          (CompilerObjectX64Instr.LoadRipAddress "_tl_message")
           (compiler-object-instr-cons
-            (ObjectX64StoreRip "_tl_cell")
+            (CompilerObjectX64Instr.StoreRip "_tl_cell")
             (compiler-object-instr-cons
-              (ObjectX64Branch ".L_true" ".L_false")
+              (CompilerObjectX64Instr.Branch ".L_true" ".L_false")
               (compiler-object-instr-cons
-                (ObjectX64Label ".L_true")
+                (CompilerObjectX64Instr.Label ".L_true")
                 (compiler-object-instr-cons
-                  (ObjectX64Jump ".L_done")
+                  (CompilerObjectX64Instr.Jump ".L_done")
                   (compiler-object-instr-cons
-                    (ObjectX64Label ".L_false")
+                    (CompilerObjectX64Instr.Label ".L_false")
                     (compiler-object-instr-cons
-                      (ObjectX64TailCall "_tl_text")
+                      (CompilerObjectX64Instr.TailCall "_tl_text")
                       (compiler-object-instr-cons
-                        (ObjectX64Label ".L_done")
+                        (CompilerObjectX64Instr.Label ".L_done")
                         (compiler-object-instr-cons
-                          (ObjectX64SubRspImm8 8)
+                          (CompilerObjectX64Instr.SubRspImm8 8)
                           (compiler-object-instr-cons
-                            (ObjectX64MovRcxRip "_tl_cell")
+                            (CompilerObjectX64Instr.MovRcxRip "_tl_cell")
                             (compiler-object-instr-cons
-                              (ObjectX64MovRdxRip "_tl_message")
+                              (CompilerObjectX64Instr.MovRdxRip "_tl_message")
                               (compiler-object-instr-cons
-                                (ObjectX64MovRcxRax)
+                                (CompilerObjectX64Instr.MovRcxRax)
                                 (compiler-object-instr-cons
-                                  (ObjectX64Raw (compiler-object-elf-ret-bytes))
-                                  ObjectInstrNil)))))))))))))))))
+                                  (CompilerObjectX64Instr.Raw
+                                    (compiler-object-elf-ret-bytes))
+                                  CompilerObjectX64InstrList.Nil)))))))))))))))))
 
 (define (compiler-object-elf-text-smoke-relocations) : CompilerObjectRelocationList
   (compiler-object-relocation-cons
-    (ObjectRelocation
-      (ObjectSectionText)
+    (CompilerObjectRelocation.Relocation
+      (CompilerObjectSectionKind.Text)
       "_tl_text"
-      (ObjectRelocCall)
+      (CompilerObjectRelocationKind.Call)
       "foreign_exact")
     (compiler-object-relocation-cons
-      (ObjectRelocation
-        (ObjectSectionText)
+      (CompilerObjectRelocation.Relocation
+        (CompilerObjectSectionKind.Text)
         "_tl_text"
-        (ObjectRelocRipValue)
+        (CompilerObjectRelocationKind.RipValue)
         "_tl_cell")
       (compiler-object-relocation-cons
-        (ObjectRelocation
-          (ObjectSectionText)
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
           "_tl_text"
-          (ObjectRelocRipAddress)
+          (CompilerObjectRelocationKind.RipAddress)
           "_tl_message")
         (compiler-object-relocation-cons
-          (ObjectRelocation
-            (ObjectSectionText)
+          (CompilerObjectRelocation.Relocation
+            (CompilerObjectSectionKind.Text)
             "_tl_text"
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             "_tl_cell")
           (compiler-object-relocation-cons
-            (ObjectRelocation
-              (ObjectSectionText)
+            (CompilerObjectRelocation.Relocation
+              (CompilerObjectSectionKind.Text)
               "_tl_text"
-              (ObjectRelocBranch)
+              (CompilerObjectRelocationKind.Branch)
               ".L_true")
             (compiler-object-relocation-cons
-              (ObjectRelocation
-                (ObjectSectionText)
+              (CompilerObjectRelocation.Relocation
+                (CompilerObjectSectionKind.Text)
                 "_tl_text"
-                (ObjectRelocBranch)
+                (CompilerObjectRelocationKind.Branch)
                 ".L_false")
               (compiler-object-relocation-cons
-                (ObjectRelocation
-                  (ObjectSectionText)
+                (CompilerObjectRelocation.Relocation
+                  (CompilerObjectSectionKind.Text)
                   "_tl_text"
-                  (ObjectRelocBranch)
+                  (CompilerObjectRelocationKind.Branch)
                   ".L_done")
                 (compiler-object-relocation-cons
-                  (ObjectRelocation
-                    (ObjectSectionText)
+                  (CompilerObjectRelocation.Relocation
+                    (CompilerObjectSectionKind.Text)
                     "_tl_text"
-                    (ObjectRelocTailCall)
+                    (CompilerObjectRelocationKind.TailCall)
                     "_tl_text")
                   (compiler-object-relocation-cons
-                    (ObjectRelocation
-                      (ObjectSectionText)
+                    (CompilerObjectRelocation.Relocation
+                      (CompilerObjectSectionKind.Text)
                       "_tl_text"
-                      (ObjectRelocRipValue)
+                      (CompilerObjectRelocationKind.RipValue)
                       "_tl_cell")
                     (compiler-object-relocation-cons
-                      (ObjectRelocation
-                        (ObjectSectionText)
+                      (CompilerObjectRelocation.Relocation
+                        (CompilerObjectSectionKind.Text)
                         "_tl_text"
-                        (ObjectRelocRipValue)
+                        (CompilerObjectRelocationKind.RipValue)
                         "_tl_message")
-                      ObjectRelocationNil)))))))))))
+                      CompilerObjectRelocationList.Nil)))))))))))
 
 (define (compiler-object-elf-text-smoke-image) : CompilerObjectImage
   (CompilerObjectImage
     (compiler-object-section-cons
-      (ObjectSection
-        (ObjectSectionText)
-        ObjectDataNil
+      (CompilerObjectSection.Section
+        (CompilerObjectSectionKind.Text)
+        CompilerObjectDataRecordList.Nil
         (compiler-object-elf-text-smoke-instrs))
       (compiler-object-section-cons
-        (ObjectSection
-          (ObjectSectionData)
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Data)
           (compiler-object-data-cons
-            (ObjectDataLabel "_tl_cell")
-            (compiler-object-data-cons (ObjectDataI64 0) ObjectDataNil))
-          ObjectInstrNil)
-        (compiler-object-section-cons
-          (ObjectSection
-            (ObjectSectionRodata)
+            (CompilerObjectDataRecord.Label "_tl_cell")
             (compiler-object-data-cons
-              (ObjectDataLabel "_tl_message")
-              (compiler-object-data-cons (ObjectDataString "ok") ObjectDataNil))
-            ObjectInstrNil)
+              (CompilerObjectDataRecord.I64 0)
+              CompilerObjectDataRecordList.Nil))
+          CompilerObjectX64InstrList.Nil)
+        (compiler-object-section-cons
+          (CompilerObjectSection.Section
+            (CompilerObjectSectionKind.Rodata)
+            (compiler-object-data-cons
+              (CompilerObjectDataRecord.Label "_tl_message")
+              (compiler-object-data-cons
+                (CompilerObjectDataRecord.String "ok")
+                CompilerObjectDataRecordList.Nil))
+            CompilerObjectX64InstrList.Nil)
           (compiler-object-section-cons
-            (ObjectSection (ObjectSectionBss) ObjectDataNil ObjectInstrNil)
-            ObjectSectionNil))))
+            (CompilerObjectSection.Section
+              (CompilerObjectSectionKind.Bss)
+              CompilerObjectDataRecordList.Nil
+              CompilerObjectX64InstrList.Nil)
+            CompilerObjectSectionList.Nil))))
     (compiler-object-symbol-cons
-      (ObjectSymbol
+      (CompilerObjectSymbol.Symbol
         ".L_true"
-        (ObjectSymbolLocal)
-        (ObjectSymbolFunction)
-        (ObjectSomeSection (ObjectSectionText)))
+        (CompilerObjectSymbolBinding.Local)
+        (CompilerObjectSymbolKind.Function)
+        (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
       (compiler-object-symbol-cons
-        (ObjectSymbol
+        (CompilerObjectSymbol.Symbol
           ".L_false"
-          (ObjectSymbolLocal)
-          (ObjectSymbolFunction)
-          (ObjectSomeSection (ObjectSectionText)))
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Function)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
         (compiler-object-symbol-cons
-          (ObjectSymbol
+          (CompilerObjectSymbol.Symbol
             ".L_done"
-            (ObjectSymbolLocal)
-            (ObjectSymbolFunction)
-            (ObjectSomeSection (ObjectSectionText)))
+            (CompilerObjectSymbolBinding.Local)
+            (CompilerObjectSymbolKind.Function)
+            (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
           (compiler-object-symbol-cons
-            (ObjectSymbol
+            (CompilerObjectSymbol.Symbol
               "_tl_message"
-              (ObjectSymbolLocal)
-              (ObjectSymbolData)
-              (ObjectSomeSection (ObjectSectionRodata)))
+              (CompilerObjectSymbolBinding.Local)
+              (CompilerObjectSymbolKind.Data)
+              (CompilerObjectMaybeSection.Some
+                (CompilerObjectSectionKind.Rodata)))
             (compiler-object-symbol-cons
-              (ObjectSymbol
+              (CompilerObjectSymbol.Symbol
                 "_tl_text"
-                (ObjectSymbolExport)
-                (ObjectSymbolFunction)
-                (ObjectSomeSection (ObjectSectionText)))
+                (CompilerObjectSymbolBinding.Export)
+                (CompilerObjectSymbolKind.Function)
+                (CompilerObjectMaybeSection.Some
+                  (CompilerObjectSectionKind.Text)))
               (compiler-object-symbol-cons
-                (ObjectSymbol
+                (CompilerObjectSymbol.Symbol
                   "_tl_cell"
-                  (ObjectSymbolExport)
-                  (ObjectSymbolData)
-                  (ObjectSomeSection (ObjectSectionData)))
+                  (CompilerObjectSymbolBinding.Export)
+                  (CompilerObjectSymbolKind.Data)
+                  (CompilerObjectMaybeSection.Some
+                    (CompilerObjectSectionKind.Data)))
                 (compiler-object-symbol-cons
-                  (ObjectSymbol
+                  (CompilerObjectSymbol.Symbol
                     "foreign_exact"
-                    (ObjectSymbolExtern)
-                    (ObjectSymbolFunction)
-                    (ObjectNoSection))
-                  ObjectSymbolNil)))))))
+                    (CompilerObjectSymbolBinding.Extern)
+                    (CompilerObjectSymbolKind.Function)
+                    (CompilerObjectMaybeSection.No))
+                  CompilerObjectSymbolList.Nil)))))))
     (compiler-object-elf-text-smoke-relocations)))
 
 (define (compiler-object-elf-smoke-image) : CompilerObjectImage
   (CompilerObjectImage
     (compiler-object-section-cons
-      (ObjectSection
-        (ObjectSectionText)
-        ObjectDataNil
+      (CompilerObjectSection.Section
+        (CompilerObjectSectionKind.Text)
+        CompilerObjectDataRecordList.Nil
         (compiler-object-instr-cons
-          (ObjectX64Label "_tl_empty")
+          (CompilerObjectX64Instr.Label "_tl_empty")
           (compiler-object-instr-cons
-            (ObjectX64Raw (compiler-object-elf-ret-bytes))
-            ObjectInstrNil)))
+            (CompilerObjectX64Instr.Raw (compiler-object-elf-ret-bytes))
+            CompilerObjectX64InstrList.Nil)))
       (compiler-object-section-cons
-        (ObjectSection
-          (ObjectSectionData)
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Data)
           (compiler-object-data-cons
-            (ObjectDataLabel "_tl_cell")
+            (CompilerObjectDataRecord.Label "_tl_cell")
             (compiler-object-data-cons
-              (ObjectDataSymbolAddress "_tl_message")
-              (compiler-object-data-cons (ObjectDataI64 99) ObjectDataNil)))
-          ObjectInstrNil)
+              (CompilerObjectDataRecord.SymbolAddress "_tl_message")
+              (compiler-object-data-cons
+                (CompilerObjectDataRecord.I64 99)
+                CompilerObjectDataRecordList.Nil)))
+          CompilerObjectX64InstrList.Nil)
         (compiler-object-section-cons
-          (ObjectSection
-            (ObjectSectionRodata)
+          (CompilerObjectSection.Section
+            (CompilerObjectSectionKind.Rodata)
             (compiler-object-data-cons
-              (ObjectDataLabel "_tl_message")
+              (CompilerObjectDataRecord.Label "_tl_message")
               (compiler-object-data-cons
-                (ObjectDataString "ok")
+                (CompilerObjectDataRecord.String "ok")
                 (compiler-object-data-cons
-                  (ObjectDataAlign 8)
+                  (CompilerObjectDataRecord.Align 8)
                   (compiler-object-data-cons
-                    (ObjectDataLabel "_tl_pi")
+                    (CompilerObjectDataRecord.Label "_tl_pi")
                     (compiler-object-data-cons
-                      (ObjectDataF64 0x400c000000000000)
-                      ObjectDataNil)))))
-            ObjectInstrNil)
+                      (CompilerObjectDataRecord.F64 0x400c000000000000)
+                      CompilerObjectDataRecordList.Nil)))))
+            CompilerObjectX64InstrList.Nil)
           (compiler-object-section-cons
-            (ObjectSection
-              (ObjectSectionBss)
+            (CompilerObjectSection.Section
+              (CompilerObjectSectionKind.Bss)
               (compiler-object-data-cons
-                (ObjectDataLabel "_tl_zero")
-                (compiler-object-data-cons (ObjectDataZero 16) ObjectDataNil))
-              ObjectInstrNil)
-            ObjectSectionNil))))
+                (CompilerObjectDataRecord.Label "_tl_zero")
+                (compiler-object-data-cons
+                  (CompilerObjectDataRecord.Zero 16)
+                  CompilerObjectDataRecordList.Nil))
+              CompilerObjectX64InstrList.Nil)
+            CompilerObjectSectionList.Nil))))
     (compiler-object-symbol-cons
-      (ObjectSymbol
+      (CompilerObjectSymbol.Symbol
         "_tl_empty"
-        (ObjectSymbolExport)
-        (ObjectSymbolFunction)
-        (ObjectSomeSection (ObjectSectionText)))
+        (CompilerObjectSymbolBinding.Export)
+        (CompilerObjectSymbolKind.Function)
+        (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
       (compiler-object-symbol-cons
-        (ObjectSymbol
+        (CompilerObjectSymbol.Symbol
           "_tl_cell"
-          (ObjectSymbolExport)
-          (ObjectSymbolData)
-          (ObjectSomeSection (ObjectSectionData)))
+          (CompilerObjectSymbolBinding.Export)
+          (CompilerObjectSymbolKind.Data)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data)))
         (compiler-object-symbol-cons
-          (ObjectSymbol
+          (CompilerObjectSymbol.Symbol
             "_tl_message"
-            (ObjectSymbolLocal)
-            (ObjectSymbolData)
-            (ObjectSomeSection (ObjectSectionRodata)))
+            (CompilerObjectSymbolBinding.Local)
+            (CompilerObjectSymbolKind.Data)
+            (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rodata)))
           (compiler-object-symbol-cons
-            (ObjectSymbol
+            (CompilerObjectSymbol.Symbol
               "_tl_zero"
-              (ObjectSymbolExport)
-              (ObjectSymbolData)
-              (ObjectSomeSection (ObjectSectionBss)))
+              (CompilerObjectSymbolBinding.Export)
+              (CompilerObjectSymbolKind.Data)
+              (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Bss)))
             (compiler-object-symbol-cons
-              (ObjectSymbol
+              (CompilerObjectSymbol.Symbol
                 "foreign_exact"
-                (ObjectSymbolExtern)
-                (ObjectSymbolFunction)
-                (ObjectNoSection))
-              ObjectSymbolNil)))))
+                (CompilerObjectSymbolBinding.Extern)
+                (CompilerObjectSymbolKind.Function)
+                (CompilerObjectMaybeSection.No))
+              CompilerObjectSymbolList.Nil)))))
     (compiler-object-relocation-cons
-      (ObjectRelocation
-        (ObjectSectionData)
+      (CompilerObjectRelocation.Relocation
+        (CompilerObjectSectionKind.Data)
         "_tl_cell"
-        (ObjectRelocAbs64)
+        (CompilerObjectRelocationKind.Abs64)
         "_tl_message")
-      ObjectRelocationNil)))
+      CompilerObjectRelocationList.Nil)))
 
 (define (compiler-object-elf-smoke-ok?) : bool
   (match (compiler-object-elf-render (compiler-object-elf-smoke-image))

@@ -2,119 +2,117 @@
 (import stdlib.string)
 
 (defenum CompilerObjectSectionKind
-  (ObjectSectionText)
-  (ObjectSectionData)
-  (ObjectSectionRodata)
-  (ObjectSectionBss)
-  (ObjectSectionPdata)
-  (ObjectSectionXdata)
-  (ObjectSectionRsrc))
+  (Text)
+  (Data)
+  (Rodata)
+  (Bss)
+  (Pdata)
+  (Xdata)
+  (Rsrc))
 
 (defenum CompilerObjectMaybeSection
-  (ObjectNoSection)
-  (ObjectSomeSection CompilerObjectSectionKind))
+  (No)
+  (Some CompilerObjectSectionKind))
 
 (defenum CompilerObjectSymbolBinding
-  (ObjectSymbolLocal)
-  (ObjectSymbolExport)
-  (ObjectSymbolExtern))
+  (Local)
+  (Export)
+  (Extern))
 
 (defenum CompilerObjectSymbolKind
-  (ObjectSymbolFunction)
-  (ObjectSymbolData)
-  (ObjectSymbolSection)
-  (ObjectSymbolRuntime))
+  (Function)
+  (Data)
+  (Section)
+  (Runtime))
 
 (defenum CompilerObjectRelocationKind
-  (ObjectRelocCall)
-  (ObjectRelocTailCall)
-  (ObjectRelocAbs64)
-  (ObjectRelocAddr32Nb)
-  (ObjectRelocRipValue)
-  (ObjectRelocRipAddress)
-  (ObjectRelocBranch))
+  (Call)
+  (TailCall)
+  (Abs64)
+  (Addr32Nb)
+  (RipValue)
+  (RipAddress)
+  (Branch))
 
 (defenum CompilerObjectDataRecord
-  (ObjectDataLabel String)
-  (ObjectDataAlign i64)
-  (ObjectDataBytes String)
-  (ObjectDataString String)
-  (ObjectDataF64 u64)
-  (ObjectDataF32 u64)
-  (ObjectDataI64 i64)
-  (ObjectDataZero i64)
-  (ObjectDataSymbolAddress String)
-  (ObjectDataSymbolRva32 String))
+  (Label String)
+  (Align i64)
+  (Bytes String)
+  (String String)
+  (F64 u64)
+  (F32 u64)
+  (I64 i64)
+  (Zero i64)
+  (SymbolAddress String)
+  (SymbolRva32 String))
 
 (defenum CompilerObjectDataRecordList
-  (ObjectDataNil)
-  (ObjectDataCons CompilerObjectDataRecord (Box CompilerObjectDataRecordList))
-  (ObjectDataArray (Array CompilerObjectDataRecord) i64))
+  (Nil)
+  (Cons CompilerObjectDataRecord (Box CompilerObjectDataRecordList))
+  (Array (Array CompilerObjectDataRecord) i64))
 
 (defenum CompilerObjectX64Instr
-  (ObjectX64Label String)
-  (ObjectX64Call String)
-  (ObjectX64TailCall String)
-  (ObjectX64Jump String)
-  (ObjectX64Ja String)
-  (ObjectX64Branch String String)
-  (ObjectX64LoadRip String)
-  (ObjectX64LoadRipAddress String)
-  (ObjectX64LoadRipAddressR11 String)
-  (ObjectX64StoreRip String)
-  (ObjectX64SubRspImm8 i64)
-  (ObjectX64MovRcxRip String)
-  (ObjectX64MovRdxRip String)
-  (ObjectX64LoadRipAddressRdx String)
-  (ObjectX64StoreR14Rip String)
-  (ObjectX64StoreR15Rip String)
-  (ObjectX64AddRcxRip String)
-  (ObjectX64MovRcxRax)
-  (ObjectX64XorpdRip String)
-  (ObjectX64Bytes String)
-  (ObjectX64Raw String))
+  (Label String)
+  (Call String)
+  (TailCall String)
+  (Jump String)
+  (Ja String)
+  (Branch String String)
+  (LoadRip String)
+  (LoadRipAddress String)
+  (LoadRipAddressR11 String)
+  (StoreRip String)
+  (SubRspImm8 i64)
+  (MovRcxRip String)
+  (MovRdxRip String)
+  (LoadRipAddressRdx String)
+  (StoreR14Rip String)
+  (StoreR15Rip String)
+  (AddRcxRip String)
+  (MovRcxRax)
+  (XorpdRip String)
+  (Bytes String)
+  (Raw String))
 
 (defenum CompilerObjectX64InstrList
-  (ObjectInstrNil)
-  (ObjectInstrCons CompilerObjectX64Instr (Box CompilerObjectX64InstrList))
-  (ObjectInstrArray (Array CompilerObjectX64Instr) i64))
+  (Nil)
+  (Cons CompilerObjectX64Instr (Box CompilerObjectX64InstrList))
+  (Array (Array CompilerObjectX64Instr) i64))
 
 (defenum CompilerObjectSymbol
-  (ObjectSymbol
+  (Symbol
     String
     CompilerObjectSymbolBinding
     CompilerObjectSymbolKind
     CompilerObjectMaybeSection))
 
 (defenum CompilerObjectSymbolList
-  (ObjectSymbolNil)
-  (ObjectSymbolCons CompilerObjectSymbol (Box CompilerObjectSymbolList))
-  (ObjectSymbolArray (Array CompilerObjectSymbol) i64))
+  (Nil)
+  (Cons CompilerObjectSymbol (Box CompilerObjectSymbolList))
+  (Array (Array CompilerObjectSymbol) i64))
 
 (defenum CompilerObjectRelocation
-  (ObjectRelocation
+  (Relocation
     CompilerObjectSectionKind
     String
     CompilerObjectRelocationKind
     String))
 
 (defenum CompilerObjectRelocationList
-  (ObjectRelocationNil)
-  (ObjectRelocationCons
-    CompilerObjectRelocation
-    (Box CompilerObjectRelocationList))
-  (ObjectRelocationArray (Array CompilerObjectRelocation) i64))
+  (Nil)
+  (Cons CompilerObjectRelocation (Box CompilerObjectRelocationList))
+  (Array (Array CompilerObjectRelocation) i64))
 
 (defenum CompilerObjectSection
-  (ObjectSection
+  (Section
     CompilerObjectSectionKind
     CompilerObjectDataRecordList
     CompilerObjectX64InstrList))
 
 (defenum CompilerObjectSectionList
-  (ObjectSectionNil)
-  (ObjectSectionCons CompilerObjectSection (Box CompilerObjectSectionList))
-  (ObjectSectionArray (Array CompilerObjectSection) i64))
+  (Nil)
+  (Cons CompilerObjectSection (Box CompilerObjectSectionList))
+  (Array (Array CompilerObjectSection) i64))
 
 (defstruct CompilerObjectImage
   (sections CompilerObjectSectionList)
@@ -124,47 +122,47 @@
 (define (compiler-object-data-cons
   [head : CompilerObjectDataRecord]
   [tail : CompilerObjectDataRecordList]) : CompilerObjectDataRecordList
-  (ObjectDataCons head (box tail)))
+  (CompilerObjectDataRecordList.Cons head (box tail)))
 
 (define (compiler-object-instr-cons
   [head : CompilerObjectX64Instr]
   [tail : CompilerObjectX64InstrList]) : CompilerObjectX64InstrList
-  (ObjectInstrCons head (box tail)))
+  (CompilerObjectX64InstrList.Cons head (box tail)))
 
 (define (compiler-object-symbol-cons
   [head : CompilerObjectSymbol]
   [tail : CompilerObjectSymbolList]) : CompilerObjectSymbolList
-  (ObjectSymbolCons head (box tail)))
+  (CompilerObjectSymbolList.Cons head (box tail)))
 
 (define (compiler-object-relocation-cons
   [head : CompilerObjectRelocation]
   [tail : CompilerObjectRelocationList]) : CompilerObjectRelocationList
-  (ObjectRelocationCons head (box tail)))
+  (CompilerObjectRelocationList.Cons head (box tail)))
 
 (define (compiler-object-section-cons
   [head : CompilerObjectSection]
   [tail : CompilerObjectSectionList]) : CompilerObjectSectionList
-  (ObjectSectionCons head (box tail)))
+  (CompilerObjectSectionList.Cons head (box tail)))
 
 (define (compiler-object-data-list-fill-reversed!
   [records : CompilerObjectDataRecordList]
   [slots : (Array CompilerObjectDataRecord)]
   [index : i64]) : unit
   (match records
-    [(ObjectDataNil) unit]
-    [(ObjectDataCons head rest)
+    [(CompilerObjectDataRecordList.Nil) unit]
+    [(CompilerObjectDataRecordList.Cons head rest)
       (begin
         (array-set! slots index head)
         (compiler-object-data-list-fill-reversed!
           (box-get rest)
           slots
           (- index 1)))]
-    [(ObjectDataArray _ _) unit]))
+    [(CompilerObjectDataRecordList.Array _ _) unit]))
 
 (define (compiler-object-data-list-dense-reversed
   [records : CompilerObjectDataRecordList]) : CompilerObjectDataRecordList
   (match records
-    [(ObjectDataArray _ _) records]
+    [(CompilerObjectDataRecordList.Array _ _) records]
     [_
       (let
         [count : i64 (compiler-object-data-record-list-count records)]
@@ -172,27 +170,27 @@
           (make-array CompilerObjectDataRecord count)]
         (begin
           (compiler-object-data-list-fill-reversed! records slots (- count 1))
-          (ObjectDataArray slots count)))]))
+          (CompilerObjectDataRecordList.Array slots count)))]))
 
 (define (compiler-object-instr-list-fill-reversed!
   [instrs : CompilerObjectX64InstrList]
   [slots : (Array CompilerObjectX64Instr)]
   [index : i64]) : unit
   (match instrs
-    [(ObjectInstrNil) unit]
-    [(ObjectInstrCons head rest)
+    [(CompilerObjectX64InstrList.Nil) unit]
+    [(CompilerObjectX64InstrList.Cons head rest)
       (begin
         (array-set! slots index head)
         (compiler-object-instr-list-fill-reversed!
           (box-get rest)
           slots
           (- index 1)))]
-    [(ObjectInstrArray _ _) unit]))
+    [(CompilerObjectX64InstrList.Array _ _) unit]))
 
 (define (compiler-object-instr-list-dense-reversed
   [instrs : CompilerObjectX64InstrList]) : CompilerObjectX64InstrList
   (match instrs
-    [(ObjectInstrArray _ _) instrs]
+    [(CompilerObjectX64InstrList.Array _ _) instrs]
     [_
       (let
         [count : i64 (compiler-object-instr-list-count instrs)]
@@ -200,27 +198,27 @@
           (make-array CompilerObjectX64Instr count)]
         (begin
           (compiler-object-instr-list-fill-reversed! instrs slots (- count 1))
-          (ObjectInstrArray slots count)))]))
+          (CompilerObjectX64InstrList.Array slots count)))]))
 
 (define (compiler-object-symbol-list-fill-reversed!
   [symbols : CompilerObjectSymbolList]
   [slots : (Array CompilerObjectSymbol)]
   [index : i64]) : unit
   (match symbols
-    [(ObjectSymbolNil) unit]
-    [(ObjectSymbolCons head rest)
+    [(CompilerObjectSymbolList.Nil) unit]
+    [(CompilerObjectSymbolList.Cons head rest)
       (begin
         (array-set! slots index head)
         (compiler-object-symbol-list-fill-reversed!
           (box-get rest)
           slots
           (- index 1)))]
-    [(ObjectSymbolArray _ _) unit]))
+    [(CompilerObjectSymbolList.Array _ _) unit]))
 
 (define (compiler-object-symbol-list-dense-reversed
   [symbols : CompilerObjectSymbolList]) : CompilerObjectSymbolList
   (match symbols
-    [(ObjectSymbolArray _ _) symbols]
+    [(CompilerObjectSymbolList.Array _ _) symbols]
     [_
       (let
         [count : i64 (compiler-object-symbol-list-count symbols)]
@@ -228,27 +226,27 @@
           (make-array CompilerObjectSymbol count)]
         (begin
           (compiler-object-symbol-list-fill-reversed! symbols slots (- count 1))
-          (ObjectSymbolArray slots count)))]))
+          (CompilerObjectSymbolList.Array slots count)))]))
 
 (define (compiler-object-relocation-list-fill-reversed!
   [relocs : CompilerObjectRelocationList]
   [slots : (Array CompilerObjectRelocation)]
   [index : i64]) : unit
   (match relocs
-    [(ObjectRelocationNil) unit]
-    [(ObjectRelocationCons head rest)
+    [(CompilerObjectRelocationList.Nil) unit]
+    [(CompilerObjectRelocationList.Cons head rest)
       (begin
         (array-set! slots index head)
         (compiler-object-relocation-list-fill-reversed!
           (box-get rest)
           slots
           (- index 1)))]
-    [(ObjectRelocationArray _ _) unit]))
+    [(CompilerObjectRelocationList.Array _ _) unit]))
 
 (define (compiler-object-relocation-list-dense-reversed
   [relocs : CompilerObjectRelocationList]) : CompilerObjectRelocationList
   (match relocs
-    [(ObjectRelocationArray _ _) relocs]
+    [(CompilerObjectRelocationList.Array _ _) relocs]
     [_
       (let
         [count : i64 (compiler-object-relocation-list-count relocs)]
@@ -259,24 +257,24 @@
             relocs
             slots
             (- count 1))
-          (ObjectRelocationArray slots count)))]))
+          (CompilerObjectRelocationList.Array slots count)))]))
 
 (define (compiler-object-section-list-fill!
   [sections : CompilerObjectSectionList]
   [slots : (Array CompilerObjectSection)]
   [index : i64]) : unit
   (match sections
-    [(ObjectSectionNil) unit]
-    [(ObjectSectionCons head rest)
+    [(CompilerObjectSectionList.Nil) unit]
+    [(CompilerObjectSectionList.Cons head rest)
       (begin
         (array-set! slots index head)
         (compiler-object-section-list-fill! (box-get rest) slots (+ index 1)))]
-    [(ObjectSectionArray _ _) unit]))
+    [(CompilerObjectSectionList.Array _ _) unit]))
 
 (define (compiler-object-section-list-dense
   [sections : CompilerObjectSectionList]) : CompilerObjectSectionList
   (match sections
-    [(ObjectSectionArray _ _) sections]
+    [(CompilerObjectSectionList.Array _ _) sections]
     [_
       (let
         [count : i64 (compiler-object-section-list-count sections)]
@@ -284,7 +282,7 @@
           (make-array CompilerObjectSection count)]
         (begin
           (compiler-object-section-list-fill! sections slots 0)
-          (ObjectSectionArray slots count)))]))
+          (CompilerObjectSectionList.Array slots count)))]))
 
 (define (compiler-object-data-list-reverse
   [records : CompilerObjectDataRecordList]) : CompilerObjectDataRecordList
@@ -306,201 +304,212 @@
   [a : CompilerObjectSectionKind]
   [b : CompilerObjectSectionKind]) : bool
   (match a
-    [(ObjectSectionText)
+    [(CompilerObjectSectionKind.Text)
       (match b
-        [(ObjectSectionText) true]
+        [(CompilerObjectSectionKind.Text) true]
         [_ false])]
-    [(ObjectSectionData)
+    [(CompilerObjectSectionKind.Data)
       (match b
-        [(ObjectSectionData) true]
+        [(CompilerObjectSectionKind.Data) true]
         [_ false])]
-    [(ObjectSectionRodata)
+    [(CompilerObjectSectionKind.Rodata)
       (match b
-        [(ObjectSectionRodata) true]
+        [(CompilerObjectSectionKind.Rodata) true]
         [_ false])]
-    [(ObjectSectionBss)
+    [(CompilerObjectSectionKind.Bss)
       (match b
-        [(ObjectSectionBss) true]
+        [(CompilerObjectSectionKind.Bss) true]
         [_ false])]
-    [(ObjectSectionPdata)
+    [(CompilerObjectSectionKind.Pdata)
       (match b
-        [(ObjectSectionPdata) true]
+        [(CompilerObjectSectionKind.Pdata) true]
         [_ false])]
-    [(ObjectSectionXdata)
+    [(CompilerObjectSectionKind.Xdata)
       (match b
-        [(ObjectSectionXdata) true]
+        [(CompilerObjectSectionKind.Xdata) true]
         [_ false])]
-    [(ObjectSectionRsrc)
+    [(CompilerObjectSectionKind.Rsrc)
       (match b
-        [(ObjectSectionRsrc) true]
+        [(CompilerObjectSectionKind.Rsrc) true]
         [_ false])]))
 
 (define (compiler-object-symbol-binding-eq?
   [a : CompilerObjectSymbolBinding]
   [b : CompilerObjectSymbolBinding]) : bool
   (match a
-    [(ObjectSymbolLocal)
+    [(CompilerObjectSymbolBinding.Local)
       (match b
-        [(ObjectSymbolLocal) true]
+        [(CompilerObjectSymbolBinding.Local) true]
         [_ false])]
-    [(ObjectSymbolExport)
+    [(CompilerObjectSymbolBinding.Export)
       (match b
-        [(ObjectSymbolExport) true]
+        [(CompilerObjectSymbolBinding.Export) true]
         [_ false])]
-    [(ObjectSymbolExtern)
+    [(CompilerObjectSymbolBinding.Extern)
       (match b
-        [(ObjectSymbolExtern) true]
+        [(CompilerObjectSymbolBinding.Extern) true]
         [_ false])]))
 
 (define (compiler-object-symbol-kind-eq?
   [a : CompilerObjectSymbolKind]
   [b : CompilerObjectSymbolKind]) : bool
   (match a
-    [(ObjectSymbolFunction)
+    [(CompilerObjectSymbolKind.Function)
       (match b
-        [(ObjectSymbolFunction) true]
+        [(CompilerObjectSymbolKind.Function) true]
         [_ false])]
-    [(ObjectSymbolData)
+    [(CompilerObjectSymbolKind.Data)
       (match b
-        [(ObjectSymbolData) true]
+        [(CompilerObjectSymbolKind.Data) true]
         [_ false])]
-    [(ObjectSymbolSection)
+    [(CompilerObjectSymbolKind.Section)
       (match b
-        [(ObjectSymbolSection) true]
+        [(CompilerObjectSymbolKind.Section) true]
         [_ false])]
-    [(ObjectSymbolRuntime)
+    [(CompilerObjectSymbolKind.Runtime)
       (match b
-        [(ObjectSymbolRuntime) true]
+        [(CompilerObjectSymbolKind.Runtime) true]
         [_ false])]))
 
 (define (compiler-object-relocation-kind-eq?
   [a : CompilerObjectRelocationKind]
   [b : CompilerObjectRelocationKind]) : bool
   (match a
-    [(ObjectRelocCall)
+    [(CompilerObjectRelocationKind.Call)
       (match b
-        [(ObjectRelocCall) true]
+        [(CompilerObjectRelocationKind.Call) true]
         [_ false])]
-    [(ObjectRelocTailCall)
+    [(CompilerObjectRelocationKind.TailCall)
       (match b
-        [(ObjectRelocTailCall) true]
+        [(CompilerObjectRelocationKind.TailCall) true]
         [_ false])]
-    [(ObjectRelocAbs64)
+    [(CompilerObjectRelocationKind.Abs64)
       (match b
-        [(ObjectRelocAbs64) true]
+        [(CompilerObjectRelocationKind.Abs64) true]
         [_ false])]
-    [(ObjectRelocAddr32Nb)
+    [(CompilerObjectRelocationKind.Addr32Nb)
       (match b
-        [(ObjectRelocAddr32Nb) true]
+        [(CompilerObjectRelocationKind.Addr32Nb) true]
         [_ false])]
-    [(ObjectRelocRipValue)
+    [(CompilerObjectRelocationKind.RipValue)
       (match b
-        [(ObjectRelocRipValue) true]
+        [(CompilerObjectRelocationKind.RipValue) true]
         [_ false])]
-    [(ObjectRelocRipAddress)
+    [(CompilerObjectRelocationKind.RipAddress)
       (match b
-        [(ObjectRelocRipAddress) true]
+        [(CompilerObjectRelocationKind.RipAddress) true]
         [_ false])]
-    [(ObjectRelocBranch)
+    [(CompilerObjectRelocationKind.Branch)
       (match b
-        [(ObjectRelocBranch) true]
+        [(CompilerObjectRelocationKind.Branch) true]
         [_ false])]))
 
 (define (compiler-object-symbol-list-count [symbols : CompilerObjectSymbolList]) : i64
   (match symbols
-    [(ObjectSymbolNil) 0]
-    [(ObjectSymbolCons _ rest)
+    [(CompilerObjectSymbolList.Nil) 0]
+    [(CompilerObjectSymbolList.Cons _ rest)
       (+ 1 (compiler-object-symbol-list-count (box-get rest)))]
-    [(ObjectSymbolArray _ count) count]))
+    [(CompilerObjectSymbolList.Array _ count) count]))
 
 (define (compiler-object-symbol-list-ref
   [symbols : CompilerObjectSymbolList]
   [index : i64]) : CompilerObjectSymbol
   (match symbols
-    [(ObjectSymbolNil)
-      (ObjectSymbol "" (ObjectSymbolLocal) (ObjectSymbolData) ObjectNoSection)]
-    [(ObjectSymbolCons head rest)
+    [(CompilerObjectSymbolList.Nil)
+      (CompilerObjectSymbol.Symbol
+        ""
+        (CompilerObjectSymbolBinding.Local)
+        (CompilerObjectSymbolKind.Data)
+        CompilerObjectMaybeSection.No)]
+    [(CompilerObjectSymbolList.Cons head rest)
       (if (= index 0)
         head
         (compiler-object-symbol-list-ref (box-get rest) (- index 1)))]
-    [(ObjectSymbolArray slots _) (array-ref slots index)]))
+    [(CompilerObjectSymbolList.Array slots _) (array-ref slots index)]))
 
 (define (compiler-object-relocation-list-count
   [relocs : CompilerObjectRelocationList]) : i64
   (match relocs
-    [(ObjectRelocationNil) 0]
-    [(ObjectRelocationCons _ rest)
+    [(CompilerObjectRelocationList.Nil) 0]
+    [(CompilerObjectRelocationList.Cons _ rest)
       (+ 1 (compiler-object-relocation-list-count (box-get rest)))]
-    [(ObjectRelocationArray _ count) count]))
+    [(CompilerObjectRelocationList.Array _ count) count]))
 
 (define (compiler-object-relocation-list-ref
   [relocs : CompilerObjectRelocationList]
   [index : i64]) : CompilerObjectRelocation
   (match relocs
-    [(ObjectRelocationNil)
-      (ObjectRelocation (ObjectSectionText) "" (ObjectRelocAbs64) "")]
-    [(ObjectRelocationCons head rest)
+    [(CompilerObjectRelocationList.Nil)
+      (CompilerObjectRelocation.Relocation
+        (CompilerObjectSectionKind.Text)
+        ""
+        (CompilerObjectRelocationKind.Abs64)
+        "")]
+    [(CompilerObjectRelocationList.Cons head rest)
       (if (= index 0)
         head
         (compiler-object-relocation-list-ref (box-get rest) (- index 1)))]
-    [(ObjectRelocationArray slots _) (array-ref slots index)]))
+    [(CompilerObjectRelocationList.Array slots _) (array-ref slots index)]))
 
 (define (compiler-object-data-record-list-count
   [records : CompilerObjectDataRecordList]) : i64
   (match records
-    [(ObjectDataNil) 0]
-    [(ObjectDataCons _ rest)
+    [(CompilerObjectDataRecordList.Nil) 0]
+    [(CompilerObjectDataRecordList.Cons _ rest)
       (+ 1 (compiler-object-data-record-list-count (box-get rest)))]
-    [(ObjectDataArray _ count) count]))
+    [(CompilerObjectDataRecordList.Array _ count) count]))
 
 (define (compiler-object-data-record-list-ref
   [records : CompilerObjectDataRecordList]
   [index : i64]) : CompilerObjectDataRecord
   (match records
-    [(ObjectDataNil) (ObjectDataZero 0)]
-    [(ObjectDataCons head rest)
+    [(CompilerObjectDataRecordList.Nil) (CompilerObjectDataRecord.Zero 0)]
+    [(CompilerObjectDataRecordList.Cons head rest)
       (if (= index 0)
         head
         (compiler-object-data-record-list-ref (box-get rest) (- index 1)))]
-    [(ObjectDataArray slots _) (array-ref slots index)]))
+    [(CompilerObjectDataRecordList.Array slots _) (array-ref slots index)]))
 
 (define (compiler-object-instr-list-count [instrs : CompilerObjectX64InstrList]) : i64
   (match instrs
-    [(ObjectInstrNil) 0]
-    [(ObjectInstrCons _ rest)
+    [(CompilerObjectX64InstrList.Nil) 0]
+    [(CompilerObjectX64InstrList.Cons _ rest)
       (+ 1 (compiler-object-instr-list-count (box-get rest)))]
-    [(ObjectInstrArray _ count) count]))
+    [(CompilerObjectX64InstrList.Array _ count) count]))
 
 (define (compiler-object-instr-list-ref
   [instrs : CompilerObjectX64InstrList]
   [index : i64]) : CompilerObjectX64Instr
   (match instrs
-    [(ObjectInstrNil) (ObjectX64Raw "")]
-    [(ObjectInstrCons head rest)
+    [(CompilerObjectX64InstrList.Nil) (CompilerObjectX64Instr.Raw "")]
+    [(CompilerObjectX64InstrList.Cons head rest)
       (if (= index 0)
         head
         (compiler-object-instr-list-ref (box-get rest) (- index 1)))]
-    [(ObjectInstrArray slots _) (array-ref slots index)]))
+    [(CompilerObjectX64InstrList.Array slots _) (array-ref slots index)]))
 
 (define (compiler-object-section-list-count
   [sections : CompilerObjectSectionList]) : i64
   (match sections
-    [(ObjectSectionNil) 0]
-    [(ObjectSectionCons _ rest)
+    [(CompilerObjectSectionList.Nil) 0]
+    [(CompilerObjectSectionList.Cons _ rest)
       (+ 1 (compiler-object-section-list-count (box-get rest)))]
-    [(ObjectSectionArray _ count) count]))
+    [(CompilerObjectSectionList.Array _ count) count]))
 
 (define (compiler-object-section-list-ref
   [sections : CompilerObjectSectionList]
   [index : i64]) : CompilerObjectSection
   (match sections
-    [(ObjectSectionNil)
-      (ObjectSection (ObjectSectionText) ObjectDataNil ObjectInstrNil)]
-    [(ObjectSectionCons head rest)
+    [(CompilerObjectSectionList.Nil)
+      (CompilerObjectSection.Section
+        (CompilerObjectSectionKind.Text)
+        CompilerObjectDataRecordList.Nil
+        CompilerObjectX64InstrList.Nil)]
+    [(CompilerObjectSectionList.Cons head rest)
       (if (= index 0)
         head
         (compiler-object-section-list-ref (box-get rest) (- index 1)))]
-    [(ObjectSectionArray slots _) (array-ref slots index)]))
+    [(CompilerObjectSectionList.Array slots _) (array-ref slots index)]))
 
 (define (compiler-object-section-payloads-dense?
   [sections : CompilerObjectSectionList]) : bool
@@ -511,13 +520,13 @@
     (begin
       (while (and ok (< index count))
         (match (compiler-object-section-list-ref sections index)
-          [(ObjectSection _ data instrs)
+          [(CompilerObjectSection.Section _ data instrs)
             (if (and
               (match data
-                [(ObjectDataArray _ _) true]
+                [(CompilerObjectDataRecordList.Array _ _) true]
                 [_ false])
               (match instrs
-                [(ObjectInstrArray _ _) true]
+                [(CompilerObjectX64InstrList.Array _ _) true]
                 [_ false]))
               (set! index (+ index 1))
               (set! ok false))]))
@@ -528,14 +537,14 @@
     [sections : CompilerObjectSectionList (struct-get image sections)]
     (and
       (match sections
-        [(ObjectSectionArray _ _) true]
+        [(CompilerObjectSectionList.Array _ _) true]
         [_ false])
       (compiler-object-section-payloads-dense? sections)
       (match (struct-get image symbols)
-        [(ObjectSymbolArray _ _) true]
+        [(CompilerObjectSymbolList.Array _ _) true]
         [_ false])
       (match (struct-get image relocations)
-        [(ObjectRelocationArray _ _) true]
+        [(CompilerObjectRelocationList.Array _ _) true]
         [_ false]))))
 
 (define (compiler-object-section-list-find
@@ -545,7 +554,10 @@
     [count : i64 (compiler-object-section-list-count sections)]
     [index : i64 0]
     [result : CompilerObjectSection
-      (ObjectSection kind ObjectDataNil ObjectInstrNil)]
+      (CompilerObjectSection.Section
+        kind
+        CompilerObjectDataRecordList.Nil
+        CompilerObjectX64InstrList.Nil)]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
@@ -553,7 +565,7 @@
           [section : CompilerObjectSection
             (compiler-object-section-list-ref sections index)]
           (match section
-            [(ObjectSection found-kind _ _)
+            [(CompilerObjectSection.Section found-kind _ _)
               (if (compiler-object-section-kind-eq? found-kind kind)
                 (begin
                   (set! result section)
@@ -565,13 +577,15 @@
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]) : i64
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _) (compiler-object-data-record-list-count data)]))
+    [(CompilerObjectSection.Section _ data _)
+      (compiler-object-data-record-list-count data)]))
 
 (define (compiler-object-section-instr-count
   [sections : CompilerObjectSectionList]
   [kind : CompilerObjectSectionKind]) : i64
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ _ instrs) (compiler-object-instr-list-count instrs)]))
+    [(CompilerObjectSection.Section _ _ instrs)
+      (compiler-object-instr-list-count instrs)]))
 
 (define (compiler-object-symbol-list-contains?
   [symbols : CompilerObjectSymbolList]
@@ -585,7 +599,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
-          [(ObjectSymbol found-name found-binding found-kind _)
+          [(CompilerObjectSymbol.Symbol found-name found-binding found-kind _)
             (if (and
               (string.string-eq found-name name)
               (compiler-object-symbol-binding-eq? found-binding binding)
@@ -605,7 +619,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-relocation-list-ref relocs index)
-          [(ObjectRelocation _ _ found-kind found-target)
+          [(CompilerObjectRelocation.Relocation _ _ found-kind found-target)
             (if (and
               (compiler-object-relocation-kind-eq? found-kind kind)
               (string.string-eq found-target target))
@@ -623,7 +637,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataString value)
+          [(CompilerObjectDataRecord.String value)
             (if (string.string-eq value text)
               (set! found true)
               (set! index (+ index 1)))]
@@ -640,7 +654,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataF64 value)
+          [(CompilerObjectDataRecord.F64 value)
             (if (= value bits)
               (set! found true)
               (set! index (+ index 1)))]
@@ -657,7 +671,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataF32 value)
+          [(CompilerObjectDataRecord.F32 value)
             (if (= value bits)
               (set! found true)
               (set! index (+ index 1)))]
@@ -674,7 +688,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataLabel value)
+          [(CompilerObjectDataRecord.Label value)
             (if (string.string-eq value label)
               (set! found true)
               (set! index (+ index 1)))]
@@ -691,7 +705,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataAlign value)
+          [(CompilerObjectDataRecord.Align value)
             (if (= value align)
               (set! found true)
               (set! index (+ index 1)))]
@@ -708,7 +722,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataI64 found-value)
+          [(CompilerObjectDataRecord.I64 found-value)
             (if (= found-value value)
               (set! found true)
               (set! index (+ index 1)))]
@@ -727,15 +741,15 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
-          [(ObjectDataLabel value)
+          [(CompilerObjectDataRecord.Label value)
             (if (and (string.string-eq value label) (< (+ index 2) count))
               (match (compiler-object-data-record-list-ref records (+ index 1))
-                [(ObjectDataI64 first-found)
+                [(CompilerObjectDataRecord.I64 first-found)
                   (if (= first-found first)
                     (match (compiler-object-data-record-list-ref
                       records
                       (+ index 2))
-                      [(ObjectDataI64 second-found)
+                      [(CompilerObjectDataRecord.I64 second-found)
                         (if (= second-found second)
                           (set! found true)
                           (set! index (+ index 1)))]
@@ -751,7 +765,7 @@
   [kind : CompilerObjectSectionKind]
   [text : String]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-string? data text)]))
 
 (define (compiler-object-section-contains-f64?
@@ -759,7 +773,7 @@
   [kind : CompilerObjectSectionKind]
   [bits : u64]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-f64? data bits)]))
 
 (define (compiler-object-section-contains-f32?
@@ -767,7 +781,7 @@
   [kind : CompilerObjectSectionKind]
   [bits : u64]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-f32? data bits)]))
 
 (define (compiler-object-section-contains-label?
@@ -775,7 +789,7 @@
   [kind : CompilerObjectSectionKind]
   [label : String]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-label? data label)]))
 
 (define (compiler-object-section-contains-align?
@@ -783,7 +797,7 @@
   [kind : CompilerObjectSectionKind]
   [align : i64]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-align? data align)]))
 
 (define (compiler-object-section-contains-i64?
@@ -791,7 +805,7 @@
   [kind : CompilerObjectSectionKind]
   [value : i64]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-contains-i64? data value)]))
 
 (define (compiler-object-section-label-has-i64-pair?
@@ -801,7 +815,7 @@
   [first : i64]
   [second : i64]) : bool
   (match (compiler-object-section-list-find sections kind)
-    [(ObjectSection _ data _)
+    [(CompilerObjectSection.Section _ data _)
       (compiler-object-data-record-list-label-has-i64-pair?
         data
         label
@@ -818,7 +832,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
-          [(ObjectX64Call value)
+          [(CompilerObjectX64Instr.Call value)
             (if (string.string-eq value target)
               (set! found true)
               (set! index (+ index 1)))]
@@ -828,8 +842,10 @@
 (define (compiler-object-section-contains-call?
   [sections : CompilerObjectSectionList]
   [target : String]) : bool
-  (match (compiler-object-section-list-find sections (ObjectSectionText))
-    [(ObjectSection _ _ instrs)
+  (match (compiler-object-section-list-find
+    sections
+    (CompilerObjectSectionKind.Text))
+    [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-instr-list-contains-call? instrs target)]))
 
 (define (compiler-object-string-prefix-at?
@@ -867,11 +883,11 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
-          [(ObjectX64Bytes value)
+          [(CompilerObjectX64Instr.Bytes value)
             (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
-          [(ObjectX64Raw value)
+          [(CompilerObjectX64Instr.Raw value)
             (if (compiler-object-string-contains? value bytes 0)
               (set! found true)
               (set! index (+ index 1)))]
@@ -881,8 +897,10 @@
 (define (compiler-object-section-contains-bytes?
   [sections : CompilerObjectSectionList]
   [bytes : String]) : bool
-  (match (compiler-object-section-list-find sections (ObjectSectionText))
-    [(ObjectSection _ _ instrs)
+  (match (compiler-object-section-list-find
+    sections
+    (CompilerObjectSectionKind.Text))
+    [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-instr-list-contains-bytes? instrs bytes)]))
 
 (define (compiler-object-instr-list-contains-xorpd-rip?
@@ -895,7 +913,7 @@
     (begin
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
-          [(ObjectX64XorpdRip value)
+          [(CompilerObjectX64Instr.XorpdRip value)
             (if (string.string-eq value target)
               (set! found true)
               (set! index (+ index 1)))]
@@ -905,6 +923,8 @@
 (define (compiler-object-section-contains-xorpd-rip?
   [sections : CompilerObjectSectionList]
   [target : String]) : bool
-  (match (compiler-object-section-list-find sections (ObjectSectionText))
-    [(ObjectSection _ _ instrs)
+  (match (compiler-object-section-list-find
+    sections
+    (CompilerObjectSectionKind.Text))
+    [(CompilerObjectSection.Section _ _ instrs)
       (compiler-object-instr-list-contains-xorpd-rip? instrs target)]))

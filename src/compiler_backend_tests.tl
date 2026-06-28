@@ -989,92 +989,96 @@
           (backend-and8
             (= (compiler-object-section-list-count sections) 4)
             (>
-              (compiler-object-section-instr-count sections (ObjectSectionText))
-              0)
-            (>
-              (compiler-object-section-data-count sections (ObjectSectionData))
+              (compiler-object-section-instr-count
+                sections
+                (CompilerObjectSectionKind.Text))
               0)
             (>
               (compiler-object-section-data-count
                 sections
-                (ObjectSectionRodata))
+                (CompilerObjectSectionKind.Data))
+              0)
+            (>
+              (compiler-object-section-data-count
+                sections
+                (CompilerObjectSectionKind.Rodata))
               0)
             (compiler-object-symbol-list-contains?
               symbols
               "_tl_start"
-              (ObjectSymbolExport)
-              (ObjectSymbolFunction))
+              (CompilerObjectSymbolBinding.Export)
+              (CompilerObjectSymbolKind.Function))
             (compiler-object-symbol-list-contains?
               symbols
               "main"
-              (ObjectSymbolExport)
-              (ObjectSymbolFunction))
+              (CompilerObjectSymbolBinding.Export)
+              (CompilerObjectSymbolKind.Function))
             (compiler-object-symbol-list-contains?
               symbols
               "_tl_inc"
-              (ObjectSymbolExport)
-              (ObjectSymbolFunction))
+              (CompilerObjectSymbolBinding.Export)
+              (CompilerObjectSymbolKind.Function))
             (compiler-object-symbol-list-contains?
               symbols
               "foreign_exact"
-              (ObjectSymbolExtern)
-              (ObjectSymbolFunction)))
+              (CompilerObjectSymbolBinding.Extern)
+              (CompilerObjectSymbolKind.Function)))
           (backend-and8
             (compiler-object-symbol-list-contains?
               symbols
               "tl_alloc"
-              (ObjectSymbolLocal)
-              (ObjectSymbolRuntime))
+              (CompilerObjectSymbolBinding.Local)
+              (CompilerObjectSymbolKind.Runtime))
             (compiler-object-section-contains-label?
               sections
-              (ObjectSectionData)
+              (CompilerObjectSectionKind.Data)
               "_tl_answer")
             (compiler-object-section-contains-label?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               (compiler-backend-string-data-label "hi"))
             (compiler-object-section-contains-label?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               (compiler-backend-string-fat-label "hi"))
             (compiler-object-section-contains-string?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               "hi")
             (compiler-object-section-contains-align?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               8)
             (compiler-object-section-contains-i64?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               2)
             (compiler-object-section-contains-f64?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               (compiler-backend-test-f64-bits "4.0")))
           (compiler-object-section-contains-f32?
             sections
-            (ObjectSectionData)
+            (CompilerObjectSectionKind.Data)
             (compiler-backend-test-f32-bits "2.5"))
           (compiler-object-section-contains-f32?
             sections
-            (ObjectSectionRodata)
+            (CompilerObjectSectionKind.Rodata)
             (compiler-backend-test-f32-bits "3.0"))
           (backend-and8
             (compiler-object-section-contains-call? sections "_tl_inc")
             (compiler-object-section-contains-call? sections "foreign_exact")
             (compiler-object-relocation-list-contains?
               relocs
-              (ObjectRelocCall)
+              (CompilerObjectRelocationKind.Call)
               "_tl_inc")
             (compiler-object-relocation-list-contains?
               relocs
-              (ObjectRelocCall)
+              (CompilerObjectRelocationKind.Call)
               "foreign_exact")
             (compiler-object-relocation-list-contains?
               relocs
-              (ObjectRelocCall)
+              (CompilerObjectRelocationKind.Call)
               "tl_alloc")
             (compiler-object-section-contains-bytes?
               sections
@@ -1087,11 +1091,11 @@
               (compiler-backend-object-linux-exit-bytes)))
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             (compiler-backend-string-data-label "hi"))
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocRipValue)
+            (CompilerObjectRelocationKind.RipValue)
             "_tl_answer")
           (> (compiler-object-relocation-list-count relocs) 5)))]
     [(ErrCompilerBackendObject _) false]))
@@ -1155,14 +1159,14 @@
   (and
     (=
       (compiler-backend-pic-data-record-end-offset
-        (ObjectDataSymbolRva32 ".L_target")
+        (CompilerObjectDataRecord.SymbolRva32 ".L_target")
         8)
       12)
     (string.string-eq
-      (compiler-backend-pic-section-name (ObjectSectionPdata))
+      (compiler-backend-pic-section-name (CompilerObjectSectionKind.Pdata))
       "pdata")
     (string.string-eq
-      (compiler-backend-pic-section-name (ObjectSectionXdata))
+      (compiler-backend-pic-section-name (CompilerObjectSectionKind.Xdata))
       "xdata")))
 
 (define (compiler-backend-pic-ok?) : bool
@@ -1180,7 +1184,8 @@
         [(ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
-              (compiler-object-coff-section-header-offset (ObjectSectionText))]
+              (compiler-object-coff-section-header-offset
+                (CompilerObjectSectionKind.Text))]
             [text-size : i64
               (compiler-object-coff-u32-at obj (+ text-header 16))]
             [reloc-count : i64
@@ -1231,18 +1236,19 @@
     [manifest-offset : i64
       (compiler-object-coff-section-label-offset
         image
-        (ObjectSectionRsrc)
+        (CompilerObjectSectionKind.Rsrc)
         manifest-label)]
     [data-offset : i64
       (compiler-object-coff-section-label-offset
         image
-        (ObjectSectionRsrc)
+        (CompilerObjectSectionKind.Rsrc)
         rsrc-data-label)]
     (match (compiler-object-coff-render image)
       [(ResultCompilerObjectCoff.Ok obj)
         (let
           [rsrc-header : i64
-            (compiler-object-coff-section-header-offset (ObjectSectionRsrc))]
+            (compiler-object-coff-section-header-offset
+              (CompilerObjectSectionKind.Rsrc))]
           [rsrc-size : i64 (compiler-object-coff-u32-at obj (+ rsrc-header 16))]
           [rsrc-ptr : i64 (compiler-object-coff-u32-at obj (+ rsrc-header 20))]
           [rsrc-reloc-ptr : i64
@@ -1262,21 +1268,21 @@
               (= manifest-offset 88)
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionRsrc)
+                (CompilerObjectSectionKind.Rsrc)
                 ".L_tl_rsrc_base"))
             (backend-and8
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionRsrc)
+                (CompilerObjectSectionKind.Rsrc)
                 manifest-label)
               (compiler-object-symbol-list-contains?
                 symbols
                 manifest-label
-                (ObjectSymbolLocal)
-                (ObjectSymbolData))
+                (CompilerObjectSymbolBinding.Local)
+                (CompilerObjectSymbolKind.Data))
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocAddr32Nb)
+                (CompilerObjectRelocationKind.Addr32Nb)
                 manifest-label)
               (compiler-object-coff-reloc-entry-ok?
                 obj
@@ -1339,46 +1345,46 @@
               (compiler-object-symbol-list-contains?
                 symbols
                 "_tl_start"
-                (ObjectSymbolExport)
-                (ObjectSymbolFunction))
+                (CompilerObjectSymbolBinding.Export)
+                (CompilerObjectSymbolKind.Function))
               (compiler-object-symbol-list-contains?
                 symbols
                 ".L_tl_start_end"
-                (ObjectSymbolLocal)
-                (ObjectSymbolFunction))
+                (CompilerObjectSymbolBinding.Local)
+                (CompilerObjectSymbolKind.Function))
               (compiler-object-symbol-list-contains?
                 symbols
                 "ExitProcess"
-                (ObjectSymbolExtern)
-                (ObjectSymbolFunction))
+                (CompilerObjectSymbolBinding.Extern)
+                (CompilerObjectSymbolKind.Function))
               (compiler-object-symbol-list-contains?
                 symbols
                 "GetCommandLineA"
-                (ObjectSymbolExtern)
-                (ObjectSymbolFunction))
+                (CompilerObjectSymbolBinding.Extern)
+                (CompilerObjectSymbolKind.Function))
               (compiler-object-symbol-list-contains?
                 symbols
                 "__chkstk"
-                (ObjectSymbolLocal)
-                (ObjectSymbolRuntime))
+                (CompilerObjectSymbolBinding.Local)
+                (CompilerObjectSymbolKind.Runtime))
               (compiler-object-symbol-list-contains?
                 symbols
                 ".L_tl_start_xdata"
-                (ObjectSymbolLocal)
-                (ObjectSymbolData))
+                (CompilerObjectSymbolBinding.Local)
+                (CompilerObjectSymbolKind.Data))
               true)
             (backend-and8
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionData)
+                (CompilerObjectSectionKind.Data)
                 ".L_tl_argc")
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionBss)
+                (CompilerObjectSectionKind.Bss)
                 "tl_boot_off")
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionBss)
+                (CompilerObjectSectionKind.Bss)
                 "tl_boot_pool")
               true
               true
@@ -1389,97 +1395,97 @@
               (>=
                 (compiler-object-coff-section-label-offset
                   image
-                  (ObjectSectionText)
+                  (CompilerObjectSectionKind.Text)
                   "tl_setup_argv")
                 0)
               (>=
                 (compiler-object-coff-section-label-offset
                   image
-                  (ObjectSectionText)
+                  (CompilerObjectSectionKind.Text)
                   ".L_tl_boot_alloc")
                 0)
               (>=
                 (compiler-object-coff-section-label-offset
                   image
-                  (ObjectSectionText)
+                  (CompilerObjectSectionKind.Text)
                   "tl_alloc")
                 0)
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionPdata)
+                (CompilerObjectSectionKind.Pdata)
                 ".L_tl_start_pdata_begin")
               (compiler-object-section-contains-label?
                 sections
-                (ObjectSectionXdata)
+                (CompilerObjectSectionKind.Xdata)
                 ".L_tl_start_xdata")
               (compiler-object-symbol-list-contains?
                 symbols
                 ".L_tl_boot_alloc"
-                (ObjectSymbolLocal)
-                (ObjectSymbolRuntime))
+                (CompilerObjectSymbolBinding.Local)
+                (CompilerObjectSymbolKind.Runtime))
               true
               true)
             (backend-and8
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocCall)
+                (CompilerObjectRelocationKind.Call)
                 "tl_setup_argv")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocCall)
+                (CompilerObjectRelocationKind.Call)
                 "GetCommandLineA")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocCall)
+                (CompilerObjectRelocationKind.Call)
                 ".L_tl_boot_alloc")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipAddress)
+                (CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_argc")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipAddress)
+                (CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_argv")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipValue)
+                (CompilerObjectRelocationKind.RipValue)
                 "tl_boot_off")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipAddress)
+                (CompilerObjectRelocationKind.RipAddress)
                 "tl_boot_pool")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipAddress)
+                (CompilerObjectRelocationKind.RipAddress)
                 "tl_boot_off"))
             (backend-and8
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocCall)
+                (CompilerObjectRelocationKind.Call)
                 "main")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocCall)
+                (CompilerObjectRelocationKind.Call)
                 "ExitProcess")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipValue)
+                (CompilerObjectRelocationKind.RipValue)
                 ".L_tl_argc")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocRipValue)
+                (CompilerObjectRelocationKind.RipValue)
                 ".L_tl_argv")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocAddr32Nb)
+                (CompilerObjectRelocationKind.Addr32Nb)
                 "_tl_start")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocAddr32Nb)
+                (CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_end")
               (compiler-object-relocation-list-contains?
                 relocs
-                (ObjectRelocAddr32Nb)
+                (CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_xdata")
               true))]
         (if (and
@@ -1490,21 +1496,21 @@
               (let
                 [pdata-header : i64
                   (compiler-object-coff-section-header-offset
-                    (ObjectSectionPdata))]
+                    (CompilerObjectSectionKind.Pdata))]
                 [text-header : i64
                   (compiler-object-coff-section-header-offset
-                    (ObjectSectionText))]
+                    (CompilerObjectSectionKind.Text))]
                 [text-ptr : i64
                   (compiler-object-coff-u32-at obj (+ text-header 20))]
                 [entry-offset : i64
                   (compiler-object-coff-section-label-offset
                     image
-                    (ObjectSectionText)
+                    (CompilerObjectSectionKind.Text)
                     "_tl_start")]
                 [gs-clear-offset : i64 (+ text-ptr (+ entry-offset 9))]
                 [xdata-header : i64
                   (compiler-object-coff-section-header-offset
-                    (ObjectSectionXdata))]
+                    (CompilerObjectSectionKind.Xdata))]
                 [pdata-size : i64
                   (compiler-object-coff-u32-at obj (+ pdata-header 16))]
                 [pdata-relocs : i64
@@ -1542,13 +1548,14 @@
         [(ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
-              (compiler-object-coff-section-header-offset (ObjectSectionText))]
+              (compiler-object-coff-section-header-offset
+                (CompilerObjectSectionKind.Text))]
             [text-ptr : i64
               (compiler-object-coff-u32-at obj (+ text-header 20))]
             [main-offset : i64
               (compiler-object-coff-section-label-offset
                 image
-                (ObjectSectionText)
+                (CompilerObjectSectionKind.Text)
                 "main")]
             [main-ptr : i64 (+ text-ptr main-offset)]
             (if (< main-offset 0)
@@ -3849,15 +3856,15 @@
     (and
       (compiler-object-relocation-list-contains?
         relocs
-        (ObjectRelocRipAddress)
+        (CompilerObjectRelocationKind.RipAddress)
         (compiler-backend-string-fat-label "object-walked"))
       (compiler-object-relocation-list-contains?
         relocs
-        (ObjectRelocRipValue)
+        (CompilerObjectRelocationKind.RipValue)
         (compiler-backend-f64-label (compiler-backend-test-f64-bits "6.25")))
       (compiler-object-relocation-list-contains?
         relocs
-        (ObjectRelocRipAddress)
+        (CompilerObjectRelocationKind.RipAddress)
         (compiler-backend-closure-descriptor-label "word_target")))))
 
 (define (compiler-backend-ir-walker-object-refs-ok?) : bool
@@ -5727,39 +5734,39 @@
           (compiler-object-symbol-list-contains?
             symbols
             table-label
-            (ObjectSymbolLocal)
-            (ObjectSymbolData))
+            (CompilerObjectSymbolBinding.Local)
+            (CompilerObjectSymbolKind.Data))
           (compiler-object-section-contains-label?
             sections
-            (ObjectSectionRodata)
+            (CompilerObjectSectionKind.Rodata)
             table-label)
           (compiler-object-section-contains-align?
             sections
-            (ObjectSectionRodata)
+            (CompilerObjectSectionKind.Rodata)
             8)
           (compiler-object-section-contains-label?
             sections
-            (ObjectSectionRodata)
+            (CompilerObjectSectionKind.Rodata)
             ".Lf0_entry_switch_table_entry_0")
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocRipAddress)
+            (CompilerObjectRelocationKind.RipAddress)
             table-label)
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocBranch)
+            (CompilerObjectRelocationKind.Branch)
             ".Lf0_other")
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             ".Lf0_zero")
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             ".Lf0_one")
           (compiler-object-relocation-list-contains?
             relocs
-            (ObjectRelocAbs64)
+            (CompilerObjectRelocationKind.Abs64)
             ".Lf0_two")
           (compiler-object-section-contains-bytes?
             sections
@@ -9876,26 +9883,26 @@
             (compiler-object-symbol-list-contains?
               symbols
               label
-              (ObjectSymbolLocal)
-              (ObjectSymbolData))
+              (CompilerObjectSymbolBinding.Local)
+              (CompilerObjectSymbolKind.Data))
             (compiler-object-section-contains-label?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               label)
             (compiler-object-section-contains-align?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               16)
             (compiler-object-section-label-has-i64-pair?
               sections
-              (ObjectSectionRodata)
+              (CompilerObjectSectionKind.Rodata)
               label
               -9223372036854775808
               0)
             (compiler-object-section-contains-xorpd-rip? sections label)
             (compiler-object-relocation-list-contains?
               relocs
-              (ObjectRelocRipValue)
+              (CompilerObjectRelocationKind.RipValue)
               label)
             true
             true)

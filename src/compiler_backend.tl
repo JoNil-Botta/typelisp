@@ -10011,6 +10011,24 @@
                       7
                       "%r8")]
                   (if (and
+                    (or
+                      (string-eq mnem "and")
+                      (string-eq mnem "or")
+                      (string-eq mnem "xor"))
+                    (not (string-eq lhs-reg ""))
+                    (string-eq rhs-reg dst-home))
+                    ;; commutative shortcut: rhs-home == dst-home, so dst-home already
+                    ;; holds rhs; for and/or/xor emit "<op> lhs, dst" directly -- no
+                    ;; scav-rhs copy and no lhs->dst copy (dst = rhs <op> lhs = lhs <op>
+                    ;; rhs, commutative). Saves two movs + a scratch register vs the
+                    ;; scav path below.
+                    (OkCompilerBackend
+                      (compiler-backend-binop-reg-asm
+                        mnem
+                        operand-ty
+                        (compiler-backend-sized-reg lhs-reg operand-ty)
+                        (compiler-backend-sized-reg dst-home operand-ty)))
+                  (if (and
                     (string-eq mnem "add")
                     (not (string-eq lhs-reg ""))
                     (not (string-eq rhs-reg "")))
@@ -10073,7 +10091,7 @@
                             [(ErrCompilerBackend message)
                               (ErrCompilerBackend message)])]
                         [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)]))))])])
+                          (ErrCompilerBackend message)])))))])])
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs

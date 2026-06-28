@@ -121,6 +121,14 @@ assert_opt_escape_row() {
         "$OPT_STDERR"
 }
 
+assert_lower_row() {
+    assert_contains_in \
+        "$OPT_STDERR" \
+        "compile-profile|lower.$1|" \
+        "$OPT_STDOUT" \
+        "$OPT_STDERR"
+}
+
 echo "[compile-profile] compile profile-enabled CLI"
 if ! "$COMPILER" compile src/main.tl \
     -o "$PROFILE_ASM" \
@@ -266,5 +274,23 @@ assert_opt_escape_row "compact"
 assert_opt_escape_row "clone"
 assert_opt_escape_row "restore"
 assert_contains_in "$OPT_STDERR" "|1|main" "$OPT_STDOUT" "$OPT_STDERR"
+assert_lower_row "ast_expr_pool.macro_expand.len"
+assert_lower_row "ast_expr_pool.macro_expand.capacity"
+assert_lower_row "ast_type_pool.macro_expand.len"
+assert_lower_row "ast_type_pool.macro_expand.capacity"
+assert_lower_row "ast_expr_pool.typecheck.len"
+assert_lower_row "ast_expr_pool.typecheck.capacity"
+assert_lower_row "ast_type_pool.typecheck.len"
+assert_lower_row "ast_type_pool.typecheck.capacity"
+assert_lower_row "ast_expr_pool.pre_decls.len"
+assert_lower_row "ast_expr_pool.pre_decls.capacity"
+assert_lower_row "ast_type_pool.pre_decls.len"
+assert_lower_row "ast_type_pool.pre_decls.capacity"
+assert_lower_row "checked_program.pre_decls.decls"
+assert_lower_row "checked_program.pre_decls.functions"
+assert_lower_row "ir.after_decls.functions"
+assert_lower_row "ir.after_decls.blocks"
+assert_lower_row "ir.after_decls.instructions"
+assert_lower_row "ir_arena.after_decls.active"
 
 echo "[compile-profile] ok"

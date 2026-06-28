@@ -12602,9 +12602,9 @@
   [env : SymI64Env]
   [name : String]
   [ty : AstType]) : ResultLowerExpr
-  (if (sym-i64-contains env name)
-    (lower-var state env name ty)
-    (if (lower-extern-value-decl? ctx name)
+  (cond
+    [(sym-i64-contains env name) (lower-var state env name ty)]
+    [(lower-extern-value-decl? ctx name)
       (match (lower-var state env name ty)
         [(OkLowerExpr lowered)
           (match lowered
@@ -12616,13 +12616,13 @@
                       (lower-state-emit allocated (IrInstrMov var-id value ty))
                       (IrValueVar var-id)
                       ty))])])]
-        [(ErrLowerExpr message) (ErrLowerExpr message)])
-      (if (and
+        [(ErrLowerExpr message) (ErrLowerExpr message)])]
+    [(and
         (lower-function-type? ty)
         (lower-symbol-function-value? ctx state name))
-        (OkLowerExpr
-          (LowerExpr state (IrValueFunction (lower-resolve-name state name)) ty))
-        (lower-var state env name ty)))))
+      (OkLowerExpr
+        (LowerExpr state (IrValueFunction (lower-resolve-name state name)) ty))]
+    [else (lower-var state env name ty)]))
 
 (define (lower-lambda-captures-env?
   [outer-env : SymI64Env]
@@ -16472,29 +16472,28 @@
                             enum-name
                             enum-ty
                             fields))]
-                      (let
-                        [handle : i64
-                          (compiler-registries-lookup-variant-or
-                            (tc-context-registries ctx)
-                            lookup-name
-                            (compiler-symbols-missing-handle))]
-                        (if (compiler-symbols-handle-found? handle)
-                          (lower-construct-enum-with-name
-                            ctx
-                            state
-                            env
-                            type-env
-                            lookup-name
-                            handle
-                            (lower-init-expr-list-from-types payload-types)
-                            enum-name
-                            enum-ty)
-                          (ErrLowerExpr
-                            (box
-                              (lower-diagnostic
-                                (string.string-append
-                                  "lower: unknown variant "
-                                  lookup-name)))))))])])])]
+                      [handle : i64
+                        (compiler-registries-lookup-variant-or
+                          (tc-context-registries ctx)
+                          lookup-name
+                          (compiler-symbols-missing-handle))]
+                      (if (compiler-symbols-handle-found? handle)
+                        (lower-construct-enum-with-name
+                          ctx
+                          state
+                          env
+                          type-env
+                          lookup-name
+                          handle
+                          (lower-init-expr-list-from-types payload-types)
+                          enum-name
+                          enum-ty)
+                        (ErrLowerExpr
+                          (box
+                            (lower-diagnostic
+                              (string.string-append
+                                "lower: unknown variant "
+                                lookup-name))))))])])])]
       [(ErrTcEnumDecl message) (ErrLowerExpr (box (lower-diagnostic message)))])))
 
 (define (lower-init-struct-into
@@ -16572,30 +16571,29 @@
                             enum-name
                             enum-ty
                             fields))]
-                      (let
-                        [handle : i64
-                          (compiler-registries-lookup-variant-or
-                            (tc-context-registries ctx)
-                            lookup-name
-                            (compiler-symbols-missing-handle))]
-                        (if (compiler-symbols-handle-found? handle)
-                          (lower-construct-enum-with-name-into
-                            ctx
-                            state
-                            env
-                            type-env
-                            dst
-                            lookup-name
-                            handle
-                            (lower-init-expr-list-from-types payload-types)
-                            enum-name
-                            enum-ty)
-                          (ErrLowerState
-                            (box
-                              (lower-diagnostic
-                                (string.string-append
-                                  "lower: unknown variant "
-                                  lookup-name)))))))])])])]
+                      [handle : i64
+                        (compiler-registries-lookup-variant-or
+                          (tc-context-registries ctx)
+                          lookup-name
+                          (compiler-symbols-missing-handle))]
+                      (if (compiler-symbols-handle-found? handle)
+                        (lower-construct-enum-with-name-into
+                          ctx
+                          state
+                          env
+                          type-env
+                          dst
+                          lookup-name
+                          handle
+                          (lower-init-expr-list-from-types payload-types)
+                          enum-name
+                          enum-ty)
+                        (ErrLowerState
+                          (box
+                            (lower-diagnostic
+                              (string.string-append
+                                "lower: unknown variant "
+                                lookup-name))))))])])])]
       [(ErrTcEnumDecl message) (ErrLowerState (box (lower-diagnostic message)))])))
 
 (define (lower-init-expr-into
@@ -19979,35 +19977,29 @@
   [state : LowerState]
   [env : SymI64Env]
   [name : String]) : bool
-  (if (not (lower-mode-c-abi? (lower-state-mode state)))
-    false
-    (if (sym-i64-contains env name)
-      false
-      (if (lower-c-abi-runtime-handle-extern? name)
-        false
-        (let
-          [handle : i64
-            (lower-symbols-lookup-value-hygiene (tc-context-symbols ctx) name)]
-          (if (compiler-symbols-handle-found? handle)
-            (and
-              (=
-                (compiler-symbol-handle-kind handle)
-                (compiler-symbol-kind-extern))
-              (lower-extern-function-decl? ctx name))
-            false))))))
+  (cond
+    [(not (lower-mode-c-abi? (lower-state-mode state))) false]
+    [(sym-i64-contains env name) false]
+    [(lower-c-abi-runtime-handle-extern? name) false]
+    [else
+      (let
+        [handle : i64
+          (lower-symbols-lookup-value-hygiene (tc-context-symbols ctx) name)]
+        (and
+          (compiler-symbols-handle-found? handle)
+          (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-extern))
+          (lower-extern-function-decl? ctx name)))]))
 
 (define (lower-c-abi-extern-value-call?
   [ctx : TcContext]
   [state : LowerState]
   [env : SymI64Env]
   [name : String]) : bool
-  (if (not (lower-mode-c-abi? (lower-state-mode state)))
-    false
-    (if (sym-i64-contains env name)
-      false
-      (if (lower-c-abi-runtime-handle-extern? name)
-        false
-        (lower-extern-value-decl? ctx name)))))
+  (cond
+    [(not (lower-mode-c-abi? (lower-state-mode state))) false]
+    [(sym-i64-contains env name) false]
+    [(lower-c-abi-runtime-handle-extern? name) false]
+    [else (lower-extern-value-decl? ctx name)]))
 
 (define (lower-c-abi-integer-field-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -40358,35 +40350,34 @@
             dispatch-name
             isa
             variant-logical)]
-        (let
-          [handle : i64
-            (compiler-symbols-lookup-value-or
-              (tc-context-symbols ctx)
-              lookup-name
-              (compiler-symbols-missing-handle))]
-          (if (compiler-symbols-handle-found? handle)
-            (match (compiler-program-decl-at-index
-              (tc-context-program ctx)
-              (compiler-symbol-handle-index handle))
-              [(OkAstDecl decl)
-                (lower-dispatch-lower-variant-decl
-                  ctx
-                  top-env
-                  type-cache
-                  internal-name
-                  isa
-                  decl
-                  spans
-                  names
-                  mode)]
-              [(ErrAstDecl message)
-                (ErrLowerFunction (box (lower-diagnostic message)))])
-            (ErrLowerFunction
-              (box
-                (lower-diagnostic
-                  (string.string-append
-                    "lower: unknown defdispatch variant "
-                    variant-name)))))))]))
+        [handle : i64
+          (compiler-symbols-lookup-value-or
+            (tc-context-symbols ctx)
+            lookup-name
+            (compiler-symbols-missing-handle))]
+        (if (compiler-symbols-handle-found? handle)
+          (match (compiler-program-decl-at-index
+            (tc-context-program ctx)
+            (compiler-symbol-handle-index handle))
+            [(OkAstDecl decl)
+              (lower-dispatch-lower-variant-decl
+                ctx
+                top-env
+                type-cache
+                internal-name
+                isa
+                decl
+                spans
+                names
+                mode)]
+            [(ErrAstDecl message)
+              (ErrLowerFunction (box (lower-diagnostic message)))])
+          (ErrLowerFunction
+            (box
+              (lower-diagnostic
+                (string.string-append
+                  "lower: unknown defdispatch variant "
+                  variant-name))))))]))
 
 (define (lower-dispatch-lower-variants
   [ctx : TcContext]

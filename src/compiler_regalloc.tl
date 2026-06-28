@@ -8345,11 +8345,60 @@
 (define (compiler-reg-greedy-stage-rs-spill) : i64
   3)
 
+;; Physical-register preference (arg-var -> ABI-arg-register coalescing). For an
+;; OUTGOING call-argument var the plan records the greedy-integer-pool INDEX of the
+;; SysV register it will be marshalled into (arg position i ->
+;; compiler-backend-arg-reg i: 0=%rdi,1=%rsi,2=%rdx,3=%rcx,4=%r8,5=%r9). Homing the
+;; arg value directly in that register turns the backend's `movq <home>, %rdi`
+;; marshalling move into a `movq %rdi, %rdi` self-move that the peephole drops.
+;; SOUND because an arg value is consumed AT the call (not live across it):
+;;   * `spans-call` vars are gated out, so a genuinely call-spanning value is NEVER
+;;     homed in a caller-saved arg register (it would be clobbered by the call it
+;;     spans) -- those fall through to the callee-saved-only search below;
+;;   * the preference is honoured ONLY when the register is in the active pool, not
+;;     clobbered by a spanned div/shift (`forbidden`), and FREE over the var's whole
+;;     interval (no interferer holds it). Any failure returns "" and the normal
+;;     hint/free/evict pick runs, so a preference can never force a spill, evict a
+;;     value, or create interference -- it only biases a free choice.
+(define (compiler-reg-greedy-arg-pref-reg
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [arg-prefs : (Array i64)]
+  [reg-arr : (Array String)]
+  [rcount : i64]
+  [regs : CompilerRegStringList]
+  [var : i64]
+  [n : i64]
+  [forbidden : CompilerRegStringList]
+  [spans-call : bool]) : String
+  (if (or spans-call (< var 0) (>= var (array.array-length arg-prefs)))
+    ""
+    (let
+      [idx : i64 (array.array-ref arg-prefs var)]
+      (if (or (< idx 0) (>= idx rcount))
+        ""
+        (let
+          [reg : String (array.array-ref reg-arr idx)]
+          (if (and
+            (not (compiler-reg-string-list-contains? forbidden reg))
+            (compiler-reg-string-list-contains? regs reg)
+            (compiler-reg-greedy-reg-free?
+              assignments
+              interval-index
+              ref-counts
+              var
+              reg
+              n))
+            reg
+            ""))))))
+
 (define (compiler-reg-greedy-alloc-one!
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
+  [arg-prefs : (Array i64)]
   [group-vars : CompilerLiveI64Set]
   [regs : CompilerRegStringList]
   [reg-arr : (Array String)]
@@ -8390,6 +8439,22 @@
         (if spans-call
           CompilerRegStringNil
           (compiler-reg-greedy-forbidden-regs spans-div spans-shift))]
+      ;; Highest-priority bias: if this var is an outgoing call argument, try its
+      ;; ABI arg register first (free-only, never evicting). Falls through to the
+      ;; copy-hint / first-free / evict pick when the arg register is unavailable.
+      [pref : String
+        (compiler-reg-greedy-arg-pref-reg
+          assignments
+          interval-index
+          ref-counts
+          arg-prefs
+          reg-arr
+          rcount
+          regs
+          var
+          n
+          forbidden
+          spans-call)]
       [hint : String
         (compiler-reg-greedy-hint-free-reg
           assignments
@@ -8400,12 +8465,19 @@
           var
           n
           forbidden)]
-      (if (not (string-eq hint ""))
+      ;; The ABI arg-register preference takes priority over the copy hint; both
+      ;; are free-only picks (no eviction), so a single non-empty test assigns
+      ;; whichever applies and otherwise falls through to first-free/evict/spill.
+      [chosen : String
+        (if (not (string-eq pref ""))
+          pref
+          hint)]
+      (if (not (string-eq chosen ""))
         (begin
           (compiler-reg-assignment-table-insert
             assignments
             var
-            (CompilerRegRegister hint))
+            (CompilerRegRegister chosen))
           (compiler-reg-greedy-stage-rs-assign))
         (let
           [free : String
@@ -8586,6 +8658,7 @@
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
+  [arg-prefs : (Array i64)]
   [group-vars : CompilerLiveI64Set]
   [regs : CompilerRegStringList]
   [reg-arr : (Array String)]
@@ -8607,6 +8680,7 @@
           interval-index
           ref-counts
           copy-hints
+          arg-prefs
           group-vars
           regs
           reg-arr
@@ -8630,6 +8704,7 @@
           interval-index
           ref-counts
           copy-hints
+          arg-prefs
           group-vars
           regs
           reg-arr
@@ -8696,6 +8771,184 @@
         (array.array-ref ends var))
       true)))
 
+;; SysV integer call-argument registers by position (mirrors
+;; compiler-backend-arg-reg in compiler_backend.tl; duplicated here because
+;; regalloc must not depend on the backend). "" past the 6 register args (the rest
+;; are stack-passed and get no physical preference).
+(define (compiler-reg-sysv-arg-reg [pos : i64]) : String
+  (cond
+    [(= pos 0) "%rdi"]
+    [(= pos 1) "%rsi"]
+    [(= pos 2) "%rdx"]
+    [(= pos 3) "%rcx"]
+    [(= pos 4) "%r8"]
+    [(= pos 5) "%r9"]
+    [else ""]))
+
+(define (compiler-reg-string-list-index-of
+  [regs : CompilerRegStringList]
+  [want : String]
+  [i : i64]) : i64
+  (match regs
+    [(CompilerRegStringNil) -1]
+    [(CompilerRegStringCons reg rest)
+      (if (string.string-eq reg want)
+        i
+        (compiler-reg-string-list-index-of (box-get rest) want (+ i 1)))]))
+
+;; Greedy-integer-pool INDEX of the SysV register for integer arg position `pos`,
+;; or -1 if `pos` is not a register-passed argument. Computed by searching the
+;; live pool definition, so it stays correct if the pool order changes.
+(define (compiler-reg-greedy-arg-pool-index [pos : i64]) : i64
+  (let
+    [reg : String (compiler-reg-sysv-arg-reg pos)]
+    (if (string.string-eq reg "")
+      -1
+      (compiler-reg-string-list-index-of
+        (compiler-reg-greedy-integer-pool)
+        reg
+        0))))
+
+;; Record arg-var -> ABI-register preference (greedy-pool index) for one call
+;; argument at integer position `pos`. Only IrValueVar args take a home; the
+;; var is mapped to its coalesce root (parents) like the copy hints, and the first
+;; preference for a root wins. Indices past arg 5 yield -1 and are skipped.
+(define (compiler-reg-arg-pref-value!
+  [value : CompilerIrValue]
+  [pos : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match value
+    [(IrValueVar v)
+      (let
+        [idx : i64 (compiler-reg-greedy-arg-pool-index pos)]
+        (if (< idx 0)
+          unit
+          (let
+            [root : i64
+              (if (if (>= v 0)
+                (< v (array.array-length parents))
+                false)
+                (array.array-ref parents v)
+                v)]
+            (if (if (>= root 0)
+              (< root (array.array-length prefs))
+              false)
+              (if (< (array.array-ref prefs root) 0)
+                (begin
+                  (array.array-set! prefs root idx)
+                  unit)
+                unit)
+              unit))))]
+    [_ unit]))
+
+(define (compiler-reg-arg-pref-array!
+  [values : (Array CompilerIrValue)]
+  [i : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (if (>= i (array.array-length values))
+    unit
+    (begin
+      (compiler-reg-arg-pref-value! (array.array-ref values i) i prefs parents)
+      (compiler-reg-arg-pref-array! values (+ i 1) prefs parents))))
+
+(define (compiler-reg-arg-pref-args!
+  [args : CompilerIrCallArgs]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match args
+    [(IrCallArgsNil) unit]
+    [(IrCallArgsOne a) (compiler-reg-arg-pref-value! a 0 prefs parents)]
+    [(IrCallArgsTwo a b)
+      (begin
+        (compiler-reg-arg-pref-value! a 0 prefs parents)
+        (compiler-reg-arg-pref-value! b 1 prefs parents))]
+    [(IrCallArgsArray values)
+      (compiler-reg-arg-pref-array! values 0 prefs parents)]))
+
+;; Outgoing call instructions whose integer args are marshalled through the SysV
+;; arg registers. The callee/function-pointer operand of the indirect forms is NOT
+;; an argument and is left without a preference. (Syscalls use a different register
+;; convention and are intentionally omitted.)
+(define (compiler-reg-arg-pref-instr!
+  [instr : CompilerIrInstr]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match instr
+    [(IrInstrCall _ _ args _)
+      (compiler-reg-arg-pref-args! args prefs parents)]
+    [(IrInstrCallIndirect _ _ args _)
+      (compiler-reg-arg-pref-args! args prefs parents)]
+    [(IrInstrCallIndirectC _ _ args _)
+      (compiler-reg-arg-pref-args! args prefs parents)]
+    [(IrInstrCallCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ args _)
+          (compiler-reg-arg-pref-args! args prefs parents)])]
+    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+          (compiler-reg-arg-pref-args! args prefs parents)])]
+    [(IrInstrTailCall _ args _)
+      (compiler-reg-arg-pref-args! args prefs parents)]
+    [(IrInstrTailCallIndirect _ args _)
+      (compiler-reg-arg-pref-args! args prefs parents)]
+    [_ unit]))
+
+(define (compiler-reg-arg-pref-seq!
+  [instrs : CompilerIrInstrSeq]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-arg-pref-instr!
+            (array.array-ref slots index)
+            prefs
+            parents)
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-arg-pref-blocks!
+  [blocks : CompilerIrBlockList]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-arg-pref-seq! instrs prefs parents)])
+        (compiler-reg-arg-pref-blocks! (box-get rest) prefs parents))]
+    [(IrBlockArray seq)
+      (compiler-reg-arg-pref-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        prefs
+        parents)]))
+
+;; Build the per-root physical-register preference array: each outgoing call-arg
+;; var biased toward the SysV register it is marshalled into. Indexed by coalesce
+;; root (like copy hints); -1 = no preference.
+(define (compiler-reg-function-arg-prefs
+  [func : CompilerIrFunction]
+  [coalesce : CompilerRegCoalesceMap]
+  [n : i64]) : (Array i64)
+  (let
+    [prefs : (Array i64) (array.make-array i64 n)]
+    [parents : (Array i64) (struct-get coalesce parents)]
+    (begin
+      (compiler-reg-fill-i64-array prefs -1)
+      (match func
+        [(IrFunction _ _ _ _ blocks)
+          (compiler-reg-arg-pref-blocks! blocks prefs parents)])
+      prefs)))
+
 (define (compiler-reg-greedy-state
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
@@ -8704,6 +8957,7 @@
   [group-vars : CompilerLiveI64Set]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
+  [arg-prefs : (Array i64)]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
@@ -8746,6 +9000,7 @@
             interval-index
             ref-counts
             copy-hints
+            arg-prefs
             group-vars
             regs
             reg-arr
@@ -8856,6 +9111,18 @@
         moves
         coalesce
         (array.array-length (struct-get interval-index starts)))]
+    ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
+    ;; var biased toward the SysV register it will be marshalled into, so the
+    ;; backend's `movq <home>, %rdi` becomes an elided self-move. Indexed by
+    ;; coalesce root, like copy-hints. Only the scalar-opt2 integer greedy consumes
+    ;; it; the SIMD-integer and float->XMM greedy calls pass an empty array (their
+    ;; pools are not the SysV integer pool, so a pool-index preference is moot).
+    [arg-prefs
+      : (Array i64)
+      (compiler-reg-function-arg-prefs
+        func
+        coalesce
+        (array.array-length (struct-get interval-index starts)))]
     ;; #3489 follow-up: the effective scalar allocation pass sees only coalesced
     ;; roots, so original-var exclusions must block the root. Otherwise a root
     ;; may get a register even though one merged member is a call argument or
@@ -8932,6 +9199,7 @@
           group-vars
           eviction-ref-counts
           copy-hints
+          arg-prefs
           call-points
           div-points
           shift-points
@@ -8951,6 +9219,7 @@
           group-vars
           eviction-ref-counts
           copy-hints
+          (array.make-array i64 0)
           call-points
           div-points
           shift-points
@@ -8999,6 +9268,7 @@
         integer-call-assignments
         eff-index
         (compiler-live-set-empty)
+        (array.make-array i64 0)
         (array.make-array i64 0)
         (array.make-array i64 0)
         call-points

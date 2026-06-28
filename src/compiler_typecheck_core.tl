@@ -855,20 +855,19 @@
   compile-profile
   (define (compiler-tc-profile-start) : unit
     (begin
-      (set! compiler-tc-profile-start-ms (profile.profile-now-ms))
-      (set! compiler-tc-profile-start-total (profile.profile-alloc-total))
-      (set! compiler-tc-profile-start-live (profile.profile-alloc-live))
-      (profile.profile-alloc-reset-peak))))
+      (set! compiler-tc-profile-start-ms (profile.now-ms))
+      (set! compiler-tc-profile-start-total (profile.alloc-total))
+      (set! compiler-tc-profile-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-tc-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile.profile-now-ms)]
-      [end-total : i64 (profile.profile-alloc-total)]
-      [end-live : i64 (profile.profile-alloc-live)]
-      [peak-delta : i64
-        (- (profile.profile-alloc-peak) compiler-tc-profile-start-live)]
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
+      [peak-delta : i64 (- (profile.alloc-peak) compiler-tc-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|typecheck."
@@ -906,7 +905,7 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-profile-start) : unit
-    (set! compiler-tc-macro-profile-start-ms (profile.profile-now-ms))))
+    (set! compiler-tc-macro-profile-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -973,7 +972,7 @@
     (compiler-tc-macro-profile-record
       macro-name
       (compiler-tc-macro-profile-arg-count args)
-      (- (profile.profile-now-ms) compiler-tc-macro-profile-start-ms))))
+      (- (profile.now-ms) compiler-tc-macro-profile-start-ms))))
 
 (cfg
   compile-profile
@@ -1130,19 +1129,19 @@
             index
             (+
               (array.array-ref compiler-tc-reinfer-profile-ms index)
-              (- (profile.profile-now-ms) start-ms)))
+              (- (profile.now-ms) start-ms)))
           (array.array-set!
             compiler-tc-reinfer-profile-alloc
             index
             (+
               (array.array-ref compiler-tc-reinfer-profile-alloc index)
-              (- (profile.profile-alloc-total) start-total)))
+              (- (profile.alloc-total) start-total)))
           (array.array-set!
             compiler-tc-reinfer-profile-live
             index
             (+
               (array.array-ref compiler-tc-reinfer-profile-live index)
-              (- (profile.profile-alloc-live) start-live))))))))
+              (- (profile.alloc-live) start-live))))))))
 
 (cfg
   compile-profile
@@ -1152,9 +1151,9 @@
     [env : TcTypeEnv]
     [expr : AstExpr]) : ResultTcType
     (let
-      [start-ms : i64 (profile.profile-now-ms)]
-      [start-total : i64 (profile.profile-alloc-total)]
-      [start-live : i64 (profile.profile-alloc-live)]
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
       [result : ResultTcType (tc-expr ctx env expr)]
       (begin
         (compiler-tc-reinfer-profile-record
@@ -1172,9 +1171,9 @@
     [env : TcTypeEnv]
     [exprs : AstExprList]) : ResultTcTypeList
     (let
-      [start-ms : i64 (profile.profile-now-ms)]
-      [start-total : i64 (profile.profile-alloc-total)]
-      [start-live : i64 (profile.profile-alloc-live)]
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
       [result : ResultTcTypeList (tc-expr-list-types ctx env exprs)]
       (begin
         (compiler-tc-reinfer-profile-record
@@ -1193,9 +1192,9 @@
     [arg : AstExpr]
     [want : AstType]) : ResultTcExpr
     (let
-      [start-ms : i64 (profile.profile-now-ms)]
-      [start-total : i64 (profile.profile-alloc-total)]
-      [start-live : i64 (profile.profile-alloc-live)]
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
       [result : ResultTcExpr (tc-call-effective-arg-expr ctx env arg want)]
       (begin
         (compiler-tc-reinfer-profile-record
@@ -1213,9 +1212,9 @@
     [env : TcTypeEnv]
     [func : AstExpr]) : ResultTcTypeList
     (let
-      [start-ms : i64 (profile.profile-now-ms)]
-      [start-total : i64 (profile.profile-alloc-total)]
-      [start-live : i64 (profile.profile-alloc-live)]
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
       [result : ResultTcTypeList (tc-move-call-param-types ctx env func)]
       (begin
         (compiler-tc-reinfer-profile-record
@@ -1554,13 +1553,9 @@
   compile-profile
   (define (compiler-tc-decl-profile-start-section) : unit
     (begin
-      (set! compiler-tc-decl-profile-start-ms (profile.profile-now-ms))
-      (set!
-        compiler-tc-decl-profile-section-start-alloc
-        (profile.profile-alloc-total))
-      (set!
-        compiler-tc-decl-profile-section-start-live
-        (profile.profile-alloc-live)))))
+      (set! compiler-tc-decl-profile-start-ms (profile.now-ms))
+      (set! compiler-tc-decl-profile-section-start-alloc (profile.alloc-total))
+      (set! compiler-tc-decl-profile-section-start-live (profile.alloc-live)))))
 
 (cfg
   compile-profile
@@ -1570,21 +1565,17 @@
         compiler-tc-decl-profile-local-env-ms
         (+
           compiler-tc-decl-profile-local-env-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-local-env-alloc
         (+
           compiler-tc-decl-profile-local-env-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-local-env-live
         (+
           compiler-tc-decl-profile-local-env-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1594,21 +1585,17 @@
         compiler-tc-decl-profile-arena-ms
         (+
           compiler-tc-decl-profile-arena-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-arena-alloc
         (+
           compiler-tc-decl-profile-arena-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-arena-live
         (+
           compiler-tc-decl-profile-arena-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1618,21 +1605,17 @@
         compiler-tc-decl-profile-def-expr-ms
         (+
           compiler-tc-decl-profile-def-expr-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-def-expr-alloc
         (+
           compiler-tc-decl-profile-def-expr-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-def-expr-live
         (+
           compiler-tc-decl-profile-def-expr-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1642,36 +1625,27 @@
         compiler-tc-decl-profile-fn-expr-ms
         (+
           compiler-tc-decl-profile-fn-expr-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-fn-expr-alloc
         (+
           compiler-tc-decl-profile-fn-expr-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-fn-expr-live
         (+
           compiler-tc-decl-profile-fn-expr-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
   (define (compiler-tc-decl-profile-add-fn-expr-named [name : String]) : unit
     (let
-      [elapsed : i64
-        (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)]
+      [elapsed : i64 (- (profile.now-ms) compiler-tc-decl-profile-start-ms)]
       [alloc-delta : i64
-        (-
-          (profile.profile-alloc-total)
-          compiler-tc-decl-profile-section-start-alloc)]
+        (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)]
       [live-delta : i64
-        (-
-          (profile.profile-alloc-live)
-          compiler-tc-decl-profile-section-start-live)]
+        (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live)]
       (begin
         (set!
           compiler-tc-decl-profile-fn-expr-ms
@@ -1707,21 +1681,17 @@
         compiler-tc-decl-profile-fn-move-ms
         (+
           compiler-tc-decl-profile-fn-move-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-fn-move-alloc
         (+
           compiler-tc-decl-profile-fn-move-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-fn-move-live
         (+
           compiler-tc-decl-profile-fn-move-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1731,21 +1701,17 @@
         compiler-tc-decl-profile-macro-ms
         (+
           compiler-tc-decl-profile-macro-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-macro-alloc
         (+
           compiler-tc-decl-profile-macro-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-macro-live
         (+
           compiler-tc-decl-profile-macro-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -1755,21 +1721,17 @@
         compiler-tc-decl-profile-extern-ms
         (+
           compiler-tc-decl-profile-extern-ms
-          (- (profile.profile-now-ms) compiler-tc-decl-profile-start-ms)))
+          (- (profile.now-ms) compiler-tc-decl-profile-start-ms)))
       (set!
         compiler-tc-decl-profile-extern-alloc
         (+
           compiler-tc-decl-profile-extern-alloc
-          (-
-            (profile.profile-alloc-total)
-            compiler-tc-decl-profile-section-start-alloc)))
+          (- (profile.alloc-total) compiler-tc-decl-profile-section-start-alloc)))
       (set!
         compiler-tc-decl-profile-extern-live
         (+
           compiler-tc-decl-profile-extern-live
-          (-
-            (profile.profile-alloc-live)
-            compiler-tc-decl-profile-section-start-live))))))
+          (- (profile.alloc-live) compiler-tc-decl-profile-section-start-live))))))
 
 (cfg
   compile-profile
@@ -40815,6 +40777,65 @@
             args
             env)])]))
 
+(define (macro-rewrite-generated-import-call-with-decl
+  [func-box : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [fallback : i64]
+  [maybe-decl : MacroMaybeDecl]) : i64
+  (match maybe-decl
+    [(MacroSomeDecl _ _ params _ _)
+      (ast-expr-call
+        func-box
+        (macro-generated-import-type-args params args env))]
+    [(MacroNoDecl) fallback]))
+
+(define (macro-rewrite-generated-import-direct-call
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [func : AstExpr]
+  [call-expr : AstExpr]
+  [func-box : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [fallback : i64]) : i64
+  (match (ast-expr-unspan func)
+    [(AstExprVar name)
+      (let
+        [lookup-name : String (macro-output-source-name (intern-str name))]
+        (if (or
+          (tc-name-qualified? lookup-name)
+          (tc-source-slash-qualified? lookup-name)
+          (>= (tc-name-first-dot lookup-name) 0))
+          fallback
+          (match (macro-import-alias-target-cached
+            decls
+            (intern module)
+            lookup-name)
+            [(TcSomeString target)
+              (match (macro-unqualified-imported-target-call-decl
+                ctx
+                target
+                lookup-name
+                call-expr)
+                [(OkMacroCallDecl maybe-decl)
+                  (match maybe-decl
+                    [(MacroSomeDecl _ _ _ _ _)
+                      (macro-rewrite-generated-import-call-with-decl
+                        func-box
+                        args
+                        env
+                        fallback
+                        maybe-decl)]
+                    [(MacroNoDecl)
+                      (ast-expr-call
+                        func-box
+                        (macro-generated-type-param-expr-list env args))])]
+                [(ErrMacroCallDecl _) fallback])]
+            [(TcNoString) fallback])))]
+    [_ fallback]))
+
 (define (macro-rewrite-generated-import-call-id
   [ctx : TcContext]
   [orig-decls : AstDeclList]
@@ -40838,12 +40859,35 @@
             call-expr)
             [(OkMacroCallDeclModule maybe-decl _)
               (match maybe-decl
-                [(MacroSomeDecl _ _ params _ _)
-                  (ast-expr-call
+                [(MacroSomeDecl _ _ _ _ _)
+                  (macro-rewrite-generated-import-call-with-decl
                     func-box
-                    (macro-generated-import-type-args params args env))]
-                [(MacroNoDecl) call-id])]
-            [(ErrMacroCallDeclModule _) call-id]))]
+                    args
+                    env
+                    call-id
+                    maybe-decl)]
+                [(MacroNoDecl)
+                  (macro-rewrite-generated-import-direct-call
+                    ctx
+                    orig-decls
+                    module
+                    lookup-func
+                    call-expr
+                    func-box
+                    args
+                    env
+                    call-id)])]
+            [(ErrMacroCallDeclModule _)
+              (macro-rewrite-generated-import-direct-call
+                ctx
+                orig-decls
+                module
+                lookup-func
+                call-expr
+                func-box
+                args
+                env
+                call-id)]))]
       [_ call-id])))
 
 (define (macro-rewrite-generated-import-kind
@@ -43138,6 +43182,9 @@
   [decl-path : String]
   [macro-name : String]
   [identity : String]
+  [definition-module : String]
+  [macro-env : CtfeEnv]
+  [rewrite-imports? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -43158,19 +43205,41 @@
           [(AstDeclCons first body-rest-box)
             (match first
               [(AstDeclModule target-module-id)
-                (macro-expand-module-materialized
-                  ctx
-                  top-env
-                  orig-decls
-                  module
-                  (intern-str target-module-id)
-                  alias
-                  span
-                  decl-path
-                  macro-name
-                  identity
-                  (box-get body-rest-box)
-                  call-expr)]
+                (let
+                  [target-module : String (intern-str target-module-id)]
+                  [body-rest : AstDeclList (box-get body-rest-box)]
+                  [contextual-body : AstDeclList
+                    (macro-generated-context-decls body-rest definition-module)]
+                  [final-body : AstDeclList
+                    (if rewrite-imports?
+                      (let
+                        [rewrite-decls : AstDeclList
+                          (ast-decl-cons
+                            (ast-decl-module target-module)
+                            contextual-body)]
+                        [lookup-decls : AstDeclList
+                          (macro-decl-list-append orig-decls rewrite-decls)]
+                        (macro-rewrite-generated-import-decls
+                          (tc-context-with-module ctx target-module)
+                          lookup-decls
+                          target-module
+                          definition-module
+                          macro-env
+                          contextual-body))
+                      contextual-body)]
+                  (macro-expand-module-materialized
+                    ctx
+                    top-env
+                    orig-decls
+                    module
+                    target-module
+                    alias
+                    span
+                    decl-path
+                    macro-name
+                    identity
+                    final-body
+                    call-expr))]
               [_
                 (ErrMacroDeclExpansion
                   (box
@@ -43426,18 +43495,11 @@
                                           decl-path
                                           macro-name
                                           identity
-                                          (macro-generated-context-decls
-                                            (if (tc-macro-param-list-needs-call-context?
-                                              params)
-                                              (macro-rewrite-generated-import-decls
-                                                call-ctx
-                                                orig-decls
-                                                module
-                                                definition-module
-                                                macro-env
-                                                generated)
-                                              generated)
-                                            definition-module)
+                                          definition-module
+                                          macro-env
+                                          (tc-macro-param-list-needs-call-context?
+                                            params)
+                                          generated
                                           call-expr)]
                                       [(ErrMacroParsedDecls diag)
                                         (ErrMacroDeclExpansion diag)]))]
@@ -45475,11 +45537,11 @@
               (begin
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (build-compiler-symbols-with-paths program paths)
-                  [(OkCompilerSymbols symbols)
+                  [(ResultCompilerSymbols.Ok symbols)
                     (match (build-compiler-registries-with-symbols
                       program
                       symbols)
-                      [(OkCompilerRegistries registries)
+                      [(ResultCompilerRegistries.Ok registries)
                         (begin
                           (set! macro-expand-active-module "")
                           (set!
@@ -45550,9 +45612,9 @@
                               [(ErrTcUnit message)
                                 (ErrMacroExpandPass
                                   (box (tc-diag-at-start message)))])))]
-                      [(ErrCompilerRegistries message)
+                      [(ResultCompilerRegistries.Err message)
                         (ErrMacroExpandPass (box (tc-diag-at-start message)))])]
-                  [(ErrCompilerSymbols message)
+                  [(ResultCompilerSymbols.Err message)
                     (ErrMacroExpandPass (box (tc-diag-at-start message)))]))
               (OkMacroExpandPass program paths false))))])))
 
@@ -45696,7 +45758,7 @@
           kind
           import-path
           stdlib-roots)
-          [(OkPkgResolve resolved)
+          [(ResultPkgResolve.Ok resolved)
             (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
               resolved
               seen
@@ -45705,7 +45767,7 @@
               import-root
               cfgs
               pools)
-              [(OkCompilerLoadWithPaths
+              [(ResultCompilerLoadWithPaths.Ok
                   imported-decls
                   imported-paths
                   _
@@ -45743,8 +45805,9 @@
                     (macro-decl-path-list-append imported-paths tail-paths)
                     next-seen
                     true))]
-              [(ErrCompilerLoadWithPaths diag) (ErrMacroMaterializeImport diag)])]
-          [(ErrPkgResolve message)
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ErrMacroMaterializeImport diag)])]
+          [(ResultPkgResolve.Err message)
             (ErrMacroMaterializeImport
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
@@ -47252,9 +47315,9 @@
     (tc-nominal-owner-cache-reset!)
     (ast-node-pool-context-install! pools)
     (match (build-compiler-symbols-with-paths program paths)
-      [(OkCompilerSymbols symbols)
+      [(ResultCompilerSymbols.Ok symbols)
         (match (build-compiler-registries-with-symbols program symbols)
-          [(OkCompilerRegistries registries)
+          [(ResultCompilerRegistries.Ok registries)
             (let
               [ctx : TcContext (TcContext program symbols registries "" pools)]
               (match (tc-stdlib-comptime-surface-ok ctx)
@@ -47297,9 +47360,9 @@
                         (box (tc-diag-at-start message)))])]
                 [(ErrTcUnit message)
                   (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))]))]
-          [(ErrCompilerRegistries message)
+          [(ResultCompilerRegistries.Err message)
             (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))])]
-      [(ErrCompilerSymbols message)
+      [(ResultCompilerSymbols.Err message)
         (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner

@@ -21,7 +21,7 @@
 (cfg
   compile-profile
   (define (compiler-check-profile-start) : unit
-    (set! compiler-check-profile-start-ms (profile.profile-now-ms))))
+    (set! compiler-check-profile-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -35,7 +35,7 @@
             "|"
             (string.string-append
               (string.int->string
-                (- (profile.profile-now-ms) compiler-check-profile-start-ms))
+                (- (profile.now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : SymI64Env
@@ -111,7 +111,7 @@
   [stdlib-roots : vector.StringVec]
   [cache-scope : String]) : ResultCompilerCheck
   (match loaded
-    [(OkCompilerLoadWithPaths entry-decls entry-paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok entry-decls entry-paths _ _)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (compiler-check-program-with-paths-cache
@@ -120,7 +120,7 @@
           (compiler-load-decl-path-list-append prelude-paths entry-paths)
           stdlib-roots
           cache-scope))]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheck.Err diag))]))
@@ -131,7 +131,7 @@
   [stdlib-roots : vector.StringVec]
   [cache-scope : String]) : ResultCompilerCheckWithPaths
   (match loaded
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (match (compiler-check-program-with-paths-cache
@@ -144,7 +144,7 @@
             (ResultCompilerCheckWithPaths.Ok summary paths)]
           [(ResultCompilerCheck.Err diag)
             (ResultCompilerCheckWithPaths.Err diag)]))]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheckWithPaths.Err diag))]))
@@ -167,7 +167,7 @@
   [stdlib-roots : vector.StringVec]
   [prelude : ResultCompilerLoadWithPaths]) : ResultCompilerCheck
   (match prelude
-    [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+    [(ResultCompilerLoadWithPaths.Ok prelude-decls prelude-paths _ prelude-seen)
       (compiler-check-loaded-with-prelude-cache
         path
         prelude-decls
@@ -182,7 +182,7 @@
           "typecheck-prefix-check"
           stdlib-roots
           (compiler-check-language-cfgs)))]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-check-profile-finish "load"))
         (ResultCompilerCheck.Err diag))]))
@@ -227,7 +227,11 @@
       manifest-dir
       deps
       (compiler-check-language-cfgs))
-      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+      [(ResultCompilerLoadWithPaths.Ok
+          prelude-decls
+          prelude-paths
+          _
+          prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
@@ -244,7 +248,7 @@
             "typecheck-prefix-check"
             stdlib-roots
             (compiler-check-language-cfgs)))]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err diag))])))
@@ -264,7 +268,11 @@
       manifest-dir
       deps
       (compiler-check-language-cfgs))
-      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+      [(ResultCompilerLoadWithPaths.Ok
+          prelude-decls
+          prelude-paths
+          _
+          prelude-seen)
         (match (compiler-load-parse-source-diagnostic-escaping
           path
           source
@@ -292,7 +300,7 @@
             (begin
               (cfg compile-profile (compiler-check-profile-finish "load"))
               (ResultCompilerCheck.Err diag))])]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err diag))])))
@@ -329,7 +337,11 @@
       (sym-i64-empty)
       (vector.string-vec-new)
       (compiler-check-language-cfgs))
-      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+      [(ResultCompilerLoadWithPaths.Ok
+          prelude-decls
+          prelude-paths
+          _
+          prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
@@ -345,7 +357,7 @@
             "typecheck-prefix-check"
             (vector.string-vec-new)
             (compiler-check-language-cfgs)))]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err diag))])))
@@ -361,7 +373,11 @@
       (sym-i64-empty)
       stdlib-roots
       (compiler-check-language-cfgs))
-      [(OkCompilerLoadWithPaths prelude-decls prelude-paths _ prelude-seen)
+      [(ResultCompilerLoadWithPaths.Ok
+          prelude-decls
+          prelude-paths
+          _
+          prelude-seen)
         (compiler-check-loaded-with-prelude-cache
           path
           prelude-decls
@@ -377,7 +393,7 @@
             "typecheck-prefix-check"
             stdlib-roots
             (compiler-check-language-cfgs)))]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (ResultCompilerCheck.Err diag))])))
@@ -504,10 +520,10 @@
   "(import stdlib.profile)
 (define (main) : i64
   (begin
-    (profile.profile-alloc-reset-peak)
-    (+ (profile.profile-now-ms)
-       (+ (profile.profile-alloc-total)
-          (+ (profile.profile-alloc-live) (profile.profile-alloc-peak))))))")
+    (profile.alloc-reset-peak)
+    (+ (profile.now-ms)
+       (+ (profile.alloc-total)
+          (+ (profile.alloc-live) (profile.alloc-peak))))))")
 
 (define (compiler-check-private-dynamic-buffer-vector-source) : String
   "(import stdlib.vector)
@@ -548,13 +564,13 @@
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source)
     (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls _ _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (let
         [program : AstProgram (ast-program decls)]
         (match (build-compiler-symbols program)
-          [(OkCompilerSymbols symbols)
+          [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
-              [(OkCompilerRegistries registries)
+              [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
                     (TcContext
@@ -572,9 +588,9 @@
                     (compiler-check-inline-layout-name-ok?
                       ctx
                       "AstVariantDefList")))]
-              [(ErrCompilerRegistries _) false])]
-          [(ErrCompilerSymbols _) false]))]
-    [(ErrCompilerLoadWithPaths _) false]))
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false]))]
+    [(ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-check-export-ok?) : bool
   (match (compiler-check-source
@@ -699,11 +715,11 @@
     "src/already_loaded.tl"
     "(define answer : i64 1)"
     (sym-i64-bind (sym-i64-empty) "src/already_loaded.tl" 1))
-    [(OkCompilerLoad decls _)
+    [(ResultCompilerLoad.Ok decls _)
       (match decls
         [(AstDeclNil) true]
         [_ false])]
-    [(ErrCompilerLoad _) false]))
+    [(ResultCompilerLoad.Err _) false]))
 
 (define (compiler-check-pool-reset-ok?) : bool
   (let

@@ -1072,6 +1072,13 @@
 (define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
   (= (doc-test-run-failure-list-count (doc-test-run-report-failures report)) 0))
 
+(define (doc-test-run-report-add-prefix-count
+  [prefix-count : i64]
+  [report : DocTestRunReport]) : DocTestRunReport
+  (DocTestRunReport
+    (+ prefix-count (doc-test-run-report-count report))
+    (doc-test-run-report-failures report)))
+
 (define (doc-test-run-failure-list-append
   [failures : DocTestRunFailureList]
   [failure : DocTestRunFailure]) : DocTestRunFailureList
@@ -1387,7 +1394,7 @@
       code
       stdlib-roots
       cfgs)
-      [(OkCompilerLoadWithPaths decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (match (lower-compiler-program-with-decl-paths
           virtual-path
           (ast-program decls)
@@ -1409,7 +1416,7 @@
           [(ErrCompilerLower diag)
             (ResultSourceToolString.Err
               (compiler-diagnostic-render (box-get diag)))])]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])))
 
 (define (doc-test-runnable-failure
@@ -1975,9 +1982,11 @@
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [last-path : String]) : DocTestRunReport
+  [last-path : String]
+  [count : i64]) : DocTestRunReport
   (match paths
-    [(AstDeclPathNil) (DocTestRunReport 0 (doc-test-run-failure-list-empty))]
+    [(AstDeclPathNil)
+      (DocTestRunReport count (doc-test-run-failure-list-empty))]
     [(AstDeclPathCons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
@@ -2028,14 +2037,16 @@
                 stdlib-roots
                 manifest-dir
                 deps
-                rooted)
-              report))
+                rooted
+                (+ count (doc-test-run-report-count report)))
+              (doc-test-run-report-add-prefix-count count report)))
           (doc-test-typecheck-package-path-list-with-roots-from
             rest
             stdlib-roots
             manifest-dir
             deps
-            last-path)))]))
+            last-path
+            count)))]))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
@@ -2062,7 +2073,8 @@
     stdlib-roots
     manifest-dir
     deps
-    ""))
+    ""
+    0))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.
@@ -2784,6 +2796,78 @@ typecheck: return type mismatch"))]
           (compiler-load-session-cache-disable-for-test!)
           (and (doc-test-run-report-ok? report) (> hits 0)))))))
 
+(define (doc-test-package-walk-example-source [value : i64]) : String
+  (string.string-append
+    ";# ```typelisp
+;# (define (main) : i64 "
+    (string.string-append (string.int->string value) ")
+;# ```
+")))
+
+(define (doc-test-package-walk-numbered-path
+  [root : String]
+  [prefix : String]
+  [index : i64]) : String
+  (string.string-append
+    root
+    (string.string-append
+      "/"
+      (string.string-append
+        prefix
+        (string.string-append (string.int->string index) ".tl")))))
+
+(define (doc-test-package-walk-write-empty-paths
+  [root : String]
+  [count : i64]
+  [paths : AstDeclPathList]) : AstDeclPathList
+  (let
+    [i : i64 0]
+    [out : AstDeclPathList paths]
+    (begin
+      (while (< i count)
+        (let
+          [path : String (doc-test-package-walk-numbered-path root "empty_" i)]
+          (begin
+            (io.write-file path ";; no doctest fence
+")
+            (set! out (ast-decl-path-cons path out))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (doc-test-package-walk-long-list-smoke-ok?) : bool
+  (let
+    [root : String "target/doc_test_package_walk"]
+    [example-a : String (doc-test-package-walk-numbered-path root "example_" 1)]
+    [example-b : String (doc-test-package-walk-numbered-path root "example_" 2)]
+    [example-c : String (doc-test-package-walk-numbered-path root "example_" 3)]
+    (begin
+      (compiler-load-test-mkdir "target")
+      (compiler-load-test-mkdir root)
+      (io.write-file example-a (doc-test-package-walk-example-source 1))
+      (io.write-file example-b (doc-test-package-walk-example-source 2))
+      (io.write-file example-c (doc-test-package-walk-example-source 3))
+      (let
+        [paths : AstDeclPathList
+          (doc-test-package-walk-write-empty-paths
+            root
+            128
+            (ast-decl-path-cons
+              example-a
+              (ast-decl-path-cons
+                example-a
+                (ast-decl-path-cons
+                  example-b
+                  (ast-decl-path-cons example-c AstDeclPathNil)))))]
+        [report : DocTestRunReport
+          (doc-test-typecheck-package-paths-with-roots
+            paths
+            (doc-test-run-smoke-stdlib-roots)
+            root
+            (compiler-pkg-deps-empty))]
+        (and
+          (doc-test-run-report-ok? report)
+          (= (doc-test-run-report-count report) 3))))))
+
 (define (doc-test-run-smoke) : i64
   (begin
     (unless
@@ -2825,6 +2909,9 @@ typecheck: return type mismatch"))]
     (unless
       (doc-test-session-cache-smoke-ok?)
       (return (io.panic "doc-test-run: session cache smoke mismatch")))
+    (unless
+      (doc-test-package-walk-long-list-smoke-ok?)
+      (return (io.panic "doc-test-run: package walk long-list mismatch")))
     42))
 
 ;; Combined smoke: extraction (#722) then runner (#724). Returns 42 iff both

@@ -989,8 +989,9 @@
     (match (compiler-load-parse-manifest-diagnostic-infer-kind
       manifest-path
       (io.read-file manifest-path))
-      [(OkCompilerPkgManifestDiagnostic manifest) (OkBuildManifest manifest)]
-      [(ErrCompilerPkgManifestDiagnostic diag)
+      [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+        (OkBuildManifest manifest)]
+      [(ResultCompilerPkgManifestDiagnostic.Err diag)
         (ErrBuildManifest (build-invalid-manifest-message (box-get diag)))])
     (ErrBuildManifest
       (str_cat.str-cat "cannot read package manifest '" manifest-path "'"))))
@@ -3152,11 +3153,11 @@
     manifest-dir
     deps
     emit-entry)
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]
-    [(OkCompilerLoadWithPaths _ paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (build-doctest-typecheck-package-paths
         (build-package-doctest-paths owner paths)
         stdlib-roots
@@ -3273,11 +3274,11 @@
                 manifest-dir
                 (struct-get manifest deps)
                 emit-entry)
-                [(ErrCompilerLoadWithPaths diag)
+                [(ResultCompilerLoadWithPaths.Err diag)
                   (begin
                     (io.print-error (compiler-diagnostic-render (box-get diag)))
                     1)]
-                [(OkCompilerLoadWithPaths decls paths _ _)
+                [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                   (let
                     [owned-paths : AstDeclPathList
                       (compiler-load-package-owned-paths-for-decls

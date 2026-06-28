@@ -12,5 +12,5 @@
     (vector.string-vec-new)
     "src/tests"
     (compiler-cfg-empty))
-    [(OkCompilerLoadWithPaths _ _ _ _) 42]
-    [(ErrCompilerLoadWithPaths _) 1]))
+    [(ResultCompilerLoadWithPaths.Ok _ _ _ _) 42]
+    [(ResultCompilerLoadWithPaths.Err _) 1]))

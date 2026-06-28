@@ -22,7 +22,7 @@
 
 (defenum LowerNameEnv
   (LowerNameNil)
-  (LowerNameBind String String (Box LowerNameEnv)))
+  (LowerNameBind String i64 String (Box LowerNameEnv)))
 
 ;; #3759: like LowerTypeCache, a LowerNameCache carries a `parent` marker.
 ;; `LowerNameParentNone` is a complete cache (a miss returns the source name
@@ -42,7 +42,7 @@
   (LowerNameParentGlobal))
 
 (defstruct LowerNameCache
-  (ids hashmap.StringI64Map)
+  (ids hashmap.I64I64Map)
   (values (Array String))
   (parent LowerNameParent))
 
@@ -51,7 +51,7 @@
 ;; name env; per-module overlays fall through here.
 (define lower-active-global-name-cache : LowerNameCache
   (LowerNameCache
-    (hashmap.string-i64-map-with-capacity 8)
+    (hashmap.i64-i64-map-with-capacity 8)
     (array.make-array String 0)
     (LowerNameParentNone)))
 
@@ -72,7 +72,7 @@
 
 (defenum LowerTypeCache
   (LowerNoTypeCache)
-  (LowerSomeTypeCache hashmap.StringI64Map (Array AstType) i64 LowerTypeParent))
+  (LowerSomeTypeCache hashmap.I64I64Map (Array AstType) i64 LowerTypeParent))
 
 ;; #3759: the shared global decl-lowering type cache (built once per lower-decls
 ;; from top-env). Per-module overlay caches (LowerTypeParentGlobal) fall through
@@ -481,20 +481,20 @@
   compile-profile
   (define (compiler-lower-profile-start) : unit
     (begin
-      (set! compiler-lower-profile-start-ms (profile.profile-now-ms))
-      (set! compiler-lower-profile-start-total (profile.profile-alloc-total))
-      (set! compiler-lower-profile-start-live (profile.profile-alloc-live))
-      (profile.profile-alloc-reset-peak))))
+      (set! compiler-lower-profile-start-ms (profile.now-ms))
+      (set! compiler-lower-profile-start-total (profile.alloc-total))
+      (set! compiler-lower-profile-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
 
 (cfg
   compile-profile
   (define (compiler-lower-profile-finish [phase : String]) : unit
     (let
-      [end-ms : i64 (profile.profile-now-ms)]
-      [end-total : i64 (profile.profile-alloc-total)]
-      [end-live : i64 (profile.profile-alloc-live)]
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
-        (- (profile.profile-alloc-peak) compiler-lower-profile-start-live)]
+        (- (profile.alloc-peak) compiler-lower-profile-start-live)]
       (io.print-error
         (string.string-append
           "compile-profile|lower."
@@ -516,7 +516,7 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-detail-start) : unit
-    (set! compiler-lower-profile-detail-start-ms (profile.profile-now-ms))))
+    (set! compiler-lower-profile-detail-start-ms (profile.now-ms))))
 
 (cfg
   compile-profile
@@ -525,7 +525,7 @@
     [name : String]) : unit
     (let
       [elapsed : i64
-        (- (profile.profile-now-ms) compiler-lower-profile-detail-start-ms)]
+        (- (profile.now-ms) compiler-lower-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
           (string.string-append
@@ -793,7 +793,7 @@
           [_ true]))
         (match cur
           [(LowerNameNil) unit]
-          [(LowerNameBind source logical rest)
+          [(LowerNameBind source _ logical rest)
             (if (string.string-eq source source-name)
               (begin
                 (set! result (TcSomeString logical))
@@ -816,7 +816,7 @@
         [_ true])
         (match cur
           [(LowerNameNil) unit]
-          [(LowerNameBind _ _ rest)
+          [(LowerNameBind _ _ _ rest)
             (begin
               (set! count (+ count 1))
               (set! cur (box-get rest)))]))
@@ -827,24 +827,101 @@
     8
     (* count 2)))
 
+(defenum LowerNameCacheMaybeId
+  (LowerNameCacheNoId)
+  (LowerNameCacheSomeId i64))
+
+(define (lower-name-cache-source-last-slash [source-name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length source-name)]
+    [last : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (string.char-eq (string.string-ref source-name i) '/')
+            (set! last i)
+            unit)
+          (set! i (+ i 1))))
+      last)))
+
+(define (lower-name-cache-source-id-from-parts [source-name : String]) : LowerNameCacheMaybeId
+  (let
+    [slash : i64 (lower-name-cache-source-last-slash source-name)]
+    [n : i64 (string.string-length source-name)]
+    (if (< slash 0)
+      (LowerNameCacheNoId)
+      (let
+        [base-start : i64 (+ slash 1)]
+        [module : String (string.substring source-name 0 slash)]
+        [base : String
+          (string.substring source-name base-start (- n base-start))]
+        (match (intern-lookup module)
+          [(InternLookupFound module-id)
+            (match (intern-lookup base)
+              [(InternLookupFound base-id)
+                (LowerNameCacheSomeId
+                  (compiler-symbol-module-key-id-by-id module-id base-id))]
+              [(InternLookupMissing) (LowerNameCacheNoId)])]
+          [(InternLookupMissing) (LowerNameCacheNoId)])))))
+
+(define (lower-name-cache-source-id [source-name : String]) : LowerNameCacheMaybeId
+  (match (intern-lookup source-name)
+    [(InternLookupFound id)
+      (LowerNameCacheSomeId (compiler-symbol-name-id-key id))]
+    [(InternLookupMissing) (lower-name-cache-source-id-from-parts source-name)]))
+
+(define (lower-name-cache-source-id-value [source-name : String]) : i64
+  (match (lower-name-cache-source-id source-name)
+    [(LowerNameCacheSomeId source-id) source-id]
+    [(LowerNameCacheNoId) -1]))
+
+(define (lower-name-env-bind
+  [source-name : String]
+  [logical-name : String]
+  [rest : LowerNameEnv]) : LowerNameEnv
+  (LowerNameBind
+    source-name
+    (lower-name-cache-source-id-value source-name)
+    logical-name
+    (box rest)))
+
+(define (lower-name-env-bind-id
+  [source-name : String]
+  [source-id : i64]
+  [logical-name : String]
+  [rest : LowerNameEnv]) : LowerNameEnv
+  (LowerNameBind source-name source-id logical-name (box rest)))
+
+(define (lower-name-cache-add-id
+  [cache : LowerNameCache]
+  [source-id : i64]
+  [logical-name : String]) : LowerNameCache
+  (let
+    [ids : hashmap.I64I64Map (struct-get cache ids)]
+    [values : (Array String) (struct-get cache values)]
+    (if (< source-id 0)
+      cache
+      (match (hashmap.i64-i64-map-get ids source-id)
+        [(hashmap.I64I64MapFound _) cache]
+        [(hashmap.I64I64MapMissing)
+          (let
+            [next : i64 (hashmap.i64-i64-map-len ids)]
+            (begin
+              (array.array-set! values next logical-name)
+              (LowerNameCache
+                (hashmap.i64-i64-map-put ids source-id next)
+                values
+                (struct-get cache parent))))]))))
+
 (define (lower-name-cache-add
   [cache : LowerNameCache]
   [source-name : String]
   [logical-name : String]) : LowerNameCache
-  (let
-    [ids : hashmap.StringI64Map (struct-get cache ids)]
-    [values : (Array String) (struct-get cache values)]
-    (match (hashmap.string-i64-map-get ids source-name)
-      [(hashmap.StringI64MapFound _) cache]
-      [(hashmap.StringI64MapMissing)
-        (let
-          [next : i64 (hashmap.string-i64-map-len ids)]
-          (begin
-            (array.array-set! values next logical-name)
-            (LowerNameCache
-              (hashmap.string-i64-map-put ids source-name next)
-              values
-              (struct-get cache parent))))])))
+  (lower-name-cache-add-id
+    cache
+    (lower-name-cache-source-id-value source-name)
+    logical-name))
 
 (define (lower-name-cache-from-env-into
   [names : LowerNameEnv]
@@ -858,9 +935,9 @@
         [_ true])
         (match cur
           [(LowerNameNil) unit]
-          [(LowerNameBind source logical rest)
+          [(LowerNameBind _ source-id logical rest)
             (begin
-              (set! out (lower-name-cache-add out source logical))
+              (set! out (lower-name-cache-add-id out source-id logical))
               (set! cur (box-get rest)))]))
       out)))
 
@@ -870,7 +947,7 @@
     (lower-name-cache-from-env-into
       names
       (LowerNameCache
-        (hashmap.string-i64-map-with-capacity (lower-name-cache-capacity count))
+        (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
         (array.make-array String count)
         (LowerNameParentNone)))))
 
@@ -883,21 +960,29 @@
     (lower-name-cache-from-env-into
       names
       (LowerNameCache
-        (hashmap.string-i64-map-with-capacity (lower-name-cache-capacity count))
+        (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
         (array.make-array String count)
         (LowerNameParentGlobal)))))
+
+(define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
+  (match (hashmap.i64-i64-map-get (struct-get cache ids) source-id)
+    [(hashmap.I64I64MapFound index)
+      (TcSomeString (array.array-ref (struct-get cache values) index))]
+    [(hashmap.I64I64MapMissing)
+      (match (struct-get cache parent)
+        [(LowerNameParentNone) (TcNoString)]
+        [(LowerNameParentGlobal)
+          (lower-name-cache-lookup-id lower-active-global-name-cache source-id)])]))
 
 (define (lower-name-cache-resolve
   [cache : LowerNameCache]
   [source-name : String]) : String
-  (match (hashmap.string-i64-map-get (struct-get cache ids) source-name)
-    [(hashmap.StringI64MapFound index)
-      (array.array-ref (struct-get cache values) index)]
-    [(hashmap.StringI64MapMissing)
-      (match (struct-get cache parent)
-        [(LowerNameParentNone) source-name]
-        [(LowerNameParentGlobal)
-          (lower-name-cache-resolve lower-active-global-name-cache source-name)])]))
+  (match (lower-name-cache-source-id source-name)
+    [(LowerNameCacheSomeId source-id)
+      (match (lower-name-cache-lookup-id cache source-id)
+        [(TcSomeString logical-name) logical-name]
+        [(TcNoString) source-name])]
+    [(LowerNameCacheNoId) source-name]))
 
 (define (lower-name-cache-resolve-dotted
   [cache : LowerNameCache]
@@ -921,13 +1006,20 @@
               [base-start : i64 (+ i 1)]
               [base : String
                 (string.substring source-name base-start (- n base-start))]
-              [candidate : String (compiler-symbol-module-key module base)]
-              [resolved : String (lower-name-cache-resolve cache candidate)]
-              (if (string.string-eq resolved candidate)
-                unit
-                (begin
-                  (set! out (string.string-copy resolved))
-                  (set! done true))))
+              (match (intern-lookup module)
+                [(InternLookupFound module-id)
+                  (match (intern-lookup base)
+                    [(InternLookupFound base-id)
+                      (match (lower-name-cache-lookup-id
+                        cache
+                        (compiler-symbol-module-key-id-by-id module-id base-id))
+                        [(TcSomeString resolved)
+                          (begin
+                            (set! out (string.string-copy resolved))
+                            (set! done true))]
+                        [(TcNoString) unit])]
+                    [(InternLookupMissing) unit])]
+                [(InternLookupMissing) unit]))
             unit)
           (set! i (+ i 1))))
       (if done
@@ -966,18 +1058,18 @@
 
 (define (lower-type-cache-add
   [cache : LowerTypeCache]
-  [name : String]
+  [name-id : i64]
   [ty : AstType]) : LowerTypeCache
   (match cache
     [(LowerNoTypeCache) cache]
     [(LowerSomeTypeCache ids values next parent)
-      (match (hashmap.string-i64-map-get ids name)
-        [(hashmap.StringI64MapFound _) cache]
-        [(hashmap.StringI64MapMissing)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound _) cache]
+        [(hashmap.I64I64MapMissing)
           (begin
             (array.array-set! values next ty)
             (LowerSomeTypeCache
-              (hashmap.string-i64-map-put ids name next)
+              (hashmap.i64-i64-map-put ids name-id next)
               values
               (+ next 1)
               parent))])]))
@@ -992,7 +1084,7 @@
     [(TcTypeBind name-id ty rest)
       (lower-type-cache-from-env-into
         (box-get rest)
-        (lower-type-cache-add cache (intern-str name-id) ty))]))
+        (lower-type-cache-add cache name-id ty))]))
 
 (define (lower-type-cache-from-env [env : TcTypeEnv]) : LowerTypeCache
   (let
@@ -1000,7 +1092,7 @@
     (lower-type-cache-from-env-into
       env
       (LowerSomeTypeCache
-        (hashmap.string-i64-map-with-capacity (lower-type-cache-capacity count))
+        (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
         (array.make-array AstType count)
         0
         (LowerTypeParentNone)))))
@@ -1014,25 +1106,39 @@
     (lower-type-cache-from-env-into
       env
       (LowerSomeTypeCache
-        (hashmap.string-i64-map-with-capacity (lower-type-cache-capacity count))
+        (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
         (array.make-array AstType count)
         0
         (LowerTypeParentGlobal)))))
 
-(define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
+(define (lower-type-cache-lookup-id
+  [cache : LowerTypeCache]
+  [name-id : i64]
+  [display-name : String]) : ResultTcType
   (match cache
     [(LowerNoTypeCache)
-      (ErrTcType (string.string-append "typecheck: unbound name " name))]
+      (ErrTcType (string.string-append "typecheck: unbound name " display-name))]
     [(LowerSomeTypeCache ids values _ parent)
-      (match (hashmap.string-i64-map-get ids name)
-        [(hashmap.StringI64MapFound index)
+      (match (hashmap.i64-i64-map-get ids name-id)
+        [(hashmap.I64I64MapFound index)
           (OkTcType (array.array-ref values index))]
-        [(hashmap.StringI64MapMissing)
+        [(hashmap.I64I64MapMissing)
           (match parent
             [(LowerTypeParentNone)
-              (ErrTcType (string.string-append "typecheck: unbound name " name))]
+              (ErrTcType
+                (string.string-append "typecheck: unbound name " display-name))]
             [(LowerTypeParentGlobal)
-              (lower-type-cache-lookup lower-decls-global-type-cache name)])])]))
+              (lower-type-cache-lookup-id
+                lower-decls-global-type-cache
+                name-id
+                display-name)])])]))
+
+(define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
+  (match (intern-lookup name)
+    [(InternLookupFound name-id)
+      (lower-type-cache-lookup-id cache name-id name)]
+    [(InternLookupMissing)
+      (ErrTcType (string.string-append "typecheck: unbound name " name))]))
 
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
@@ -1229,7 +1335,17 @@
   [logical-name : String]) : LowerNameEnv
   (match (lower-name-env-lookup names source-name)
     [(TcSomeString _) names]
-    [(TcNoString) (LowerNameBind source-name logical-name (box names))]))
+    [(TcNoString) (lower-name-env-bind source-name logical-name names)]))
+
+(define (lower-name-env-add-alias-if-free-id
+  [names : LowerNameEnv]
+  [source-name : String]
+  [source-id : i64]
+  [logical-name : String]) : LowerNameEnv
+  (match (lower-name-env-lookup names source-name)
+    [(TcSomeString _) names]
+    [(TcNoString)
+      (lower-name-env-bind-id source-name source-id logical-name names)]))
 
 (define (lower-name-env-add-import-alias-binding
   [names : LowerNameEnv]
@@ -1238,7 +1354,34 @@
   [logical-name : String]) : LowerNameEnv
   (if (string.string-eq alias "")
     (lower-name-env-add-alias-if-free names source-name logical-name)
-    (LowerNameBind source-name logical-name (box names))))
+    (lower-name-env-bind source-name logical-name names)))
+
+(define (lower-name-env-add-import-alias-binding-id
+  [names : LowerNameEnv]
+  [alias : String]
+  [source-name : String]
+  [source-id : i64]
+  [logical-name : String]) : LowerNameEnv
+  (if (string.string-eq alias "")
+    (lower-name-env-add-alias-if-free-id
+      names
+      source-name
+      source-id
+      logical-name)
+    (lower-name-env-bind-id source-name source-id logical-name names)))
+
+(define (lower-name-env-add-import-alias-binding-base-id
+  [names : LowerNameEnv]
+  [alias : String]
+  [base-name : String]
+  [base-id : i64]
+  [logical-name : String]) : LowerNameEnv
+  (lower-name-env-add-import-alias-binding-id
+    names
+    alias
+    (compiler-symbol-module-key alias base-name)
+    (compiler-symbol-module-key-id-by-id (intern alias) base-id)
+    logical-name))
 
 (define (lower-name-env-add-module-binding
   [names : LowerNameEnv]
@@ -1246,11 +1389,17 @@
   [source-name : String]
   [logical-name : String]) : LowerNameEnv
   (if (string.string-eq module "")
-    (LowerNameBind source-name logical-name (box names))
-    (LowerNameBind
-      (compiler-symbol-module-key module source-name)
-      logical-name
-      (box names))))
+    (lower-name-env-bind source-name logical-name names)
+    (let
+      [source-id : i64
+        (compiler-symbol-module-key-id-by-id
+          (intern module)
+          (intern source-name))]
+      (lower-name-env-bind-id
+        (compiler-symbol-module-key module source-name)
+        source-id
+        logical-name
+        names))))
 
 (define (lower-name-env-add-struct-cleanup-in-module
   [names : LowerNameEnv]
@@ -1296,10 +1445,11 @@
     [(AstStructCleanupFn cleanup-name)
       (let
         [cleanup-str : String (intern-str cleanup-name)]
-        (LowerNameBind
+        (lower-name-env-bind-id
           cleanup-str
+          cleanup-name
           (lower-current-decl-logical-name-cache name-cache module cleanup-str)
-          (box names)))]))
+          names))]))
 
 (define (lower-name-env-add-local-enum-cleanup
   [names : LowerNameEnv]
@@ -1311,10 +1461,11 @@
     [(AstEnumCleanupFn cleanup-name)
       (let
         [cleanup-str : String (intern-str cleanup-name)]
-        (LowerNameBind
+        (lower-name-env-bind-id
           cleanup-str
+          cleanup-name
           (lower-current-decl-logical-name-cache name-cache module cleanup-str)
-          (box names)))]))
+          names))]))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
   (if (>= (string.string-length name) 6)
@@ -1966,10 +2117,11 @@
     [(AstDeclDef name _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           (lower-alias-logical-name
             entry-path
             decl-path
@@ -1979,10 +2131,11 @@
     [(AstDeclDefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           (lower-alias-logical-name
             entry-path
             decl-path
@@ -1992,10 +2145,11 @@
     [(AstDeclDefDispatch name _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           (lower-alias-logical-name
             entry-path
             decl-path
@@ -2005,10 +2159,11 @@
     [(AstDeclExtern name _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           name-str))]
     [(AstDeclDefStruct _ _ cleanup _)
       (match cleanup
@@ -2016,10 +2171,11 @@
         [(AstStructCleanupFn cleanup-name)
           (let
             [cleanup-str : String (intern-str cleanup-name)]
-            (lower-name-env-add-import-alias-binding
+            (lower-name-env-add-import-alias-binding-base-id
               names
               alias
-              (compiler-symbol-module-key alias cleanup-str)
+              cleanup-str
+              cleanup-name
               (lower-alias-logical-name
                 entry-path
                 decl-path
@@ -2032,10 +2188,11 @@
         [(AstStructCleanupFn cleanup-name)
           (let
             [cleanup-str : String (intern-str cleanup-name)]
-            (lower-name-env-add-import-alias-binding
+            (lower-name-env-add-import-alias-binding-base-id
               names
               alias
-              (compiler-symbol-module-key alias cleanup-str)
+              cleanup-str
+              cleanup-name
               (lower-alias-logical-name
                 entry-path
                 decl-path
@@ -2076,34 +2233,38 @@
     [(AstDeclDef name _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           (lower-current-decl-logical-name-cache base-cache module name-str)))]
     [(AstDeclDefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           (lower-current-decl-logical-name-cache base-cache module name-str)))]
     [(AstDeclDefDispatch name _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           (lower-current-decl-logical-name-cache base-cache module name-str)))]
     [(AstDeclExtern name _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-import-alias-binding
+        (lower-name-env-add-import-alias-binding-base-id
           names
           alias
-          (compiler-symbol-module-key alias name-str)
+          name-str
+          name
           name-str))]
     [(AstDeclDefStruct _ _ cleanup _)
       (match cleanup
@@ -2111,10 +2272,11 @@
         [(AstStructCleanupFn cleanup-name)
           (let
             [cleanup-str : String (intern-str cleanup-name)]
-            (lower-name-env-add-import-alias-binding
+            (lower-name-env-add-import-alias-binding-base-id
               names
               alias
-              (compiler-symbol-module-key alias cleanup-str)
+              cleanup-str
+              cleanup-name
               (lower-current-decl-logical-name-cache
                 base-cache
                 module
@@ -2125,10 +2287,11 @@
         [(AstStructCleanupFn cleanup-name)
           (let
             [cleanup-str : String (intern-str cleanup-name)]
-            (lower-name-env-add-import-alias-binding
+            (lower-name-env-add-import-alias-binding-base-id
               names
               alias
-              (compiler-symbol-module-key alias cleanup-str)
+              cleanup-str
+              cleanup-name
               (lower-current-decl-logical-name-cache
                 base-cache
                 module
@@ -2506,31 +2669,35 @@
     [(AstDeclDef name _ _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-bind-id
           name-str
+          name
           (lower-current-decl-logical-name-cache name-cache module name-str)
-          (box names)))]
+          names))]
     [(AstDeclDefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-bind-id
           name-str
+          name
           (lower-current-decl-logical-name-cache name-cache module name-str)
-          (box names)))]
+          names))]
     [(AstDeclDefDispatch name _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-bind-id
           name-str
+          name
           (lower-current-decl-logical-name resolve-env module name-str)
-          (box names)))]
+          names))]
     [(AstDeclExtern name _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (LowerNameBind
+        (lower-name-env-bind-id
           name-str
+          name
           (lower-current-decl-logical-name-cache name-cache module name-str)
-          (box names)))]
+          names))]
     [(AstDeclDefEnum _ cleanup _)
       (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
     [(AstDeclDefEnumLifetimes _ _ cleanup _)
@@ -5116,9 +5283,9 @@
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultLowerCloneRoots
           (match (build-compiler-symbols program)
-            [(OkCompilerSymbols symbols)
+            [(ResultCompilerSymbols.Ok symbols)
               (match (build-compiler-registries-with-symbols program symbols)
-                [(OkCompilerRegistries registries)
+                [(ResultCompilerRegistries.Ok registries)
                   (let
                     [ctx : TcContext
                       (TcContext program symbols registries "" pools)]
@@ -5134,9 +5301,9 @@
                               program)))]
                       [(ErrTcEnv message)
                         (ErrLowerCloneRoots (box (lower-diagnostic message)))]))]
-                [(ErrCompilerRegistries message)
+                [(ResultCompilerRegistries.Err message)
                   (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
-            [(ErrCompilerSymbols message)
+            [(ResultCompilerSymbols.Err message)
               (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
@@ -41632,7 +41799,7 @@
             [stdlib-roots : vector.StringVec (vector.string-vec-new)]
             [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
             (match (typecheck-compiler-source-load src)
-              [(OkCompilerLoadWithPaths decls paths _ _)
+              [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                 (lower-compiler-program-with-decl-paths-mode-cache
                   path
                   (ast-program decls)
@@ -41643,7 +41810,7 @@
                     "typecheck-prefix-lower"
                     stdlib-roots
                     cfgs))]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLower diag)]))
+              [(ResultCompilerLoadWithPaths.Err diag) (ErrCompilerLower diag)]))
           (lower-compiler-program-with-path-mode path program mode))]
       [(ErrAstProgram message)
         (ErrCompilerLower
@@ -52289,10 +52456,10 @@
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let
     [names : LowerNameEnv
-      (LowerNameBind
+      (lower-name-env-bind
         "source-a"
         "logical-a"
-        (box (LowerNameBind "source-b" "logical-b" (box LowerNameNil))))]
+        (lower-name-env-bind "source-b" "logical-b" LowerNameNil))]
     [strings : LowerStringSet
       (lower-string-set-insert
         (lower-string-set-insert LowerStringNil "helper-a")
@@ -52362,11 +52529,122 @@
         [(LowerCAbiSlot ty offset)
           (and (= offset 8) (tc-type-eq ty (AstTyF64)))]))))
 
+(define (compiler-lower-name-cache-intern-id-dotted-ok?) : bool
+  (let
+    [source : String (compiler-symbol-module-key "alias" "value")]
+    [source-id : i64 (intern source)]
+    [alias-id : i64 (intern "alias")]
+    [value-id : i64 (intern "value")]
+    [logical : String "logical-value"]
+    [split-source : String
+      (compiler-symbol-module-key
+        "name_cache_split_alias_3940"
+        "name_cache_split_value_3940")]
+    [split-source-missing-before : bool
+      (match (intern-lookup split-source)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])]
+    [split-alias-id : i64 (intern "name_cache_split_alias_3940")]
+    [split-value-id : i64 (intern "name_cache_split_value_3940")]
+    [split-logical : String "split-logical-value"]
+    [names : LowerNameEnv
+      (lower-name-env-bind
+        split-source
+        split-logical
+        (lower-name-env-bind source logical LowerNameNil))]
+    [cache : LowerNameCache (lower-name-cache-from-env names)]
+    (and
+      (>= source-id 0)
+      (>= alias-id 0)
+      (>= value-id 0)
+      split-source-missing-before
+      (>= split-alias-id 0)
+      (>= split-value-id 0)
+      (match (intern-lookup split-source)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])
+      (string.string-eq (lower-name-cache-resolve cache source) logical)
+      (string.string-eq
+        (lower-name-cache-resolve-source cache "alias.value")
+        logical)
+      (string.string-eq
+        (lower-name-cache-resolve cache split-source)
+        split-logical)
+      (string.string-eq
+        (lower-name-cache-resolve-source
+          cache
+          "name_cache_split_alias_3940.name_cache_split_value_3940")
+        split-logical)
+      (string.string-eq
+        (lower-name-cache-resolve-source cache "alias.missing")
+        "alias.missing")
+      (string.string-eq
+        (lower-name-cache-resolve-source cache "unknown.value")
+        "unknown.value"))))
+
+(define (compiler-lower-type-cache-i64-keys-ok?) : bool
+  (let
+    [module : String "type_cache_mod_3939"]
+    [name : String "TypeCacheThing3939"]
+    [name-id : i64 (intern name)]
+    [qualified-name : String (compiler-symbol-module-key module name)]
+    [qualified-id : i64 (tc-module-name-id module name-id)]
+    [fallback-name : String "TypeCacheFallback3939"]
+    [fallback-id : i64 (intern fallback-name)]
+    [fallback-primary : String
+      (compiler-symbol-module-key module fallback-name)]
+    [fallback-primary-missing-before : bool
+      (match (intern-lookup fallback-primary)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])]
+    [env : TcTypeEnv
+      (tc-bind-id
+        (tc-bind-id TcTypeNil qualified-id (AstTyI64))
+        fallback-id
+        (AstTyBool))]
+    [cache : LowerTypeCache (lower-type-cache-from-env env)]
+    [qualified-hygiene : String (tc-hygiene-global-context-name module name)]
+    [fallback-hygiene : String
+      (tc-hygiene-global-context-name module fallback-name)]
+    [missing : String "TypeCacheMissing3939"]
+    [missing-before : bool
+      (match (intern-lookup missing)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])]
+    (and
+      (string.string-eq (intern-str qualified-id) qualified-name)
+      fallback-primary-missing-before
+      missing-before
+      (match (lower-type-cache-lookup cache qualified-name)
+        [(OkTcType ty) (tc-type-eq ty (AstTyI64))]
+        [(ErrTcType _) false])
+      (match (lower-type-cache-lookup-hygiene cache qualified-hygiene)
+        [(OkTcType ty) (tc-type-eq ty (AstTyI64))]
+        [(ErrTcType _) false])
+      (match (lower-type-cache-lookup-hygiene cache fallback-hygiene)
+        [(OkTcType ty) (tc-type-eq ty (AstTyBool))]
+        [(ErrTcType _) false])
+      (match (lower-type-cache-lookup cache missing)
+        [(OkTcType _) false]
+        [(ErrTcType _) true])
+      (match (intern-lookup fallback-primary)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true])
+      (match (intern-lookup missing)
+        [(InternLookupFound _) false]
+        [(InternLookupMissing) true]))))
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
     (begin
       (if (compiler-lower-boxed-helper-lists-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-name-cache-intern-id-dotted-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-type-cache-i64-keys-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-module-specialize-ok?)

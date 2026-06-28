@@ -58,7 +58,7 @@
         entry
         (sym-i64-empty)
         roots)
-        [(OkCompilerLoadWithPaths decls paths _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (lower-compiler-program-with-decl-paths
             entry
             (ast-program decls)
@@ -66,7 +66,7 @@
             [(OkCompilerLower _ _) true]
             [(ErrCompilerLower diag)
               (panic (compiler-diagnostic-message (box-get diag)))])]
-        [(ErrCompilerLoadWithPaths diag)
+        [(ResultCompilerLoadWithPaths.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
 (define (compiler-lower-smoke-stdlib-args-ok?) : bool

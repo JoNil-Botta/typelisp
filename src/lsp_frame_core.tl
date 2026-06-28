@@ -1651,8 +1651,8 @@
     (compiler-load-dirname path)
     module-name
     stdlib-roots)
-    [(OkPkgResolve resolved) (compiler-load-normalize-path resolved)]
-    [(ErrPkgResolve _) module-name]))
+    [(ResultPkgResolve.Ok resolved) (compiler-load-normalize-path resolved)]
+    [(ResultPkgResolve.Err _) module-name]))
 
 (define (lsp-resolve-import-target-at
   [text : String]

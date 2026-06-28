@@ -2395,7 +2395,9 @@
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-format-edit-text [text : String]) : String
-  text)
+  (match (format-rules-render-source-width-result text 80)
+    [(ResultFormatString.Ok formatted) formatted]
+    [(ResultFormatString.Err _) text]))
 
 (define (lsp-handle-formatting
   [id : json.Json]

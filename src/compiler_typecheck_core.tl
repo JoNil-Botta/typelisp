@@ -1441,6 +1441,22 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-fixed-point-passes : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-followup-needs-followup : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-followup-generated-imports : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-followup-module-placeholders : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-fingerprint-cache-hits : i64
     0))
 (cfg
@@ -1496,6 +1512,46 @@
     (set!
       compiler-tc-macro-generated-compare-passes
       (+ compiler-tc-macro-generated-compare-passes 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-fixed-point-pass) : unit
+    (set!
+      compiler-tc-macro-fixed-point-passes
+      (+ compiler-tc-macro-fixed-point-passes 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-reset-loop-counters) : unit
+    (begin
+      (set! compiler-tc-macro-generated-compare-passes 0)
+      (set! compiler-tc-macro-fixed-point-passes 0)
+      (set! compiler-tc-macro-followup-needs-followup 0)
+      (set! compiler-tc-macro-followup-generated-imports 0)
+      (set! compiler-tc-macro-followup-module-placeholders 0)
+      (set! compiler-tc-macro-generated-fingerprint-cache-hits 0)
+      (set! compiler-tc-macro-generated-fingerprint-cache-misses 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-followup-needs-followup) : unit
+    (set!
+      compiler-tc-macro-followup-needs-followup
+      (+ compiler-tc-macro-followup-needs-followup 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-followup-generated-imports) : unit
+    (set!
+      compiler-tc-macro-followup-generated-imports
+      (+ compiler-tc-macro-followup-generated-imports 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-followup-module-placeholders) : unit
+    (set!
+      compiler-tc-macro-followup-module-placeholders
+      (+ compiler-tc-macro-followup-module-placeholders 1))))
 
 (cfg
   compile-profile
@@ -1568,9 +1624,6 @@
       (set! compiler-tc-env-profile-marker-scans 0)
       (set! compiler-tc-env-profile-module-local-hits 0)
       (set! compiler-tc-env-profile-module-local-misses 0)
-      (set! compiler-tc-macro-generated-compare-passes 0)
-      (set! compiler-tc-macro-generated-fingerprint-cache-hits 0)
-      (set! compiler-tc-macro-generated-fingerprint-cache-misses 0)
       (compiler-tc-reinfer-profile-reset)
       (tc-lp-reset 0))))
 
@@ -1971,6 +2024,18 @@
       (compiler-tc-env-profile-line
         "module_local_misses"
         compiler-tc-env-profile-module-local-misses)
+      (compiler-tc-macro-counter-profile-line
+        "fixed_point_passes"
+        compiler-tc-macro-fixed-point-passes)
+      (compiler-tc-macro-counter-profile-line
+        "fixed_point_followup_needs_followup"
+        compiler-tc-macro-followup-needs-followup)
+      (compiler-tc-macro-counter-profile-line
+        "fixed_point_followup_generated_imports"
+        compiler-tc-macro-followup-generated-imports)
+      (compiler-tc-macro-counter-profile-line
+        "fixed_point_followup_module_placeholders"
+        compiler-tc-macro-followup-module-placeholders)
       (compiler-tc-macro-counter-profile-line
         "generated_compare_passes"
         compiler-tc-macro-generated-compare-passes)
@@ -47207,74 +47272,101 @@
       (box
         (tc-diag-at-start
           "typecheck: module macro expansion exceeded fixed-point limit")))
-    (match (macro-expand-program-pass-with-paths-and-pools-with-followup
-      program
-      paths
-      pools)
-      [(OkMacroExpandPass expanded expanded-paths pass-followup-work)
-        (match (macro-materialize-generated-imports
-          expanded
-          expanded-paths
-          stdlib-roots
-          cfgs
-          pools)
-          [(OkMacroMaterializeImport
-              materialized-decls
-              materialized-paths
-              _
-              materialized-followup-work)
-            (let
-              [materialized : AstProgram (ast-program materialized-decls)]
-              [normalized-result : ResultGenProgramWithPaths
-                (if (compiler-specialize-needed? materialized)
-                  (gen-normalize-program-with-paths-and-pools
-                    materialized
-                    materialized-paths
-                    (tc-decl-path-list-last materialized-paths "")
-                    pools)
-                  (OkGenProgramWithPaths materialized materialized-paths))]
-              (match normalized-result
-                [(OkGenProgramWithPaths normalized normalized-paths)
-                  (match normalized
-                    [(AstProgram decls-box)
-                      (let
-                        [decls : AstDeclList (box-get decls-box)]
-                        [module-placeholder-work : MacroFollowupWorkList
-                          (macro-module-placeholder-followup-work-list
-                            decls
-                            normalized-paths)]
-                        (if (or
-                          (not
-                            (macro-followup-work-list-empty? pass-followup-work))
-                          (not
-                            (macro-followup-work-list-empty?
-                              materialized-followup-work))
-                          (not
-                            (macro-followup-work-list-empty?
-                              module-placeholder-work)))
-                          (macro-expand-program-with-paths-loop-and-pools
-                            normalized
-                            normalized-paths
-                            pools
-                            stdlib-roots
-                            cfgs
-                            (- fuel 1))
-                          (OkMacroExpand normalized normalized-paths)))])]
-                [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
-          [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
-      [(ErrMacroExpandPass diag) (ErrMacroExpand diag)])))
+    (begin
+      (cfg compile-profile (compiler-tc-macro-profile-note-fixed-point-pass))
+      (match (macro-expand-program-pass-with-paths-and-pools-with-followup
+        program
+        paths
+        pools)
+        [(OkMacroExpandPass expanded expanded-paths pass-followup-work)
+          (match (macro-materialize-generated-imports
+            expanded
+            expanded-paths
+            stdlib-roots
+            cfgs
+            pools)
+            [(OkMacroMaterializeImport
+                materialized-decls
+                materialized-paths
+                _
+                materialized-followup-work)
+              (let
+                [materialized : AstProgram (ast-program materialized-decls)]
+                [normalized-result : ResultGenProgramWithPaths
+                  (if (compiler-specialize-needed? materialized)
+                    (gen-normalize-program-with-paths-and-pools
+                      materialized
+                      materialized-paths
+                      (tc-decl-path-list-last materialized-paths "")
+                      pools)
+                    (OkGenProgramWithPaths materialized materialized-paths))]
+                (match normalized-result
+                  [(OkGenProgramWithPaths normalized normalized-paths)
+                    (match normalized
+                      [(AstProgram decls-box)
+                        (let
+                          [decls : AstDeclList (box-get decls-box)]
+                          [module-placeholder-work : MacroFollowupWorkList
+                            (macro-module-placeholder-followup-work-list
+                              decls
+                              normalized-paths)]
+                          [has-pass-followup : bool
+                            (not
+                              (macro-followup-work-list-empty?
+                                pass-followup-work))]
+                          [has-materialized-followup : bool
+                            (not
+                              (macro-followup-work-list-empty?
+                                materialized-followup-work))]
+                          [has-module-placeholder-followup : bool
+                            (not
+                              (macro-followup-work-list-empty?
+                                module-placeholder-work))]
+                          (if (or
+                            has-pass-followup
+                            has-materialized-followup
+                            has-module-placeholder-followup)
+                            (begin
+                              (if has-pass-followup
+                                (cfg
+                                  compile-profile
+                                  (compiler-tc-macro-profile-note-followup-needs-followup))
+                                unit)
+                              (if has-materialized-followup
+                                (cfg
+                                  compile-profile
+                                  (compiler-tc-macro-profile-note-followup-generated-imports))
+                                unit)
+                              (if has-module-placeholder-followup
+                                (cfg
+                                  compile-profile
+                                  (compiler-tc-macro-profile-note-followup-module-placeholders))
+                                unit)
+                              (macro-expand-program-with-paths-loop-and-pools
+                                normalized
+                                normalized-paths
+                                pools
+                                stdlib-roots
+                                cfgs
+                                (- fuel 1)))
+                            (OkMacroExpand normalized normalized-paths)))])]
+                  [(ErrGenProgramWithPaths diag) (ErrMacroExpand diag)]))]
+            [(ErrMacroMaterializeImport diag) (ErrMacroExpand diag)])]
+        [(ErrMacroExpandPass diag) (ErrMacroExpand diag)]))))
 
 (define (macro-expand-program-with-paths-loop
   [program : AstProgram]
   [paths : AstDeclPathList]
   [fuel : i64]) : ResultMacroExpand
-  (macro-expand-program-with-paths-loop-and-pools
-    program
-    paths
-    (ast-node-pool-context-capture-active)
-    (vector.string-vec-new)
-    (compiler-cfg-empty)
-    fuel))
+  (begin
+    (cfg compile-profile (compiler-tc-macro-profile-reset-loop-counters))
+    (macro-expand-program-with-paths-loop-and-pools
+      program
+      paths
+      (ast-node-pool-context-capture-active)
+      (vector.string-vec-new)
+      (compiler-cfg-empty)
+      fuel)))
 
 (define (macro-expand-program-with-paths-and-pools-roots-cfg
   [program : AstProgram]
@@ -47282,13 +47374,15 @@
   [pools : AstNodePoolContext]
   [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : ResultMacroExpand
-  (macro-expand-program-with-paths-loop-and-pools
-    program
-    paths
-    pools
-    stdlib-roots
-    cfgs
-    (macro-expand-fixed-point-limit-for-program program)))
+  (begin
+    (cfg compile-profile (compiler-tc-macro-profile-reset-loop-counters))
+    (macro-expand-program-with-paths-loop-and-pools
+      program
+      paths
+      pools
+      stdlib-roots
+      cfgs
+      (macro-expand-fixed-point-limit-for-program program))))
 
 (define (macro-expand-program-with-paths-and-pools
   [program : AstProgram]

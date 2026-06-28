@@ -2973,6 +2973,842 @@
 (define (ast-program [decls : AstDeclList]) : AstProgram
   (AstProgram (box decls)))
 
+(defenum AstProgramCompaction
+  (AstProgramCompaction AstProgram AstNodePoolContext))
+
+(defstruct AstProgramCompactionRemap
+  (source-pools AstNodePoolContext)
+  (dest-pools AstNodePoolContext)
+  (expr-map (Array i64))
+  (type-map (Array i64)))
+
+(define (ast-compaction-id-map-create [count : i64]) : (Array i64)
+  (let
+    [cap : i64
+      (if (< count 1)
+        1
+        count)]
+    [slots : (Array i64) (array.make-array i64 cap)]
+    [i : i64 0]
+    (begin
+      (while (< i cap)
+        (begin
+          (array.array-set! slots i -1)
+          (set! i (+ i 1))))
+      slots)))
+
+(define (ast-compaction-remap-source-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
+  (struct-get remap source-pools))
+
+(define (ast-compaction-remap-dest-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
+  (struct-get remap dest-pools))
+
+(define (ast-compaction-remap-lifetime-list [lifetimes : AstLifetimeList]) : AstLifetimeList
+  (match lifetimes
+    [(AstLifetimeNil) AstLifetimeNil]
+    [(AstLifetimeCons name rest)
+      (AstLifetimeCons
+        name
+        (box (ast-compaction-remap-lifetime-list (box-get rest))))]))
+
+(define (ast-compaction-remap-type-list
+  [remap : AstProgramCompactionRemap]
+  [types : AstTypeList]) : AstTypeList
+  (match types
+    [(AstTypeNil) AstTypeNil]
+    [(AstTypeCons head rest)
+      (AstTypeCons
+        (ast-compaction-remap-type-id remap head)
+        (box (ast-compaction-remap-type-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-type
+  [remap : AstProgramCompactionRemap]
+  [ty : AstType]) : AstType
+  (match ty
+    [(AstTyI64) (AstTyI64)]
+    [(AstTyI32) (AstTyI32)]
+    [(AstTyI16) (AstTyI16)]
+    [(AstTyI8) (AstTyI8)]
+    [(AstTyU64) (AstTyU64)]
+    [(AstTyU32) (AstTyU32)]
+    [(AstTyU16) (AstTyU16)]
+    [(AstTyU8) (AstTyU8)]
+    [(AstTyF64) (AstTyF64)]
+    [(AstTyF32) (AstTyF32)]
+    [(AstTyBool) (AstTyBool)]
+    [(AstTyChar) (AstTyChar)]
+    [(AstTyString) (AstTyString)]
+    [(AstTyStr) (AstTyStr)]
+    [(AstTyBytes) (AstTyBytes)]
+    [(AstTyUnit) (AstTyUnit)]
+    [(AstTyNever) (AstTyNever)]
+    [(AstTyExpr) (AstTyExpr)]
+    [(AstTyExprList) (AstTyExprList)]
+    [(AstTyFunc args ret)
+      (AstTyFunc
+        (box (ast-compaction-remap-type-list remap (box-get args)))
+        (ast-compaction-remap-type-id remap ret))]
+    [(AstTyTuple elems)
+      (AstTyTuple (box (ast-compaction-remap-type-list remap (box-get elems))))]
+    [(AstTyArray elem count)
+      (AstTyArray (ast-compaction-remap-type-id remap elem) count)]
+    [(AstTyDynArray elem)
+      (AstTyDynArray (ast-compaction-remap-type-id remap elem))]
+    [(AstTyBox elem) (AstTyBox (ast-compaction-remap-type-id remap elem))]
+    [(AstTyRegion region inner)
+      (AstTyRegion region (ast-compaction-remap-type-id remap inner))]
+    [(AstTyRef region inner)
+      (AstTyRef region (ast-compaction-remap-type-id remap inner))]
+    [(AstTyMutRef region inner)
+      (AstTyMutRef region (ast-compaction-remap-type-id remap inner))]
+    [(AstTyEnum name) (AstTyEnum name)]
+    [(AstTyEnumArgs name lifetimes)
+      (AstTyEnumArgs
+        name
+        (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
+    [(AstTyStruct name) (AstTyStruct name)]
+    [(AstTyStructArgs name lifetimes)
+      (AstTyStructArgs
+        name
+        (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
+    [(AstTyVar name) (AstTyVar name)]
+    [(AstTyVarArgs name lifetimes)
+      (AstTyVarArgs
+        name
+        (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
+    [(AstTyPtr elem) (AstTyPtr (ast-compaction-remap-type-id remap elem))]
+    [(AstTyMutPtr elem) (AstTyMutPtr (ast-compaction-remap-type-id remap elem))]))
+
+(define (ast-compaction-remap-type-id
+  [remap : AstProgramCompactionRemap]
+  [id : i64]) : i64
+  (let
+    [type-map : (Array i64) (struct-get remap type-map)]
+    [cached : i64 (array.array-ref type-map id)]
+    (if (>= cached 0)
+      cached
+      (let
+        [source-pools : AstNodePoolContext
+          (ast-compaction-remap-source-pools remap)]
+        [dest-pools : AstNodePoolContext
+          (ast-compaction-remap-dest-pools remap)]
+        [source-ty : AstType (ast-node-pool-context-type-get source-pools id)]
+        [new-ty : AstType (ast-compaction-remap-type remap source-ty)]
+        [new-id : i64 (ast-node-pool-context-type-push dest-pools new-ty)]
+        (begin
+          (array.array-set! type-map id new-id)
+          new-id)))))
+
+(define (ast-compaction-remap-maybe-type
+  [remap : AstProgramCompactionRemap]
+  [maybe-ty : AstMaybeType]) : AstMaybeType
+  (match maybe-ty
+    [(AstNoType) AstNoType]
+    [(AstSomeType ty) (AstSomeType (ast-compaction-remap-type remap ty))]))
+
+(define (ast-compaction-remap-param
+  [remap : AstProgramCompactionRemap]
+  [param : AstParam]) : AstParam
+  (match param
+    [(AstParam name ty is-comptime)
+      (AstParam name (ast-compaction-remap-type remap ty) is-comptime)]))
+
+(define (ast-compaction-remap-param-list
+  [remap : AstProgramCompactionRemap]
+  [params : AstParamList]) : AstParamList
+  (match params
+    [(AstParamNil) AstParamNil]
+    [(AstParamCons param rest)
+      (AstParamCons
+        (ast-compaction-remap-param remap param)
+        (box (ast-compaction-remap-param-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-macro-param
+  [remap : AstProgramCompactionRemap]
+  [param : AstMacroParam]) : AstMacroParam
+  (match param
+    [(AstMacroParam name ty variadic)
+      (AstMacroParam name (ast-compaction-remap-type remap ty) variadic)]))
+
+(define (ast-compaction-remap-macro-param-list
+  [remap : AstProgramCompactionRemap]
+  [params : AstMacroParamList]) : AstMacroParamList
+  (match params
+    [(AstMacroParamNil) AstMacroParamNil]
+    [(AstMacroParamCons param rest)
+      (AstMacroParamCons
+        (ast-compaction-remap-macro-param remap param)
+        (box (ast-compaction-remap-macro-param-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-field-def
+  [remap : AstProgramCompactionRemap]
+  [field : AstFieldDef]) : AstFieldDef
+  (match field
+    [(AstFieldDef name ty cleanup)
+      (AstFieldDef
+        name
+        (ast-compaction-remap-type remap ty)
+        (ast-compaction-remap-field-cleanup cleanup))]))
+
+(define (ast-compaction-remap-field-cleanup [cleanup : AstFieldCleanup]) : AstFieldCleanup
+  (match cleanup
+    [(AstFieldNoCleanup) AstFieldNoCleanup]
+    [(AstFieldCleanupFn name) (AstFieldCleanupFn name)]
+    [(AstFieldOwnedCleanup) AstFieldOwnedCleanup]))
+
+(define (ast-compaction-remap-field-def-list
+  [remap : AstProgramCompactionRemap]
+  [fields : AstFieldDefList]) : AstFieldDefList
+  (match fields
+    [(AstFieldDefNil) AstFieldDefNil]
+    [(AstFieldDefCons field rest)
+      (AstFieldDefCons
+        (ast-compaction-remap-field-def remap field)
+        (box (ast-compaction-remap-field-def-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-extern-abi
+  [remap : AstProgramCompactionRemap]
+  [abi : AstExternAbi]) : AstExternAbi
+  (match abi
+    [(AstExternAbiC) AstExternAbiC]
+    [(AstExternAbiCVarargsOpen) AstExternAbiCVarargsOpen]
+    [(AstExternAbiCVarargsTyped ty)
+      (AstExternAbiCVarargsTyped (ast-compaction-remap-type remap ty))]))
+
+(define (ast-compaction-remap-extern-link-input [input : AstExternLinkInput]) : AstExternLinkInput
+  (match input
+    [(AstExternLinkLib name) (AstExternLinkLib name)]
+    [(AstExternLinkSearch dir) (AstExternLinkSearch dir)]
+    [(AstExternLinkArg arg) (AstExternLinkArg arg)]))
+
+(define (ast-compaction-remap-extern-link-input-list
+  [inputs : AstExternLinkInputList]) : AstExternLinkInputList
+  (match inputs
+    [(AstExternLinkInputNil) AstExternLinkInputNil]
+    [(AstExternLinkInputCons input rest)
+      (AstExternLinkInputCons
+        (ast-compaction-remap-extern-link-input input)
+        (box (ast-compaction-remap-extern-link-input-list (box-get rest))))]))
+
+(define (ast-compaction-remap-extern-metadata
+  [remap : AstProgramCompactionRemap]
+  [metadata : AstExternMetadata]) : AstExternMetadata
+  (match metadata
+    [(AstExternMetadata abi symbol links no-mangle)
+      (AstExternMetadata
+        (ast-compaction-remap-extern-abi remap abi)
+        symbol
+        (ast-compaction-remap-extern-link-input-list links)
+        no-mangle)]))
+
+(define (ast-compaction-remap-variant-payload-cleanup
+  [cleanup : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
+  (match cleanup
+    [(AstVariantPayloadNoCleanup) AstVariantPayloadNoCleanup]
+    [(AstVariantPayloadCleanupFn name) (AstVariantPayloadCleanupFn name)]
+    [(AstVariantPayloadOwnedCleanup) AstVariantPayloadOwnedCleanup]))
+
+(define (ast-compaction-remap-variant-payload-cleanup-list
+  [cleanups : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
+  (match cleanups
+    [(AstVariantPayloadCleanupNil) AstVariantPayloadCleanupNil]
+    [(AstVariantPayloadCleanupCons cleanup rest)
+      (AstVariantPayloadCleanupCons
+        (ast-compaction-remap-variant-payload-cleanup cleanup)
+        (box (ast-compaction-remap-variant-payload-cleanup-list (box-get rest))))]))
+
+(define (ast-compaction-remap-variant-def
+  [remap : AstProgramCompactionRemap]
+  [variant : AstVariantDef]) : AstVariantDef
+  (match variant
+    [(AstVariantDef name fields cleanups)
+      (AstVariantDef
+        name
+        (ast-compaction-remap-type-list remap fields)
+        (ast-compaction-remap-variant-payload-cleanup-list cleanups))]))
+
+(define (ast-compaction-remap-variant-def-list
+  [remap : AstProgramCompactionRemap]
+  [variants : AstVariantDefList]) : AstVariantDefList
+  (match variants
+    [(AstVariantDefNil) AstVariantDefNil]
+    [(AstVariantDefCons variant rest)
+      (AstVariantDefCons
+        (ast-compaction-remap-variant-def remap variant)
+        (box (ast-compaction-remap-variant-def-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-struct-cleanup [cleanup : AstStructCleanup]) : AstStructCleanup
+  (match cleanup
+    [(AstStructNoCleanup) AstStructNoCleanup]
+    [(AstStructCleanupFn name) (AstStructCleanupFn name)]))
+
+(define (ast-compaction-remap-enum-cleanup [cleanup : AstEnumCleanup]) : AstEnumCleanup
+  (match cleanup
+    [(AstEnumNoCleanup) AstEnumNoCleanup]
+    [(AstEnumCleanupFn name) (AstEnumCleanupFn name)]))
+
+(define (ast-compaction-remap-import-kind [kind : AstImportKind]) : AstImportKind
+  (match kind
+    [(AstImportPath) AstImportPath]
+    [(AstImportModule) AstImportModule]
+    [(AstImportMacro name module-name) (AstImportMacro name module-name)]
+    [(AstImportMacroDecls name module-name)
+      (AstImportMacroDecls name module-name)]))
+
+(define (ast-compaction-remap-import-spec [spec : AstImportSpec]) : AstImportSpec
+  (match spec
+    [(AstImportSpec kind path module-name alias span)
+      (AstImportSpec
+        (ast-compaction-remap-import-kind kind)
+        path
+        module-name
+        alias
+        span)]))
+
+(define (ast-compaction-remap-dispatch-variant [variant : AstDispatchVariant]) : AstDispatchVariant
+  (match variant
+    [(AstDispatchVariant isa name) (AstDispatchVariant isa name)]))
+
+(define (ast-compaction-remap-dispatch-variant-list
+  [variants : AstDispatchVariantList]) : AstDispatchVariantList
+  (match variants
+    [(AstDispatchVariantNil) AstDispatchVariantNil]
+    [(AstDispatchVariantCons variant rest)
+      (AstDispatchVariantCons
+        (ast-compaction-remap-dispatch-variant variant)
+        (box (ast-compaction-remap-dispatch-variant-list (box-get rest))))]))
+
+(define (ast-compaction-remap-pattern
+  [remap : AstProgramCompactionRemap]
+  [pattern : AstPattern]) : AstPattern
+  (match pattern
+    [(AstPatVar name maybe-ty)
+      (AstPatVar name (ast-compaction-remap-maybe-type remap maybe-ty))]
+    [(AstPatTuple items)
+      (AstPatTuple
+        (box (ast-compaction-remap-pattern-list remap (box-get items))))]
+    [(AstPatWildcard) AstPatWildcard]
+    [(AstPatBinding name) (AstPatBinding name)]
+    [(AstPatVariant name items)
+      (AstPatVariant
+        name
+        (box (ast-compaction-remap-pattern-list remap (box-get items))))]
+    [(AstPatLiteral lit) (AstPatLiteral lit)]))
+
+(define (ast-compaction-remap-pattern-list
+  [remap : AstProgramCompactionRemap]
+  [patterns : AstPatternList]) : AstPatternList
+  (match patterns
+    [(AstPatternNil) AstPatternNil]
+    [(AstPatternCons pattern rest)
+      (AstPatternCons
+        (box (ast-compaction-remap-pattern remap (box-get pattern)))
+        (box (ast-compaction-remap-pattern-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-let-binding
+  [remap : AstProgramCompactionRemap]
+  [binding : AstLetBinding]) : AstLetBinding
+  (match binding
+    [(AstLetBinding name maybe-ty value)
+      (AstLetBinding
+        name
+        (ast-compaction-remap-maybe-type remap maybe-ty)
+        (ast-compaction-remap-expr-id remap value))]))
+
+(define (ast-compaction-remap-let-binding-list
+  [remap : AstProgramCompactionRemap]
+  [bindings : AstLetBindingList]) : AstLetBindingList
+  (match bindings
+    [(AstLetBindingNil) AstLetBindingNil]
+    [(AstLetBindingCons binding rest)
+      (AstLetBindingCons
+        (ast-compaction-remap-let-binding remap binding)
+        (box (ast-compaction-remap-let-binding-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-resource-binding
+  [remap : AstProgramCompactionRemap]
+  [binding : AstResourceBinding]) : AstResourceBinding
+  (match binding
+    [(AstResourceBinding name init cleanup)
+      (AstResourceBinding
+        name
+        (ast-compaction-remap-expr-id remap init)
+        (ast-compaction-remap-expr-id remap cleanup))]))
+
+(define (ast-compaction-remap-resource-binding-list
+  [remap : AstProgramCompactionRemap]
+  [bindings : AstResourceBindingList]) : AstResourceBindingList
+  (match bindings
+    [(AstResourceBindingNil) AstResourceBindingNil]
+    [(AstResourceBindingCons binding rest)
+      (AstResourceBindingCons
+        (ast-compaction-remap-resource-binding remap binding)
+        (box (ast-compaction-remap-resource-binding-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-match-arm
+  [remap : AstProgramCompactionRemap]
+  [arm : AstMatchArm]) : AstMatchArm
+  (match arm
+    [(AstMatchArm pattern body)
+      (AstMatchArm
+        (ast-compaction-remap-pattern remap pattern)
+        (ast-compaction-remap-expr-id remap body))]))
+
+(define (ast-compaction-remap-match-arm-list
+  [remap : AstProgramCompactionRemap]
+  [arms : AstMatchArmList]) : AstMatchArmList
+  (match arms
+    [(AstMatchArmNil) AstMatchArmNil]
+    [(AstMatchArmCons arm rest)
+      (AstMatchArmCons
+        (ast-compaction-remap-match-arm remap arm)
+        (box (ast-compaction-remap-match-arm-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-expr-list
+  [remap : AstProgramCompactionRemap]
+  [exprs : AstExprList]) : AstExprList
+  (match exprs
+    [(AstExprNil) AstExprNil]
+    [(AstExprCons head rest)
+      (AstExprCons
+        (ast-compaction-remap-expr-id remap head)
+        (box (ast-compaction-remap-expr-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-expr
+  [remap : AstProgramCompactionRemap]
+  [expr : AstExpr]) : AstExpr
+  (match expr
+    [(AstExprSpanned inner span)
+      (AstExprSpanned (ast-compaction-remap-expr-id remap inner) span)]
+    [(AstExprLiteral lit) (AstExprLiteral lit)]
+    [(AstExprVar name) (AstExprVar name)]
+    [(AstExprBinary op left right)
+      (AstExprBinary
+        op
+        (ast-compaction-remap-expr-id remap left)
+        (ast-compaction-remap-expr-id remap right))]
+    [(AstExprUnary op inner)
+      (AstExprUnary op (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprCall callee args)
+      (AstExprCall
+        (ast-compaction-remap-expr-id remap callee)
+        (ast-compaction-remap-expr-list remap args))]
+    [(AstExprIf cond then-expr else-expr)
+      (AstExprIf
+        (ast-compaction-remap-expr-id remap cond)
+        (ast-compaction-remap-expr-id remap then-expr)
+        (ast-compaction-remap-expr-id remap else-expr))]
+    [(AstExprLet payload)
+      (match (box-get payload)
+        [(AstLet bindings body)
+          (AstExprLet
+            (box
+              (AstLet
+                (ast-compaction-remap-let-binding-list remap bindings)
+                (ast-compaction-remap-expr-id remap body))))])]
+    [(AstExprLambda payload)
+      (match (box-get payload)
+        [(AstLambda params ret body)
+          (AstExprLambda
+            (box
+              (AstLambda
+                (ast-compaction-remap-param-list remap params)
+                (ast-compaction-remap-maybe-type remap ret)
+                (ast-compaction-remap-expr-id remap body))))])]
+    [(AstExprTuple items)
+      (AstExprTuple (ast-compaction-remap-expr-list remap items))]
+    [(AstExprTupleRef target index)
+      (AstExprTupleRef (ast-compaction-remap-expr-id remap target) index)]
+    [(AstExprArray items)
+      (AstExprArray (ast-compaction-remap-expr-list remap items))]
+    [(AstExprMakeArray elem size)
+      (AstExprMakeArray (ast-compaction-remap-type remap elem) size)]
+    [(AstExprArrayRef target index)
+      (AstExprArrayRef
+        (ast-compaction-remap-expr-id remap target)
+        (ast-compaction-remap-expr-id remap index))]
+    [(AstExprArraySet target index value)
+      (AstExprArraySet
+        (ast-compaction-remap-expr-id remap target)
+        (ast-compaction-remap-expr-id remap index)
+        (ast-compaction-remap-expr-id remap value))]
+    [(AstExprArrayPush target value)
+      (AstExprArrayPush
+        (ast-compaction-remap-expr-id remap target)
+        (ast-compaction-remap-expr-id remap value))]
+    [(AstExprStringRef target index)
+      (AstExprStringRef
+        (ast-compaction-remap-expr-id remap target)
+        (ast-compaction-remap-expr-id remap index))]
+    [(AstExprWhile cond body)
+      (AstExprWhile
+        (ast-compaction-remap-expr-id remap cond)
+        (ast-compaction-remap-expr-id remap body))]
+    [(AstExprBegin exprs)
+      (AstExprBegin (ast-compaction-remap-expr-list remap exprs))]
+    [(AstExprUnsafe exprs)
+      (AstExprUnsafe (ast-compaction-remap-expr-list remap exprs))]
+    [(AstExprSet name value)
+      (AstExprSet name (ast-compaction-remap-expr-id remap value))]
+    [(AstExprAnn inner ty)
+      (AstExprAnn
+        (ast-compaction-remap-expr-id remap inner)
+        (ast-compaction-remap-type remap ty))]
+    [(AstExprCast inner ty)
+      (AstExprCast
+        (ast-compaction-remap-expr-id remap inner)
+        (ast-compaction-remap-type remap ty))]
+    [(AstExprBorrow mutable lifetime inner)
+      (AstExprBorrow
+        mutable
+        lifetime
+        (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprMatch payload)
+      (match (box-get payload)
+        [(AstMatch scrutinee arms)
+          (AstExprMatch
+            (box
+              (AstMatch
+                (ast-compaction-remap-expr-id remap scrutinee)
+                (ast-compaction-remap-match-arm-list remap arms))))])]
+    [(AstExprForeach payload)
+      (match (box-get payload)
+        [(AstForeach name index-ty start end body)
+          (AstExprForeach
+            (box
+              (AstForeach
+                name
+                (ast-compaction-remap-type remap index-ty)
+                (ast-compaction-remap-expr-id remap start)
+                (ast-compaction-remap-expr-id remap end)
+                (ast-compaction-remap-expr-id remap body))))])]
+    [(AstExprSpmdReduce payload)
+      (match (box-get payload)
+        [(AstSpmdReduce op index index-ty start end init value)
+          (AstExprSpmdReduce
+            (box
+              (AstSpmdReduce
+                op
+                index
+                (ast-compaction-remap-type remap index-ty)
+                (ast-compaction-remap-expr-id remap start)
+                (ast-compaction-remap-expr-id remap end)
+                (ast-compaction-remap-expr-id remap init)
+                (ast-compaction-remap-expr-id remap value))))])]
+    [(AstExprSpmdScan payload)
+      (match (box-get payload)
+        [(AstSpmdScan
+            op
+            index
+            index-ty
+            start
+            end
+            prefix
+            prefix-ty
+            init
+            value
+            body)
+          (AstExprSpmdScan
+            (box
+              (AstSpmdScan
+                op
+                index
+                (ast-compaction-remap-type remap index-ty)
+                (ast-compaction-remap-expr-id remap start)
+                (ast-compaction-remap-expr-id remap end)
+                prefix
+                (ast-compaction-remap-type remap prefix-ty)
+                (ast-compaction-remap-expr-id remap init)
+                (ast-compaction-remap-expr-id remap value)
+                (ast-compaction-remap-expr-id remap body))))])]
+    [(AstExprSpmdBroadcast value lane)
+      (AstExprSpmdBroadcast
+        (ast-compaction-remap-expr-id remap value)
+        (ast-compaction-remap-expr-id remap lane))]
+    [(AstExprSpmdShuffle value lane)
+      (AstExprSpmdShuffle
+        (ast-compaction-remap-expr-id remap value)
+        (ast-compaction-remap-expr-id remap lane))]
+    [(AstExprSpmdProgramIndex) AstExprSpmdProgramIndex]
+    [(AstExprSpmdProgramCount) AstExprSpmdProgramCount]
+    [(AstExprStructGet target field)
+      (AstExprStructGet (ast-compaction-remap-expr-id remap target) field)]
+    [(AstExprStructSet target field value)
+      (AstExprStructSet
+        (ast-compaction-remap-expr-id remap target)
+        field
+        (ast-compaction-remap-expr-id remap value))]
+    [(AstExprWithRegion region body)
+      (AstExprWithRegion region (ast-compaction-remap-expr-list remap body))]
+    [(AstExprWithEscape escape body)
+      (AstExprWithEscape
+        (ast-compaction-remap-expr-id remap escape)
+        (ast-compaction-remap-expr-list remap body))]
+    [(AstExprWithScratch body)
+      (AstExprWithScratch (ast-compaction-remap-expr-list remap body))]
+    [(AstExprInArena arena body)
+      (AstExprInArena
+        (ast-compaction-remap-expr-id remap arena)
+        (ast-compaction-remap-expr-list remap body))]
+    [(AstExprWithResource payload)
+      (match (box-get payload)
+        [(AstWithResource bindings body)
+          (AstExprWithResource
+            (box
+              (AstWithResource
+                (ast-compaction-remap-resource-binding-list remap bindings)
+                (ast-compaction-remap-expr-list remap body))))])]
+    [(AstExprBox value) (AstExprBox (ast-compaction-remap-expr-id remap value))]
+    [(AstExprBoxGet value)
+      (AstExprBoxGet (ast-compaction-remap-expr-id remap value))]
+    [(AstExprBoxTake value)
+      (AstExprBoxTake (ast-compaction-remap-expr-id remap value))]
+    [(AstExprBoxSet target value)
+      (AstExprBoxSet
+        (ast-compaction-remap-expr-id remap target)
+        (ast-compaction-remap-expr-id remap value))]
+    [(AstExprTypeLiteral ty)
+      (AstExprTypeLiteral (ast-compaction-remap-type remap ty))]
+    [(AstExprInit maybe-ty)
+      (AstExprInit (ast-compaction-remap-maybe-type remap maybe-ty))]
+    [(AstExprComptime inner)
+      (AstExprComptime (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprQuote inner)
+      (AstExprQuote (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprQuasiquote inner)
+      (AstExprQuasiquote (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprUnquote inner)
+      (AstExprUnquote (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprUnquoteSplicing inner)
+      (AstExprUnquoteSplicing (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprBracketClause items)
+      (AstExprBracketClause (ast-compaction-remap-expr-list remap items))]
+    [(AstExprTry inner) (AstExprTry (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprReturn inner)
+      (AstExprReturn (ast-compaction-remap-expr-id remap inner))]
+    [(AstExprPtrNull ty) (AstExprPtrNull (ast-compaction-remap-type remap ty))]
+    [(AstExprPtrNullCheck ptr)
+      (AstExprPtrNullCheck (ast-compaction-remap-expr-id remap ptr))]
+    [(AstExprPtrAddrOf name) (AstExprPtrAddrOf name)]
+    [(AstExprPtrRead ptr)
+      (AstExprPtrRead (ast-compaction-remap-expr-id remap ptr))]
+    [(AstExprPtrWrite ptr value)
+      (AstExprPtrWrite
+        (ast-compaction-remap-expr-id remap ptr)
+        (ast-compaction-remap-expr-id remap value))]
+    [(AstExprPtrOffset ptr offset)
+      (AstExprPtrOffset
+        (ast-compaction-remap-expr-id remap ptr)
+        (ast-compaction-remap-expr-id remap offset))]
+    [(AstExprPtrCast ptr ty)
+      (AstExprPtrCast
+        (ast-compaction-remap-expr-id remap ptr)
+        (ast-compaction-remap-type remap ty))]
+    [(AstExprPtrToInt ptr)
+      (AstExprPtrToInt (ast-compaction-remap-expr-id remap ptr))]
+    [(AstExprIntToPtr value ty)
+      (AstExprIntToPtr
+        (ast-compaction-remap-expr-id remap value)
+        (ast-compaction-remap-type remap ty))]
+    [(AstExprStringData value)
+      (AstExprStringData (ast-compaction-remap-expr-id remap value))]
+    [(AstExprStringFromBytes data len)
+      (AstExprStringFromBytes
+        (ast-compaction-remap-expr-id remap data)
+        (ast-compaction-remap-expr-id remap len))]
+    [(AstExprArrayData value)
+      (AstExprArrayData (ast-compaction-remap-expr-id remap value))]
+    [(AstExprBinaryData name) (AstExprBinaryData name)]
+    [(AstExprProgramArgc) AstExprProgramArgc]
+    [(AstExprProgramArgv) AstExprProgramArgv]
+    [(AstExprProgramEnvp) AstExprProgramEnvp]
+    [(AstExprCpuIdEax leaf subleaf)
+      (AstExprCpuIdEax
+        (ast-compaction-remap-expr-id remap leaf)
+        (ast-compaction-remap-expr-id remap subleaf))]
+    [(AstExprCpuIdEbx leaf subleaf)
+      (AstExprCpuIdEbx
+        (ast-compaction-remap-expr-id remap leaf)
+        (ast-compaction-remap-expr-id remap subleaf))]
+    [(AstExprCpuIdEcx leaf subleaf)
+      (AstExprCpuIdEcx
+        (ast-compaction-remap-expr-id remap leaf)
+        (ast-compaction-remap-expr-id remap subleaf))]
+    [(AstExprCpuIdEdx leaf subleaf)
+      (AstExprCpuIdEdx
+        (ast-compaction-remap-expr-id remap leaf)
+        (ast-compaction-remap-expr-id remap subleaf))]
+    [(AstExprXgetbv index)
+      (AstExprXgetbv (ast-compaction-remap-expr-id remap index))]
+    [(AstExprSyscall args)
+      (AstExprSyscall (ast-compaction-remap-expr-list remap args))]))
+
+(define (ast-compaction-remap-expr-id
+  [remap : AstProgramCompactionRemap]
+  [id : i64]) : i64
+  (let
+    [expr-map : (Array i64) (struct-get remap expr-map)]
+    [cached : i64 (array.array-ref expr-map id)]
+    (if (>= cached 0)
+      cached
+      (let
+        [source-pools : AstNodePoolContext
+          (ast-compaction-remap-source-pools remap)]
+        [dest-pools : AstNodePoolContext
+          (ast-compaction-remap-dest-pools remap)]
+        [source-expr : AstExpr (ast-node-pool-context-expr-get source-pools id)]
+        [new-expr : AstExpr (ast-compaction-remap-expr remap source-expr)]
+        [new-id : i64 (ast-node-pool-context-expr-push dest-pools new-expr)]
+        (begin
+          (array.array-set! expr-map id new-id)
+          new-id)))))
+
+(define (ast-compaction-remap-generated-meta
+  [remap : AstProgramCompactionRemap]
+  [meta : AstGeneratedDeclMeta]) : AstGeneratedDeclMeta
+  (match meta
+    [(AstNoGeneratedDeclMeta) AstNoGeneratedDeclMeta]
+    [(AstSomeGeneratedDeclMeta generator item args key)
+      (AstSomeGeneratedDeclMeta
+        generator
+        item
+        (ast-compaction-remap-expr-list remap args)
+        key)]))
+
+(define (ast-compaction-remap-decl
+  [remap : AstProgramCompactionRemap]
+  [decl : AstDecl]) : AstDecl
+  (match decl
+    [(AstDeclModule name) (AstDeclModule name)]
+    [(AstDeclDef name maybe-ty value)
+      (AstDeclDef
+        name
+        (ast-compaction-remap-maybe-type remap maybe-ty)
+        (ast-compaction-remap-expr-id remap value))]
+    [(AstDeclDefFn name params ret body export)
+      (AstDeclDefFn
+        name
+        (ast-compaction-remap-param-list remap params)
+        (ast-compaction-remap-type remap ret)
+        (ast-compaction-remap-expr-id remap body)
+        export)]
+    [(AstDeclDefMacro name params ret body)
+      (AstDeclDefMacro
+        name
+        (ast-compaction-remap-macro-param-list remap params)
+        (ast-compaction-remap-type remap ret)
+        (ast-compaction-remap-expr-id remap body))]
+    [(AstDeclExtern name kind metadata ty)
+      (AstDeclExtern
+        name
+        kind
+        (ast-compaction-remap-extern-metadata remap metadata)
+        (ast-compaction-remap-type remap ty))]
+    [(AstDeclDefEnum name cleanup variants)
+      (AstDeclDefEnum
+        name
+        (ast-compaction-remap-enum-cleanup cleanup)
+        (ast-compaction-remap-variant-def-list remap variants))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (AstDeclDefEnumLifetimes
+        name
+        (ast-compaction-remap-lifetime-list lifetimes)
+        (ast-compaction-remap-enum-cleanup cleanup)
+        (ast-compaction-remap-variant-def-list remap variants))]
+    [(AstDeclDefStruct name repr cleanup fields)
+      (AstDeclDefStruct
+        name
+        repr
+        (ast-compaction-remap-struct-cleanup cleanup)
+        (ast-compaction-remap-field-def-list remap fields))]
+    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+      (AstDeclDefStructLifetimes
+        name
+        (ast-compaction-remap-lifetime-list lifetimes)
+        repr
+        (ast-compaction-remap-struct-cleanup cleanup)
+        (ast-compaction-remap-field-def-list remap fields))]
+    [(AstDeclImport spec)
+      (AstDeclImport (ast-compaction-remap-import-spec spec))]
+    [(AstDeclIncludeStr name path) (AstDeclIncludeStr name path)]
+    [(AstDeclIncludeBin name path) (AstDeclIncludeBin name path)]
+    [(AstDeclDefDispatch name variants)
+      (AstDeclDefDispatch
+        name
+        (ast-compaction-remap-dispatch-variant-list variants))]
+    [(AstDeclTest name body span)
+      (AstDeclTest name (ast-compaction-remap-expr-id remap body) span)]
+    [(AstDeclUnsafe inner)
+      (AstDeclUnsafe (box (ast-compaction-remap-decl remap (box-get inner))))]
+    [(AstDeclComptimeDecl meta inner)
+      (AstDeclComptimeDecl
+        (ast-compaction-remap-generated-meta remap meta)
+        (box (ast-compaction-remap-decl remap (box-get inner))))]))
+
+(define (ast-compaction-remap-decl-list
+  [remap : AstProgramCompactionRemap]
+  [decls : AstDeclList]) : AstDeclList
+  (match decls
+    [(AstDeclNil) AstDeclNil]
+    [(AstDeclCons decl rest)
+      (AstDeclCons
+        (ast-compaction-remap-decl remap decl)
+        (box (ast-compaction-remap-decl-list remap (box-get rest))))]))
+
+(define (ast-compaction-remap-program
+  [remap : AstProgramCompactionRemap]
+  [program : AstProgram]) : AstProgram
+  (match program
+    [(AstProgram decls)
+      (AstProgram (box (ast-compaction-remap-decl-list remap (box-get decls))))]))
+
+;: Copy `program` from `source-pools` into a reset `dest-pools`, remapping every
+;: reachable expression id and recursive type id into dense destination ids.
+;: `dest-pools` is expected to be distinct from `source-pools`.
+(define (ast-program-compact-with-pools
+  [source-pools : AstNodePoolContext]
+  [dest-pools : AstNodePoolContext]
+  [program : AstProgram]) : AstProgramCompaction
+  (begin
+    (ast-node-pool-context-reset-to! dest-pools 0 0)
+    (let
+      [expr-map : (Array i64)
+        (ast-compaction-id-map-create
+          (ast-node-pool-context-expr-len source-pools))]
+      [type-map : (Array i64)
+        (ast-compaction-id-map-create
+          (ast-node-pool-context-type-len source-pools))]
+      [remap : AstProgramCompactionRemap
+        (AstProgramCompactionRemap source-pools dest-pools expr-map type-map)]
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
+      [out-program : AstProgram
+        (begin
+          (unsafe
+            (arena.tl_arena_set dest-arena))
+          (let
+            [out : AstProgram (ast-compaction-remap-program remap program)]
+            (begin
+              (unsafe
+                (arena.tl_arena_set prev-arena))
+              out)))]
+      (AstProgramCompaction
+        out-program
+        (ast-node-pool-context-snapshot dest-pools)))))
+
+;: Compact `program` into a newly allocated pool context sized from the source.
+(define (ast-program-compact
+  [source-pools : AstNodePoolContext]
+  [program : AstProgram]) : AstProgramCompaction
+  (let
+    [dest-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create
+          (ast-node-pool-context-expr-len source-pools))
+        (ast-type-node-pool-state-create
+          (ast-node-pool-context-type-len source-pools)))]
+    (ast-program-compact-with-pools source-pools dest-pools program)))
+
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty
     [(AstTyI64) 1]

@@ -1,4 +1,5 @@
 (import stdlib.serialize)
+(import stdlib.array)
 (import stdlib.string)
 (import serialize_toy_format as toy)
 
@@ -13,15 +14,38 @@
   (age i32)
   (active bool)
   (score f64)
-  (home Address))
+  (home Address)
+  (scores (Array i64 3))
+  (previous (Array Address 2))
+  (samples (Array i64)))
 
 (import (serialize.serialize toy Person) as person_ser)
 (import (serialize.serialize toy Person) as person_ser_again)
 
-(define (serialize-address-ok? [home : Address]) : bool
+(define (serialize-address-eq? [home : Address] [zip : i64] [city : String]) : bool
   (and
-    (= (struct-get home zip) 12345)
-    (string.string-eq (struct-get home city) "London")))
+    (= (struct-get home zip) zip)
+    (string.string-eq (struct-get home city) city)))
+
+(define (serialize-address-ok? [home : Address]) : bool
+  (serialize-address-eq? home 12345 "London"))
+
+(define (serialize-scores-ok? [scores : (Array i64 3)]) : bool
+  (and
+    (= (array.array-ref scores 0) 4)
+    (= (array.array-ref scores 1) 5)
+    (= (array.array-ref scores 2) 6)))
+
+(define (serialize-samples-ok? [samples : (Array i64)]) : bool
+  (and
+    (= (array.array-length samples) 2)
+    (= (array.array-ref samples 0) 7)
+    (= (array.array-ref samples 1) 8)))
+
+(define (serialize-previous-ok? [previous : (Array Address 2)]) : bool
+  (and
+    (serialize-address-eq? (array.array-ref previous 0) 111 "Oxford")
+    (serialize-address-eq? (array.array-ref previous 1) 222 "Paris")))
 
 (define (serialize-person-ok? [person : Person]) : bool
   (and
@@ -29,38 +53,119 @@
     (= (struct-get person age) (cast 36 : i32))
     (struct-get person active)
     (= (struct-get person score) 9.5)
-    (serialize-address-ok? (struct-get person home))))
+    (serialize-address-ok? (struct-get person home))
+    (serialize-scores-ok? (struct-get person scores))
+    (serialize-previous-ok? (struct-get person previous))
+    (serialize-samples-ok? (struct-get person samples))))
 
-(define (serialize-home-value-ok? [value : toy.Value]) : bool
+(define (serialize-address-value-city-ok?
+  [value : toy.Value]
+  [expected-city : String]) : bool
   (match value
     [(toy.Object fields)
       (match (toy.field-list-get (box-get fields) "city")
-        [(toy.Found city)
-          (match city
-            [(toy.Text found) (string.string-eq found "London")]
+        [(toy.Found city-value)
+          (match city-value
+            [(toy.Text found) (string.string-eq found expected-city)]
             [_ false])]
         [(toy.Missing) false])]
+    [_ false]))
+
+(define (serialize-home-value-ok? [value : toy.Value]) : bool
+  (serialize-address-value-city-ok? value "London"))
+
+(define (serialize-scores-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 3)
+        (match (toy.value-list-get (box-get items) 2)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 6)]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-samples-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 2)
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 8)]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-previous-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 2)
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item) (serialize-address-value-city-ok? item "Paris")]
+          [(toy.Missing) false]))]
     [_ false]))
 
 (define (serialize-encoded-shape-ok? [value : toy.Value]) : bool
   (match value
     [(toy.Object fields)
-      (match (toy.field-list-get (box-get fields) "home")
-        [(toy.Found home) (serialize-home-value-ok? home)]
-        [(toy.Missing) false])]
+      (and
+        (match (toy.field-list-get (box-get fields) "home")
+          [(toy.Found home) (serialize-home-value-ok? home)]
+          [(toy.Missing) false])
+        (match (toy.field-list-get (box-get fields) "scores")
+          [(toy.Found scores) (serialize-scores-value-ok? scores)]
+          [(toy.Missing) false])
+        (match (toy.field-list-get (box-get fields) "previous")
+          [(toy.Found previous) (serialize-previous-value-ok? previous)]
+          [(toy.Missing) false])
+        (match (toy.field-list-get (box-get fields) "samples")
+          [(toy.Found samples) (serialize-samples-value-ok? samples)]
+          [(toy.Missing) false]))]
     [_ false]))
+
+(define (serialize-previous-addresses) : (Array Address 2)
+  (array (Address 111 "Oxford") (Address 222 "Paris")))
+
+(define (serialize-make-samples) : (Array i64)
+  (let
+    [samples : (Array i64) (array.make-array i64 2)]
+    (begin
+      (array.array-set! samples 0 7)
+      (array.array-set! samples 1 8)
+      samples)))
 
 (define (serialize-encoded-shape-roundtrip-ok?) : bool
   (let
     [person : Person
-      (Person "Ada" (cast 36 : i32) true 9.5 (Address 12345 "London"))]
+      (Person
+        "Ada"
+        (cast 36 : i32)
+        true
+        9.5
+        (Address 12345 "London")
+        (array 4 5 6)
+        (serialize-previous-addresses)
+        (serialize-make-samples))]
     [encoded : toy.Value (person_ser.encode person)]
     (serialize-encoded-shape-ok? encoded)))
 
 (define (serialize-roundtrip-ok?) : bool
   (let
     [person : Person
-      (Person "Ada" (cast 36 : i32) true 9.5 (Address 12345 "London"))]
+      (Person
+        "Ada"
+        (cast 36 : i32)
+        true
+        9.5
+        (Address 12345 "London")
+        (array 4 5 6)
+        (serialize-previous-addresses)
+        (serialize-make-samples))]
     [encoded : toy.Value (person_ser.encode person)]
     (match (person_ser.decode encoded)
       [(person_ser.Ok parsed) (serialize-person-ok? parsed)]
@@ -104,7 +209,10 @@
                             (cast 1 : i32)
                             false
                             1.0
-                            (Address 12345 "London")))
+                            (Address 12345 "London")
+                            (array 4 5 6)
+                            (serialize-previous-addresses)
+                            (serialize-make-samples)))
                         (box toy.FieldNil)))))))))))))
 
 (define (serialize-missing-field-ok?) : bool
@@ -120,7 +228,15 @@
 (define (serialize-direct-parse-ok?) : bool
   (let
     [person : Person
-      (Person "Ada" (cast 36 : i32) true 9.5 (Address 12345 "London"))]
+      (Person
+        "Ada"
+        (cast 36 : i32)
+        true
+        9.5
+        (Address 12345 "London")
+        (array 4 5 6)
+        (serialize-previous-addresses)
+        (serialize-make-samples))]
     [encoded : toy.Value (person_ser_again.encode person)]
     (match (person_ser_again.decode encoded)
       [(person_ser_again.Ok parsed) (serialize-person-ok? parsed)]

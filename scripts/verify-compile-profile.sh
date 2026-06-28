@@ -40,6 +40,8 @@ CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
 VECTOR_STDOUT="$WORKDIR/profile-vector.stdout"
 VECTOR_STDERR="$WORKDIR/profile-vector.stderr"
+GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
+GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
 REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
@@ -102,6 +104,34 @@ assert_line_count_in() {
     if [ "$_got" != "$_want" ]; then
         show_failure_logs "$_stdout" "$_stderr"
         fail "expected $_want profile rows for: $_text; got $_got"
+    fi
+}
+
+assert_line_count_at_most_in() {
+    _file=$1
+    _text=$2
+    _max=$3
+    _stdout=$4
+    _stderr=$5
+    _got=$(grep -F -- "$_text" "$_file" | wc -l | tr -d '[:space:]')
+    if [ "$_got" -gt "$_max" ]; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected at most $_max profile rows for: $_text; got $_got"
+    fi
+}
+
+assert_profile_counter_at_least_in() {
+    _file=$1
+    _phase=$2
+    _min=$3
+    _stdout=$4
+    _stderr=$5
+    if ! awk -F'|' -v phase="$_phase" -v min="$_min" '
+        $1 == "compile-profile" && $2 == phase && ($3 + 0) >= min { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$_file"; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected profile counter $_phase to be at least $_min"
     fi
 }
 
@@ -173,6 +203,10 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_fingerprint_cache_hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_fingerprint_cache_misses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_passes|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_generated_imports|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
 
@@ -195,6 +229,38 @@ assert_contains_in \
     "stdlib.vector/vector-family arity=3 calls=2" \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
+
+echo "[compile-profile] check generated import fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$GEN_IMPORT_STDOUT" 2> "$GEN_IMPORT_STDERR"; then
+    show_failure_logs "$GEN_IMPORT_STDOUT" "$GEN_IMPORT_STDERR"
+    fail "profiled generated import fixture check failed"
+fi
+
+assert_contains_in \
+    "$GEN_IMPORT_STDERR" \
+    "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|" \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
+assert_contains_in \
+    "$GEN_IMPORT_STDERR" \
+    "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|" \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
+assert_profile_counter_at_least_in \
+    "$GEN_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_passes" \
+    2 \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
+assert_profile_counter_at_least_in \
+    "$GEN_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_followup_generated_imports" \
+    1 \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
 
 echo "[compile-profile] check generated module replay lazy fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \
@@ -225,6 +291,28 @@ assert_contains_in \
     "compile-profile|typecheck.macro.generated_fingerprint_cache_misses|0|0|0|0" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro.fixed_point_followup_needs_followup|" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro.fixed_point_followup_generated_imports|" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_profile_counter_at_least_in \
+    "$REPLAY_STDERR" \
+    "typecheck.macro.fixed_point_passes" \
+    2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_profile_counter_at_least_in \
+    "$REPLAY_STDERR" \
+    "typecheck.macro.fixed_point_followup_module_placeholders" \
+    1 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
 assert_line_count_in \
     "$REPLAY_STDERR" \
     "profile-replay-user arity=1 calls=1" \
@@ -235,6 +323,21 @@ assert_line_count_in \
     "$REPLAY_STDERR" \
     "profile-replay-nested arity=2 calls=1" \
     2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+# The repeated profile-replay-user import is structurally identical. It must not
+# add another whole-program macro setup/walk pass just to discover no new work.
+# Keep this as an upper bound so future local-worklist fixes can reduce it.
+assert_line_count_at_most_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro_setup|" \
+    7 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_line_count_at_most_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro_walk|" \
+    7 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 

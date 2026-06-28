@@ -175,9 +175,32 @@
   (CompilerBackendPeepholeNoMove)
   (CompilerBackendPeepholeMove String String))
 
+;; Per-register reload-elision owner map: for each general-purpose register
+;; tracked by the register allocator, the exact stack-slot operand string that
+;; the register currently mirrors (loaded from and not yet clobbered), or "" if
+;; the register's contents are unknown / not a known frame slot. Used by the
+;; reload-elision peephole to drop redundant `movq <slot>, <reg>` reloads for
+;; every register (not just %rax). %rbp and %rsp are intentionally NOT tracked
+;; (frame/stack pointers); writing either invalidates the whole map.
+(defstruct CompilerBackendPeepholeOwners
+  (rax String)
+  (rcx String)
+  (rdx String)
+  (rbx String)
+  (rsi String)
+  (rdi String)
+  (r8 String)
+  (r9 String)
+  (r10 String)
+  (r11 String)
+  (r12 String)
+  (r13 String)
+  (r14 String)
+  (r15 String))
+
 (defstruct CompilerBackendPeepholeEmitResult
   (buf text_buf.TextBuf)
-  (rax-owner String))
+  (owners CompilerBackendPeepholeOwners))
 
 (defenum CompilerBackendMaybeI64
   (CompilerBackendNoI64)
@@ -37753,6 +37776,215 @@ tl_memchr:
     [(CompilerBackendPeepholeNoMove)
       (string.substring asm next-start (- next-end next-start))]))
 
+;; All-unknown owner map: every tracked register mirrors no known slot.
+(define (compiler-backend-peephole-owners-empty) : CompilerBackendPeepholeOwners
+  (CompilerBackendPeepholeOwners "" "" "" "" "" "" "" "" "" "" "" "" "" ""))
+
+;; True iff `operand` is exactly one of the 14 general-purpose registers owned
+;; by the register allocator. %rbp and %rsp are deliberately excluded.
+(define (compiler-backend-peephole-owner-reg? [operand : String]) : bool
+  (or
+    (string.string-eq operand "%rax")
+    (string.string-eq operand "%rcx")
+    (string.string-eq operand "%rdx")
+    (string.string-eq operand "%rbx")
+    (string.string-eq operand "%rsi")
+    (string.string-eq operand "%rdi")
+    (string.string-eq operand "%r8")
+    (string.string-eq operand "%r9")
+    (string.string-eq operand "%r10")
+    (string.string-eq operand "%r11")
+    (string.string-eq operand "%r12")
+    (string.string-eq operand "%r13")
+    (string.string-eq operand "%r14")
+    (string.string-eq operand "%r15")))
+
+;; Slot currently mirrored by `reg`, or "" if unknown / `reg` is not tracked.
+(define (compiler-backend-peephole-owners-get
+  [owners : CompilerBackendPeepholeOwners]
+  [reg : String]) : String
+  (cond
+    [(string.string-eq reg "%rax") (struct-get owners rax)]
+    [(string.string-eq reg "%rcx") (struct-get owners rcx)]
+    [(string.string-eq reg "%rdx") (struct-get owners rdx)]
+    [(string.string-eq reg "%rbx") (struct-get owners rbx)]
+    [(string.string-eq reg "%rsi") (struct-get owners rsi)]
+    [(string.string-eq reg "%rdi") (struct-get owners rdi)]
+    [(string.string-eq reg "%r8") (struct-get owners r8)]
+    [(string.string-eq reg "%r9") (struct-get owners r9)]
+    [(string.string-eq reg "%r10") (struct-get owners r10)]
+    [(string.string-eq reg "%r11") (struct-get owners r11)]
+    [(string.string-eq reg "%r12") (struct-get owners r12)]
+    [(string.string-eq reg "%r13") (struct-get owners r13)]
+    [(string.string-eq reg "%r14") (struct-get owners r14)]
+    [(string.string-eq reg "%r15") (struct-get owners r15)]
+    [else ""]))
+
+;; Owner map with `reg`'s slot set to `slot` ("" clears it). No-op when `reg`
+;; is not a tracked register (e.g. an immediate or untracked register source).
+(define (compiler-backend-peephole-owners-set-reg
+  [owners : CompilerBackendPeepholeOwners]
+  [reg : String]
+  [slot : String]) : CompilerBackendPeepholeOwners
+  (CompilerBackendPeepholeOwners
+    (if (string.string-eq reg "%rax") slot (struct-get owners rax))
+    (if (string.string-eq reg "%rcx") slot (struct-get owners rcx))
+    (if (string.string-eq reg "%rdx") slot (struct-get owners rdx))
+    (if (string.string-eq reg "%rbx") slot (struct-get owners rbx))
+    (if (string.string-eq reg "%rsi") slot (struct-get owners rsi))
+    (if (string.string-eq reg "%rdi") slot (struct-get owners rdi))
+    (if (string.string-eq reg "%r8") slot (struct-get owners r8))
+    (if (string.string-eq reg "%r9") slot (struct-get owners r9))
+    (if (string.string-eq reg "%r10") slot (struct-get owners r10))
+    (if (string.string-eq reg "%r11") slot (struct-get owners r11))
+    (if (string.string-eq reg "%r12") slot (struct-get owners r12))
+    (if (string.string-eq reg "%r13") slot (struct-get owners r13))
+    (if (string.string-eq reg "%r14") slot (struct-get owners r14))
+    (if (string.string-eq reg "%r15") slot (struct-get owners r15))))
+
+;; Owner map with every register that mirrored `slot` reset to unknown. Used
+;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
+(define (compiler-backend-peephole-owners-clear-slot
+  [owners : CompilerBackendPeepholeOwners]
+  [slot : String]) : CompilerBackendPeepholeOwners
+  (CompilerBackendPeepholeOwners
+    (if (string.string-eq (struct-get owners rax) slot) "" (struct-get owners rax))
+    (if (string.string-eq (struct-get owners rcx) slot) "" (struct-get owners rcx))
+    (if (string.string-eq (struct-get owners rdx) slot) "" (struct-get owners rdx))
+    (if (string.string-eq (struct-get owners rbx) slot) "" (struct-get owners rbx))
+    (if (string.string-eq (struct-get owners rsi) slot) "" (struct-get owners rsi))
+    (if (string.string-eq (struct-get owners rdi) slot) "" (struct-get owners rdi))
+    (if (string.string-eq (struct-get owners r8) slot) "" (struct-get owners r8))
+    (if (string.string-eq (struct-get owners r9) slot) "" (struct-get owners r9))
+    (if (string.string-eq (struct-get owners r10) slot) "" (struct-get owners r10))
+    (if (string.string-eq (struct-get owners r11) slot) "" (struct-get owners r11))
+    (if (string.string-eq (struct-get owners r12) slot) "" (struct-get owners r12))
+    (if (string.string-eq (struct-get owners r13) slot) "" (struct-get owners r13))
+    (if (string.string-eq (struct-get owners r14) slot) "" (struct-get owners r14))
+    (if (string.string-eq (struct-get owners r15) slot) "" (struct-get owners r15))))
+
+;; Owner-map transfer for a recognized `movq SRC, DST` line.
+;;  * DST is a clean rbp-relative stack slot (a store): SRC's value is written to
+;;    the slot. Every OTHER register that mirrored the slot becomes stale and is
+;;    dropped (`owners-clear-slot`, which also drops SRC's entry when it happened
+;;    to mirror this slot). SRC's value itself is unchanged, so any slot SRC
+;;    already mirrors is preserved; only when SRC is a tracked register with no
+;;    known slot do we record that it now mirrors DST (a sound store-to-reload
+;;    forward). Preserving an existing SRC owner is required: it keeps reloads of
+;;    a *different* slot still resident in SRC eligible for elision.
+;;  * DST is a tracked GP register (a load or reg-reg move): DST is overwritten,
+;;    so it mirrors SRC when SRC is a clean stack slot, otherwise becomes unknown.
+;;  * anything else for DST (%rbp/%rsp, an xmm/untracked register, or any memory
+;;    operand that is not a clean N(%rbp) slot -- indexed, pointer, rip-relative,
+;;    or segment relative) may change the frame base or alias an unknown slot, so
+;;    conservatively clear the whole map.
+(define (compiler-backend-peephole-movq-owners-transfer
+  [owners : CompilerBackendPeepholeOwners]
+  [src : String]
+  [dst : String]) : CompilerBackendPeepholeOwners
+  (cond
+    [(compiler-backend-peephole-stack-slot-operand? dst)
+      (let
+        [cleared : CompilerBackendPeepholeOwners
+          (compiler-backend-peephole-owners-clear-slot owners dst)]
+        (if (and
+          (compiler-backend-peephole-owner-reg? src)
+          (string.string-eq
+            (compiler-backend-peephole-owners-get cleared src)
+            ""))
+          (compiler-backend-peephole-owners-set-reg cleared src dst)
+          cleared))]
+    [(compiler-backend-peephole-owner-reg? dst)
+      (compiler-backend-peephole-owners-set-reg
+        owners
+        dst
+        (if (compiler-backend-peephole-stack-slot-operand? src) src ""))]
+    [else (compiler-backend-peephole-owners-empty)]))
+
+;; Length of the leading non-space token (the mnemonic) starting at `i`.
+(define (compiler-backend-peephole-token-len
+  [data : (Ptr u8)]
+  [i : i64]
+  [end : i64]) : i64
+  (let
+    [j : i64 i]
+    (begin
+      (while (and (< j end) (not (= (compiler-backend-peephole-byte-at data j) 32)))
+        (set! j (+ j 1)))
+      (- j i))))
+
+;; True iff byte `b` is a movq-style size suffix: q, l, w, or b.
+(define (compiler-backend-peephole-size-suffix-byte? [b : i64]) : bool
+  (or (= b 113) (= b 108) (= b 119) (= b 98)))
+
+;; True iff the mnemonic token at `i` is exactly a cmp/test compare (cmp, cmpq,
+;; cmpl, cmpw, cmpb, test, testq, testl, testw, testb). These write only the
+;; flags, never a GP register or memory, so they need no owner invalidation.
+;; cmpxchg, cmps, and similar (which DO write registers/memory) are excluded by
+;; the strict token-length / suffix check.
+(define (compiler-backend-peephole-cmp-or-test?
+  [data : (Ptr u8)]
+  [i : i64]
+  [end : i64]) : bool
+  (let
+    [tlen : i64 (compiler-backend-peephole-token-len data i end)]
+    (or
+      (and
+        (>= tlen 3)
+        (= (compiler-backend-peephole-byte-at data i) 99)
+        (= (compiler-backend-peephole-byte-at data (+ i 1)) 109)
+        (= (compiler-backend-peephole-byte-at data (+ i 2)) 112)
+        (or
+          (= tlen 3)
+          (and
+            (= tlen 4)
+            (compiler-backend-peephole-size-suffix-byte?
+              (compiler-backend-peephole-byte-at data (+ i 3))))))
+      (and
+        (>= tlen 4)
+        (= (compiler-backend-peephole-byte-at data i) 116)
+        (= (compiler-backend-peephole-byte-at data (+ i 1)) 101)
+        (= (compiler-backend-peephole-byte-at data (+ i 2)) 115)
+        (= (compiler-backend-peephole-byte-at data (+ i 3)) 116)
+        (or
+          (= tlen 4)
+          (and
+            (= tlen 5)
+            (compiler-backend-peephole-size-suffix-byte?
+              (compiler-backend-peephole-byte-at data (+ i 4)))))))))
+
+;; Owner-map transfer for a non-movq line (everything `line-movq` does not parse
+;; as a clean two-operand movq). Returns true when the line must conservatively
+;; clear the whole owner map. The line is classified from its raw bytes:
+;;  * blank / whitespace-only -> no effect.
+;;  * a label (ends in ':') -> a control-flow merge target; arbitrary predecessors
+;;    can reach it with different register contents -> clear all.
+;;  * an assembler directive (first non-space byte '.') -> no register/memory
+;;    effect -> no clear.
+;;  * a jump ('j...': jmp/jcc/jrcxz/jecxz) -> writes no register; the fall-through
+;;    keeps the current state and every branch target is itself a label that
+;;    clears -> no clear.
+;;  * cmp / test -> flags only -> no clear.
+;;  * everything else (call, ret, leave, syscall, every arithmetic/vector op, any
+;;    store through a pointer/index/segment, and any unrecognized mnemonic) may
+;;    write a GP register or alias a frame slot -> clear all (conservative).
+(define (compiler-backend-peephole-line-clears-owners?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+        (set! i (+ i 1)))
+      (cond
+        [(>= i end) false]
+        [(= (compiler-backend-peephole-byte-at data (- end 1)) 58) true]
+        [(= (compiler-backend-peephole-byte-at data i) 46) false]
+        [(= (compiler-backend-peephole-byte-at data i) 106) false]
+        [(compiler-backend-peephole-cmp-or-test? data i end) false]
+        [else true]))))
+
 (define (compiler-backend-peephole-emit-pending-line
   [out : text_buf.TextBuf]
   [asm : String]
@@ -37762,7 +37994,7 @@ tl_memchr:
   [pending-line : String]
   [pending-owned? : bool]
   [pending-newline : bool]
-  [rax-owner : String]) : CompilerBackendPeepholeEmitResult
+  [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeEmitResult
   (match (compiler-backend-peephole-line-movq
     asm
     asm-data
@@ -37774,9 +38006,10 @@ tl_memchr:
       (let
         [next-out : text_buf.TextBuf
           (if (and
-            (string.string-eq dst "%rax")
-            (string.string-eq src rax-owner)
-            (compiler-backend-peephole-stack-slot-operand? src))
+            (compiler-backend-peephole-stack-slot-operand? src)
+            (string.string-eq
+              (compiler-backend-peephole-owners-get owners dst)
+              src))
             out
             (compiler-backend-peephole-append-pending-line
               out
@@ -37786,20 +38019,35 @@ tl_memchr:
               pending-line
               pending-owned?
               pending-newline))]
-        [next-owner : String
-          (compiler-backend-peephole-rax-slot-next-owner rax-owner src dst)]
-        (CompilerBackendPeepholeEmitResult next-out next-owner))]
+        [next-owners : CompilerBackendPeepholeOwners
+          (compiler-backend-peephole-movq-owners-transfer owners src dst)]
+        (CompilerBackendPeepholeEmitResult next-out next-owners))]
     [(CompilerBackendPeepholeNoMove)
-      (CompilerBackendPeepholeEmitResult
-        (compiler-backend-peephole-append-pending-line
-          out
-          asm
-          pending-start
-          pending-end
-          pending-line
-          pending-owned?
-          pending-newline)
-        "")]))
+      (let
+        [clears? : bool
+          (if pending-owned?
+            (compiler-backend-peephole-line-clears-owners?
+              (unsafe (string-data pending-line))
+              0
+              (string.string-length pending-line))
+            (compiler-backend-peephole-line-clears-owners?
+              asm-data
+              pending-start
+              pending-end))]
+        [next-owners : CompilerBackendPeepholeOwners
+          (if clears?
+            (compiler-backend-peephole-owners-empty)
+            owners)]
+        (CompilerBackendPeepholeEmitResult
+          (compiler-backend-peephole-append-pending-line
+            out
+            asm
+            pending-start
+            pending-end
+            pending-line
+            pending-owned?
+            pending-newline)
+          next-owners))]))
 
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
   (let
@@ -37815,7 +38063,8 @@ tl_memchr:
     [pending-line : String ""]
     [pending-owned? : bool false]
     [pending-newline : bool false]
-    [rax-owner : String ""]
+    [owners : CompilerBackendPeepholeOwners
+      (compiler-backend-peephole-owners-empty)]
     (begin
       (while (< i n)
         (let
@@ -37871,10 +38120,10 @@ tl_memchr:
                               pending-line
                               pending-owned?
                               pending-newline
-                              rax-owner)]
+                              owners)]
                           (begin
                             (set! out (struct-get emit buf))
-                            (set! rax-owner (struct-get emit rax-owner))))
+                            (set! owners (struct-get emit owners))))
                         (set! pending-start 0)
                         (set! pending-end 0)
                         (set! pending-line forwarded-line)
@@ -37893,10 +38142,10 @@ tl_memchr:
                             pending-line
                             pending-owned?
                             pending-newline
-                            rax-owner)]
+                            owners)]
                         (begin
                           (set! out (struct-get emit buf))
-                          (set! rax-owner (struct-get emit rax-owner))))
+                          (set! owners (struct-get emit owners))))
                       (set! pending-start i)
                       (set! pending-end end)
                       (set! pending-line "")
@@ -37931,27 +38180,12 @@ tl_memchr:
               pending-line
               pending-owned?
               pending-newline
-              rax-owner)]
+              owners)]
           (begin
             (set! out (struct-get emit buf))
-            (set! rax-owner (struct-get emit rax-owner))))
+            (set! owners (struct-get emit owners))))
         unit)
       (text_buf.text-buf-render out))))
-
-(define (compiler-backend-peephole-rax-slot-next-owner
-  [owner : String]
-  [src : String]
-  [dst : String]) : String
-  (if (string.string-eq dst "%rax")
-    (if (compiler-backend-peephole-stack-slot-operand? src)
-      src
-      "")
-    (if (and
-      (not (string.string-eq owner ""))
-      (string.string-eq dst owner)
-      (not (string.string-eq src "%rax")))
-      ""
-      owner)))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (compiler-backend-peephole-asm-once asm))

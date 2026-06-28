@@ -98,10 +98,10 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_os_write:
     movq -16(%rbp), %rdi
     call _tl_stdlib_runtime_stdlib_runtime_runtime_ptr_arg
     movq %rax, -48(%rbp)
-    movl $1, %eax
     movq -8(%rbp), %rdi
     movq -48(%rbp), %rsi
     movq -24(%rbp), %rdx
+    movl $1, %eax
     syscall
     movq %rax, -56(%rbp)
     leave
@@ -114,8 +114,8 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit:
     subq $32, %rsp
     movq %rdi, -8(%rbp)
 .Lf3_entry:
-    movl $231, %eax
     movq -8(%rbp), %rdi
+    movl $231, %eax
     syscall
     movq %rax, -32(%rbp)
     movq -8(%rbp), %rdi

@@ -5485,7 +5485,6 @@
   (and
     (not (string.string-eq home ""))
     (not (string.string-eq home "%rax"))
-    (not (string.string-eq home "%r11"))
     (if (string.string-eq avoid "")
       true
       (not (string.string-eq home avoid)))))

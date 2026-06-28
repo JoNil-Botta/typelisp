@@ -9898,6 +9898,10 @@
       (compiler-reg-assignment-cons
         (CompilerRegAssignment 0 (CompilerRegRegister "%r12"))
         CompilerRegAssignmentNil)]
+    [r11-assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r11"))
+        CompilerRegAssignmentNil)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build IrFunctionNil IrExternNil)]
     (and
@@ -9924,6 +9928,17 @@
           (and
             (string.string-eq asm "    movq $9, 8(%r12)\n")
             (not (compiler-backend-string-contains? asm "%r10")))]
+        [(ErrCompilerBackend _) false])
+      (match (compiler-backend-emit-store-ptr
+        r11-assignments
+        (IrValueVar 0)
+        (IrValueI64 11)
+        (AstTyI64)
+        index)
+        [(OkCompilerBackend asm)
+          (and
+            (string.string-eq asm "    movq $11, (%r11)\n")
+            (not (compiler-backend-string-contains? asm "    movq %r11, %r10\n")))]
         [(ErrCompilerBackend _) false]))))
 
 (define (compiler-backend-gep-load-store-order-shape-ok?) : bool

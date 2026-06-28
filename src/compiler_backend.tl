@@ -12205,8 +12205,8 @@
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
       (array-set! a 3 "%r8")
-      (array-set! a 4 "%r10")
-      (array-set! a 5 "%r11")
+      (array-set! a 4 "%rax")
+      (array-set! a 5 "%rax")
       (array-set! a 6 extra)
       a)))
 
@@ -12237,8 +12237,8 @@
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
       (array-set! a 3 "%r8")
-      (array-set! a 4 "%r10")
-      (array-set! a 5 "%r11")
+      (array-set! a 4 "%rax")
+      (array-set! a 5 "%rax")
       (array-set! a 6 (if (string-eq h1 "") "%rax" h1))
       (array-set! a 7 (if (string-eq h2 "") "%rax" h2))
       a)))
@@ -27155,7 +27155,8 @@
 ;; Robustly prevents a scavenged scratch from clobbering an operand whose value is
 ;; needed by THIS instruction (e.g. a loop-invariant base/src whose register the
 ;; liveness query may not see occupied at the scavenge point). Non-register-homed
-;; operands map to "%rax" (already excluded), a harmless no-op. n = 7.
+;; operands map to "%rax" (already excluded), a harmless no-op. Pooled scratch
+;; registers such as r10/r11 stay available unless one is an operand home. n = 7.
 (define (compiler-backend-scavenge-exclude-ops2
   [assignments : CompilerRegAssignmentList]
   [v1 : CompilerIrValue]
@@ -27168,15 +27169,16 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
+      (array-set! a 3 "%rax")
+      (array-set! a 4 "%rax")
       (array-set! a 5 (if (string-eq h1 "") "%rax" h1))
       (array-set! a 6 (if (string-eq h2 "") "%rax" h2))
       a)))
 
 ;; Exclude set = HW-fixed regs PLUS two given register names (caller already knows
 ;; them, e.g. the emission's dst-home + an operand's home reg). "" maps to "%rax"
-;; (already excluded). n = 7.
+;; (already excluded). Pooled scratch registers such as r10/r11 stay available
+;; unless one is one of the explicit register names. n = 7.
 (define (compiler-backend-scavenge-exclude-regs2
   [r1 : String]
   [r2 : String]) : (Array String)
@@ -27186,8 +27188,8 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
+      (array-set! a 3 "%rax")
+      (array-set! a 4 "%rax")
       (array-set! a 5 (if (string-eq r1 "") "%rax" r1))
       (array-set! a 6 (if (string-eq r2 "") "%rax" r2))
       a)))

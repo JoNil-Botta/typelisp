@@ -9801,10 +9801,14 @@
       5)
       [(OkCompilerBackend asm)
         (and
-          (compiler-backend-string-contains? asm "    movq -16(%rbp), %rcx\n")
+          (compiler-backend-string-contains? asm "    movq -8(%rbp), %r10\n")
+          (compiler-backend-string-contains? asm "    movq -24(%rbp), %r8\n")
           (compiler-backend-string-contains?
             asm
-            "    movq %rcx, (%r9,%r8,8)\n")
+            "    movq -16(%rbp), %r9\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %r9, (%r10,%r8,8)\n")
           (not
             (compiler-backend-string-contains? asm "    movq -16(%rbp), %rax\n")))]
       [(ErrCompilerBackend _) false])))
@@ -9823,11 +9827,11 @@
           IrInstrNil))
       assignments
       4)
-      [(OkCompilerBackend asm)
-        (and
-          (compiler-backend-string-contains?
-            asm
-            "    movq %r9, %r8\n    movq -8(%rbp), %r9\n    movq $0, (%r9,%r8,8)\n")
+        [(OkCompilerBackend asm)
+          (and
+            (compiler-backend-string-contains?
+              asm
+            "    movq -8(%rbp), %r10\n    movq %r9, %r8\n    movq $0, (%r10,%r8,8)\n")
           (not
             (compiler-backend-string-contains?
               asm
@@ -11389,7 +11393,7 @@
           (compiler-backend-string-contains? asm "    call tl_oob_abort\n")
           (compiler-backend-string-contains?
             asm
-            "    movq %rcx, (%r9,%r8,8)\n")
+            "    movq %r9, (%r10,%r8,8)\n")
           (compiler-backend-string-contains?
             asm
             "    movq (%r10,%r8,8), %r9\n")
@@ -15812,8 +15816,83 @@
             5
             (compiler-backend-scavenge-exclude-with "%r13")
             6
+          "%r8")
+        "%r11")))))
+
+(define (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 7)]
+    [ends : (Array i64) (make-array i64 7)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r9"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 1 (CompilerRegRegister "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 2 (CompilerRegRegister "%rdx"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 3 (CompilerRegRegister "%r8"))
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment 5 (CompilerRegRegister "%r13"))
+                (compiler-reg-assignment-cons
+                  (CompilerRegAssignment 6 (CompilerRegRegister "%r14"))
+                  CompilerRegAssignmentNil))))))]
+    (begin
+      (array-set! starts 0 0)
+      (array-set! starts 1 0)
+      (array-set! starts 2 0)
+      (array-set! starts 3 0)
+      (array-set! starts 4 0)
+      (array-set! starts 5 0)
+      (array-set! starts 6 0)
+      (array-set! ends 0 10)
+      (array-set! ends 1 10)
+      (array-set! ends 2 10)
+      (array-set! ends 3 10)
+      (array-set! ends 4 10)
+      (array-set! ends 5 10)
+      (array-set! ends 6 10)
+      (and
+        (string-eq
+          (compiler-backend-scavenge-pick
+            starts
+            ends
+            assignments
+            7
+            5
+            (compiler-backend-scavenge-exclude-regs2 "%r13" "%r14")
+            7
             "%r8")
-          "%r11")))))
+          "%r10")
+        (and
+          (string-eq
+            (compiler-backend-scavenge-pick
+              starts
+              ends
+              assignments
+              7
+              5
+              (compiler-backend-scavenge-exclude-ops2
+                assignments
+                (IrValueVar 5)
+                (IrValueVar 6))
+              7
+              "%r8")
+            "%r10")
+          (string-eq
+            (compiler-backend-scavenge-pick
+              starts
+              ends
+              assignments
+              7
+              5
+              (compiler-backend-scavenge-exclude-ops2-r8
+                assignments
+                (IrValueVar 5)
+                (IrValueVar 6))
+              8
+              "%r8")
+            "%r10"))))))
 
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
   (let
@@ -15931,6 +16010,7 @@
         (compiler-backend-scavenge-pooled-r10-r11-ok?)
         (compiler-backend-binop-exclude-keeps-pooled-r10-r11-ok?)
         (compiler-backend-scavenge-exclude-with-keeps-pooled-r10-r11-ok?)
+        (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)

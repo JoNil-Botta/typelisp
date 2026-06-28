@@ -40815,6 +40815,65 @@
             args
             env)])]))
 
+(define (macro-rewrite-generated-import-call-with-decl
+  [func-box : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [fallback : i64]
+  [maybe-decl : MacroMaybeDecl]) : i64
+  (match maybe-decl
+    [(MacroSomeDecl _ _ params _ _)
+      (ast-expr-call
+        func-box
+        (macro-generated-import-type-args params args env))]
+    [(MacroNoDecl) fallback]))
+
+(define (macro-rewrite-generated-import-direct-call
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [module : String]
+  [func : AstExpr]
+  [call-expr : AstExpr]
+  [func-box : i64]
+  [args : AstExprList]
+  [env : CtfeEnv]
+  [fallback : i64]) : i64
+  (match (ast-expr-unspan func)
+    [(AstExprVar name)
+      (let
+        [lookup-name : String (macro-output-source-name (intern-str name))]
+        (if (or
+          (tc-name-qualified? lookup-name)
+          (tc-source-slash-qualified? lookup-name)
+          (>= (tc-name-first-dot lookup-name) 0))
+          fallback
+          (match (macro-import-alias-target-cached
+            decls
+            (intern module)
+            lookup-name)
+            [(TcSomeString target)
+              (match (macro-unqualified-imported-target-call-decl
+                ctx
+                target
+                lookup-name
+                call-expr)
+                [(OkMacroCallDecl maybe-decl)
+                  (match maybe-decl
+                    [(MacroSomeDecl _ _ _ _ _)
+                      (macro-rewrite-generated-import-call-with-decl
+                        func-box
+                        args
+                        env
+                        fallback
+                        maybe-decl)]
+                    [(MacroNoDecl)
+                      (ast-expr-call
+                        func-box
+                        (macro-generated-type-param-expr-list env args))])]
+                [(ErrMacroCallDecl _) fallback])]
+            [(TcNoString) fallback])))]
+    [_ fallback]))
+
 (define (macro-rewrite-generated-import-call-id
   [ctx : TcContext]
   [orig-decls : AstDeclList]
@@ -40838,12 +40897,35 @@
             call-expr)
             [(OkMacroCallDeclModule maybe-decl _)
               (match maybe-decl
-                [(MacroSomeDecl _ _ params _ _)
-                  (ast-expr-call
+                [(MacroSomeDecl _ _ _ _ _)
+                  (macro-rewrite-generated-import-call-with-decl
                     func-box
-                    (macro-generated-import-type-args params args env))]
-                [(MacroNoDecl) call-id])]
-            [(ErrMacroCallDeclModule _) call-id]))]
+                    args
+                    env
+                    call-id
+                    maybe-decl)]
+                [(MacroNoDecl)
+                  (macro-rewrite-generated-import-direct-call
+                    ctx
+                    orig-decls
+                    module
+                    lookup-func
+                    call-expr
+                    func-box
+                    args
+                    env
+                    call-id)])]
+            [(ErrMacroCallDeclModule _)
+              (macro-rewrite-generated-import-direct-call
+                ctx
+                orig-decls
+                module
+                lookup-func
+                call-expr
+                func-box
+                args
+                env
+                call-id)]))]
       [_ call-id])))
 
 (define (macro-rewrite-generated-import-kind
@@ -43138,6 +43220,9 @@
   [decl-path : String]
   [macro-name : String]
   [identity : String]
+  [definition-module : String]
+  [macro-env : CtfeEnv]
+  [rewrite-imports? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -43158,19 +43243,41 @@
           [(AstDeclCons first body-rest-box)
             (match first
               [(AstDeclModule target-module-id)
-                (macro-expand-module-materialized
-                  ctx
-                  top-env
-                  orig-decls
-                  module
-                  (intern-str target-module-id)
-                  alias
-                  span
-                  decl-path
-                  macro-name
-                  identity
-                  (box-get body-rest-box)
-                  call-expr)]
+                (let
+                  [target-module : String (intern-str target-module-id)]
+                  [body-rest : AstDeclList (box-get body-rest-box)]
+                  [contextual-body : AstDeclList
+                    (macro-generated-context-decls body-rest definition-module)]
+                  [final-body : AstDeclList
+                    (if rewrite-imports?
+                      (let
+                        [rewrite-decls : AstDeclList
+                          (ast-decl-cons
+                            (ast-decl-module target-module)
+                            contextual-body)]
+                        [lookup-decls : AstDeclList
+                          (macro-decl-list-append orig-decls rewrite-decls)]
+                        (macro-rewrite-generated-import-decls
+                          (tc-context-with-module ctx target-module)
+                          lookup-decls
+                          target-module
+                          definition-module
+                          macro-env
+                          contextual-body))
+                      contextual-body)]
+                  (macro-expand-module-materialized
+                    ctx
+                    top-env
+                    orig-decls
+                    module
+                    target-module
+                    alias
+                    span
+                    decl-path
+                    macro-name
+                    identity
+                    final-body
+                    call-expr))]
               [_
                 (ErrMacroDeclExpansion
                   (box
@@ -43426,18 +43533,11 @@
                                           decl-path
                                           macro-name
                                           identity
-                                          (macro-generated-context-decls
-                                            (if (tc-macro-param-list-needs-call-context?
-                                              params)
-                                              (macro-rewrite-generated-import-decls
-                                                call-ctx
-                                                orig-decls
-                                                module
-                                                definition-module
-                                                macro-env
-                                                generated)
-                                              generated)
-                                            definition-module)
+                                          definition-module
+                                          macro-env
+                                          (tc-macro-param-list-needs-call-context?
+                                            params)
+                                          generated
                                           call-expr)]
                                       [(ErrMacroParsedDecls diag)
                                         (ErrMacroDeclExpansion diag)]))]

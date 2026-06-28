@@ -1246,6 +1246,24 @@
 (define (main) : i64
   (user.score (Pair 42)))")
 
+(define (compiler-typecheck-smoke-module-macro-local-import-param-vector-source) : String
+  "(defstruct Pair
+  (value i64))
+(defmacro (vector-user [T : type]) : Module
+  `(begin
+    (module generated.local_import_param_vector_user)
+    (import stdlib.vector)
+    (import (vector T) as vec)
+    (define (score [value : ,T]) : i64
+      (let
+        [items : vec.Vec (vec.new)]
+        (begin
+          (vec.push (&mut items) value)
+          (vec.len (& items)))))))
+(import (vector-user Pair) as user)
+(define (main) : i64
+  (user.score (Pair 42)))")
+
 (define (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source) : String
   "(import stdlib.json)
 (import stdlib.vector)
@@ -1535,6 +1553,10 @@
       (compiler-typecheck-ok?
         (compiler-typecheck-smoke-module-macro-param-type-stdlib-vector-source))
       "typecheck: module macro identity param type stdlib vector failed")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-module-macro-local-import-param-vector-source))
+      "typecheck: module macro identity local import param vector failed")
     (compiler-typecheck-smoke-require
       (compiler-typecheck-ok?
         (compiler-typecheck-smoke-module-macro-imported-aggregate-stdlib-vector-source))

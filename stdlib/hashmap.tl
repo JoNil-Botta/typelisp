@@ -422,6 +422,169 @@
                 (match entry
                   [(EntrySome _ value) value]
                   [(EntryNone) fallback])))]
+          ["struct_stdlib.hashmap/HashPayload"
+            `(begin
+              (module ,module-name)
+              (import stdlib.hashmap as base)
+              (defstruct Map
+                (inner base.StringHashPayloadMap))
+              (defenum Lookup
+                (LookupMissing)
+                (LookupFound ,V))
+              (defenum BorrowedValueLookup
+                (:lifetimes map)
+                (BorrowedValueMissing)
+                (BorrowedValueFound (& map ,V)))
+              (defenum RemoveResult
+                (RemoveOk)
+                (RemoveMissing))
+              (defenum EntryOrInsertResult
+                (EntryOrInsertFound ,V)
+                (EntryOrInsertInserted ,V))
+              (defenum Entry
+                (EntryNone)
+                (EntrySome String ,V))
+              (define (with-capacity [capacity : i64]) : Map
+                (Map (base.string-hash-payload-map-with-capacity capacity)))
+              (define (new) : Map
+                (with-capacity 4))
+              (define (len [map : Map]) : i64
+                (base.string-hash-payload-map-len (struct-get map inner)))
+              (define (capacity [map : Map]) : i64
+                (base.string-hash-payload-map-capacity (struct-get map inner)))
+              (define (deleted [map : Map]) : i64
+                (base.string-hash-payload-map-deleted (struct-get map inner)))
+              (define (inner-mut [map : (&mut map Map)]) : (&mut
+                  map
+                  base.StringHashPayloadMap)
+                (&mut (struct-get map inner)))
+              (define (is-empty? [map : Map]) : bool
+                (<= (len map) 0))
+              (define (lookup-from-base
+                [lookup : base.StringHashPayloadMapLookup]) : Lookup
+                (match lookup
+                  [(base.StringHashPayloadMapFound value) (LookupFound value)]
+                  [(base.StringHashPayloadMapMissing) (LookupMissing)]))
+              (define (get-borrowed [map : Map] [key : (& key str)]) : Lookup
+                (lookup-from-base
+                  (base.string-hash-payload-map-get-borrowed
+                    (struct-get map inner)
+                    key)))
+              (define (get [map : Map] [key : String]) : Lookup
+                (get-borrowed map (& key)))
+              (define (lookup-value-or [lookup : Lookup] [fallback : ,V]) : ,V
+                (match lookup
+                  [(LookupFound value) value]
+                  [(LookupMissing) fallback]))
+              (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup
+                  map)
+                (BorrowedValueMissing))
+              (define (borrowed-value-found [value : (& map ,V)]) : (BorrowedValueLookup
+                  map)
+                (BorrowedValueFound value))
+              (define (get-value-borrowed
+                [map : (& map Map)]
+                [key : (& key str)]) : (BorrowedValueLookup map)
+                (match (base.string-hash-payload-map-get-value-borrowed
+                  (& (struct-get map inner))
+                  key)
+                  [(base.StringHashPayloadMapBorrowedValueFound value)
+                    (borrowed-value-found value)]
+                  [(base.StringHashPayloadMapBorrowedValueMissing)
+                    (borrowed-value-missing map)]))
+              (define (borrowed-value-found?
+                [lookup : (BorrowedValueLookup map)]) : bool
+                (match lookup
+                  [(BorrowedValueFound _) true]
+                  [(BorrowedValueMissing) false]))
+              (define (contains-borrowed? [map : Map] [key : (& key str)]) : bool
+                (base.string-hash-payload-map-contains-borrowed?
+                  (struct-get map inner)
+                  key))
+              (define (contains? [map : Map] [key : String]) : bool
+                (contains-borrowed? map (& key)))
+              (define (insert
+                [map : (&mut map Map)]
+                [key : String]
+                [value : ,V]) : unit
+                (let
+                  [inner : base.StringHashPayloadMap
+                    (clone (struct-get map inner))]
+                  (set!
+                    (struct-get map inner)
+                    (base.string-hash-payload-map-put inner key value))))
+              (define (insert-or-update
+                [map : (&mut map Map)]
+                [key : String]
+                [value : ,V]) : unit
+                (insert map key value))
+              (define (remove-borrowed
+                [map : (&mut map Map)]
+                [key : (& key str)]) : RemoveResult
+                (let
+                  [inner : base.StringHashPayloadMap
+                    (clone (struct-get map inner))]
+                  (match (base.string-hash-payload-map-remove-borrowed
+                    inner
+                    key)
+                    [(base.StringHashPayloadMapRemoveOk next)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (RemoveOk))]
+                    [(base.StringHashPayloadMapRemoveMissing next)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (RemoveMissing))])))
+              (define (remove [map : (&mut map Map)] [key : String]) : RemoveResult
+                (remove-borrowed map (& key)))
+              (define (remove-ok? [result : RemoveResult]) : bool
+                (match result
+                  [(RemoveOk) true]
+                  [(RemoveMissing) false]))
+              (define (entry-or-insert
+                [map : (&mut map Map)]
+                [key : String]
+                [default-value : ,V]) : EntryOrInsertResult
+                (let
+                  [inner : base.StringHashPayloadMap
+                    (clone (struct-get map inner))]
+                  (match (base.string-hash-payload-map-entry-or-insert
+                    inner
+                    key
+                    default-value)
+                    [(base.StringHashPayloadMapEntryOrInsertFound next value)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (EntryOrInsertFound value))]
+                    [(base.StringHashPayloadMapEntryOrInsertInserted next value)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (EntryOrInsertInserted value))])))
+              (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
+                (match result
+                  [(EntryOrInsertInserted _) true]
+                  [(EntryOrInsertFound _) false]))
+              (define (entry-or-insert-value-or
+                [result : EntryOrInsertResult]
+                [fallback : ,V]) : ,V
+                (match result
+                  [(EntryOrInsertFound value) value]
+                  [(EntryOrInsertInserted value) value]))
+              (define (next-occupied [map : Map] [from : i64]) : i64
+                (base.string-hash-payload-map-next-occupied
+                  (struct-get map inner)
+                  from))
+              (define (entry-at [map : Map] [index : i64]) : Entry
+                (match (base.string-hash-payload-map-entry-at
+                  (struct-get map inner)
+                  index)
+                  [(base.StringHashPayloadMapEntrySome key value)
+                    (EntrySome key value)]
+                  [(base.StringHashPayloadMapEntryNone) (EntryNone)]))
+              (define (entry-value-or [entry : Entry] [fallback : ,V]) : ,V
+                (match entry
+                  [(EntrySome _ value) value]
+                  [(EntryNone) fallback])))]
           [_
             `(begin
               (module ,module-name))])]
@@ -716,12 +879,320 @@
                 (match entry
                   [(EntrySome _ value) value]
                   [(EntryNone) fallback])))]
+          ["enum_stdlib.hashmap/HashState"
+            `(begin
+              (module ,module-name)
+              (import stdlib.hashmap as base)
+              (defstruct Map
+                (inner base.I64HashStateMap))
+              (defenum Lookup
+                (LookupMissing)
+                (LookupFound ,V))
+              (defenum BorrowedValueLookup
+                (:lifetimes map)
+                (BorrowedValueMissing)
+                (BorrowedValueFound (& map ,V)))
+              (defenum RemoveResult
+                (RemoveOk)
+                (RemoveMissing))
+              (defenum EntryOrInsertResult
+                (EntryOrInsertFound ,V)
+                (EntryOrInsertInserted ,V))
+              (defenum Entry
+                (EntryNone)
+                (EntrySome i64 ,V))
+              (define (with-capacity [capacity : i64]) : Map
+                (Map (base.i64-hash-state-map-with-capacity capacity)))
+              (define (new) : Map
+                (with-capacity 4))
+              (define (len [map : Map]) : i64
+                (base.i64-hash-state-map-len (struct-get map inner)))
+              (define (capacity [map : Map]) : i64
+                (base.i64-hash-state-map-capacity (struct-get map inner)))
+              (define (deleted [map : Map]) : i64
+                (base.i64-hash-state-map-deleted (struct-get map inner)))
+              (define (inner-mut [map : (&mut map Map)]) : (&mut
+                  map
+                  base.I64HashStateMap)
+                (&mut (struct-get map inner)))
+              (define (is-empty? [map : Map]) : bool
+                (<= (len map) 0))
+              (define (lookup-from-base [lookup : base.I64HashStateMapLookup]) : Lookup
+                (match lookup
+                  [(base.I64HashStateMapFound value) (LookupFound value)]
+                  [(base.I64HashStateMapMissing) (LookupMissing)]))
+              (define (get [map : Map] [key : i64]) : Lookup
+                (lookup-from-base
+                  (base.i64-hash-state-map-get (struct-get map inner) key)))
+              (define (lookup-value-or [lookup : Lookup] [fallback : ,V]) : ,V
+                (match lookup
+                  [(LookupFound value) value]
+                  [(LookupMissing) fallback]))
+              (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup
+                  map)
+                (BorrowedValueMissing))
+              (define (borrowed-value-found [value : (& map ,V)]) : (BorrowedValueLookup
+                  map)
+                (BorrowedValueFound value))
+              (define (get-value-borrowed [map : (& map Map)] [key : i64]) : (BorrowedValueLookup
+                  map)
+                (match (base.i64-hash-state-map-get-value-borrowed
+                  (& (struct-get map inner))
+                  key)
+                  [(base.I64HashStateMapBorrowedValueFound value)
+                    (borrowed-value-found value)]
+                  [(base.I64HashStateMapBorrowedValueMissing)
+                    (borrowed-value-missing map)]))
+              (define (borrowed-value-found?
+                [lookup : (BorrowedValueLookup map)]) : bool
+                (match lookup
+                  [(BorrowedValueFound _) true]
+                  [(BorrowedValueMissing) false]))
+              (define (contains? [map : Map] [key : i64]) : bool
+                (match (get map key)
+                  [(LookupFound _) true]
+                  [(LookupMissing) false]))
+              (define (insert [map : (&mut map Map)] [key : i64] [value : ,V]) : unit
+                (let
+                  [inner : base.I64HashStateMap (clone (struct-get map inner))]
+                  (set!
+                    (struct-get map inner)
+                    (base.i64-hash-state-map-put inner key value))))
+              (define (insert-or-update
+                [map : (&mut map Map)]
+                [key : i64]
+                [value : ,V]) : unit
+                (insert map key value))
+              (define (remove [map : (&mut map Map)] [key : i64]) : RemoveResult
+                (let
+                  [inner : base.I64HashStateMap (clone (struct-get map inner))]
+                  (match (base.i64-hash-state-map-remove inner key)
+                    [(base.I64HashStateMapRemoveOk next)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (RemoveOk))]
+                    [(base.I64HashStateMapRemoveMissing next)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (RemoveMissing))])))
+              (define (remove-ok? [result : RemoveResult]) : bool
+                (match result
+                  [(RemoveOk) true]
+                  [(RemoveMissing) false]))
+              (define (entry-or-insert
+                [map : (&mut map Map)]
+                [key : i64]
+                [default-value : ,V]) : EntryOrInsertResult
+                (let
+                  [inner : base.I64HashStateMap (clone (struct-get map inner))]
+                  (match (base.i64-hash-state-map-entry-or-insert
+                    inner
+                    key
+                    default-value)
+                    [(base.I64HashStateMapEntryOrInsertFound next value)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (EntryOrInsertFound value))]
+                    [(base.I64HashStateMapEntryOrInsertInserted next value)
+                      (begin
+                        (set! (struct-get map inner) next)
+                        (EntryOrInsertInserted value))])))
+              (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
+                (match result
+                  [(EntryOrInsertInserted _) true]
+                  [(EntryOrInsertFound _) false]))
+              (define (entry-or-insert-value-or
+                [result : EntryOrInsertResult]
+                [fallback : ,V]) : ,V
+                (match result
+                  [(EntryOrInsertFound value) value]
+                  [(EntryOrInsertInserted value) value]))
+              (define (next-occupied [map : Map] [from : i64]) : i64
+                (base.i64-hash-state-map-next-occupied
+                  (struct-get map inner)
+                  from))
+              (define (entry-at [map : Map] [index : i64]) : Entry
+                (match (base.i64-hash-state-map-entry-at
+                  (struct-get map inner)
+                  index)
+                  [(base.I64HashStateMapEntrySome key value)
+                    (EntrySome key value)]
+                  [(base.I64HashStateMapEntryNone) (EntryNone)]))
+              (define (entry-value-or [entry : Entry] [fallback : ,V]) : ,V
+                (match entry
+                  [(EntrySome _ value) value]
+                  [(EntryNone) fallback])))]
           [_
             `(begin
               (module ,module-name))])]
       [_
-        `(begin
-          (module ,module-name))])))
+        (match (type-key K)
+          ["struct_stdlib.hashmap/HashNestedKey"
+            (match (type-key V)
+              ["i64"
+                `(begin
+                  (module ,module-name)
+                  (import stdlib.hashmap as base)
+                  (defstruct Map
+                    (inner base.HashNestedKeyI64Map))
+                  (defenum Lookup
+                    (LookupMissing)
+                    (LookupFound i64))
+                  (defenum BorrowedValueLookup
+                    (:lifetimes map)
+                    (BorrowedValueMissing)
+                    (BorrowedValueFound (& map i64)))
+                  (defenum RemoveResult
+                    (RemoveOk)
+                    (RemoveMissing))
+                  (defenum EntryOrInsertResult
+                    (EntryOrInsertFound i64)
+                    (EntryOrInsertInserted i64))
+                  (defenum Entry
+                    (EntryNone)
+                    (EntrySome ,K i64))
+                  (define (with-capacity [capacity : i64]) : Map
+                    (Map (base.hash-nested-key-i64-map-with-capacity capacity)))
+                  (define (new) : Map
+                    (with-capacity 4))
+                  (define (len [map : Map]) : i64
+                    (base.hash-nested-key-i64-map-len (struct-get map inner)))
+                  (define (capacity [map : Map]) : i64
+                    (base.hash-nested-key-i64-map-capacity
+                      (struct-get map inner)))
+                  (define (deleted [map : Map]) : i64
+                    (base.hash-nested-key-i64-map-deleted
+                      (struct-get map inner)))
+                  (define (inner-mut [map : (&mut map Map)]) : (&mut
+                      map
+                      base.HashNestedKeyI64Map)
+                    (&mut (struct-get map inner)))
+                  (define (is-empty? [map : Map]) : bool
+                    (<= (len map) 0))
+                  (define (lookup-from-base
+                    [lookup : base.HashNestedKeyI64MapLookup]) : Lookup
+                    (match lookup
+                      [(base.HashNestedKeyI64MapFound value)
+                        (LookupFound value)]
+                      [(base.HashNestedKeyI64MapMissing) (LookupMissing)]))
+                  (define (get [map : Map] [key : ,K]) : Lookup
+                    (lookup-from-base
+                      (base.hash-nested-key-i64-map-get
+                        (struct-get map inner)
+                        key)))
+                  (define (lookup-value-or [lookup : Lookup] [fallback : i64]) : i64
+                    (match lookup
+                      [(LookupFound value) value]
+                      [(LookupMissing) fallback]))
+                  (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup
+                      map)
+                    (BorrowedValueMissing))
+                  (define (borrowed-value-found [value : (& map i64)]) : (BorrowedValueLookup
+                      map)
+                    (BorrowedValueFound value))
+                  (define (get-value-borrowed [map : (& map Map)] [key : ,K]) : (BorrowedValueLookup
+                      map)
+                    (match (base.hash-nested-key-i64-map-get-value-borrowed
+                      (& (struct-get map inner))
+                      key)
+                      [(base.HashNestedKeyI64MapBorrowedValueFound value)
+                        (borrowed-value-found value)]
+                      [(base.HashNestedKeyI64MapBorrowedValueMissing)
+                        (borrowed-value-missing map)]))
+                  (define (borrowed-value-found?
+                    [lookup : (BorrowedValueLookup map)]) : bool
+                    (match lookup
+                      [(BorrowedValueFound _) true]
+                      [(BorrowedValueMissing) false]))
+                  (define (contains? [map : Map] [key : ,K]) : bool
+                    (base.hash-nested-key-i64-map-contains?
+                      (struct-get map inner)
+                      key))
+                  (define (insert
+                    [map : (&mut map Map)]
+                    [key : ,K]
+                    [value : i64]) : unit
+                    (let
+                      [inner : base.HashNestedKeyI64Map
+                        (clone (struct-get map inner))]
+                      (set!
+                        (struct-get map inner)
+                        (base.hash-nested-key-i64-map-put inner key value))))
+                  (define (insert-or-update
+                    [map : (&mut map Map)]
+                    [key : ,K]
+                    [value : i64]) : unit
+                    (insert map key value))
+                  (define (remove [map : (&mut map Map)] [key : ,K]) : RemoveResult
+                    (let
+                      [inner : base.HashNestedKeyI64Map
+                        (clone (struct-get map inner))]
+                      (match (base.hash-nested-key-i64-map-remove inner key)
+                        [(base.HashNestedKeyI64MapRemoveOk next)
+                          (begin
+                            (set! (struct-get map inner) next)
+                            (RemoveOk))]
+                        [(base.HashNestedKeyI64MapRemoveMissing next)
+                          (begin
+                            (set! (struct-get map inner) next)
+                            (RemoveMissing))])))
+                  (define (remove-ok? [result : RemoveResult]) : bool
+                    (match result
+                      [(RemoveOk) true]
+                      [(RemoveMissing) false]))
+                  (define (entry-or-insert
+                    [map : (&mut map Map)]
+                    [key : ,K]
+                    [default-value : i64]) : EntryOrInsertResult
+                    (let
+                      [inner : base.HashNestedKeyI64Map
+                        (clone (struct-get map inner))]
+                      (match (base.hash-nested-key-i64-map-entry-or-insert
+                        inner
+                        key
+                        default-value)
+                        [(base.HashNestedKeyI64MapEntryOrInsertFound next value)
+                          (begin
+                            (set! (struct-get map inner) next)
+                            (EntryOrInsertFound value))]
+                        [(base.HashNestedKeyI64MapEntryOrInsertInserted
+                            next
+                            value)
+                          (begin
+                            (set! (struct-get map inner) next)
+                            (EntryOrInsertInserted value))])))
+                  (define (entry-or-insert-inserted?
+                    [result : EntryOrInsertResult]) : bool
+                    (match result
+                      [(EntryOrInsertInserted _) true]
+                      [(EntryOrInsertFound _) false]))
+                  (define (entry-or-insert-value-or
+                    [result : EntryOrInsertResult]
+                    [fallback : i64]) : i64
+                    (match result
+                      [(EntryOrInsertFound value) value]
+                      [(EntryOrInsertInserted value) value]))
+                  (define (next-occupied [map : Map] [from : i64]) : i64
+                    (base.hash-nested-key-i64-map-next-occupied
+                      (struct-get map inner)
+                      from))
+                  (define (entry-at [map : Map] [index : i64]) : Entry
+                    (match (base.hash-nested-key-i64-map-entry-at
+                      (struct-get map inner)
+                      index)
+                      [(base.HashNestedKeyI64MapEntrySome key value)
+                        (EntrySome key value)]
+                      [(base.HashNestedKeyI64MapEntryNone) (EntryNone)]))
+                  (define (entry-value-or [entry : Entry] [fallback : i64]) : i64
+                    (match entry
+                      [(EntrySome _ value) value]
+                      [(EntryNone) fallback])))]
+              [_
+                `(begin
+                  (module ,module-name))])]
+          [_
+            `(begin
+              (module ,module-name))])])))
 
 ;: One open-addressing slot: empty, a deleted tombstone, or an occupied entry
 ;: carrying the owned key, its copied value, and the cached key hash (#824).

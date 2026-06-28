@@ -354,7 +354,8 @@
               ok
               true
               "single-line spans should match Rust test_spans_single_line")))]
-      [(ResultSpannedTokens.Err e) (lexer-assert-true false (source-error-message e))])))
+      [(ResultSpannedTokens.Err e)
+        (lexer-assert-true false (source-error-message e))])))
 
 ;; ---- 7. src/lexer.rs test_spans_multi_line_and_blank_lines -------------
 (test
@@ -382,7 +383,8 @@
               ok
               true
               "multi-line blank spans should match Rust test")))]
-      [(ResultSpannedTokens.Err e) (lexer-assert-true false (source-error-message e))])))
+      [(ResultSpannedTokens.Err e)
+        (lexer-assert-true false (source-error-message e))])))
 
 ;; ---- 8. src/lexer.rs EOF handling --------------------------------------
 (test

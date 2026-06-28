@@ -20,7 +20,8 @@
 (define (list-score [items : StringList]) : i64
   (match items
     [StringList.Nil 0]
-    [(StringList.Cons head tail) (+ (string-length head) (list-score (box-get tail)))]))
+    [(StringList.Cons head tail)
+      (+ (string-length head) (list-score (box-get tail)))]))
 
 (define (bundle-score [bundle : Bundle]) : i64
   (+

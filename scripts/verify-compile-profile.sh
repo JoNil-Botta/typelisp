@@ -171,6 +171,8 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.cache_builds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.marker_scans|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_fingerprint_cache_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_fingerprint_cache_misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
 
@@ -211,6 +213,16 @@ assert_contains_in \
 assert_contains_in \
     "$REPLAY_STDERR" \
     "compile-profile|typecheck.macro.generated_compare_passes|0|0|0|0" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro.generated_fingerprint_cache_hits|0|0|0|0" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro.generated_fingerprint_cache_misses|0|0|0|0" \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 assert_line_count_in \

@@ -45475,11 +45475,11 @@
               (begin
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (build-compiler-symbols-with-paths program paths)
-                  [(OkCompilerSymbols symbols)
+                  [(ResultCompilerSymbols.Ok symbols)
                     (match (build-compiler-registries-with-symbols
                       program
                       symbols)
-                      [(OkCompilerRegistries registries)
+                      [(ResultCompilerRegistries.Ok registries)
                         (begin
                           (set! macro-expand-active-module "")
                           (set!
@@ -45550,9 +45550,9 @@
                               [(ErrTcUnit message)
                                 (ErrMacroExpandPass
                                   (box (tc-diag-at-start message)))])))]
-                      [(ErrCompilerRegistries message)
+                      [(ResultCompilerRegistries.Err message)
                         (ErrMacroExpandPass (box (tc-diag-at-start message)))])]
-                  [(ErrCompilerSymbols message)
+                  [(ResultCompilerSymbols.Err message)
                     (ErrMacroExpandPass (box (tc-diag-at-start message)))]))
               (OkMacroExpandPass program paths false))))])))
 
@@ -45696,7 +45696,7 @@
           kind
           import-path
           stdlib-roots)
-          [(OkPkgResolve resolved)
+          [(ResultPkgResolve.Ok resolved)
             (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
               resolved
               seen
@@ -45705,7 +45705,7 @@
               import-root
               cfgs
               pools)
-              [(OkCompilerLoadWithPaths
+              [(ResultCompilerLoadWithPaths.Ok
                   imported-decls
                   imported-paths
                   _
@@ -45743,8 +45743,9 @@
                     (macro-decl-path-list-append imported-paths tail-paths)
                     next-seen
                     true))]
-              [(ErrCompilerLoadWithPaths diag) (ErrMacroMaterializeImport diag)])]
-          [(ErrPkgResolve message)
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ErrMacroMaterializeImport diag)])]
+          [(ResultPkgResolve.Err message)
             (ErrMacroMaterializeImport
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))
 
@@ -47252,9 +47253,9 @@
     (tc-nominal-owner-cache-reset!)
     (ast-node-pool-context-install! pools)
     (match (build-compiler-symbols-with-paths program paths)
-      [(OkCompilerSymbols symbols)
+      [(ResultCompilerSymbols.Ok symbols)
         (match (build-compiler-registries-with-symbols program symbols)
-          [(OkCompilerRegistries registries)
+          [(ResultCompilerRegistries.Ok registries)
             (let
               [ctx : TcContext (TcContext program symbols registries "" pools)]
               (match (tc-stdlib-comptime-surface-ok ctx)
@@ -47297,9 +47298,9 @@
                         (box (tc-diag-at-start message)))])]
                 [(ErrTcUnit message)
                   (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))]))]
-          [(ErrCompilerRegistries message)
+          [(ResultCompilerRegistries.Err message)
             (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))])]
-      [(ErrCompilerSymbols message)
+      [(ResultCompilerSymbols.Err message)
         (ErrCompilerTypecheckChecked (box (tc-diag-at-start message)))])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner

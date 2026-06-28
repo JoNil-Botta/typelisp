@@ -1387,7 +1387,7 @@
       code
       stdlib-roots
       cfgs)
-      [(OkCompilerLoadWithPaths decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (match (lower-compiler-program-with-decl-paths
           virtual-path
           (ast-program decls)
@@ -1409,7 +1409,7 @@
           [(ErrCompilerLower diag)
             (ResultSourceToolString.Err
               (compiler-diagnostic-render (box-get diag)))])]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (ResultSourceToolString.Err (compiler-diagnostic-render (box-get diag)))])))
 
 (define (doc-test-runnable-failure

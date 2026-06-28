@@ -83,7 +83,7 @@
                               (match (build-compiler-symbols-with-paths
                                 normalized
                                 normalized-paths)
-                                [(OkCompilerSymbols _)
+                                [(ResultCompilerSymbols.Ok _)
                                   (begin
                                     (ast-node-pool-context-capture-active!
                                       pools)
@@ -105,7 +105,7 @@
                                           pools)]
                                       [(ErrSpecProgramWithPaths diag)
                                         (ErrCompilerTypecheck diag)]))]
-                                [(ErrCompilerSymbols message)
+                                [(ResultCompilerSymbols.Err message)
                                   (ErrCompilerTypecheck
                                     (box (tc-diag-at-start message)))])
                               (typecheck-compiler-specialized-program-with-paths-cache-and-pools
@@ -184,7 +184,7 @@
                               (match (build-compiler-symbols-with-paths
                                 normalized
                                 normalized-paths)
-                                [(OkCompilerSymbols _)
+                                [(ResultCompilerSymbols.Ok _)
                                   (begin
                                     (ast-node-pool-context-capture-active!
                                       pools)
@@ -206,7 +206,7 @@
                                           pools)]
                                       [(ErrSpecProgramWithPaths diag)
                                         (ErrCompilerTypecheckChecked diag)]))]
-                                [(ErrCompilerSymbols message)
+                                [(ResultCompilerSymbols.Err message)
                                   (ErrCompilerTypecheckChecked
                                     (box (tc-diag-at-start message)))])
                               (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
@@ -275,7 +275,7 @@
       (sym-i64-empty)
       stdlib-roots
       cfgs)
-      [(OkCompilerLoadWithPaths
+      [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
           prelude-modules
@@ -286,16 +286,22 @@
           prelude-seen
           stdlib-roots
           cfgs)
-          [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-            (OkCompilerLoadWithPaths
+          [(ResultCompilerLoadWithPaths.Ok
+              entry-decls
+              entry-paths
+              entry-modules
+              seen)
+            (ResultCompilerLoadWithPaths.Ok
               (compiler-load-decl-list-append prelude-decls entry-decls)
               (compiler-load-decl-path-list-append prelude-paths entry-paths)
               (compiler-load-decl-module-list-append
                 prelude-modules
                 entry-modules)
               seen)]
-          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])))
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (typecheck-compiler-source-stdlib-import-kind?
   [kind : AstImportKind]
@@ -338,9 +344,9 @@
       (tc-clone-able-cache-reset!)
       (macro-alias-cache-reset!)
       (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
+        [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
+            [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
                   (TcContext
@@ -368,8 +374,8 @@
                           [(ErrTcEnv message) (ErrTcType message)])]
                       [(ErrTcUnit message) (ErrTcType message)])]
                   [(ErrTcUnit message) (ErrTcType message)]))]
-            [(ErrCompilerRegistries message) (ErrTcType message)])]
-        [(ErrCompilerSymbols message) (ErrTcType message)]))))
+            [(ResultCompilerRegistries.Err message) (ErrTcType message)])]
+        [(ResultCompilerSymbols.Err message) (ErrTcType message)]))))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (let
@@ -384,11 +390,12 @@
           ;; see loaded stdlib macro definitions and alias markers.
           (if (typecheck-compiler-source-program-has-stdlib-import? program)
             (match (typecheck-compiler-source-load src)
-              [(OkCompilerLoadWithPaths decls paths _ _)
+              [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                 (typecheck-compiler-program-with-paths
                   (ast-program decls)
                   paths)]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerTypecheck diag)])
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ErrCompilerTypecheck diag)])
             (typecheck-compiler-program program))]
         [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
     (begin
@@ -1583,9 +1590,9 @@
     (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
       [(OkAstProgram program)
         (match (build-compiler-symbols program)
-          [(OkCompilerSymbols symbols)
+          [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
-              [(OkCompilerRegistries registries)
+              [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
                     (TcContext
@@ -1630,8 +1637,8 @@
                               12))]
                         [(ErrTcReprCLayout _) false])]
                     [(ErrTcReprCLayout _) false]))]
-              [(ErrCompilerRegistries _) false])]
-          [(ErrCompilerSymbols _) false])]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
 
 (define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
@@ -1640,9 +1647,9 @@
     (match (parse-ast-source (compiler-typecheck-repr-c-f32-source))
       [(OkAstProgram program)
         (match (build-compiler-symbols program)
-          [(OkCompilerSymbols symbols)
+          [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
-              [(OkCompilerRegistries registries)
+              [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
                     (TcContext
@@ -1672,8 +1679,8 @@
                             "tag")
                           8))]
                     [(ErrTcReprCLayout _) false]))]
-              [(ErrCompilerRegistries _) false])]
-          [(ErrCompilerSymbols _) false])]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
 
 (define (compiler-typecheck-repr-c-string-source) : String
@@ -1731,9 +1738,9 @@
     (match (parse-ast-source src)
       [(OkAstProgram program)
         (match (build-compiler-symbols program)
-          [(OkCompilerSymbols symbols)
+          [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
-              [(OkCompilerRegistries registries)
+              [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
                     (TcContext
@@ -1745,8 +1752,8 @@
                   (match (tc-repr-c-struct-layout ctx name)
                     [(OkTcReprCLayout _) false]
                     [(ErrTcReprCLayout message) (string.string-eq message want)]))]
-              [(ErrCompilerRegistries _) false])]
-          [(ErrCompilerSymbols _) false])]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
 
 (define (compiler-typecheck-repr-c-mixed-layout-ok?) : bool
@@ -1755,9 +1762,9 @@
     (match (parse-ast-source (compiler-typecheck-repr-c-mixed-layout-source))
       [(OkAstProgram program)
         (match (build-compiler-symbols program)
-          [(OkCompilerSymbols symbols)
+          [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
-              [(OkCompilerRegistries registries)
+              [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
                     (TcContext
@@ -1792,8 +1799,8 @@
                             "tail")
                           40))]
                     [(ErrTcReprCLayout _) false]))]
-              [(ErrCompilerRegistries _) false])]
-          [(ErrCompilerSymbols _) false])]
+              [(ResultCompilerRegistries.Err _) false])]
+          [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
 
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
@@ -1819,9 +1826,9 @@
   (match (parse-ast-source src)
     [(OkAstProgram program)
       (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
+        [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
+            [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
                   (TcContext
@@ -1831,8 +1838,8 @@
                     ""
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
-            [(ErrCompilerRegistries message) (ErrTcUnit message)])]
-        [(ErrCompilerSymbols message) (ErrTcUnit message)])]
+            [(ResultCompilerRegistries.Err message) (ErrTcUnit message)])]
+        [(ResultCompilerSymbols.Err message) (ErrTcUnit message)])]
     [(ErrAstProgram message) (ErrTcUnit message)]))
 
 (define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
@@ -1847,9 +1854,9 @@
   (match (parse-ast-source src)
     [(OkAstProgram program)
       (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
+        [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
+            [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
                   (TcContext
@@ -1862,8 +1869,8 @@
                   [(OkTcInlineAggregateLayout layout)
                     (= (tc-inline-aggregate-layout-size layout) want)]
                   [(ErrTcInlineAggregateLayout _) false]))]
-            [(ErrCompilerRegistries _) false])]
-        [(ErrCompilerSymbols _) false])]
+            [(ResultCompilerRegistries.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-typecheck-inline-layout-error-ok?
@@ -1896,9 +1903,9 @@
   (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
     [(OkAstProgram program)
       (match (build-compiler-symbols program)
-        [(OkCompilerSymbols symbols)
+        [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
-            [(OkCompilerRegistries registries)
+            [(ResultCompilerRegistries.Ok registries)
               (let
                 [ctx : TcContext
                   (TcContext
@@ -2055,8 +2062,8 @@
                         (set! ok false))]
                     [(ErrTcLayoutInfo _) (set! ok false)])
                   ok))]
-            [(ErrCompilerRegistries _) false])]
-        [(ErrCompilerSymbols _) false])]
+            [(ResultCompilerRegistries.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-typecheck-inline-boxed-list-source) : String

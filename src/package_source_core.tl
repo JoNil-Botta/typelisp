@@ -116,7 +116,7 @@
     (match (compiler-load-parse-manifest-diagnostic-infer-kind
       path
       (io.read-file path))
-      [(ErrCompilerPkgManifestDiagnostic diag)
+      [(ResultCompilerPkgManifestDiagnostic.Err diag)
         (ErrPackageSourceSet
           (str_cat.str-cat
             "invalid package manifest '"
@@ -124,7 +124,7 @@
             (string.string-append
               "': "
               (compiler-diagnostic-message (box-get diag)))))]
-      [(OkCompilerPkgManifestDiagnostic manifest)
+      [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (OkPackageSourceSet
           (PackageSourceSet
             path

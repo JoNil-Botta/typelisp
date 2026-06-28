@@ -19,14 +19,14 @@
     (match (compiler-load-file-with-paths
       "target/cl_lazy_dotted/entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 1)
           (= (compiler-load-decl-list-count decls) 3)
           (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
           (sym-i64-contains seen "lazy.dotted.entry")
           (not (sym-i64-contains seen "nested.dep")))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-used-dotted-import-ok?) : bool
   (begin
@@ -44,12 +44,12 @@
     (match (compiler-load-file-with-paths
       "target/cl_lazy_dotted_used/entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths _ _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
           (sym-i64-contains seen "lazy.dotted.used.entry")
           (sym-i64-contains seen "nested.dep"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (package-lazy-unused-dotted-import-ok?) : bool
   (begin
@@ -70,14 +70,14 @@
       (vector.string-vec-new)
       "target/cl_pkg_lazy_dotted"
       (compiler-pkg-deps-empty))
-      [(OkCompilerLoadWithPaths decls _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 1)
           (= (compiler-load-decl-list-count decls) 3)
           (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
           (sym-i64-contains seen "pkg.lazy.dotted.entry")
           (not (sym-i64-contains seen "nested.dep")))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (package-lazy-used-dotted-import-ok?) : bool
   (begin
@@ -98,12 +98,12 @@
       (vector.string-vec-new)
       "target/cl_pkg_lazy_dotted_used"
       (compiler-pkg-deps-empty))
-      [(OkCompilerLoadWithPaths _ _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
           (sym-i64-contains seen "pkg.lazy.dotted.used.entry")
           (sym-i64-contains seen "nested.dep"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (main) : i64
   (begin

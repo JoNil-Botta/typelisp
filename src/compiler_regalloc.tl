@@ -2723,6 +2723,24 @@
                   (compiler-live-value-vars-into
                     (compiler-live-call-args-vars args)
                     func))]
+              ;; Closure/indirect calls reserve ABI arg-register 0 for the env and
+              ;; marshal user args at base 1; the parallel-move solver builds at base
+              ;; 0, so keep their arg vars memory-sourced (ineligible) -> the naive
+              ;; (base-correct) marshalling handles them and no register cycle forms.
+              ;; (Follow-up: a base-aware + cap-aware parallel move could re-enable
+              ;; register-homed indirect-call args.)
+              [(IrInstrCallIndirect _ func args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-value-vars-into
+                    (compiler-live-call-args-vars args)
+                    func))]
+              [(IrInstrCallIndirectC _ func args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-value-vars-into
+                    (compiler-live-call-args-vars args)
+                    func))]
               [_ out]))
           (set! index (+ index 1))))
       out)))
@@ -9077,10 +9095,9 @@
   (match instr
     [(IrInstrCall _ _ args _)
       (compiler-reg-arg-pref-args! args prefs parents)]
-    [(IrInstrCallIndirect _ _ args _)
-      (compiler-reg-arg-pref-args! args prefs parents)]
-    [(IrInstrCallIndirectC _ _ args _)
-      (compiler-reg-arg-pref-args! args prefs parents)]
+    ;; Indirect/closure calls: arg vars are ineligible (see
+    ;; compiler-reg-call-arg-vars-instr-seq-scalar) so no arg-reg preference
+    ;; applies; the base-0 pref was also wrong for the closure base-1 marshalling.
     [(IrInstrCallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload _ _ args _)

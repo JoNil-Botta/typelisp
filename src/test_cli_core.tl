@@ -1876,7 +1876,7 @@
       (begin
         (tltest-inline-reset-load-state!)
         (match (compiler-driver-load-file-with-runtime source roots test-cfgs)
-          [(OkCompilerLoadWithPaths decls paths _ _)
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (tltest-inline-typecheck-loaded
               source
               decls
@@ -1884,7 +1884,7 @@
               roots
               test-cfgs
               cache-scope-prefix)]
-          [(ErrCompilerLoadWithPaths diag)
+          [(ResultCompilerLoadWithPaths.Err diag)
             (begin
               (io.print-error
                 (compiler-diagnostic-render
@@ -1910,7 +1910,7 @@
         deps
         true
         test-cfgs)
-        [(OkCompilerLoadWithPaths decls paths _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (tltest-inline-typecheck-loaded
             (compiler-load-package-owned-path
               package-owner
@@ -1922,7 +1922,7 @@
             roots
             test-cfgs
             cache-scope-prefix)]
-        [(ErrCompilerLoadWithPaths diag)
+        [(ResultCompilerLoadWithPaths.Err diag)
           (begin
             (io.print-error
               (compiler-diagnostic-render
@@ -2844,8 +2844,8 @@
             source
             roots
             (tltest-cfgs target))
-            [(ErrCompilerLoadWithPaths _) false]
-            [(OkCompilerLoadWithPaths decls paths _ _)
+            [(ResultCompilerLoadWithPaths.Err _) false]
+            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (tltest-nested-module-macro-vector-loaded-ok?
                 source
                 decls
@@ -2890,8 +2890,8 @@
             (compiler-pkg-deps-empty)
             true
             (tltest-cfgs (BackendTargetLinux)))
-            [(ErrCompilerLoadWithPaths _) false]
-            [(OkCompilerLoadWithPaths decls paths _ _)
+            [(ResultCompilerLoadWithPaths.Err _) false]
+            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (let
                 [owned-source : String
                   (compiler-load-package-owned-path "tltest" "." roots source)]
@@ -2927,11 +2927,11 @@
             source
             roots
             (tltest-cfgs target))
-            [(ErrCompilerLoadWithPaths diag)
+            [(ResultCompilerLoadWithPaths.Err diag)
               (begin
                 (io.print-error (compiler-diagnostic-render (box-get diag)))
                 false)]
-            [(OkCompilerLoadWithPaths decls paths _ _)
+            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (match (lower-compiler-program-with-decl-paths-mode-cache
                 source
                 (ast-program decls)
@@ -3660,7 +3660,7 @@
     deps
     true
     (tltest-cfgs backend-target))
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match test-mode
         [(TestModeCheck)
           (tltest-package-integration-check
@@ -3677,7 +3677,7 @@
             opt-level
             decls
             paths)])]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error
           (string.string-append "test: integration test source failed: " source))
@@ -3729,7 +3729,7 @@
       deps
       true
       (tltest-cfgs backend-target))
-      [(OkCompilerLoadWithPaths decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (let
           [owned-source : String
             (compiler-load-package-owned-path
@@ -3746,7 +3746,7 @@
             backend-target
             decls
             paths))]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (io.print-error
             (string.string-append "test: package source failed: " source))
@@ -4064,9 +4064,9 @@
     source
     roots
     (tltest-cfgs backend-target))
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (tltest-check-file-loaded source decls paths backend-target roots)]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         (ErrTestFileCheck 1))]))
@@ -4183,7 +4183,7 @@
             source
             roots
             (tltest-cfgs backend-target))
-            [(OkCompilerLoadWithPaths decls paths _ _)
+            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (match (tltest-build-harness source decls paths)
                 [(InlineHarness program harness-paths count)
                   (if (= count 0)
@@ -4208,7 +4208,7 @@
                           roots
                           target
                           opt-level)]))])]
-            [(ErrCompilerLoadWithPaths diag)
+            [(ResultCompilerLoadWithPaths.Err diag)
               (begin
                 (io.print-error (compiler-diagnostic-render (box-get diag)))
                 1)])])]

@@ -482,14 +482,14 @@
     (sym-i64-empty)
     stdlib-roots
     cfgs)
-    [(OkCompilerLoadWithPaths decls _ _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (ResultSourceToolLinkInputs.Ok
         (source-tool-link-inputs-merge
           (source-tool-link-inputs-from-decls
             decls
             (source-tool-link-inputs-empty))
           explicit-inputs))]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (ResultSourceToolLinkInputs.Err
         (compiler-diagnostic-render (box-get diag)))]))
 

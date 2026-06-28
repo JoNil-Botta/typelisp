@@ -100,9 +100,9 @@
   (match (compiler-driver-load-runtime-prelude-cold
     (compiler-driver-pic-smoke-roots)
     (compiler-cfg-enable (compiler-cfg-empty) "__typelisp_pic_image"))
-    [(OkCompilerLoadWithPaths _ paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl")]
-    [(ErrCompilerLoadWithPaths _) false]))
+    [(ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (main) : i64
   (begin

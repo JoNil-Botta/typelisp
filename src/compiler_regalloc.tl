@@ -8814,6 +8814,10 @@
   (compiler-reg-string-cons
     "%rax"
     (compiler-reg-string-cons
+    "%rsi"
+    (compiler-reg-string-cons
+    "%rdi"
+    (compiler-reg-string-cons
     "%r9"
     (compiler-reg-string-cons
       "%rcx"
@@ -8825,10 +8829,10 @@
             "%r11"
             (compiler-reg-string-cons
               "%r8"
-              (compiler-reg-sysv-integer-registers)))))))))
+              (compiler-reg-sysv-integer-registers)))))))))))
 
 (define (compiler-reg-greedy-caller-saved-count) : i64
-  7)
+  9)
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check
@@ -13473,18 +13477,19 @@
         (= (compiler-reg-assignment-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 0)
         ;; #perf call-spanning-aware partitioning homes the non-call-spanning
-        ;; values in the caller-saved zero-call pool (%r9/%rcx/%rdx) FIRST, in
-        ;; candidate order, so they now land on the leading vars rather than as a
-        ;; trailing overflow. Every value still gets a register (0 spills).
+        ;; values in the caller-saved pool in candidate order. With %rax/%rsi/%rdi
+        ;; now pooled at the front, the leading vars land on %rax/%rsi/%rdi (was
+        ;; %r9/%rcx/%rdx). Every value still gets a register (0 spills); sound here
+        ;; because this is a zero-call function -- no clobber across a call.
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 0)
-          "%r9")
+          "%rax")
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 1)
-          "%rcx")
+          "%rsi")
         (compiler-reg-location-register?
           (compiler-reg-assignment-lookup assignments 2)
-          "%rdx"))]))
+          "%rdi"))]))
 
 (cfg
   test
@@ -16262,7 +16267,7 @@
         "%r12")
       ;; The greedy pool owns the caller-saved backend temps behind the
       ;; clobber-point filter.
-      (= (compiler-reg-greedy-caller-saved-count) 6)
+      (= (compiler-reg-greedy-caller-saved-count) 9)
       (compiler-reg-string-list-contains? greedy-pool "%r8")
       (compiler-reg-string-list-contains? greedy-pool "%r10")
       (compiler-reg-string-list-contains? greedy-pool "%r11")

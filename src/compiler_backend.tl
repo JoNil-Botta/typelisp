@@ -4380,6 +4380,16 @@
         (string-append save-asm (string-append head restore-asm))))
     head))
 
+(define (compiler-backend-emergency-append
+  [buf : text_buf.TextBuf]
+  [head : String]) : text_buf.TextBuf
+  (text-buf-append buf (compiler-backend-emergency-wrap head)))
+
+(define (compiler-backend-emergency-render-append
+  [buf : text_buf.TextBuf]
+  [head : String]) : String
+  (text_buf.text-buf-render (compiler-backend-emergency-append buf head)))
+
 ;; A callee-saved reg must be saved by the prologue iff the allocator homes a
 ;; value there OR the scavenge used it on demand.
 (define (compiler-backend-callee-needs-save?
@@ -21220,8 +21230,7 @@
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match result
     [(OkCompilerBackend asm)
-      (OkCompilerBackend
-        (text_buf.text-buf-render (text_buf.text-buf-append buf asm)))]
+      (OkCompilerBackend (compiler-backend-emergency-render-append buf asm))]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 (define (compiler-backend-emit-instr-with-call-rax
@@ -21393,7 +21402,7 @@
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (let
     [next-buf : TextBuf
-      (text-buf-append buf (compiler-backend-emergency-wrap head))]
+      (compiler-backend-emergency-append buf head)]
     (match instr
       [(IrInstrCall dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
@@ -22868,7 +22877,7 @@
           spans
           func-diag
           use-counts
-          (text_buf.text-buf-append buf direct-return)))]
+          (compiler-backend-emergency-append buf direct-return)))]
     [(ErrCompilerBackend message)
       (ErrCompilerBackend
         (box
@@ -23757,7 +23766,9 @@
                                   spans
                                   func-diag
                                   use-counts
-                                  (text_buf.text-buf-append buf binop-asm))]
+                                  (compiler-backend-emergency-append
+                                    buf
+                                    binop-asm))]
                               [(ErrCompilerBackend message)
                                 (ErrCompilerBackend message)])
                             (compiler-backend-emit-instrs-normal
@@ -23873,9 +23884,9 @@
                               spans
                               func-diag
                               use-counts
-                              (text_buf.text-buf-append
-                                (text_buf.text-buf-append buf prefix)
-                                binop-asm))]
+                              (compiler-backend-emergency-append
+                                buf
+                                (string-append prefix binop-asm)))]
                           [(ErrCompilerBackend message)
                             (ErrCompilerBackend message)])]
                       [(ErrCompilerBackend message)
@@ -23944,8 +23955,9 @@
                               program-index)
                               [(OkCompilerBackend asm)
                                 (OkCompilerBackend
-                                  (text_buf.text-buf-render
-                                    (text_buf.text-buf-append buf asm)))]
+                                  (compiler-backend-emergency-render-append
+                                    buf
+                                    asm))]
                               [(ErrCompilerBackend message)
                                 (ErrCompilerBackend
                                   (box
@@ -26969,6 +26981,28 @@
 (define compiler-backend-scavenge-all-reg-mask : i64
   32767)
 
+(define compiler-backend-scavenge-reg-bit-count : i64
+  15)
+
+(define (compiler-backend-scavenge-reg-bit-by-index [index : i64]) : i64
+  (cond
+    [(= index 0) 1]
+    [(= index 1) 2]
+    [(= index 2) 4]
+    [(= index 3) 8]
+    [(= index 4) 16]
+    [(= index 5) 32]
+    [(= index 6) 64]
+    [(= index 7) 128]
+    [(= index 8) 256]
+    [(= index 9) 512]
+    [(= index 10) 1024]
+    [(= index 11) 2048]
+    [(= index 12) 4096]
+    [(= index 13) 8192]
+    [(= index 14) 16384]
+    [else 0]))
+
 (define (compiler-backend-scavenge-location-mask
   [location : CompilerRegLocation]) : i64
   (match location
@@ -26978,6 +27012,60 @@
         (compiler-backend-scavenge-reg-bit a)
         (compiler-backend-scavenge-reg-bit b))]
     [_ 0]))
+
+(define (compiler-backend-scavenge-mask-bit-count [mask : i64]) : i64
+  (let
+    [bit-index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< bit-index compiler-backend-scavenge-reg-bit-count)
+        (let
+          [bit : i64 (compiler-backend-scavenge-reg-bit-by-index bit-index)]
+          (begin
+            (if (not (= (bit-and mask bit) 0))
+              (set! count (+ count 1))
+              unit)
+            (set! bit-index (+ bit-index 1)))))
+      count)))
+
+(define (compiler-backend-scavenge-occupancy-event-capacity
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [present : (Array i64)]
+  [items : (Array CompilerRegLocation)]
+  [limit : i64]
+  [vars : i64]
+  [instr-count : i64]) : i64
+  (let
+    [v : i64 0]
+    [events : i64 0]
+    (begin
+      (while (< v vars)
+        (begin
+          (if (and
+            (< v limit)
+            (not (= (array-ref present v) 0))
+            (>= (array-ref starts v) 0)
+            (>= (array-ref ends v) 0))
+            (let
+              [loc-mask : i64
+                (compiler-backend-scavenge-location-mask (array-ref items v))]
+              [start-i : i64 (/ (array-ref starts v) 2)]
+              [raw-end-i : i64 (/ (array-ref ends v) 2)]
+              [end-i : i64
+                (if (>= raw-end-i instr-count)
+                  (- instr-count 1)
+                  raw-end-i)]
+              (if (and (not (= loc-mask 0)) (<= start-i end-i))
+                (set!
+                  events
+                  (+ events (* 2 (compiler-backend-scavenge-mask-bit-count loc-mask))))
+                unit))
+            unit)
+          (set! v (+ v 1))))
+      (if (< events 1)
+        1
+        events))))
 
 (define (compiler-backend-scavenge-exclude-mask
   [exclude : (Array String)]
@@ -27015,18 +27103,118 @@
           (set! v (+ v 1))))
       (+ max-end 1))))
 
+(define (compiler-backend-scavenge-occupancy-add-event!
+  [heads : (Array i64)]
+  [event-bits : (Array i64)]
+  [event-deltas : (Array i64)]
+  [event-next : (Array i64)]
+  [event : i64]
+  [bit-index : i64]
+  [delta : i64]
+  [used : i64]) : i64
+  (if (or (< event 0) (>= event (array-length heads)) (>= used (array-length event-bits)))
+    used
+    (begin
+      (array-set! event-bits used bit-index)
+      (array-set! event-deltas used delta)
+      (array-set! event-next used (array-ref heads event))
+      (array-set! heads event used)
+      (+ used 1))))
+
+(define (compiler-backend-scavenge-occupancy-add-mask-events!
+  [heads : (Array i64)]
+  [event-bits : (Array i64)]
+  [event-deltas : (Array i64)]
+  [event-next : (Array i64)]
+  [event : i64]
+  [mask : i64]
+  [delta : i64]
+  [used : i64]) : i64
+  (let
+    [bit-index : i64 0]
+    [out : i64 used]
+    (begin
+      (while (< bit-index compiler-backend-scavenge-reg-bit-count)
+        (let
+          [bit : i64 (compiler-backend-scavenge-reg-bit-by-index bit-index)]
+          (begin
+            (if (not (= (bit-and mask bit) 0))
+              (set!
+                out
+                (compiler-backend-scavenge-occupancy-add-event!
+                  heads
+                  event-bits
+                  event-deltas
+                  event-next
+                  event
+                  bit-index
+                  delta
+                  out))
+              unit)
+            (set! bit-index (+ bit-index 1)))))
+      out)))
+
 (define (compiler-backend-scavenge-occupancy-add-range!
-  [adds : (Array i64)]
-  [removes : (Array i64)]
+  [heads : (Array i64)]
+  [event-bits : (Array i64)]
+  [event-deltas : (Array i64)]
+  [event-next : (Array i64)]
   [start-i : i64]
   [end-i : i64]
-  [mask : i64]) : unit
-  (begin
-    (array-set! adds start-i (bit-or (array-ref adds start-i) mask))
-    (array-set!
-      removes
-      (+ end-i 1)
-      (bit-or (array-ref removes (+ end-i 1)) mask))))
+  [mask : i64]
+  [used : i64]) : i64
+  (compiler-backend-scavenge-occupancy-add-mask-events!
+    heads
+    event-bits
+    event-deltas
+    event-next
+    (+ end-i 1)
+    mask
+    (- 0 1)
+    (compiler-backend-scavenge-occupancy-add-mask-events!
+      heads
+      event-bits
+      event-deltas
+      event-next
+      start-i
+      mask
+      1
+      used)))
+
+(define (compiler-backend-scavenge-occupancy-mask-at-event
+  [heads : (Array i64)]
+  [event-bits : (Array i64)]
+  [event-deltas : (Array i64)]
+  [event-next : (Array i64)]
+  [active-counts : (Array i64)]
+  [event : i64]) : i64
+  (let
+    [node : i64 (array-ref heads event)]
+    [_apply-events : unit
+      (while (>= node 0)
+        (let
+          [bit-index : i64 (array-ref event-bits node)]
+          [next : i64
+            (+
+              (array-ref active-counts bit-index)
+              (array-ref event-deltas node))]
+          (begin
+            (array-set! active-counts bit-index next)
+            (set! node (array-ref event-next node)))))]
+    [bit-index : i64 0]
+    [mask : i64 0]
+    (begin
+      (while (< bit-index compiler-backend-scavenge-reg-bit-count)
+        (begin
+          (if (> (array-ref active-counts bit-index) 0)
+            (set!
+              mask
+              (bit-or
+                mask
+                (compiler-backend-scavenge-reg-bit-by-index bit-index)))
+            unit)
+          (set! bit-index (+ bit-index 1))))
+      mask)))
 
 (define (compiler-backend-scavenge-occupancy-build
   [starts : (Array i64)]
@@ -27037,17 +27225,34 @@
     [instr-count : i64
       (compiler-backend-scavenge-occupancy-instr-count ends vars)]
     [event-count : i64 (+ instr-count 1)]
-    [adds : (Array i64) (make-array i64 event-count)]
-    [removes : (Array i64) (make-array i64 event-count)]
-    [out : (Array i64) (make-array i64 instr-count)]
+    [heads : (Array i64) (make-array i64 event-count)]
     [present : (Array i64) (struct-get assignment-index present)]
     [items : (Array CompilerRegLocation) (struct-get assignment-index items)]
     [limit : i64 (array-length present)]
+    [max-events : i64
+      (compiler-backend-scavenge-occupancy-event-capacity
+        starts
+        ends
+        present
+        items
+        limit
+        vars
+        instr-count)]
+    [event-bits : (Array i64) (make-array i64 max-events)]
+    [event-deltas : (Array i64) (make-array i64 max-events)]
+    [event-next : (Array i64) (make-array i64 max-events)]
+    [out : (Array i64) (make-array i64 instr-count)]
+    [active-counts : (Array i64)
+      (make-array i64 compiler-backend-scavenge-reg-bit-count)]
     [v : i64 0]
+    [event-used : i64 0]
     (begin
-      (compiler-reg-fill-i64-array adds 0)
-      (compiler-reg-fill-i64-array removes 0)
+      (compiler-reg-fill-i64-array heads (- 0 1))
+      (compiler-reg-fill-i64-array event-bits 0)
+      (compiler-reg-fill-i64-array event-deltas 0)
+      (compiler-reg-fill-i64-array event-next (- 0 1))
       (compiler-reg-fill-i64-array out 0)
+      (compiler-reg-fill-i64-array active-counts 0)
       (while (< v vars)
         (begin
           (if (and
@@ -27065,30 +27270,35 @@
                   (- instr-count 1)
                   raw-end-i)]
               (if (and (not (= loc-mask 0)) (<= start-i end-i))
-                (compiler-backend-scavenge-occupancy-add-range!
-                  adds
-                  removes
-                  start-i
-                  end-i
-                  loc-mask)
+                (set!
+                  event-used
+                  (compiler-backend-scavenge-occupancy-add-range!
+                    heads
+                    event-bits
+                    event-deltas
+                    event-next
+                    start-i
+                    end-i
+                    loc-mask
+                    event-used))
                 unit))
             unit)
           (set! v (+ v 1))))
       (let
         [i : i64 0]
-        [active : i64 0]
         (begin
           (while (< i instr-count)
             (begin
-              (set!
-                active
-                (bit-and
-                  active
-                  (bit-xor
-                    compiler-backend-scavenge-all-reg-mask
-                    (array-ref removes i))))
-              (set! active (bit-or active (array-ref adds i)))
-              (array-set! out i active)
+              (array-set!
+                out
+                i
+                (compiler-backend-scavenge-occupancy-mask-at-event
+                  heads
+                  event-bits
+                  event-deltas
+                  event-next
+                  active-counts
+                  i))
               (set! i (+ i 1))))
           out)))))
 
@@ -27163,23 +27373,17 @@
           (CompilerRegAssignmentIndex present items)
           plan-mask)))))
 
-(define (compiler-backend-scavenge-remap-intervals
-  [remap : (Array i64)]
-  [intervals : CompilerRegIntervalList]) : CompilerRegIntervalList
-  (match intervals
-    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
-    [(CompilerRegIntervalCons item rest)
+(define (compiler-backend-assignments-have-register-home?
+  [assignments : CompilerRegAssignmentList]) : bool
+  (match assignments
+    [(CompilerRegAssignmentNil) false]
+    [(CompilerRegAssignmentCons item rest)
       (match item
-        [(CompilerRegInterval var start end)
-          (let
-            [new-var : i64 (compiler-reg-remap-id remap var)]
-            [tail : CompilerRegIntervalList
-              (compiler-backend-scavenge-remap-intervals remap (box-get rest))]
-            (if (< new-var 0)
-              tail
-              (compiler-reg-interval-cons
-                (CompilerRegInterval new-var start end)
-                tail)))])]))
+        [(CompilerRegAssignment _ location)
+          (match location
+            [(CompilerRegRegister _) true]
+            [(CompilerRegRegisterPair _ _) true]
+            [_ (compiler-backend-assignments-have-register-home? (box-get rest))])])]))
 
 (cfg
   scavenge-self-check
@@ -28445,13 +28649,20 @@
             [(CompilerRegColoringNone) remat-vars]
             [(CompilerRegColoringRemap _ slots) slots])]
         [scavenge-intervals : CompilerRegIntervalList
-          (match coloring
-            [(CompilerRegColoringNone)
-              (compiler-reg-plan-intervals remat-reg-plan)]
-            [(CompilerRegColoringRemap remap _)
-              (compiler-backend-scavenge-remap-intervals
-                remap
-                (compiler-reg-plan-intervals remat-reg-plan))])]
+          ;; Scavenge occupancy must be keyed to the FINAL emitted IR at
+          ;; instruction precision. The allocator plan intervals predate
+          ;; call-save/remat rewrites and frame slot compaction, and the cheap
+          ;; block interval builder can miss within-block live-through scratch
+          ;; hazards. The full live-after intervals are the source of truth for
+          ;; register-owned values that must not be scavenged.
+          (if (compiler-backend-assignments-have-register-home? assignments)
+            (let
+              [scavenge-func : CompilerIrFunction
+                (IrFunction name params ret-ty remat-vars emit-blocks-list)]
+              (compiler-reg-live-intervals
+                scavenge-func
+                (compiler-live-analyze-function scavenge-func)))
+            CompilerRegIntervalNil)]
         [types : CompilerRegVarTypeList
           (match coloring
             [(CompilerRegColoringNone) plan-types]

@@ -16162,8 +16162,8 @@
 
 (define (compiler-backend-scavenge-occupancy-cache-ok?) : bool
   (let
-    [starts : (Array i64) (make-array i64 4)]
-    [ends : (Array i64) (make-array i64 4)]
+    [starts : (Array i64) (make-array i64 5)]
+    [ends : (Array i64) (make-array i64 5)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment 0 (CompilerRegRegister "%r9"))
@@ -16173,25 +16173,29 @@
             (CompilerRegAssignment 2 (CompilerRegRegisterPair "%r11" "%xmm2"))
             (compiler-reg-assignment-cons
               (CompilerRegAssignment 3 (CompilerRegSpill 0))
-              CompilerRegAssignmentNil))))]
+              (compiler-reg-assignment-cons
+                (CompilerRegAssignment 4 (CompilerRegRegister "%r9"))
+                CompilerRegAssignmentNil)))))]
     [assignment-index : CompilerRegAssignmentIndex
-      (compiler-reg-assignment-index-build assignments 4)]
+      (compiler-reg-assignment-index-build assignments 5)]
     (begin
       (array-set! starts 0 0)
-      (array-set! ends 0 0)
+      (array-set! ends 0 2)
       (array-set! starts 1 3)
       (array-set! ends 1 5)
       (array-set! starts 2 4)
       (array-set! ends 2 7)
       (array-set! starts 3 0)
       (array-set! ends 3 8)
+      (array-set! starts 4 2)
+      (array-set! ends 4 6)
       (let
         [masks : (Array i64)
           (compiler-backend-scavenge-occupancy-build
             starts
             ends
             assignment-index
-            4)]
+            5)]
         (and
           (= (array-length masks) 5)
           (compiler-backend-scavenge-occupancy-cache-point-ok?
@@ -16199,42 +16203,142 @@
             starts
             ends
             assignment-index
-            4
+            5
             0)
           (compiler-backend-scavenge-occupancy-cache-point-ok?
             masks
             starts
             ends
             assignment-index
-            4
+            5
             2)
           (compiler-backend-scavenge-occupancy-cache-point-ok?
             masks
             starts
             ends
             assignment-index
-            4
+            5
             4)
           (compiler-backend-scavenge-occupancy-cache-point-ok?
             masks
             starts
             ends
             assignment-index
-            4
+            5
             6)
           (compiler-backend-scavenge-occupancy-cache-point-ok?
             masks
             starts
             ends
             assignment-index
-            4
+            5
             8)
           (= (array-ref masks 0) (compiler-backend-scavenge-reg-bit "%r9"))
+          (not
+            (=
+              (bit-and (array-ref masks 2) (compiler-backend-scavenge-reg-bit "%r9"))
+              0))
           (=
             (array-ref masks 3)
             (bit-or
-              (compiler-backend-scavenge-reg-bit "%r11")
-              (compiler-backend-scavenge-reg-bit "%xmm2"))))))))
+              (compiler-backend-scavenge-reg-bit "%r9")
+              (bit-or
+                (compiler-backend-scavenge-reg-bit "%r11")
+                (compiler-backend-scavenge-reg-bit "%xmm2")))))))))
+
+(define (compiler-backend-scavenge-loop-live-through-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (IrInstrMov 0 (IrValueI64 8) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 1 (IrValueI64 0) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrMov 5 (IrValueI64 0) (AstTyI64))
+            (compiler-ir-instr-cons (IrInstrJump "header") IrInstrNil)))))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "header"
+        (compiler-ir-instr-cons
+          (IrInstrBinOp
+            2
+            (IrBinLt)
+            (IrValueVar 1)
+            (IrValueVar 0)
+            (AstTyBool))
+          (compiler-ir-instr-cons
+            (IrInstrBranch (IrValueVar 2) "body" "exit")
+            IrInstrNil)))
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "body"
+          (compiler-ir-instr-cons
+            (IrInstrGep 3 (IrValueVar 5) (IrValueVar 1) (AstTyI64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+              (compiler-ir-instr-cons (IrInstrJump "header") IrInstrNil))))
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "exit"
+            (compiler-ir-instr-cons
+              (IrInstrBinOp
+                6
+                (IrBinMul)
+                (IrValueVar 0)
+                (IrValueI64 8)
+                (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrReturn (IrSomeValue (IrValueVar 6)))
+                IrInstrNil)))
+          IrBlockNil)))))
+
+(define (compiler-backend-scavenge-loop-live-through-ok?) : bool
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [blocks : CompilerIrBlockList
+      (compiler-backend-scavenge-loop-live-through-blocks)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 0 (CompilerRegRegister "%r8"))
+        CompilerRegAssignmentNil)]
+    (begin
+      (compiler-backend-test-scavenge-install-ctx!
+        "scavenge_loop_live_through"
+        IrParamNil
+        (AstTyI64)
+        7
+        blocks
+        assignments)
+      (let
+        [mask : i64 (compiler-backend-scavenge-occupied-mask-at-point 12)]
+        [ok : bool
+          (and
+            (not (= (bit-and mask (compiler-backend-scavenge-reg-bit "%r8")) 0))
+            (not
+              (string-eq
+                (compiler-backend-scavenge-pick-with-mask
+                  mask
+                  (compiler-backend-one-exclude "%rax")
+                  1
+                  "%r8")
+                "%r8")))]
+        (begin
+          (compiler-backend-set-scavenge-ctx-ready!
+            prev-starts
+            prev-ends
+            prev-assignment-index
+            prev-plan-mask
+            prev-occupied-masks
+            prev-vars)
+          ok)))))
 
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
@@ -16307,6 +16411,7 @@
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
+        (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)

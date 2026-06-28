@@ -1,5 +1,5 @@
-;; vector_family_import_provider.tl - Imported vector-family generator fixture.
-(import stdlib.vector_family as vf)
+;; vector_named_family_import_provider.tl - Imported named vector-family generator fixture.
+(import stdlib.vector as vf)
 
 (defstruct ImportedVecFamilyPoint
   (x i64))

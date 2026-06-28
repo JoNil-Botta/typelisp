@@ -9,7 +9,7 @@
 (import "../../stdlib/fs.tl")
 (import "../../stdlib/string.tl")
 (import "../../stdlib/str_cat.tl")
-(import "../../stdlib/vector_family.tl")
+(import "../../stdlib/vector.tl")
 
 (defenum DocSiteModule
   (DocSiteModule String String))
@@ -33,7 +33,7 @@
 (define doc-site-status-ok : i64
   0)
 (define doc-site-stdlib-manifest-size : i64
-  20)
+  19)
 (define doc-site-repo-blob-root : String
   "https://github.com/JoNil-Botta/typelisp/blob/main/")
 (define doc-site-repo-tree-root : String
@@ -170,9 +170,6 @@
       (doc-site-module-list-push
         (&mut modules)
         (DocSiteModule "stdlib/vector.tl" "stdlib-vector.html"))
-      (doc-site-module-list-push
-        (&mut modules)
-        (DocSiteModule "stdlib/vector_family.tl" "stdlib-vector-family.html"))
       modules)))
 
 (define (doc-site-language-guides) : DocSiteGuidePageList

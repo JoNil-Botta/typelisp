@@ -1,7 +1,7 @@
-;; vector_family_import_consumer.tl - imported vector-family generated names remain visible.
+;; vector_named_family_import_consumer.tl - imported named vector-family generated names remain visible.
 (import "stdlib/test.tl")
 (import stdlib.io)
-(import "vector_family_import_provider.tl")
+(import "vector_named_family_import_provider.tl")
 
 (define (imported-vector-family-helper-ok?) : bool
   (let

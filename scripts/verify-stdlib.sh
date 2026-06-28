@@ -214,7 +214,6 @@ time.tl
 text_buf.tl
 text_buf_borrowed.tl
 vector.tl
-vector_family.tl
 vector_slice.tl
 EOF
 }

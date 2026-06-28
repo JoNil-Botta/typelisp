@@ -37568,8 +37568,8 @@
       (string.string-eq definition-module "stdlib.vector")
       (string.string-eq macro-name "stdlib.vector/vector"))
     (and
-      (string.string-eq definition-module "stdlib.vector_family")
-      (string.string-eq macro-name "stdlib.vector_family/vector-family"))))
+      (string.string-eq definition-module "stdlib.vector")
+      (string.string-eq macro-name "stdlib.vector/vector-family"))))
 
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]
@@ -40928,14 +40928,14 @@
       rewrite-env
       decls)))
 
-;; Fast path for the hot stdlib.vector_family declaration macro. The macro body
+;; Fast path for the hot stdlib.vector declaration macro. The macro body
 ;; is a deterministic quasiquote that emits a fixed growable-vector declaration
 ;; family, so building the AST directly avoids CTFE plus macro-output parsing.
 (define (macro-vector-family-decls-macro?
   [macro-name : String]
   [definition-module : String]) : bool
   (and
-    (string.string-eq definition-module "stdlib.vector_family")
+    (string.string-eq definition-module "stdlib.vector")
     (tc-name-base-eq? macro-name "vector-family")))
 
 (define (macro-vf-name-expr [expr : AstExpr]) : TcMaybeString
@@ -44733,7 +44733,7 @@
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
 ;; and every reflection/layout builtin -- size-of/struct-field-*/enum-variant-*/
-;; …) take a type-literal argument, and type literals are comptime-only (they
+;; ...) take a type-literal argument, and type literals are comptime-only (they
 ;; can't appear in runtime code). So a program with no type literal never queries
 ;; the CTFE metadata, and `tc-ctfe-env` can hand back an empty env instead of
 ;; building the whole-program reflection + layout tables (tens of MB, O(types^2)).

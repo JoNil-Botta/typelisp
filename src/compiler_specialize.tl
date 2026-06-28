@@ -1,10 +1,10 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
 (import stdlib.text_buf)
 (import stdlib.array)
+(import "compiler_parse_core.tl")
 (import "compiler_ctfe.tl")
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
-(import "compiler_parse_core.tl")
 (import stdlib.string)
 (import stdlib.hashmap)
 

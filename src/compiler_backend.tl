@@ -5505,9 +5505,12 @@
 (define (compiler-backend-address-base-register-ok?
   [home : String]
   [avoid : String]) : bool
+  ;; %rax was excluded here as a pre-pooling artifact (when %rax was the hardcoded
+  ;; scratch/result reg). Now %rax is in the allocator pool, so a var homed in %rax
+  ;; is a valid address base -- using it directly elides the `movq %rax,<scav>` reload
+  ;; (the value-home conflict is still handled by `avoid`).
   (and
     (not (string.string-eq home ""))
-    (not (string.string-eq home "%rax"))
     (if (string.string-eq avoid "")
       true
       (not (string.string-eq home avoid)))))

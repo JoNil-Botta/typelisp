@@ -28,7 +28,8 @@
     `(string.string-ref ,text ,index)))
 
 ;; A compile-time value. Scalar subset from #719; Expr / ExprList aggregates
-;; from #1137 for macro transformers.
+;; from #1137 for macro transformers; TypeInfo pseudo-values back the
+;; stdlib-owned reflection surface.
 (defenum CompilerCtfeValue
   (CtfeI64 i64)
   (CtfeF64 f64)
@@ -45,7 +46,16 @@
   (CtfeExprClause AstExprClause)
   (CtfeExprClauseList AstExprClauseList)
   (CtfeExprBindingClause AstExprBindingClause)
-  (CtfeExprBindingClauseList AstExprBindingClauseList))
+  (CtfeExprBindingClauseList AstExprBindingClauseList)
+  (CtfeTypeInfo AstType)
+  (CtfeTypeInfoBox AstType)
+  (CtfeTypeInfoList AstTypeList)
+  (CtfeTypeField String AstType)
+  (CtfeTypeFieldList CtfeReflectFieldList)
+  (CtfeTypeVariantPayload AstType)
+  (CtfeTypeVariantPayloadList AstTypeList)
+  (CtfeTypeVariant String AstTypeList)
+  (CtfeTypeVariantList CtfeReflectVariantList))
 
 (define (ctfe-untyped-expr-type-name) : String
   "__typelisp_untyped_expr")
@@ -92,6 +102,18 @@
   (ctfe-captured-expr-type-inner-with-pools
     (ast-node-pool-context-capture-active)
     ty))
+
+(define (ctfe-stdlib-comptime-type-key [name : String]) : String
+  (string.string-append "stdlib.comptime/" name))
+
+(define (ctfe-stdlib-comptime-type [name : String]) : AstType
+  (AstTyVar (intern (ctfe-stdlib-comptime-type-key name))))
+
+(define (ctfe-type-info-source-type) : AstType
+  (ctfe-stdlib-comptime-type "TypeInfo"))
+
+(define (ctfe-type-info-box-source-type) : AstType
+  (ast-ty-box (ctfe-type-info-source-type)))
 
 (defenum CtfeValueList
   (CtfeValueNil)
@@ -1146,7 +1168,16 @@
     [(CtfeExprClause _) "ExprClause"]
     [(CtfeExprClauseList _) "ExprClauseList"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]))
+    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CtfeTypeInfo _) "TypeInfo"]
+    [(CtfeTypeInfoBox _) "Box"]
+    [(CtfeTypeInfoList _) "TypeInfoList"]
+    [(CtfeTypeField _ _) "TypeField"]
+    [(CtfeTypeFieldList _) "TypeFieldList"]
+    [(CtfeTypeVariantPayload _) "TypeVariantPayload"]
+    [(CtfeTypeVariantPayloadList _) "TypeVariantPayloadList"]
+    [(CtfeTypeVariant _ _) "TypeVariant"]
+    [(CtfeTypeVariantList _) "TypeVariantList"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -1380,6 +1411,32 @@
           (ctfe-diagnostic-at-expr
             expr
             "this operation is not supported on unit in compile-time evaluation")))]))
+
+(define (ctfe-eval-bin-type-info
+  [op : AstBinOp]
+  [a : AstType]
+  [b : AstType]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match op
+    [(AstBinEq) (OkCtfe (CtfeBool (ctfe-type-eq-in-env env a b)) fuel)]
+    [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-type-eq-in-env env a b))) fuel)]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "this operation is not supported on TypeInfo in compile-time evaluation")))]))
+
+(define (ctfe-eval-bin-comptime-metadata [label : String] [expr : AstExpr]) : ResultCtfe
+  (ErrCtfe
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        (string.string-append
+          "this operation is not supported on "
+          (string.string-append label " in compile-time evaluation"))))))
 
 ;; Dispatch a binary op over two already-evaluated operands.
 (define (ctfe-apply-binop
@@ -1621,7 +1678,36 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                "binary operation in comptime requires matching operand types")))])]))
+                "binary operation in comptime requires matching operand types")))])]
+    [(CtfeTypeInfo a)
+      (match rv
+        [(CtfeTypeInfo b) (ctfe-eval-bin-type-info op a b expr env fuel)]
+        [_
+          (ErrCtfe
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                "binary operation in comptime requires matching operand types")))])]
+    [(CtfeTypeInfoBox a)
+      (match rv
+        [(CtfeTypeInfoBox b) (ctfe-eval-bin-type-info op a b expr env fuel)]
+        [_
+          (ErrCtfe
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                "binary operation in comptime requires matching operand types")))])]
+    [(CtfeTypeInfoList _) (ctfe-eval-bin-comptime-metadata "TypeInfoList" expr)]
+    [(CtfeTypeField _ _) (ctfe-eval-bin-comptime-metadata "TypeField" expr)]
+    [(CtfeTypeFieldList _)
+      (ctfe-eval-bin-comptime-metadata "TypeFieldList" expr)]
+    [(CtfeTypeVariantPayload _)
+      (ctfe-eval-bin-comptime-metadata "TypeVariantPayload" expr)]
+    [(CtfeTypeVariantPayloadList _)
+      (ctfe-eval-bin-comptime-metadata "TypeVariantPayloadList" expr)]
+    [(CtfeTypeVariant _ _) (ctfe-eval-bin-comptime-metadata "TypeVariant" expr)]
+    [(CtfeTypeVariantList _)
+      (ctfe-eval-bin-comptime-metadata "TypeVariantList" expr)]))
 
 ;; --- unary operators --------------------------------------------------------
 (define (ctfe-apply-unop
@@ -1664,6 +1750,17 @@
     [(CtfeF64 _) (AstTyF64)]
     [(CtfeF32 _) (AstTyF32)]
     [(CtfeChar _) (AstTyChar)]
+    [(CtfeTypeInfo _) (ctfe-type-info-source-type)]
+    [(CtfeTypeInfoBox _) (ctfe-type-info-box-source-type)]
+    [(CtfeTypeInfoList _) (ctfe-stdlib-comptime-type "TypeInfoList")]
+    [(CtfeTypeField _ _) (ctfe-stdlib-comptime-type "TypeField")]
+    [(CtfeTypeFieldList _) (ctfe-stdlib-comptime-type "TypeFieldList")]
+    [(CtfeTypeVariantPayload _)
+      (ctfe-stdlib-comptime-type "TypeVariantPayload")]
+    [(CtfeTypeVariantPayloadList _)
+      (ctfe-stdlib-comptime-type "TypeVariantPayloadList")]
+    [(CtfeTypeVariant _ _) (ctfe-stdlib-comptime-type "TypeVariant")]
+    [(CtfeTypeVariantList _) (ctfe-stdlib-comptime-type "TypeVariantList")]
     [_ (AstTyUnit)]))
 
 (define (ctfe-cast-source-type
@@ -2312,6 +2409,141 @@
     infos
     index))
 
+(define (ctfe-type-info-builtin-kind? [kind : String]) : bool
+  (cond
+    [(string.string-eq kind "i64") true]
+    [(string.string-eq kind "i32") true]
+    [(string.string-eq kind "i16") true]
+    [(string.string-eq kind "i8") true]
+    [(string.string-eq kind "u64") true]
+    [(string.string-eq kind "u32") true]
+    [(string.string-eq kind "u16") true]
+    [(string.string-eq kind "u8") true]
+    [(string.string-eq kind "f64") true]
+    [(string.string-eq kind "f32") true]
+    [(string.string-eq kind "bool") true]
+    [(string.string-eq kind "char") true]
+    [(string.string-eq kind "string") true]
+    [(string.string-eq kind "unit") true]
+    [else (string.string-eq kind "never")]))
+
+(define (ctfe-type-info-key-in-env [env : CtfeEnv] [ty : AstType]) : String
+  (ctfe-type-key-with-reflections-and-pools
+    (ctfe-env-pools env)
+    (ctfe-env-reflections env)
+    ty))
+
+(define (ctfe-match-type-info-opaque
+  [variant : i64]
+  [args : AstPatternList]
+  [ty : AstType]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (if (ctfe-pattern-variant-name? variant "TypeInfoOpaque")
+    (ctfe-match-pattern-list
+      args
+      (ctfe-value-list1 (CtfeString (ctfe-type-info-key-in-env env ty)))
+      env)
+    (CtfeNoPatternMatch)))
+
+(define (ctfe-match-type-info-nominal
+  [variant : i64]
+  [args : AstPatternList]
+  [ty : AstType]
+  [env : CtfeEnv]
+  [want-struct : bool]) : CtfePatternMatch
+  (let
+    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
+    [key : String (ctfe-type-nominal-key ty)]
+    (match (ctfe-reflect-info-lookup infos key)
+      [(CtfeSomeReflectInfo info)
+        (match info
+          [(CtfeReflectStruct _ _ _ fields)
+            (if want-struct
+              (if (ctfe-pattern-variant-name? variant "TypeInfoStruct")
+                (ctfe-match-pattern-list
+                  args
+                  (ctfe-value-list2
+                    (CtfeString (ctfe-type-info-key-in-env env ty))
+                    (CtfeTypeFieldList fields))
+                  env)
+                (CtfeNoPatternMatch))
+              (CtfeNoPatternMatch))]
+          [(CtfeReflectEnum _ _ _ variants)
+            (if want-struct
+              (CtfeNoPatternMatch)
+              (if (ctfe-pattern-variant-name? variant "TypeInfoEnum")
+                (ctfe-match-pattern-list
+                  args
+                  (ctfe-value-list2
+                    (CtfeString (ctfe-type-info-key-in-env env ty))
+                    (CtfeTypeVariantList variants))
+                  env)
+                (CtfeNoPatternMatch)))])]
+      [(CtfeNoReflectInfo) (ctfe-match-type-info-opaque variant args ty env)])))
+
+(define (ctfe-match-type-info-variant
+  [variant : i64]
+  [args : AstPatternList]
+  [ty : AstType]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (let
+    [pools : AstNodePoolContext (ctfe-env-pools env)]
+    [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
+    [resolved : AstType (ctfe-reflect-resolve-type-with-pools pools infos ty)]
+    [kind : String
+      (ctfe-type-kind-with-reflections-and-pools pools infos resolved)]
+    (match resolved
+      [(AstTyArray elem count)
+        (if (ctfe-pattern-variant-name? variant "TypeInfoArray")
+          (ctfe-match-pattern-list
+            args
+            (ctfe-value-list2
+              (CtfeTypeInfoBox (ast-node-pool-context-type-get pools elem))
+              (CtfeI64 count))
+            env)
+          (CtfeNoPatternMatch))]
+      [(AstTyDynArray elem)
+        (if (ctfe-pattern-variant-name? variant "TypeInfoDynArray")
+          (ctfe-match-pattern-list
+            args
+            (ctfe-value-list1
+              (CtfeTypeInfoBox (ast-node-pool-context-type-get pools elem)))
+            env)
+          (CtfeNoPatternMatch))]
+      [(AstTyFunc params ret)
+        (if (ctfe-pattern-variant-name? variant "TypeInfoFunction")
+          (ctfe-match-pattern-list
+            args
+            (ctfe-value-list2
+              (CtfeTypeInfoList (box-get params))
+              (CtfeTypeInfoBox (ast-node-pool-context-type-get pools ret)))
+            env)
+          (CtfeNoPatternMatch))]
+      [(AstTyTuple elems)
+        (if (ctfe-pattern-variant-name? variant "TypeInfoTuple")
+          (ctfe-match-pattern-list
+            args
+            (ctfe-value-list1 (CtfeTypeInfoList (box-get elems)))
+            env)
+          (CtfeNoPatternMatch))]
+      [(AstTyStruct _)
+        (ctfe-match-type-info-nominal variant args resolved env true)]
+      [(AstTyStructArgs _ _)
+        (ctfe-match-type-info-nominal variant args resolved env true)]
+      [(AstTyEnum _)
+        (ctfe-match-type-info-nominal variant args resolved env false)]
+      [(AstTyEnumArgs _ _)
+        (ctfe-match-type-info-nominal variant args resolved env false)]
+      [_
+        (if (ctfe-type-info-builtin-kind? kind)
+          (if (ctfe-pattern-variant-name? variant "TypeInfoBuiltin")
+            (ctfe-match-pattern-list
+              args
+              (ctfe-value-list1 (CtfeString kind))
+              env)
+            (CtfeNoPatternMatch))
+          (ctfe-match-type-info-opaque variant args resolved env))])))
+
 ;; --- core evaluator ---------------------------------------------------------
 ;; Evaluate `expr` under `env` with the given remaining `fuel`. Each call
 ;; charges one unit of fuel up front (mirroring `use_fuel`); when fuel is
@@ -2390,6 +2622,14 @@
       (let
         [func : AstExpr (ctfe-ast-get env func-box)]
         (ctfe-eval-call func args expr env fuel))]
+    [(AstExprBoxGet inner-box)
+      (let
+        [inner : AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-box-get inner expr env fuel))]
+    [(AstExprBoxTake inner-box)
+      (let
+        [inner : AstExpr (ctfe-ast-get env inner-box)]
+        (ctfe-eval-box-get inner expr env fuel))]
     [(AstExprStructGet inner-box field)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
@@ -2797,6 +3037,7 @@
 
 (define (ctfe-reflection-query-name? [name : String]) : bool
   (cond
+    [(string.string-eq name "type-info") true]
     [(string.string-eq name "type-kind") true]
     [(string.string-eq name "type-key") true]
     [(string.string-eq name "type-nominal-module") true]
@@ -2836,6 +3077,14 @@
                 (let
                   [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
                   (cond
+                    [(string.string-eq name "type-info")
+                      (OkCtfe
+                        (CtfeTypeInfo
+                          (ctfe-reflect-resolve-type-with-pools
+                            (ctfe-env-pools env)
+                            infos
+                            ty))
+                        arg-fuel)]
                     [(string.string-eq name "type-kind")
                       (OkCtfe
                         (CtfeString
@@ -3512,6 +3761,7 @@
   [fuel : i64]) : ResultCtfe
   (cond
     [(or
+        (string.string-eq name "type-info")
         (string.string-eq name "type-kind")
         (string.string-eq name "type-key")
         (string.string-eq name "type-nominal-module")
@@ -3890,6 +4140,8 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
         "expr-type"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "type-info")
+        "type-info"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-name")
         "module-name"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-macro?")
@@ -5523,6 +5775,28 @@
               "compile-time evaluation cannot reference runtime variable '"
               (string.string-append name "'")))))]))
 
+(define (ctfe-eval-box-get-value
+  [value : CompilerCtfeValue]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match value
+    [(CtfeTypeInfoBox ty) (OkCtfe (CtfeTypeInfo ty) fuel)]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "box-get in compile-time evaluation requires a TypeInfo box")))]))
+
+(define (ctfe-eval-box-get
+  [inner : AstExpr]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval inner env fuel)
+    [(OkCtfe value next-fuel) (ctfe-eval-box-get-value value expr next-fuel)]
+    [(ErrCtfe diag) (ErrCtfe diag)]))
+
 (define (ctfe-comptime-field-name? [field : i64] [want : String]) : bool
   (string.string-eq (intern-str field) want))
 
@@ -5599,6 +5873,51 @@
         [(ctfe-comptime-field-name? field "len")
           (OkCtfe (CtfeI64 (ctfe-expr-binding-clause-list-length clauses)) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeTypeInfoList items)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeTypeInfoList items) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-type-list-count items)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeTypeField name ty)
+      (cond
+        [(ctfe-comptime-field-name? field "name")
+          (OkCtfe (CtfeString name) fuel)]
+        [(ctfe-comptime-field-name? field "ty") (OkCtfe (CtfeTypeInfo ty) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeTypeFieldList fields)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeTypeFieldList fields) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-reflect-field-list-count fields)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeTypeVariantPayload ty)
+      (if (ctfe-comptime-field-name? field "ty")
+        (OkCtfe (CtfeTypeInfo ty) fuel)
+        (ctfe-comptime-field-error field expr))]
+    [(CtfeTypeVariantPayloadList payloads)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeTypeVariantPayloadList payloads) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-type-list-count payloads)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeTypeVariant name payloads)
+      (cond
+        [(ctfe-comptime-field-name? field "name")
+          (OkCtfe (CtfeString name) fuel)]
+        [(ctfe-comptime-field-name? field "payloads")
+          (OkCtfe (CtfeTypeVariantPayloadList payloads) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeTypeVariantList variants)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeTypeVariantList variants) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-reflect-variant-list-count variants)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
     [_ (ctfe-comptime-struct-get-type-error expr)]))
 
 (define (ctfe-eval-struct-get
@@ -5626,6 +5945,7 @@
   [array : CompilerCtfeValue]
   [index : i64]
   [expr : AstExpr]
+  [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match array
     [(CtfeExprList nodes)
@@ -5647,6 +5967,41 @@
           (CtfeExprBindingClause
             (ctfe-expr-binding-clause-list-nth clauses index))
           fuel))]
+    [(CtfeTypeInfoList items)
+      (match (ctfe-type-list-ref-with-pools
+        items
+        (ctfe-env-pools env)
+        (ctfe-env-reflections env)
+        index)
+        [(OkCtfeTypeLookup ty) (OkCtfe (CtfeTypeInfo ty) fuel)]
+        [(ErrCtfeTypeLookup _) (ctfe-comptime-array-index-error expr)])]
+    [(CtfeTypeFieldList fields)
+      (if (or (< index 0) (>= index (ctfe-reflect-field-list-count fields)))
+        (ctfe-comptime-array-index-error expr)
+        (match (ctfe-reflect-field-list-ref fields index)
+          [(CtfeReflectField name ty)
+            (OkCtfe
+              (CtfeTypeField
+                name
+                (ctfe-reflect-resolve-type-with-pools
+                  (ctfe-env-pools env)
+                  (ctfe-env-reflections env)
+                  ty))
+              fuel)]))]
+    [(CtfeTypeVariantPayloadList payloads)
+      (match (ctfe-type-list-ref-with-pools
+        payloads
+        (ctfe-env-pools env)
+        (ctfe-env-reflections env)
+        index)
+        [(OkCtfeTypeLookup ty) (OkCtfe (CtfeTypeVariantPayload ty) fuel)]
+        [(ErrCtfeTypeLookup _) (ctfe-comptime-array-index-error expr)])]
+    [(CtfeTypeVariantList variants)
+      (if (or (< index 0) (>= index (ctfe-reflect-variant-list-count variants)))
+        (ctfe-comptime-array-index-error expr)
+        (match (ctfe-reflect-variant-list-ref variants index)
+          [(CtfeReflectVariant name payloads)
+            (OkCtfe (CtfeTypeVariant name payloads) fuel)]))]
     [_ (ctfe-comptime-array-type-error expr)]))
 
 (define (ctfe-eval-array-ref
@@ -5661,7 +6016,7 @@
         [(OkCtfe index-value index-fuel)
           (match index-value
             [(CtfeI64 index)
-              (ctfe-eval-array-ref-value array-value index expr index-fuel)]
+              (ctfe-eval-array-ref-value array-value index expr env index-fuel)]
             [_
               (ErrCtfe
                 (box
@@ -5970,6 +6325,14 @@
         (match value
           [(CtfeExpr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
+          [(CtfeTypeInfo ty) (ctfe-match-type-info-variant variant args ty env)]
+          [(CtfeTypeInfoBox ty)
+            (if (ctfe-pattern-variant-name? variant "box")
+              (ctfe-match-pattern-list
+                args
+                (ctfe-value-list1 (CtfeTypeInfo ty))
+                env)
+              (CtfeNoPatternMatch))]
           [(CtfeExprClause clause)
             (if (ctfe-pattern-variant-name? variant "ExprClause")
               (ctfe-match-pattern-list
@@ -9684,7 +10047,16 @@
     [(CtfeExprClause _) (AstLitUnit)]
     [(CtfeExprClauseList _) (AstLitUnit)]
     [(CtfeExprBindingClause _) (AstLitUnit)]
-    [(CtfeExprBindingClauseList _) (AstLitUnit)]))
+    [(CtfeExprBindingClauseList _) (AstLitUnit)]
+    [(CtfeTypeInfo _) (AstLitUnit)]
+    [(CtfeTypeInfoBox _) (AstLitUnit)]
+    [(CtfeTypeInfoList _) (AstLitUnit)]
+    [(CtfeTypeField _ _) (AstLitUnit)]
+    [(CtfeTypeFieldList _) (AstLitUnit)]
+    [(CtfeTypeVariantPayload _) (AstLitUnit)]
+    [(CtfeTypeVariantPayloadList _) (AstLitUnit)]
+    [(CtfeTypeVariant _ _) (AstLitUnit)]
+    [(CtfeTypeVariantList _) (AstLitUnit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]
@@ -10609,6 +10981,364 @@
         (set! ok false))
       ok)))
 
+(define (compiler-ctfe-env-string-eq?
+  [env : CtfeEnv]
+  [name : String]
+  [want : String]) : bool
+  (match (ctfe-env-lookup env name)
+    [(CtfeSomeValue value)
+      (match value
+        [(CtfeString actual) (string.string-eq actual want)]
+        [_ false])]
+    [(CtfeNoValue) false]))
+
+(define (compiler-ctfe-env-i64-eq? [env : CtfeEnv] [name : String] [want : i64]) : bool
+  (match (ctfe-env-lookup env name)
+    [(CtfeSomeValue value)
+      (match value
+        [(CtfeI64 actual) (= actual want)]
+        [_ false])]
+    [(CtfeNoValue) false]))
+
+(define (compiler-ctfe-type-info-builtin-kind?
+  [env : CtfeEnv]
+  [ty : AstType]
+  [want : String]) : bool
+  (match (ctfe-match-type-info-variant
+    (intern "TypeInfoBuiltin")
+    (ast-pattern-cons (ast-pat-binding "kind") AstPatternNil)
+    ty
+    env)
+    [(CtfePatternMatched matched)
+      (compiler-ctfe-env-string-eq? matched "kind" want)]
+    [(CtfeNoPatternMatch) false]))
+
+(define (compiler-ctfe-env-type-info-box-builtin-kind?
+  [env : CtfeEnv]
+  [name : String]
+  [want : String]) : bool
+  (match (ctfe-env-lookup env name)
+    [(CtfeSomeValue value)
+      (match value
+        [(CtfeTypeInfoBox ty)
+          (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [_ false])]
+    [(CtfeNoValue) false]))
+
+(define (compiler-ctfe-type-info-list-ref-builtin-kind?
+  [env : CtfeEnv]
+  [items : CompilerCtfeValue]
+  [index : i64]
+  [want : String]) : bool
+  (match (ctfe-eval-array-ref-value
+    items
+    index
+    (AstExprLiteral (AstLitUnit))
+    env
+    (ctfe-fuel-limit))
+    [(OkCtfe value _)
+      (match value
+        [(CtfeTypeInfo ty) (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [(CtfeTypeVariantPayload ty)
+          (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
+(define (compiler-ctfe-env-type-info-list-ref-builtin-kind?
+  [env : CtfeEnv]
+  [name : String]
+  [index : i64]
+  [want : String]) : bool
+  (match (ctfe-env-lookup env name)
+    [(CtfeSomeValue value)
+      (compiler-ctfe-type-info-list-ref-builtin-kind? env value index want)]
+    [(CtfeNoValue) false]))
+
+(define (compiler-ctfe-type-info-field-list-ok?
+  [env : CtfeEnv]
+  [fields-value : CompilerCtfeValue]) : bool
+  (match (ctfe-eval-array-ref-value
+    fields-value
+    0
+    (AstExprLiteral (AstLitUnit))
+    env
+    (ctfe-fuel-limit))
+    [(OkCtfe field-value _)
+      (match field-value
+        [(CtfeTypeField name ty)
+          (and
+            (string.string-eq name "id")
+            (compiler-ctfe-type-info-builtin-kind? env ty "i64"))]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
+(define (compiler-ctfe-type-info-variant-list-ok?
+  [env : CtfeEnv]
+  [variants-value : CompilerCtfeValue]) : bool
+  (match (ctfe-eval-array-ref-value
+    variants-value
+    1
+    (AstExprLiteral (AstLitUnit))
+    env
+    (ctfe-fuel-limit))
+    [(OkCtfe variant-value _)
+      (match variant-value
+        [(CtfeTypeVariant name payloads)
+          (and
+            (string.string-eq name "Failed")
+            (compiler-ctfe-type-info-list-ref-builtin-kind?
+              env
+              (CtfeTypeVariantPayloadList payloads)
+              0
+              "string"))]
+        [_ false])]
+    [(ErrCtfe _) false]))
+
+(define (compiler-ctfe-type-info-source-match-ok? [env : CtfeEnv]) : bool
+  (let
+    [match-env : CtfeEnv (ctfe-env-extend env "info" (CtfeTypeInfo (AstTyI64)))]
+    [scrutinee : i64 (ctfe-ast-push match-env (AstExprVar (intern "info")))]
+    [true-lit : i64
+      (ctfe-ast-push match-env (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64
+      (ctfe-ast-push match-env (AstExprLiteral (AstLitBool false)))]
+    [builtin-arm : AstMatchArm
+      (ast-match-arm
+        (ast-pat-variant
+          "TypeInfoBuiltin"
+          (ast-pattern-cons (ast-pat-binding "kind") AstPatternNil))
+        true-lit)]
+    [fallback-arm : AstMatchArm (ast-match-arm AstPatWildcard false-lit)]
+    [match-expr : i64
+      (ast-expr-match-with-pools
+        (ctfe-env-pools match-env)
+        scrutinee
+        (ast-match-arm-cons
+          builtin-arm
+          (ast-match-arm-cons fallback-arm AstMatchArmNil)))]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get match-env match-expr)
+      match-env
+      (ctfe-fuel-limit))
+      [(OkCtfe value _)
+        (match value
+          [(CtfeBool actual) actual]
+          [_ false])]
+      [(ErrCtfe _) false])))
+
+(define (compiler-ctfe-type-info-reflection-ok?) : bool
+  (let
+    [env : CtfeEnv
+      (ctfe-env-with-reflections
+        (ctfe-reflections-from-program (compiler-ctfe-reflection-program)))]
+    [i64-ty : i64 (ctfe-ast-push env (AstExprTypeLiteral (AstTyI64)))]
+    [array-ty : i64
+      (ctfe-ast-push env (AstExprTypeLiteral (ast-ty-array (AstTyI64) 4)))]
+    [dyn-array-ty : i64
+      (ctfe-ast-push env (AstExprTypeLiteral (ast-ty-dyn-array (AstTyBool))))]
+    [tuple-ty : i64
+      (ctfe-ast-push
+        env
+        (AstExprTypeLiteral
+          (ast-ty-tuple
+            (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil)))))]
+    [fn-ty : i64
+      (ctfe-ast-push
+        env
+        (AstExprTypeLiteral
+          (ast-ty-func
+            (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))
+            (AstTyString))))]
+    [record-ty : i64
+      (ctfe-ast-push env (AstExprTypeLiteral (AstTyVar (intern "Record"))))]
+    [status-ty : i64
+      (ctfe-ast-push env (AstExprTypeLiteral (AstTyVar (intern "Status"))))]
+    [ok : bool true]
+    (begin
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" i64-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (if (compiler-ctfe-type-info-builtin-kind? env ty "i64")
+                unit
+                (set! ok false))]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" array-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                (intern "TypeInfoArray")
+                (ast-pattern-cons
+                  (ast-pat-binding "elem")
+                  (ast-pattern-cons (ast-pat-binding "len") AstPatternNil))
+                ty
+                env)
+                [(CtfePatternMatched matched)
+                  (if (and
+                    (compiler-ctfe-env-i64-eq? matched "len" 4)
+                    (compiler-ctfe-env-type-info-box-builtin-kind?
+                      matched
+                      "elem"
+                      "i64"))
+                    unit
+                    (set! ok false))]
+                [(CtfeNoPatternMatch) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env "type-info" dyn-array-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                (intern "TypeInfoDynArray")
+                (ast-pattern-cons (ast-pat-binding "elem") AstPatternNil)
+                ty
+                env)
+                [(CtfePatternMatched matched)
+                  (if (compiler-ctfe-env-type-info-box-builtin-kind?
+                    matched
+                    "elem"
+                    "bool")
+                    unit
+                    (set! ok false))]
+                [(CtfeNoPatternMatch) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" tuple-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                (intern "TypeInfoTuple")
+                (ast-pattern-cons (ast-pat-binding "items") AstPatternNil)
+                ty
+                env)
+                [(CtfePatternMatched matched)
+                  (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
+                    matched
+                    "items"
+                    1
+                    "bool")
+                    unit
+                    (set! ok false))]
+                [(CtfeNoPatternMatch) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" fn-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                (intern "TypeInfoFunction")
+                (ast-pattern-cons
+                  (ast-pat-binding "params")
+                  (ast-pattern-cons (ast-pat-binding "ret") AstPatternNil))
+                ty
+                env)
+                [(CtfePatternMatched matched)
+                  (if (and
+                    (compiler-ctfe-env-type-info-list-ref-builtin-kind?
+                      matched
+                      "params"
+                      1
+                      "bool")
+                    (compiler-ctfe-env-type-info-box-builtin-kind?
+                      matched
+                      "ret"
+                      "string"))
+                    unit
+                    (set! ok false))]
+                [(CtfeNoPatternMatch) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env "type-info" record-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                (intern "TypeInfoStruct")
+                (ast-pattern-cons
+                  (ast-pat-binding "key")
+                  (ast-pattern-cons (ast-pat-binding "fields") AstPatternNil))
+                ty
+                env)
+                [(CtfePatternMatched matched)
+                  (if (and
+                    (compiler-ctfe-env-string-eq?
+                      matched
+                      "key"
+                      (ctfe-type-info-key-in-env env ty))
+                    (match (ctfe-env-lookup matched "fields")
+                      [(CtfeSomeValue fields-value)
+                        (compiler-ctfe-type-info-field-list-ok?
+                          matched
+                          fields-value)]
+                      [(CtfeNoValue) false]))
+                    unit
+                    (set! ok false))]
+                [(CtfeNoPatternMatch) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env "type-info" status-ty))
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeTypeInfo ty)
+              (match (ctfe-match-type-info-variant
+                (intern "TypeInfoEnum")
+                (ast-pattern-cons
+                  (ast-pat-binding "key")
+                  (ast-pattern-cons (ast-pat-binding "variants") AstPatternNil))
+                ty
+                env)
+                [(CtfePatternMatched matched)
+                  (if (and
+                    (compiler-ctfe-env-string-eq?
+                      matched
+                      "key"
+                      (ctfe-type-info-key-in-env env ty))
+                    (match (ctfe-env-lookup matched "variants")
+                      [(CtfeSomeValue variants-value)
+                        (compiler-ctfe-type-info-variant-list-ok?
+                          matched
+                          variants-value)]
+                      [(CtfeNoValue) false]))
+                    unit
+                    (set! ok false))]
+                [(CtfeNoPatternMatch) (set! ok false)])]
+            [_ (set! ok false)])]
+        [(ErrCtfe _) (set! ok false)])
+      (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
+      ok)))
+
 ;; --- self-tests (#1137 additions) -------------------------------------------
 ;; Basic round-trip: build an `if` expression from bool literal constructors,
 ;; compare it structurally, extract its parts, and verify list ops.
@@ -11142,6 +11872,7 @@
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-from-program-ok?) (return 1))
+    (unless (compiler-ctfe-type-info-reflection-ok?) (return 1))
     (unless (compiler-ctfe-expr-eq-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-fold-sketch-ok?) (return 1))
@@ -11151,3 +11882,13 @@
     (unless (compiler-ctfe-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
     42))
+
+(cfg
+  test
+  (test
+    compiler-ctfe-self-test
+    (if (= (compiler-ctfe-self-test) 42)
+      unit
+      (begin
+        (/ 1 0)
+        unit))))

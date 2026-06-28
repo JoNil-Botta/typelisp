@@ -4990,6 +4990,8 @@
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
     [expr : AstType (AstTyExpr)]
+    [type-info : AstType
+      (AstTyVar (intern (tc-stdlib-comptime-type-key "TypeInfo")))]
     [clause : AstType (tc-macro-expr-clause-type)]
     [clause-list : AstType (tc-macro-expr-clause-list-type)]
     [binding-clause : AstType (tc-macro-expr-binding-clause-type)]
@@ -5043,6 +5045,7 @@
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
+      (set! out (tc-bind out "type-info" (tc-fn1 expr type-info)))
       (set!
         out
         (tc-bind out "module-name" (tc-fn1 (AstTyString) (AstTyString))))
@@ -7782,6 +7785,7 @@
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
     (string.string-eq name "expr-type")
+    (string.string-eq name "type-info")
     (string.string-eq name "module-name")
     (string.string-eq name "module-export-macro?")
     (string.string-eq name "module-hook")
@@ -13560,7 +13564,20 @@
     [(CtfeExprClauseList _) (OkTcType (tc-macro-expr-clause-list-type))]
     [(CtfeExprBindingClause _) (OkTcType (tc-macro-expr-binding-clause-type))]
     [(CtfeExprBindingClauseList _)
-      (OkTcType (tc-macro-expr-binding-clause-list-type))]))
+      (OkTcType (tc-macro-expr-binding-clause-list-type))]
+    [(CtfeTypeInfo _) (ErrTcType "TypeInfo value is compile-time only")]
+    [(CtfeTypeInfoBox _) (ErrTcType "TypeInfo box value is compile-time only")]
+    [(CtfeTypeInfoList _) (ErrTcType "TypeInfoList value is compile-time only")]
+    [(CtfeTypeField _ _) (ErrTcType "TypeField value is compile-time only")]
+    [(CtfeTypeFieldList _)
+      (ErrTcType "TypeFieldList value is compile-time only")]
+    [(CtfeTypeVariantPayload _)
+      (ErrTcType "TypeVariantPayload value is compile-time only")]
+    [(CtfeTypeVariantPayloadList _)
+      (ErrTcType "TypeVariantPayloadList value is compile-time only")]
+    [(CtfeTypeVariant _ _) (ErrTcType "TypeVariant value is compile-time only")]
+    [(CtfeTypeVariantList _)
+      (ErrTcType "TypeVariantList value is compile-time only")]))
 
 (define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
   (match value
@@ -29226,6 +29243,7 @@
       [(string.string-eq call-name "expr-splice") true]
       [(string.string-eq call-name "expr-if") true]
       [(string.string-eq call-name "expr-type") true]
+      [(string.string-eq call-name "type-info") true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-list-inspector-name? call-name) true]
       [(ctfe-expr-binding-clause-inspector-name? call-name) true]

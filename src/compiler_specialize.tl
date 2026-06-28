@@ -581,7 +581,17 @@
     [(CtfeExprClause _) "expr-clause"]
     [(CtfeExprClauseList _) "expr-clause-list"]
     [(CtfeExprBindingClause _) "expr-binding-clause"]
-    [(CtfeExprBindingClauseList _) "expr-binding-clause-list"]))
+    [(CtfeExprBindingClauseList _) "expr-binding-clause-list"]
+    [(CtfeTypeInfo ty) (string.string-append "typeinfo_" (spec-type-key ty))]
+    [(CtfeTypeInfoBox ty)
+      (string.string-append "typeinfo-box_" (spec-type-key ty))]
+    [(CtfeTypeInfoList _) "typeinfo-list"]
+    [(CtfeTypeField _ _) "type-field"]
+    [(CtfeTypeFieldList _) "type-field-list"]
+    [(CtfeTypeVariantPayload _) "type-variant-payload"]
+    [(CtfeTypeVariantPayloadList _) "type-variant-payload-list"]
+    [(CtfeTypeVariant _ _) "type-variant"]
+    [(CtfeTypeVariantList _) "type-variant-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
@@ -1491,7 +1501,16 @@
     [(CtfeExprBindingClause _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClause")))]
     [(CtfeExprBindingClauseList _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]))
+      (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]
+    [(CtfeTypeInfo _) false]
+    [(CtfeTypeInfoBox _) false]
+    [(CtfeTypeInfoList _) false]
+    [(CtfeTypeField _ _) false]
+    [(CtfeTypeFieldList _) false]
+    [(CtfeTypeVariantPayload _) false]
+    [(CtfeTypeVariantPayloadList _) false]
+    [(CtfeTypeVariant _ _) false]
+    [(CtfeTypeVariantList _) false]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
@@ -1508,7 +1527,16 @@
     [(CtfeExprClause _) "ExprClause"]
     [(CtfeExprClauseList _) "ExprClauseList"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]))
+    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CtfeTypeInfo _) "TypeInfo"]
+    [(CtfeTypeInfoBox _) "TypeInfoBox"]
+    [(CtfeTypeInfoList _) "TypeInfoList"]
+    [(CtfeTypeField _ _) "TypeField"]
+    [(CtfeTypeFieldList _) "TypeFieldList"]
+    [(CtfeTypeVariantPayload _) "TypeVariantPayload"]
+    [(CtfeTypeVariantPayloadList _) "TypeVariantPayloadList"]
+    [(CtfeTypeVariant _ _) "TypeVariant"]
+    [(CtfeTypeVariantList _) "TypeVariantList"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -1815,7 +1843,61 @@
         (box
           (spec-diagnostic-at-expr
             origin
-            "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]))
+            "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]
+    [(CtfeTypeInfo _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeInfo value into runtime expression")))]
+    [(CtfeTypeInfoBox _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeInfo box value into runtime expression")))]
+    [(CtfeTypeInfoList _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeInfoList value into runtime expression")))]
+    [(CtfeTypeField _ _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeField value into runtime expression")))]
+    [(CtfeTypeFieldList _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeFieldList value into runtime expression")))]
+    [(CtfeTypeVariantPayload _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeVariantPayload value into runtime expression")))]
+    [(CtfeTypeVariantPayloadList _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeVariantPayloadList value into runtime expression")))]
+    [(CtfeTypeVariant _ _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeVariant value into runtime expression")))]
+    [(CtfeTypeVariantList _)
+      (ErrSpecSubExpr
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time TypeVariantList value into runtime expression")))]))
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)

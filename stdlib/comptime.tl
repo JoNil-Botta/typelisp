@@ -340,6 +340,10 @@
 (define (expr-type [value : Expr]) : Expr
   value)
 
+;: Return the public value-level reflection descriptor for a type operand.
+(define (type-info [ty : Expr]) : TypeInfo
+  (type-info ty))
+
 ;: Return the canonical identity string for a module strategy operand.
 (define (module-name [module : String]) : String
   module)

@@ -60,7 +60,7 @@
         (begin
           (ast-node-pool-context-install! pools)
           (match generated-result
-            [(OkGenProgramWithPaths generated generated-paths)
+            [(ResultGenProgramWithPaths.Ok generated generated-paths)
               (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
@@ -76,7 +76,9 @@
                         expanded-paths
                         (tc-decl-path-list-last expanded-paths "")
                         pools)
-                        [(OkGenProgramWithPaths normalized normalized-paths)
+                        [(ResultGenProgramWithPaths.Ok
+                            normalized
+                            normalized-paths)
                           (begin
                             (ast-node-pool-context-install! pools)
                             (if (compiler-specialize-needed? normalized)
@@ -94,7 +96,7 @@
                                         normalized-paths
                                         "")
                                       pools)
-                                      [(OkSpecProgramWithPaths
+                                      [(ResultSpecProgramWithPaths.Ok
                                           specialized
                                           specialized-paths)
                                         (typecheck-compiler-specialized-program-with-paths-cache-and-pools
@@ -103,7 +105,7 @@
                                           stdlib-roots
                                           cache-scope
                                           pools)]
-                                      [(ErrSpecProgramWithPaths diag)
+                                      [(ResultSpecProgramWithPaths.Err diag)
                                         (ErrCompilerTypecheck diag)]))]
                                 [(ResultCompilerSymbols.Err message)
                                   (ErrCompilerTypecheck
@@ -114,7 +116,7 @@
                                 stdlib-roots
                                 cache-scope
                                 pools)))]
-                        [(ErrGenProgramWithPaths diag)
+                        [(ResultGenProgramWithPaths.Err diag)
                           (ErrCompilerTypecheck diag)])
                       (typecheck-compiler-specialized-program-with-paths-cache-and-pools
                         expanded
@@ -123,7 +125,7 @@
                         cache-scope
                         pools)))]
                 [(ResultMacroExpand.Err diag) (ErrCompilerTypecheck diag)])]
-            [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheck diag)]))))))
+            [(ResultGenProgramWithPaths.Err diag) (ErrCompilerTypecheck diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
@@ -161,7 +163,7 @@
         (begin
           (ast-node-pool-context-install! pools)
           (match generated-result
-            [(OkGenProgramWithPaths generated generated-paths)
+            [(ResultGenProgramWithPaths.Ok generated generated-paths)
               (match (macro-expand-program-with-paths-and-pools-roots-cfg
                 generated
                 generated-paths
@@ -177,7 +179,9 @@
                         expanded-paths
                         (tc-decl-path-list-last expanded-paths "")
                         pools)
-                        [(OkGenProgramWithPaths normalized normalized-paths)
+                        [(ResultGenProgramWithPaths.Ok
+                            normalized
+                            normalized-paths)
                           (begin
                             (ast-node-pool-context-install! pools)
                             (if (compiler-specialize-needed? normalized)
@@ -195,7 +199,7 @@
                                         normalized-paths
                                         "")
                                       pools)
-                                      [(OkSpecProgramWithPaths
+                                      [(ResultSpecProgramWithPaths.Ok
                                           specialized
                                           specialized-paths)
                                         (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
@@ -204,7 +208,7 @@
                                           stdlib-roots
                                           cache-scope
                                           pools)]
-                                      [(ErrSpecProgramWithPaths diag)
+                                      [(ResultSpecProgramWithPaths.Err diag)
                                         (ErrCompilerTypecheckChecked diag)]))]
                                 [(ResultCompilerSymbols.Err message)
                                   (ErrCompilerTypecheckChecked
@@ -215,7 +219,7 @@
                                 stdlib-roots
                                 cache-scope
                                 pools)))]
-                        [(ErrGenProgramWithPaths diag)
+                        [(ResultGenProgramWithPaths.Err diag)
                           (ErrCompilerTypecheckChecked diag)])
                       (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
                         expanded
@@ -225,7 +229,8 @@
                         pools)))]
                 [(ResultMacroExpand.Err diag)
                   (ErrCompilerTypecheckChecked diag)])]
-            [(ErrGenProgramWithPaths diag) (ErrCompilerTypecheckChecked diag)]))))))
+            [(ResultGenProgramWithPaths.Err diag)
+              (ErrCompilerTypecheckChecked diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]

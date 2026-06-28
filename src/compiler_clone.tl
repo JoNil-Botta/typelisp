@@ -20,8 +20,8 @@
   (map hashmap.StringI64Map))
 
 (defenum CloneNameList
-  (CloneNameNil)
-  (CloneNameCons String (Box CloneNameList)))
+  (Nil)
+  (Cons String (Box CloneNameList)))
 
 (define (clone-type-name-last-slash [name : String]) : i64
   (let
@@ -134,11 +134,11 @@
       (while (and
         (not found)
         (match cur
-          [(CloneNameNil) false]
+          [(CloneNameList.Nil) false]
           [_ true]))
         (match cur
-          [(CloneNameNil) unit]
-          [(CloneNameCons head rest)
+          [(CloneNameList.Nil) unit]
+          [(CloneNameList.Cons head rest)
             (if (string.string-eq head name)
               (set! found true)
               (set! cur (box-get rest)))]))
@@ -521,8 +521,8 @@
 ;; clone: accumulate the cloned elements into a reversed list, then reverse it
 ;; back into order. Element clones stay bounded-depth via `(clone h)`.
 (defenum CloneListShape
-  (CloneNotList)
-  (CloneIsList String String bool))
+  (NotList)
+  (IsList String String bool))
 
 ; nil-ctor name, cons-ctor name
 (define (clone-variant-field-count [v : AstVariantDef]) : i64
@@ -611,12 +611,12 @@
   [self-name : String]) : CloneListShape
   (if (= (clone-variant-field-count nil-v) 0)
     (if (clone-variant-cons-tail-self? pools cons-v self-name)
-      (CloneIsList
+      (CloneListShape.IsList
         (clone-variant-name nil-v)
         (clone-variant-name cons-v)
         (clone-variant-cons-tail-boxed? pools cons-v self-name))
-      (CloneNotList))
-    (CloneNotList)))
+      (CloneListShape.NotList))
+    (CloneListShape.NotList)))
 
 ;; A list-shaped enum is exactly two variants: one nullary (Nil) and one
 ;; `(Cons element Self)` or `(Cons element (Box Self))`, in either source order.
@@ -635,12 +635,13 @@
               (match rest
                 [(AstVariantDefNil)
                   (match (clone-list-shape-try pools v1 v2 self-name)
-                    [(CloneIsList n c boxed) (CloneIsList n c boxed)]
-                    [(CloneNotList)
+                    [(CloneListShape.IsList n c boxed)
+                      (CloneListShape.IsList n c boxed)]
+                    [(CloneListShape.NotList)
                       (clone-list-shape-try pools v2 v1 self-name)])]
-                [_ (CloneNotList)]))]
-          [_ (CloneNotList)]))]
-    [_ (CloneNotList)]))
+                [_ (CloneListShape.NotList)]))]
+          [_ (CloneListShape.NotList)]))]
+    [_ (CloneListShape.NotList)]))
 
 (define (clone-list-acc-name [type-name : String]) : String
   (string.string-append (clone-local-helper-name type-name) "$acc"))
@@ -813,7 +814,7 @@
   [variants : AstVariantDefList]
   [acc : AstDeclList]) : AstDeclList
   (match (clone-list-shape pools variants name)
-    [(CloneIsList nil-ctor cons-ctor boxed-tail)
+    [(CloneListShape.IsList nil-ctor cons-ctor boxed-tail)
       (ast-decl-cons
         (clone-list-entry-decl pools name nil-ctor)
         (ast-decl-cons
@@ -821,7 +822,7 @@
           (ast-decl-cons
             (clone-list-rev-decl pools name nil-ctor cons-ctor boxed-tail)
             acc)))]
-    [(CloneNotList)
+    [(CloneListShape.NotList)
       (ast-decl-cons
         (clone-make-helper-decl
           name
@@ -1109,7 +1110,7 @@
         decls
         decls
         able
-        (CloneNameCons name (box roots))
+        (CloneNameList.Cons name (box roots))
         name))
     roots))
 
@@ -1189,11 +1190,11 @@
     [out : CloneNameList roots]
     (begin
       (while (match cur
-        [(CloneNameNil) false]
+        [(CloneNameList.Nil) false]
         [_ true])
         (match cur
-          [(CloneNameNil) unit]
-          [(CloneNameCons name rest)
+          [(CloneNameList.Nil) unit]
+          [(CloneNameList.Cons name rest)
             (let
               [with-name : CloneNameList
                 (clone-root-add-name pools decls able out name)]
@@ -1216,11 +1217,11 @@
     [out : CloneNameSet acc]
     (begin
       (while (match cur
-        [(CloneNameNil) false]
+        [(CloneNameList.Nil) false]
         [_ true])
         (match cur
-          [(CloneNameNil) unit]
-          [(CloneNameCons name rest)
+          [(CloneNameList.Nil) unit]
+          [(CloneNameList.Cons name rest)
             (begin
               (set! out (clone-name-set-insert out name))
               (set! cur (box-get rest)))]))

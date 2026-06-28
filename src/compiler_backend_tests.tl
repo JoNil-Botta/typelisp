@@ -1832,7 +1832,7 @@
               (set! i (+ i 1))
               (set! same false)))
           same)))))
-(define (`string.string-key=? [left : String] [right : String]) : bool
+(define (string.string=? [left : String] [right : String]) : bool
   (string.string-eq left right))
 (define (string.string-append [left : String] [right : String]) : String
   left)
@@ -1861,7 +1861,7 @@
   (if (if
     (string.string-eq \"same\" (string.string-append \"sa\" \"me\"))
     (if
-      (not (`string.string-key=? \"same\" \"different\"))
+      (not (string.string=? \"same\" \"different\"))
       (= (string.string->int \"-42\") -42)
       false)
     false)

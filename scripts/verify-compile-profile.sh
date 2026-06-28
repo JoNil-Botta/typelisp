@@ -40,6 +40,8 @@ CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
 VF_STDOUT="$WORKDIR/profile-vector-family.stdout"
 VF_STDERR="$WORKDIR/profile-vector-family.stderr"
+REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
+REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
 LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
@@ -90,6 +92,19 @@ assert_not_contains() {
     assert_not_contains_in "$1" "$2" "$CHECK_STDOUT" "$CHECK_STDERR"
 }
 
+assert_line_count_in() {
+    _file=$1
+    _text=$2
+    _want=$3
+    _stdout=$4
+    _stderr=$5
+    _got=$(grep -F -- "$_text" "$_file" | wc -l | tr -d '[:space:]')
+    if [ "$_got" != "$_want" ]; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected $_want profile rows for: $_text; got $_got"
+    fi
+}
+
 assert_layout_row() {
     assert_contains_in \
         "$LAYOUT_STDERR" \
@@ -102,6 +117,14 @@ assert_opt_escape_row() {
     assert_contains_in \
         "$OPT_STDERR" \
         "compile-profile-detail|optimize.escape.$1|" \
+        "$OPT_STDOUT" \
+        "$OPT_STDERR"
+}
+
+assert_lower_row() {
+    assert_contains_in \
+        "$OPT_STDERR" \
+        "compile-profile|lower.$1|" \
         "$OPT_STDOUT" \
         "$OPT_STDERR"
 }
@@ -171,6 +194,38 @@ assert_contains_in \
     "$VF_STDOUT" \
     "$VF_STDERR"
 
+echo "[compile-profile] check generated module replay lazy fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$REPLAY_STDOUT" 2> "$REPLAY_STDERR"; then
+    show_failure_logs "$REPLAY_STDOUT" "$REPLAY_STDERR"
+    fail "profiled generated replay fixture check failed"
+fi
+
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile-detail|typecheck.macro_expand|" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_contains_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro.generated_compare_passes|0|0|0|0" \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_line_count_in \
+    "$REPLAY_STDERR" \
+    "profile-replay-user arity=1 calls=1" \
+    2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_line_count_in \
+    "$REPLAY_STDERR" \
+    "profile-replay-nested arity=2 calls=1" \
+    2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+
 echo "[compile-profile] check layout/spec counter fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_layout_spec.tl \
     --stdlib-root . \
@@ -219,5 +274,23 @@ assert_opt_escape_row "compact"
 assert_opt_escape_row "clone"
 assert_opt_escape_row "restore"
 assert_contains_in "$OPT_STDERR" "|1|main" "$OPT_STDOUT" "$OPT_STDERR"
+assert_lower_row "ast_expr_pool.macro_expand.len"
+assert_lower_row "ast_expr_pool.macro_expand.capacity"
+assert_lower_row "ast_type_pool.macro_expand.len"
+assert_lower_row "ast_type_pool.macro_expand.capacity"
+assert_lower_row "ast_expr_pool.typecheck.len"
+assert_lower_row "ast_expr_pool.typecheck.capacity"
+assert_lower_row "ast_type_pool.typecheck.len"
+assert_lower_row "ast_type_pool.typecheck.capacity"
+assert_lower_row "ast_expr_pool.pre_decls.len"
+assert_lower_row "ast_expr_pool.pre_decls.capacity"
+assert_lower_row "ast_type_pool.pre_decls.len"
+assert_lower_row "ast_type_pool.pre_decls.capacity"
+assert_lower_row "checked_program.pre_decls.decls"
+assert_lower_row "checked_program.pre_decls.functions"
+assert_lower_row "ir.after_decls.functions"
+assert_lower_row "ir.after_decls.blocks"
+assert_lower_row "ir.after_decls.instructions"
+assert_lower_row "ir_arena.after_decls.active"
 
 echo "[compile-profile] ok"

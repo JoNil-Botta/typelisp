@@ -11,11 +11,25 @@
 (defstruct Payload
   (value i64))
 
+(defstruct Span
+  (line i64)
+  (col i64))
+
+(defstruct RichPayload
+  (message String)
+  (span Span))
+
+(defstruct RichError
+  (message String)
+  (span Span))
+
 (defenum Status
   (StatusOk)
   (StatusBad i64))
 
 (import (result Payload Status) as result_payload_status)
+(import (result RichPayload Status) as result_rich_payload_status)
+(import (result i64 RichError) as result_i64_rich_error)
 (import (result result_i64_string.Result String) as result_nested)
 
 (define (read-i64 [ok : bool]) : result_i64_string.Result
@@ -77,6 +91,20 @@
         [(StatusOk) 10]
         [(StatusBad code) code])]))
 
+(define (rich-payload-score [value : result_rich_payload_status.Result]) : i64
+  (match value
+    [(result_rich_payload_status.Ok payload)
+      (struct-get (struct-get payload span) col)]
+    [(result_rich_payload_status.Err status)
+      (match status
+        [(StatusOk) 10]
+        [(StatusBad code) code])]))
+
+(define (rich-error-score [value : result_i64_rich_error.Result]) : i64
+  (match value
+    [(result_i64_rich_error.Ok n) n]
+    [(result_i64_rich_error.Err err) (struct-get (struct-get err span) col)]))
+
 (define (nested-score [value : result_nested.Result]) : i64
   (match value
     [(result_nested.Ok inner) (result-string-score inner)]
@@ -105,23 +133,27 @@
         (result_i64_string.map (result_i64_string.ok 2) result-i64-double)
         0)]
     [payload : i64 (payload-score (result_payload_status.ok (Payload 3)))]
+    [rich-payload : i64
+      (rich-payload-score
+        (result_rich_payload_status.ok (RichPayload "ok" (Span 5 9))))]
+    [rich-error : i64
+      (rich-error-score
+        (result_i64_rich_error.err (RichError "bad" (Span 2 3))))]
     [nested : i64 (nested-score (result_nested.ok (result_i64_string.ok 7)))]
-    (+
-      option-some
-      (+
-        option-none
-        (+
-          option-string-fallback
-          (+
-            option-try-some
-            (+
-              option-try-none
-              (+
-                option-duplicate
-                (+
-                  option-map
-                  (+
-                    result-try
-                    (+
-                      result-fallback
-                      (+ result-duplicate (+ result-map (+ payload nested))))))))))))))
+    [total : i64 option-some]
+    (begin
+      (set! total (+ total option-none))
+      (set! total (+ total option-string-fallback))
+      (set! total (+ total option-try-some))
+      (set! total (+ total option-try-none))
+      (set! total (+ total option-duplicate))
+      (set! total (+ total option-map))
+      (set! total (+ total result-try))
+      (set! total (+ total result-fallback))
+      (set! total (+ total result-duplicate))
+      (set! total (+ total result-map))
+      (set! total (+ total payload))
+      (set! total (+ total rich-payload))
+      (set! total (+ total rich-error))
+      (set! total (+ total nested))
+      total)))

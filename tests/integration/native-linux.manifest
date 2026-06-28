@@ -30,6 +30,7 @@ c_abi_sysv_tag_only_enum|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|be
 c_abi_sysv_enum_aggregate|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
+arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl
 arithmetic|tests/integration/arithmetic.tl|47|-|-|-
 constant_divisor_strength|tests/integration/constant_divisor_strength.tl|42|-|-|-
 arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|requires-stage0-symbol:tl_arena_poison_enable

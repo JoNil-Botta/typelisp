@@ -2604,6 +2604,136 @@
         (compiler-ir-block-seq-to-list seq)
         set)]))
 
+;; --- Register-eligible direct-call args (option b) -------------------------
+;; A direct IrInstrCall is "simple" for register-eligible args when it has at
+;; most 4 integer-class scalar args. 4 is the Win64 GP arg-register count (the
+;; safe minimum across both ABIs), so every arg of a simple call is GP-register
+;; passed on BOTH SysV (%rdi..%rcx) and Win64 (%rcx..%r9); none land on the
+;; stack and there are no float/group/aggregate args (which shift positions or
+;; need two-register marshalling). Only such calls' arg vars are left eligible;
+;; the backend resolves any register source/dest conflict among them with a
+;; sound parallel move (compiler-backend-emit-arg-move-list). Every other call
+;; shape keeps its arg vars ineligible (memory-sourced), so the backend's naive
+;; ascending marshalling stays correct for them. The SIMD path keeps the old
+;; block-everything behavior via compiler-reg-call-arg-vars-blocks (unchanged).
+(define (compiler-reg-call-arg-int-class?
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]) : bool
+  (match value
+    [(IrValueVar id)
+      (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegSomeType ty) (compiler-reg-integer-param-type? ty)]
+        [(CompilerRegNoType) false])]
+    [(IrValueF64 _) false]
+    [(IrValueUnit) false]
+    [_ true]))
+
+(define (compiler-reg-call-args-array-int-class?
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (compiler-reg-call-arg-int-class? (array.array-ref values index) types)
+      (compiler-reg-call-args-array-int-class? values types (+ index 1) count))))
+
+(define (compiler-reg-call-simple?
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]) : bool
+  (match args
+    [(IrCallArgsNil) true]
+    [(IrCallArgsOne v) (compiler-reg-call-arg-int-class? v types)]
+    [(IrCallArgsTwo a b)
+      (and
+        (compiler-reg-call-arg-int-class? a types)
+        (compiler-reg-call-arg-int-class? b types))]
+    [(IrCallArgsArray values)
+      (if (> (array.array-length values) 4)
+        false
+        (compiler-reg-call-args-array-int-class?
+          values
+          types
+          0
+          (array.array-length values)))]))
+
+(define (compiler-reg-call-arg-vars-instr-seq-scalar
+  [instrs : CompilerIrInstrSeq]
+  [set : CompilerLiveI64Set]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [out : CompilerLiveI64Set set]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            out
+            (match (array.array-ref slots index)
+              [(IrInstrCall _ _ args _)
+                (if (compiler-reg-call-simple? args types)
+                  out
+                  (compiler-live-set-union
+                    out
+                    (compiler-live-call-args-vars args)))]
+              [(IrInstrCallCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-value-vars-into
+                        (compiler-live-call-args-vars args)
+                        base))])]
+              [(IrInstrCallIndirectCAbiStoreResult payload-box)
+                (match (box-get payload-box)
+                  [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+                      base
+                      func
+                      args
+                      _)
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-value-vars-into
+                        (compiler-live-value-vars-into
+                          (compiler-live-call-args-vars args)
+                          base)
+                        func))])]
+              [(IrInstrTailCall _ args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-call-args-vars args))]
+              [(IrInstrTailCallIndirect func args _)
+                (compiler-live-set-union
+                  out
+                  (compiler-live-value-vars-into
+                    (compiler-live-call-args-vars args)
+                    func))]
+              [_ out]))
+          (set! index (+ index 1))))
+      out)))
+
+(define (compiler-reg-call-arg-vars-blocks-scalar
+  [blocks : CompilerIrBlockList]
+  [set : CompilerLiveI64Set]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (match blocks
+    [(IrBlockNil) set]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (compiler-reg-call-arg-vars-blocks-scalar
+            (box-get rest)
+            (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types)
+            types)])]
+    [(IrBlockArray seq)
+      (compiler-reg-call-arg-vars-blocks-scalar
+        (compiler-ir-block-seq-to-list seq)
+        set
+        types)]))
+
 ;; Ineligible variables are computed structurally (non-scalar/non-handle types,
 ;; call-argument vars, address-taken/memory targets). A value live across a call
 ;; is NOT structurally ineligible: the primary integer pool admits only
@@ -2618,12 +2748,13 @@
     [(IrFunction _ _ _ _ blocks)
       (compiler-reg-ineligible-memory
         blocks
-        (compiler-reg-call-arg-vars-blocks
+        (compiler-reg-call-arg-vars-blocks-scalar
           blocks
           (compiler-reg-ineligible-non-scalars
             types
             (compiler-live-set-empty)
-            true)))]))
+            true)
+          types))]))
 
 (define (compiler-reg-ineligible-vars
   [func : CompilerIrFunction]

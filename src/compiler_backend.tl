@@ -16557,6 +16557,285 @@
                 (OkCompilerBackend (str-cat head "    movq " scav ", " slot ""))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))))
 
+;; --- Sound register-arg parallel move (option b) ---------------------------
+;; Direct/indirect call args can be register-eligible (regalloc only leaves them
+;; eligible for 1..4 integer-class scalar args, all GP-register passed on both
+;; ABIs). Then one arg's source register can be another arg's destination arg
+;; register, so the naive ascending marshalling could clobber a source before it
+;; is read. This emits the GP-register arg loads in a safe order, breaking cycles
+;; through %r11 (the marshalling scratch, never an arg register). It runs ONLY
+;; when a real source/dest conflict exists; the overwhelming common case
+;; (self-moves / memory sources) falls through to the byte-identical naive path.
+(defenum CompilerBackendArgMoveSource
+  (BackendArgMoveValue CompilerIrValue)
+  (BackendArgMoveReg String))
+
+(defenum CompilerBackendArgMove
+  (BackendArgMove String CompilerBackendArgMoveSource))
+
+(defenum CompilerBackendArgMoveList
+  (BackendArgMoveNil)
+  (BackendArgMoveCons CompilerBackendArgMove (Box CompilerBackendArgMoveList)))
+
+(defenum CompilerBackendMaybeArgMove
+  (BackendNoArgMove)
+  (BackendSomeArgMove CompilerBackendArgMove))
+
+(define (compiler-backend-arg-move-source-reg
+  [assignments : CompilerRegAssignmentList]
+  [source : CompilerBackendArgMoveSource]) : String
+  (match source
+    [(BackendArgMoveReg r) r]
+    [(BackendArgMoveValue value)
+      (match value
+        [(IrValueVar id)
+          (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
+            ""
+            (match (compiler-reg-assignment-lookup assignments id)
+              [(CompilerRegSomeLocation loc)
+                (match loc
+                  [(CompilerRegRegister home) home]
+                  [_ ""])]
+              [(CompilerRegNoLocation) ""]))]
+        [_ ""])]))
+
+(define (compiler-backend-arg-move-list-reg-is-source?
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]
+  [reg : String]
+  [exclude-dest : String]) : bool
+  (match moves
+    [(BackendArgMoveNil) false]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove dest source)
+          (if (and
+                (not (string.string-eq dest exclude-dest))
+                (string.string-eq
+                  (compiler-backend-arg-move-source-reg assignments source)
+                  reg))
+            true
+            (compiler-backend-arg-move-list-reg-is-source?
+              assignments
+              (box-get rest)
+              reg
+              exclude-dest))])]))
+
+(define (compiler-backend-arg-move-list-is-dest?
+  [moves : CompilerBackendArgMoveList]
+  [reg : String]
+  [exclude : String]) : bool
+  (match moves
+    [(BackendArgMoveNil) false]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove dest _)
+          (if (and
+                (not (string.string-eq dest exclude))
+                (string.string-eq dest reg))
+            true
+            (compiler-backend-arg-move-list-is-dest? (box-get rest) reg exclude))])]))
+
+(define (compiler-backend-arg-moves-conflict?
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]
+  [all : CompilerBackendArgMoveList]) : bool
+  (match moves
+    [(BackendArgMoveNil) false]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove dest source)
+          (let
+            [srcreg : String
+              (compiler-backend-arg-move-source-reg assignments source)]
+            (if (and
+                  (not (string.string-eq srcreg ""))
+                  (compiler-backend-arg-move-list-is-dest? all srcreg dest))
+              true
+              (compiler-backend-arg-moves-conflict?
+                assignments
+                (box-get rest)
+                all)))])]))
+
+(define (compiler-backend-arg-move-find-unblocked
+  [assignments : CompilerRegAssignmentList]
+  [remaining : CompilerBackendArgMoveList]
+  [all : CompilerBackendArgMoveList]) : CompilerBackendMaybeArgMove
+  (match remaining
+    [(BackendArgMoveNil) BackendNoArgMove]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove dest _)
+          (if (compiler-backend-arg-move-list-reg-is-source?
+                assignments
+                all
+                dest
+                dest)
+            (compiler-backend-arg-move-find-unblocked
+              assignments
+              (box-get rest)
+              all)
+            (BackendSomeArgMove move))])]))
+
+(define (compiler-backend-arg-move-list-remove
+  [moves : CompilerBackendArgMoveList]
+  [dest : String]) : CompilerBackendArgMoveList
+  (match moves
+    [(BackendArgMoveNil) BackendArgMoveNil]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove d _)
+          (if (string.string-eq d dest)
+            (box-get rest)
+            (BackendArgMoveCons
+              move
+              (box (compiler-backend-arg-move-list-remove (box-get rest) dest))))])]))
+
+(define (compiler-backend-arg-move-list-redirect
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]
+  [oldreg : String]
+  [newreg : String]) : CompilerBackendArgMoveList
+  (match moves
+    [(BackendArgMoveNil) BackendArgMoveNil]
+    [(BackendArgMoveCons move rest)
+      (match move
+        [(BackendArgMove dest source)
+          (BackendArgMoveCons
+            (if (string.string-eq
+                  (compiler-backend-arg-move-source-reg assignments source)
+                  oldreg)
+              (BackendArgMove dest (BackendArgMoveReg newreg))
+              move)
+            (box
+              (compiler-backend-arg-move-list-redirect
+                assignments
+                (box-get rest)
+                oldreg
+                newreg)))])]))
+
+(define (compiler-backend-emit-arg-move
+  [assignments : CompilerRegAssignmentList]
+  [move : CompilerBackendArgMove]) : ResultCompilerBackend
+  (match move
+    [(BackendArgMove dest source)
+      (match source
+        [(BackendArgMoveReg r)
+          (if (string.string-eq r dest)
+            (OkCompilerBackend "")
+            (OkCompilerBackend (str_cat.str-cat "    movq " r ", " dest "\n")))]
+        [(BackendArgMoveValue value)
+          (compiler-backend-emit-load-value-with-plan assignments value dest)])]))
+
+(define (compiler-backend-emit-arg-move-list
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]) : ResultCompilerBackend
+  (match moves
+    [(BackendArgMoveNil) (OkCompilerBackend "")]
+    [(BackendArgMoveCons first _)
+      (match (compiler-backend-arg-move-find-unblocked assignments moves moves)
+        [(BackendSomeArgMove move)
+          (match move
+            [(BackendArgMove dest _)
+              (match (compiler-backend-emit-arg-move assignments move)
+                [(OkCompilerBackend head)
+                  (match (compiler-backend-emit-arg-move-list
+                            assignments
+                            (compiler-backend-arg-move-list-remove moves dest))
+                    [(OkCompilerBackend tail)
+                      (OkCompilerBackend (string.string-append head tail))]
+                    [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
+                [(ErrCompilerBackend m) (ErrCompilerBackend m)])])]
+        [(BackendNoArgMove)
+          (match first
+            [(BackendArgMove dest source)
+              (let
+                [srcreg : String
+                  (compiler-backend-arg-move-source-reg assignments source)]
+                (if (string.string-eq srcreg "")
+                  (match (compiler-backend-emit-arg-move assignments first)
+                    [(OkCompilerBackend head)
+                      (match (compiler-backend-emit-arg-move-list
+                                assignments
+                                (compiler-backend-arg-move-list-remove moves dest))
+                        [(OkCompilerBackend tail)
+                          (OkCompilerBackend (string.string-append head tail))]
+                        [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
+                    [(ErrCompilerBackend m) (ErrCompilerBackend m)])
+                  (match (compiler-backend-emit-arg-move-list
+                            assignments
+                            (compiler-backend-arg-move-list-redirect
+                              assignments
+                              moves
+                              srcreg
+                              "%r11"))
+                    [(OkCompilerBackend tail)
+                      (OkCompilerBackend
+                        (string.string-append
+                          (str_cat.str-cat "    movq " srcreg ", %r11\n")
+                          tail))]
+                    [(ErrCompilerBackend m) (ErrCompilerBackend m)])))])])]))
+
+(define (compiler-backend-arg-moves-build-from
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]
+  [index : i64]
+  [count : i64]) : CompilerBackendArgMoveList
+  (if (>= index count)
+    BackendArgMoveNil
+    (match (compiler-backend-target-arg-reg target index)
+      [(OkBackendReg reg)
+        (BackendArgMoveCons
+          (BackendArgMove
+            reg
+            (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
+          (box (compiler-backend-arg-moves-build-from target args (+ index 1) count)))]
+      [(ErrBackendReg _)
+        (compiler-backend-arg-moves-build-from target args (+ index 1) count)])))
+
+(define (compiler-backend-arg-moves-build
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]) : CompilerBackendArgMoveList
+  (compiler-backend-arg-moves-build-from
+    target
+    args
+    0
+    (compiler-backend-call-args-count args)))
+
+(define (compiler-backend-types-all-gp-int?
+  [target : CompilerBackendTarget]
+  [types : AstTypeList]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (match types
+    [(AstTypeNil) true]
+    [(AstTypeCons ty-node rest)
+      (let
+        [ty : AstType (ty-node-get ty-node)]
+        (if (or
+              (compiler-backend-float-type? ty)
+              (or
+                (compiler-backend-group-type? program-index ty)
+                (compiler-backend-c-memory-aggregate-type? target c-abi? ty)))
+          false
+          (compiler-backend-types-all-gp-int?
+            target
+            (box-get rest)
+            c-abi?
+            program-index)))]))
+
+(define (compiler-backend-call-args-gp-parallel?
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]) : bool
+  (let
+    [count : i64 (compiler-backend-call-args-count args)]
+    (and
+      (and (> count 0) (<= count 4))
+      (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
+
 (define (compiler-backend-emit-call-args-with-assignments
   [target : CompilerBackendTarget]
   [arg-assignments : CompilerRegAssignmentList]
@@ -16816,20 +17095,41 @@
   [func-diag : CompilerDiagnostic]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  (compiler-backend-emit-call-args-with-assignments
-    target
-    assignments
-    args
-    types
-    c-abi?
-    arg-index
-    int-idx
-    float-idx
-    position
-    stack-idx
-    func-diag
-    program-index
-    vars))
+  ;; Intercept only a fresh (arg-index 0), non-c-abi call whose args are all GP
+  ;; register-passed scalars AND that has a real register source/dest conflict;
+  ;; emit those via the sound parallel move. Every other call (including the
+  ;; conflict-free common case) delegates to the byte-identical naive path.
+  (if (and
+        (= arg-index 0)
+        (and
+          (not c-abi?)
+          (compiler-backend-call-args-gp-parallel?
+            target
+            args
+            types
+            c-abi?
+            program-index))
+        (compiler-backend-arg-moves-conflict?
+          assignments
+          (compiler-backend-arg-moves-build target args)
+          (compiler-backend-arg-moves-build target args)))
+    (compiler-backend-emit-arg-move-list
+      assignments
+      (compiler-backend-arg-moves-build target args))
+    (compiler-backend-emit-call-args-with-assignments
+      target
+      assignments
+      args
+      types
+      c-abi?
+      arg-index
+      int-idx
+      float-idx
+      position
+      stack-idx
+      func-diag
+      program-index
+      vars)))
 
 (define (compiler-backend-call-leading-arg-uses-var?
   [args : CompilerIrCallArgs]

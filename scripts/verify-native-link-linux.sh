@@ -447,7 +447,7 @@ EOF
     assert_contains "$_asm" "ffi_base_value(%rip)" extern-fnptr
     assert_contains "$_asm" ".extern ffi_add7_ptr" extern-fnptr
     assert_contains "$_asm" "ffi_add7_ptr(%rip)" extern-fnptr
-    assert_contains "$_asm" "    call *%rax" extern-fnptr
+    assert_contains "$_asm" "    call *%" extern-fnptr
     assert_not_contains "$_asm" "    call ffi_add7_ptr" extern-fnptr
     assert_not_contains "$_asm" "_tl_add7" extern-fnptr
 

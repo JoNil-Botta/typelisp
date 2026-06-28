@@ -1,3 +1,4 @@
+(import stdlib.array)
 (import stdlib.thread)
 (import (thread.thread-handle i64) as thread_i64)
 (import stdlib.string)
@@ -46,12 +47,12 @@
 
 (define (thread-api-array-i64-build [base : i64]) : (Array i64)
   (let
-    [items : (Array i64) (make-array i64 4)]
+    [items : (Array i64) (array.make-array i64 4)]
     (begin
-      (array-set! items 0 base)
-      (array-set! items 1 (+ base 10))
-      (array-set! items 2 (+ base 20))
-      (array-set! items 3 (+ base 30))
+      (array.array-set! items 0 base)
+      (array.array-set! items 1 (+ base 10))
+      (array.array-set! items 2 (+ base 20))
+      (array.array-set! items 3 (+ base 30))
       items)))
 
 (define (thread-api-safe-array-i64-run) : i64
@@ -113,10 +114,10 @@
       (if (and (= result 42) (not (thread.thread-semaphore-close sem)))
         (set! result 6)
         unit)
-      (if (and (= result 42) (not (= (array-ref out-a 0) 11)))
+      (if (and (= result 42) (not (= (array.array-ref out-a 0) 11)))
         (set! result 7)
         unit)
-      (if (and (= result 42) (not (= (array-ref out-b 0) 31)))
+      (if (and (= result 42) (not (= (array.array-ref out-b 0) 31)))
         (set! result 8)
         unit)
       (if (and (= result 42) (not (= a-code 11)))
@@ -129,18 +130,18 @@
 
 (define (thread-api-run-with-semaphore [sem : thread.ThreadSemaphore]) : i64
   (let
-    [out-a : (Array i64) (make-array i64 1)]
-    [out-b : (Array i64) (make-array i64 1)]
-    [ctx-a : (Array i64) (make-array i64 3)]
-    [ctx-b : (Array i64) (make-array i64 3)]
+    [out-a : (Array i64) (array.make-array i64 1)]
+    [out-b : (Array i64) (array.make-array i64 1)]
+    [ctx-a : (Array i64) (array.make-array i64 3)]
+    [ctx-b : (Array i64) (array.make-array i64 3)]
     [sem-handle : i64 (struct-get sem handle)]
     (begin
-      (array-set! ctx-a 0 (test-array-i64-addr out-a))
-      (array-set! ctx-a 1 11)
-      (array-set! ctx-a 2 sem-handle)
-      (array-set! ctx-b 0 (test-array-i64-addr out-b))
-      (array-set! ctx-b 1 31)
-      (array-set! ctx-b 2 sem-handle)
+      (array.array-set! ctx-a 0 (test-array-i64-addr out-a))
+      (array.array-set! ctx-a 1 11)
+      (array.array-set! ctx-a 2 sem-handle)
+      (array.array-set! ctx-b 0 (test-array-i64-addr out-b))
+      (array.array-set! ctx-b 1 31)
+      (array.array-set! ctx-b 2 sem-handle)
       (let
         [a-spawn : thread.ThreadSpawnResult
           (thread.thread-spawn thread-api-worker (test-array-i64-addr ctx-a))]

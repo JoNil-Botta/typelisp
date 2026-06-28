@@ -26,7 +26,7 @@
   feature-comptime-public-fields
   (defmacro (stdlib-comptime-public-field-second [args : comptime.Expr ...]) : i64
     (if (> (struct-get args len) 1)
-      (array-ref (struct-get args items) 1)
+      (__tl_array-ref (struct-get args items) 1)
       (comptime.expr-int 0))))
 
 (defmacro (stdlib-comptime-clause-count [arms : comptime.ExprClause ...]) : i64
@@ -44,7 +44,7 @@
   (defmacro (stdlib-comptime-public-clause-first-result
     [arms : comptime.ExprClause ...]) : i64
     (if (> (struct-get arms len) 0)
-      (match (array-ref (struct-get arms items) 0)
+      (match (__tl_array-ref (struct-get arms items) 0)
         [(ExprClause _ result) result])
       (comptime.expr-int 0))))
 
@@ -65,7 +65,7 @@
     (if (> (struct-get bindings len) 0)
       (let
         [first : comptime.ExprBindingClause
-          (array-ref (struct-get bindings items) 0)]
+          (__tl_array-ref (struct-get bindings items) 0)]
         (if (string.string-eq (struct-get first name) "value")
           (struct-get first init)
           (comptime.expr-int 0)))

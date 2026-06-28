@@ -35,6 +35,7 @@
       ["String"
         `(begin
           (module ,module-name)
+          (import stdlib.array as array_ops)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -122,7 +123,7 @@
             [first-tombstone : i64]) : Probe
             (if (>= seen capacity)
               (Probe.Full)
-              (match (array-ref slots index)
+              (match (array_ops.array-ref slots index)
                 [Slot.Empty (Probe.Absent (insert-slot first-tombstone index))]
                 [Slot.Tombstone
                   (probe-borrowed-from
@@ -168,30 +169,31 @@
                   (if (< capacity 1)
                     1
                     capacity))]
-              (Set (make-array Slot cap) 0 0)))
+              (Set (array_ops.make-array Slot cap) 0 0)))
           (define (new) : Set
             (with-capacity 8))
           (define (len [set : (& set Set)]) : i64
             (struct-get set len))
           (define (capacity [set : (& set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array_ops.array-length (struct-get set slots)))
           (define (capacity-mut [set : (&mut set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array_ops.array-length (struct-get set slots)))
           (define (needs-grow? [set : (&mut set Set)]) : bool
             (> (* (+ (struct-get set len) 1) 4) (* (capacity-mut set) 3)))
           (define (grow [set : (&mut set Set)]) : unit
             (let
-              [old-capacity : i64 (array-length (struct-get set slots))]
+              [old-capacity : i64
+                (array_ops.array-length (struct-get set slots))]
               [new-capacity : i64
                 (if (< old-capacity 1)
                   1
                   (* old-capacity 2))]
-              [fresh : (Array Slot) (make-array Slot new-capacity)]
+              [fresh : (Array Slot) (array_ops.make-array Slot new-capacity)]
               [scan : i64 0]
               (begin
                 (while (< scan old-capacity)
                   (begin
-                    (match (array-ref (struct-get set slots) scan)
+                    (match (array_ops.array-ref (struct-get set slots) scan)
                       [(Slot.Occupied key hash)
                         (let
                           [index : i64 (bucket-index hash new-capacity)]
@@ -200,10 +202,10 @@
                           (while (if placed
                             false
                             (< seen new-capacity))
-                            (match (array-ref fresh index)
+                            (match (array_ops.array-ref fresh index)
                               [Slot.Empty
                                 (begin
-                                  (array-set!
+                                  (array_ops.array-set!
                                     fresh
                                     index
                                     (Slot.Occupied (clone key) hash))
@@ -242,11 +244,13 @@
                   [(Probe.Absent index)
                     (let
                       [was-tombstone : bool
-                        (match (array-ref (struct-get set slots) index)
+                        (match (array_ops.array-ref
+                          (struct-get set slots)
+                          index)
                           [Slot.Tombstone true]
                           [_ false])]
                       (begin
-                        (array-set!
+                        (array_ops.array-set!
                           (struct-get set slots)
                           index
                           (Slot.Occupied key hash))
@@ -268,7 +272,10 @@
               (hash-key key))
               [(Probe.Found index)
                 (begin
-                  (array-set! (struct-get set slots) index (Slot.Tombstone))
+                  (array_ops.array-set!
+                    (struct-get set slots)
+                    index
+                    (Slot.Tombstone))
                   (set! (struct-get set len) (- (struct-get set len) 1))
                   (set! (struct-get set deleted) (+ (struct-get set deleted) 1)))]
               [_ unit]))
@@ -286,7 +293,7 @@
                 (while (if found
                   false
                   (< index cap))
-                  (match (array-ref (struct-get set slots) index)
+                  (match (array_ops.array-ref (struct-get set slots) index)
                     [(Slot.Occupied _ _) (set! found true)]
                     [_ (set! index (+ index 1))]))
                 index)))
@@ -294,7 +301,7 @@
             (if (if (>= index 0)
               (< index (capacity set))
               false)
-              (match (array-ref (struct-get set slots) index)
+              (match (array_ops.array-ref (struct-get set slots) index)
                 [(Slot.Occupied key _) (Entry.Some (clone key))]
                 [_ (Entry.None)])
               (Entry.None)))
@@ -305,6 +312,7 @@
       ["i64"
         `(begin
           (module ,module-name)
+          (import stdlib.array as array_ops)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -358,7 +366,7 @@
             [first-tombstone : i64]) : Probe
             (if (>= seen capacity)
               (Probe.Full)
-              (match (array-ref slots index)
+              (match (array_ops.array-ref slots index)
                 [Slot.Empty (Probe.Absent (insert-slot first-tombstone index))]
                 [Slot.Tombstone
                   (probe-from
@@ -404,30 +412,31 @@
                   (if (< capacity 1)
                     1
                     capacity))]
-              (Set (make-array Slot cap) 0 0)))
+              (Set (array_ops.make-array Slot cap) 0 0)))
           (define (new) : Set
             (with-capacity 8))
           (define (len [set : (& set Set)]) : i64
             (struct-get set len))
           (define (capacity [set : (& set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array_ops.array-length (struct-get set slots)))
           (define (capacity-mut [set : (&mut set Set)]) : i64
-            (array-length (struct-get set slots)))
+            (array_ops.array-length (struct-get set slots)))
           (define (needs-grow? [set : (&mut set Set)]) : bool
             (> (* (+ (struct-get set len) 1) 4) (* (capacity-mut set) 3)))
           (define (grow [set : (&mut set Set)]) : unit
             (let
-              [old-capacity : i64 (array-length (struct-get set slots))]
+              [old-capacity : i64
+                (array_ops.array-length (struct-get set slots))]
               [new-capacity : i64
                 (if (< old-capacity 1)
                   1
                   (* old-capacity 2))]
-              [fresh : (Array Slot) (make-array Slot new-capacity)]
+              [fresh : (Array Slot) (array_ops.make-array Slot new-capacity)]
               [scan : i64 0]
               (begin
                 (while (< scan old-capacity)
                   (begin
-                    (match (array-ref (struct-get set slots) scan)
+                    (match (array_ops.array-ref (struct-get set slots) scan)
                       [(Slot.Occupied key hash)
                         (let
                           [index : i64 (bucket-index hash new-capacity)]
@@ -436,10 +445,10 @@
                           (while (if placed
                             false
                             (< seen new-capacity))
-                            (match (array-ref fresh index)
+                            (match (array_ops.array-ref fresh index)
                               [Slot.Empty
                                 (begin
-                                  (array-set!
+                                  (array_ops.array-set!
                                     fresh
                                     index
                                     (Slot.Occupied key hash))
@@ -476,11 +485,13 @@
                   [(Probe.Absent index)
                     (let
                       [was-tombstone : bool
-                        (match (array-ref (struct-get set slots) index)
+                        (match (array_ops.array-ref
+                          (struct-get set slots)
+                          index)
                           [Slot.Tombstone true]
                           [_ false])]
                       (begin
-                        (array-set!
+                        (array_ops.array-set!
                           (struct-get set slots)
                           index
                           (Slot.Occupied key hash))
@@ -502,7 +513,10 @@
               (hash-key key))
               [(Probe.Found index)
                 (begin
-                  (array-set! (struct-get set slots) index (Slot.Tombstone))
+                  (array_ops.array-set!
+                    (struct-get set slots)
+                    index
+                    (Slot.Tombstone))
                   (set! (struct-get set len) (- (struct-get set len) 1))
                   (set! (struct-get set deleted) (+ (struct-get set deleted) 1)))]
               [_ unit]))
@@ -518,7 +532,7 @@
                 (while (if found
                   false
                   (< index cap))
-                  (match (array-ref (struct-get set slots) index)
+                  (match (array_ops.array-ref (struct-get set slots) index)
                     [(Slot.Occupied _ _) (set! found true)]
                     [_ (set! index (+ index 1))]))
                 index)))
@@ -526,7 +540,7 @@
             (if (if (>= index 0)
               (< index (capacity set))
               false)
-              (match (array-ref (struct-get set slots) index)
+              (match (array_ops.array-ref (struct-get set slots) index)
                 [(Slot.Occupied key _) (Entry.Some key)]
                 [_ (Entry.None)])
               (Entry.None)))

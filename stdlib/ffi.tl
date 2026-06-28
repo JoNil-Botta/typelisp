@@ -23,6 +23,7 @@
 ;# ```
 (module stdlib.ffi)
 
+(import stdlib.array)
 (import stdlib.byte_buf)
 
 ;: Result type for copying TypeLisp bytes into caller-owned C string storage.
@@ -102,7 +103,7 @@
     (let
       [needed : i64 (ffi-c-bytes-required-bytes view)]
       [n : i64 (byte_buf.bytes-length view)]
-      [buf : (Array u8) (make-array u8 needed)]
+      [buf : (Array u8) (array.make-array u8 needed)]
       [dst : (MutPtr u8)
         (unsafe
           (array-data buf))]
@@ -209,7 +210,7 @@
 ;: Inline test helper that builds a string containing an interior NUL byte.
 (define (ffi-test-string-with-nul) : String
   (let
-    [data : (Array u8) (make-array u8 3)]
+    [data : (Array u8) (array.make-array u8 3)]
     [dst : (MutPtr u8)
       (unsafe
         (array-data data))]
@@ -243,7 +244,7 @@
       unit
       (ffi-test-fail))
     (let
-      [empty-storage : (Array u8) (make-array u8 1)]
+      [empty-storage : (Array u8) (array.make-array u8 1)]
       [empty-buf : (MutPtr u8)
         (unsafe
           (array-data empty-storage))]
@@ -251,7 +252,7 @@
         (ffi-test-assert-copy-ok (ffi-c-string-copy! "" empty-buf 1) 1)
         (ffi-test-assert-u8-eq (ffi-test-read-u8 empty-buf 0) 0)))
     (let
-      [exact-storage : (Array u8) (make-array u8 4)]
+      [exact-storage : (Array u8) (array.make-array u8 4)]
       [exact : (MutPtr u8)
         (unsafe
           (array-data exact-storage))]
@@ -264,7 +265,7 @@
     (let
       [bytes-text : String "buf"]
       [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
-      [bytes-storage : (Array u8) (make-array u8 4)]
+      [bytes-storage : (Array u8) (array.make-array u8 4)]
       [bytes-dst : (MutPtr u8)
         (unsafe
           (array-data bytes-storage))]
@@ -275,7 +276,7 @@
         (ffi-test-assert-u8-eq (ffi-test-read-u8 bytes-dst 2) 102)
         (ffi-test-assert-u8-eq (ffi-test-read-u8 bytes-dst 3) 0)))
     (let
-      [small-storage : (Array u8) (make-array u8 3)]
+      [small-storage : (Array u8) (array.make-array u8 3)]
       [small : (MutPtr u8)
         (unsafe
           (array-data small-storage))]
@@ -285,7 +286,7 @@
         (ffi-test-assert-u8-eq (ffi-test-read-u8 small 0) 77)))
     (let
       [with-nul : String (ffi-test-string-with-nul)]
-      [nul-storage : (Array u8) (make-array u8 4)]
+      [nul-storage : (Array u8) (array.make-array u8 4)]
       [nul-buf : (MutPtr u8)
         (unsafe
           (array-data nul-storage))]
@@ -302,7 +303,7 @@
           (byte_buf.byte-buf-push (byte_buf.byte-buf-new) (cast 97 : u8))
           (cast 0 : u8))]
       [binary-view : (& binary bytes) (byte_buf.byte-buf-as-bytes (& binary))]
-      [binary-storage : (Array u8) (make-array u8 3)]
+      [binary-storage : (Array u8) (array.make-array u8 3)]
       [binary-buf : (MutPtr u8)
         (unsafe
           (array-data binary-storage))]

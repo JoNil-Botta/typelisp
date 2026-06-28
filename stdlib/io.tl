@@ -35,6 +35,7 @@
 ;# ```
 (module stdlib.io)
 
+(import stdlib.array)
 (import stdlib.io_core)
 (import stdlib.string)
 
@@ -116,7 +117,7 @@
   (define (io-windows-write [fd : i32] [buf : (Ptr u8)] [count : i32]) : i32
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [written : (Array i32) (make-array i32 1)]
+      [written : (Array i32) (array.make-array i32 1)]
       [ok : i32
         (io-win-write-file
           handle
@@ -127,7 +128,7 @@
           0)]
       (if (= ok (cast 0 : i32))
         (cast -1 : i32)
-        (array-ref written 0)))))
+        (array.array-ref written 0)))))
 
 ;: Windows `_read` replacement via ReadFile; a broken pipe (error 109) is EOF.
 (cfg
@@ -135,7 +136,7 @@
   (define (io-windows-read [fd : i32] [buf : (MutPtr u8)] [count : i32]) : i32
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [nread : (Array i32) (make-array i32 1)]
+      [nread : (Array i32) (array.make-array i32 1)]
       [ok : i32
         (io-win-read-file
           handle
@@ -148,7 +149,7 @@
         (if (= (io-win-get-last-error) (cast 109 : i32))
           (cast 0 : i32)
           (cast -1 : i32))
-        (array-ref nread 0)))))
+        (array.array-ref nread 0)))))
 
 ;: Windows `_close` replacement: std handles (fd 0/1/2) are a no-op, else
 ;: CloseHandle. Always reports success, matching the former shim.
@@ -167,7 +168,7 @@
   (define (io-windows-lseek [fd : i32] [offset : i64] [whence : i32]) : i64
     (let
       [handle : i64 (io-windows-fd-handle fd)]
-      [newpos : (Array i64) (make-array i64 1)]
+      [newpos : (Array i64) (array.make-array i64 1)]
       [ok : i32
         (io-win-set-file-pointer-ex
           handle
@@ -177,7 +178,7 @@
           whence)]
       (if (= ok (cast 0 : i32))
         -1
-        (array-ref newpos 0)))))
+        (array.array-ref newpos 0)))))
 
 ;: Windows `_open` replacement via CreateFileA, translating the POSIX-style
 ;: open flags (O_APPEND/O_RDWR/O_WRONLY, O_CREAT/O_TRUNC) into the kernel32
@@ -243,14 +244,14 @@
 (define (io-c-string [text : String]) : (Array u8)
   (let
     [n : i64 (string-length text)]
-    [buf : (Array u8) (make-array u8 (+ n 1))]
+    [buf : (Array u8) (array.make-array u8 (+ n 1))]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! buf i (cast (string-ref text i) : u8))
+          (array.array-set! buf i (cast (string-ref text i) : u8))
           (set! i (+ i 1))))
-      (array-set! buf n (cast '\0' : u8))
+      (array.array-set! buf n (cast '\0' : u8))
       buf)))
 
 ;: Return a mutable pointer to an Array u8 backing buffer.
@@ -272,12 +273,12 @@
 (define (io-copy-c-string [ptr : (Ptr u8)]) : String
   (let
     [n : i64 (io-c-string-length ptr)]
-    [buf : (Array u8) (make-array u8 n)]
+    [buf : (Array u8) (array.make-array u8 n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set!
+          (array.array-set!
             buf
             i
             (unsafe
@@ -528,9 +529,9 @@
 ;: Write one character byte to stdout without adding a newline.
 (define (print-char [ch : char]) : unit
   (let
-    [buf : (Array u8) (make-array u8 1)]
+    [buf : (Array u8) (array.make-array u8 1)]
     (begin
-      (array-set! buf 0 (cast ch : u8))
+      (array.array-set! buf 0 (cast ch : u8))
       (if (= (io-write-all-fd-status 1 (io-array-const-ptr buf) 1) 0)
         unit
         (io-platform-exit 134)))))
@@ -550,7 +551,7 @@
 
 ;: A zero-valued BigNum.
 (define (bn-zero) : BigNum
-  (BigNum (make-array u64 stdlib.io.ftoa-cap) 0))
+  (BigNum (array.make-array u64 stdlib.io.ftoa-cap) 0))
 
 ;: BigNum holding the u64 value x.
 (define (bn-from-u64 [x : u64]) : BigNum
@@ -559,8 +560,8 @@
     [lo : u64 (bit-and x stdlib.io.ftoa-mask32)]
     [hi : u64 (shr x 32)]
     (begin
-      (array-set! (struct-get r limbs) 0 lo)
-      (array-set! (struct-get r limbs) 1 hi)
+      (array.array-set! (struct-get r limbs) 0 lo)
+      (array.array-set! (struct-get r limbs) 1 hi)
       (if (> hi (cast 0 : u64))
         (BigNum (struct-get r limbs) 2)
         (if (> lo (cast 0 : u64))
@@ -583,8 +584,8 @@
           (begin
             (while (and (not done) (>= i 0))
               (let
-                [av : u64 (array-ref (struct-get a limbs) i)]
-                [bv : u64 (array-ref (struct-get b limbs) i)]
+                [av : u64 (array.array-ref (struct-get a limbs) i)]
+                [bv : u64 (array.array-ref (struct-get b limbs) i)]
                 (begin
                   (if (> av bv)
                     (begin
@@ -603,14 +604,14 @@
   (let
     [i : i64 hint]
     (begin
-      (while (and (> i 0) (= (array-ref arr (- i 1)) (cast 0 : u64)))
+      (while (and (> i 0) (= (array.array-ref arr (- i 1)) (cast 0 : u64)))
         (set! i (- i 1)))
       i)))
 
 ;: Sum of BigNums a and b.
 (define (bn-add [a : BigNum] [b : BigNum]) : BigNum
   (let
-    [r : (Array u64) (make-array u64 stdlib.io.ftoa-cap)]
+    [r : (Array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 (struct-get a len)]
     [lb : i64 (struct-get b len)]
     [n : i64
@@ -624,42 +625,42 @@
         (let
           [av : u64
             (if (< i la)
-              (array-ref (struct-get a limbs) i)
+              (array.array-ref (struct-get a limbs) i)
               (cast 0 : u64))]
           [bv : u64
             (if (< i lb)
-              (array-ref (struct-get b limbs) i)
+              (array.array-ref (struct-get b limbs) i)
               (cast 0 : u64))]
           [s : u64 (+ (+ av bv) carry)]
           (begin
-            (array-set! r i (bit-and s stdlib.io.ftoa-mask32))
+            (array.array-set! r i (bit-and s stdlib.io.ftoa-mask32))
             (set! carry (shr s 32))
             (set! i (+ i 1)))))
       (when
         (> carry (cast 0 : u64))
         (begin
-          (array-set! r i carry)
+          (array.array-set! r i carry)
           (set! n (+ n 1))))
       (BigNum r (bn-norm-len r n)))))
 
 ;: Product of BigNum a and a value m that fits in 32 bits.
 (define (bn-mul-u32 [a : BigNum] [m : u64]) : BigNum
   (let
-    [r : (Array u64) (make-array u64 stdlib.io.ftoa-cap)]
+    [r : (Array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
     [la : i64 (struct-get a len)]
     [carry : u64 (cast 0 : u64)]
     [i : i64 0]
     (begin
       (while (< i la)
         (let
-          [p : u64 (+ (* (array-ref (struct-get a limbs) i) m) carry)]
+          [p : u64 (+ (* (array.array-ref (struct-get a limbs) i) m) carry)]
           (begin
-            (array-set! r i (bit-and p stdlib.io.ftoa-mask32))
+            (array.array-set! r i (bit-and p stdlib.io.ftoa-mask32))
             (set! carry (shr p 32))
             (set! i (+ i 1)))))
       (while (> carry (cast 0 : u64))
         (begin
-          (array-set! r i (bit-and carry stdlib.io.ftoa-mask32))
+          (array.array-set! r i (bit-and carry stdlib.io.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
       (BigNum r (bn-norm-len r i)))))
@@ -671,7 +672,7 @@
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]
-      [r : (Array u64) (make-array u64 stdlib.io.ftoa-cap)]
+      [r : (Array u64) (array.make-array u64 stdlib.io.ftoa-cap)]
       [la : i64 (struct-get a len)]
       [carry : u64 (cast 0 : u64)]
       [i : i64 0]
@@ -679,20 +680,23 @@
         (if (= bit-shift 0)
           (while (< i la)
             (begin
-              (array-set! r (+ i limb-shift) (array-ref (struct-get a limbs) i))
+              (array.array-set!
+                r
+                (+ i limb-shift)
+                (array.array-ref (struct-get a limbs) i))
               (set! i (+ i 1))))
           (while (< i la)
             (let
-              [v : u64 (array-ref (struct-get a limbs) i)]
+              [v : u64 (array.array-ref (struct-get a limbs) i)]
               [shifted : u64
                 (bit-or (bit-and (shl v bit-shift) stdlib.io.ftoa-mask32) carry)]
               (begin
-                (array-set! r (+ i limb-shift) shifted)
+                (array.array-set! r (+ i limb-shift) shifted)
                 (set! carry (shr v (- 32 bit-shift)))
                 (set! i (+ i 1))))))
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
-          (array-set! r (+ la limb-shift) carry))
+          (array.array-set! r (+ la limb-shift) carry))
         (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
 
 ;: Product of BigNum a and the 64-bit value m.
@@ -925,7 +929,7 @@
         (* (- len 1) 32)
         (+
           (stdlib.io.ftoa-msb-index
-            (array-ref (struct-get value limbs) (- len 1)))
+            (array.array-ref (struct-get value limbs) (- len 1)))
           1)))))
 
 ;: Floor log2 of the positive rational `num / den`.
@@ -969,27 +973,27 @@
 ;: Reinterpret IEEE-754 binary64 bits as f64.
 (define (io-float-f64-from-bits [bits : u64]) : f64
   (let
-    [buf : (Array u64) (make-array u64 1)]
+    [buf : (Array u64) (array.make-array u64 1)]
     (begin
-      (array-set! buf 0 bits)
+      (array.array-set! buf 0 bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
 
 ;: Reinterpret an f64 as IEEE-754 binary64 bits.
 (define (io-float-f64-bits [value : f64]) : u64
   (let
-    [buf : (Array f64) (make-array f64 1)]
+    [buf : (Array f64) (array.make-array f64 1)]
     (begin
-      (array-set! buf 0 value)
+      (array.array-set! buf 0 value)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))))
 
 ;: Reinterpret an f32 as IEEE-754 binary32 bits.
 (define (io-float-f32-bits [value : f32]) : u32
   (let
-    [buf : (Array f32) (make-array f32 1)]
+    [buf : (Array f32) (array.make-array f32 1)]
     (begin
-      (array-set! buf 0 value)
+      (array.array-set! buf 0 value)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))))
 
@@ -1166,9 +1170,9 @@
 ;: Render value as a shortest round-tripping decimal string (printf %.17g style).
 (define (io-format-float-core [value : f64]) : String
   (let
-    [buf : (Array f64) (make-array f64 1)]
+    [buf : (Array f64) (array.make-array f64 1)]
     (begin
-      (array-set! buf 0 value)
+      (array.array-set! buf 0 value)
       (let
         [bits : u64
           (unsafe
@@ -1309,7 +1313,7 @@
           (panic "tl: read-file failed\n")
           unit)
         (let
-          [buf : (Array u8) (make-array u8 end)]
+          [buf : (Array u8) (array.make-array u8 end)]
           [offset : i64 0]
           [done : bool false]
           (begin
@@ -1343,7 +1347,7 @@
     (if (< fd 0)
       (stdlib.io.io-last-error-code)
       (let
-        [probe : (Array u8) (make-array u8 1)]
+        [probe : (Array u8) (array.make-array u8 1)]
         [read-count : i64
           (stdlib.io.io-platform-read fd (stdlib.io.io-array-ptr probe) 1)]
         [status : i64
@@ -1500,7 +1504,7 @@
         0)]
     [else
       (let
-        [buf : (Array u8) (make-array u8 count)]
+        [buf : (Array u8) (array.make-array u8 count)]
         [fd : i64 (io_core.io-file-i64-ref (io_core.io-file-fds-ptr) raw)]
         [read-count : i64
           (stdlib.io.io-platform-read fd (stdlib.io.io-array-ptr buf) count)]
@@ -1562,7 +1566,7 @@
     (if (= count 0)
       ""
       (let
-        [buf : (Array u8) (make-array u8 count)]
+        [buf : (Array u8) (array.make-array u8 count)]
         [offset : i64 0]
         [done : bool false]
         (begin
@@ -1592,8 +1596,8 @@
 ;: Private compatibility builder; the API returns `String`, not bytes.
 (define (read-stdin-line) : String
   (let
-    [bytes : (Array u8) (make-array u8 0)]
-    [one : (Array u8) (make-array u8 1)]
+    [bytes : (Array u8) (array.make-array u8 0)]
+    [one : (Array u8) (array.make-array u8 1)]
     [done : bool false]
     (begin
       (while (not done)
@@ -1606,14 +1610,16 @@
                 (set! io-stdin-eof-state true)
                 (set! done true))
               (let
-                [byte : u8 (array-ref one 0)]
+                [byte : u8 (array.array-ref one 0)]
                 (if (= (cast byte : i64) 10)
                   (set! done true)
                   (begin
-                    (array-push! bytes byte)
+                    (array.array-push! bytes byte)
                     (set! done false))))))))
       (unsafe
-        (string-from-bytes (io-array-const-ptr bytes) (array-length bytes))))))
+        (string-from-bytes
+          (io-array-const-ptr bytes)
+          (array.array-length bytes))))))
 
 ;: Return the sticky stdin EOF state.
 (define (stdin-eof?) : bool

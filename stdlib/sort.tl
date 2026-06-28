@@ -98,6 +98,7 @@
     (if scalar?
       `(begin
         (module ,module-name)
+        (import stdlib.array as array_ops)
         (define (sort! [v : (&mut v Vec)]) : unit
           (let
             [n : i64 (len-mut v)]
@@ -105,19 +106,23 @@
             [i : i64 1]
             (while (< i n)
               (let
-                [value : ,T (array-ref slots i)]
+                [value : ,T (array_ops.array-ref slots i)]
                 [j : i64 i]
                 (begin
                   (while (if (> j 0)
-                    (< value (array-ref slots (- j 1)))
+                    (< value (array_ops.array-ref slots (- j 1)))
                     false)
                     (begin
-                      (array-set! slots j (array-ref slots (- j 1)))
+                      (array_ops.array-set!
+                        slots
+                        j
+                        (array_ops.array-ref slots (- j 1)))
                       (set! j (- j 1))))
-                  (array-set! slots j value)
+                  (array_ops.array-set! slots j value)
                   (set! i (+ i 1))))))))
       `(begin
         (module ,module-name)
+        (import stdlib.array as array_ops)
         (define (sort! [v : (&mut v Vec)] [less? : (-> ,T ,T bool)]) : unit
           (let
             [n : i64 (len-mut v)]
@@ -125,16 +130,21 @@
             [i : i64 1]
             (while (< i n)
               (let
-                [value : ,T (array-ref slots i)]
+                [value : ,T (array_ops.array-ref slots i)]
                 [j : i64 i]
                 (begin
                   (while (if (> j 0)
-                    (less? (clone value) (clone (array-ref slots (- j 1))))
+                    (less?
+                      (clone value)
+                      (clone (array_ops.array-ref slots (- j 1))))
                     false)
                     (begin
-                      (array-set! slots j (clone (array-ref slots (- j 1))))
+                      (array_ops.array-set!
+                        slots
+                        j
+                        (clone (array_ops.array-ref slots (- j 1))))
                       (set! j (- j 1))))
-                  (array-set! slots j value)
+                  (array_ops.array-set! slots j value)
                   (set! i (+ i 1)))))))))))
 
 ;; Inline coverage migrated from the old flat vector sort helpers (#3082).

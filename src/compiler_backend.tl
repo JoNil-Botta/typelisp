@@ -8669,7 +8669,8 @@
 (define (compiler-backend-binop-immediate-shift-asm
   [mnemonic : String]
   [ty : AstType]
-  [imm : String]) : CompilerBackendMaybeAsm
+  [imm : String]
+  [staging-reg : String]) : CompilerBackendMaybeAsm
   (let
     [count : i64
       (string.string->int
@@ -8683,7 +8684,7 @@
             (compiler-backend-int-instruction-suffix ty)
             " "
             imm)
-          (str_cat.str-cat ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
+          (str_cat.str-cat ", " (compiler-backend-sized-reg staging-reg ty) "\n")))
       (CompilerBackendNoAsm))))
 
 (define (compiler-backend-binop-immediate-shift-reg-asm
@@ -8954,29 +8955,32 @@
 (define (compiler-backend-binop-immediate-reg-asm
   [mnemonic : String]
   [ty : AstType]
-  [imm : String]) : String
+  [imm : String]
+  [staging-reg : String]) : String
   (compiler-backend-binop-reg-asm
     mnemonic
     ty
     imm
-    (compiler-backend-sized-reg "%rax" ty)))
+    (compiler-backend-sized-reg staging-reg ty)))
 
 (define (compiler-backend-binop-immediate-asm
   [op : CompilerIrBinOp]
   [imm : String]
-  [ty : AstType]) : CompilerBackendMaybeAsm
+  [ty : AstType]
+  [staging-reg : String]
+  [result-reg : String]) : CompilerBackendMaybeAsm
   (match op
     [(IrBinAdd)
       (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "add" ty imm))]
+        (compiler-backend-binop-immediate-reg-asm "add" ty imm staging-reg))]
     [(IrBinSub)
       (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "sub" ty imm))]
+        (compiler-backend-binop-immediate-reg-asm "sub" ty imm staging-reg))]
     [(IrBinMul)
       (CompilerBackendSomeAsm
         (if (= (compiler-backend-type-size ty) 1)
-          (str_cat.str-cat "    imulq " imm ", %rax\n")
-          (compiler-backend-binop-immediate-reg-asm "imul" ty imm)))]
+          (str_cat.str-cat "    imulq " imm ", " staging-reg "\n")
+          (compiler-backend-binop-immediate-reg-asm "imul" ty imm staging-reg)))]
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (if (string.string-eq imm "$0")
@@ -9021,37 +9025,38 @@
             "setge")))]
     [(IrBinAnd)
       (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "and" ty imm))]
+        (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg))]
     [(IrBinOr)
       (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
+        (compiler-backend-binop-immediate-reg-asm "or" ty imm staging-reg))]
     [(IrBinBitAnd)
       (let
         [size : i64 (compiler-backend-type-size ty)]
         (CompilerBackendSomeAsm
           (if (string.string-eq imm "$255")
             (if (= size 8)
-              "    movzbq %al, %rax\n"
-              "    movzbl %al, %eax\n")
+              (str_cat.str-cat "    movzbq " (compiler-backend-reg-part staging-reg 1) ", " result-reg "\n")
+              (str_cat.str-cat "    movzbl " (compiler-backend-reg-part staging-reg 1) ", " (compiler-backend-reg-part result-reg 4) "\n"))
             (if (and (>= size 2) (string.string-eq imm "$65535"))
               (if (= size 8)
-                "    movzwq %ax, %rax\n"
-                "    movzwl %ax, %eax\n")
-              (compiler-backend-binop-immediate-reg-asm "and" ty imm)))))]
+                (str_cat.str-cat "    movzwq " (compiler-backend-reg-part staging-reg 2) ", " result-reg "\n")
+                (str_cat.str-cat "    movzwl " (compiler-backend-reg-part staging-reg 2) ", " (compiler-backend-reg-part result-reg 4) "\n"))
+              (compiler-backend-binop-immediate-reg-asm "and" ty imm staging-reg)))))]
     [(IrBinBitOr)
       (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
+        (compiler-backend-binop-immediate-reg-asm "or" ty imm staging-reg))]
     [(IrBinBitXor)
       (CompilerBackendSomeAsm
-        (compiler-backend-binop-immediate-reg-asm "xor" ty imm))]
-    [(IrBinShl) (compiler-backend-binop-immediate-shift-asm "shl" ty imm)]
+        (compiler-backend-binop-immediate-reg-asm "xor" ty imm staging-reg))]
+    [(IrBinShl) (compiler-backend-binop-immediate-shift-asm "shl" ty imm staging-reg)]
     [(IrBinShr)
       (compiler-backend-binop-immediate-shift-asm
         (if (compiler-backend-type-signed? ty)
           "sar"
           "shr")
         ty
-        imm)]
+        imm
+        staging-reg)]
     [_ (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
@@ -9532,7 +9537,8 @@
 (define (compiler-backend-binop-source-asm
   [op : CompilerIrBinOp]
   [ty : AstType]
-  [rhs : String]) : CompilerBackendMaybeAsm
+  [rhs : String]
+  [staging-reg : String]) : CompilerBackendMaybeAsm
   (match op
     [(IrBinAdd)
       (CompilerBackendSomeAsm
@@ -9540,14 +9546,14 @@
           "add"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [(IrBinSub)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm
           "sub"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [(IrBinMul)
       (if (= (compiler-backend-type-size ty) 1)
         (CompilerBackendNoAsm)
@@ -9556,27 +9562,27 @@
             "imul"
             ty
             rhs
-            (compiler-backend-sized-reg "%rax" ty))))]
+            (compiler-backend-sized-reg staging-reg ty))))]
     [(IrBinEq)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)
+          (compiler-backend-sized-reg staging-reg ty)
           "sete"))]
     [(IrBinNe)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)
+          (compiler-backend-sized-reg staging-reg ty)
           "setne"))]
     [(IrBinLt)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)
+          (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")))]
@@ -9585,7 +9591,7 @@
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)
+          (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")))]
@@ -9594,7 +9600,7 @@
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)
+          (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")))]
@@ -9603,7 +9609,7 @@
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)
+          (compiler-backend-sized-reg staging-reg ty)
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")))]
@@ -9613,35 +9619,35 @@
           "and"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [(IrBinOr)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm
           "or"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [(IrBinBitAnd)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm
           "and"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [(IrBinBitOr)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm
           "or"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [(IrBinBitXor)
       (CompilerBackendSomeAsm
         (compiler-backend-binop-reg-asm
           "xor"
           ty
           rhs
-          (compiler-backend-sized-reg "%rax" ty)))]
+          (compiler-backend-sized-reg staging-reg ty)))]
     [_ (CompilerBackendNoAsm)]))
 
 (define (compiler-backend-emit-binop-direct-immediate
@@ -10120,7 +10126,9 @@
                     (match (compiler-backend-binop-immediate-asm
                       op
                       imm
-                      operand-ty)
+                      operand-ty
+                      "%rax"
+                      "%rax")
                       [(CompilerBackendSomeAsm op-asm)
                         (OkCompilerBackend
                           (string.string-append
@@ -10172,7 +10180,8 @@
                         (match (compiler-backend-binop-source-asm
                           op
                           operand-ty
-                          rhs-address)
+                          rhs-address
+                          "%rax")
                           [(CompilerBackendSomeAsm op-asm)
                             (OkCompilerBackend
                               (string.string-append
@@ -10244,7 +10253,8 @@
                             (compiler-backend-binop-source-asm
                               op
                               operand-ty
-                              (compiler-backend-sized-reg rhs-reg operand-ty))
+                              (compiler-backend-sized-reg rhs-reg operand-ty)
+                              "%rax")
                             (CompilerBackendNoAsm))
                             [(CompilerBackendSomeAsm op-asm)
                               (OkCompilerBackend
@@ -10367,7 +10377,7 @@
       [(CompilerBackendNoAsm)
         (match (compiler-backend-immediate-operand rhs)
           [(CompilerBackendSomeImmediate imm)
-            (match (compiler-backend-binop-immediate-asm op imm operand-ty)
+            (match (compiler-backend-binop-immediate-asm op imm operand-ty "%rax" "%rax")
               [(CompilerBackendSomeAsm op-asm)
                 (OkCompilerBackend (string.string-append op-asm store))]
               [(CompilerBackendNoAsm)
@@ -10756,7 +10766,9 @@
                     (match (compiler-backend-binop-immediate-asm
                       op
                       imm
-                      operand-ty)
+                      operand-ty
+                      "%rax"
+                      "%rax")
                       [(CompilerBackendSomeAsm op-asm)
                         (OkCompilerBackend
                           (string.string-append

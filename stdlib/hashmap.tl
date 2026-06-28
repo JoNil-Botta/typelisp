@@ -2547,7 +2547,7 @@
 ;: (in ascending bucket order), or the capacity when no live entry remains.
 ;: A negative `from` is clamped to 0.
 ;:
-;: v1 iterates in *bucket order* Ã¢â‚¬â€ ascending slot index, skipping empty and
+;: v1 iterates in *bucket order* - ascending slot index, skipping empty and
 ;: tombstone slots. This order is deterministic for a fixed table state but is
 ;: NOT insertion order, and it can change across a resize/rehash (#827). Walk
 ;: live entries by starting at `(string-i64-map-next-occupied map 0)` and
@@ -2630,11 +2630,13 @@
   (StringStringMapTombstone)
   (StringStringMapOccupied String String i64))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapProbe
   (StringStringMapProbeFound i64)
   (StringStringMapProbeAbsent i64)
   (StringStringMapProbeFull))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-hash-normalize [value : i64]) : i64
   (let
     [m : i64 2147483647]
@@ -2643,6 +2645,7 @@
       (+ raw m)
       raw)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-hash-key [key : (& key str)]) : i64
   (let
     [n : i64 (__tl_string_length key)]
@@ -2659,11 +2662,13 @@
           (set! i (+ i 1))))
       hash)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-power-two-capacity? [capacity : i64]) : bool
   (if (> capacity 0)
     (= (bit-and capacity (- capacity 1)) 0)
     false))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-round-capacity [capacity : i64]) : i64
   (let
     [rounded : i64 1]
@@ -2672,16 +2677,19 @@
         (set! rounded (* rounded 2)))
       rounded)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-normalized-bucket-index
   [hash : i64]
   [capacity : i64]) : i64
   (bit-and hash (- capacity 1)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-bucket-index [hash : i64] [capacity : i64]) : i64
   (string-string-map-normalized-bucket-index
     (string-string-map-hash-normalize hash)
     capacity))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-next-index [index : i64] [capacity : i64]) : i64
   (let
     [next : i64 (+ index 1)]
@@ -2689,6 +2697,7 @@
       0
       next)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-insert-slot
   [first-tombstone : i64]
   [empty-index : i64]) : i64
@@ -2696,11 +2705,13 @@
     first-tombstone
     empty-index))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-key-eq?
   [left : (& left str)]
   [right : (& right str)]) : bool
   (__tl_string_eq left right))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-probe-borrowed-from
   [slots : (Array StringStringMapSlot)]
   [capacity : i64]
@@ -2751,6 +2762,7 @@
         (StringStringMapProbeAbsent first)
         (StringStringMapProbeFull)))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-probe-borrowed
   [slots : (Array StringStringMapSlot)]
   [capacity : i64]
@@ -2767,6 +2779,7 @@
       0
       -1)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-probe
   [slots : (Array StringStringMapSlot)]
   [capacity : i64]
@@ -2774,42 +2787,51 @@
   [hash : i64]) : StringStringMapProbe
   (string-string-map-probe-borrowed slots capacity (& key) hash))
 
+;: Generated concrete hashmap family helper.
 (defstruct StringStringMap
   (slots (Array StringStringMapSlot))
   (len i64)
   (deleted i64))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapLookup
   (StringStringMapMissing)
   (StringStringMapFound String))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapBorrowedValueLookup
   (:lifetimes map)
   (StringStringMapBorrowedValueMissing)
   (StringStringMapBorrowedValueFound (& map str)))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapInsertResult
   (StringStringMapInsertOk StringStringMap)
   (StringStringMapInsertFull StringStringMap))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapRemoveResult
   (StringStringMapRemoveOk StringStringMap)
   (StringStringMapRemoveMissing StringStringMap))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapUpdateResult
   (StringStringMapUpdateOk StringStringMap)
   (StringStringMapUpdateMissing StringStringMap))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapEntryOrInsertResult
   (StringStringMapEntryOrInsertFound StringStringMap String)
   (StringStringMapEntryOrInsertInserted StringStringMap String))
 
+;: Generated concrete hashmap family helper.
 (defstruct StringStringMapMutEntryInfo
   (index i64)
   (present bool)
   (key String)
   (hash i64))
 
+;: Generated concrete hashmap family helper.
 (defstruct StringStringMapMutEntry
   (:lifetimes map)
   (slots (Array StringStringMapSlot))
@@ -2819,19 +2841,24 @@
   (key String)
   (hash i64))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-slots [map : StringStringMap]) : (Array
     StringStringMapSlot)
   (struct-get map slots))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-len [map : StringStringMap]) : i64
   (struct-get map len))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-capacity [map : StringStringMap]) : i64
   (array-length (struct-get map slots)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-deleted [map : StringStringMap]) : i64
   (struct-get map deleted))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-fill-empty
   [slots : (Array StringStringMapSlot)]
   [index : i64]
@@ -2842,6 +2869,7 @@
       (array-set! slots index (StringStringMapEmpty))
       (string-string-map-fill-empty slots (+ index 1) count))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-with-capacity [capacity : i64]) : StringStringMap
   (let
     [rounded-capacity : i64 (string-string-map-round-capacity capacity)]
@@ -2851,14 +2879,17 @@
       (string-string-map-fill-empty slots 0 rounded-capacity)
       (StringStringMap slots 0 0))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-borrowed-value-missing
   [map : (& map StringStringMap)]) : (StringStringMapBorrowedValueLookup map)
   (StringStringMapBorrowedValueMissing))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-borrowed-value-found [value : (& map str)]) : (StringStringMapBorrowedValueLookup
     map)
   (StringStringMapBorrowedValueFound value))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-get-borrowed
   [map : StringStringMap]
   [key : (& key str)]) : StringStringMapLookup
@@ -2877,9 +2908,11 @@
       [(StringStringMapProbeAbsent _) (StringStringMapMissing)]
       [(StringStringMapProbeFull) (StringStringMapMissing)])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-get [map : StringStringMap] [key : String]) : StringStringMapLookup
   (string-string-map-get-borrowed map (& key)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-get-value-borrowed
   [map : (& map StringStringMap)]
   [key : (& key str)]) : (StringStringMapBorrowedValueLookup map)
@@ -2928,6 +2961,7 @@
                       (set! walked (+ walked 1)))))]))
           (string-string-map-borrowed-value-missing map))))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-contains-borrowed?
   [map : StringStringMap]
   [key : (& key str)]) : bool
@@ -2935,15 +2969,18 @@
     [(StringStringMapFound _) true]
     [(StringStringMapMissing) false]))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-contains? [map : StringStringMap] [key : String]) : bool
   (string-string-map-contains-borrowed? map (& key)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-slot-tombstone? [slot : StringStringMapSlot]) : bool
   (match slot
     [(StringStringMapTombstone) true]
     [(StringStringMapEmpty) false]
     [(StringStringMapOccupied _ _ _) false]))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-insert
   [map : StringStringMap]
   [key : String]
@@ -2975,6 +3012,7 @@
             (StringStringMapInsertOk map)))]
       [(StringStringMapProbeFull) (StringStringMapInsertFull map)])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-remove-borrowed
   [map : StringStringMap]
   [key : (& key str)]) : StringStringMapRemoveResult
@@ -2994,9 +3032,11 @@
       [(StringStringMapProbeAbsent _) (StringStringMapRemoveMissing map)]
       [(StringStringMapProbeFull) (StringStringMapRemoveMissing map)])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-remove [map : StringStringMap] [key : String]) : StringStringMapRemoveResult
   (string-string-map-remove-borrowed map (& key)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-update-borrowed-if-present
   [map : StringStringMap]
   [key : (& key str)]
@@ -3023,12 +3063,14 @@
       [(StringStringMapProbeAbsent _) (StringStringMapUpdateMissing map)]
       [(StringStringMapProbeFull) (StringStringMapUpdateMissing map)])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-update-if-present
   [map : StringStringMap]
   [key : String]
   [value : String]) : StringStringMapUpdateResult
   (string-string-map-update-borrowed-if-present map (& key) value))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-insert-into-empty
   [slots : (Array StringStringMapSlot)]
   [capacity : i64]
@@ -3059,6 +3101,7 @@
                 (set! walked (+ walked 1)))]))
         unit))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-rehash-from
   [src : (Array StringStringMapSlot)]
   [dst : (Array StringStringMapSlot)]
@@ -3075,6 +3118,7 @@
         [(StringStringMapTombstone) unit])
       (string-string-map-rehash-from src dst dst-capacity (+ index 1) count))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-resized [map : StringStringMap] [new-capacity : i64]) : StringStringMap
   (let
     [src : (Array StringStringMapSlot) (string-string-map-slots map)]
@@ -3094,16 +3138,19 @@
       (set! (struct-get map deleted) 0)
       map)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-grow-capacity [capacity : i64]) : i64
   (if (< capacity 4)
     8
     (* (string-string-map-round-capacity capacity) 2)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-grow [map : StringStringMap]) : StringStringMap
   (string-string-map-resized
     map
     (string-string-map-grow-capacity (string-string-map-capacity map))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-needs-grow? [map : StringStringMap]) : bool
   (let
     [capacity : i64 (string-string-map-capacity map)]
@@ -3112,6 +3159,7 @@
       true
       (>= (* used 4) (* capacity 3)))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-put
   [map : StringStringMap]
   [key : String]
@@ -3131,12 +3179,14 @@
           [(StringStringMapInsertOk u) u]
           [(StringStringMapInsertFull u) u])])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-insert-or-update
   [map : StringStringMap]
   [key : String]
   [value : String]) : StringStringMap
   (string-string-map-put map key value))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-entry-or-insert
   [map : StringStringMap]
   [key : String]
@@ -3174,6 +3224,7 @@
             (string-string-map-put map key default-value)]
           (StringStringMapEntryOrInsertInserted updated default-value))])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-mut-entry-info
   [slots : (Array StringStringMapSlot)]
   [capacity : i64]
@@ -3214,6 +3265,7 @@
                 (set! walked (+ walked 1)))]))
         (StringStringMapMutEntryInfo found present entry-key entry-hash)))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-mut-entry-from-info
   [info : StringStringMapMutEntryInfo]
   [slots : (Array StringStringMapSlot)]
@@ -3227,6 +3279,7 @@
     (struct-get info key)
     (struct-get info hash)))
 
+;: Generated concrete hashmap family helper.
 (defmacro (string-string-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
   `(string-string-map-mut-entry-from-info
     (string-string-map-mut-entry-info
@@ -3236,10 +3289,12 @@
     (struct-get ,map slots)
     (&mut (struct-get ,map slots))))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-mut-entry-present?
   [entry : (StringStringMapMutEntry map)]) : bool
   (struct-get entry present))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-mut-entry-value-or
   [entry : (StringStringMapMutEntry map)]
   [fallback : String]) : String
@@ -3250,6 +3305,7 @@
       [(StringStringMapTombstone) fallback])
     fallback))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-mut-entry-set!
   [entry : (StringStringMapMutEntry map)]
   [value : String]) : unit
@@ -3263,10 +3319,12 @@
         (struct-get entry hash)))
     unit))
 
+;: Generated concrete hashmap family helper.
 (defenum StringStringMapEntry
   (StringStringMapEntryNone)
   (StringStringMapEntrySome String String))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-next-occupied-from
   [slots : (Array StringStringMapSlot)]
   [index : i64]
@@ -3280,6 +3338,7 @@
       [(StringStringMapTombstone)
         (string-string-map-next-occupied-from slots (+ index 1) capacity)])))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-next-occupied [map : StringStringMap] [from : i64]) : i64
   (string-string-map-next-occupied-from
     (string-string-map-slots map)
@@ -3288,6 +3347,7 @@
       from)
     (string-string-map-capacity map)))
 
+;: Generated concrete hashmap family helper.
 (define (string-string-map-entry-at [map : StringStringMap] [index : i64]) : StringStringMapEntry
   (if (if (< index 0)
     true
@@ -3305,11 +3365,13 @@
   (I64I64MapTombstone)
   (I64I64MapOccupied i64 i64 i64))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapProbe
   (I64I64MapProbeFound i64)
   (I64I64MapProbeAbsent i64)
   (I64I64MapProbeFull))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-hash-normalize [value : i64]) : i64
   (let
     [m : i64 2147483647]
@@ -3318,14 +3380,17 @@
       (+ raw m)
       raw)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-hash-key [key : i64]) : i64
   (i64-i64-map-hash-normalize (* key 6364136223846793005)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-power-two-capacity? [capacity : i64]) : bool
   (if (> capacity 0)
     (= (bit-and capacity (- capacity 1)) 0)
     false))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-round-capacity [capacity : i64]) : i64
   (let
     [rounded : i64 1]
@@ -3334,14 +3399,17 @@
         (set! rounded (* rounded 2)))
       rounded)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
   (bit-and hash (- capacity 1)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
   (i64-i64-map-normalized-bucket-index
     (i64-i64-map-hash-normalize hash)
     capacity))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-next-index [index : i64] [capacity : i64]) : i64
   (let
     [next : i64 (+ index 1)]
@@ -3349,11 +3417,13 @@
       0
       next)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
   (if (>= first-tombstone 0)
     first-tombstone
     empty-index))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-probe-from
   [slots : (Array I64I64MapSlot)]
   [capacity : i64]
@@ -3403,6 +3473,7 @@
         (I64I64MapProbeAbsent first)
         (I64I64MapProbeFull)))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-probe
   [slots : (Array I64I64MapSlot)]
   [capacity : i64]
@@ -3419,42 +3490,51 @@
       0
       -1)))
 
+;: Generated concrete hashmap family helper.
 (defstruct I64I64Map
   (slots (Array I64I64MapSlot))
   (len i64)
   (deleted i64))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapLookup
   (I64I64MapMissing)
   (I64I64MapFound i64))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapBorrowedValueLookup
   (:lifetimes map)
   (I64I64MapBorrowedValueMissing)
   (I64I64MapBorrowedValueFound (& map i64)))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapInsertResult
   (I64I64MapInsertOk I64I64Map)
   (I64I64MapInsertFull I64I64Map))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapRemoveResult
   (I64I64MapRemoveOk I64I64Map)
   (I64I64MapRemoveMissing I64I64Map))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapUpdateResult
   (I64I64MapUpdateOk I64I64Map)
   (I64I64MapUpdateMissing I64I64Map))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapEntryOrInsertResult
   (I64I64MapEntryOrInsertFound I64I64Map i64)
   (I64I64MapEntryOrInsertInserted I64I64Map i64))
 
+;: Generated concrete hashmap family helper.
 (defstruct I64I64MapMutEntryInfo
   (index i64)
   (present bool)
   (key i64)
   (hash i64))
 
+;: Generated concrete hashmap family helper.
 (defstruct I64I64MapMutEntry
   (:lifetimes map)
   (slots (Array I64I64MapSlot))
@@ -3464,18 +3544,23 @@
   (key i64)
   (hash i64))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-slots [map : I64I64Map]) : (Array I64I64MapSlot)
   (struct-get map slots))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-len [map : I64I64Map]) : i64
   (struct-get map len))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-capacity [map : I64I64Map]) : i64
   (array-length (struct-get map slots)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-deleted [map : I64I64Map]) : i64
   (struct-get map deleted))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-fill-empty
   [slots : (Array I64I64MapSlot)]
   [index : i64]
@@ -3489,6 +3574,7 @@
           (set! i (+ i 1))))
       unit)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-with-capacity [capacity : i64]) : I64I64Map
   (let
     [rounded-capacity : i64 (i64-i64-map-round-capacity capacity)]
@@ -3497,14 +3583,17 @@
       (i64-i64-map-fill-empty slots 0 rounded-capacity)
       (I64I64Map slots 0 0))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-borrowed-value-missing [map : (& map I64I64Map)]) : (I64I64MapBorrowedValueLookup
     map)
   (I64I64MapBorrowedValueMissing))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-borrowed-value-found [value : (& map i64)]) : (I64I64MapBorrowedValueLookup
     map)
   (I64I64MapBorrowedValueFound value))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-get [map : I64I64Map] [key : i64]) : I64I64MapLookup
   (let
     [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -3521,6 +3610,7 @@
       [(I64I64MapProbeAbsent _) (I64I64MapMissing)]
       [(I64I64MapProbeFull) (I64I64MapMissing)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-get-value-borrowed [map : (& map I64I64Map)] [key : i64]) : (I64I64MapBorrowedValueLookup
     map)
   (let
@@ -3568,17 +3658,20 @@
                       (set! walked (+ walked 1)))))]))
           (i64-i64-map-borrowed-value-missing map))))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-contains? [map : I64I64Map] [key : i64]) : bool
   (match (i64-i64-map-get map key)
     [(I64I64MapFound _) true]
     [(I64I64MapMissing) false]))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-slot-tombstone? [slot : I64I64MapSlot]) : bool
   (match slot
     [(I64I64MapTombstone) true]
     [(I64I64MapEmpty) false]
     [(I64I64MapOccupied _ _ _) false]))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-insert [map : I64I64Map] [key : i64] [value : i64]) : I64I64MapInsertResult
   (let
     [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -3601,6 +3694,7 @@
             (I64I64MapInsertOk map)))]
       [(I64I64MapProbeFull) (I64I64MapInsertFull map)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-remove [map : I64I64Map] [key : i64]) : I64I64MapRemoveResult
   (let
     [slots : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -3618,6 +3712,7 @@
       [(I64I64MapProbeAbsent _) (I64I64MapRemoveMissing map)]
       [(I64I64MapProbeFull) (I64I64MapRemoveMissing map)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-update-if-present
   [map : I64I64Map]
   [key : i64]
@@ -3640,6 +3735,7 @@
       [(I64I64MapProbeAbsent _) (I64I64MapUpdateMissing map)]
       [(I64I64MapProbeFull) (I64I64MapUpdateMissing map)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-insert-into-empty
   [slots : (Array I64I64MapSlot)]
   [capacity : i64]
@@ -3667,6 +3763,7 @@
                 (set! walked (+ walked 1)))]))
         unit))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-rehash-from
   [src : (Array I64I64MapSlot)]
   [dst : (Array I64I64MapSlot)]
@@ -3686,6 +3783,7 @@
           (set! i (+ i 1))))
       unit)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-resized [map : I64I64Map] [new-capacity : i64]) : I64I64Map
   (let
     [src : (Array I64I64MapSlot) (i64-i64-map-slots map)]
@@ -3703,16 +3801,19 @@
       (set! (struct-get map deleted) 0)
       map)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-grow-capacity [capacity : i64]) : i64
   (if (< capacity 4)
     8
     (* (i64-i64-map-round-capacity capacity) 2)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-grow [map : I64I64Map]) : I64I64Map
   (i64-i64-map-resized
     map
     (i64-i64-map-grow-capacity (i64-i64-map-capacity map))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-needs-grow? [map : I64I64Map]) : bool
   (let
     [capacity : i64 (i64-i64-map-capacity map)]
@@ -3721,6 +3822,7 @@
       true
       (>= (* used 4) (* capacity 3)))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-put [map : I64I64Map] [key : i64] [value : i64]) : I64I64Map
   (let
     [grown : I64I64Map
@@ -3734,12 +3836,14 @@
           [(I64I64MapInsertOk u) u]
           [(I64I64MapInsertFull u) u])])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-insert-or-update
   [map : I64I64Map]
   [key : i64]
   [value : i64]) : I64I64Map
   (i64-i64-map-put map key value))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-entry-or-insert
   [map : I64I64Map]
   [key : i64]
@@ -3769,6 +3873,7 @@
           [updated : I64I64Map (i64-i64-map-put map key default-value)]
           (I64I64MapEntryOrInsertInserted updated default-value))])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-mut-entry-info
   [slots : (Array I64I64MapSlot)]
   [capacity : i64]
@@ -3809,6 +3914,7 @@
                 (set! walked (+ walked 1)))]))
         (I64I64MapMutEntryInfo found present entry-key entry-hash)))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-mut-entry-from-info
   [info : I64I64MapMutEntryInfo]
   [slots : (Array I64I64MapSlot)]
@@ -3821,6 +3927,7 @@
     (struct-get info key)
     (struct-get info hash)))
 
+;: Generated concrete hashmap family helper.
 (defmacro (i64-i64-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
   `(i64-i64-map-mut-entry-from-info
     (i64-i64-map-mut-entry-info
@@ -3830,9 +3937,11 @@
     (struct-get ,map slots)
     (&mut (struct-get ,map slots))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-mut-entry-present? [entry : (I64I64MapMutEntry map)]) : bool
   (struct-get entry present))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-mut-entry-value-or
   [entry : (I64I64MapMutEntry map)]
   [fallback : i64]) : i64
@@ -3843,6 +3952,7 @@
       [(I64I64MapTombstone) fallback])
     fallback))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-mut-entry-set!
   [entry : (I64I64MapMutEntry map)]
   [value : i64]) : unit
@@ -3853,10 +3963,12 @@
       (I64I64MapOccupied (struct-get entry key) value (struct-get entry hash)))
     unit))
 
+;: Generated concrete hashmap family helper.
 (defenum I64I64MapEntry
   (I64I64MapEntryNone)
   (I64I64MapEntrySome i64 i64))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-next-occupied-from
   [slots : (Array I64I64MapSlot)]
   [index : i64]
@@ -3871,6 +3983,7 @@
           [(I64I64MapTombstone) (set! i (+ i 1))]))
       capacity)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-next-occupied [map : I64I64Map] [from : i64]) : i64
   (i64-i64-map-next-occupied-from
     (i64-i64-map-slots map)
@@ -3879,6 +3992,7 @@
       from)
     (i64-i64-map-capacity map)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-i64-map-entry-at [map : I64I64Map] [index : i64]) : I64I64MapEntry
   (if (if (< index 0)
     true
@@ -3895,11 +4009,13 @@
   (I64StringMapTombstone)
   (I64StringMapOccupied i64 String i64))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapProbe
   (I64StringMapProbeFound i64)
   (I64StringMapProbeAbsent i64)
   (I64StringMapProbeFull))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-hash-normalize [value : i64]) : i64
   (let
     [m : i64 2147483647]
@@ -3908,14 +4024,17 @@
       (+ raw m)
       raw)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-hash-key [key : i64]) : i64
   (i64-string-map-hash-normalize (* key 6364136223846793005)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-power-two-capacity? [capacity : i64]) : bool
   (if (> capacity 0)
     (= (bit-and capacity (- capacity 1)) 0)
     false))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-round-capacity [capacity : i64]) : i64
   (let
     [rounded : i64 1]
@@ -3924,14 +4043,17 @@
         (set! rounded (* rounded 2)))
       rounded)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-normalized-bucket-index [hash : i64] [capacity : i64]) : i64
   (bit-and hash (- capacity 1)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-bucket-index [hash : i64] [capacity : i64]) : i64
   (i64-string-map-normalized-bucket-index
     (i64-string-map-hash-normalize hash)
     capacity))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-next-index [index : i64] [capacity : i64]) : i64
   (let
     [next : i64 (+ index 1)]
@@ -3939,11 +4061,13 @@
       0
       next)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
   (if (>= first-tombstone 0)
     first-tombstone
     empty-index))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-probe-from
   [slots : (Array I64StringMapSlot)]
   [capacity : i64]
@@ -3994,6 +4118,7 @@
         (I64StringMapProbeAbsent first)
         (I64StringMapProbeFull)))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-probe
   [slots : (Array I64StringMapSlot)]
   [capacity : i64]
@@ -4010,42 +4135,51 @@
       0
       -1)))
 
+;: Generated concrete hashmap family helper.
 (defstruct I64StringMap
   (slots (Array I64StringMapSlot))
   (len i64)
   (deleted i64))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapLookup
   (I64StringMapMissing)
   (I64StringMapFound String))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapBorrowedValueLookup
   (:lifetimes map)
   (I64StringMapBorrowedValueMissing)
   (I64StringMapBorrowedValueFound (& map str)))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapInsertResult
   (I64StringMapInsertOk I64StringMap)
   (I64StringMapInsertFull I64StringMap))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapRemoveResult
   (I64StringMapRemoveOk I64StringMap)
   (I64StringMapRemoveMissing I64StringMap))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapUpdateResult
   (I64StringMapUpdateOk I64StringMap)
   (I64StringMapUpdateMissing I64StringMap))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapEntryOrInsertResult
   (I64StringMapEntryOrInsertFound I64StringMap String)
   (I64StringMapEntryOrInsertInserted I64StringMap String))
 
+;: Generated concrete hashmap family helper.
 (defstruct I64StringMapMutEntryInfo
   (index i64)
   (present bool)
   (key i64)
   (hash i64))
 
+;: Generated concrete hashmap family helper.
 (defstruct I64StringMapMutEntry
   (:lifetimes map)
   (slots (Array I64StringMapSlot))
@@ -4055,18 +4189,23 @@
   (key i64)
   (hash i64))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-slots [map : I64StringMap]) : (Array I64StringMapSlot)
   (struct-get map slots))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-len [map : I64StringMap]) : i64
   (struct-get map len))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-capacity [map : I64StringMap]) : i64
   (array-length (struct-get map slots)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-deleted [map : I64StringMap]) : i64
   (struct-get map deleted))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-fill-empty
   [slots : (Array I64StringMapSlot)]
   [index : i64]
@@ -4077,6 +4216,7 @@
       (array-set! slots index (I64StringMapEmpty))
       (i64-string-map-fill-empty slots (+ index 1) count))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-with-capacity [capacity : i64]) : I64StringMap
   (let
     [rounded-capacity : i64 (i64-string-map-round-capacity capacity)]
@@ -4086,14 +4226,17 @@
       (i64-string-map-fill-empty slots 0 rounded-capacity)
       (I64StringMap slots 0 0))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-borrowed-value-missing [map : (& map I64StringMap)]) : (I64StringMapBorrowedValueLookup
     map)
   (I64StringMapBorrowedValueMissing))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-borrowed-value-found [value : (& map str)]) : (I64StringMapBorrowedValueLookup
     map)
   (I64StringMapBorrowedValueFound value))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-get [map : I64StringMap] [key : i64]) : I64StringMapLookup
   (let
     [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
@@ -4110,6 +4253,7 @@
       [(I64StringMapProbeAbsent _) (I64StringMapMissing)]
       [(I64StringMapProbeFull) (I64StringMapMissing)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-get-value-borrowed
   [map : (& map I64StringMap)]
   [key : i64]) : (I64StringMapBorrowedValueLookup map)
@@ -4158,17 +4302,20 @@
                       (set! walked (+ walked 1)))))]))
           (i64-string-map-borrowed-value-missing map))))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-contains? [map : I64StringMap] [key : i64]) : bool
   (match (i64-string-map-get map key)
     [(I64StringMapFound _) true]
     [(I64StringMapMissing) false]))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-slot-tombstone? [slot : I64StringMapSlot]) : bool
   (match slot
     [(I64StringMapTombstone) true]
     [(I64StringMapEmpty) false]
     [(I64StringMapOccupied _ _ _) false]))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-insert
   [map : I64StringMap]
   [key : i64]
@@ -4194,6 +4341,7 @@
             (I64StringMapInsertOk map)))]
       [(I64StringMapProbeFull) (I64StringMapInsertFull map)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-remove [map : I64StringMap] [key : i64]) : I64StringMapRemoveResult
   (let
     [slots : (Array I64StringMapSlot) (i64-string-map-slots map)]
@@ -4211,6 +4359,7 @@
       [(I64StringMapProbeAbsent _) (I64StringMapRemoveMissing map)]
       [(I64StringMapProbeFull) (I64StringMapRemoveMissing map)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-update-if-present
   [map : I64StringMap]
   [key : i64]
@@ -4233,6 +4382,7 @@
       [(I64StringMapProbeAbsent _) (I64StringMapUpdateMissing map)]
       [(I64StringMapProbeFull) (I64StringMapUpdateMissing map)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-insert-into-empty
   [slots : (Array I64StringMapSlot)]
   [capacity : i64]
@@ -4260,6 +4410,7 @@
                 (set! walked (+ walked 1)))]))
         unit))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-rehash-from
   [src : (Array I64StringMapSlot)]
   [dst : (Array I64StringMapSlot)]
@@ -4276,6 +4427,7 @@
         [(I64StringMapTombstone) unit])
       (i64-string-map-rehash-from src dst dst-capacity (+ index 1) count))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-resized [map : I64StringMap] [new-capacity : i64]) : I64StringMap
   (let
     [src : (Array I64StringMapSlot) (i64-string-map-slots map)]
@@ -4294,16 +4446,19 @@
       (set! (struct-get map deleted) 0)
       map)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-grow-capacity [capacity : i64]) : i64
   (if (< capacity 4)
     8
     (* (i64-string-map-round-capacity capacity) 2)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-grow [map : I64StringMap]) : I64StringMap
   (i64-string-map-resized
     map
     (i64-string-map-grow-capacity (i64-string-map-capacity map))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-needs-grow? [map : I64StringMap]) : bool
   (let
     [capacity : i64 (i64-string-map-capacity map)]
@@ -4312,6 +4467,7 @@
       true
       (>= (* used 4) (* capacity 3)))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-put [map : I64StringMap] [key : i64] [value : String]) : I64StringMap
   (let
     [grown : I64StringMap
@@ -4325,12 +4481,14 @@
           [(I64StringMapInsertOk u) u]
           [(I64StringMapInsertFull u) u])])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-insert-or-update
   [map : I64StringMap]
   [key : i64]
   [value : String]) : I64StringMap
   (i64-string-map-put map key value))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-entry-or-insert
   [map : I64StringMap]
   [key : i64]
@@ -4362,6 +4520,7 @@
           [updated : I64StringMap (i64-string-map-put map key default-value)]
           (I64StringMapEntryOrInsertInserted updated default-value))])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-mut-entry-info
   [slots : (Array I64StringMapSlot)]
   [capacity : i64]
@@ -4402,6 +4561,7 @@
                 (set! walked (+ walked 1)))]))
         (I64StringMapMutEntryInfo found present entry-key entry-hash)))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-mut-entry-from-info
   [info : I64StringMapMutEntryInfo]
   [slots : (Array I64StringMapSlot)]
@@ -4414,6 +4574,7 @@
     (struct-get info key)
     (struct-get info hash)))
 
+;: Generated concrete hashmap family helper.
 (defmacro (i64-string-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
   `(i64-string-map-mut-entry-from-info
     (i64-string-map-mut-entry-info
@@ -4423,9 +4584,11 @@
     (struct-get ,map slots)
     (&mut (struct-get ,map slots))))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-mut-entry-present? [entry : (I64StringMapMutEntry map)]) : bool
   (struct-get entry present))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-mut-entry-value-or
   [entry : (I64StringMapMutEntry map)]
   [fallback : String]) : String
@@ -4436,6 +4599,7 @@
       [(I64StringMapTombstone) fallback])
     fallback))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-mut-entry-set!
   [entry : (I64StringMapMutEntry map)]
   [value : String]) : unit
@@ -4449,10 +4613,12 @@
         (struct-get entry hash)))
     unit))
 
+;: Generated concrete hashmap family helper.
 (defenum I64StringMapEntry
   (I64StringMapEntryNone)
   (I64StringMapEntrySome i64 String))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-next-occupied-from
   [slots : (Array I64StringMapSlot)]
   [index : i64]
@@ -4466,6 +4632,7 @@
       [(I64StringMapTombstone)
         (i64-string-map-next-occupied-from slots (+ index 1) capacity)])))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-next-occupied [map : I64StringMap] [from : i64]) : i64
   (i64-string-map-next-occupied-from
     (i64-string-map-slots map)
@@ -4474,6 +4641,7 @@
       from)
     (i64-string-map-capacity map)))
 
+;: Generated concrete hashmap family helper.
 (define (i64-string-map-entry-at [map : I64StringMap] [index : i64]) : I64StringMapEntry
   (if (if (< index 0)
     true

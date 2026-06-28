@@ -27034,16 +27034,16 @@
 ;; remainder, and a sign-mask register for signed cases. All three must be
 ;; mutually distinct and distinct from %rax/%rdx (the multiply/idiv clobbers).
 ;; The freeness query cannot see a sibling scratch's transient use at the same
-;; point, so each scavenge excludes the already-picked regs plus the other
-;; scratch fallbacks.
+;; point, so each scavenge excludes the already-picked regs. The sibling fallback
+;; registers themselves stay available unless they were actually picked.
 (define (compiler-backend-divmod-dividend-exclude [magic : String]) : (Array String)
   (let
     [a : (Array String) (make-array String 5)]
     (begin
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
-      (array-set! a 2 "%r10")
-      (array-set! a 3 "%r9")
+      (array-set! a 2 "%rax")
+      (array-set! a 3 "%rax")
       (array-set! a 4 magic)
       a)))
 
@@ -27055,8 +27055,8 @@
     (begin
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
-      (array-set! a 2 "%r10")
-      (array-set! a 3 "%r9")
+      (array-set! a 2 "%rax")
+      (array-set! a 3 "%rax")
       (array-set! a 4 magic)
       (array-set! a 5 dividend)
       a)))

@@ -15894,6 +15894,34 @@
               "%r8")
             "%r10"))))))
 
+(define (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?) : bool
+  (let
+    [starts : (Array i64) (make-array i64 1)]
+    [ends : (Array i64) (make-array i64 1)]
+    (and
+      (string-eq
+        (compiler-backend-scavenge-pick
+          starts
+          ends
+          CompilerRegAssignmentNil
+          0
+          0
+          (compiler-backend-divmod-dividend-exclude "%r8")
+          5
+          "%r10")
+        "%r10")
+      (string-eq
+        (compiler-backend-scavenge-pick
+          starts
+          ends
+          CompilerRegAssignmentNil
+          0
+          0
+          (compiler-backend-divmod-mask-exclude "%r8" "%r10")
+          6
+          "%r9")
+        "%r9"))))
+
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 1)]
@@ -16011,6 +16039,7 @@
         (compiler-backend-binop-exclude-keeps-pooled-r10-r11-ok?)
         (compiler-backend-scavenge-exclude-with-keeps-pooled-r10-r11-ok?)
         (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
+        (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)

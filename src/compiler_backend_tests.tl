@@ -8552,6 +8552,10 @@
     [prev-emergency-pending : bool compiler-backend-emergency-pending]
     [prev-emergency-reg : String compiler-backend-emergency-reg]
     [prev-emergency-used : bool compiler-backend-emergency-used]
+    [prev-emergency-pending-count : i64
+      compiler-backend-emergency-pending-count]
+    [prev-emergency-used-count : i64
+      compiler-backend-emergency-used-count]
     [prev-emergency-slot-offset : i64
       compiler-backend-emergency-slot-offset]
     [prev-callee0 : bool (array-ref compiler-backend-scavenge-used-callee 0)]
@@ -8615,6 +8619,12 @@
               (set! compiler-backend-emergency-reg prev-emergency-reg)
               (set! compiler-backend-emergency-used prev-emergency-used)
               (set!
+                compiler-backend-emergency-pending-count
+                prev-emergency-pending-count)
+              (set!
+                compiler-backend-emergency-used-count
+                prev-emergency-used-count)
+              (set!
                 compiler-backend-emergency-slot-offset
                 prev-emergency-slot-offset)
               (array-set! compiler-backend-scavenge-used-callee 0 prev-callee0)
@@ -8651,6 +8661,12 @@
               (set! compiler-backend-emergency-pending prev-emergency-pending)
               (set! compiler-backend-emergency-reg prev-emergency-reg)
               (set! compiler-backend-emergency-used prev-emergency-used)
+              (set!
+                compiler-backend-emergency-pending-count
+                prev-emergency-pending-count)
+              (set!
+                compiler-backend-emergency-used-count
+                prev-emergency-used-count)
               (set!
                 compiler-backend-emergency-slot-offset
                 prev-emergency-slot-offset)
@@ -9995,6 +10011,211 @@
                   (compiler-backend-todo-marker))))))]
       [(ErrCompilerBackend _) false])))
 
+(define (compiler-backend-gep-load-live-through-home-asm) : ResultCompilerBackend
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 4 (CompilerRegRegister "%rcx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 5 (CompilerRegRegister "%r10"))
+            CompilerRegAssignmentNil)))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (IrInstrMov 1 (IrValueI64 5) (AstTyI64))
+        (compiler-ir-instr-cons
+          (IrInstrMov 5 (IrValueI64 7) (AstTyI64))
+          (compiler-ir-instr-cons
+            (IrInstrGep 3 (IrValueVar 0) (IrValueI64 24) (AstTyU64))
+            (compiler-ir-instr-cons
+              (IrInstrLoad 4 (IrValueVar 3) (AstTyI64))
+              (compiler-ir-instr-cons
+                (IrInstrStorePtr (IrValueVar 2) (IrValueVar 1) (AstTyI64))
+                (compiler-ir-instr-cons
+                  (IrInstrMov 6 (IrValueVar 5) (AstTyI64))
+                  IrInstrNil))))))]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-scavenge-install-ctx!
+          "gep_load_live_through"
+          IrParamNil
+          (AstTyI64)
+          8
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base 6)
+        (set! compiler-backend-emit-current-count 6))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments 8)]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-scavenge-ctx!
+          prev-starts
+          prev-ends
+          prev-assignments
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count))]
+    result))
+
+(define (compiler-backend-gep-load-live-through-home-preserved-ok?) : bool
+  (match (compiler-backend-gep-load-live-through-home-asm)
+      [(OkCompilerBackend asm)
+        (and
+          (compiler-backend-string-contains? asm "    movl $5, %r9d\n")
+          (compiler-backend-string-contains? asm "    movq %r9, (")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq -8(%rbp), %r9\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq -8(%rbp), %r10\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq 192(%r9), %rcx\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq 192(%r10), %rcx\n")))]
+      [(ErrCompilerBackend _) false]))
+
+(define (compiler-backend-gep-load-multi-emergency-assignments)
+  : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment 1 (CompilerRegRegister "%r9"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment 2 (CompilerRegRegister "%rcx"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment 3 (CompilerRegRegister "%rdx"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment 4 (CompilerRegRegister "%r10"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment 5 (CompilerRegRegister "%r11"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment 6 (CompilerRegRegister "%r8"))
+              CompilerRegAssignmentNil)))))))
+
+(define (compiler-backend-gep-load-multi-emergency-instrs)
+  : CompilerIrInstrList
+  (let
+    [instrs : CompilerIrInstrList IrInstrNil]
+    (begin
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 35 (IrValueVar 6) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 34 (IrValueVar 5) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 33 (IrValueVar 4) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 32 (IrValueVar 3) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 31 (IrValueVar 2) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 30 (IrValueVar 1) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrLoad 21 (IrValueVar 20) (AstTyI64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons
+          (IrInstrGep 20 (IrValueVar 0) (IrValueI64 24) (AstTyU64))
+          instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 6 (IrValueI64 6) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 5 (IrValueI64 5) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 4 (IrValueI64 4) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 3 (IrValueI64 3) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 2 (IrValueI64 2) (AstTyI64)) instrs))
+      (set!
+        instrs
+        (compiler-ir-instr-cons (IrInstrMov 1 (IrValueI64 1) (AstTyI64)) instrs))
+      instrs)))
+
+(define (compiler-backend-gep-load-multi-emergency-asm) : ResultCompilerBackend
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignments : CompilerRegAssignmentList
+      compiler-backend-scavenge-ctx-assignments]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-emergency-slot-offset : i64
+      compiler-backend-emergency-slot-offset]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-gep-load-multi-emergency-assignments)]
+    [instrs : CompilerIrInstrList
+      (compiler-backend-gep-load-multi-emergency-instrs)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-scavenge-install-ctx!
+          "gep_load_multi_emergency"
+          IrParamNil
+          (AstTyI64)
+          40
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base 14)
+        (set! compiler-backend-emit-current-count 14)
+        (set! compiler-backend-emergency-slot-offset -512))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments 40)]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-scavenge-ctx!
+          prev-starts
+          prev-ends
+          prev-assignments
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (set!
+          compiler-backend-emergency-slot-offset
+          prev-emergency-slot-offset))]
+    result))
+
+(define (compiler-backend-gep-load-multi-emergency-preserved-ok?) : bool
+  (match (compiler-backend-gep-load-multi-emergency-asm)
+    [(OkCompilerBackend asm)
+      (backend-and4
+        (compiler-backend-string-contains? asm "    movq %r9, -512(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq -512(%rbp), %r9\n")
+        (compiler-backend-string-contains? asm "    movq %rcx, -520(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq -520(%rbp), %rcx\n"))]
+    [(ErrCompilerBackend _) false]))
+
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
@@ -10325,8 +10546,12 @@
       (compiler-backend-gep-load-compare-priority-shape-ok?)
       (compiler-backend-gep-load-store-order-shape-ok?)
       (compiler-backend-gep-load-register-homes-shape-ok?)
-      (compiler-backend-gep-store-index-home-preserved-ok?))
-    (compiler-backend-store-address-source-home-preserved-ok?)))
+      (compiler-backend-gep-load-live-through-home-preserved-ok?))
+    (backend-and4
+      (compiler-backend-gep-load-multi-emergency-preserved-ok?)
+      (compiler-backend-gep-store-index-home-preserved-ok?)
+      (compiler-backend-store-address-source-home-preserved-ok?)
+      true)))
 
 (define (compiler-backend-full-syscall-instr) : CompilerIrInstr
   (IrInstrSyscall
@@ -15468,6 +15693,8 @@
       (array-set! ends 0 10)
       (set! compiler-backend-emergency-pending false)
       (set! compiler-backend-emergency-used false)
+      (set! compiler-backend-emergency-pending-count 0)
+      (set! compiler-backend-emergency-used-count 0)
       (let
         [reg : String
           (compiler-backend-scavenge-pick
@@ -15484,10 +15711,16 @@
             (string-eq reg "%r12")
             (and
               compiler-backend-emergency-pending
-              (string-eq compiler-backend-emergency-reg "%r12")))]
+              (and
+                (string-eq compiler-backend-emergency-reg "%r12")
+                (and
+                  (= compiler-backend-emergency-pending-count 1)
+                  (= compiler-backend-emergency-used-count 1)))))]
         (begin
           (set! compiler-backend-emergency-pending false)
           (set! compiler-backend-emergency-used false)
+          (set! compiler-backend-emergency-pending-count 0)
+          (set! compiler-backend-emergency-used-count 0)
           ok)))))
 
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool

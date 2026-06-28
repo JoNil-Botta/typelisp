@@ -4267,29 +4267,105 @@
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
 ;; occupied -- genuine register pressure, not param pressure), it must not silently
 ;; degrade to the occupied fallback (that clobbers a live value). Instead the
-;; instruction's asm is wrapped `movq R, off(%rbp) ; <instr> ; movq off(%rbp), R`,
-;; saving the occupied value in R before the scratch use and restoring it after.
-;; rbp-relative (no rsp shift, so a call inside the instruction stays aligned). The
-;; slot is at off = -(frame-size + 8) -- below the locals, so it shifts nothing --
-;; and the frame is extended by 16 (alignment) ONLY when an emergency fired, so
-;; while no register is pooled (no emergency) the frame is unchanged -> byte-identical.
+;; instruction's asm is wrapped with rbp-relative saves/restores for every occupied
+;; scratch register chosen while building that one head. A single fused operation
+;; can scavenge multiple scratch registers, so this tracks a pending set, not just
+;; the last register.
 (define compiler-backend-emergency-pending : bool false)
 (define compiler-backend-emergency-reg : String "")
 (define compiler-backend-emergency-used : bool false)
 (define compiler-backend-emergency-slot-offset : i64 0)
+(define compiler-backend-emergency-pending-count : i64 0)
+(define compiler-backend-emergency-used-count : i64 0)
+(define compiler-backend-emergency-regs : (Array String) (make-array String 16))
+
+(define (compiler-backend-emergency-capacity) : i64
+  16)
+
+(define (compiler-backend-emergency-frame-extra [count : i64]) : i64
+  (compiler-backend-round-up-16 (* count 8)))
+
+(define (compiler-backend-emergency-reg-offset [index : i64]) : i64
+  (- compiler-backend-emergency-slot-offset (* 8 index)))
+
+(define (compiler-backend-emergency-index [reg : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< index compiler-backend-emergency-pending-count) (< found 0))
+        (begin
+          (if (string-eq (array-ref compiler-backend-emergency-regs index) reg)
+            (set! found index)
+            unit)
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-backend-emergency-add! [reg : String]) : unit
+  (let
+    [existing : i64 (compiler-backend-emergency-index reg)]
+    (begin
+      (set! compiler-backend-emergency-reg (string.string-copy (& reg)))
+      (if (>= existing 0)
+        (begin
+          (set! compiler-backend-emergency-pending true)
+          (set! compiler-backend-emergency-used true))
+        (if (< compiler-backend-emergency-pending-count
+          (compiler-backend-emergency-capacity))
+          (begin
+            (array-set!
+              compiler-backend-emergency-regs
+              compiler-backend-emergency-pending-count
+              (string.string-copy (& reg)))
+            (set!
+              compiler-backend-emergency-pending-count
+              (+ compiler-backend-emergency-pending-count 1))
+            (set! compiler-backend-emergency-pending true)
+            (set! compiler-backend-emergency-used true)
+            (if (> compiler-backend-emergency-pending-count
+              compiler-backend-emergency-used-count)
+              (set!
+                compiler-backend-emergency-used-count
+                compiler-backend-emergency-pending-count)
+              unit))
+          (panic "backend: emergency scratch register capacity exceeded"))))))
+
+(define (compiler-backend-emergency-save-asm
+  [index : i64]
+  [count : i64]) : String
+  (if (>= index count)
+    ""
+    (str-cat
+      "    movq "
+      (array-ref compiler-backend-emergency-regs index)
+      ", "
+      (int->string (compiler-backend-emergency-reg-offset index))
+      "(%rbp)\n"
+      (compiler-backend-emergency-save-asm (+ index 1) count))))
+
+(define (compiler-backend-emergency-restore-asm [index : i64]) : String
+  (if (< index 0)
+    ""
+    (str-cat
+      "    movq "
+      (int->string (compiler-backend-emergency-reg-offset index))
+      "(%rbp), "
+      (array-ref compiler-backend-emergency-regs index)
+      "\n"
+      (compiler-backend-emergency-restore-asm (- index 1)))))
 
 (define (compiler-backend-emergency-wrap [head : String]) : String
   (if compiler-backend-emergency-pending
     (let
-      [reg : String compiler-backend-emergency-reg]
-      [off : String (int->string compiler-backend-emergency-slot-offset)]
+      [count : i64 compiler-backend-emergency-pending-count]
+      [save-asm : String (compiler-backend-emergency-save-asm 0 count)]
+      [restore-asm : String (compiler-backend-emergency-restore-asm (- count 1))]
       (begin
         (set! compiler-backend-emergency-pending false)
+        (set! compiler-backend-emergency-pending-count 0)
         (string-append
-          (str-cat "    movq " reg ", " off "(%rbp)\n")
-          (string-append
-            head
-            (str-cat "    movq " off "(%rbp), " reg "\n")))))
+          save-asm
+          (string-append head restore-asm))))
     head))
 
 ;; A callee-saved reg must be saved by the prologue iff the allocator homes a
@@ -27270,8 +27346,6 @@
       [emidx : i64
         (compiler-backend-scavenge-emergency-cand-index starts ends assignments vars point exclude exclude-n fallback cands n)]
       (begin
-        (set! compiler-backend-emergency-pending true)
-        (set! compiler-backend-emergency-used true)
         (if (< emidx 0)
           (begin
             ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
@@ -27280,7 +27354,7 @@
             ;; for the global, and return the owned fallback. (emidx<0 = the
             ;; fallback is FREE here, preferred; or the pathological all-excluded
             ;; last resort.)
-            (set! compiler-backend-emergency-reg
+            (compiler-backend-emergency-add!
               (cond
                 [(string-eq fallback "%r10") "%r10"]
                 [(string-eq fallback "%r11") "%r11"]
@@ -27292,7 +27366,7 @@
                 [else "%r8"]))
             fallback)
           (begin
-            (set! compiler-backend-emergency-reg (array-ref cands emidx))
+            (compiler-backend-emergency-add! (array-ref cands emidx))
             (array-ref cands emidx)))))
     (if (compiler-backend-scavenge-candidate-ok?
       starts
@@ -28108,6 +28182,8 @@
                     (begin
                       (set! compiler-backend-emergency-used false)
                       (set! compiler-backend-emergency-pending false)
+                      (set! compiler-backend-emergency-used-count 0)
+                      (set! compiler-backend-emergency-pending-count 0)
                       (set!
                         compiler-backend-emergency-slot-offset
                         (-
@@ -28163,7 +28239,8 @@
                                 target
                                 emit-blocks-list
                                 program-index))
-                            (if compiler-backend-emergency-used 16 0))]
+                            (compiler-backend-emergency-frame-extra
+                              compiler-backend-emergency-used-count))]
                         [_addr-forward-done : unit
                           (begin
                             (set!
@@ -28255,7 +28332,12 @@
     (set! compiler-backend-emit-current-count 0)
     (set! compiler-backend-emit-instrs-loop-active false)
     (set! compiler-backend-emit-instrs-continue-pending false)
-    (set! compiler-backend-identity-tail-forwarder-active false)))
+    (set! compiler-backend-identity-tail-forwarder-active false)
+    (set! compiler-backend-emergency-used false)
+    (set! compiler-backend-emergency-pending false)
+    (set! compiler-backend-emergency-used-count 0)
+    (set! compiler-backend-emergency-pending-count 0)
+    (set! compiler-backend-emergency-reg "")))
 
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func

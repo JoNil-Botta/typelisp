@@ -1,5 +1,6 @@
 (import stdlib.json)
 (import stdlib.serialize)
+(import stdlib.array)
 (import stdlib.string)
 
 (defstruct Address
@@ -14,79 +15,148 @@
   (active bool)
   (score f64)
   (ratio f32)
-  (home Address))
+  (home Address)
+  (scores (Array i64 3))
+  (previous (Array Address 2))
+  (samples (Array i64)))
 
 (import (serialize.serialize json Person) as person_json)
 (import (serialize.serialize json Person) as person_json_again)
 
-(define (serialize-json-home-json) : json.Json
+(define (serialize-json-member
+  [key : String]
+  [value : json.Json]
+  [rest : json.JsonMemberList]) : json.JsonMemberList
+  (json.JsonMemberListCons key value (box rest)))
+
+(define (serialize-json-item [value : json.Json] [rest : json.JsonList]) : json.JsonList
+  (json.JsonListCons value (box rest)))
+
+(define (serialize-json-address-json [zip : String] [city : String]) : json.Json
   (json.JsonObject
     (box
-      (json.JsonMemberListCons
+      (serialize-json-member
         "zip"
-        (json.JsonNumber "12345")
-        (box
-          (json.JsonMemberListCons
-            "city"
-            (json.JsonString "London")
-            (box json.JsonMemberListNil)))))))
+        (json.JsonNumber zip)
+        (serialize-json-member
+          "city"
+          (json.JsonString city)
+          json.JsonMemberListNil)))))
+
+(define (serialize-json-home-json) : json.Json
+  (serialize-json-address-json "12345" "London"))
+
+(define (serialize-json-scores-json) : json.Json
+  (json.JsonArray
+    (box
+      (serialize-json-item
+        (json.JsonNumber "4")
+        (serialize-json-item
+          (json.JsonNumber "5")
+          (serialize-json-item (json.JsonNumber "6") json.JsonListNil))))))
+
+(define (serialize-json-samples-json) : json.Json
+  (json.JsonArray
+    (box
+      (serialize-json-item
+        (json.JsonNumber "7")
+        (serialize-json-item (json.JsonNumber "8") json.JsonListNil)))))
+
+(define (serialize-json-previous-json) : json.Json
+  (json.JsonArray
+    (box
+      (serialize-json-item
+        (serialize-json-address-json "111" "Oxford")
+        (serialize-json-item
+          (serialize-json-address-json "222" "Paris")
+          json.JsonListNil)))))
 
 (define (serialize-json-person-json [age : json.Json]) : json.Json
   (json.JsonObject
     (box
-      (json.JsonMemberListCons
+      (serialize-json-member
         "name"
         (json.JsonString "Ada\nLovelace")
-        (box
-          (json.JsonMemberListCons
-            "age"
-            age
-            (box
-              (json.JsonMemberListCons
-                "active"
-                (json.JsonBool true)
-                (box
-                  (json.JsonMemberListCons
-                    "score"
-                    (json.JsonNumber "9.5")
-                    (box
-                      (json.JsonMemberListCons
-                        "ratio"
-                        (json.JsonNumber "1.25")
-                        (box
-                          (json.JsonMemberListCons
-                            "home"
-                            (serialize-json-home-json)
-                            (box json.JsonMemberListNil)))))))))))))))
+        (serialize-json-member
+          "age"
+          age
+          (serialize-json-member
+            "active"
+            (json.JsonBool true)
+            (serialize-json-member
+              "score"
+              (json.JsonNumber "9.5")
+              (serialize-json-member
+                "ratio"
+                (json.JsonNumber "1.25")
+                (serialize-json-member
+                  "home"
+                  (serialize-json-home-json)
+                  (serialize-json-member
+                    "scores"
+                    (serialize-json-scores-json)
+                    (serialize-json-member
+                      "previous"
+                      (serialize-json-previous-json)
+                      (serialize-json-member
+                        "samples"
+                        (serialize-json-samples-json)
+                        json.JsonMemberListNil))))))))))))
 
 (define (serialize-json-person-missing-age) : json.Json
   (json.JsonObject
     (box
-      (json.JsonMemberListCons
+      (serialize-json-member
         "name"
         (json.JsonString "Ada")
-        (box
-          (json.JsonMemberListCons
-            "active"
-            (json.JsonBool true)
-            (box
-              (json.JsonMemberListCons
-                "score"
-                (json.JsonNumber "9.5")
-                (box
-                  (json.JsonMemberListCons
-                    "ratio"
-                    (json.JsonNumber "1.25")
-                    (box
-                      (json.JsonMemberListCons
-                        "home"
-                        (serialize-json-home-json)
-                        (box json.JsonMemberListNil)))))))))))))
+        (serialize-json-member
+          "active"
+          (json.JsonBool true)
+          (serialize-json-member
+            "score"
+            (json.JsonNumber "9.5")
+            (serialize-json-member
+              "ratio"
+              (json.JsonNumber "1.25")
+              (serialize-json-member
+                "home"
+                (serialize-json-home-json)
+                (serialize-json-member
+                  "scores"
+                  (serialize-json-scores-json)
+                  (serialize-json-member
+                    "previous"
+                    (serialize-json-previous-json)
+                    (serialize-json-member
+                      "samples"
+                      (serialize-json-samples-json)
+                      json.JsonMemberListNil)))))))))))
+
+(define (serialize-json-address-eq?
+  [home : Address]
+  [zip : i64]
+  [city : String]) : bool
+  (and
+    (= (struct-get home zip) zip)
+    (string.string-eq (struct-get home city) city)))
 
 (define (serialize-json-address-ok? [home : Address]) : bool
+  (serialize-json-address-eq? home 12345 "London"))
+
+(define (serialize-json-scores-ok? [scores : (Array i64 3)]) : bool
   (and
-    (= (struct-get home zip) 12345)
-    (string.string-eq (struct-get home city) "London")))
+    (= (array.array-ref scores 0) 4)
+    (and (= (array.array-ref scores 1) 5) (= (array.array-ref scores 2) 6))))
+
+(define (serialize-json-samples-ok? [samples : (Array i64)]) : bool
+  (and
+    (= (array.array-length samples) 2)
+    (and (= (array.array-ref samples 0) 7) (= (array.array-ref samples 1) 8))))
+
+(define (serialize-json-previous-ok? [previous : (Array Address 2)]) : bool
+  (and
+    (serialize-json-address-eq? (array.array-ref previous 0) 111 "Oxford")
+    (serialize-json-address-eq? (array.array-ref previous 1) 222 "Paris")))
 
 (define (serialize-json-person-ok? [person : Person]) : bool
   (and
@@ -95,7 +165,24 @@
     (struct-get person active)
     (= (struct-get person score) 9.5)
     (= (struct-get person ratio) (cast 1.25 : f32))
-    (serialize-json-address-ok? (struct-get person home))))
+    (and
+      (serialize-json-address-ok? (struct-get person home))
+      (and
+        (serialize-json-scores-ok? (struct-get person scores))
+        (and
+          (serialize-json-previous-ok? (struct-get person previous))
+          (serialize-json-samples-ok? (struct-get person samples)))))))
+
+(define (serialize-json-make-samples) : (Array i64)
+  (let
+    [samples : (Array i64) (array.make-array i64 2)]
+    (begin
+      (array.array-set! samples 0 7)
+      (array.array-set! samples 1 8)
+      samples)))
+
+(define (serialize-json-previous-addresses) : (Array Address 2)
+  (array (Address 111 "Oxford") (Address 222 "Paris")))
 
 (define (serialize-json-roundtrip-ok?) : bool
   (let
@@ -106,13 +193,16 @@
         true
         9.5
         (cast 1.25 : f32)
-        (Address 12345 "London"))]
+        (Address 12345 "London")
+        (array 4 5 6)
+        (serialize-json-previous-addresses)
+        (serialize-json-make-samples))]
     [json : json.Json (person_json.to-json person)]
     [encoded : String (stdlib.json.json-stringify json)]
     (and
       (string.string-eq
         encoded
-        "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"score\":9.5,\"ratio\":1.25,\"home\":{\"zip\":12345,\"city\":\"London\"}}")
+        "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"score\":9.5,\"ratio\":1.25,\"home\":{\"zip\":12345,\"city\":\"London\"},\"scores\":[4,5,6],\"previous\":[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}],\"samples\":[7,8]}")
       (match (person_json.from-json json)
         [(person_json.Ok parsed) (serialize-json-person-ok? parsed)]
         [(person_json.Err _) false]))))

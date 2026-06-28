@@ -452,8 +452,8 @@
     (repl-session-source-path)
     session-source
     (sym-i64-empty))
-    [(OkCompilerLoad decls _) (OkReplDeclList decls)]
-    [(ErrCompilerLoad diag)
+    [(ResultCompilerLoad.Ok decls _) (OkReplDeclList decls)]
+    [(ResultCompilerLoad.Err diag)
       (ErrReplDeclList (compiler-diagnostic-message (box-get diag)))]))
 
 (define (repl-typecheck-session-source [session-source : String]) : ResultCompilerTypecheck

@@ -945,7 +945,7 @@
     (sym-i64-empty)
     stdlib-roots
     cfgs)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         runtime-decls
         runtime-paths
         runtime-modules
@@ -954,20 +954,22 @@
         runtime-seen
         stdlib-roots
         cfgs)
-        [(OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
             macro-decls
             macro-paths
             macro-modules
             macro-seen)
-          (OkCompilerLoadWithPaths
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append runtime-decls macro-decls)
             (compiler-load-decl-path-list-append runtime-paths macro-paths)
             (compiler-load-decl-module-list-append
               runtime-modules
               macro-modules)
             macro-seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss
   [key : String]
@@ -985,14 +987,14 @@
             (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
           (begin
             (match cold
-              [(OkCompilerLoadWithPaths decls paths modules seen)
+              [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
                 (compiler-driver-runtime-prelude-cache-store
                   persistent-key
                   decls
                   paths
                   modules
                   seen)]
-              [(ErrCompilerLoadWithPaths _) unit])
+              [(ResultCompilerLoadWithPaths.Err _) unit])
             (unsafe
               (arena.tl_arena_set prev-arena))
             cold)))]
@@ -1007,7 +1009,7 @@
         (compiler-load-prelude-cache-key "runtime-prelude" stdlib-roots cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
-          (OkCompilerLoadWithPaths decls paths modules seen)]
+          (ResultCompilerLoadWithPaths.Ok decls paths modules seen)]
         [(CompilerLoadPreludeCacheMiss)
           (compiler-driver-load-runtime-prelude-cache-miss
             key
@@ -1021,7 +1023,7 @@
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -1031,16 +1033,22 @@
         prelude-seen
         stdlib-roots
         cfgs)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append prelude-decls entry-decls)
             (compiler-load-decl-path-list-append prelude-paths entry-paths)
             (compiler-load-decl-module-list-append
               prelude-modules
               entry-modules)
             seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-source-with-runtime
   [input-path : String]
@@ -1048,7 +1056,7 @@
   [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -1059,16 +1067,22 @@
         prelude-seen
         stdlib-roots
         cfgs)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append prelude-decls entry-decls)
             (compiler-load-decl-path-list-append prelude-paths entry-paths)
             (compiler-load-decl-module-list-append
               prelude-modules
               entry-modules)
             seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-file-for-pic-image
   [input-path : String]
@@ -1078,7 +1092,7 @@
     (sym-i64-empty)
     stdlib-roots
     cfgs)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -1088,16 +1102,22 @@
         prelude-seen
         stdlib-roots
         cfgs)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append prelude-decls entry-decls)
             (compiler-load-decl-path-list-append prelude-paths entry-paths)
             (compiler-load-decl-module-list-append
               prelude-modules
               entry-modules)
             seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cold-with-pools
   [stdlib-roots : vector.StringVec]
@@ -1109,7 +1129,7 @@
     stdlib-roots
     cfgs
     pools)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         runtime-decls
         runtime-paths
         runtime-modules
@@ -1119,20 +1139,22 @@
         stdlib-roots
         cfgs
         pools)
-        [(OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
             macro-decls
             macro-paths
             macro-modules
             macro-seen)
-          (OkCompilerLoadWithPaths
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append runtime-decls macro-decls)
             (compiler-load-decl-path-list-append runtime-paths macro-paths)
             (compiler-load-decl-module-list-append
               runtime-modules
               macro-modules)
             macro-seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
   [key : String]
@@ -1154,7 +1176,7 @@
               pools)]
           (begin
             (match cold
-              [(OkCompilerLoadWithPaths decls paths modules seen)
+              [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
                 (compiler-driver-runtime-prelude-cache-store-with-pools
                   persistent-key
                   decls
@@ -1162,7 +1184,7 @@
                   modules
                   seen
                   pools)]
-              [(ErrCompilerLoadWithPaths _) unit])
+              [(ResultCompilerLoadWithPaths.Err _) unit])
             (unsafe
               (arena.tl_arena_set prev-arena))
             cold)))]
@@ -1178,7 +1200,7 @@
         (compiler-load-prelude-cache-key "runtime-prelude" stdlib-roots cfgs)]
       (match (compiler-driver-runtime-prelude-cache-lookup key)
         [(CompilerLoadPreludeCacheHit decls paths modules seen)
-          (OkCompilerLoadWithPaths decls paths modules seen)]
+          (ResultCompilerLoadWithPaths.Ok decls paths modules seen)]
         [(CompilerLoadPreludeCacheMiss)
           (compiler-driver-load-runtime-prelude-cache-miss-with-pools
             key
@@ -1199,7 +1221,7 @@
     stdlib-roots
     cfgs
     pools)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -1210,16 +1232,22 @@
         stdlib-roots
         cfgs
         pools)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append prelude-decls entry-decls)
             (compiler-load-decl-path-list-append prelude-paths entry-paths)
             (compiler-load-decl-module-list-append
               prelude-modules
               entry-modules)
             seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-source-with-runtime-with-pools
   [input-path : String]
@@ -1231,7 +1259,7 @@
     stdlib-roots
     cfgs
     pools)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -1244,16 +1272,22 @@
         AstNoModuleName
         cfgs
         pools)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append prelude-decls entry-decls)
             (compiler-load-decl-path-list-append prelude-paths entry-paths)
             (compiler-load-decl-module-list-append
               prelude-modules
               entry-modules)
             seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [input-path : String]
@@ -1265,7 +1299,7 @@
     stdlib-roots
     cfgs
     pools)
-    [(OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
         prelude-paths
         prelude-modules
@@ -1276,16 +1310,22 @@
         stdlib-roots
         cfgs
         pools)
-        [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-          (OkCompilerLoadWithPaths
+        [(ResultCompilerLoadWithPaths.Ok
+            entry-decls
+            entry-paths
+            entry-modules
+            seen)
+          (ResultCompilerLoadWithPaths.Ok
             (compiler-load-decl-list-append prelude-decls entry-decls)
             (compiler-load-decl-path-list-append prelude-paths entry-paths)
             (compiler-load-decl-module-list-append
               prelude-modules
               entry-modules)
             seen)]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-and-lower-escaping
   [input-path : String]
@@ -1294,7 +1334,7 @@
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -1325,7 +1365,7 @@
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
               (ResultCompilerDriverLowered.Err diag))]))]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (ResultCompilerDriverLowered.Err diag))]))
@@ -1337,7 +1377,7 @@
   [mode : CompilerBackendMode]
   [cfgs : SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -1368,7 +1408,7 @@
                 compile-profile
                 (compiler-driver-profile-finish-phase "lower"))
               (ResultCompilerDriverLowered.Err diag))]))]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (ResultCompilerDriverLowered.Err diag))]))
@@ -1387,7 +1427,7 @@
       stdlib-roots
       cfgs
       pools)
-      [(OkCompilerLoadWithPaths decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -1422,7 +1462,7 @@
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
                 (ResultCompilerDriverLowered.Err diag))]))]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (ResultCompilerDriverLowered.Err diag))])))
@@ -1441,7 +1481,7 @@
       stdlib-roots
       cfgs
       pools)
-      [(OkCompilerLoadWithPaths decls paths _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (cfg compile-profile (compiler-driver-profile-start-phase))
@@ -1476,7 +1516,7 @@
                   compile-profile
                   (compiler-driver-profile-finish-phase "lower"))
                 (ResultCompilerDriverLowered.Err diag))]))]
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (ResultCompilerDriverLowered.Err diag))])))
@@ -1848,7 +1888,7 @@
     package-owner
     deps
     emit-entry)
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (lower-compiler-program-with-decl-paths-mode-cache
         ""
         (ast-program decls)
@@ -1870,7 +1910,7 @@
             emit-entry
             crt-entry)]
         [(ErrCompilerLower diag) (ResultCompilerDriver.Err diag)])]
-    [(ErrCompilerLoadWithPaths diag) (ResultCompilerDriver.Err diag)]))
+    [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerDriver.Err diag)]))
 
 (define (compiler-driver-load-package-file-with-runtime-cfg
   [input-path : String]
@@ -1917,8 +1957,8 @@
     manifest-dir
     deps
     emit-entry)
-    [(OkCompilerLoadWithPaths decls paths modules seen)
-      (OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+      (ResultCompilerLoadWithPaths.Ok
         decls
         (compiler-load-package-owned-paths-for-decls
           package-owner
@@ -1929,7 +1969,8 @@
           paths)
         modules
         seen)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-load-package-file-with-runtime-owned-cfg
   [input-path : String]
@@ -1946,8 +1987,8 @@
     deps
     emit-entry
     cfgs)
-    [(OkCompilerLoadWithPaths decls paths modules seen)
-      (OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+      (ResultCompilerLoadWithPaths.Ok
         decls
         (compiler-load-package-owned-paths-for-decls
           package-owner
@@ -1958,7 +1999,8 @@
           paths)
         modules
         seen)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
   (string.string-append

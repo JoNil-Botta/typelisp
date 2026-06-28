@@ -118,14 +118,14 @@
     input-path
     (sym-i64-empty)
     stdlib-roots)
-    [(OkCompilerLoadWithPaths _ paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (begin
         (io.write-file
           output-path
           (doc-render-loaded-markdown input-path paths))
         (doc-print-wrote output-path)
         0)]
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))

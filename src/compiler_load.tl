@@ -14,16 +14,12 @@
 (import stdlib.str_cat)
 
 (defenum ResultCompilerLoad
-  (OkCompilerLoad AstDeclList SymI64Env)
-  (ErrCompilerLoad (Box CompilerDiagnostic)))
+  (Ok AstDeclList SymI64Env)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadWithPaths
-  (OkCompilerLoadWithPaths
-    AstDeclList
-    AstDeclPathList
-    AstDeclModuleList
-    SymI64Env)
-  (ErrCompilerLoadWithPaths (Box CompilerDiagnostic)))
+  (Ok AstDeclList AstDeclPathList AstDeclModuleList SymI64Env)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerLoadMaybePath
   (CompilerLoadNoPath)
@@ -34,8 +30,8 @@
   (CompilerLoadSomeString String))
 
 (defenum ResultPkgResolve
-  (OkPkgResolve String)
-  (ErrPkgResolve String))
+  (Ok String)
+  (Err String))
 
 (defstruct CompilerLoadPackageEntry
   (entry-path String)
@@ -43,8 +39,8 @@
   (owner String))
 
 (defenum ResultCompilerLoadPackageEntry
-  (OkCompilerLoadPackageEntry CompilerLoadPackageEntry)
-  (ErrCompilerLoadPackageEntry String))
+  (Ok CompilerLoadPackageEntry)
+  (Err String))
 
 (defenum CompilerLoadMaybeModuleId
   (CompilerLoadNoModuleId)
@@ -55,16 +51,16 @@
   (CompilerLoadSomeDecl AstDecl))
 
 (defenum ResultCompilerLoadInclude
-  (OkCompilerLoadInclude AstDecl)
-  (ErrCompilerLoadInclude (Box CompilerDiagnostic)))
+  (Ok AstDecl)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadModuleId
-  (OkCompilerLoadModuleId String)
-  (ErrCompilerLoadModuleId (Box CompilerDiagnostic)))
+  (Ok String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadAliasCheck
-  (OkCompilerLoadAliasCheck)
-  (ErrCompilerLoadAliasCheck (Box CompilerDiagnostic)))
+  (Ok)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerLoadSurfaceMaybeString
   (CompilerLoadSurfaceNoString)
@@ -171,8 +167,8 @@
     (Box CompilerLoadSurfaceSummaryList)))
 
 (defenum ResultCompilerLoadSurfaceSummary
-  (OkCompilerLoadSurfaceSummary CompilerLoadSurfaceSummary)
-  (ErrCompilerLoadSurfaceSummary (Box CompilerDiagnostic)))
+  (Ok CompilerLoadSurfaceSummary)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerLoadMaybeSurfaceSummary
   (CompilerLoadNoSurfaceSummary)
@@ -1376,8 +1372,8 @@
     importer-path
     import-path
     stdlib-roots)
-    [(OkPkgResolve resolved) resolved]
-    [(ErrPkgResolve _) import-path]))
+    [(ResultPkgResolve.Ok resolved) resolved]
+    [(ResultPkgResolve.Err _) import-path]))
 
 (define (compiler-load-resolve-import-result-with-roots
   [importer-path : String]
@@ -1403,7 +1399,7 @@
                       [(CompilerLoadSomePath embedded-path) embedded-path]
                       [(CompilerLoadNoPath) primary]))]))
             primary))]
-      (OkPkgResolve resolved))))
+      (ResultPkgResolve.Ok resolved))))
 
 (define (compiler-load-dotted-path-cache-clear-ready! [index : i64]) : unit
   (if (>= index compiler-load-dotted-path-cache-capacity)
@@ -1575,7 +1571,7 @@
   (let
     [module-path : String (compiler-load-dotted-module-path module-name)]
     (if (compiler-load-stdlib-import? module-path)
-      (OkPkgResolve
+      (ResultPkgResolve.Ok
         (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
       (let
         [primary : String
@@ -1583,13 +1579,13 @@
             (compiler-load-join-root-path import-root module-path))]
         (if (compiler-load-nested-import-root? import-root)
           (if (io.file-exists? primary)
-            (OkPkgResolve primary)
+            (ResultPkgResolve.Ok primary)
             (match (compiler-load-resolve-root-module-path
               module-path
               stdlib-roots)
-              [(CompilerLoadSomePath root-path) (OkPkgResolve root-path)]
-              [(CompilerLoadNoPath) (OkPkgResolve primary)]))
-          (OkPkgResolve primary))))))
+              [(CompilerLoadSomePath root-path) (ResultPkgResolve.Ok root-path)]
+              [(CompilerLoadNoPath) (ResultPkgResolve.Ok primary)]))
+          (ResultPkgResolve.Ok primary))))))
 
 (define (compiler-load-resolve-import-spec-with-roots
   [importer-path : String]
@@ -1609,10 +1605,10 @@
         import-path
         stdlib-roots)]
     [(AstImportMacro _ _)
-      (ErrPkgResolve
+      (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]
     [(AstImportMacroDecls _ _)
-      (ErrPkgResolve
+      (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 (define (compiler-load-resolve-package-module-import
@@ -1625,11 +1621,11 @@
     [first : String (string.substring module-name 0 first-len)]
     [module-path : String (compiler-load-dotted-module-path module-name)]
     (if (compiler-load-stdlib-import? module-path)
-      (OkPkgResolve
+      (ResultPkgResolve.Ok
         (compiler-load-resolve-stdlib-module-path module-path stdlib-roots))
       (match (compiler-load-pkg-dep-lookup deps first)
         [(CompilerLoadNoPath)
-          (OkPkgResolve
+          (ResultPkgResolve.Ok
             (compiler-load-normalize-path
               (compiler-load-join-root-path manifest-dir module-path)))]
         [(CompilerLoadSomePath dep-path)
@@ -1637,12 +1633,12 @@
             [rest : String
               (compiler-load-dotted-module-rest module-name first-len)]
             (if (= (string.string-length rest) 0)
-              (ErrPkgResolve
+              (ResultPkgResolve.Err
                 (string.string-append
                   "compiler-load: dotted import missing module segment after package alias: "
                   module-name))
               (if (compiler-load-github-dependency-path? dep-path)
-                (ErrPkgResolve
+                (ResultPkgResolve.Err
                   (string.string-append
                     "compiler-load: GitHub dependency '"
                     (string.string-append
@@ -1650,7 +1646,7 @@
                       (string.string-append
                         "' requires fetch support (#1157): "
                         module-name))))
-                (OkPkgResolve
+                (ResultPkgResolve.Ok
                   (compiler-load-normalize-path
                     (compiler-load-join-root-path
                       (compiler-load-join-root-path manifest-dir dep-path)
@@ -1678,10 +1674,10 @@
         deps
         stdlib-roots)]
     [(AstImportMacro _ _)
-      (ErrPkgResolve
+      (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]
     [(AstImportMacroDecls _ _)
-      (ErrPkgResolve
+      (ResultPkgResolve.Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
 (define (compiler-load-package-import-externs?
@@ -1770,13 +1766,14 @@
   [resolved : String]
   [name : String]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
-    (OkCompilerLoadInclude
+    (ResultCompilerLoadInclude.Ok
       (compiler-load-include-str-def name (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(CompilerEmbeddedStdlibSomeSource source)
-        (OkCompilerLoadInclude (compiler-load-include-str-def name source))]
+        (ResultCompilerLoadInclude.Ok
+          (compiler-load-include-str-def name source))]
       [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadInclude
+        (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-str-read-error
               importer-path
@@ -1790,17 +1787,17 @@
   [name : String]
   [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
-    (OkCompilerLoadInclude
+    (ResultCompilerLoadInclude.Ok
       (compiler-load-include-str-def-with-pools
         pools
         name
         (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(CompilerEmbeddedStdlibSomeSource source)
-        (OkCompilerLoadInclude
+        (ResultCompilerLoadInclude.Ok
           (compiler-load-include-str-def-with-pools pools name source))]
       [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadInclude
+        (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-str-read-error
               importer-path
@@ -1828,13 +1825,14 @@
   [resolved : String]
   [name : String]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
-    (OkCompilerLoadInclude
+    (ResultCompilerLoadInclude.Ok
       (compiler-load-include-bin-def name (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(CompilerEmbeddedStdlibSomeSource source)
-        (OkCompilerLoadInclude (compiler-load-include-bin-def name source))]
+        (ResultCompilerLoadInclude.Ok
+          (compiler-load-include-bin-def name source))]
       [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadInclude
+        (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-bin-read-error
               importer-path
@@ -1848,17 +1846,17 @@
   [name : String]
   [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
-    (OkCompilerLoadInclude
+    (ResultCompilerLoadInclude.Ok
       (compiler-load-include-bin-def-with-pools
         pools
         name
         (io.read-file resolved)))
     (match (compiler-load-embedded-stdlib-source-for-path resolved)
       [(CompilerEmbeddedStdlibSomeSource source)
-        (OkCompilerLoadInclude
+        (ResultCompilerLoadInclude.Ok
           (compiler-load-include-bin-def-with-pools pools name source))]
       [(CompilerEmbeddedStdlibNoSource)
-        (ErrCompilerLoadInclude
+        (ResultCompilerLoadInclude.Err
           (box
             (compiler-load-include-bin-read-error
               importer-path
@@ -1874,14 +1872,14 @@
     importer-path
     include-path
     stdlib-roots)
-    [(OkPkgResolve resolved)
+    [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-str-from-resolved
         importer-path
         include-path
         resolved
         name)]
-    [(ErrPkgResolve message)
-      (ErrCompilerLoadInclude
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-str-with-pools
@@ -1894,15 +1892,15 @@
     importer-path
     include-path
     stdlib-roots)
-    [(OkPkgResolve resolved)
+    [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-str-from-resolved-with-pools
         importer-path
         include-path
         resolved
         name
         pools)]
-    [(ErrPkgResolve message)
-      (ErrCompilerLoadInclude
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-bin
@@ -1914,14 +1912,14 @@
     importer-path
     include-path
     stdlib-roots)
-    [(OkPkgResolve resolved)
+    [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-bin-from-resolved
         importer-path
         include-path
         resolved
         name)]
-    [(ErrPkgResolve message)
-      (ErrCompilerLoadInclude
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-expand-include-bin-with-pools
@@ -1934,15 +1932,15 @@
     importer-path
     include-path
     stdlib-roots)
-    [(OkPkgResolve resolved)
+    [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-bin-from-resolved-with-pools
         importer-path
         include-path
         resolved
         name
         pools)]
-    [(ErrPkgResolve message)
-      (ErrCompilerLoadInclude
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-decl-list-append
@@ -1988,8 +1986,8 @@
 (define (compiler-load-append-root-module-marker
   [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
   (match loaded
-    [(OkCompilerLoadWithPaths decls paths modules seen)
-      (OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules seen)
+      (ResultCompilerLoadWithPaths.Ok
         (compiler-load-decl-list-append
           decls
           (ast-decl-cons (ast-decl-module "") AstDeclNil))
@@ -2002,7 +2000,8 @@
           modules
           (ast-decl-module-cons "" AstDeclModuleNil))
         seen)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg
   [seen : SymI64Env]
@@ -2038,8 +2037,9 @@
 
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
-    [(OkCompilerLoadWithPaths decls _ _ seen) (OkCompilerLoad decls seen)]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoad diag)]))
+    [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+      (ResultCompilerLoad.Ok decls seen)]
+    [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerLoad.Err diag)]))
 
 (define (compiler-load-decls-module-id-loop
   [path : String]
@@ -2049,8 +2049,8 @@
   (match decls
     [(AstDeclNil)
       (match found
-        [(CompilerLoadNoModuleId) (OkCompilerLoadModuleId fallback)]
-        [(CompilerLoadSomeModuleId name) (OkCompilerLoadModuleId name)])]
+        [(CompilerLoadNoModuleId) (ResultCompilerLoadModuleId.Ok fallback)]
+        [(CompilerLoadSomeModuleId name) (ResultCompilerLoadModuleId.Ok name)])]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -2064,7 +2064,7 @@
                   fallback
                   (CompilerLoadSomeModuleId (intern-str name)))]
               [(CompilerLoadSomeModuleId _)
-                (ErrCompilerLoadModuleId
+                (ResultCompilerLoadModuleId.Err
                   (box
                     (compiler-diagnostic-at-start
                       path
@@ -2083,11 +2083,11 @@
   [expected : AstMaybeModuleName]
   [actual : String]) : ResultCompilerLoadModuleId
   (match expected
-    [(AstNoModuleName) (OkCompilerLoadModuleId actual)]
+    [(AstNoModuleName) (ResultCompilerLoadModuleId.Ok actual)]
     [(AstSomeModuleName want)
       (if (string.string-eq want actual)
-        (OkCompilerLoadModuleId actual)
-        (ErrCompilerLoadModuleId
+        (ResultCompilerLoadModuleId.Ok actual)
+        (ResultCompilerLoadModuleId.Err
           (box
             (compiler-diagnostic-at-start
               path
@@ -2131,12 +2131,16 @@
   [decls : AstDeclList]
   [seen : SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-decl-list-has-module? decls)
-    (OkCompilerLoadWithPaths
+    (ResultCompilerLoadWithPaths.Ok
       (ast-decl-cons (ast-decl-module module-id) AstDeclNil)
       (ast-decl-path-cons path AstDeclPathNil)
       (ast-decl-module-cons module-id AstDeclModuleNil)
       seen)
-    (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)))
+    (ResultCompilerLoadWithPaths.Ok
+      AstDeclNil
+      AstDeclPathNil
+      AstDeclModuleNil
+      seen)))
 
 (define (compiler-load-legacy-path-flat-module-import?
   [kind : AstImportKind]
@@ -2225,9 +2229,9 @@
     decls
     source-module
     (sym-i64-empty))
-    [(CompilerLoadNoString) (OkCompilerLoadAliasCheck)]
+    [(CompilerLoadNoString) (ResultCompilerLoadAliasCheck.Ok)]
     [(CompilerLoadSomeString alias)
-      (ErrCompilerLoadAliasCheck
+      (ResultCompilerLoadAliasCheck.Err
         (box
           (compiler-diagnostic-at-start
             path
@@ -2903,22 +2907,23 @@
         [decls : AstDeclList (box-get decls-box)]
         [source-module : String (compiler-load-decls-source-module decls)]
         (match (compiler-load-decls-module-id path decls)
-          [(OkCompilerLoadModuleId module-id)
+          [(ResultCompilerLoadModuleId.Ok module-id)
             (match (compiler-load-check-dotted-import-aliases
               path
               decls
               source-module)
-              [(OkCompilerLoadAliasCheck)
-                (OkCompilerLoadSurfaceSummary
+              [(ResultCompilerLoadAliasCheck.Ok)
+                (ResultCompilerLoadSurfaceSummary.Ok
                   (compiler-load-surface-summary-from-decls
                     path
                     root-id
                     cfgs
                     module-id
                     decls))]
-              [(ErrCompilerLoadAliasCheck diag)
-                (ErrCompilerLoadSurfaceSummary diag)])]
-          [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadSurfaceSummary diag)]))]))
+              [(ResultCompilerLoadAliasCheck.Err diag)
+                (ResultCompilerLoadSurfaceSummary.Err diag)])]
+          [(ResultCompilerLoadModuleId.Err diag)
+            (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
 
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
@@ -3077,7 +3082,11 @@
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
-      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
+      (ResultCompilerLoadWithPaths.Ok
+        AstDeclNil
+        AstDeclPathNil
+        AstDeclModuleNil
+        seen)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -3095,25 +3104,25 @@
                 import-root
                 cfgs
                 pools)
-                [(OkCompilerLoadWithPaths
+                [(ResultCompilerLoadWithPaths.Ok
                     rest-decls
                     rest-paths
                     rest-modules
                     rest-seen)
-                  (OkCompilerLoadWithPaths
+                  (ResultCompilerLoadWithPaths.Ok
                     (ast-decl-cons decl rest-decls)
                     (ast-decl-path-cons importer-path rest-paths)
                     (ast-decl-module-cons importer-module rest-modules)
                     rest-seen)]
-                [(ErrCompilerLoadWithPaths diag)
-                  (ErrCompilerLoadWithPaths diag)])
+                [(ResultCompilerLoadWithPaths.Err diag)
+                  (ResultCompilerLoadWithPaths.Err diag)])
               (match (compiler-load-resolve-import-spec-with-roots
                 importer-path
                 import-root
                 kind
                 import-path
                 stdlib-roots)
-                [(OkPkgResolve resolved)
+                [(ResultPkgResolve.Ok resolved)
                   (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
                     resolved
                     seen
@@ -3122,7 +3131,7 @@
                     import-root
                     cfgs
                     pools)
-                    [(OkCompilerLoadWithPaths
+                    [(ResultCompilerLoadWithPaths.Ok
                         imported-decls
                         imported-paths
                         imported-modules
@@ -3149,7 +3158,7 @@
                           import-root
                           cfgs
                           pools)
-                          [(OkCompilerLoadWithPaths
+                          [(ResultCompilerLoadWithPaths.Ok
                               rest-decls
                               rest-paths
                               rest-modules
@@ -3170,7 +3179,7 @@
                               (if lazy-skip
                                 (begin
                                   (compiler-load-lazy-import-record-skip!)
-                                  (OkCompilerLoadWithPaths
+                                  (ResultCompilerLoadWithPaths.Ok
                                     (compiler-load-decls-after-import
                                       kind
                                       resolved
@@ -3190,7 +3199,7 @@
                                       AstDeclNil
                                       rest-modules)
                                     rest-seen))
-                                (OkCompilerLoadWithPaths
+                                (ResultCompilerLoadWithPaths.Ok
                                   (compiler-load-decl-list-append
                                     imported-decls
                                     (compiler-load-decls-after-import
@@ -3216,12 +3225,12 @@
                                       imported-decls
                                       rest-modules))
                                   rest-seen)))]
-                          [(ErrCompilerLoadWithPaths diag)
-                            (ErrCompilerLoadWithPaths diag)]))]
-                    [(ErrCompilerLoadWithPaths diag)
-                      (ErrCompilerLoadWithPaths diag)])]
-                [(ErrPkgResolve message)
-                  (ErrCompilerLoadWithPaths
+                          [(ResultCompilerLoadWithPaths.Err diag)
+                            (ResultCompilerLoadWithPaths.Err diag)]))]
+                    [(ResultCompilerLoadWithPaths.Err diag)
+                      (ResultCompilerLoadWithPaths.Err diag)])]
+                [(ResultPkgResolve.Err message)
+                  (ResultCompilerLoadWithPaths.Err
                     (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-expand-include-str-with-pools
@@ -3230,7 +3239,7 @@
               name
               stdlib-roots
               pools)
-              [(OkCompilerLoadInclude expanded)
+              [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   rest
                   importer-path
@@ -3241,19 +3250,20 @@
                   import-root
                   cfgs
                   pools)
-                  [(OkCompilerLoadWithPaths
+                  [(ResultCompilerLoadWithPaths.Ok
                       rest-decls
                       rest-paths
                       rest-modules
                       rest-seen)
-                    (OkCompilerLoadWithPaths
+                    (ResultCompilerLoadWithPaths.Ok
                       (ast-decl-cons expanded rest-decls)
                       (ast-decl-path-cons importer-path rest-paths)
                       (ast-decl-module-cons importer-module rest-modules)
                       rest-seen)]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
           [(AstDeclIncludeBin name include-path)
             (match (compiler-load-expand-include-bin-with-pools
               importer-path
@@ -3261,7 +3271,7 @@
               name
               stdlib-roots
               pools)
-              [(OkCompilerLoadInclude expanded)
+              [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   rest
                   importer-path
@@ -3272,19 +3282,20 @@
                   import-root
                   cfgs
                   pools)
-                  [(OkCompilerLoadWithPaths
+                  [(ResultCompilerLoadWithPaths.Ok
                       rest-decls
                       rest-paths
                       rest-modules
                       rest-seen)
-                    (OkCompilerLoadWithPaths
+                    (ResultCompilerLoadWithPaths.Ok
                       (ast-decl-cons expanded rest-decls)
                       (ast-decl-path-cons importer-path rest-paths)
                       (ast-decl-module-cons importer-module rest-modules)
                       rest-seen)]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
           [_
             (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
               rest
@@ -3296,17 +3307,18 @@
               import-root
               cfgs
               pools)
-              [(OkCompilerLoadWithPaths
+              [(ResultCompilerLoadWithPaths.Ok
                   rest-decls
                   rest-paths
                   rest-modules
                   rest-seen)
-                (OkCompilerLoadWithPaths
+                (ResultCompilerLoadWithPaths.Ok
                   (ast-decl-cons decl rest-decls)
                   (ast-decl-path-cons importer-path rest-paths)
                   (ast-decl-module-cons importer-module rest-modules)
                   rest-seen)]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))]))
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]))]))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root
   [decls : AstDeclList]
@@ -3353,9 +3365,9 @@
   [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
-    [(OkCompilerLoadModuleId module-id)
+    [(ResultCompilerLoadModuleId.Ok module-id)
       (if (sym-i64-contains seen module-id)
-        (OkCompilerLoadWithPaths
+        (ResultCompilerLoadWithPaths.Ok
           AstDeclNil
           AstDeclPathNil
           AstDeclModuleNil
@@ -3368,7 +3380,8 @@
           (sym-i64-bind seen module-id 1)
           stdlib-roots
           cfgs))]
-    [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ResultCompilerLoadModuleId.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-decls-with-paths-and-roots-cfg-with-pools
   [decls : AstDeclList]
@@ -3378,9 +3391,9 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
-    [(OkCompilerLoadModuleId module-id)
+    [(ResultCompilerLoadModuleId.Ok module-id)
       (if (sym-i64-contains seen module-id)
-        (OkCompilerLoadWithPaths
+        (ResultCompilerLoadWithPaths.Ok
           AstDeclNil
           AstDeclPathNil
           AstDeclModuleNil
@@ -3394,7 +3407,8 @@
           stdlib-roots
           cfgs
           pools))]
-    [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ResultCompilerLoadModuleId.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-decls
   [decls : AstDeclList]
@@ -3503,12 +3517,12 @@
             [decls : AstDeclList (box-get decls-box)]
             [source-module : String (compiler-load-decls-source-module decls)]
             (match (compiler-load-decls-module-id path decls)
-              [(OkCompilerLoadModuleId module-id)
+              [(ResultCompilerLoadModuleId.Ok module-id)
                 (match (compiler-load-check-expected-module
                   path
                   expected-module
                   module-id)
-                  [(OkCompilerLoadModuleId _)
+                  [(ResultCompilerLoadModuleId.Ok _)
                     (if (sym-i64-contains seen module-id)
                       (compiler-load-seen-module-with-paths
                         path
@@ -3519,7 +3533,7 @@
                         path
                         decls
                         source-module)
-                        [(OkCompilerLoadAliasCheck)
+                        [(ResultCompilerLoadAliasCheck.Ok)
                           (begin
                             (compiler-load-record-surface-summary!
                               (compiler-load-surface-summary-from-decls
@@ -3538,11 +3552,12 @@
                               import-root
                               cfgs
                               pools))]
-                        [(ErrCompilerLoadAliasCheck diag)
-                          (ErrCompilerLoadWithPaths diag)]))]
-                  [(ErrCompilerLoadModuleId diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))])]
+                        [(ResultCompilerLoadAliasCheck.Err diag)
+                          (ResultCompilerLoadWithPaths.Err diag)]))]
+                  [(ResultCompilerLoadModuleId.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadModuleId.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
       (compiler-load-surface-summary-load-exit!)
       loaded)))
@@ -4038,7 +4053,7 @@
         stdlib-roots
         expected-module
         cfgs)]
-    [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
   [path : String]
@@ -4062,7 +4077,7 @@
         expected-module
         cfgs
         pools)]
-    [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-source
   [path : String]
@@ -4134,15 +4149,16 @@
   [path-dedup : bool]
   [path-key : String]) : ResultCompilerLoadWithPaths
   (match loaded
-    [(OkCompilerLoadWithPaths decls paths modules loaded-seen)
-      (OkCompilerLoadWithPaths
+    [(ResultCompilerLoadWithPaths.Ok decls paths modules loaded-seen)
+      (ResultCompilerLoadWithPaths.Ok
         decls
         paths
         modules
         (if path-dedup
           (sym-i64-bind loaded-seen path-key 1)
           loaded-seen))]
-    [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg
   [path : String]
@@ -4220,7 +4236,11 @@
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym-i64-contains seen path-key))
-      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
+      (ResultCompilerLoadWithPaths.Ok
+        AstDeclNil
+        AstDeclPathNil
+        AstDeclModuleNil
+        seen)
       (let
         [parse-cfgs : SymI64Env
           (compiler-load-stdlib-private-cfgs
@@ -4247,7 +4267,8 @@
                   parse-cfgs)
                 path-dedup
                 path-key)]
-            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+            [(ErrAstProgramDiagnostic diag)
+              (ResultCompilerLoadWithPaths.Err diag)])
           (match (compiler-load-embedded-stdlib-source-for-path path)
             [(CompilerEmbeddedStdlibSomeSource source)
               (match (if cache-current
@@ -4271,9 +4292,10 @@
                       parse-cfgs)
                     path-dedup
                     path-key)]
-                [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+                [(ErrAstProgramDiagnostic diag)
+                  (ResultCompilerLoadWithPaths.Err diag)])]
             [(CompilerEmbeddedStdlibNoSource)
-              (ErrCompilerLoadWithPaths
+              (ResultCompilerLoadWithPaths.Err
                 (box
                   (compiler-diagnostic-at-start
                     path
@@ -4294,7 +4316,11 @@
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     (if (and path-dedup (sym-i64-contains seen path-key))
-      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)
+      (ResultCompilerLoadWithPaths.Ok
+        AstDeclNil
+        AstDeclPathNil
+        AstDeclModuleNil
+        seen)
       (let
         [parse-cfgs : SymI64Env
           (compiler-load-stdlib-private-cfgs
@@ -4326,7 +4352,8 @@
                   pools)
                 path-dedup
                 path-key)]
-            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+            [(ErrAstProgramDiagnostic diag)
+              (ResultCompilerLoadWithPaths.Err diag)])
           (match (compiler-load-embedded-stdlib-source-for-path path)
             [(CompilerEmbeddedStdlibSomeSource source)
               (match (if cache-current
@@ -4353,9 +4380,10 @@
                       pools)
                     path-dedup
                     path-key)]
-                [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+                [(ErrAstProgramDiagnostic diag)
+                  (ResultCompilerLoadWithPaths.Err diag)])]
             [(CompilerEmbeddedStdlibNoSource)
-              (ErrCompilerLoadWithPaths
+              (ResultCompilerLoadWithPaths.Err
                 (box
                   (compiler-diagnostic-at-start
                     path
@@ -4866,7 +4894,11 @@
   [module : String]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
-      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
+      (ResultCompilerLoadWithPaths.Ok
+        AstDeclNil
+        AstDeclPathNil
+        AstDeclModuleNil
+        seen)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -4891,7 +4923,7 @@
           rest-paths
           seen
           next-module)
-          [(OkCompilerLoadWithPaths
+          [(ResultCompilerLoadWithPaths.Ok
               rest-decls
               rest-decl-paths
               rest-modules
@@ -4904,23 +4936,24 @@
               module
               decl)
               [(CompilerLoadSomeDecl transformed)
-                (OkCompilerLoadWithPaths
+                (ResultCompilerLoadWithPaths.Ok
                   (ast-decl-cons transformed rest-decls)
                   (ast-decl-path-cons owned-decl-path rest-decl-paths)
                   (ast-decl-module-cons module rest-modules)
                   rest-seen)]
               [(CompilerLoadNoDecl)
-                (OkCompilerLoadWithPaths
+                (ResultCompilerLoadWithPaths.Ok
                   rest-decls
                   rest-decl-paths
                   rest-modules
                   rest-seen)])]
-          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)]))]))
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)]))]))
 
 (define (compiler-load-package-entry-for-source [source-path : String]) : ResultCompilerLoadPackageEntry
   (match (compiler-load-discover-manifest source-path)
     [(CompilerLoadNoPath)
-      (ErrCompilerLoadPackageEntry
+      (ResultCompilerLoadPackageEntry.Err
         (string.string-append
           "compiler-load: dependency package manifest not found for "
           source-path))]
@@ -4928,8 +4961,8 @@
       (match (compiler-load-parse-manifest-diagnostic-infer-kind
         manifest-path
         (io.read-file manifest-path))
-        [(ErrCompilerPkgManifestDiagnostic diag)
-          (ErrCompilerLoadPackageEntry
+        [(ResultCompilerPkgManifestDiagnostic.Err diag)
+          (ResultCompilerLoadPackageEntry.Err
             (string.string-append
               "compiler-load: invalid dependency package manifest '"
               (string.string-append
@@ -4937,10 +4970,10 @@
                 (string.string-append
                   "': "
                   (compiler-diagnostic-message (box-get diag))))))]
-        [(OkCompilerPkgManifestDiagnostic manifest)
+        [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
           (let
             [manifest-dir : String (compiler-load-dirname manifest-path)]
-            (OkCompilerLoadPackageEntry
+            (ResultCompilerLoadPackageEntry.Ok
               (CompilerLoadPackageEntry
                 (compiler-load-normalize-path
                   (compiler-load-join-root-path
@@ -4956,17 +4989,21 @@
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-for-source resolved)
-    [(ErrCompilerLoadPackageEntry message)
-      (ErrCompilerLoadWithPaths
+    [(ResultCompilerLoadPackageEntry.Err message)
+      (ResultCompilerLoadWithPaths.Err
         (box (compiler-diagnostic-at-start resolved message)))]
-    [(OkCompilerLoadPackageEntry entry)
+    [(ResultCompilerLoadPackageEntry.Ok entry)
       (match (compiler-load-file-with-paths-and-roots-expect-cfg
         resolved
         seen
         stdlib-roots
         expected-module
         cfgs)
-        [(OkCompilerLoadWithPaths imported-decls imported-paths _ import-seen)
+        [(ResultCompilerLoadWithPaths.Ok
+            imported-decls
+            imported-paths
+            _
+            import-seen)
           (compiler-load-package-extern-decls
             (struct-get entry owner)
             (struct-get entry manifest-dir)
@@ -4975,7 +5012,8 @@
             imported-paths
             import-seen
             "")]
-        [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])]))
 
 (define (compiler-load-package-expand-include-str
   [importer-path : String]
@@ -4990,14 +5028,14 @@
       importer-path
       include-path
       stdlib-roots))
-    [(OkPkgResolve resolved)
+    [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-str-from-resolved
         importer-path
         include-path
         resolved
         name)]
-    [(ErrPkgResolve message)
-      (ErrCompilerLoadInclude
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-expand-include-bin
@@ -5013,14 +5051,14 @@
       importer-path
       include-path
       stdlib-roots))
-    [(OkPkgResolve resolved)
+    [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-bin-from-resolved
         importer-path
         include-path
         resolved
         name)]
-    [(ErrPkgResolve message)
-      (ErrCompilerLoadInclude
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
 (define (compiler-load-package-decls-with-module-and-roots
@@ -5035,7 +5073,11 @@
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclNil)
-      (OkCompilerLoadWithPaths AstDeclNil AstDeclPathNil AstDeclModuleNil seen)]
+      (ResultCompilerLoadWithPaths.Ok
+        AstDeclNil
+        AstDeclPathNil
+        AstDeclModuleNil
+        seen)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -5053,18 +5095,18 @@
                 manifest-dir
                 deps
                 cfgs)
-                [(OkCompilerLoadWithPaths
+                [(ResultCompilerLoadWithPaths.Ok
                     rest-decls
                     rest-paths
                     rest-modules
                     rest-seen)
-                  (OkCompilerLoadWithPaths
+                  (ResultCompilerLoadWithPaths.Ok
                     (ast-decl-cons decl rest-decls)
                     (ast-decl-path-cons importer-path rest-paths)
                     (ast-decl-module-cons importer-module rest-modules)
                     rest-seen)]
-                [(ErrCompilerLoadWithPaths diag)
-                  (ErrCompilerLoadWithPaths diag)])
+                [(ResultCompilerLoadWithPaths.Err diag)
+                  (ResultCompilerLoadWithPaths.Err diag)])
               (match (compiler-load-resolve-package-import-spec
                 importer-path
                 kind
@@ -5072,7 +5114,7 @@
                 stdlib-roots
                 manifest-dir
                 deps)
-                [(OkPkgResolve resolved)
+                [(ResultPkgResolve.Ok resolved)
                   (let
                     [package-externs : bool
                       (compiler-load-package-import-externs?
@@ -5094,7 +5136,7 @@
                         manifest-dir
                         deps
                         cfgs))
-                      [(OkCompilerLoadWithPaths
+                      [(ResultCompilerLoadWithPaths.Ok
                           imported-decls
                           imported-paths
                           imported-modules
@@ -5123,7 +5165,7 @@
                             manifest-dir
                             deps
                             cfgs)
-                            [(OkCompilerLoadWithPaths
+                            [(ResultCompilerLoadWithPaths.Ok
                                 rest-decls
                                 rest-paths
                                 rest-modules
@@ -5144,7 +5186,7 @@
                                 (if lazy-skip
                                   (begin
                                     (compiler-load-lazy-import-record-skip!)
-                                    (OkCompilerLoadWithPaths
+                                    (ResultCompilerLoadWithPaths.Ok
                                       (compiler-load-decls-after-import
                                         kind
                                         resolved
@@ -5164,7 +5206,7 @@
                                         AstDeclNil
                                         rest-modules)
                                       rest-seen))
-                                  (OkCompilerLoadWithPaths
+                                  (ResultCompilerLoadWithPaths.Ok
                                     (compiler-load-decl-list-append
                                       imported-decls
                                       (compiler-load-decls-after-import
@@ -5190,12 +5232,12 @@
                                         imported-decls
                                         rest-modules))
                                     rest-seen)))]
-                            [(ErrCompilerLoadWithPaths diag)
-                              (ErrCompilerLoadWithPaths diag)]))]
-                      [(ErrCompilerLoadWithPaths diag)
-                        (ErrCompilerLoadWithPaths diag)]))]
-                [(ErrPkgResolve message)
-                  (ErrCompilerLoadWithPaths
+                            [(ResultCompilerLoadWithPaths.Err diag)
+                              (ResultCompilerLoadWithPaths.Err diag)]))]
+                      [(ResultCompilerLoadWithPaths.Err diag)
+                        (ResultCompilerLoadWithPaths.Err diag)]))]
+                [(ResultPkgResolve.Err message)
+                  (ResultCompilerLoadWithPaths.Err
                     (box (compiler-diagnostic-at-start importer-path message)))]))]
           [(AstDeclIncludeStr name include-path)
             (match (compiler-load-package-expand-include-str
@@ -5205,7 +5247,7 @@
               stdlib-roots
               manifest-dir
               deps)
-              [(OkCompilerLoadInclude expanded)
+              [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-package-decls-with-module-and-roots
                   rest
                   importer-path
@@ -5216,19 +5258,20 @@
                   manifest-dir
                   deps
                   cfgs)
-                  [(OkCompilerLoadWithPaths
+                  [(ResultCompilerLoadWithPaths.Ok
                       rest-decls
                       rest-paths
                       rest-modules
                       rest-seen)
-                    (OkCompilerLoadWithPaths
+                    (ResultCompilerLoadWithPaths.Ok
                       (ast-decl-cons expanded rest-decls)
                       (ast-decl-path-cons importer-path rest-paths)
                       (ast-decl-module-cons importer-module rest-modules)
                       rest-seen)]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
           [(AstDeclIncludeBin name include-path)
             (match (compiler-load-package-expand-include-bin
               importer-path
@@ -5237,7 +5280,7 @@
               stdlib-roots
               manifest-dir
               deps)
-              [(OkCompilerLoadInclude expanded)
+              [(ResultCompilerLoadInclude.Ok expanded)
                 (match (compiler-load-package-decls-with-module-and-roots
                   rest
                   importer-path
@@ -5248,19 +5291,20 @@
                   manifest-dir
                   deps
                   cfgs)
-                  [(OkCompilerLoadWithPaths
+                  [(ResultCompilerLoadWithPaths.Ok
                       rest-decls
                       rest-paths
                       rest-modules
                       rest-seen)
-                    (OkCompilerLoadWithPaths
+                    (ResultCompilerLoadWithPaths.Ok
                       (ast-decl-cons expanded rest-decls)
                       (ast-decl-path-cons importer-path rest-paths)
                       (ast-decl-module-cons importer-module rest-modules)
                       rest-seen)]
-                  [(ErrCompilerLoadWithPaths diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadInclude diag) (ErrCompilerLoadWithPaths diag)])]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
           [_
             (match (compiler-load-package-decls-with-module-and-roots
               rest
@@ -5272,17 +5316,18 @@
               manifest-dir
               deps
               cfgs)
-              [(OkCompilerLoadWithPaths
+              [(ResultCompilerLoadWithPaths.Ok
                   rest-decls
                   rest-paths
                   rest-modules
                   rest-seen)
-                (OkCompilerLoadWithPaths
+                (ResultCompilerLoadWithPaths.Ok
                   (ast-decl-cons decl rest-decls)
                   (ast-decl-path-cons importer-path rest-paths)
                   (ast-decl-module-cons importer-module rest-modules)
                   rest-seen)]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]))]))
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]))]))
 
 (define (compiler-load-package-program-with-paths-and-roots-expect
   [path : String]
@@ -5302,12 +5347,12 @@
             [decls : AstDeclList (box-get decls-box)]
             [source-module : String (compiler-load-decls-source-module decls)]
             (match (compiler-load-decls-module-id path decls)
-              [(OkCompilerLoadModuleId module-id)
+              [(ResultCompilerLoadModuleId.Ok module-id)
                 (match (compiler-load-check-expected-module
                   path
                   expected-module
                   module-id)
-                  [(OkCompilerLoadModuleId _)
+                  [(ResultCompilerLoadModuleId.Ok _)
                     (if (sym-i64-contains seen module-id)
                       (compiler-load-seen-module-with-paths
                         path
@@ -5318,7 +5363,7 @@
                         path
                         decls
                         source-module)
-                        [(OkCompilerLoadAliasCheck)
+                        [(ResultCompilerLoadAliasCheck.Ok)
                           (begin
                             (compiler-load-record-surface-summary!
                               (compiler-load-surface-summary-from-decls
@@ -5337,11 +5382,12 @@
                               manifest-dir
                               deps
                               cfgs))]
-                        [(ErrCompilerLoadAliasCheck diag)
-                          (ErrCompilerLoadWithPaths diag)]))]
-                  [(ErrCompilerLoadModuleId diag)
-                    (ErrCompilerLoadWithPaths diag)])]
-              [(ErrCompilerLoadModuleId diag) (ErrCompilerLoadWithPaths diag)]))])]
+                        [(ResultCompilerLoadAliasCheck.Err diag)
+                          (ResultCompilerLoadWithPaths.Err diag)]))]
+                  [(ResultCompilerLoadModuleId.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadModuleId.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)]))])]
     (begin
       (compiler-load-surface-summary-load-exit!)
       loaded)))
@@ -5375,7 +5421,7 @@
             manifest-dir
             deps
             parse-cfgs)]
-        [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])
+        [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)])
       (match (compiler-load-embedded-stdlib-source-for-path path)
         [(CompilerEmbeddedStdlibSomeSource source)
           (match (if cache-current
@@ -5397,9 +5443,10 @@
                 manifest-dir
                 deps
                 parse-cfgs)]
-            [(ErrAstProgramDiagnostic diag) (ErrCompilerLoadWithPaths diag)])]
+            [(ErrAstProgramDiagnostic diag)
+              (ResultCompilerLoadWithPaths.Err diag)])]
         [(CompilerEmbeddedStdlibNoSource)
-          (ErrCompilerLoadWithPaths
+          (ResultCompilerLoadWithPaths.Err
             (box
               (compiler-diagnostic-at-start
                 path
@@ -5501,7 +5548,7 @@
       manifest-dir
       deps
       cfgs)
-      [(OkCompilerLoadWithPaths
+      [(ResultCompilerLoadWithPaths.Ok
           runtime-decls
           runtime-paths
           runtime-modules
@@ -5512,7 +5559,7 @@
           manifest-dir
           deps
           cfgs)
-          [(OkCompilerLoadWithPaths
+          [(ResultCompilerLoadWithPaths.Ok
               macro-decls
               macro-paths
               macro-modules
@@ -5524,12 +5571,12 @@
               manifest-dir
               deps
               cfgs)
-              [(OkCompilerLoadWithPaths
+              [(ResultCompilerLoadWithPaths.Ok
                   entry-decls
                   entry-paths
                   entry-modules
                   seen)
-                (OkCompilerLoadWithPaths
+                (ResultCompilerLoadWithPaths.Ok
                   (compiler-load-decl-list-append
                     (compiler-load-decl-list-append runtime-decls macro-decls)
                     entry-decls)
@@ -5544,16 +5591,19 @@
                       macro-modules)
                     entry-modules)
                   seen)]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])
+              [(ResultCompilerLoadWithPaths.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])
     (match (compiler-load-package-core-macro-prelude-with-roots-cfg
       (sym-i64-empty)
       stdlib-roots
       manifest-dir
       deps
       cfgs)
-      [(OkCompilerLoadWithPaths
+      [(ResultCompilerLoadWithPaths.Ok
           prelude-decls
           prelude-paths
           prelude-modules
@@ -5565,16 +5615,22 @@
           manifest-dir
           deps
           cfgs)
-          [(OkCompilerLoadWithPaths entry-decls entry-paths entry-modules seen)
-            (OkCompilerLoadWithPaths
+          [(ResultCompilerLoadWithPaths.Ok
+              entry-decls
+              entry-paths
+              entry-modules
+              seen)
+            (ResultCompilerLoadWithPaths.Ok
               (compiler-load-decl-list-append prelude-decls entry-decls)
               (compiler-load-decl-path-list-append prelude-paths entry-paths)
               (compiler-load-decl-module-list-append
                 prelude-modules
                 entry-modules)
               seen)]
-          [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])]
-      [(ErrCompilerLoadWithPaths diag) (ErrCompilerLoadWithPaths diag)])))
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultCompilerLoadWithPaths.Err diag)])]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultCompilerLoadWithPaths.Err diag)])))
 
 (define (compiler-load-decl-list-count [decls : AstDeclList]) : i64
   (match decls
@@ -6014,9 +6070,9 @@
           "src\\..\\src"
           cfgs
           program)
-          [(OkCompilerLoadSurfaceSummary summary)
+          [(ResultCompilerLoadSurfaceSummary.Ok summary)
             (compiler-load-surface-summary-shape-ok? summary)]
-          [(ErrCompilerLoadSurfaceSummary _) false])]
+          [(ResultCompilerLoadSurfaceSummary.Err _) false])]
       [(ErrAstProgramDiagnostic _) false])))
 
 (define (compiler-load-normalize-ok?) : bool
@@ -6034,12 +6090,12 @@
     "(module app.main)
 (define answer : i64 42)"
     (sym-i64-empty))
-    [(OkCompilerLoadWithPaths decls _ modules seen)
+    [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
       (and
         (= (compiler-load-decl-list-count decls) 2)
         (compiler-load-two-modules? modules "app.main")
         (sym-i64-contains seen "app.main"))]
-    [(ErrCompilerLoadWithPaths _) false]))
+    [(ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-load-entry-moduled-main-ok?) : bool
   (and
@@ -6074,11 +6130,11 @@
     (sym-i64-empty)
     (vector.string-vec-new)
     (AstSomeModuleName "lib.want"))
-    [(ErrCompilerLoadWithPaths diag)
+    [(ResultCompilerLoadWithPaths.Err diag)
       (string.string-eq
         (compiler-diagnostic-message (box-get diag))
         "compiler-load: import expected module lib.want but loaded lib.actual")]
-    [(OkCompilerLoadWithPaths _ _ _ _) false]))
+    [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))
 
 (define (compiler-load-duplicate-module-ok?) : bool
   (match (compiler-load-source
@@ -6087,11 +6143,11 @@
 (module dup.two)
 (define value : i64 1)"
     (sym-i64-empty))
-    [(ErrCompilerLoad diag)
+    [(ResultCompilerLoad.Err diag)
       (string.string-eq
         (compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module declaration")]
-    [(OkCompilerLoad _ _) false]))
+    [(ResultCompilerLoad.Ok _ _) false]))
 
 (define (compiler-load-seen-module-ok?) : bool
   (match (compiler-load-source
@@ -6099,8 +6155,9 @@
     "(module seen.module)
 (define value : i64 1)"
     (sym-i64-bind (sym-i64-empty) "seen.module" 1))
-    [(OkCompilerLoad decls _) (compiler-load-decl-list-has-module? decls)]
-    [(ErrCompilerLoad _) false]))
+    [(ResultCompilerLoad.Ok decls _)
+      (compiler-load-decl-list-has-module? decls)]
+    [(ResultCompilerLoad.Err _) false]))
 
 (define (compiler-load-cfg-import-ok?) : bool
   (let
@@ -6121,17 +6178,17 @@
         (sym-i64-empty)
         (vector.string-vec-new)
         (compiler-cfg-empty))
-        [(OkCompilerLoadWithPaths decls _ _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (= (compiler-load-decl-list-count decls) 2)]
-        [(ErrCompilerLoadWithPaths _) false])
+        [(ResultCompilerLoadWithPaths.Err _) false])
       (match (compiler-load-source-with-paths-and-roots-cfg
         "src/main.tl"
         enabled-source
         (sym-i64-empty)
         (vector.string-vec-new)
         feature-cfg)
-        [(ErrCompilerLoadWithPaths _) true]
-        [(OkCompilerLoadWithPaths _ _ _ _) false]))))
+        [(ResultCompilerLoadWithPaths.Err _) true]
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
 
 (define (compiler-load-file-import-dedup-cycle-ok?) : bool
   (begin
@@ -6149,13 +6206,13 @@
     (match (compiler-load-file-with-paths
       "target/compiler_load_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ modules seen)
+      [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 11)
           (compiler-load-entry-cycle-modules? modules)
           (sym-i64-contains seen "smoke.entry")
           (sym-i64-contains seen "smoke.dep"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-module-restore-ok?) : bool
   (begin
@@ -6170,9 +6227,9 @@
     (match (compiler-load-file-with-paths
       "target/cl_restore_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-unmoduled-import-restored-decls? decls)]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-file-fallback-path-dedup-ok?) : bool
   (begin
@@ -6187,7 +6244,7 @@
     (match (compiler-load-file-with-paths
       "target/compiler_load_legacy_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ modules seen)
+      [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (match modules
@@ -6211,7 +6268,7 @@
                   [_ false]))]
             [_ false])
           (sym-i64-contains seen "target/compiler_load_legacy_dep.tl"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-alias-preserved-ok?) : bool
   (begin
@@ -6227,9 +6284,9 @@
     (match (compiler-load-file-with-paths
       "target/cl_alias_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-legacy-path-module-flat-alias-ok?) : bool
   (begin
@@ -6244,9 +6301,9 @@
     (match (compiler-load-file-with-paths
       "target/cl_legacy_module_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-seen-legacy-path-module-flat-alias-ok?) : bool
   (begin
@@ -6266,9 +6323,9 @@
     (match (compiler-load-file-with-paths
       "target/cl_seen_legacy_module_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "seen.legacy.dep" "")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-package-legacy-path-module-flat-alias-ok?) : bool
   (begin
@@ -6286,9 +6343,9 @@
       (vector.string-vec-new)
       "target"
       (compiler-pkg-deps-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "legacy.pkg.dep" "")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-package-seen-legacy-path-module-flat-alias-ok?) : bool
   (begin
@@ -6311,12 +6368,12 @@
       (vector.string-vec-new)
       "target"
       (compiler-pkg-deps-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias?
           decls
           "seen.legacy.pkg.dep"
           "")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-dotted-import-duplicate-alias-ok?) : bool
   (match (compiler-load-source
@@ -6326,11 +6383,11 @@
 (import other.one)
 (define (main) : i64 0)"
     (sym-i64-empty))
-    [(ErrCompilerLoad diag)
+    [(ResultCompilerLoad.Err diag)
       (string.string-eq
         (compiler-diagnostic-message (box-get diag))
         "compiler-load: duplicate module import alias one")]
-    [(OkCompilerLoad _ _) false]))
+    [(ResultCompilerLoad.Ok _ _) false]))
 
 (define (compiler-load-dotted-import-resolution-ok?) : bool
   (and
@@ -6341,14 +6398,15 @@
       "src/"
       "app.lib"
       (vector.string-vec-new))
-      [(OkPkgResolve path) (string.string-eq path "src/app/lib.tl")]
-      [(ErrPkgResolve _) false])
+      [(ResultPkgResolve.Ok path) (string.string-eq path "src/app/lib.tl")]
+      [(ResultPkgResolve.Err _) false])
     (match (compiler-load-resolve-module-import-with-roots
       "src/"
       "stdlib.core_macros"
       (vector.string-vec-new))
-      [(OkPkgResolve path) (string.string-eq path "stdlib/core_macros.tl")]
-      [(ErrPkgResolve _) false])))
+      [(ResultPkgResolve.Ok path)
+        (string.string-eq path "stdlib/core_macros.tl")]
+      [(ResultPkgResolve.Err _) false])))
 
 (define (compiler-load-test-mkdir-direct [path : String]) : bool
   (match (fs.try-mkdir-if-missing (& path))
@@ -6392,8 +6450,8 @@
             "target/cl_cache_entry_a.tl"
             (sym-i64-empty)
             roots)
-            [(OkCompilerLoadWithPaths _ _ _ _) true]
-            [(ErrCompilerLoadWithPaths _) false])
+            [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+            [(ResultCompilerLoadWithPaths.Err _) false])
             (begin
               (compiler-load-session-reset-pools!)
               (compiler-load-session-reset-interns!)
@@ -6401,13 +6459,13 @@
                 "target/cl_cache_entry_b.tl"
                 (sym-i64-empty)
                 roots)
-                [(OkCompilerLoadWithPaths _ _ _ _)
+                [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (set!
                     ok
                     (and
                       (> (compiler-load-program-cache-hit-count-value) 0)
                       (>= (compiler-load-program-cache-store-count-value) 1)))]
-                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+                [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))
             (set! ok false))
           (compiler-load-session-cache-disable-for-test!)
           ok)))))
@@ -6453,8 +6511,8 @@
             "target/cl_cache_root_entry_a.tl"
             (sym-i64-empty)
             roots-a)
-            [(OkCompilerLoadWithPaths _ _ _ _) true]
-            [(ErrCompilerLoadWithPaths _) false])
+            [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+            [(ResultCompilerLoadWithPaths.Err _) false])
             (begin
               (compiler-load-session-reset-pools!)
               (compiler-load-session-reset-interns!)
@@ -6462,8 +6520,8 @@
                 "target/cl_cache_root_entry_b.tl"
                 (sym-i64-empty)
                 roots-b)
-                [(OkCompilerLoadWithPaths _ _ _ _) (set! ok true)]
-                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+                [(ResultCompilerLoadWithPaths.Ok _ _ _ _) (set! ok true)]
+                [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))
             (set! ok false))
           (compiler-load-session-cache-disable-for-test!)
           ok)))))
@@ -6484,8 +6542,8 @@
           (sym-i64-empty)
           (vector.string-vec-new)
           (compiler-cfg-empty))
-          [(OkCompilerLoadWithPaths _ _ _ _) true]
-          [(ErrCompilerLoadWithPaths _) false])
+          [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+          [(ResultCompilerLoadWithPaths.Err _) false])
           (begin
             (compiler-load-session-reset-pools!)
             (compiler-load-session-reset-interns!)
@@ -6494,13 +6552,13 @@
               (sym-i64-empty)
               (vector.string-vec-new)
               (compiler-cfg-empty))
-              [(OkCompilerLoadWithPaths _ _ _ _)
+              [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                 (set!
                   ok
                   (and
                     (= (compiler-load-program-cache-hit-count-value) 0)
                     (= (compiler-load-program-cache-store-count-value) 0)))]
-              [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+              [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))
           (set! ok false))
         (compiler-load-session-cache-disable-for-test!)
         ok))))
@@ -6582,8 +6640,8 @@
             (sym-i64-empty)
             (vector.string-vec-new)
             (compiler-cfg-empty))
-            [(OkCompilerLoadWithPaths _ _ _ _) true]
-            [(ErrCompilerLoadWithPaths _) false])
+            [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+            [(ResultCompilerLoadWithPaths.Err _) false])
             (begin
               (compiler-load-session-reset-pools!)
               (compiler-load-session-reset-interns!)
@@ -6592,7 +6650,7 @@
                 (sym-i64-empty)
                 (vector.string-vec-new)
                 (compiler-cfg-empty))
-                [(OkCompilerLoadWithPaths _ _ _ _)
+                [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (begin
                     (compiler-load-session-reset-pools!)
                     (compiler-load-session-reset-interns!)
@@ -6601,7 +6659,7 @@
                       (sym-i64-empty)
                       (vector.string-vec-new)
                       (compiler-cfg-empty))
-                      [(OkCompilerLoadWithPaths _ _ _ _)
+                      [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                         (set!
                           ok
                           (and
@@ -6609,8 +6667,8 @@
                             (>=
                               (compiler-load-program-cache-store-count-value)
                               1)))]
-                      [(ErrCompilerLoadWithPaths _) (set! ok false)]))]
-                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+                      [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))]
+                [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))
             (set! ok false))
           (compiler-load-session-cache-disable-for-test!)
           ok)))))
@@ -6658,8 +6716,8 @@
             root
             deps
             (compiler-cfg-empty))
-            [(OkCompilerLoadWithPaths _ _ _ _) true]
-            [(ErrCompilerLoadWithPaths _) false])
+            [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
+            [(ResultCompilerLoadWithPaths.Err _) false])
             (begin
               (compiler-load-session-reset-pools!)
               (compiler-load-session-reset-interns!)
@@ -6670,7 +6728,7 @@
                 root
                 deps
                 (compiler-cfg-empty))
-                [(OkCompilerLoadWithPaths _ _ _ _)
+                [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (begin
                     (compiler-load-session-reset-pools!)
                     (compiler-load-session-reset-interns!)
@@ -6681,7 +6739,7 @@
                       root
                       deps
                       (compiler-cfg-empty))
-                      [(OkCompilerLoadWithPaths _ _ _ _)
+                      [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                         (set!
                           ok
                           (and
@@ -6689,8 +6747,8 @@
                             (>=
                               (compiler-load-program-cache-store-count-value)
                               1)))]
-                      [(ErrCompilerLoadWithPaths _) (set! ok false)]))]
-                [(ErrCompilerLoadWithPaths _) (set! ok false)]))
+                      [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))]
+                [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))
             (set! ok false))
           (compiler-load-session-cache-disable-for-test!)
           ok)))))
@@ -6716,12 +6774,12 @@
     (match (compiler-load-file-with-paths
       "target/cl_dotted_src/entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths _ _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (sym-i64-contains seen "dotted.entry")
           (sym-i64-contains seen "nested.dep")
           (sym-i64-contains seen "root_leaf"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-dotted-source-root-fallback-ok?) : bool
   (let
@@ -6752,12 +6810,12 @@
         entry
         (sym-i64-empty)
         roots)
-        [(OkCompilerLoadWithPaths _ _ _ seen)
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (sym-i64-contains seen "fallback.entry")
             (sym-i64-contains seen "mid")
             (sym-i64-contains seen "leaf"))]
-        [(ErrCompilerLoadWithPaths _) false]))))
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-package-dotted-import-resolution-ok?) : bool
   (let
@@ -6770,8 +6828,8 @@
         (vector.string-vec-new)
         "proj"
         deps)
-        [(OkPkgResolve path) (string.string-eq path "proj/app/lib.tl")]
-        [(ErrPkgResolve _) false])
+        [(ResultPkgResolve.Ok path) (string.string-eq path "proj/app/lib.tl")]
+        [(ResultPkgResolve.Err _) false])
       (match (compiler-load-resolve-package-import-spec
         "proj/src/main.tl"
         (AstImportModule)
@@ -6779,8 +6837,8 @@
         (vector.string-vec-new)
         "proj"
         deps)
-        [(OkPkgResolve path) (string.string-eq path "math/src/add.tl")]
-        [(ErrPkgResolve _) false])
+        [(ResultPkgResolve.Ok path) (string.string-eq path "math/src/add.tl")]
+        [(ResultPkgResolve.Err _) false])
       (compiler-load-package-import-externs?
         (AstImportModule)
         "math.src.add"
@@ -6859,14 +6917,14 @@
     (match (compiler-load-file-with-paths
       "target/cl_diamond_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 17)
           (sym-i64-contains seen "diamond.c")
           (sym-i64-contains seen "diamond.a")
           (sym-i64-contains seen "diamond.b")
           (sym-i64-contains seen "diamond.entry"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; Transitive import dedup (#1074 / #1041): entry imports A, A imports B, B
 ;; imports C; the whole chain loads with the deterministic loaded decl count and
@@ -6893,14 +6951,14 @@
     (match (compiler-load-file-with-paths
       "target/cl_tr_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ seen)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 14)
           (sym-i64-contains seen "tr.c")
           (sym-i64-contains seen "tr.b")
           (sym-i64-contains seen "tr.a")
           (sym-i64-contains seen "tr.entry"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; An `(import ...)` of a path that does not resolve to a readable file reports
 ;; a `cannot read import <path>` diagnostic (the imported-file diagnostic; #1074).
@@ -6910,11 +6968,11 @@
     "(import \"no_such_module_xyz.tl\")
 (define value : i64 1)"
     (sym-i64-empty))
-    [(ErrCompilerLoad diag)
+    [(ResultCompilerLoad.Err diag)
       (string.string-eq
         (compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read import src/no_such_module_xyz.tl")]
-    [(OkCompilerLoad _ _) false]))
+    [(ResultCompilerLoad.Ok _ _) false]))
 
 (define (compiler-load-include-str-relative-ok?) : bool
   (begin
@@ -6926,11 +6984,11 @@
     (match (compiler-load-file-with-paths
       "target/cl_include_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (compiler-load-first-string-def? decls "payload" "hello from include"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-include-str-stdlib-root-ok?) : bool
   (begin
@@ -6941,11 +6999,11 @@
 (define (main) : i64 0)"
       (sym-i64-empty)
       (vector.string-vec-push (vector.string-vec-new) "target"))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (compiler-load-first-string-def? decls "embedded" "hello from root"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-missing-include-str-ok?) : bool
   (match (compiler-load-source
@@ -6953,11 +7011,11 @@
     "(include-str missing \"no_such_resource_xyz.txt\")
 (define value : i64 1)"
     (sym-i64-empty))
-    [(ErrCompilerLoad diag)
+    [(ResultCompilerLoad.Err diag)
       (string.string-eq
         (compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read include-str no_such_resource_xyz.txt from src/app.tl (resolved src/no_such_resource_xyz.txt)")]
-    [(OkCompilerLoad _ _) false]))
+    [(ResultCompilerLoad.Ok _ _) false]))
 
 (define (compiler-load-include-str-raw-text-ok?) : bool
   (let
@@ -6973,11 +7031,11 @@
       (match (compiler-load-file-with-paths
         "target/cl_include_raw_entry.tl"
         (sym-i64-empty))
-        [(OkCompilerLoadWithPaths decls _ _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (and
             (= (compiler-load-decl-list-count decls) 2)
             (compiler-load-first-string-def? decls "payload" payload))]
-        [(ErrCompilerLoadWithPaths _) false]))))
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-include-bin-relative-ok?) : bool
   (begin
@@ -6991,11 +7049,11 @@
     (match (compiler-load-file-with-paths
       "target/cl_include_bin_entry.tl"
       (sym-i64-empty))
-      [(OkCompilerLoadWithPaths decls _ _ _)
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (compiler-load-first-bin-def? decls "payload"))]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-missing-include-bin-ok?) : bool
   (match (compiler-load-source
@@ -7003,11 +7061,11 @@
     "(include-bin missing \"no_such_resource_xyz.bin\")
 (define value : i64 1)"
     (sym-i64-empty))
-    [(ErrCompilerLoad diag)
+    [(ResultCompilerLoad.Err diag)
       (string.string-eq
         (compiler-diagnostic-message (box-get diag))
         "compiler-load: cannot read include-bin no_such_resource_xyz.bin from src/app.tl (resolved src/no_such_resource_xyz.bin)")]
-    [(OkCompilerLoad _ _) false]))
+    [(ResultCompilerLoad.Ok _ _) false]))
 
 (define (compiler-load-embedded-stdlib-lookup-ok?) : bool
   (match (compiler-load-embedded-stdlib-source "string.tl")
@@ -7017,9 +7075,9 @@
         source
         (sym-i64-empty)
         (vector.string-vec-new))
-        [(OkCompilerLoadWithPaths decls _ _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (> (compiler-load-decl-list-count decls) 0)]
-        [(ErrCompilerLoadWithPaths _) false])]
+        [(ResultCompilerLoadWithPaths.Err _) false])]
     [(CompilerEmbeddedStdlibNoSource) false]))
 
 (define (compiler-load-embedded-stdlib-missing-ok?) : bool
@@ -7048,7 +7106,7 @@
     (match (compiler-load-file-with-paths
       "target/cl_ipe_entry.tl"
       (sym-i64-empty))
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.string-eq
             (compiler-diagnostic-path (box-get diag))
@@ -7056,7 +7114,7 @@
           (string.string-eq
             (compiler-diagnostic-message (box-get diag))
             "parse: malformed value definition"))]
-      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 ;; A duplicate `(module ...)` declaration inside an imported file surfaces a
 ;; diagnostic whose path is the imported file, not the importer (#1074).
@@ -7075,7 +7133,7 @@
     (match (compiler-load-file-with-paths
       "target/cl_idm_entry.tl"
       (sym-i64-empty))
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.string-eq
             (compiler-diagnostic-path (box-get diag))
@@ -7083,7 +7141,7 @@
           (string.string-eq
             (compiler-diagnostic-message (box-get diag))
             "compiler-load: duplicate module declaration"))]
-      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 ;; A `stdlib/<x>` import whose importer-relative path is absent resolves through
 ;; a configured `--stdlib-root` (root fallback) (#1074).
@@ -7100,8 +7158,9 @@
       "target/cl_srf_entry.tl"
       (sym-i64-empty)
       (vector.string-vec-push (vector.string-vec-new) "target"))
-      [(OkCompilerLoadWithPaths _ _ _ seen) (sym-i64-contains seen "srf.mod")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (sym-i64-contains seen "srf.mod")]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; `--stdlib-root` resolution searches roots in order; the first existing
 ;; candidate wins, so a missing leading root is skipped (#1074).
@@ -7122,8 +7181,9 @@
           (vector.string-vec-new)
           "target/cl_ssr_absent_root")
         "target"))
-      [(OkCompilerLoadWithPaths _ _ _ seen) (sym-i64-contains seen "ssr.mod")]
-      [(ErrCompilerLoadWithPaths _) false])))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (sym-i64-contains seen "ssr.mod")]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; A `stdlib/<x>` import found in no configured root reports a cannot-read
 ;; diagnostic naming the importer-relative candidate path (#1074).
@@ -7138,11 +7198,11 @@
       "target/cl_sur_entry.tl"
       (sym-i64-empty)
       (vector.string-vec-push (vector.string-vec-new) "target"))
-      [(ErrCompilerLoadWithPaths diag)
+      [(ResultCompilerLoadWithPaths.Err diag)
         (string.string-eq
           (compiler-diagnostic-message (box-get diag))
           "compiler-load: cannot read import target/stdlib/cl_sur_missing.tl")]
-      [(OkCompilerLoadWithPaths _ _ _ _) false])))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false])))
 
 ;; A configured stdlib root must not serve a suffix that lexically escapes the
 ;; root with `..` (#1681).
@@ -7166,8 +7226,8 @@
         "target/cl_sre_entry_dir/entry.tl"
         (sym-i64-empty)
         (vector.string-vec-push (vector.string-vec-new) "target/cl_sre_root"))
-        [(ErrCompilerLoadWithPaths _) true]
-        [(OkCompilerLoadWithPaths _ _ _ _) false]))))
+        [(ResultCompilerLoadWithPaths.Err _) true]
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))
 
 ;: --- typelisp.pkg manifest parser (#834, slice 1) ---------------------------
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form
@@ -7213,13 +7273,13 @@
   (windows CompilerPkgLinkSet))
 
 (defenum ResultCompilerPkgLink
-  (OkCompilerPkgLink CompilerPkgLink)
-  (ErrCompilerPkgLink String))
+  (Ok CompilerPkgLink)
+  (Err String))
 
 ;: Internal: a parsed list of `link` field string values, or a diagnostic.
 (defenum ResultPkgStrVec
-  (OkPkgStrVec vector.StringVec)
-  (ErrPkgStrVec String))
+  (Ok vector.StringVec)
+  (Err String))
 
 (defstruct CompilerPkgManifest
   (name String)
@@ -7231,28 +7291,28 @@
 
 ;: Parse result: the manifest or a legacy string diagnostic.
 (defenum ResultCompilerPkgManifest
-  (OkCompilerPkgManifest CompilerPkgManifest)
-  (ErrCompilerPkgManifest String))
+  (Ok CompilerPkgManifest)
+  (Err String))
 
 ;: Source-facing parse result: the manifest or a path/span-bearing diagnostic.
 (defenum ResultCompilerPkgManifestDiagnostic
-  (OkCompilerPkgManifestDiagnostic CompilerPkgManifest)
-  (ErrCompilerPkgManifestDiagnostic (Box CompilerDiagnostic)))
+  (Ok CompilerPkgManifest)
+  (Err (Box CompilerDiagnostic)))
 
 ;: Internal: a single extracted string field value, or a diagnostic.
 (defenum ResultPkgString
-  (OkPkgString String)
-  (ErrPkgString String))
+  (Ok String)
+  (Err String))
 
 ;: Internal: a parsed package kind, or a diagnostic.
 (defenum ResultCompilerPkgKind
-  (OkCompilerPkgKind CompilerPkgKind)
-  (ErrCompilerPkgKind String))
+  (Ok CompilerPkgKind)
+  (Err String))
 
 ;: Internal: parsed dependencies, or a diagnostic.
 (defenum ResultCompilerPkgDeps
-  (OkCompilerPkgDeps CompilerPkgDeps)
-  (ErrCompilerPkgDeps String))
+  (Ok CompilerPkgDeps)
+  (Err String))
 
 ;: Count the dependencies in a parsed list.
 (define (compiler-pkg-dep-list-count [deps : CompilerPkgDepList]) : i64
@@ -7352,7 +7412,7 @@
     address))
 
 (define (compiler-load-github-address-error [alias : String]) : ResultPkgString
-  (ErrPkgString
+  (ResultPkgString.Err
     (string.string-append
       "manifest dependency `"
       (string.string-append
@@ -7387,7 +7447,7 @@
           [(not (compiler-load-github-component-valid? repo))
             (compiler-load-github-address-error alias)]
           [else
-            (OkPkgString
+            (ResultPkgString.Ok
               (string.string-append
                 "https://github.com/"
                 (string.string-append
@@ -7412,19 +7472,19 @@
       (match (box-get vhead)
         [(SStr val)
           (match (box-get vrest)
-            [(SNil) (OkPkgString val)]
+            [(SNil) (ResultPkgString.Ok val)]
             [_
-              (ErrPkgString
+              (ResultPkgString.Err
                 (string.string-append
                   "manifest field `"
                   (string.string-append fname "` takes a single string value")))])]
         [_
-          (ErrPkgString
+          (ResultPkgString.Err
             (string.string-append
               "manifest field `"
               (string.string-append fname "` must have a string value")))])]
     [_
-      (ErrPkgString
+      (ResultPkgString.Err
         (string.string-append
           "manifest field `"
           (string.string-append fname "` must have a string value")))]))
@@ -7445,7 +7505,7 @@
                     (match (box-get pin-value-node)
                       [(SStr pin-value)
                         (if (string.string-eq pin-value "")
-                          (ErrPkgString
+                          (ResultPkgString.Err
                             (string.string-append
                               "manifest dependency `"
                               (string.string-append
@@ -7457,41 +7517,41 @@
                             pin-kind
                             pin-value))]
                       [_
-                        (ErrPkgString
+                        (ResultPkgString.Err
                           (string.string-append
                             "manifest dependency `"
                             (string.string-append
                               alias
                               "` github pin must be a single string value")))])]
                   [_
-                    (ErrPkgString
+                    (ResultPkgString.Err
                       (string.string-append
                         "manifest dependency `"
                         (string.string-append
                           alias
                           "` github pin must be a single string value")))])]
               [_
-                (ErrPkgString
+                (ResultPkgString.Err
                   (string.string-append
                     "manifest dependency `"
                     (string.string-append
                       alias
                       "` github pin must be a single string value")))])
-            (ErrPkgString
+            (ResultPkgString.Err
               (string.string-append
                 "manifest dependency `"
                 (string.string-append
                   alias
                   "` github pin must be rev, tag, or branch"))))]
         [_
-          (ErrPkgString
+          (ResultPkgString.Err
             (string.string-append
               "manifest dependency `"
               (string.string-append
                 alias
                 "` github source requires exactly one rev, tag, or branch pin")))])]
     [_
-      (ErrPkgString
+      (ResultPkgString.Err
         (string.string-append
           "manifest dependency `"
           (string.string-append
@@ -7514,28 +7574,28 @@
                     address
                     (box-get pin-form))]
                 [_
-                  (ErrPkgString
+                  (ResultPkgString.Err
                     (string.string-append
                       "manifest dependency `"
                       (string.string-append
                         alias
                         "` github source requires exactly one rev, tag, or branch pin")))])]
             [_
-              (ErrPkgString
+              (ResultPkgString.Err
                 (string.string-append
                   "manifest dependency `"
                   (string.string-append
                     alias
                     "` github source requires exactly one rev, tag, or branch pin")))])]
         [_
-          (ErrPkgString
+          (ResultPkgString.Err
             (string.string-append
               "manifest dependency `"
               (string.string-append
                 alias
                 "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))])]
     [_
-      (ErrPkgString
+      (ResultPkgString.Err
         (string.string-append
           "manifest dependency `"
           (string.string-append
@@ -7550,7 +7610,7 @@
       (match (box-get vrest)
         [(SNil)
           (match (box-get vhead)
-            [(SStr path) (OkPkgString path)]
+            [(SStr path) (ResultPkgString.Ok path)]
             [(SCons source-kind-node source-tail)
               (match (box-get source-kind-node)
                 [(SSym source-kind)
@@ -7558,35 +7618,35 @@
                     (compiler-load-manifest-github-value
                       alias
                       (box-get source-tail))
-                    (ErrPkgString
+                    (ResultPkgString.Err
                       (string.string-append
                         "manifest dependency `"
                         (string.string-append
                           alias
                           "` must be a path string or github source"))))]
                 [_
-                  (ErrPkgString
+                  (ResultPkgString.Err
                     (string.string-append
                       "manifest dependency `"
                       (string.string-append
                         alias
                         "` must be a path string or github source")))])]
             [_
-              (ErrPkgString
+              (ResultPkgString.Err
                 (string.string-append
                   "manifest dependency `"
                   (string.string-append
                     alias
                     "` must be a path string or github source")))])]
         [_
-          (ErrPkgString
+          (ResultPkgString.Err
             (string.string-append
               "manifest dependency `"
               (string.string-append
                 alias
                 "` takes a single path string or github source")))])]
     [_
-      (ErrPkgString
+      (ResultPkgString.Err
         (string.string-append
           "manifest dependency `"
           (string.string-append
@@ -7595,10 +7655,10 @@
 
 (define (compiler-load-manifest-kind-token [val : String]) : ResultCompilerPkgKind
   (if (string.string-eq val "bin")
-    (OkCompilerPkgKind (CompilerPkgKindBin))
+    (ResultCompilerPkgKind.Ok (CompilerPkgKindBin))
     (if (or (string.string-eq val "staticlib") (string.string-eq val "lib"))
-      (OkCompilerPkgKind (CompilerPkgKindLib))
-      (ErrCompilerPkgKind
+      (ResultCompilerPkgKind.Ok (CompilerPkgKindLib))
+      (ResultCompilerPkgKind.Err
         "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
 
 (define (compiler-load-manifest-kind-value [ftail : Sexpr]) : ResultCompilerPkgKind
@@ -7610,11 +7670,13 @@
             [(SStr val) (compiler-load-manifest-kind-token val)]
             [(SSym val) (compiler-load-manifest-kind-token val)]
             [_
-              (ErrCompilerPkgKind
+              (ResultCompilerPkgKind.Err
                 "manifest field `kind` must have a string or symbol value")])]
-        [_ (ErrCompilerPkgKind "manifest field `kind` takes a single value")])]
+        [_
+          (ResultCompilerPkgKind.Err
+            "manifest field `kind` takes a single value")])]
     [_
-      (ErrCompilerPkgKind
+      (ResultCompilerPkgKind.Err
         "manifest field `kind` must have a string or symbol value")]))
 
 (define (compiler-load-manifest-cons-dep
@@ -7623,30 +7685,31 @@
   [rest : Sexpr]) : ResultCompilerPkgDeps
   (cond
     [(string.string-eq alias "")
-      (ErrCompilerPkgDeps "dependency alias must not be empty")]
+      (ResultCompilerPkgDeps.Err "dependency alias must not be empty")]
     [(not (compiler-load-package-token-valid? alias))
-      (ErrCompilerPkgDeps
+      (ResultCompilerPkgDeps.Err
         "dependency alias may only contain ASCII letters, digits, '-' and '_'")]
     [(string.string-eq path "")
-      (ErrCompilerPkgDeps
+      (ResultCompilerPkgDeps.Err
         (string.string-append
           "manifest dependency `"
           (string.string-append alias "` path must not be empty")))]
     [else
       (match (compiler-load-manifest-parse-deps rest)
-        [(ErrCompilerPkgDeps m) (ErrCompilerPkgDeps m)]
-        [(OkCompilerPkgDeps tail-deps)
+        [(ResultCompilerPkgDeps.Err m) (ResultCompilerPkgDeps.Err m)]
+        [(ResultCompilerPkgDeps.Ok tail-deps)
           (if (compiler-pkg-deps-alias-seen? tail-deps alias)
-            (ErrCompilerPkgDeps
+            (ResultCompilerPkgDeps.Err
               (string.string-append
                 "duplicate dependency alias `"
                 (string.string-append alias "`")))
-            (OkCompilerPkgDeps (compiler-pkg-deps-cons alias path tail-deps)))])]))
+            (ResultCompilerPkgDeps.Ok
+              (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDeps
   (match entries
-    [(SNil) (OkCompilerPkgDeps (compiler-pkg-deps-empty))]
+    [(SNil) (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
     [(SCons entry rest)
       (match (box-get entry)
         [(SCons ehead etail)
@@ -7655,17 +7718,17 @@
               (match (compiler-load-manifest-dependency-value
                 (box-get etail)
                 alias)
-                [(ErrPkgString m) (ErrCompilerPkgDeps m)]
-                [(OkPkgString path)
+                [(ResultPkgString.Err m) (ResultCompilerPkgDeps.Err m)]
+                [(ResultPkgString.Ok path)
                   (compiler-load-manifest-cons-dep alias path (box-get rest))])]
             [_
-              (ErrCompilerPkgDeps
+              (ResultCompilerPkgDeps.Err
                 "dependency entries must start with an alias name")])]
         [_
-          (ErrCompilerPkgDeps
+          (ResultCompilerPkgDeps.Err
             "dependency entries must be lists like `(alias \"path\")`")])]
     [_
-      (ErrCompilerPkgDeps
+      (ResultCompilerPkgDeps.Err
         "`dependencies` must be a list of `(alias \"path\")` or `(alias (github ...))` entries")]))
 
 ;: An empty link scope (no libraries, search paths, or args).
@@ -7782,16 +7845,16 @@
   (match values
     [(SNil)
       (if (= (vector.string-vec-len acc) 0)
-        (ErrPkgStrVec
+        (ResultPkgStrVec.Err
           (string.string-append
             "`link` field `"
             (string.string-append fname "` requires at least one value")))
-        (OkPkgStrVec acc))]
+        (ResultPkgStrVec.Ok acc))]
     [(SCons vhead vrest)
       (match (box-get vhead)
         [(SStr val)
           (if (string.string-eq val "")
-            (ErrPkgStrVec
+            (ResultPkgStrVec.Err
               (string.string-append
                 "`link` field `"
                 (string.string-append fname "` values must not be empty")))
@@ -7800,12 +7863,12 @@
               fname
               (vector.string-vec-push acc val)))]
         [_
-          (ErrPkgStrVec
+          (ResultPkgStrVec.Err
             (string.string-append
               "`link` field `"
               (string.string-append fname "` values must be strings")))])]
     [_
-      (ErrPkgStrVec
+      (ResultPkgStrVec.Err
         (string.string-append
           "`link` field `"
           (string.string-append fname "` must be a list of string values")))]))
@@ -7820,25 +7883,26 @@
     [scope : i64 (compiler-load-link-field-scope fname)]
     [cat : i64 (compiler-load-link-field-category fname)]
     (if (or (< scope 0) (< cat 0))
-      (ErrCompilerPkgLink
+      (ResultCompilerPkgLink.Err
         (string.string-append
           "unknown `link` field `"
           (string.string-append fname "`")))
       (if (>
         (vector.string-vec-len (compiler-pkg-link-get-vec acc scope cat))
         0)
-        (ErrCompilerPkgLink
+        (ResultCompilerPkgLink.Err
           (string.string-append
             "duplicate `link` field `"
             (string.string-append fname "`")))
-        (OkCompilerPkgLink (compiler-pkg-link-set-vec acc scope cat values))))))
+        (ResultCompilerPkgLink.Ok
+          (compiler-pkg-link-set-vec acc scope cat values))))))
 
 ;: Walk the `(field "...")` entries of a `(link ...)` section.
 (define (compiler-load-manifest-parse-link-into
   [entries : Sexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
   (match entries
-    [(SNil) (OkCompilerPkgLink acc)]
+    [(SNil) (ResultCompilerPkgLink.Ok acc)]
     [(SCons entry rest)
       (match (box-get entry)
         [(SCons ehead etail)
@@ -7848,21 +7912,24 @@
                 (box-get etail)
                 fname
                 (vector.string-vec-new))
-                [(ErrPkgStrVec m) (ErrCompilerPkgLink m)]
-                [(OkPkgStrVec values)
+                [(ResultPkgStrVec.Err m) (ResultCompilerPkgLink.Err m)]
+                [(ResultPkgStrVec.Ok values)
                   (match (compiler-load-manifest-link-store acc fname values)
-                    [(ErrCompilerPkgLink m) (ErrCompilerPkgLink m)]
-                    [(OkCompilerPkgLink acc2)
+                    [(ResultCompilerPkgLink.Err m)
+                      (ResultCompilerPkgLink.Err m)]
+                    [(ResultCompilerPkgLink.Ok acc2)
                       (compiler-load-manifest-parse-link-into
                         (box-get rest)
                         acc2)])])]
             [_
-              (ErrCompilerPkgLink "`link` entries must start with a field name")])]
+              (ResultCompilerPkgLink.Err
+                "`link` entries must start with a field name")])]
         [_
-          (ErrCompilerPkgLink
+          (ResultCompilerPkgLink.Err
             "`link` entries must be lists like `(libraries \"...\")`")])]
     [_
-      (ErrCompilerPkgLink "`link` must be a list of `(field \"...\")` entries")]))
+      (ResultCompilerPkgLink.Err
+        "`link` must be a list of `(field \"...\")` entries")]))
 
 ;: Parse a `(link ...)` manifest section into a CompilerPkgLink.
 (define (compiler-load-manifest-parse-link [entries : Sexpr]) : ResultCompilerPkgLink
@@ -7910,24 +7977,28 @@
             (compiler-load-manifest-default-entry kind))]
         (cond
           [(not has-name)
-            (ErrCompilerPkgManifest "manifest missing required field `name`")]
+            (ResultCompilerPkgManifest.Err
+              "manifest missing required field `name`")]
           [(string.string-eq name "")
-            (ErrCompilerPkgManifest "manifest field `name` must not be empty")]
+            (ResultCompilerPkgManifest.Err
+              "manifest field `name` must not be empty")]
           [(not (compiler-load-package-token-valid? name))
-            (ErrCompilerPkgManifest
+            (ResultCompilerPkgManifest.Err
               "manifest field `name` may only contain ASCII letters, digits, '-' and '_'")]
           [(not has-version)
-            (ErrCompilerPkgManifest "manifest missing required field `version`")]
+            (ResultCompilerPkgManifest.Err
+              "manifest missing required field `version`")]
           [(string.string-eq version "")
-            (ErrCompilerPkgManifest
+            (ResultCompilerPkgManifest.Err
               "manifest field `version` must not be empty")]
           [(string.string-eq final-entry "")
-            (ErrCompilerPkgManifest "manifest field `entry` must not be empty")]
+            (ResultCompilerPkgManifest.Err
+              "manifest field `entry` must not be empty")]
           [(not (compiler-load-normal-relative-entry? final-entry))
-            (ErrCompilerPkgManifest
+            (ResultCompilerPkgManifest.Err
               "manifest field `entry` must be a normal relative path below the manifest directory")]
           [else
-            (OkCompilerPkgManifest
+            (ResultCompilerPkgManifest.Ok
               (CompilerPkgManifest name version kind final-entry deps link))]))]
     [(SCons field rest)
       (match (box-get field)
@@ -7937,11 +8008,12 @@
               (cond
                 [(string.string-eq fname "dependencies")
                   (if has-deps
-                    (ErrCompilerPkgManifest
+                    (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `dependencies`")
                     (match (compiler-load-manifest-parse-deps (box-get ftail))
-                      [(ErrCompilerPkgDeps m) (ErrCompilerPkgManifest m)]
-                      [(OkCompilerPkgDeps parsed-deps)
+                      [(ResultCompilerPkgDeps.Err m)
+                        (ResultCompilerPkgManifest.Err m)]
+                      [(ResultCompilerPkgDeps.Ok parsed-deps)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           name
@@ -7958,10 +8030,12 @@
                           link)]))]
                 [(string.string-eq fname "link")
                   (if has-link
-                    (ErrCompilerPkgManifest "duplicate manifest field `link`")
+                    (ResultCompilerPkgManifest.Err
+                      "duplicate manifest field `link`")
                     (match (compiler-load-manifest-parse-link (box-get ftail))
-                      [(ErrCompilerPkgLink m) (ErrCompilerPkgManifest m)]
-                      [(OkCompilerPkgLink parsed-link)
+                      [(ResultCompilerPkgLink.Err m)
+                        (ResultCompilerPkgManifest.Err m)]
+                      [(ResultCompilerPkgLink.Ok parsed-link)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           name
@@ -7978,12 +8052,14 @@
                           parsed-link)]))]
                 [(string.string-eq fname "name")
                   (if has-name
-                    (ErrCompilerPkgManifest "duplicate manifest field `name`")
+                    (ResultCompilerPkgManifest.Err
+                      "duplicate manifest field `name`")
                     (match (compiler-load-manifest-string-value
                       (box-get ftail)
                       fname)
-                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
-                      [(OkPkgString val)
+                      [(ResultPkgString.Err m)
+                        (ResultCompilerPkgManifest.Err m)]
+                      [(ResultPkgString.Ok val)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           val
@@ -8000,13 +8076,14 @@
                           link)]))]
                 [(string.string-eq fname "version")
                   (if has-version
-                    (ErrCompilerPkgManifest
+                    (ResultCompilerPkgManifest.Err
                       "duplicate manifest field `version`")
                     (match (compiler-load-manifest-string-value
                       (box-get ftail)
                       fname)
-                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
-                      [(OkPkgString val)
+                      [(ResultPkgString.Err m)
+                        (ResultCompilerPkgManifest.Err m)]
+                      [(ResultPkgString.Ok val)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           name
@@ -8023,10 +8100,12 @@
                           link)]))]
                 [(string.string-eq fname "kind")
                   (if has-kind
-                    (ErrCompilerPkgManifest "duplicate manifest field `kind`")
+                    (ResultCompilerPkgManifest.Err
+                      "duplicate manifest field `kind`")
                     (match (compiler-load-manifest-kind-value (box-get ftail))
-                      [(ErrCompilerPkgKind m) (ErrCompilerPkgManifest m)]
-                      [(OkCompilerPkgKind val)
+                      [(ResultCompilerPkgKind.Err m)
+                        (ResultCompilerPkgManifest.Err m)]
+                      [(ResultCompilerPkgKind.Ok val)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           name
@@ -8043,12 +8122,14 @@
                           link)]))]
                 [(string.string-eq fname "entry")
                   (if has-entry
-                    (ErrCompilerPkgManifest "duplicate manifest field `entry`")
+                    (ResultCompilerPkgManifest.Err
+                      "duplicate manifest field `entry`")
                     (match (compiler-load-manifest-string-value
                       (box-get ftail)
                       fname)
-                      [(ErrPkgString m) (ErrCompilerPkgManifest m)]
-                      [(OkPkgString val)
+                      [(ResultPkgString.Err m)
+                        (ResultCompilerPkgManifest.Err m)]
+                      [(ResultPkgString.Ok val)
                         (compiler-load-manifest-fields
                           (box-get rest)
                           name
@@ -8064,18 +8145,18 @@
                           has-link
                           link)]))]
                 [else
-                  (ErrCompilerPkgManifest
+                  (ResultCompilerPkgManifest.Err
                     (string.string-append
                       "unknown manifest field `"
                       (string.string-append fname "`")))])]
             [_
-              (ErrCompilerPkgManifest
+              (ResultCompilerPkgManifest.Err
                 "package fields must start with a field name")])]
         [_
-          (ErrCompilerPkgManifest
+          (ResultCompilerPkgManifest.Err
             "package fields must be lists like `(name \"...\")`")])]
     [_
-      (ErrCompilerPkgManifest
+      (ResultCompilerPkgManifest.Err
         "package fields must be lists like `(name \"...\")`")]))
 
 ;: Parse the top-level `(package ...)` form.
@@ -8099,12 +8180,13 @@
               (compiler-pkg-deps-empty)
               false
               (compiler-pkg-link-empty))
-            (ErrCompilerPkgManifest
+            (ResultCompilerPkgManifest.Err
               (string.string-append
                 "expected `package` form, got `"
                 (string.string-append s "`"))))]
-        [_ (ErrCompilerPkgManifest "manifest must start with `package`")])]
-    [_ (ErrCompilerPkgManifest "manifest must be a `(package ...)` form")]))
+        [_ (ResultCompilerPkgManifest.Err "manifest must start with `package`")])]
+    [_
+      (ResultCompilerPkgManifest.Err "manifest must be a `(package ...)` form")]))
 
 (define (compiler-load-manifest-fields-have? [fields : Sexpr] [target : String]) : bool
   (match fields
@@ -8153,13 +8235,15 @@
       (io.file-exists?
         (compiler-load-manifest-convention-path manifest-path "src/lib.tl"))]
     (cond
-      [(and has-main (not has-lib)) (OkCompilerPkgKind (CompilerPkgKindBin))]
-      [(and has-lib (not has-main)) (OkCompilerPkgKind (CompilerPkgKindLib))]
+      [(and has-main (not has-lib))
+        (ResultCompilerPkgKind.Ok (CompilerPkgKindBin))]
+      [(and has-lib (not has-main))
+        (ResultCompilerPkgKind.Ok (CompilerPkgKindLib))]
       [(and has-main has-lib)
-        (ErrCompilerPkgKind
+        (ResultCompilerPkgKind.Err
           "manifest omits `kind` and `entry`, but both `src/main.tl` and `src/lib.tl` exist; add explicit `kind` or `entry`")]
       [else
-        (ErrCompilerPkgKind
+        (ResultCompilerPkgKind.Err
           "manifest omits `kind` and `entry`, but neither `src/main.tl` nor `src/lib.tl` exists; add `kind` and `entry` or create a conventional entry file")])))
 
 ;: Preserve the legacy `manifest: ...` syntax-error message while attaching the
@@ -8186,33 +8270,33 @@
     [raw-form : Sexpr (spanned-sexpr-form form)]
     (if (compiler-load-manifest-needs-kind-inference? raw-form)
       (match (compiler-load-manifest-infer-kind-from-files path)
-        [(OkCompilerPkgKind kind)
-          (OkCompilerPkgManifestDiagnostic
+        [(ResultCompilerPkgKind.Ok kind)
+          (ResultCompilerPkgManifestDiagnostic.Ok
             (compiler-load-manifest-with-kind manifest kind))]
-        [(ErrCompilerPkgKind message)
-          (ErrCompilerPkgManifestDiagnostic
+        [(ResultCompilerPkgKind.Err message)
+          (ResultCompilerPkgManifestDiagnostic.Err
             (box
               (compiler-load-manifest-validation-diagnostic path form message)))])
-      (OkCompilerPkgManifestDiagnostic manifest))))
+      (ResultCompilerPkgManifestDiagnostic.Ok manifest))))
 
 (define (compiler-load-parse-manifest-form-diagnostic
   [path : String]
   [form : SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
   (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
-    [(OkCompilerPkgManifest manifest)
-      (OkCompilerPkgManifestDiagnostic manifest)]
-    [(ErrCompilerPkgManifest message)
-      (ErrCompilerPkgManifestDiagnostic
+    [(ResultCompilerPkgManifest.Ok manifest)
+      (ResultCompilerPkgManifestDiagnostic.Ok manifest)]
+    [(ResultCompilerPkgManifest.Err message)
+      (ResultCompilerPkgManifestDiagnostic.Err
         (box (compiler-load-manifest-validation-diagnostic path form message)))]))
 
 (define (compiler-load-parse-manifest-form-diagnostic-infer-kind
   [path : String]
   [form : SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
   (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
-    [(OkCompilerPkgManifest manifest)
+    [(ResultCompilerPkgManifest.Ok manifest)
       (compiler-load-manifest-apply-kind-inference path form manifest)]
-    [(ErrCompilerPkgManifest message)
-      (ErrCompilerPkgManifestDiagnostic
+    [(ResultCompilerPkgManifest.Err message)
+      (ResultCompilerPkgManifestDiagnostic.Err
         (box (compiler-load-manifest-validation-diagnostic path form message)))]))
 
 ;: Parse a `typelisp.pkg` manifest source string into a structured manifest,
@@ -8224,12 +8308,12 @@
     (sp-node-pool-reset!)
     (match (lex-spanned-result source)
       [(ErrSpannedTokens err)
-        (ErrCompilerPkgManifestDiagnostic
+        (ResultCompilerPkgManifestDiagnostic.Err
           (box (compiler-load-manifest-source-error-diagnostic path err)))]
       [(OkSpannedTokens toks)
         (match (read-spanned-result toks)
           [(ErrSpannedSexpr err)
-            (ErrCompilerPkgManifestDiagnostic
+            (ResultCompilerPkgManifestDiagnostic.Err
               (box (compiler-load-manifest-source-error-diagnostic path err)))]
           [(OkSpannedSexpr form)
             (compiler-load-parse-manifest-form-diagnostic path form)])])))
@@ -8241,12 +8325,12 @@
     (sp-node-pool-reset!)
     (match (lex-spanned-result source)
       [(ErrSpannedTokens err)
-        (ErrCompilerPkgManifestDiagnostic
+        (ResultCompilerPkgManifestDiagnostic.Err
           (box (compiler-load-manifest-source-error-diagnostic path err)))]
       [(OkSpannedTokens toks)
         (match (read-spanned-result toks)
           [(ErrSpannedSexpr err)
-            (ErrCompilerPkgManifestDiagnostic
+            (ResultCompilerPkgManifestDiagnostic.Err
               (box (compiler-load-manifest-source-error-diagnostic path err)))]
           [(OkSpannedSexpr form)
             (compiler-load-parse-manifest-form-diagnostic-infer-kind path form)])])))
@@ -8255,17 +8339,18 @@
 ;: wrapper keeps existing in-memory parser callers and message-only tests stable.
 (define (compiler-load-parse-manifest [source : String]) : ResultCompilerPkgManifest
   (match (compiler-load-parse-manifest-diagnostic "" source)
-    [(OkCompilerPkgManifestDiagnostic manifest)
-      (OkCompilerPkgManifest manifest)]
-    [(ErrCompilerPkgManifestDiagnostic diag)
-      (ErrCompilerPkgManifest (compiler-diagnostic-message (box-get diag)))]))
+    [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
+      (ResultCompilerPkgManifest.Ok manifest)]
+    [(ResultCompilerPkgManifestDiagnostic.Err diag)
+      (ResultCompilerPkgManifest.Err
+        (compiler-diagnostic-message (box-get diag)))]))
 
 ;: Self-test: a full manifest parses with the expected fields + dependency
 ;: count.
 (define (compiler-load-manifest-valid-full-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"demo\") (version \"0.1.0\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math \"../math\") (util \"../util\")))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (and
         (string.string-eq (struct-get m name) "demo")
         (string.string-eq (struct-get m version) "0.1.0")
@@ -8275,40 +8360,40 @@
               (string.string-eq (struct-get m entry) "src/main.tl")
               (= (compiler-pkg-deps-count (struct-get m deps)) 2))]
           [(CompilerPkgKindLib) false]))]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: a manifest without a `dependencies` field parses with no deps.
 (define (compiler-load-manifest-valid-nodeps-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"x\") (version \"1\") (kind staticlib))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (match (struct-get m kind)
         [(CompilerPkgKindLib)
           (and
             (string.string-eq (struct-get m entry) "src/lib.tl")
             (= (compiler-pkg-deps-count (struct-get m deps)) 0))]
         [(CompilerPkgKindBin) false])]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 (define (compiler-load-manifest-default-bin-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"default_bin\") (version \"1\"))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (match (struct-get m kind)
         [(CompilerPkgKindBin)
           (string.string-eq (struct-get m entry) "src/main.tl")]
         [(CompilerPkgKindLib) false])]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 (define (compiler-load-manifest-entry-override-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"override\") (version \"1\") (kind \"staticlib\") (entry \"custom/lib.tl\"))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (match (struct-get m kind)
         [(CompilerPkgKindLib)
           (string.string-eq (struct-get m entry) "custom/lib.tl")]
         [(CompilerPkgKindBin) false])]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 (define (compiler-load-manifest-dep-path-is?
   [deps : CompilerPkgDeps]
@@ -8345,7 +8430,7 @@
 (define (compiler-load-manifest-github-deps-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"abc123\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (let
         [deps : CompilerPkgDeps (struct-get m deps)]
         (and
@@ -8360,13 +8445,13 @@
             "util"
             "https://github.com/JoNil-Botta/util.repo.git#tag=v1.0.0")
           (compiler-load-manifest-dep-path-is? deps "core" "../core")))]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: True when parsing `source` fails with exactly the `expected` diagnostic.
 (define (compiler-load-manifest-rejects? [source : String] [expected : String]) : bool
   (match (compiler-load-parse-manifest source)
-    [(ErrCompilerPkgManifest m) (string.string-eq m expected)]
-    [(OkCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err m) (string.string-eq m expected)]
+    [(ResultCompilerPkgManifest.Ok _) false]))
 
 (define (compiler-load-manifest-diagnostic-span-forward?
   [diag : CompilerDiagnostic]) : bool
@@ -8383,14 +8468,14 @@
   [line : i64]
   [col : i64]) : bool
   (match (compiler-load-parse-manifest-diagnostic path source)
-    [(ErrCompilerPkgManifestDiagnostic diag)
+    [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (and
         (string.string-eq (compiler-diagnostic-path (box-get diag)) path)
         (= (compiler-diagnostic-line (box-get diag)) line)
         (= (compiler-diagnostic-col (box-get diag)) col)
         (compiler-load-manifest-diagnostic-span-forward? (box-get diag))
         (string.string-eq (compiler-diagnostic-message (box-get diag)) expected))]
-    [(OkCompilerPkgManifestDiagnostic _) false]))
+    [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
 
 (define (compiler-load-pkg-manifest-diagnostic-ok?) : bool
   (and
@@ -8461,7 +8546,7 @@
   (match (compiler-load-parse-manifest-diagnostic-infer-kind
     path
     (io.read-file path))
-    [(OkCompilerPkgManifestDiagnostic manifest)
+    [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
       (and
         (string.string-eq (struct-get manifest entry) expected-entry)
         (match (struct-get manifest kind)
@@ -8473,7 +8558,7 @@
             (match expected-kind
               [(CompilerPkgKindLib) true]
               [(CompilerPkgKindBin) false])]))]
-    [(ErrCompilerPkgManifestDiagnostic _) false]))
+    [(ResultCompilerPkgManifestDiagnostic.Err _) false]))
 
 (define (compiler-load-manifest-path-rejects?
   [path : String]
@@ -8481,9 +8566,9 @@
   (match (compiler-load-parse-manifest-diagnostic-infer-kind
     path
     (io.read-file path))
-    [(ErrCompilerPkgManifestDiagnostic diag)
+    [(ResultCompilerPkgManifestDiagnostic.Err diag)
       (string.string-eq (compiler-diagnostic-message (box-get diag)) expected)]
-    [(OkCompilerPkgManifestDiagnostic _) false]))
+    [(ResultCompilerPkgManifestDiagnostic.Ok _) false]))
 
 (define (compiler-load-manifest-infer-bin-only-ok?) : bool
   (let
@@ -8594,11 +8679,11 @@
         false
         true)
       (match (compiler-load-package-entry-for-source source-path)
-        [(OkCompilerLoadPackageEntry entry)
+        [(ResultCompilerLoadPackageEntry.Ok entry)
           (and
             (string.string-eq (struct-get entry owner) "entry_dep")
             (string.string-eq (struct-get entry entry-path) expected-entry))]
-        [(ErrCompilerLoadPackageEntry _) false]))))
+        [(ResultCompilerLoadPackageEntry.Err _) false]))))
 
 (define (compiler-load-manifest-path-inference-ok?) : bool
   (and
@@ -8688,7 +8773,7 @@
 (define (compiler-load-manifest-link-valid-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (link (libraries \"raylib\") (search-paths \"vendor/lib\") (linux-libraries \"GL\" \"m\") (linux-args \"-Wl,--as-needed\") (windows-libraries \"opengl32\")))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (let
         [link : CompilerPkgLink (struct-get m link)]
         [all : CompilerPkgLinkSet (struct-get link all)]
@@ -8705,13 +8790,13 @@
             (struct-get lin args)
             "-Wl,--as-needed")
           (compiler-load-link-vec-single? (struct-get win libraries) "opengl32")))]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: a manifest with no `link` section parses with empty link sets.
 (define (compiler-load-manifest-link-default-ok?) : bool
   (match (compiler-load-parse-manifest
     "(package (name \"p\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\"))")
-    [(OkCompilerPkgManifest m)
+    [(ResultCompilerPkgManifest.Ok m)
       (let
         [link : CompilerPkgLink (struct-get m link)]
         (and
@@ -8721,7 +8806,7 @@
             (struct-get (struct-get link linux) libraries))
           (compiler-load-link-vec-empty?
             (struct-get (struct-get link windows) libraries))))]
-    [(ErrCompilerPkgManifest _) false]))
+    [(ResultCompilerPkgManifest.Err _) false]))
 
 ;: Self-test: invalid `(link ...)` sections produce the expected diagnostics.
 (define (compiler-load-manifest-link-rejections-ok?) : bool
@@ -8815,7 +8900,7 @@
     [slash : i64
       (compiler-load-slash-index-from body 0 (string.string-length body))]
     (if (< slash 0)
-      (ErrPkgResolve
+      (ResultPkgResolve.Err
         (string.string-append
           "compiler-load: pkg import missing '/' after alias: "
           import-path))
@@ -8827,13 +8912,13 @@
             (+ slash 1)
             (- (string.string-length body) (+ slash 1)))]
         (if (= (string.string-length alias) 0)
-          (ErrPkgResolve
+          (ResultPkgResolve.Err
             (string.string-append
               "compiler-load: pkg import has empty alias: "
               import-path))
           (match (compiler-load-pkg-dep-lookup deps alias)
             [(CompilerLoadNoPath)
-              (ErrPkgResolve
+              (ResultPkgResolve.Err
                 (string.string-append
                   "compiler-load: unknown package alias '"
                   (string.string-append
@@ -8841,7 +8926,7 @@
                     (string.string-append "': " import-path))))]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path? dep-path)
-                (ErrPkgResolve
+                (ResultPkgResolve.Err
                   (string.string-append
                     "compiler-load: GitHub dependency '"
                     (string.string-append
@@ -8852,11 +8937,11 @@
                 (let
                   [norm-rest : String (compiler-load-normalize-path rest)]
                   (if (compiler-load-path-escapes? norm-rest)
-                    (ErrPkgResolve
+                    (ResultPkgResolve.Err
                       (string.string-append
                         "compiler-load: pkg import escapes package root: "
                         import-path))
-                    (OkPkgResolve
+                    (ResultPkgResolve.Ok
                       (compiler-load-normalize-path
                         (compiler-load-join-root-path
                           (compiler-load-join-root-path manifest-dir dep-path)
@@ -8907,13 +8992,14 @@
   [importer-path : String]
   [import-path : String]) : ResultPkgResolve
   (match (compiler-load-discover-manifest importer-path)
-    [(CompilerLoadNoPath) (OkPkgResolve import-path)]
+    [(CompilerLoadNoPath) (ResultPkgResolve.Ok import-path)]
     [(CompilerLoadSomePath manifest-path)
       (match (compiler-load-parse-manifest-diagnostic
         manifest-path
         (io.read-file manifest-path))
-        [(ErrCompilerPkgManifestDiagnostic _) (OkPkgResolve import-path)]
-        [(OkCompilerPkgManifestDiagnostic manifest)
+        [(ResultCompilerPkgManifestDiagnostic.Err _)
+          (ResultPkgResolve.Ok import-path)]
+        [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
           (compiler-load-resolve-pkg-import
             import-path
             (compiler-load-dirname manifest-path)
@@ -8940,8 +9026,8 @@
     import-path
     "proj"
     (compiler-load-pkg-resolve-deps))
-    [(OkPkgResolve p) (string.string-eq p expected)]
-    [(ErrPkgResolve _) false]))
+    [(ResultPkgResolve.Ok p) (string.string-eq p expected)]
+    [(ResultPkgResolve.Err _) false]))
 
 ;: True when resolving `import-path` fails with exactly `expected`.
 (define (compiler-load-pkg-resolve-rejects?
@@ -8951,8 +9037,8 @@
     import-path
     "proj"
     (compiler-load-pkg-resolve-deps))
-    [(ErrPkgResolve m) (string.string-eq m expected)]
-    [(OkPkgResolve _) false]))
+    [(ResultPkgResolve.Err m) (string.string-eq m expected)]
+    [(ResultPkgResolve.Ok _) false]))
 
 ;: Aggregate pkg-import resolution self-test (#834).
 (define (compiler-load-pkg-resolve-ok?) : bool

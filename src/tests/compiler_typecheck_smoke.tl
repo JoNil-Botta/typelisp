@@ -1932,7 +1932,7 @@
     (sym-i64-empty)
     stdlib-roots
     cfgs)
-    [(OkCompilerLoadWithPaths decls paths _ _)
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (typecheck-compiler-program-with-paths-cache
         (ast-program decls)
         paths
@@ -1943,7 +1943,7 @@
           cfgs))
         [(OkCompilerTypecheck _) true]
         [(ErrCompilerTypecheck _) false])]
-    [(ErrCompilerLoadWithPaths _) false]))
+    [(ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?) : bool
   (let
@@ -2044,7 +2044,7 @@
         (sym-i64-empty)
         roots
         cfgs)
-        [(OkCompilerLoadWithPaths decls paths _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (typecheck-compiler-program-with-paths-cache
             (ast-program decls)
             paths
@@ -2060,7 +2060,7 @@
                   (compiler-diagnostic-message (box-get diag))
                   "typecheck: value definition type mismatch"))]
             [(OkCompilerTypecheck _) false])]
-        [(ErrCompilerLoadWithPaths _) false]))))
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
   "(module tc.macro.context.helper)
@@ -2126,7 +2126,7 @@
         (sym-i64-empty)
         roots
         cfgs)
-        [(OkCompilerLoadWithPaths _ _ _ _)
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
           (begin
             (ctfe-module-macro-export-reset!)
             (let
@@ -2148,7 +2148,7 @@
                   (ctfe-module-macro-export?
                     "tc.surface.macro.provider"
                     "missing")))))]
-        [(ErrCompilerLoadWithPaths _) false]))))
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-typecheck-smoke-record-surface-summary?
   [path : String]
@@ -2160,11 +2160,11 @@
         (compiler-load-dirname path)
         (compiler-cfg-empty)
         program)
-        [(OkCompilerLoadSurfaceSummary summary)
+        [(ResultCompilerLoadSurfaceSummary.Ok summary)
           (begin
             (compiler-load-record-surface-summary! summary)
             true)]
-        [(ErrCompilerLoadSurfaceSummary _) false])]
+        [(ResultCompilerLoadSurfaceSummary.Err _) false])]
     [(ErrAstProgramDiagnostic _) false]))
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-provider-source) : String
@@ -2371,7 +2371,7 @@
     [ok : bool
       (match (typecheck-compiler-source-load
         (compiler-typecheck-smoke-lazy-import-stdlib-summary-source))
-        [(OkCompilerLoadWithPaths decls paths _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (typecheck-compiler-program-with-paths-checked
             (ast-program decls)
             paths)
@@ -2383,7 +2383,7 @@
                     env
                     (compiler-symbol-module-key "vec" "I64Vec"))))]
             [(ErrCompilerTypecheckChecked _) false])]
-        [(ErrCompilerLoadWithPaths _) false])]
+        [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin
       (compiler-typecheck-reset-file-state!)
       (compiler-load-surface-summaries-reset!)

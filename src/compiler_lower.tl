@@ -5116,9 +5116,9 @@
         [mark : i64 (arena.tl_region_mark)]
         [raw : ResultLowerCloneRoots
           (match (build-compiler-symbols program)
-            [(OkCompilerSymbols symbols)
+            [(ResultCompilerSymbols.Ok symbols)
               (match (build-compiler-registries-with-symbols program symbols)
-                [(OkCompilerRegistries registries)
+                [(ResultCompilerRegistries.Ok registries)
                   (let
                     [ctx : TcContext
                       (TcContext program symbols registries "" pools)]
@@ -5134,9 +5134,9 @@
                               program)))]
                       [(ErrTcEnv message)
                         (ErrLowerCloneRoots (box (lower-diagnostic message)))]))]
-                [(ErrCompilerRegistries message)
+                [(ResultCompilerRegistries.Err message)
                   (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
-            [(ErrCompilerSymbols message)
+            [(ResultCompilerSymbols.Err message)
               (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
         [scratch-head : i64 (arena.tl_arena_current)]
         (begin
@@ -41632,7 +41632,7 @@
             [stdlib-roots : vector.StringVec (vector.string-vec-new)]
             [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
             (match (typecheck-compiler-source-load src)
-              [(OkCompilerLoadWithPaths decls paths _ _)
+              [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                 (lower-compiler-program-with-decl-paths-mode-cache
                   path
                   (ast-program decls)
@@ -41643,7 +41643,7 @@
                     "typecheck-prefix-lower"
                     stdlib-roots
                     cfgs))]
-              [(ErrCompilerLoadWithPaths diag) (ErrCompilerLower diag)]))
+              [(ResultCompilerLoadWithPaths.Err diag) (ErrCompilerLower diag)]))
           (lower-compiler-program-with-path-mode path program mode))]
       [(ErrAstProgram message)
         (ErrCompilerLower

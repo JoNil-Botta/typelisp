@@ -94,20 +94,25 @@
 (define (clone-name-set-with-capacity [capacity : i64]) : CloneNameSet
   (CloneNameSet (clone_name_map.with-capacity capacity)))
 
-(define (clone-name-set-map [names : CloneNameSet]) : clone_name_map.Map
-  (struct-get names map))
+(define (clone-name-set-map [names : (& names CloneNameSet)]) : (&
+    names
+    clone_name_map.Map)
+  (& (struct-get names map)))
+
+(define (clone-name-set-map-mut [names : (&mut names CloneNameSet)]) : (&mut
+    names
+    clone_name_map.Map)
+  (&mut (struct-get names map)))
 
 (define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
   (let
-    [map : clone_name_map.Map (clone-name-set-map names)]
+    [updated : CloneNameSet names]
     (begin
-      (clone_name_map.insert (&mut map) name 1)
-      (CloneNameSet map))))
+      (clone_name_map.insert (clone-name-set-map-mut (&mut updated)) name 1)
+      updated)))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
-  (let
-    [map : clone_name_map.Map (clone-name-set-map names)]
-    (clone_name_map.contains? (& map) name)))
+  (clone_name_map.contains? (clone-name-set-map (& names)) name))
 
 (define (clone-name-set-contains-canonical?
   [names : CloneNameSet]
@@ -152,14 +157,10 @@
       found)))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
-  (let
-    [map : clone_name_map.Map (clone-name-set-map names)]
-    (clone_name_map.len (& map))))
+  (clone_name_map.len (clone-name-set-map (& names))))
 
 (define (clone-name-set-capacity [names : CloneNameSet]) : i64
-  (let
-    [map : clone_name_map.Map (clone-name-set-map names)]
-    (clone_name_map.capacity (& map))))
+  (clone_name_map.capacity (clone-name-set-map (& names))))
 
 (define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
   (if (<= count 0)

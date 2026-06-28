@@ -8583,9 +8583,10 @@
 (define (compiler-backend-binop-asm
   [op : CompilerIrBinOp]
   [ty : AstType]
-  [rhs-reg : String]) : String
+  [rhs-reg : String]
+  [staging-reg : String]) : String
   (let
-    [lhs : String (compiler-backend-sized-reg "%rax" ty)]
+    [lhs : String (compiler-backend-sized-reg staging-reg ty)]
     [rhs : String (compiler-backend-sized-reg rhs-reg ty)]
     [_suffix : String (compiler-backend-int-instruction-suffix ty)]
     (match op
@@ -8593,7 +8594,7 @@
       [(IrBinSub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
       [(IrBinMul)
         (if (= (compiler-backend-type-size ty) 1)
-          (str-cat "    imulq " rhs-reg ", %rax\n")
+          (str-cat "    imulq " rhs-reg ", " staging-reg "\n")
           (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
       [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false rhs-reg)]
       [(IrBinMod) (compiler-backend-binop-divmod-asm ty true rhs-reg)]
@@ -10154,7 +10155,8 @@
                                       (compiler-backend-binop-asm
                                         op
                                         operand-ty
-                                        scav-rhs)
+                                        scav-rhs
+                                        "%rax")
                                       (compiler-backend-emit-store-typed-var-with-plan
                                         assignments
                                         dst
@@ -10205,7 +10207,8 @@
                                           (compiler-backend-binop-asm
                                             op
                                             operand-ty
-                                            scav-rhs)
+                                            scav-rhs
+                                            "%rax")
                                           (compiler-backend-emit-store-typed-var-with-plan
                                             assignments
                                             dst
@@ -10269,7 +10272,8 @@
                                           (compiler-backend-binop-asm
                                             op
                                             operand-ty
-                                            scav-rhs)
+                                            scav-rhs
+                                            "%rax")
                                           (compiler-backend-emit-store-typed-var-with-plan
                                             assignments
                                             dst
@@ -10376,7 +10380,7 @@
                       (string.string-append
                         rhs-asm
                         (string-append
-                          (compiler-backend-binop-asm op operand-ty scav-rhs)
+                          (compiler-backend-binop-asm op operand-ty scav-rhs "%rax")
                           store)))]
                   [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
           [(CompilerBackendNoImmediate)
@@ -10389,7 +10393,7 @@
                   (string.string-append
                     rhs-asm
                     (string-append
-                      (compiler-backend-binop-asm op operand-ty scav-rhs)
+                      (compiler-backend-binop-asm op operand-ty scav-rhs "%rax")
                       store)))]
               [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])))
 
@@ -10779,7 +10783,8 @@
                                       (compiler-backend-binop-asm
                                         op
                                         operand-ty
-                                        rhs-reg)
+                                        rhs-reg
+                                        "%rax")
                                       return-tail))))]
                             [(ErrCompilerBackend message)
                               (ErrCompilerBackend message)]))])]
@@ -10804,7 +10809,8 @@
                                   (compiler-backend-binop-asm
                                     op
                                     operand-ty
-                                    rhs-reg)
+                                    rhs-reg
+                                    "%rax")
                                   return-tail))))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)]))])])]

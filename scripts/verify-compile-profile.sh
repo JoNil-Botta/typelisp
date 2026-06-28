@@ -105,6 +105,19 @@ assert_line_count_in() {
     fi
 }
 
+assert_line_count_at_most_in() {
+    _file=$1
+    _text=$2
+    _max=$3
+    _stdout=$4
+    _stderr=$5
+    _got=$(grep -F -- "$_text" "$_file" | wc -l | tr -d '[:space:]')
+    if [ "$_got" -gt "$_max" ]; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected at most $_max profile rows for: $_text; got $_got"
+    fi
+}
+
 assert_layout_row() {
     assert_contains_in \
         "$LAYOUT_STDERR" \
@@ -235,6 +248,21 @@ assert_line_count_in \
     "$REPLAY_STDERR" \
     "profile-replay-nested arity=2 calls=1" \
     2 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+# The repeated profile-replay-user import is structurally identical. It must not
+# add another whole-program macro setup/walk pass just to discover no new work.
+# Keep this as an upper bound so future local-worklist fixes can reduce it.
+assert_line_count_at_most_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro_setup|" \
+    7 \
+    "$REPLAY_STDOUT" \
+    "$REPLAY_STDERR"
+assert_line_count_at_most_in \
+    "$REPLAY_STDERR" \
+    "compile-profile|typecheck.macro_walk|" \
+    7 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
 

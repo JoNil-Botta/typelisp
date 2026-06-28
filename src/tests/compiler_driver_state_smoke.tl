@@ -540,7 +540,7 @@
                   (match (compiler-specialize-program-with-pools
                     program-a
                     pools-a)
-                    [(OkSpecProgram specialized-a)
+                    [(ResultSpecProgram.Ok specialized-a)
                       (begin
                         (compiler-driver-state-reset-file-state! state-b)
                         (unless
@@ -552,7 +552,7 @@
                           (> (ast-node-pool-context-expr-len pools-a) 0)
                           (set! ok false))
                         ok)]
-                    [(ErrSpecProgram _) false]))]
+                    [(ResultSpecProgram.Err _) false]))]
               [(ErrAstProgramDiagnostic _) false])]
           [(ErrAstProgramDiagnostic _) false])))))
 

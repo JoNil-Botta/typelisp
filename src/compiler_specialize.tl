@@ -13,19 +13,19 @@
   (len i64))
 
 (defenum SpecTemplate
-  (SpecTemplate String AstParamList AstType AstExpr))
+  (Item String AstParamList AstType AstExpr))
 
 (defenum SpecTemplateList
-  (SpecTemplateNil)
-  (SpecTemplateCons SpecTemplate (Box SpecTemplateList)))
+  (Nil)
+  (Cons SpecTemplate (Box SpecTemplateList)))
 
 (defenum SpecTemplateShadowList
-  (SpecTemplateShadowNil)
-  (SpecTemplateShadowCons String (Box SpecTemplateShadowList)))
+  (Nil)
+  (Cons String (Box SpecTemplateShadowList)))
 
 (defenum SpecMaybeTemplate
-  (SpecNoTemplate)
-  (SpecSomeTemplate SpecTemplate))
+  (None)
+  (Some SpecTemplate))
 
 (defstruct SpecTemplateEnv
   (index hashmap.StringI64Map)
@@ -36,137 +36,137 @@
 ;; generated hashmap.StringStringMap; the former SpecCache linked list made every
 ;; lookup a linear scan.
 (defenum SpecState
-  (SpecState AstDeclList hashmap.StringStringMap CtfeEnv AstNodePoolContext))
+  (State AstDeclList hashmap.StringStringMap CtfeEnv AstNodePoolContext))
 
 (defenum SpecValueList
-  (SpecValueNil)
-  (SpecValueCons CompilerCtfeValue (Box SpecValueList)))
+  (Nil)
+  (Cons CompilerCtfeValue (Box SpecValueList)))
 
 (defenum SpecValueSubst
-  (SpecValueSubstNil)
-  (SpecValueSubstCons String CompilerCtfeValue (Box SpecValueSubst)))
+  (Nil)
+  (Cons String CompilerCtfeValue (Box SpecValueSubst)))
 
 (defenum SpecTypeSubst
-  (SpecTypeSubstNil)
-  (SpecTypeSubstCons String AstType (Box SpecTypeSubst)))
+  (Nil)
+  (Cons String AstType (Box SpecTypeSubst)))
 
 (define (spec-template-cons [head : SpecTemplate] [rest : SpecTemplateList]) : SpecTemplateList
-  (SpecTemplateCons head (box rest)))
+  (SpecTemplateList.Cons head (box rest)))
 
 (define (spec-value-cons [head : CompilerCtfeValue] [rest : SpecValueList]) : SpecValueList
-  (SpecValueCons head (box rest)))
+  (SpecValueList.Cons head (box rest)))
 
 (define (spec-value-subst-cons
   [key : String]
   [value : CompilerCtfeValue]
   [rest : SpecValueSubst]) : SpecValueSubst
-  (SpecValueSubstCons key value (box rest)))
+  (SpecValueSubst.Cons key value (box rest)))
 
 (define (spec-type-subst-cons
   [key : String]
   [ty : AstType]
   [rest : SpecTypeSubst]) : SpecTypeSubst
-  (SpecTypeSubstCons key ty (box rest)))
+  (SpecTypeSubst.Cons key ty (box rest)))
 
 (defenum SpecMaybeString
-  (SpecNoString)
-  (SpecSomeString String))
+  (None)
+  (Some String))
 
 (defenum SpecMaybeDecl
-  (SpecNoDecl)
-  (SpecSomeDecl AstDecl))
+  (None)
+  (Some AstDecl))
 
 (defenum ResultSpecProgram
-  (OkSpecProgram AstProgram)
-  (ErrSpecProgram (Box CompilerDiagnostic)))
+  (Ok AstProgram)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecProgramWithPaths
-  (OkSpecProgramWithPaths AstProgram AstDeclPathList)
-  (ErrSpecProgramWithPaths (Box CompilerDiagnostic)))
+  (Ok AstProgram AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDecls
-  (OkSpecDecls AstDeclList SpecState)
-  (ErrSpecDecls (Box CompilerDiagnostic)))
+  (Ok AstDeclList SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDeclsWithPaths
-  (OkSpecDeclsWithPaths AstDeclList AstDeclPathList SpecState)
-  (ErrSpecDeclsWithPaths (Box CompilerDiagnostic)))
+  (Ok AstDeclList AstDeclPathList SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecDecl
-  (OkSpecDecl SpecMaybeDecl SpecState)
-  (ErrSpecDecl (Box CompilerDiagnostic)))
+  (Ok SpecMaybeDecl SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecExpr
-  (OkSpecExpr i64 SpecState)
-  (ErrSpecExpr (Box CompilerDiagnostic)))
+  (Ok i64 SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecExprList
-  (OkSpecExprList AstExprList SpecState)
-  (ErrSpecExprList (Box CompilerDiagnostic)))
+  (Ok AstExprList SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecLetBindingList
-  (OkSpecLetBindingList AstLetBindingList SpecState)
-  (ErrSpecLetBindingList (Box CompilerDiagnostic)))
+  (Ok AstLetBindingList SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecMatchArmList
-  (OkSpecMatchArmList AstMatchArmList SpecState)
-  (ErrSpecMatchArmList (Box CompilerDiagnostic)))
+  (Ok AstMatchArmList SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecArgs
-  (OkSpecArgs SpecValueList AstExprList SpecState)
-  (ErrSpecArgs (Box CompilerDiagnostic)))
+  (Ok SpecValueList AstExprList SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecEnsure
-  (OkSpecEnsure String SpecState)
-  (ErrSpecEnsure (Box CompilerDiagnostic)))
+  (Ok String SpecState)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecBuild
-  (OkSpecBuild AstParamList SpecValueSubst SpecTypeSubst)
-  (ErrSpecBuild (Box CompilerDiagnostic)))
+  (Ok AstParamList SpecValueSubst SpecTypeSubst)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExpr
-  (OkSpecSubExpr i64)
-  (ErrSpecSubExpr (Box CompilerDiagnostic)))
+  (Ok i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubExprList
-  (OkSpecSubExprList AstExprList)
-  (ErrSpecSubExprList (Box CompilerDiagnostic)))
+  (Ok AstExprList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubLetBindingList
-  (OkSpecSubLetBindingList AstLetBindingList)
-  (ErrSpecSubLetBindingList (Box CompilerDiagnostic)))
+  (Ok AstLetBindingList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSpecSubMatchArmList
-  (OkSpecSubMatchArmList AstMatchArmList)
-  (ErrSpecSubMatchArmList (Box CompilerDiagnostic)))
+  (Ok AstMatchArmList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum GenMaybeEntry
-  (GenNoEntry)
-  (GenSomeEntry AstDecl))
+  (None)
+  (Some AstDecl))
 
 (defenum ResultGenKey
-  (OkGenKey String i64)
-  (ErrGenKey (Box CompilerDiagnostic)))
+  (Ok String i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultGenDecl
-  (OkGenDecl AstDeclList GenRegistry String)
-  (ErrGenDecl (Box CompilerDiagnostic)))
+  (Ok AstDeclList GenRegistry String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultGenDecls
-  (OkGenDecls AstDeclList GenRegistry String)
-  (ErrGenDecls (Box CompilerDiagnostic)))
+  (Ok AstDeclList GenRegistry String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultGenProgram
-  (OkGenProgram AstProgram)
-  (ErrGenProgram (Box CompilerDiagnostic)))
+  (Ok AstProgram)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultGenDeclsWithPaths
-  (OkGenDeclsWithPaths AstDeclList AstDeclPathList GenRegistry String)
-  (ErrGenDeclsWithPaths (Box CompilerDiagnostic)))
+  (Ok AstDeclList AstDeclPathList GenRegistry String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultGenProgramWithPaths
-  (OkGenProgramWithPaths AstProgram AstDeclPathList)
-  (ErrGenProgramWithPaths (Box CompilerDiagnostic)))
+  (Ok AstProgram AstDeclPathList)
+  (Err (Box CompilerDiagnostic)))
 
 (define (spec-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
   (match expr
@@ -188,11 +188,11 @@
 
 (define (spec-state-ctfe-env [state : SpecState]) : CtfeEnv
   (match state
-    [(SpecState _ _ env _) env]))
+    [(SpecState.State _ _ env _) env]))
 
 (define (spec-state-pools [state : SpecState]) : AstNodePoolContext
   (match state
-    [(SpecState _ _ _ pools) pools]))
+    [(SpecState.State _ _ _ pools) pools]))
 
 (define (spec-ctfe-eval [state : SpecState] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (let
@@ -227,16 +227,17 @@
   [shadowed : SpecTemplateShadowList]
   [name : String]) : bool
   (match shadowed
-    [(SpecTemplateShadowNil) false]
-    [(SpecTemplateShadowCons shadow-name rest)
+    [(SpecTemplateShadowList.Nil) false]
+    [(SpecTemplateShadowList.Cons shadow-name rest)
       (if (string.string-eq shadow-name name)
         true
         (spec-template-shadow-contains? (box-get rest) name))]))
 
 (define (spec-template-list-count [templates : SpecTemplateList]) : i64
   (match templates
-    [(SpecTemplateNil) 0]
-    [(SpecTemplateCons _ rest) (+ 1 (spec-template-list-count (box-get rest)))]))
+    [(SpecTemplateList.Nil) 0]
+    [(SpecTemplateList.Cons _ rest)
+      (+ 1 (spec-template-list-count (box-get rest)))]))
 
 (define (spec-template-values-fill-empty
   [values : (Array SpecMaybeTemplate)]
@@ -245,7 +246,7 @@
   (if (>= index count)
     unit
     (begin
-      (array.array-set! values index (SpecNoTemplate))
+      (array.array-set! values index (SpecMaybeTemplate.None))
       (spec-template-values-fill-empty values (+ index 1) count))))
 
 (define (spec-template-index-build
@@ -254,14 +255,14 @@
   [values : (Array SpecMaybeTemplate)]
   [slot : i64]) : hashmap.StringI64Map
   (match templates
-    [(SpecTemplateNil) index]
-    [(SpecTemplateCons template rest)
+    [(SpecTemplateList.Nil) index]
+    [(SpecTemplateList.Cons template rest)
       (match template
-        [(SpecTemplate name _ _ _)
+        [(SpecTemplate.Item name _ _ _)
           (if (hashmap.string-i64-map-contains? index name)
             (spec-template-index-build (box-get rest) index values slot)
             (begin
-              (array.array-set! values slot (SpecSomeTemplate template))
+              (array.array-set! values slot (SpecMaybeTemplate.Some template))
               (spec-template-index-build
                 (box-get rest)
                 (hashmap.string-i64-map-put index name slot)
@@ -282,15 +283,15 @@
           values
           0)
         values
-        SpecTemplateShadowNil))))
+        SpecTemplateShadowList.Nil))))
 
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name : String]) : SpecMaybeTemplate
   (if (spec-template-shadow-contains? (struct-get templates shadowed) name)
-    (SpecNoTemplate)
+    (SpecMaybeTemplate.None)
     (match (hashmap.string-i64-map-get (struct-get templates index) name)
       [(hashmap.StringI64MapFound slot)
         (array.array-ref (struct-get templates values) slot)]
-      [(hashmap.StringI64MapMissing) (SpecNoTemplate)])))
+      [(hashmap.StringI64MapMissing) (SpecMaybeTemplate.None)])))
 
 (define (spec-template-env-shadow-name
   [templates : SpecTemplateEnv]
@@ -298,7 +299,7 @@
   (SpecTemplateEnv
     (struct-get templates index)
     (struct-get templates values)
-    (SpecTemplateShadowCons name (box (struct-get templates shadowed)))))
+    (SpecTemplateShadowList.Cons name (box (struct-get templates shadowed)))))
 
 (define (spec-template-env-shadow-params
   [templates : SpecTemplateEnv]
@@ -360,7 +361,7 @@
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (match decls
-    [(AstDeclNil) (SpecTemplateNil)]
+    [(AstDeclNil) (SpecTemplateList.Nil)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -374,7 +375,7 @@
                     [body : AstExpr (ast-node-get body-box)]
                     (if (spec-param-list-has-comptime? params)
                       (spec-template-cons
-                        (SpecTemplate (intern-str name) params ret body)
+                        (SpecTemplate.Item (intern-str name) params ret body)
                         (spec-collect-templates rest))
                       (spec-collect-templates rest)))]
                 [_ (spec-collect-templates rest)]))]
@@ -383,15 +384,15 @@
               [body : AstExpr (ast-node-get body-box)]
               (if (spec-param-list-has-comptime? params)
                 (spec-template-cons
-                  (SpecTemplate (intern-str name) params ret body)
+                  (SpecTemplate.Item (intern-str name) params ret body)
                   (spec-collect-templates rest))
                 (spec-collect-templates rest)))]
           [_ (spec-collect-templates rest)]))]))
 
 (define (spec-cache-lookup [cache : hashmap.StringStringMap] [key : String]) : SpecMaybeString
   (match (hashmap.string-string-map-get cache key)
-    [(hashmap.StringStringMapFound name) (SpecSomeString name)]
-    [(hashmap.StringStringMapMissing) (SpecNoString)]))
+    [(hashmap.StringStringMapFound name) (SpecMaybeString.Some name)]
+    [(hashmap.StringStringMapMissing) (SpecMaybeString.None)]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
@@ -585,8 +586,8 @@
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
-    [(SpecValueNil) "none"]
-    [(SpecValueCons head rest)
+    [(SpecValueList.Nil) "none"]
+    [(SpecValueList.Cons head rest)
       (string.string-append
         (spec-value-key head)
         (string.string-append "_" (spec-values-key (box-get rest))))]))
@@ -612,8 +613,8 @@
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
   (match (hashmap.string-i64-map-get (struct-get registry index) key)
     [(hashmap.StringI64MapFound slot)
-      (GenSomeEntry (array.array-ref (struct-get registry decls) slot))]
-    [(hashmap.StringI64MapMissing) (GenNoEntry)]))
+      (GenMaybeEntry.Some (array.array-ref (struct-get registry decls) slot))]
+    [(hashmap.StringI64MapMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
   [src : (Array AstDecl)]
@@ -661,20 +662,21 @@
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
-    [(AstDeclDef name _ _) (SpecSomeString (intern-str name))]
-    [(AstDeclDefFn name _ _ _ _) (SpecSomeString (intern-str name))]
-    [(AstDeclExtern name _ _ _) (SpecSomeString (intern-str name))]
-    [(AstDeclDefDispatch name _) (SpecSomeString (intern-str name))]
-    [(AstDeclDefEnum name _ _) (SpecSomeString (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _) (SpecSomeString (intern-str name))]
-    [(AstDeclDefStruct name _ _ _) (SpecSomeString (intern-str name))]
+    [(AstDeclDef name _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclDefFn name _ _ _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclExtern name _ _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclDefDispatch name _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclDefEnum name _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclDefEnumLifetimes name _ _ _)
+      (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclDefStruct name _ _ _) (SpecMaybeString.Some (intern-str name))]
     [(AstDeclDefStructLifetimes name _ _ _ _)
-      (SpecSomeString (intern-str name))]
-    [(AstDeclDefMacro name _ _ _) (SpecSomeString (intern-str name))]
+      (SpecMaybeString.Some (intern-str name))]
+    [(AstDeclDefMacro name _ _ _) (SpecMaybeString.Some (intern-str name))]
     [(AstDeclUnsafe inner-box) (gen-decl-visible-name (box-get inner-box))]
     [(AstDeclComptimeDecl _ inner-box)
       (gen-decl-visible-name (box-get inner-box))]
-    [_ (SpecNoString)]))
+    [_ (SpecMaybeString.None)]))
 
 (define (gen-maybe-type-eq? [a : AstMaybeType] [b : AstMaybeType]) : bool
   (match a
@@ -1087,7 +1089,7 @@
 
 (define (gen-key-exprs [exprs : AstExprList] [env : CtfeEnv] [fuel : i64]) : ResultGenKey
   (match exprs
-    [(AstExprNil) (OkGenKey "none" fuel)]
+    [(AstExprNil) (ResultGenKey.Ok "none" fuel)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -1096,20 +1098,20 @@
             (match value
               [(CtfeString text)
                 (match (gen-key-exprs (box-get rest) env head-fuel)
-                  [(OkGenKey tail tail-fuel)
-                    (OkGenKey
+                  [(ResultGenKey.Ok tail tail-fuel)
+                    (ResultGenKey.Ok
                       (string.string-append
                         (spec-string-key text)
                         (string.string-append "_" tail))
                       tail-fuel)]
-                  [(ErrGenKey diag) (ErrGenKey diag)])]
+                  [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
               [_
-                (ErrGenKey
+                (ResultGenKey.Err
                   (box
                     (spec-diagnostic-at-expr
                       head-expr
                       "generated-decl: key expression must evaluate to String")))])]
-          [(ErrCtfe diag) (ErrGenKey diag)]))]))
+          [(ErrCtfe diag) (ResultGenKey.Err diag)]))]))
 
 (define (gen-full-key
   [module : String]
@@ -1219,25 +1221,25 @@
   (let
     [key : String (gen-registration-key module generator item arg-key)]
     (match (gen-registry-lookup registry key)
-      [(GenNoEntry)
-        (OkGenDecl
+      [(GenMaybeEntry.None)
+        (ResultGenDecl.Ok
           (gen-single-decl-list
             (ast-decl-comptime-decl-with-meta
               (AstSomeGeneratedDeclMeta generator item args key)
               template))
           (gen-registry-insert registry key template)
           module)]
-      [(GenSomeEntry existing)
+      [(GenMaybeEntry.Some existing)
         (if (gen-decl-eq? existing template)
-          (OkGenDecl AstDeclNil registry module)
-          (ErrGenDecl (box (gen-incompatible-diag item key))))])))
+          (ResultGenDecl.Ok AstDeclNil registry module)
+          (ResultGenDecl.Err (box (gen-incompatible-diag item key))))])))
 
 (define (gen-metadata-arg-key
   [meta-key : String]
   [args : AstExprList]
   [env : CtfeEnv]) : ResultGenKey
   (if (> (string.string-length meta-key) 0)
-    (OkGenKey meta-key (ctfe-fuel-limit))
+    (ResultGenKey.Ok meta-key (ctfe-fuel-limit))
     (gen-key-exprs args env (ctfe-fuel-limit))))
 
 (define (gen-rewrite-decl
@@ -1247,28 +1249,29 @@
   [env : CtfeEnv]) : ResultGenDecl
   (match decl
     [(AstDeclModule name)
-      (OkGenDecl (gen-single-decl-list decl) registry (intern-str name))]
+      (ResultGenDecl.Ok (gen-single-decl-list decl) registry (intern-str name))]
     [(AstDeclComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match meta
           [(AstNoGeneratedDeclMeta)
-            (OkGenDecl (gen-single-decl-list decl) registry module)]
+            (ResultGenDecl.Ok (gen-single-decl-list decl) registry module)]
           [(AstSomeGeneratedDeclMeta generator item args meta-key)
             (if (not (gen-metadata-key-normalizable? meta-key))
-              (OkGenDecl (gen-single-decl-list decl) registry module)
+              (ResultGenDecl.Ok (gen-single-decl-list decl) registry module)
               (match (gen-decl-visible-name template)
-                [(SpecNoString)
-                  (ErrGenDecl
+                [(SpecMaybeString.None)
+                  (ResultGenDecl.Err
                     (box
                       (compiler-diagnostic-at-start
                         ""
                         "generated-decl: generated payload must declare a visible item")))]
-                [(SpecSomeString actual)
+                [(SpecMaybeString.Some actual)
                   (if (not (string.string-eq item actual))
-                    (ErrGenDecl (box (gen-item-mismatch-diag item actual)))
+                    (ResultGenDecl.Err
+                      (box (gen-item-mismatch-diag item actual)))
                     (match (gen-metadata-arg-key meta-key args env)
-                      [(OkGenKey arg-key _)
+                      [(ResultGenKey.Ok arg-key _)
                         (gen-register-generated-decl
                           template
                           module
@@ -1277,8 +1280,8 @@
                           args
                           arg-key
                           registry)]
-                      [(ErrGenKey diag) (ErrGenDecl diag)]))]))]))]
-    [_ (OkGenDecl (gen-single-decl-list decl) registry module)]))
+                      [(ResultGenKey.Err diag) (ResultGenDecl.Err diag)]))]))]))]
+    [_ (ResultGenDecl.Ok (gen-single-decl-list decl) registry module)]))
 
 (define (gen-rewrite-decls
   [decls : AstDeclList]
@@ -1286,20 +1289,20 @@
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDecls
   (match decls
-    [(AstDeclNil) (OkGenDecls AstDeclNil registry module)]
+    [(AstDeclNil) (ResultGenDecls.Ok AstDeclNil registry module)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match (gen-rewrite-decl decl module registry env)
-          [(OkGenDecl rewritten-decls decl-registry decl-module)
+          [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
             (match (gen-rewrite-decls rest decl-module decl-registry env)
-              [(OkGenDecls rewritten-rest rest-registry rest-module)
-                (OkGenDecls
+              [(ResultGenDecls.Ok rewritten-rest rest-registry rest-module)
+                (ResultGenDecls.Ok
                   (spec-decl-list-append rewritten-decls rewritten-rest)
                   rest-registry
                   rest-module)]
-              [(ErrGenDecls diag) (ErrGenDecls diag)])]
-          [(ErrGenDecl diag) (ErrGenDecls diag)]))]))
+              [(ResultGenDecls.Err diag) (ResultGenDecls.Err diag)])]
+          [(ResultGenDecl.Err diag) (ResultGenDecls.Err diag)]))]))
 
 (define (gen-path-list-head-or [paths : AstDeclPathList] [fallback : String]) : String
   (match paths
@@ -1334,14 +1337,14 @@
   [env : CtfeEnv]) : ResultGenDeclsWithPaths
   (match decls
     [(AstDeclNil)
-      (OkGenDeclsWithPaths AstDeclNil AstDeclPathNil registry module)]
+      (ResultGenDeclsWithPaths.Ok AstDeclNil AstDeclPathNil registry module)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String (gen-path-list-head-or paths fallback-path)]
         [rest-paths : AstDeclPathList (gen-path-list-tail paths)]
         (match (gen-rewrite-decl decl module registry env)
-          [(OkGenDecl rewritten-decls decl-registry decl-module)
+          [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
             (match (gen-rewrite-decls-with-paths
               rest
               rest-paths
@@ -1349,12 +1352,12 @@
               decl-module
               decl-registry
               env)
-              [(OkGenDeclsWithPaths
+              [(ResultGenDeclsWithPaths.Ok
                   rewritten-rest
                   rewritten-rest-paths
                   rest-registry
                   rest-module)
-                (OkGenDeclsWithPaths
+                (ResultGenDeclsWithPaths.Ok
                   (spec-decl-list-append rewritten-decls rewritten-rest)
                   (gen-path-list-for-decls
                     rewritten-decls
@@ -1362,8 +1365,9 @@
                     rewritten-rest-paths)
                   rest-registry
                   rest-module)]
-              [(ErrGenDeclsWithPaths diag) (ErrGenDeclsWithPaths diag)])]
-          [(ErrGenDecl diag) (ErrGenDeclsWithPaths diag)]))]))
+              [(ResultGenDeclsWithPaths.Err diag)
+                (ResultGenDeclsWithPaths.Err diag)])]
+          [(ResultGenDecl.Err diag) (ResultGenDeclsWithPaths.Err diag)]))]))
 
 (define (gen-normalize-program-active [program : AstProgram]) : ResultGenProgram
   (match program
@@ -1373,8 +1377,9 @@
         [env : CtfeEnv
           (ctfe-env-with-reflections (ctfe-reflections-from-program program))]
         (match (gen-rewrite-decls decls "" (gen-registry-empty) env)
-          [(OkGenDecls rewritten _ _) (OkGenProgram (ast-program rewritten))]
-          [(ErrGenDecls diag) (ErrGenProgram diag)]))]))
+          [(ResultGenDecls.Ok rewritten _ _)
+            (ResultGenProgram.Ok (ast-program rewritten))]
+          [(ResultGenDecls.Err diag) (ResultGenProgram.Err diag)]))]))
 
 (define (gen-normalize-program-with-paths-active
   [program : AstProgram]
@@ -1393,9 +1398,12 @@
           ""
           (gen-registry-empty)
           env)
-          [(OkGenDeclsWithPaths rewritten rewritten-paths _ _)
-            (OkGenProgramWithPaths (ast-program rewritten) rewritten-paths)]
-          [(ErrGenDeclsWithPaths diag) (ErrGenProgramWithPaths diag)]))]))
+          [(ResultGenDeclsWithPaths.Ok rewritten rewritten-paths _ _)
+            (ResultGenProgramWithPaths.Ok
+              (ast-program rewritten)
+              rewritten-paths)]
+          [(ResultGenDeclsWithPaths.Err diag)
+            (ResultGenProgramWithPaths.Err diag)]))]))
 
 (define (gen-normalize-program-with-pools
   [program : AstProgram]
@@ -1512,40 +1520,40 @@
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
-    [(SpecTypeSubstNil) (SpecNoString)]
-    [(SpecTypeSubstCons key _ rest)
+    [(SpecTypeSubst.Nil) (SpecMaybeString.None)]
+    [(SpecTypeSubst.Cons key _ rest)
       (if (string.string-eq key name)
-        (SpecSomeString key)
+        (SpecMaybeString.Some key)
         (spec-type-subst-lookup (box-get rest) name))]))
 
 (define (spec-type-subst-type [subs : SpecTypeSubst] [name : String]) : AstType
   (match subs
-    [(SpecTypeSubstNil) (AstTyVar (intern name))]
-    [(SpecTypeSubstCons key ty rest)
+    [(SpecTypeSubst.Nil) (AstTyVar (intern name))]
+    [(SpecTypeSubst.Cons key ty rest)
       (if (string.string-eq key name)
         ty
         (spec-type-subst-type (box-get rest) name))]))
 
 (define (spec-value-subst-lookup [subs : SpecValueSubst] [name : String]) : SpecMaybeString
   (match subs
-    [(SpecValueSubstNil) (SpecNoString)]
-    [(SpecValueSubstCons key _ rest)
+    [(SpecValueSubst.Nil) (SpecMaybeString.None)]
+    [(SpecValueSubst.Cons key _ rest)
       (if (string.string-eq key name)
-        (SpecSomeString key)
+        (SpecMaybeString.Some key)
         (spec-value-subst-lookup (box-get rest) name))]))
 
 (define (spec-value-subst-value [subs : SpecValueSubst] [name : String]) : CompilerCtfeValue
   (match subs
-    [(SpecValueSubstNil) (CtfeUnit)]
-    [(SpecValueSubstCons key value rest)
+    [(SpecValueSubst.Nil) (CtfeUnit)]
+    [(SpecValueSubst.Cons key value rest)
       (if (string.string-eq key name)
         value
         (spec-value-subst-value (box-get rest) name))]))
 
 (define (spec-value-subst-remove-name [subs : SpecValueSubst] [name : String]) : SpecValueSubst
   (match subs
-    [(SpecValueSubstNil) SpecValueSubstNil]
-    [(SpecValueSubstCons key value rest)
+    [(SpecValueSubst.Nil) SpecValueSubst.Nil]
+    [(SpecValueSubst.Cons key value rest)
       (if (string.string-eq key name)
         (spec-value-subst-remove-name (box-get rest) name)
         (spec-value-subst-cons
@@ -1611,8 +1619,8 @@
 
 (define (spec-type-subst-remove-name [subs : SpecTypeSubst] [name : String]) : SpecTypeSubst
   (match subs
-    [(SpecTypeSubstNil) SpecTypeSubstNil]
-    [(SpecTypeSubstCons key ty rest)
+    [(SpecTypeSubst.Nil) SpecTypeSubst.Nil]
+    [(SpecTypeSubst.Cons key ty rest)
       (if (string.string-eq key name)
         (spec-type-subst-remove-name (box-get rest) name)
         (spec-type-subst-cons
@@ -1705,12 +1713,12 @@
       (ast-ty-struct-args name (box-get lifetimes))]
     [(AstTyVarArgs name lifetimes)
       (match (spec-type-subst-lookup subs (intern-str name))
-        [(SpecSomeString _) (spec-type-subst-type subs (intern-str name))]
-        [(SpecNoString) (ast-ty-var-args name (box-get lifetimes))])]
+        [(SpecMaybeString.Some _) (spec-type-subst-type subs (intern-str name))]
+        [(SpecMaybeString.None) (ast-ty-var-args name (box-get lifetimes))])]
     [(AstTyVar name)
       (match (spec-type-subst-lookup subs (intern-str name))
-        [(SpecSomeString _) (spec-type-subst-type subs (intern-str name))]
-        [(SpecNoString) ty])]
+        [(SpecMaybeString.Some _) (spec-type-subst-type subs (intern-str name))]
+        [(SpecMaybeString.None) ty])]
     [_ ty]))
 
 (define (spec-substitute-type-list [types : AstTypeList] [subs : SpecTypeSubst]) : AstTypeList
@@ -1746,13 +1754,13 @@
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
   (match value
     [(CtfeI64 n)
-      (OkSpecSubExpr (ast-node-push (AstExprLiteral (ast-lit-int n))))]
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprLiteral (ast-lit-int n))))]
     [(CtfeF64 n)
-      (OkSpecSubExpr
+      (ResultSpecSubExpr.Ok
         (ast-node-push
           (AstExprLiteral (AstLitFloat (compiler-float-format-f64 n)))))]
     [(CtfeF32 n)
-      (OkSpecSubExpr
+      (ResultSpecSubExpr.Ok
         (ast-expr-ann
           (ast-node-push
             (AstExprLiteral
@@ -1760,18 +1768,19 @@
                 (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))))
           (AstTyF32)))]
     [(CtfeBool b)
-      (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitBool b))))]
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprLiteral (AstLitBool b))))]
     [(CtfeChar c)
-      (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitChar c))))]
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprLiteral (AstLitChar c))))]
     [(CtfeString _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time String value into runtime expression")))]
-    [(CtfeUnit) (OkSpecSubExpr (ast-node-push (AstExprLiteral (AstLitUnit))))]
+    [(CtfeUnit)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprLiteral (AstLitUnit))))]
     [(CtfeType ty)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
@@ -1781,37 +1790,37 @@
                 (spec-type-key ty)
                 " into runtime expression")))))]
     [(CtfeExpr _ _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time Expr value into runtime expression")))]
     [(CtfeExprList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprList value into runtime expression")))]
     [(CtfeExprClause _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClause value into runtime expression")))]
     [(CtfeExprClauseList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClauseList value into runtime expression")))]
     [(CtfeExprBindingClause _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprBindingClause value into runtime expression")))]
     [(CtfeExprBindingClauseList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
@@ -1819,35 +1828,35 @@
 
 (define (spec-expr-var-name [expr : AstExpr]) : SpecMaybeString
   (match (ast-expr-unspan expr)
-    [(AstExprVar name) (SpecSomeString (intern-str name))]
-    [_ (SpecNoString)]))
+    [(AstExprVar name) (SpecMaybeString.Some (intern-str name))]
+    [_ (SpecMaybeString.None)]))
 
 (define (spec-rewrite-expr-list
   [exprs : AstExprList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecExprList
   (match exprs
-    [(AstExprNil) (OkSpecExprList AstExprNil state)]
+    [(AstExprNil) (ResultSpecExprList.Ok AstExprNil state)]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-rewrite-expr head templates state)
-          [(OkSpecExpr rewritten-head head-state)
+          [(ResultSpecExpr.Ok rewritten-head head-state)
             (match (spec-rewrite-expr-list rest templates head-state)
-              [(OkSpecExprList rewritten-rest rest-state)
-                (OkSpecExprList
+              [(ResultSpecExprList.Ok rewritten-rest rest-state)
+                (ResultSpecExprList.Ok
                   (ast-expr-cons rewritten-head rewritten-rest)
                   rest-state)]
-              [(ErrSpecExprList diag) (ErrSpecExprList diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExprList diag)]))]))
+              [(ResultSpecExprList.Err diag) (ResultSpecExprList.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExprList.Err diag)]))]))
 
 (define (spec-rewrite-let-bindings
   [bindings : AstLetBindingList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecLetBindingList
   (match bindings
-    [(AstLetBindingNil) (OkSpecLetBindingList AstLetBindingNil state)]
+    [(AstLetBindingNil) (ResultSpecLetBindingList.Ok AstLetBindingNil state)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -1856,26 +1865,27 @@
             (let
               [value : AstExpr (ast-node-get value-box)]
               (match (spec-rewrite-expr value templates state)
-                [(OkSpecExpr rewritten-value value-state)
+                [(ResultSpecExpr.Ok rewritten-value value-state)
                   (match (spec-rewrite-let-bindings
                     rest
                     (spec-template-env-shadow-name templates (intern-str name))
                     value-state)
-                    [(OkSpecLetBindingList rewritten-rest rest-state)
-                      (OkSpecLetBindingList
+                    [(ResultSpecLetBindingList.Ok rewritten-rest rest-state)
+                      (ResultSpecLetBindingList.Ok
                         (ast-let-binding-cons
                           (ast-let-binding-id name ty rewritten-value)
                           rewritten-rest)
                         rest-state)]
-                    [(ErrSpecLetBindingList diag) (ErrSpecLetBindingList diag)])]
-                [(ErrSpecExpr diag) (ErrSpecLetBindingList diag)]))]))]))
+                    [(ResultSpecLetBindingList.Err diag)
+                      (ResultSpecLetBindingList.Err diag)])]
+                [(ResultSpecExpr.Err diag) (ResultSpecLetBindingList.Err diag)]))]))]))
 
 (define (spec-rewrite-match-arms
   [arms : AstMatchArmList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecMatchArmList
   (match arms
-    [(AstMatchArmNil) (OkSpecMatchArmList AstMatchArmNil state)]
+    [(AstMatchArmNil) (ResultSpecMatchArmList.Ok AstMatchArmNil state)]
     [(AstMatchArmCons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -1887,16 +1897,17 @@
                 body
                 (spec-template-env-shadow-pattern templates pattern)
                 state)
-                [(OkSpecExpr rewritten-body body-state)
+                [(ResultSpecExpr.Ok rewritten-body body-state)
                   (match (spec-rewrite-match-arms rest templates body-state)
-                    [(OkSpecMatchArmList rewritten-rest rest-state)
-                      (OkSpecMatchArmList
+                    [(ResultSpecMatchArmList.Ok rewritten-rest rest-state)
+                      (ResultSpecMatchArmList.Ok
                         (ast-match-arm-cons
                           (ast-match-arm pattern rewritten-body)
                           rewritten-rest)
                         rest-state)]
-                    [(ErrSpecMatchArmList diag) (ErrSpecMatchArmList diag)])]
-                [(ErrSpecExpr diag) (ErrSpecMatchArmList diag)]))]))]))
+                    [(ResultSpecMatchArmList.Err diag)
+                      (ResultSpecMatchArmList.Err diag)])]
+                [(ResultSpecExpr.Err diag) (ResultSpecMatchArmList.Err diag)]))]))]))
 
 (define (spec-rewrite-specialized-call
   [template : SpecTemplate]
@@ -1905,23 +1916,23 @@
   [state : SpecState]
   [origin : AstExpr]) : ResultSpecExpr
   (match template
-    [(SpecTemplate name params _ _)
+    [(SpecTemplate.Item name params _ _)
       (match (spec-rewrite-specialized-args params args templates state name)
-        [(OkSpecArgs values runtime-args args-state)
+        [(ResultSpecArgs.Ok values runtime-args args-state)
           (match (spec-ensure-specialization
             template
             values
             templates
             args-state
             origin)
-            [(OkSpecEnsure specialized-name ensure-state)
-              (OkSpecExpr
+            [(ResultSpecEnsure.Ok specialized-name ensure-state)
+              (ResultSpecExpr.Ok
                 (ast-expr-call
                   (ast-node-push (AstExprVar (intern specialized-name)))
                   runtime-args)
                 ensure-state)]
-            [(ErrSpecEnsure diag) (ErrSpecExpr diag)])]
-        [(ErrSpecArgs diag) (ErrSpecExpr diag)])]))
+            [(ResultSpecEnsure.Err diag) (ResultSpecExpr.Err diag)])]
+        [(ResultSpecArgs.Err diag) (ResultSpecExpr.Err diag)])]))
 
 (define (spec-rewrite-specialized-args
   [params : AstParamList]
@@ -1932,9 +1943,9 @@
   (match params
     [(AstParamNil)
       (match args
-        [(AstExprNil) (OkSpecArgs SpecValueNil AstExprNil state)]
+        [(AstExprNil) (ResultSpecArgs.Ok SpecValueList.Nil AstExprNil state)]
         [_
-          (ErrSpecArgs
+          (ResultSpecArgs.Err
             (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))])]
     [(AstParamCons param rest-params)
       (let
@@ -1958,17 +1969,18 @@
                                 templates
                                 state
                                 fn-name)
-                                [(OkSpecArgs
+                                [(ResultSpecArgs.Ok
                                     rest-values
                                     rest-runtime
                                     rest-state)
-                                  (OkSpecArgs
+                                  (ResultSpecArgs.Ok
                                     (spec-value-cons value rest-values)
                                     rest-runtime
                                     rest-state)]
-                                [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
+                                [(ResultSpecArgs.Err diag)
+                                  (ResultSpecArgs.Err diag)])]
                             [_
-                              (ErrSpecArgs
+                              (ResultSpecArgs.Err
                                 (box
                                   (spec-diagnostic-at-expr
                                     arg
@@ -1988,13 +2000,17 @@
                               templates
                               state
                               fn-name)
-                              [(OkSpecArgs rest-values rest-runtime rest-state)
-                                (OkSpecArgs
+                              [(ResultSpecArgs.Ok
+                                  rest-values
+                                  rest-runtime
+                                  rest-state)
+                                (ResultSpecArgs.Ok
                                   (spec-value-cons value rest-values)
                                   rest-runtime
                                   rest-state)]
-                              [(ErrSpecArgs diag) (ErrSpecArgs diag)])
-                            (ErrSpecArgs
+                              [(ResultSpecArgs.Err diag)
+                                (ResultSpecArgs.Err diag)])
+                            (ResultSpecArgs.Err
                               (box
                                 (spec-diagnostic-at-expr
                                   arg
@@ -2013,24 +2029,24 @@
                                               (string.string-append
                                                 ", expected "
                                                 (spec-type-key param-ty)))))))))))))]
-                      [(ErrCtfe diag) (ErrSpecArgs diag)])
+                      [(ErrCtfe diag) (ResultSpecArgs.Err diag)])
                     (match (spec-rewrite-expr arg templates state)
-                      [(OkSpecExpr rewritten-arg arg-state)
+                      [(ResultSpecExpr.Ok rewritten-arg arg-state)
                         (match (spec-rewrite-specialized-args
                           rest-params
                           rest-args
                           templates
                           arg-state
                           fn-name)
-                          [(OkSpecArgs values rest-runtime rest-state)
-                            (OkSpecArgs
+                          [(ResultSpecArgs.Ok values rest-runtime rest-state)
+                            (ResultSpecArgs.Ok
                               values
                               (ast-expr-cons rewritten-arg rest-runtime)
                               rest-state)]
-                          [(ErrSpecArgs diag) (ErrSpecArgs diag)])]
-                      [(ErrSpecExpr diag) (ErrSpecArgs diag)]))]))]
+                          [(ResultSpecArgs.Err diag) (ResultSpecArgs.Err diag)])]
+                      [(ResultSpecExpr.Err diag) (ResultSpecArgs.Err diag)]))]))]
           [_
-            (ErrSpecArgs
+            (ResultSpecArgs.Err
               (box
                 (compiler-diagnostic-at-start "" "specialize: arity mismatch")))]))]))
 
@@ -2040,10 +2056,10 @@
   (match params
     [(AstParamNil)
       (match values
-        [(SpecValueNil)
-          (OkSpecBuild AstParamNil SpecValueSubstNil SpecTypeSubstNil)]
+        [(SpecValueList.Nil)
+          (ResultSpecBuild.Ok AstParamNil SpecValueSubst.Nil SpecTypeSubst.Nil)]
         [_
-          (ErrSpecBuild
+          (ResultSpecBuild.Err
             (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])]
     [(AstParamCons param rest-params)
       (let
@@ -2052,15 +2068,15 @@
           [(AstParam name ty is-comptime)
             (if is-comptime
               (match values
-                [(SpecValueCons value rest-values)
+                [(SpecValueList.Cons value rest-values)
                   (match (spec-build-specialization
                     rest-params
                     (box-get rest-values))
-                    [(OkSpecBuild runtime value-subs type-subs)
+                    [(ResultSpecBuild.Ok runtime value-subs type-subs)
                       (if (spec-type-kind? ty)
                         (match value
                           [(CtfeType actual-ty)
-                            (OkSpecBuild
+                            (ResultSpecBuild.Ok
                               runtime
                               value-subs
                               (spec-type-subst-cons
@@ -2068,32 +2084,32 @@
                                 actual-ty
                                 type-subs))]
                           [_
-                            (ErrSpecBuild
+                            (ResultSpecBuild.Err
                               (box
                                 (compiler-diagnostic-at-start
                                   ""
                                   "specialize: expected type value")))])
-                        (OkSpecBuild
+                        (ResultSpecBuild.Ok
                           runtime
                           (spec-value-subst-cons
                             (intern-str name)
                             value
                             value-subs)
                           type-subs))]
-                    [(ErrSpecBuild diag) (ErrSpecBuild diag)])]
+                    [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)])]
                 [_
-                  (ErrSpecBuild
+                  (ResultSpecBuild.Err
                     (box
                       (compiler-diagnostic-at-start
                         ""
                         "specialize: value mismatch")))])
               (match (spec-build-specialization rest-params values)
-                [(OkSpecBuild runtime value-subs type-subs)
-                  (OkSpecBuild
+                [(ResultSpecBuild.Ok runtime value-subs type-subs)
+                  (ResultSpecBuild.Ok
                     (ast-param-cons (AstParam name ty false) runtime)
                     value-subs
                     type-subs)]
-                [(ErrSpecBuild diag) (ErrSpecBuild diag)]))]))]))
+                [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)]))]))]))
 
 (define (spec-ensure-specialization
   [template : SpecTemplate]
@@ -2102,27 +2118,28 @@
   [state : SpecState]
   [_origin : AstExpr]) : ResultSpecEnsure
   (match template
-    [(SpecTemplate name params ret body)
+    [(SpecTemplate.Item name params ret body)
       (match state
-        [(SpecState generated cache ctfe-env pools)
+        [(SpecState.State generated cache ctfe-env pools)
           (let
             [key : String (spec-specialization-key name values)]
             (match (spec-cache-lookup cache key)
-              [(SpecSomeString cached-name) (OkSpecEnsure cached-name state)]
-              [(SpecNoString)
+              [(SpecMaybeString.Some cached-name)
+                (ResultSpecEnsure.Ok cached-name state)]
+              [(SpecMaybeString.None)
                 (let
                   [generated-name : String (spec-specialized-name name values)]
                   (match (spec-build-specialization params values)
-                    [(OkSpecBuild runtime-params value-subs type-subs)
+                    [(ResultSpecBuild.Ok runtime-params value-subs type-subs)
                       (match (spec-substitute-types-expr body type-subs)
-                        [(OkSpecSubExpr typed-body)
+                        [(ResultSpecSubExpr.Ok typed-body)
                           (match (spec-substitute-values-expr
                             (ast-node-get typed-body)
                             value-subs)
-                            [(OkSpecSubExpr valued-body)
+                            [(ResultSpecSubExpr.Ok valued-body)
                               (let
                                 [cached-state : SpecState
-                                  (SpecState
+                                  (SpecState.State
                                     generated
                                     (hashmap.string-string-map-put
                                       cache
@@ -2136,16 +2153,18 @@
                                     templates
                                     runtime-params)
                                   cached-state)
-                                  [(OkSpecExpr rewritten-body rewritten-state)
+                                  [(ResultSpecExpr.Ok
+                                      rewritten-body
+                                      rewritten-state)
                                     (match rewritten-state
-                                      [(SpecState
+                                      [(SpecState.State
                                           rewritten-generated
                                           rewritten-cache
                                           rewritten-ctfe-env
                                           rewritten-pools)
-                                        (OkSpecEnsure
+                                        (ResultSpecEnsure.Ok
                                           generated-name
-                                          (SpecState
+                                          (SpecState.State
                                             (spec-decl-list-append-one
                                               rewritten-generated
                                               (ast-decl-def-fn
@@ -2160,10 +2179,13 @@
                                             rewritten-cache
                                             rewritten-ctfe-env
                                             rewritten-pools))])]
-                                  [(ErrSpecExpr diag) (ErrSpecEnsure diag)]))]
-                            [(ErrSpecSubExpr diag) (ErrSpecEnsure diag)])]
-                        [(ErrSpecSubExpr diag) (ErrSpecEnsure diag)])]
-                    [(ErrSpecBuild diag) (ErrSpecEnsure diag)]))]))])]))
+                                  [(ResultSpecExpr.Err diag)
+                                    (ResultSpecEnsure.Err diag)]))]
+                            [(ResultSpecSubExpr.Err diag)
+                              (ResultSpecEnsure.Err diag)])]
+                        [(ResultSpecSubExpr.Err diag)
+                          (ResultSpecEnsure.Err diag)])]
+                    [(ResultSpecBuild.Err diag) (ResultSpecEnsure.Err diag)]))]))])]))
 
 (define (spec-rewrite-expr
   [expr : AstExpr]
@@ -2174,102 +2196,104 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten rewritten-state)
-            (OkSpecExpr (ast-expr-spanned rewritten span) rewritten-state)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprLiteral _) (OkSpecExpr (ast-node-push expr) state)]
-    [(AstExprVar _) (OkSpecExpr (ast-node-push expr) state)]
-    [(AstExprTypeLiteral _) (OkSpecExpr (ast-node-push expr) state)]
-    [(AstExprInit _) (OkSpecExpr (ast-node-push expr) state)]
+          [(ResultSpecExpr.Ok rewritten rewritten-state)
+            (ResultSpecExpr.Ok
+              (ast-expr-spanned rewritten span)
+              rewritten-state)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(AstExprLiteral _) (ResultSpecExpr.Ok (ast-node-push expr) state)]
+    [(AstExprVar _) (ResultSpecExpr.Ok (ast-node-push expr) state)]
+    [(AstExprTypeLiteral _) (ResultSpecExpr.Ok (ast-node-push expr) state)]
+    [(AstExprInit _) (ResultSpecExpr.Ok (ast-node-push expr) state)]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match (spec-rewrite-expr left templates state)
-          [(OkSpecExpr rewritten-left left-state)
+          [(ResultSpecExpr.Ok rewritten-left left-state)
             (match (spec-rewrite-expr right templates left-state)
-              [(OkSpecExpr rewritten-right right-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-right right-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-binary op rewritten-left rewritten-right)
                   right-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten rewritten-state)
-            (OkSpecExpr (ast-expr-unary op rewritten) rewritten-state)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten rewritten-state)
+            (ResultSpecExpr.Ok (ast-expr-unary op rewritten) rewritten-state)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (spec-expr-var-name func)
-          [(SpecSomeString name)
+          [(SpecMaybeString.Some name)
             (match (spec-template-lookup templates name)
-              [(SpecSomeTemplate template)
+              [(SpecMaybeTemplate.Some template)
                 (spec-rewrite-specialized-call
                   template
                   args
                   templates
                   state
                   expr)]
-              [(SpecNoTemplate)
+              [(SpecMaybeTemplate.None)
                 (match (spec-rewrite-expr func templates state)
-                  [(OkSpecExpr rewritten-func func-state)
+                  [(ResultSpecExpr.Ok rewritten-func func-state)
                     (match (spec-rewrite-expr-list args templates func-state)
-                      [(OkSpecExprList rewritten-args args-state)
-                        (OkSpecExpr
+                      [(ResultSpecExprList.Ok rewritten-args args-state)
+                        (ResultSpecExpr.Ok
                           (ast-expr-call rewritten-func rewritten-args)
                           args-state)]
-                      [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])])]
-          [(SpecNoString)
+                      [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])])]
+          [(SpecMaybeString.None)
             (match (spec-rewrite-expr func templates state)
-              [(OkSpecExpr rewritten-func func-state)
+              [(ResultSpecExpr.Ok rewritten-func func-state)
                 (match (spec-rewrite-expr-list args templates func-state)
-                  [(OkSpecExprList rewritten-args args-state)
-                    (OkSpecExpr
+                  [(ResultSpecExprList.Ok rewritten-args args-state)
+                    (ResultSpecExpr.Ok
                       (ast-expr-call rewritten-func rewritten-args)
                       args-state)]
-                  [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]))]
+                  [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
         [else-branch : AstExpr (ast-node-get else-branch-box)]
         (match (spec-rewrite-expr cond templates state)
-          [(OkSpecExpr rewritten-cond cond-state)
+          [(ResultSpecExpr.Ok rewritten-cond cond-state)
             (match (spec-rewrite-expr then-branch templates cond-state)
-              [(OkSpecExpr rewritten-then then-state)
+              [(ResultSpecExpr.Ok rewritten-then then-state)
                 (match (spec-rewrite-expr else-branch templates then-state)
-                  [(OkSpecExpr rewritten-else else-state)
-                    (OkSpecExpr
+                  [(ResultSpecExpr.Ok rewritten-else else-state)
+                    (ResultSpecExpr.Ok
                       (ast-expr-if rewritten-cond rewritten-then rewritten-else)
                       else-state)]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (spec-rewrite-let-bindings bindings templates state)
-              [(OkSpecLetBindingList rewritten-bindings binding-state)
+              [(ResultSpecLetBindingList.Ok rewritten-bindings binding-state)
                 (match (spec-rewrite-expr
                   body
                   (spec-template-env-shadow-let-binding-names
                     templates
                     bindings)
                   binding-state)
-                  [(OkSpecExpr rewritten-body body-state)
-                    (OkSpecExpr
+                  [(ResultSpecExpr.Ok rewritten-body body-state)
+                    (ResultSpecExpr.Ok
                       (ast-expr-let rewritten-bindings rewritten-body)
                       body-state)]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecLetBindingList diag) (ErrSpecExpr diag)]))])]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecLetBindingList.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params ret body-box)
@@ -2279,152 +2303,154 @@
               body
               (spec-template-env-shadow-params templates params)
               state)
-              [(OkSpecExpr rewritten-body body-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-body body-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-lambda params ret rewritten-body)
                   body-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(AstExprTuple exprs)
       (match (spec-rewrite-expr-list exprs templates state)
-        [(OkSpecExprList rewritten state2)
-          (OkSpecExpr (ast-node-push (AstExprTuple rewritten)) state2)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok (ast-node-push (AstExprTuple rewritten)) state2)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprTupleRef inner-box index)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-tuple-ref rewritten index) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-tuple-ref rewritten index) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprArray exprs)
       (match (spec-rewrite-expr-list exprs templates state)
-        [(OkSpecExprList rewritten state2)
-          (OkSpecExpr (ast-node-push (AstExprArray rewritten)) state2)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok (ast-node-push (AstExprArray rewritten)) state2)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
         (match (spec-rewrite-expr len templates state)
-          [(OkSpecExpr rewritten-len state2)
-            (OkSpecExpr (ast-expr-make-array elem-ty rewritten-len) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten-len state2)
+            (ResultSpecExpr.Ok
+              (ast-expr-make-array elem-ty rewritten-len)
+              state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-rewrite-expr array templates state)
-          [(OkSpecExpr rewritten-array array-state)
+          [(ResultSpecExpr.Ok rewritten-array array-state)
             (match (spec-rewrite-expr index templates array-state)
-              [(OkSpecExpr rewritten-index index-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-index index-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-array-ref rewritten-array rewritten-index)
                   index-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr array templates state)
-          [(OkSpecExpr rewritten-array array-state)
+          [(ResultSpecExpr.Ok rewritten-array array-state)
             (match (spec-rewrite-expr index templates array-state)
-              [(OkSpecExpr rewritten-index index-state)
+              [(ResultSpecExpr.Ok rewritten-index index-state)
                 (match (spec-rewrite-expr value templates index-state)
-                  [(OkSpecExpr rewritten-value value-state)
-                    (OkSpecExpr
+                  [(ResultSpecExpr.Ok rewritten-value value-state)
+                    (ResultSpecExpr.Ok
                       (ast-expr-array-set
                         rewritten-array
                         rewritten-index
                         rewritten-value)
                       value-state)]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr array templates state)
-          [(OkSpecExpr rewritten-array array-state)
+          [(ResultSpecExpr.Ok rewritten-array array-state)
             (match (spec-rewrite-expr value templates array-state)
-              [(OkSpecExpr rewritten-value value-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-value value-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-array-push rewritten-array rewritten-value)
                   value-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprStringRef text-box index-box)
       (let
         [text : AstExpr (ast-node-get text-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-rewrite-expr text templates state)
-          [(OkSpecExpr rewritten-text text-state)
+          [(ResultSpecExpr.Ok rewritten-text text-state)
             (match (spec-rewrite-expr index templates text-state)
-              [(OkSpecExpr rewritten-index index-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-index index-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-string-ref rewritten-text rewritten-index)
                   index-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprWhile cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-rewrite-expr cond templates state)
-          [(OkSpecExpr rewritten-cond cond-state)
+          [(ResultSpecExpr.Ok rewritten-cond cond-state)
             (match (spec-rewrite-expr body templates cond-state)
-              [(OkSpecExpr rewritten-body body-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-body body-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-while rewritten-cond rewritten-body)
                   body-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprBegin exprs)
       (match (spec-rewrite-expr-list exprs templates state)
-        [(OkSpecExprList rewritten state2)
-          (OkSpecExpr (ast-node-push (AstExprBegin rewritten)) state2)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok (ast-node-push (AstExprBegin rewritten)) state2)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprUnsafe exprs)
       (match (spec-rewrite-expr-list exprs templates state)
-        [(OkSpecExprList rewritten state2)
-          (OkSpecExpr (ast-node-push (AstExprUnsafe rewritten)) state2)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok (ast-node-push (AstExprUnsafe rewritten)) state2)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-set-id name rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-set-id name rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-ann rewritten ty) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-ann rewritten ty) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprCast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-cast rewritten ty) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-cast rewritten ty) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
           (let
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (match (spec-rewrite-expr scrutinee templates state)
-              [(OkSpecExpr rewritten-scrutinee scrutinee-state)
+              [(ResultSpecExpr.Ok rewritten-scrutinee scrutinee-state)
                 (match (spec-rewrite-match-arms arms templates scrutinee-state)
-                  [(OkSpecMatchArmList rewritten-arms arms-state)
-                    (OkSpecExpr
+                  [(ResultSpecMatchArmList.Ok rewritten-arms arms-state)
+                    (ResultSpecExpr.Ok
                       (ast-expr-match rewritten-scrutinee rewritten-arms)
                       arms-state)]
-                  [(ErrSpecMatchArmList diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
+                  [(ResultSpecMatchArmList.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
         [(AstForeach index index-ty start-box end-box body-box)
@@ -2433,17 +2459,17 @@
             [end : AstExpr (ast-node-get end-box)]
             [body : AstExpr (ast-node-get body-box)]
             (match (spec-rewrite-expr start templates state)
-              [(OkSpecExpr rewritten-start start-state)
+              [(ResultSpecExpr.Ok rewritten-start start-state)
                 (match (spec-rewrite-expr end templates start-state)
-                  [(OkSpecExpr rewritten-end end-state)
+                  [(ResultSpecExpr.Ok rewritten-end end-state)
                     (match (spec-rewrite-expr
                       body
                       (spec-template-env-shadow-name
                         templates
                         (intern-str index))
                       end-state)
-                      [(OkSpecExpr rewritten-body body-state)
-                        (OkSpecExpr
+                      [(ResultSpecExpr.Ok rewritten-body body-state)
+                        (ResultSpecExpr.Ok
                           (ast-expr-foreach-id
                             index
                             index-ty
@@ -2451,9 +2477,9 @@
                             rewritten-end
                             rewritten-body)
                           body-state)]
-                      [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
+                      [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -2463,19 +2489,19 @@
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             (match (spec-rewrite-expr start templates state)
-              [(OkSpecExpr rewritten-start start-state)
+              [(ResultSpecExpr.Ok rewritten-start start-state)
                 (match (spec-rewrite-expr end templates start-state)
-                  [(OkSpecExpr rewritten-end end-state)
+                  [(ResultSpecExpr.Ok rewritten-end end-state)
                     (match (spec-rewrite-expr init templates end-state)
-                      [(OkSpecExpr rewritten-init init-state)
+                      [(ResultSpecExpr.Ok rewritten-init init-state)
                         (match (spec-rewrite-expr
                           value
                           (spec-template-env-shadow-name
                             templates
                             (intern-str index))
                           init-state)
-                          [(OkSpecExpr rewritten-value value-state)
-                            (OkSpecExpr
+                          [(ResultSpecExpr.Ok rewritten-value value-state)
+                            (ResultSpecExpr.Ok
                               (ast-expr-spmd-reduce-id
                                 op
                                 index
@@ -2485,10 +2511,10 @@
                                 rewritten-init
                                 rewritten-value)
                               value-state)]
-                          [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                      [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
+                          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                      [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan
@@ -2515,22 +2541,22 @@
                 value-templates
                 (intern-str prefix))]
             (match (spec-rewrite-expr start templates state)
-              [(OkSpecExpr rewritten-start start-state)
+              [(ResultSpecExpr.Ok rewritten-start start-state)
                 (match (spec-rewrite-expr end templates start-state)
-                  [(OkSpecExpr rewritten-end end-state)
+                  [(ResultSpecExpr.Ok rewritten-end end-state)
                     (match (spec-rewrite-expr init templates end-state)
-                      [(OkSpecExpr rewritten-init init-state)
+                      [(ResultSpecExpr.Ok rewritten-init init-state)
                         (match (spec-rewrite-expr
                           value
                           value-templates
                           init-state)
-                          [(OkSpecExpr rewritten-value value-state)
+                          [(ResultSpecExpr.Ok rewritten-value value-state)
                             (match (spec-rewrite-expr
                               body
                               body-templates
                               value-state)
-                              [(OkSpecExpr rewritten-body body-state)
-                                (OkSpecExpr
+                              [(ResultSpecExpr.Ok rewritten-body body-state)
+                                (ResultSpecExpr.Ok
                                   (ast-expr-spmd-scan-id
                                     op
                                     index
@@ -2543,100 +2569,101 @@
                                     rewritten-value
                                     rewritten-body)
                                   body-state)]
-                              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                          [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                      [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-                  [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)]))])]
+                              [(ResultSpecExpr.Err diag)
+                                (ResultSpecExpr.Err diag)])]
+                          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                      [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (spec-rewrite-expr value templates state)
-          [(OkSpecExpr rewritten-value value-state)
+          [(ResultSpecExpr.Ok rewritten-value value-state)
             (match (spec-rewrite-expr lane templates value-state)
-              [(OkSpecExpr rewritten-lane lane-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-lane lane-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-spmd-broadcast rewritten-value rewritten-lane)
                   lane-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (spec-rewrite-expr value templates state)
-          [(OkSpecExpr rewritten-value value-state)
+          [(ResultSpecExpr.Ok rewritten-value value-state)
             (match (spec-rewrite-expr lane templates value-state)
-              [(OkSpecExpr rewritten-lane lane-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-lane lane-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-spmd-shuffle rewritten-value rewritten-lane)
                   lane-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (spec-rewrite-expr receiver templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-struct-get-id rewritten field) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-struct-get-id rewritten field) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprStructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr receiver templates state)
-          [(OkSpecExpr rewritten-receiver receiver-state)
+          [(ResultSpecExpr.Ok rewritten-receiver receiver-state)
             (match (spec-rewrite-expr value templates receiver-state)
-              [(OkSpecExpr rewritten-value value-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-value value-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-struct-set-id
                     rewritten-receiver
                     field
                     rewritten-value)
                   value-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-rewrite-expr-list body templates state)
-        [(OkSpecExprList rewritten state2)
-          (OkSpecExpr
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok
             (ast-node-push (AstExprWithRegion region rewritten))
             state2)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprWithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (match (spec-rewrite-expr scratch templates state)
-          [(OkSpecExpr rewritten-scratch scratch-state)
+          [(ResultSpecExpr.Ok rewritten-scratch scratch-state)
             (match (spec-rewrite-expr-list body templates scratch-state)
-              [(OkSpecExprList rewritten-body body-state)
-                (OkSpecExpr
+              [(ResultSpecExprList.Ok rewritten-body body-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-with-escape rewritten-scratch rewritten-body)
                   body-state)]
-              [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprWithScratch body)
       (match (spec-rewrite-expr-list body templates state)
-        [(OkSpecExprList rewritten-body body-state)
-          (OkSpecExpr (ast-expr-with-scratch rewritten-body) body-state)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Ok rewritten-body body-state)
+          (ResultSpecExpr.Ok (ast-expr-with-scratch rewritten-body) body-state)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (match (spec-rewrite-expr arena templates state)
-          [(OkSpecExpr rewritten-arena arena-state)
+          [(ResultSpecExpr.Ok rewritten-arena arena-state)
             (match (spec-rewrite-expr-list body templates arena-state)
-              [(OkSpecExprList rewritten-body body-state)
-                (OkSpecExpr
+              [(ResultSpecExprList.Ok rewritten-body body-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-in-arena rewritten-arena rewritten-body)
                   body-state)]
-              [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprWithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource bindings body)
-          (OkSpecExpr
+          (ResultSpecExpr.Ok
             (ast-node-push
               (AstExprWithResource (box (AstWithResource bindings body))))
             state)])]
@@ -2644,255 +2671,259 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-box rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-box rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprBoxGet inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-box-get rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-box-get rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprBoxTake inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-box-take rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-box-take rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprBoxSet inner-box value-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten-inner inner-state)
+          [(ResultSpecExpr.Ok rewritten-inner inner-state)
             (match (spec-rewrite-expr value templates inner-state)
-              [(OkSpecExpr rewritten-value value-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-value value-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-box-set rewritten-inner rewritten-value)
                   value-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-comptime rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-comptime rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-try rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-try rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprReturn inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-return rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprPtrNull ty) (OkSpecExpr (ast-node-push (AstExprPtrNull ty)) state)]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-return rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(AstExprPtrNull ty)
+      (ResultSpecExpr.Ok (ast-node-push (AstExprPtrNull ty)) state)]
     [(AstExprPtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-ptr-null-check rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
-    [(AstExprPtrAddrOf name) (OkSpecExpr (ast-expr-ptr-addr-of-id name) state)]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-ptr-null-check rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(AstExprPtrAddrOf name)
+      (ResultSpecExpr.Ok (ast-expr-ptr-addr-of-id name) state)]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-rewrite-expr ptr templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-ptr-read rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-ptr-read rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprPtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr ptr templates state)
-          [(OkSpecExpr rewritten-ptr ptr-state)
+          [(ResultSpecExpr.Ok rewritten-ptr ptr-state)
             (match (spec-rewrite-expr value templates ptr-state)
-              [(OkSpecExpr rewritten-value value-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-value value-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-ptr-write rewritten-ptr rewritten-value)
                   value-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprPtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (match (spec-rewrite-expr ptr templates state)
-          [(OkSpecExpr rewritten-ptr ptr-state)
+          [(ResultSpecExpr.Ok rewritten-ptr ptr-state)
             (match (spec-rewrite-expr offset templates ptr-state)
-              [(OkSpecExpr rewritten-offset offset-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-offset offset-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-ptr-offset rewritten-ptr rewritten-offset)
                   offset-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprPtrCast ptr-box ty)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-rewrite-expr ptr templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-ptr-cast rewritten ty) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-ptr-cast rewritten ty) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprPtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-rewrite-expr ptr templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-ptr-to-int rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-ptr-to-int rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprIntToPtr value-box ty)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-int-to-ptr rewritten ty) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-int-to-ptr rewritten ty) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprStringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-string-data rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-string-data rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprStringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (match (spec-rewrite-expr ptr templates state)
-          [(OkSpecExpr rewritten-ptr ptr-state)
+          [(ResultSpecExpr.Ok rewritten-ptr ptr-state)
             (match (spec-rewrite-expr len templates ptr-state)
-              [(OkSpecExpr rewritten-len len-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-len len-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-string-from-bytes rewritten-ptr rewritten-len)
                   len-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-array-data rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-array-data rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprBinaryData bytes)
-      (OkSpecExpr (ast-node-push (AstExprBinaryData bytes)) state)]
-    [(AstExprSpmdProgramIndex) (OkSpecExpr (ast-expr-spmd-program-index) state)]
-    [(AstExprSpmdProgramCount) (OkSpecExpr (ast-expr-spmd-program-count) state)]
+      (ResultSpecExpr.Ok (ast-node-push (AstExprBinaryData bytes)) state)]
+    [(AstExprSpmdProgramIndex)
+      (ResultSpecExpr.Ok (ast-expr-spmd-program-index) state)]
+    [(AstExprSpmdProgramCount)
+      (ResultSpecExpr.Ok (ast-expr-spmd-program-count) state)]
     [(AstExprProgramArgc)
-      (OkSpecExpr (ast-node-push (AstExprProgramArgc)) state)]
+      (ResultSpecExpr.Ok (ast-node-push (AstExprProgramArgc)) state)]
     [(AstExprProgramArgv)
-      (OkSpecExpr (ast-node-push (AstExprProgramArgv)) state)]
+      (ResultSpecExpr.Ok (ast-node-push (AstExprProgramArgv)) state)]
     [(AstExprProgramEnvp)
-      (OkSpecExpr (ast-node-push (AstExprProgramEnvp)) state)]
+      (ResultSpecExpr.Ok (ast-node-push (AstExprProgramEnvp)) state)]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-rewrite-expr leaf templates state)
-          [(OkSpecExpr rewritten-leaf leaf-state)
+          [(ResultSpecExpr.Ok rewritten-leaf leaf-state)
             (match (spec-rewrite-expr subleaf templates leaf-state)
-              [(OkSpecExpr rewritten-subleaf subleaf-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-subleaf subleaf-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-cpuid-eax rewritten-leaf rewritten-subleaf)
                   subleaf-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprCpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-rewrite-expr leaf templates state)
-          [(OkSpecExpr rewritten-leaf leaf-state)
+          [(ResultSpecExpr.Ok rewritten-leaf leaf-state)
             (match (spec-rewrite-expr subleaf templates leaf-state)
-              [(OkSpecExpr rewritten-subleaf subleaf-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-subleaf subleaf-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-cpuid-ebx rewritten-leaf rewritten-subleaf)
                   subleaf-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprCpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-rewrite-expr leaf templates state)
-          [(OkSpecExpr rewritten-leaf leaf-state)
+          [(ResultSpecExpr.Ok rewritten-leaf leaf-state)
             (match (spec-rewrite-expr subleaf templates leaf-state)
-              [(OkSpecExpr rewritten-subleaf subleaf-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-subleaf subleaf-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-cpuid-ecx rewritten-leaf rewritten-subleaf)
                   subleaf-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprCpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-rewrite-expr leaf templates state)
-          [(OkSpecExpr rewritten-leaf leaf-state)
+          [(ResultSpecExpr.Ok rewritten-leaf leaf-state)
             (match (spec-rewrite-expr subleaf templates leaf-state)
-              [(OkSpecExpr rewritten-subleaf subleaf-state)
-                (OkSpecExpr
+              [(ResultSpecExpr.Ok rewritten-subleaf subleaf-state)
+                (ResultSpecExpr.Ok
                   (ast-expr-cpuid-edx rewritten-leaf rewritten-subleaf)
                   subleaf-state)]
-              [(ErrSpecExpr diag) (ErrSpecExpr diag)])]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-rewrite-expr index templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-xgetbv rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-xgetbv rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprSyscall args)
       (match (spec-rewrite-expr-list args templates state)
-        [(OkSpecExprList rewritten-args args-state)
-          (OkSpecExpr (ast-expr-syscall rewritten-args) args-state)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
+        [(ResultSpecExprList.Ok rewritten-args args-state)
+          (ResultSpecExpr.Ok (ast-expr-syscall rewritten-args) args-state)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-quote rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-quote rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprQuasiquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-quasiquote rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-quasiquote rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprUnquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-unquote rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-unquote rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprUnquoteSplicing inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-rewrite-expr inner templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecExpr (ast-expr-unquote-splicing rewritten) state2)]
-          [(ErrSpecExpr diag) (ErrSpecExpr diag)]))]
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-unquote-splicing rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExprBracketClause items)
       (match (spec-rewrite-expr-list items templates state)
-        [(OkSpecExprList rewritten state2)
-          (OkSpecExpr (ast-expr-bracket-clause rewritten) state2)]
-        [(ErrSpecExprList diag) (ErrSpecExpr diag)])]
-    [(AstExprBorrow _ _ _) (OkSpecExpr (ast-node-push expr) state)]))
+        [(ResultSpecExprList.Ok rewritten state2)
+          (ResultSpecExpr.Ok (ast-expr-bracket-clause rewritten) state2)]
+        [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
+    [(AstExprBorrow _ _ _) (ResultSpecExpr.Ok (ast-node-push expr) state)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
   (match expr
@@ -2900,81 +2931,83 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-spanned rewritten span))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-spanned rewritten span))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprVar name)
       (let
         [name-str : String (intern-str name)]
         (match (spec-value-subst-lookup subs name-str)
-          [(SpecSomeString _)
+          [(SpecMaybeString.Some _)
             (spec-ctfe-value-to-expr
               (spec-value-subst-value subs name-str)
               expr)]
-          [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))]))]
-    [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
-    [(AstExprTypeLiteral _) (OkSpecSubExpr (ast-node-push expr))]
-    [(AstExprInit _) (OkSpecSubExpr (ast-node-push expr))]
+          [(SpecMaybeString.None) (ResultSpecSubExpr.Ok (ast-node-push expr))]))]
+    [(AstExprLiteral _) (ResultSpecSubExpr.Ok (ast-node-push expr))]
+    [(AstExprTypeLiteral _) (ResultSpecSubExpr.Ok (ast-node-push expr))]
+    [(AstExprInit _) (ResultSpecSubExpr.Ok (ast-node-push expr))]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match (spec-substitute-values-expr left subs)
-          [(OkSpecSubExpr rewritten-left)
+          [(ResultSpecSubExpr.Ok rewritten-left)
             (match (spec-substitute-values-expr right subs)
-              [(OkSpecSubExpr rewritten-right)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-right)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-binary op rewritten-left rewritten-right))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-unary op rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-unary op rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (spec-substitute-values-expr func subs)
-          [(OkSpecSubExpr rewritten-func)
+          [(ResultSpecSubExpr.Ok rewritten-func)
             (match (spec-substitute-values-expr-list args subs)
-              [(OkSpecSubExprList rewritten-args)
-                (OkSpecSubExpr (ast-expr-call rewritten-func rewritten-args))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExprList.Ok rewritten-args)
+                (ResultSpecSubExpr.Ok
+                  (ast-expr-call rewritten-func rewritten-args))]
+              [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
         [else-branch : AstExpr (ast-node-get else-branch-box)]
         (match (spec-substitute-values-expr cond subs)
-          [(OkSpecSubExpr rewritten-cond)
+          [(ResultSpecSubExpr.Ok rewritten-cond)
             (match (spec-substitute-values-expr then-branch subs)
-              [(OkSpecSubExpr rewritten-then)
+              [(ResultSpecSubExpr.Ok rewritten-then)
                 (match (spec-substitute-values-expr else-branch subs)
-                  [(OkSpecSubExpr rewritten-else)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubExpr.Ok rewritten-else)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-if rewritten-cond rewritten-then rewritten-else))]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (spec-substitute-values-let-bindings bindings subs)
-              [(OkSpecSubLetBindingList rewritten-bindings)
+              [(ResultSpecSubLetBindingList.Ok rewritten-bindings)
                 (match (spec-substitute-values-expr
                   body
                   (spec-value-subst-remove-let-binding-names subs bindings))
-                  [(OkSpecSubExpr rewritten-body)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubExpr.Ok rewritten-body)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-let rewritten-bindings rewritten-body))]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)]))])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubLetBindingList.Err diag)
+                (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params ret body-box)
@@ -2983,153 +3016,156 @@
             (match (spec-substitute-values-expr
               body
               (spec-value-subst-remove-params subs params))
-              [(OkSpecSubExpr rewritten-body)
-                (OkSpecSubExpr (ast-expr-lambda params ret rewritten-body))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+              [(ResultSpecSubExpr.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
+                  (ast-expr-lambda params ret rewritten-body))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprTuple exprs)
       (match (spec-substitute-values-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprTuple rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprTuple rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprTupleRef inner-box index)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-tuple-ref rewritten index))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-tuple-ref rewritten index))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArray exprs)
       (match (spec-substitute-values-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprArray rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprArray rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
         (match (spec-substitute-values-expr len subs)
-          [(OkSpecSubExpr rewritten-len)
-            (OkSpecSubExpr (ast-expr-make-array elem-ty rewritten-len))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten-len)
+            (ResultSpecSubExpr.Ok (ast-expr-make-array elem-ty rewritten-len))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-substitute-values-expr array subs)
-          [(OkSpecSubExpr rewritten-array)
+          [(ResultSpecSubExpr.Ok rewritten-array)
             (match (spec-substitute-values-expr index subs)
-              [(OkSpecSubExpr rewritten-index)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-array-ref rewritten-array rewritten-index))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-values-expr array subs)
-          [(OkSpecSubExpr rewritten-array)
+          [(ResultSpecSubExpr.Ok rewritten-array)
             (match (spec-substitute-values-expr index subs)
-              [(OkSpecSubExpr rewritten-index)
+              [(ResultSpecSubExpr.Ok rewritten-index)
                 (match (spec-substitute-values-expr value subs)
-                  [(OkSpecSubExpr rewritten-value)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubExpr.Ok rewritten-value)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-array-set
                         rewritten-array
                         rewritten-index
                         rewritten-value))]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-values-expr array subs)
-          [(OkSpecSubExpr rewritten-array)
+          [(ResultSpecSubExpr.Ok rewritten-array)
             (match (spec-substitute-values-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-array-push rewritten-array rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStringRef text-box index-box)
       (let
         [text : AstExpr (ast-node-get text-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-substitute-values-expr text subs)
-          [(OkSpecSubExpr rewritten-text)
+          [(ResultSpecSubExpr.Ok rewritten-text)
             (match (spec-substitute-values-expr index subs)
-              [(OkSpecSubExpr rewritten-index)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-string-ref rewritten-text rewritten-index))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWhile cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-substitute-values-expr cond subs)
-          [(OkSpecSubExpr rewritten-cond)
+          [(ResultSpecSubExpr.Ok rewritten-cond)
             (match (spec-substitute-values-expr body subs)
-              [(OkSpecSubExpr rewritten-body)
-                (OkSpecSubExpr (ast-expr-while rewritten-cond rewritten-body))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
+                  (ast-expr-while rewritten-cond rewritten-body))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBegin exprs)
       (match (spec-substitute-values-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprBegin rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprBegin rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprUnsafe exprs)
       (match (spec-substitute-values-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprUnsafe rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprUnsafe rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-value-subst-lookup subs (intern-str name))
-          [(SpecSomeString _)
-            (ErrSpecSubExpr
+          [(SpecMaybeString.Some _)
+            (ResultSpecSubExpr.Err
               (box
                 (spec-diagnostic-at-expr
                   expr
                   (string.string-append
                     "cannot assign to comptime parameter '"
                     (string.string-append (intern-str name) "'")))))]
-          [(SpecNoString)
+          [(SpecMaybeString.None)
             (match (spec-substitute-values-expr value subs)
-              [(OkSpecSubExpr rewritten)
-                (OkSpecSubExpr (ast-expr-set-id name rewritten))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
+              [(ResultSpecSubExpr.Ok rewritten)
+                (ResultSpecSubExpr.Ok (ast-expr-set-id name rewritten))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]))]
     [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ann rewritten ty))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ann rewritten ty))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-cast rewritten ty))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-cast rewritten ty))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
           (let
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (match (spec-substitute-values-expr scrutinee subs)
-              [(OkSpecSubExpr rewritten-scrutinee)
+              [(ResultSpecSubExpr.Ok rewritten-scrutinee)
                 (match (spec-substitute-values-match-arms arms subs)
-                  [(OkSpecSubMatchArmList rewritten-arms)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubMatchArmList.Ok rewritten-arms)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-match rewritten-scrutinee rewritten-arms))]
-                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                  [(ResultSpecSubMatchArmList.Err diag)
+                    (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
         [(AstForeach index index-ty start-box end-box body-box)
@@ -3138,23 +3174,24 @@
             [end : AstExpr (ast-node-get end-box)]
             [body : AstExpr (ast-node-get body-box)]
             (match (spec-substitute-values-expr start subs)
-              [(OkSpecSubExpr rewritten-start)
+              [(ResultSpecSubExpr.Ok rewritten-start)
                 (match (spec-substitute-values-expr end subs)
-                  [(OkSpecSubExpr rewritten-end)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
                     (match (spec-substitute-values-expr
                       body
                       (spec-value-subst-remove-name subs (intern-str index)))
-                      [(OkSpecSubExpr rewritten-body)
-                        (OkSpecSubExpr
+                      [(ResultSpecSubExpr.Ok rewritten-body)
+                        (ResultSpecSubExpr.Ok
                           (ast-expr-foreach-id
                             index
                             index-ty
                             rewritten-start
                             rewritten-end
                             rewritten-body))]
-                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -3164,16 +3201,16 @@
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             (match (spec-substitute-values-expr start subs)
-              [(OkSpecSubExpr rewritten-start)
+              [(ResultSpecSubExpr.Ok rewritten-start)
                 (match (spec-substitute-values-expr end subs)
-                  [(OkSpecSubExpr rewritten-end)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
                     (match (spec-substitute-values-expr init subs)
-                      [(OkSpecSubExpr rewritten-init)
+                      [(ResultSpecSubExpr.Ok rewritten-init)
                         (match (spec-substitute-values-expr
                           value
                           (spec-value-subst-remove-name subs (intern-str index)))
-                          [(OkSpecSubExpr rewritten-value)
-                            (OkSpecSubExpr
+                          [(ResultSpecSubExpr.Ok rewritten-value)
+                            (ResultSpecSubExpr.Ok
                               (ast-expr-spmd-reduce-id
                                 op
                                 index
@@ -3182,10 +3219,12 @@
                                 rewritten-end
                                 rewritten-init
                                 rewritten-value))]
-                          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                          [(ResultSpecSubExpr.Err diag)
+                            (ResultSpecSubExpr.Err diag)])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan
@@ -3210,16 +3249,16 @@
             [body-subs : SpecValueSubst
               (spec-value-subst-remove-name value-subs (intern-str prefix))]
             (match (spec-substitute-values-expr start subs)
-              [(OkSpecSubExpr rewritten-start)
+              [(ResultSpecSubExpr.Ok rewritten-start)
                 (match (spec-substitute-values-expr end subs)
-                  [(OkSpecSubExpr rewritten-end)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
                     (match (spec-substitute-values-expr init subs)
-                      [(OkSpecSubExpr rewritten-init)
+                      [(ResultSpecSubExpr.Ok rewritten-init)
                         (match (spec-substitute-values-expr value value-subs)
-                          [(OkSpecSubExpr rewritten-value)
+                          [(ResultSpecSubExpr.Ok rewritten-value)
                             (match (spec-substitute-values-expr body body-subs)
-                              [(OkSpecSubExpr rewritten-body)
-                                (OkSpecSubExpr
+                              [(ResultSpecSubExpr.Ok rewritten-body)
+                                (ResultSpecSubExpr.Ok
                                   (ast-expr-spmd-scan-id
                                     op
                                     index
@@ -3231,368 +3270,383 @@
                                     rewritten-init
                                     rewritten-value
                                     rewritten-body))]
-                              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                              [(ResultSpecSubExpr.Err diag)
+                                (ResultSpecSubExpr.Err diag)])]
+                          [(ResultSpecSubExpr.Err diag)
+                            (ResultSpecSubExpr.Err diag)])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (spec-substitute-values-expr value subs)
-          [(OkSpecSubExpr rewritten-value)
+          [(ResultSpecSubExpr.Ok rewritten-value)
             (match (spec-substitute-values-expr lane subs)
-              [(OkSpecSubExpr rewritten-lane)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-lane)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-spmd-broadcast rewritten-value rewritten-lane))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (spec-substitute-values-expr value subs)
-          [(OkSpecSubExpr rewritten-value)
+          [(ResultSpecSubExpr.Ok rewritten-value)
             (match (spec-substitute-values-expr lane subs)
-              [(OkSpecSubExpr rewritten-lane)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-lane)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-spmd-shuffle rewritten-value rewritten-lane))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (spec-substitute-values-expr receiver subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-struct-get-id rewritten field))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-struct-get-id rewritten field))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-values-expr receiver subs)
-          [(OkSpecSubExpr rewritten-receiver)
+          [(ResultSpecSubExpr.Ok rewritten-receiver)
             (match (spec-substitute-values-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-struct-set-id
                     rewritten-receiver
                     field
                     rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-values-expr-list body subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprWithRegion region rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok
+            (ast-node-push (AstExprWithRegion region rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprWithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (match (spec-substitute-values-expr scratch subs)
-          [(OkSpecSubExpr rewritten-scratch)
+          [(ResultSpecSubExpr.Ok rewritten-scratch)
             (match (spec-substitute-values-expr-list body subs)
-              [(OkSpecSubExprList rewritten-body)
-                (OkSpecSubExpr
+              [(ResultSpecSubExprList.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-with-escape rewritten-scratch rewritten-body))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWithScratch body)
       (match (spec-substitute-values-expr-list body subs)
-        [(OkSpecSubExprList rewritten-body)
-          (OkSpecSubExpr (ast-expr-with-scratch rewritten-body))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten-body)
+          (ResultSpecSubExpr.Ok (ast-expr-with-scratch rewritten-body))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (match (spec-substitute-values-expr arena subs)
-          [(OkSpecSubExpr rewritten-arena)
+          [(ResultSpecSubExpr.Ok rewritten-arena)
             (match (spec-substitute-values-expr-list body subs)
-              [(OkSpecSubExprList rewritten-body)
-                (OkSpecSubExpr
+              [(ResultSpecSubExprList.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-in-arena rewritten-arena rewritten-body))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource bindings body)
-          (OkSpecSubExpr
+          (ResultSpecSubExpr.Ok
             (ast-node-push
               (AstExprWithResource (box (AstWithResource bindings body)))))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-box rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-box rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBoxGet inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-box-get rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-box-get rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBoxTake inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-box-take rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-box-take rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBoxSet inner-box value-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten-inner)
+          [(ResultSpecSubExpr.Ok rewritten-inner)
             (match (spec-substitute-values-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-box-set rewritten-inner rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-comptime rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-comptime rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-try rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-try rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprReturn inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-return rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
-    [(AstExprPtrNull ty) (OkSpecSubExpr (ast-node-push (AstExprPtrNull ty)))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-return rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(AstExprPtrNull ty)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprPtrNull ty)))]
     [(AstExprPtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-null-check rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrAddrOf name)
       (match (spec-value-subst-lookup subs (intern-str name))
-        [(SpecSomeString _)
-          (ErrSpecSubExpr
+        [(SpecMaybeString.Some _)
+          (ResultSpecSubExpr.Err
             (box
               (spec-diagnostic-at-expr
                 expr
                 (string.string-append
                   "cannot take address of comptime value parameter '"
                   (string.string-append (intern-str name) "'")))))]
-        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
+        [(SpecMaybeString.None)
+          (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-substitute-values-expr ptr subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-read rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-read rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-values-expr ptr subs)
-          [(OkSpecSubExpr rewritten-ptr)
+          [(ResultSpecSubExpr.Ok rewritten-ptr)
             (match (spec-substitute-values-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-ptr-write rewritten-ptr rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (match (spec-substitute-values-expr ptr subs)
-          [(OkSpecSubExpr rewritten-ptr)
+          [(ResultSpecSubExpr.Ok rewritten-ptr)
             (match (spec-substitute-values-expr offset subs)
-              [(OkSpecSubExpr rewritten-offset)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-offset)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-ptr-offset rewritten-ptr rewritten-offset))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrCast ptr-box ty)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-substitute-values-expr ptr subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-cast rewritten ty))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-cast rewritten ty))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-substitute-values-expr ptr subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-to-int rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-to-int rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprIntToPtr value-box ty)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-values-expr value subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-int-to-ptr rewritten ty))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-int-to-ptr rewritten ty))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-string-data rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-string-data rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (match (spec-substitute-values-expr ptr subs)
-          [(OkSpecSubExpr rewritten-ptr)
+          [(ResultSpecSubExpr.Ok rewritten-ptr)
             (match (spec-substitute-values-expr len subs)
-              [(OkSpecSubExpr rewritten-len)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-len)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-string-from-bytes rewritten-ptr rewritten-len))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-array-data rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-array-data rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBinaryData bytes)
-      (OkSpecSubExpr (ast-node-push (AstExprBinaryData bytes)))]
-    [(AstExprSpmdProgramIndex) (OkSpecSubExpr (ast-expr-spmd-program-index))]
-    [(AstExprSpmdProgramCount) (OkSpecSubExpr (ast-expr-spmd-program-count))]
-    [(AstExprProgramArgc) (OkSpecSubExpr (ast-node-push (AstExprProgramArgc)))]
-    [(AstExprProgramArgv) (OkSpecSubExpr (ast-node-push (AstExprProgramArgv)))]
-    [(AstExprProgramEnvp) (OkSpecSubExpr (ast-node-push (AstExprProgramEnvp)))]
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprBinaryData bytes)))]
+    [(AstExprSpmdProgramIndex)
+      (ResultSpecSubExpr.Ok (ast-expr-spmd-program-index))]
+    [(AstExprSpmdProgramCount)
+      (ResultSpecSubExpr.Ok (ast-expr-spmd-program-count))]
+    [(AstExprProgramArgc)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprProgramArgc)))]
+    [(AstExprProgramArgv)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprProgramArgv)))]
+    [(AstExprProgramEnvp)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprProgramEnvp)))]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-values-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-values-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-eax rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-values-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-values-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-ebx rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-values-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-values-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-ecx rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-values-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-values-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-edx rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-substitute-values-expr index subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-xgetbv rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprSyscall args)
       (match (spec-substitute-values-expr-list args subs)
-        [(OkSpecSubExprList rewritten-args)
-          (OkSpecSubExpr (ast-expr-syscall rewritten-args))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten-args)
+          (ResultSpecSubExpr.Ok (ast-expr-syscall rewritten-args))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-quote rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-quote rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprQuasiquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-quasiquote rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-quasiquote rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprUnquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-unquote rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-unquote rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprUnquoteSplicing inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-values-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-unquote-splicing rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBracketClause items)
       (match (spec-substitute-values-expr-list items subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-expr-bracket-clause rewritten))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprBorrow _ _ _) (OkSpecSubExpr (ast-node-push expr))]))
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-expr-bracket-clause rewritten))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(AstExprBorrow _ _ _) (ResultSpecSubExpr.Ok (ast-node-push expr))]))
 
 (define (spec-substitute-values-expr-list
   [exprs : AstExprList]
   [subs : SpecValueSubst]) : ResultSpecSubExprList
   (match exprs
-    [(AstExprNil) (OkSpecSubExprList AstExprNil)]
+    [(AstExprNil) (ResultSpecSubExprList.Ok AstExprNil)]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-substitute-values-expr head subs)
-          [(OkSpecSubExpr rewritten-head)
+          [(ResultSpecSubExpr.Ok rewritten-head)
             (match (spec-substitute-values-expr-list rest subs)
-              [(OkSpecSubExprList rewritten-rest)
-                (OkSpecSubExprList
+              [(ResultSpecSubExprList.Ok rewritten-rest)
+                (ResultSpecSubExprList.Ok
                   (ast-expr-cons rewritten-head rewritten-rest))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExprList diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExprList diag)]))]))
+              [(ResultSpecSubExprList.Err diag)
+                (ResultSpecSubExprList.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExprList.Err diag)]))]))
 
 (define (spec-substitute-values-let-bindings
   [bindings : AstLetBindingList]
   [subs : SpecValueSubst]) : ResultSpecSubLetBindingList
   (match bindings
-    [(AstLetBindingNil) (OkSpecSubLetBindingList AstLetBindingNil)]
+    [(AstLetBindingNil) (ResultSpecSubLetBindingList.Ok AstLetBindingNil)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -3601,24 +3655,25 @@
             (let
               [value : AstExpr (ast-node-get value-box)]
               (match (spec-substitute-values-expr value subs)
-                [(OkSpecSubExpr rewritten-value)
+                [(ResultSpecSubExpr.Ok rewritten-value)
                   (match (spec-substitute-values-let-bindings
                     rest
                     (spec-value-subst-remove-name subs (intern-str name)))
-                    [(OkSpecSubLetBindingList rewritten-rest)
-                      (OkSpecSubLetBindingList
+                    [(ResultSpecSubLetBindingList.Ok rewritten-rest)
+                      (ResultSpecSubLetBindingList.Ok
                         (ast-let-binding-cons
                           (ast-let-binding-id name ty rewritten-value)
                           rewritten-rest))]
-                    [(ErrSpecSubLetBindingList diag)
-                      (ErrSpecSubLetBindingList diag)])]
-                [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)]))]))]))
+                    [(ResultSpecSubLetBindingList.Err diag)
+                      (ResultSpecSubLetBindingList.Err diag)])]
+                [(ResultSpecSubExpr.Err diag)
+                  (ResultSpecSubLetBindingList.Err diag)]))]))]))
 
 (define (spec-substitute-values-match-arms
   [arms : AstMatchArmList]
   [subs : SpecValueSubst]) : ResultSpecSubMatchArmList
   (match arms
-    [(AstMatchArmNil) (OkSpecSubMatchArmList AstMatchArmNil)]
+    [(AstMatchArmNil) (ResultSpecSubMatchArmList.Ok AstMatchArmNil)]
     [(AstMatchArmCons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -3629,16 +3684,17 @@
               (match (spec-substitute-values-expr
                 body
                 (spec-value-subst-remove-pattern subs pattern))
-                [(OkSpecSubExpr rewritten-body)
+                [(ResultSpecSubExpr.Ok rewritten-body)
                   (match (spec-substitute-values-match-arms rest subs)
-                    [(OkSpecSubMatchArmList rewritten-rest)
-                      (OkSpecSubMatchArmList
+                    [(ResultSpecSubMatchArmList.Ok rewritten-rest)
+                      (ResultSpecSubMatchArmList.Ok
                         (ast-match-arm-cons
                           (ast-match-arm pattern rewritten-body)
                           rewritten-rest))]
-                    [(ErrSpecSubMatchArmList diag)
-                      (ErrSpecSubMatchArmList diag)])]
-                [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)]))]))]))
+                    [(ResultSpecSubMatchArmList.Err diag)
+                      (ResultSpecSubMatchArmList.Err diag)])]
+                [(ResultSpecSubExpr.Err diag)
+                  (ResultSpecSubMatchArmList.Err diag)]))]))]))
 
 (define (spec-substitute-types-expr [expr : AstExpr] [subs : SpecTypeSubst]) : ResultSpecSubExpr
   (match expr
@@ -3646,13 +3702,13 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-spanned rewritten span))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-spanned rewritten span))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprVar name)
       (match (spec-type-subst-lookup subs (intern-str name))
-        [(SpecSomeString _)
-          (ErrSpecSubExpr
+        [(SpecMaybeString.Some _)
+          (ResultSpecSubExpr.Err
             (box
               (spec-diagnostic-at-expr
                 expr
@@ -3661,40 +3717,40 @@
                   (string.string-append
                     (intern-str name)
                     "' cannot be used as a runtime value")))))]
-        [(SpecNoString) (OkSpecSubExpr (ast-node-push expr))])]
-    [(AstExprLiteral _) (OkSpecSubExpr (ast-node-push expr))]
+        [(SpecMaybeString.None) (ResultSpecSubExpr.Ok (ast-node-push expr))])]
+    [(AstExprLiteral _) (ResultSpecSubExpr.Ok (ast-node-push expr))]
     [(AstExprTypeLiteral ty)
-      (OkSpecSubExpr
+      (ResultSpecSubExpr.Ok
         (ast-node-push (AstExprTypeLiteral (spec-substitute-type ty subs))))]
     [(AstExprInit maybe-ty)
-      (OkSpecSubExpr
+      (ResultSpecSubExpr.Ok
         (ast-expr-init-maybe (spec-substitute-maybe-type maybe-ty subs)))]
     [(AstExprMakeArray elem-ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
         (match (spec-substitute-types-expr len subs)
-          [(OkSpecSubExpr rewritten-len)
-            (OkSpecSubExpr
+          [(ResultSpecSubExpr.Ok rewritten-len)
+            (ResultSpecSubExpr.Ok
               (ast-expr-make-array
                 (spec-substitute-type elem-ty subs)
                 rewritten-len))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprAnn inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok
               (ast-expr-ann rewritten (spec-substitute-type ty subs)))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok
               (ast-expr-cast rewritten (spec-substitute-type ty subs)))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params ret body-box)
@@ -3703,13 +3759,13 @@
             (match (spec-substitute-types-expr
               body
               (spec-type-subst-remove-params subs params))
-              [(OkSpecSubExpr rewritten-body)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-lambda
                     (spec-substitute-param-types params subs)
                     (spec-substitute-maybe-type ret subs)
                     rewritten-body))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
         [(AstForeach index index-ty start-box end-box body-box)
@@ -3718,23 +3774,24 @@
             [end : AstExpr (ast-node-get end-box)]
             [body : AstExpr (ast-node-get body-box)]
             (match (spec-substitute-types-expr start subs)
-              [(OkSpecSubExpr rewritten-start)
+              [(ResultSpecSubExpr.Ok rewritten-start)
                 (match (spec-substitute-types-expr end subs)
-                  [(OkSpecSubExpr rewritten-end)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
                     (match (spec-substitute-types-expr
                       body
                       (spec-type-subst-remove-name subs (intern-str index)))
-                      [(OkSpecSubExpr rewritten-body)
-                        (OkSpecSubExpr
+                      [(ResultSpecSubExpr.Ok rewritten-body)
+                        (ResultSpecSubExpr.Ok
                           (ast-expr-foreach-id
                             index
                             (spec-substitute-type index-ty subs)
                             rewritten-start
                             rewritten-end
                             rewritten-body))]
-                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprSpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce op index index-ty start-box end-box init-box value-box)
@@ -3744,16 +3801,16 @@
             [init : AstExpr (ast-node-get init-box)]
             [value : AstExpr (ast-node-get value-box)]
             (match (spec-substitute-types-expr start subs)
-              [(OkSpecSubExpr rewritten-start)
+              [(ResultSpecSubExpr.Ok rewritten-start)
                 (match (spec-substitute-types-expr end subs)
-                  [(OkSpecSubExpr rewritten-end)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
                     (match (spec-substitute-types-expr init subs)
-                      [(OkSpecSubExpr rewritten-init)
+                      [(ResultSpecSubExpr.Ok rewritten-init)
                         (match (spec-substitute-types-expr
                           value
                           (spec-type-subst-remove-name subs (intern-str index)))
-                          [(OkSpecSubExpr rewritten-value)
-                            (OkSpecSubExpr
+                          [(ResultSpecSubExpr.Ok rewritten-value)
+                            (ResultSpecSubExpr.Ok
                               (ast-expr-spmd-reduce-id
                                 op
                                 index
@@ -3762,10 +3819,12 @@
                                 rewritten-end
                                 rewritten-init
                                 rewritten-value))]
-                          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                          [(ResultSpecSubExpr.Err diag)
+                            (ResultSpecSubExpr.Err diag)])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprSpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan
@@ -3790,16 +3849,16 @@
             [body-subs : SpecTypeSubst
               (spec-type-subst-remove-name value-subs (intern-str prefix))]
             (match (spec-substitute-types-expr start subs)
-              [(OkSpecSubExpr rewritten-start)
+              [(ResultSpecSubExpr.Ok rewritten-start)
                 (match (spec-substitute-types-expr end subs)
-                  [(OkSpecSubExpr rewritten-end)
+                  [(ResultSpecSubExpr.Ok rewritten-end)
                     (match (spec-substitute-types-expr init subs)
-                      [(OkSpecSubExpr rewritten-init)
+                      [(ResultSpecSubExpr.Ok rewritten-init)
                         (match (spec-substitute-types-expr value value-subs)
-                          [(OkSpecSubExpr rewritten-value)
+                          [(ResultSpecSubExpr.Ok rewritten-value)
                             (match (spec-substitute-types-expr body body-subs)
-                              [(OkSpecSubExpr rewritten-body)
-                                (OkSpecSubExpr
+                              [(ResultSpecSubExpr.Ok rewritten-body)
+                                (ResultSpecSubExpr.Ok
                                   (ast-expr-spmd-scan-id
                                     op
                                     index
@@ -3811,194 +3870,200 @@
                                     rewritten-init
                                     rewritten-value
                                     rewritten-body))]
-                              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                      [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                              [(ResultSpecSubExpr.Err diag)
+                                (ResultSpecSubExpr.Err diag)])]
+                          [(ResultSpecSubExpr.Err diag)
+                            (ResultSpecSubExpr.Err diag)])]
+                      [(ResultSpecSubExpr.Err diag)
+                        (ResultSpecSubExpr.Err diag)])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprSpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (spec-substitute-types-expr value subs)
-          [(OkSpecSubExpr rewritten-value)
+          [(ResultSpecSubExpr.Ok rewritten-value)
             (match (spec-substitute-types-expr lane subs)
-              [(OkSpecSubExpr rewritten-lane)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-lane)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-spmd-broadcast rewritten-value rewritten-lane))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprSpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (spec-substitute-types-expr value subs)
-          [(OkSpecSubExpr rewritten-value)
+          [(ResultSpecSubExpr.Ok rewritten-value)
             (match (spec-substitute-types-expr lane subs)
-              [(OkSpecSubExpr rewritten-lane)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-lane)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-spmd-shuffle rewritten-value rewritten-lane))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBinary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match (spec-substitute-types-expr left subs)
-          [(OkSpecSubExpr rewritten-left)
+          [(ResultSpecSubExpr.Ok rewritten-left)
             (match (spec-substitute-types-expr right subs)
-              [(OkSpecSubExpr rewritten-right)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-right)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-binary op rewritten-left rewritten-right))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-unary op rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-unary op rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCall func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (spec-substitute-types-expr func subs)
-          [(OkSpecSubExpr rewritten-func)
+          [(ResultSpecSubExpr.Ok rewritten-func)
             (match (spec-substitute-types-expr-list args subs)
-              [(OkSpecSubExprList rewritten-args)
-                (OkSpecSubExpr (ast-expr-call rewritten-func rewritten-args))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExprList.Ok rewritten-args)
+                (ResultSpecSubExpr.Ok
+                  (ast-expr-call rewritten-func rewritten-args))]
+              [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprIf cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
         [else-branch : AstExpr (ast-node-get else-branch-box)]
         (match (spec-substitute-types-expr cond subs)
-          [(OkSpecSubExpr rewritten-cond)
+          [(ResultSpecSubExpr.Ok rewritten-cond)
             (match (spec-substitute-types-expr then-branch subs)
-              [(OkSpecSubExpr rewritten-then)
+              [(ResultSpecSubExpr.Ok rewritten-then)
                 (match (spec-substitute-types-expr else-branch subs)
-                  [(OkSpecSubExpr rewritten-else)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubExpr.Ok rewritten-else)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-if rewritten-cond rewritten-then rewritten-else))]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprLet let-box)
       (match (box-get let-box)
         [(AstLet bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (match (spec-substitute-types-let-bindings bindings subs)
-              [(OkSpecSubLetBindingList rewritten-bindings)
+              [(ResultSpecSubLetBindingList.Ok rewritten-bindings)
                 (match (spec-substitute-types-expr
                   body
                   (spec-type-subst-remove-let-binding-names subs bindings))
-                  [(OkSpecSubExpr rewritten-body)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubExpr.Ok rewritten-body)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-let rewritten-bindings rewritten-body))]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubLetBindingList diag) (ErrSpecSubExpr diag)]))])]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubLetBindingList.Err diag)
+                (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprTuple exprs)
       (match (spec-substitute-types-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprTuple rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprTuple rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprTupleRef inner-box index)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-tuple-ref rewritten index))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-tuple-ref rewritten index))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArray exprs)
       (match (spec-substitute-types-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprArray rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprArray rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-substitute-types-expr array subs)
-          [(OkSpecSubExpr rewritten-array)
+          [(ResultSpecSubExpr.Ok rewritten-array)
             (match (spec-substitute-types-expr index subs)
-              [(OkSpecSubExpr rewritten-index)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-array-ref rewritten-array rewritten-index))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-types-expr array subs)
-          [(OkSpecSubExpr rewritten-array)
+          [(ResultSpecSubExpr.Ok rewritten-array)
             (match (spec-substitute-types-expr index subs)
-              [(OkSpecSubExpr rewritten-index)
+              [(ResultSpecSubExpr.Ok rewritten-index)
                 (match (spec-substitute-types-expr value subs)
-                  [(OkSpecSubExpr rewritten-value)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubExpr.Ok rewritten-value)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-array-set
                         rewritten-array
                         rewritten-index
                         rewritten-value))]
-                  [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-types-expr array subs)
-          [(OkSpecSubExpr rewritten-array)
+          [(ResultSpecSubExpr.Ok rewritten-array)
             (match (spec-substitute-types-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-array-push rewritten-array rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStringRef text-box index-box)
       (let
         [text : AstExpr (ast-node-get text-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-substitute-types-expr text subs)
-          [(OkSpecSubExpr rewritten-text)
+          [(ResultSpecSubExpr.Ok rewritten-text)
             (match (spec-substitute-types-expr index subs)
-              [(OkSpecSubExpr rewritten-index)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-index)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-string-ref rewritten-text rewritten-index))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWhile cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-substitute-types-expr cond subs)
-          [(OkSpecSubExpr rewritten-cond)
+          [(ResultSpecSubExpr.Ok rewritten-cond)
             (match (spec-substitute-types-expr body subs)
-              [(OkSpecSubExpr rewritten-body)
-                (OkSpecSubExpr (ast-expr-while rewritten-cond rewritten-body))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
+                  (ast-expr-while rewritten-cond rewritten-body))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBegin exprs)
       (match (spec-substitute-types-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprBegin rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprBegin rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprUnsafe exprs)
       (match (spec-substitute-types-expr-list exprs subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprUnsafe rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-node-push (AstExprUnsafe rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprSet name value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-type-subst-lookup subs (intern-str name))
-          [(SpecSomeString _)
-            (ErrSpecSubExpr
+          [(SpecMaybeString.Some _)
+            (ResultSpecSubExpr.Err
               (box
                 (spec-diagnostic-at-expr
                   expr
@@ -4007,150 +4072,154 @@
                     (string.string-append
                       (intern-str name)
                       "' cannot be assigned")))))]
-          [(SpecNoString)
+          [(SpecMaybeString.None)
             (match (spec-substitute-types-expr value subs)
-              [(OkSpecSubExpr rewritten)
-                (OkSpecSubExpr (ast-expr-set-id name rewritten))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]))]
+              [(ResultSpecSubExpr.Ok rewritten)
+                (ResultSpecSubExpr.Ok (ast-expr-set-id name rewritten))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
         [(AstMatch scrutinee-box arms)
           (let
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (match (spec-substitute-types-expr scrutinee subs)
-              [(OkSpecSubExpr rewritten-scrutinee)
+              [(ResultSpecSubExpr.Ok rewritten-scrutinee)
                 (match (spec-substitute-types-match-arms arms subs)
-                  [(OkSpecSubMatchArmList rewritten-arms)
-                    (OkSpecSubExpr
+                  [(ResultSpecSubMatchArmList.Ok rewritten-arms)
+                    (ResultSpecSubExpr.Ok
                       (ast-expr-match rewritten-scrutinee rewritten-arms))]
-                  [(ErrSpecSubMatchArmList diag) (ErrSpecSubExpr diag)])]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))])]
+                  [(ResultSpecSubMatchArmList.Err diag)
+                    (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))])]
     [(AstExprStructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (spec-substitute-types-expr receiver subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-struct-get-id rewritten field))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-struct-get-id rewritten field))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-types-expr receiver subs)
-          [(OkSpecSubExpr rewritten-receiver)
+          [(ResultSpecSubExpr.Ok rewritten-receiver)
             (match (spec-substitute-types-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-struct-set-id
                     rewritten-receiver
                     field
                     rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWithRegion region body)
       (match (spec-substitute-types-expr-list body subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-node-push (AstExprWithRegion region rewritten)))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok
+            (ast-node-push (AstExprWithRegion region rewritten)))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprWithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (match (spec-substitute-types-expr scratch subs)
-          [(OkSpecSubExpr rewritten-scratch)
+          [(ResultSpecSubExpr.Ok rewritten-scratch)
             (match (spec-substitute-types-expr-list body subs)
-              [(OkSpecSubExprList rewritten-body)
-                (OkSpecSubExpr
+              [(ResultSpecSubExprList.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-with-escape rewritten-scratch rewritten-body))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWithScratch body)
       (match (spec-substitute-types-expr-list body subs)
-        [(OkSpecSubExprList rewritten-body)
-          (OkSpecSubExpr (ast-expr-with-scratch rewritten-body))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten-body)
+          (ResultSpecSubExpr.Ok (ast-expr-with-scratch rewritten-body))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprInArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (match (spec-substitute-types-expr arena subs)
-          [(OkSpecSubExpr rewritten-arena)
+          [(ResultSpecSubExpr.Ok rewritten-arena)
             (match (spec-substitute-types-expr-list body subs)
-              [(OkSpecSubExprList rewritten-body)
-                (OkSpecSubExpr
+              [(ResultSpecSubExprList.Ok rewritten-body)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-in-arena rewritten-arena rewritten-body))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprWithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource bindings body)
-          (OkSpecSubExpr
+          (ResultSpecSubExpr.Ok
             (ast-node-push
               (AstExprWithResource (box (AstWithResource bindings body)))))])]
     [(AstExprBox inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-box rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-box rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBoxGet inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-box-get rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-box-get rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBoxTake inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-box-take rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-box-take rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBoxSet inner-box value-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten-inner)
+          [(ResultSpecSubExpr.Ok rewritten-inner)
             (match (spec-substitute-types-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-box-set rewritten-inner rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprComptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-comptime rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-comptime rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprTry inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-try rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-try rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprReturn inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-return rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-return rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrNull ty)
-      (OkSpecSubExpr
+      (ResultSpecSubExpr.Ok
         (ast-node-push (AstExprPtrNull (spec-substitute-type ty subs))))]
     [(AstExprPtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-null-check rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-null-check rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrAddrOf name)
       (match (spec-type-subst-lookup subs (intern-str name))
-        [(SpecSomeString _)
-          (ErrSpecSubExpr
+        [(SpecMaybeString.Some _)
+          (ResultSpecSubExpr.Err
             (box
               (spec-diagnostic-at-expr
                 expr
@@ -4159,211 +4228,219 @@
                   (string.string-append
                     (intern-str name)
                     "' cannot be used as a runtime value")))))]
-        [(SpecNoString) (OkSpecSubExpr (ast-expr-ptr-addr-of-id name))])]
+        [(SpecMaybeString.None)
+          (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id name))])]
     [(AstExprPtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-substitute-types-expr ptr subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-read rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-read rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-types-expr ptr subs)
-          [(OkSpecSubExpr rewritten-ptr)
+          [(ResultSpecSubExpr.Ok rewritten-ptr)
             (match (spec-substitute-types-expr value subs)
-              [(OkSpecSubExpr rewritten-value)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-value)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-ptr-write rewritten-ptr rewritten-value))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (match (spec-substitute-types-expr ptr subs)
-          [(OkSpecSubExpr rewritten-ptr)
+          [(ResultSpecSubExpr.Ok rewritten-ptr)
             (match (spec-substitute-types-expr offset subs)
-              [(OkSpecSubExpr rewritten-offset)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-offset)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-ptr-offset rewritten-ptr rewritten-offset))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrCast ptr-box ty)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-substitute-types-expr ptr subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok
               (ast-expr-ptr-cast rewritten (spec-substitute-type ty subs)))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprPtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (match (spec-substitute-types-expr ptr subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-ptr-to-int rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-to-int rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprIntToPtr value-box ty)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-substitute-types-expr value subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok
               (ast-expr-int-to-ptr rewritten (spec-substitute-type ty subs)))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-string-data rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-string-data rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprStringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (match (spec-substitute-types-expr ptr subs)
-          [(OkSpecSubExpr rewritten-ptr)
+          [(ResultSpecSubExpr.Ok rewritten-ptr)
             (match (spec-substitute-types-expr len subs)
-              [(OkSpecSubExpr rewritten-len)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-len)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-string-from-bytes rewritten-ptr rewritten-len))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-array-data rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-array-data rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBinaryData bytes)
-      (OkSpecSubExpr (ast-node-push (AstExprBinaryData bytes)))]
-    [(AstExprSpmdProgramIndex) (OkSpecSubExpr (ast-expr-spmd-program-index))]
-    [(AstExprSpmdProgramCount) (OkSpecSubExpr (ast-expr-spmd-program-count))]
-    [(AstExprProgramArgc) (OkSpecSubExpr (ast-node-push (AstExprProgramArgc)))]
-    [(AstExprProgramArgv) (OkSpecSubExpr (ast-node-push (AstExprProgramArgv)))]
-    [(AstExprProgramEnvp) (OkSpecSubExpr (ast-node-push (AstExprProgramEnvp)))]
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprBinaryData bytes)))]
+    [(AstExprSpmdProgramIndex)
+      (ResultSpecSubExpr.Ok (ast-expr-spmd-program-index))]
+    [(AstExprSpmdProgramCount)
+      (ResultSpecSubExpr.Ok (ast-expr-spmd-program-count))]
+    [(AstExprProgramArgc)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprProgramArgc)))]
+    [(AstExprProgramArgv)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprProgramArgv)))]
+    [(AstExprProgramEnvp)
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExprProgramEnvp)))]
     [(AstExprCpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-types-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-types-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-eax rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-types-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-types-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-ebx rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-types-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-types-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-ecx rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprCpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (spec-substitute-types-expr leaf subs)
-          [(OkSpecSubExpr rewritten-leaf)
+          [(ResultSpecSubExpr.Ok rewritten-leaf)
             (match (spec-substitute-types-expr subleaf subs)
-              [(OkSpecSubExpr rewritten-subleaf)
-                (OkSpecSubExpr
+              [(ResultSpecSubExpr.Ok rewritten-subleaf)
+                (ResultSpecSubExpr.Ok
                   (ast-expr-cpuid-edx rewritten-leaf rewritten-subleaf))]
-              [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprXgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
         (match (spec-substitute-types-expr index subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-xgetbv rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-xgetbv rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprSyscall args)
       (match (spec-substitute-types-expr-list args subs)
-        [(OkSpecSubExprList rewritten-args)
-          (OkSpecSubExpr (ast-expr-syscall rewritten-args))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
+        [(ResultSpecSubExprList.Ok rewritten-args)
+          (ResultSpecSubExpr.Ok (ast-expr-syscall rewritten-args))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
     [(AstExprQuote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten) (OkSpecSubExpr (ast-expr-quote rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-quote rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprQuasiquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-quasiquote rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-quasiquote rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprUnquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-unquote rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-unquote rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprUnquoteSplicing inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (spec-substitute-types-expr inner subs)
-          [(OkSpecSubExpr rewritten)
-            (OkSpecSubExpr (ast-expr-unquote-splicing rewritten))]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExpr diag)]))]
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-unquote-splicing rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExprBracketClause items)
       (match (spec-substitute-types-expr-list items subs)
-        [(OkSpecSubExprList rewritten)
-          (OkSpecSubExpr (ast-expr-bracket-clause rewritten))]
-        [(ErrSpecSubExprList diag) (ErrSpecSubExpr diag)])]
-    [(AstExprBorrow _ _ _) (OkSpecSubExpr (ast-node-push expr))]))
+        [(ResultSpecSubExprList.Ok rewritten)
+          (ResultSpecSubExpr.Ok (ast-expr-bracket-clause rewritten))]
+        [(ResultSpecSubExprList.Err diag) (ResultSpecSubExpr.Err diag)])]
+    [(AstExprBorrow _ _ _) (ResultSpecSubExpr.Ok (ast-node-push expr))]))
 
 (define (spec-substitute-types-expr-list
   [exprs : AstExprList]
   [subs : SpecTypeSubst]) : ResultSpecSubExprList
   (match exprs
-    [(AstExprNil) (OkSpecSubExprList AstExprNil)]
+    [(AstExprNil) (ResultSpecSubExprList.Ok AstExprNil)]
     [(AstExprCons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (spec-substitute-types-expr head subs)
-          [(OkSpecSubExpr rewritten-head)
+          [(ResultSpecSubExpr.Ok rewritten-head)
             (match (spec-substitute-types-expr-list rest subs)
-              [(OkSpecSubExprList rewritten-rest)
-                (OkSpecSubExprList
+              [(ResultSpecSubExprList.Ok rewritten-rest)
+                (ResultSpecSubExprList.Ok
                   (ast-expr-cons rewritten-head rewritten-rest))]
-              [(ErrSpecSubExprList diag) (ErrSpecSubExprList diag)])]
-          [(ErrSpecSubExpr diag) (ErrSpecSubExprList diag)]))]))
+              [(ResultSpecSubExprList.Err diag)
+                (ResultSpecSubExprList.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExprList.Err diag)]))]))
 
 (define (spec-substitute-types-let-bindings
   [bindings : AstLetBindingList]
   [subs : SpecTypeSubst]) : ResultSpecSubLetBindingList
   (match bindings
-    [(AstLetBindingNil) (OkSpecSubLetBindingList AstLetBindingNil)]
+    [(AstLetBindingNil) (ResultSpecSubLetBindingList.Ok AstLetBindingNil)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -4372,27 +4449,28 @@
             (let
               [value : AstExpr (ast-node-get value-box)]
               (match (spec-substitute-types-expr value subs)
-                [(OkSpecSubExpr rewritten-value)
+                [(ResultSpecSubExpr.Ok rewritten-value)
                   (match (spec-substitute-types-let-bindings
                     rest
                     (spec-type-subst-remove-name subs (intern-str name)))
-                    [(OkSpecSubLetBindingList rewritten-rest)
-                      (OkSpecSubLetBindingList
+                    [(ResultSpecSubLetBindingList.Ok rewritten-rest)
+                      (ResultSpecSubLetBindingList.Ok
                         (ast-let-binding-cons
                           (ast-let-binding-id
                             name
                             (spec-substitute-maybe-type ty subs)
                             rewritten-value)
                           rewritten-rest))]
-                    [(ErrSpecSubLetBindingList diag)
-                      (ErrSpecSubLetBindingList diag)])]
-                [(ErrSpecSubExpr diag) (ErrSpecSubLetBindingList diag)]))]))]))
+                    [(ResultSpecSubLetBindingList.Err diag)
+                      (ResultSpecSubLetBindingList.Err diag)])]
+                [(ResultSpecSubExpr.Err diag)
+                  (ResultSpecSubLetBindingList.Err diag)]))]))]))
 
 (define (spec-substitute-types-match-arms
   [arms : AstMatchArmList]
   [subs : SpecTypeSubst]) : ResultSpecSubMatchArmList
   (match arms
-    [(AstMatchArmNil) (OkSpecSubMatchArmList AstMatchArmNil)]
+    [(AstMatchArmNil) (ResultSpecSubMatchArmList.Ok AstMatchArmNil)]
     [(AstMatchArmCons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -4403,16 +4481,17 @@
               (match (spec-substitute-types-expr
                 body
                 (spec-type-subst-remove-pattern subs pattern))
-                [(OkSpecSubExpr rewritten-body)
+                [(ResultSpecSubExpr.Ok rewritten-body)
                   (match (spec-substitute-types-match-arms rest subs)
-                    [(OkSpecSubMatchArmList rewritten-rest)
-                      (OkSpecSubMatchArmList
+                    [(ResultSpecSubMatchArmList.Ok rewritten-rest)
+                      (ResultSpecSubMatchArmList.Ok
                         (ast-match-arm-cons
                           (ast-match-arm pattern rewritten-body)
                           rewritten-rest))]
-                    [(ErrSpecSubMatchArmList diag)
-                      (ErrSpecSubMatchArmList diag)])]
-                [(ErrSpecSubExpr diag) (ErrSpecSubMatchArmList diag)]))]))]))
+                    [(ResultSpecSubMatchArmList.Err diag)
+                      (ResultSpecSubMatchArmList.Err diag)])]
+                [(ResultSpecSubExpr.Err diag)
+                  (ResultSpecSubMatchArmList.Err diag)]))]))]))
 
 (define (spec-rewrite-decl
   [decl : AstDecl]
@@ -4423,68 +4502,73 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecDecl
-              (SpecSomeDecl (ast-decl-def-id name ty rewritten))
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecDecl.Ok
+              (SpecMaybeDecl.Some (ast-decl-def-id name ty rewritten))
               state2)]
-          [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
+          [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)]))]
     [(AstDeclDefFn name params ret body-box export)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (if (spec-param-list-has-comptime? params)
-          (OkSpecDecl (SpecNoDecl) state)
+          (ResultSpecDecl.Ok (SpecMaybeDecl.None) state)
           (match (spec-rewrite-expr
             body
             (spec-template-env-shadow-params templates params)
             state)
-            [(OkSpecExpr rewritten state2)
-              (OkSpecDecl
-                (SpecSomeDecl
+            [(ResultSpecExpr.Ok rewritten state2)
+              (ResultSpecDecl.Ok
+                (SpecMaybeDecl.Some
                   (ast-decl-def-fn-export-id name params ret rewritten export))
                 state2)]
-            [(ErrSpecExpr diag) (ErrSpecDecl diag)])))]
+            [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)])))]
     [(AstDeclUnsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (match (spec-rewrite-decl inner templates state)
-          [(OkSpecDecl maybe state2)
+          [(ResultSpecDecl.Ok maybe state2)
             (match maybe
-              [(SpecSomeDecl rewritten)
-                (OkSpecDecl (SpecSomeDecl (ast-decl-unsafe rewritten)) state2)]
-              [(SpecNoDecl) (OkSpecDecl SpecNoDecl state2)])]
-          [(ErrSpecDecl diag) (ErrSpecDecl diag)]))]
+              [(SpecMaybeDecl.Some rewritten)
+                (ResultSpecDecl.Ok
+                  (SpecMaybeDecl.Some (ast-decl-unsafe rewritten))
+                  state2)]
+              [(SpecMaybeDecl.None)
+                (ResultSpecDecl.Ok SpecMaybeDecl.None state2)])]
+          [(ResultSpecDecl.Err diag) (ResultSpecDecl.Err diag)]))]
     [(AstDeclDefMacro name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-rewrite-expr body templates state)
-          [(OkSpecExpr rewritten state2)
-            (OkSpecDecl
-              (SpecSomeDecl (ast-decl-def-macro-id name params ret rewritten))
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecDecl.Ok
+              (SpecMaybeDecl.Some
+                (ast-decl-def-macro-id name params ret rewritten))
               state2)]
-          [(ErrSpecExpr diag) (ErrSpecDecl diag)]))]
-    [_ (OkSpecDecl (SpecSomeDecl decl) state)]))
+          [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)]))]
+    [_ (ResultSpecDecl.Ok (SpecMaybeDecl.Some decl) state)]))
 
 (define (spec-rewrite-decls
   [decls : AstDeclList]
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecls
   (match decls
-    [(AstDeclNil) (OkSpecDecls AstDeclNil state)]
+    [(AstDeclNil) (ResultSpecDecls.Ok AstDeclNil state)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match (spec-rewrite-decl decl templates state)
-          [(OkSpecDecl maybe-decl decl-state)
+          [(ResultSpecDecl.Ok maybe-decl decl-state)
             (match (spec-rewrite-decls rest templates decl-state)
-              [(OkSpecDecls rewritten-rest rest-state)
+              [(ResultSpecDecls.Ok rewritten-rest rest-state)
                 (match maybe-decl
-                  [(SpecNoDecl) (OkSpecDecls rewritten-rest rest-state)]
-                  [(SpecSomeDecl rewritten-decl)
-                    (OkSpecDecls
+                  [(SpecMaybeDecl.None)
+                    (ResultSpecDecls.Ok rewritten-rest rest-state)]
+                  [(SpecMaybeDecl.Some rewritten-decl)
+                    (ResultSpecDecls.Ok
                       (ast-decl-cons rewritten-decl rewritten-rest)
                       rest-state)])]
-              [(ErrSpecDecls diag) (ErrSpecDecls diag)])]
-          [(ErrSpecDecl diag) (ErrSpecDecls diag)]))]))
+              [(ResultSpecDecls.Err diag) (ResultSpecDecls.Err diag)])]
+          [(ResultSpecDecl.Err diag) (ResultSpecDecls.Err diag)]))]))
 
 (define (spec-rewrite-decls-with-paths
   [decls : AstDeclList]
@@ -4493,37 +4577,38 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDeclsWithPaths
   (match decls
-    [(AstDeclNil) (OkSpecDeclsWithPaths AstDeclNil AstDeclPathNil state)]
+    [(AstDeclNil) (ResultSpecDeclsWithPaths.Ok AstDeclNil AstDeclPathNil state)]
     [(AstDeclCons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String (gen-path-list-head-or paths fallback-path)]
         [rest-paths : AstDeclPathList (gen-path-list-tail paths)]
         (match (spec-rewrite-decl decl templates state)
-          [(OkSpecDecl maybe-decl decl-state)
+          [(ResultSpecDecl.Ok maybe-decl decl-state)
             (match (spec-rewrite-decls-with-paths
               rest
               rest-paths
               fallback-path
               templates
               decl-state)
-              [(OkSpecDeclsWithPaths
+              [(ResultSpecDeclsWithPaths.Ok
                   rewritten-rest
                   rewritten-rest-paths
                   rest-state)
                 (match maybe-decl
-                  [(SpecNoDecl)
-                    (OkSpecDeclsWithPaths
+                  [(SpecMaybeDecl.None)
+                    (ResultSpecDeclsWithPaths.Ok
                       rewritten-rest
                       rewritten-rest-paths
                       rest-state)]
-                  [(SpecSomeDecl rewritten-decl)
-                    (OkSpecDeclsWithPaths
+                  [(SpecMaybeDecl.Some rewritten-decl)
+                    (ResultSpecDeclsWithPaths.Ok
                       (ast-decl-cons rewritten-decl rewritten-rest)
                       (ast-decl-path-cons decl-path rewritten-rest-paths)
                       rest-state)])]
-              [(ErrSpecDeclsWithPaths diag) (ErrSpecDeclsWithPaths diag)])]
-          [(ErrSpecDecl diag) (ErrSpecDeclsWithPaths diag)]))]))
+              [(ResultSpecDeclsWithPaths.Err diag)
+                (ResultSpecDeclsWithPaths.Err diag)])]
+          [(ResultSpecDecl.Err diag) (ResultSpecDeclsWithPaths.Err diag)]))]))
 
 (define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList
   (if (string.string-eq fallback-path "")
@@ -4532,70 +4617,71 @@
 
 (define (compiler-specialize-program-active [program : AstProgram]) : ResultSpecProgram
   (match (gen-normalize-program-active program)
-    [(OkGenProgram normalized)
+    [(ResultGenProgram.Ok normalized)
       (match normalized
         [(AstProgram decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             [templates : SpecTemplateList (spec-collect-templates decls)]
             (match templates
-              [(SpecTemplateNil) (OkSpecProgram normalized)]
+              [(SpecTemplateList.Nil) (ResultSpecProgram.Ok normalized)]
               [_
                 (match (spec-rewrite-decls
                   decls
                   (spec-template-env-from-list templates)
-                  (SpecState
+                  (SpecState.State
                     AstDeclNil
                     (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
                     (ast-node-pool-context-capture-active)))
-                  [(OkSpecDecls rewritten state)
+                  [(ResultSpecDecls.Ok rewritten state)
                     (match state
-                      [(SpecState generated _ _ _)
-                        (OkSpecProgram
+                      [(SpecState.State generated _ _ _)
+                        (ResultSpecProgram.Ok
                           (ast-program
                             (spec-decl-list-append rewritten generated)))])]
-                  [(ErrSpecDecls diag) (ErrSpecProgram diag)])]))])]
-    [(ErrGenProgram diag) (ErrSpecProgram diag)]))
+                  [(ResultSpecDecls.Err diag) (ResultSpecProgram.Err diag)])]))])]
+    [(ResultGenProgram.Err diag) (ResultSpecProgram.Err diag)]))
 
 (define (compiler-specialize-program-with-paths-active
   [program : AstProgram]
   [paths : AstDeclPathList]
   [fallback-path : String]) : ResultSpecProgramWithPaths
   (match (gen-normalize-program-with-paths-active program paths fallback-path)
-    [(OkGenProgramWithPaths normalized normalized-paths)
+    [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
       (match normalized
         [(AstProgram decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             [templates : SpecTemplateList (spec-collect-templates decls)]
             (match templates
-              [(SpecTemplateNil)
-                (OkSpecProgramWithPaths normalized normalized-paths)]
+              [(SpecTemplateList.Nil)
+                (ResultSpecProgramWithPaths.Ok normalized normalized-paths)]
               [_
                 (match (spec-rewrite-decls-with-paths
                   decls
                   normalized-paths
                   fallback-path
                   (spec-template-env-from-list templates)
-                  (SpecState
+                  (SpecState.State
                     AstDeclNil
                     (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
                     (ast-node-pool-context-capture-active)))
-                  [(OkSpecDeclsWithPaths rewritten rewritten-paths state)
+                  [(ResultSpecDeclsWithPaths.Ok rewritten rewritten-paths state)
                     (match state
-                      [(SpecState generated _ _ _)
-                        (OkSpecProgramWithPaths
+                      [(SpecState.State generated _ _ _)
+                        (ResultSpecProgramWithPaths.Ok
                           (ast-program
                             (spec-decl-list-append rewritten generated))
                           (spec-decl-path-list-append
                             rewritten-paths
                             (spec-generated-paths generated fallback-path)))])]
-                  [(ErrSpecDeclsWithPaths diag) (ErrSpecProgramWithPaths diag)])]))])]
-    [(ErrGenProgramWithPaths diag) (ErrSpecProgramWithPaths diag)]))
+                  [(ResultSpecDeclsWithPaths.Err diag)
+                    (ResultSpecProgramWithPaths.Err diag)])]))])]
+    [(ResultGenProgramWithPaths.Err diag) (ResultSpecProgramWithPaths.Err diag)]))
 
 (define (compiler-specialize-program-with-pools
   [program : AstProgram]
@@ -4665,7 +4751,7 @@
         (if (gen-decls-needed? decls)
           true
           (match (spec-collect-templates decls)
-            [(SpecTemplateNil) false]
+            [(SpecTemplateList.Nil) false]
             [_ true])))]))
 
 (define (compiler-specialize-decl-list-defines?
@@ -4738,7 +4824,7 @@
   (match (parse-ast-source (compiler-specialize-type-param-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram specialized)
+        [(ResultSpecProgram.Ok specialized)
           (match specialized
             [(AstProgram decls-box)
               (let
@@ -4748,30 +4834,30 @@
                   (compiler-specialize-decl-list-defines?
                     decls
                     "__tl_specialized_alloc_type_i64_none")))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-specialize-runtime-type-use-rejected?) : bool
   (match (parse-ast-source (compiler-specialize-runtime-type-use-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram _) true])]
+        [(ResultSpecProgram.Ok _) false]
+        [(ResultSpecProgram.Err _) true])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-specialize-template-shadow-ok?) : bool
   (match (parse-ast-source (compiler-specialize-template-shadow-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram _) true]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Ok _) true]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-specialize-template-shadow-sibling-ok?) : bool
   (match (parse-ast-source (compiler-specialize-template-shadow-sibling-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram specialized)
+        [(ResultSpecProgram.Ok specialized)
           (match specialized
             [(AstProgram decls-box)
               (let
@@ -4783,14 +4869,14 @@
                     decls
                     "__tl_specialized_scale_i64_2_none")]
                 (and (not original) generated))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-specialize-type-shadow-ok?) : bool
   (match (parse-ast-source (compiler-specialize-type-shadow-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram specialized)
+        [(ResultSpecProgram.Ok specialized)
           (match specialized
             [(AstProgram decls-box)
               (let
@@ -4798,13 +4884,13 @@
                 (compiler-specialize-decl-list-defines?
                   decls
                   "__tl_specialized_pick_type_i64_none"))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
     [subs : SpecTypeSubst
-      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
+      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubst.Nil)]
     (and
       (string.string-eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
       (string.string-eq
@@ -4823,15 +4909,15 @@
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
-      (spec-value-cons (CtfeType (AstTyI64)) (SpecValueNil))]
+      (spec-value-cons (CtfeType (AstTyI64)) (SpecValueList.Nil))]
     [vals-bool : SpecValueList
-      (spec-value-cons (CtfeType (AstTyBool)) (SpecValueNil))]
+      (spec-value-cons (CtfeType (AstTyBool)) (SpecValueList.Nil))]
     [vals-multi : SpecValueList
       (spec-value-cons
         (CtfeType (AstTyI64))
-        (spec-value-cons (CtfeI64 5) (SpecValueNil)))]
+        (spec-value-cons (CtfeI64 5) (SpecValueList.Nil)))]
     [vals-string : SpecValueList
-      (spec-value-cons (CtfeString "a b") (SpecValueNil))]
+      (spec-value-cons (CtfeString "a b") (SpecValueList.Nil))]
     (and
       (string.string-eq
         (spec-specialized-name "alloc" vals-i64)
@@ -4911,11 +4997,11 @@
         [tail-count : i64
           (compiler-specialize-decl-list-count-visible rest name)]
         (match (gen-decl-visible-name decl)
-          [(SpecSomeString found)
+          [(SpecMaybeString.Some found)
             (if (string.string-eq found name)
               (+ 1 tail-count)
               tail-count)]
-          [(SpecNoString) tail-count]))]))
+          [(SpecMaybeString.None) tail-count]))]))
 
 ;: Two call sites that request the SAME specialization (`alloc` at `type i64`)
 ;: must share one generated decl via the specialization cache, not emit two.
@@ -4933,7 +5019,7 @@
   (match (parse-ast-source (compiler-specialize-reuse-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram specialized)
+        [(ResultSpecProgram.Ok specialized)
           (match specialized
             [(AstProgram decls-box)
               (let
@@ -4945,18 +5031,18 @@
                       decls
                       "__tl_specialized_alloc_type_i64_none")
                     1)))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 ;: Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
 ;: `spec-substitute-type` replaces a mapped type variable with its bound type,
 ;: recurses through compound types (Ptr/DynArray/function), and leaves an
-;: unmapped variable unchanged (the SpecNoString lookup branch). Complements
+;: unmapped variable unchanged (the SpecMaybeString.None lookup branch). Complements
 ;: the single MutPtr case embedded in `compiler-specialize-raw-pointer-type-ok?`.
 (define (compiler-specialize-subst-ok?) : bool
   (let
     [subs : SpecTypeSubst
-      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubstNil)]
+      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubst.Nil)]
     (and
       (string.string-eq
         (spec-type-key (spec-substitute-type (AstTyVar (intern "T")) subs))
@@ -4988,25 +5074,25 @@
 (define (compiler-specialize-value-subst-ok?) : bool
   (let
     [subs : SpecValueSubst
-      (spec-value-subst-cons "x" (CtfeI64 5) SpecValueSubstNil)]
+      (spec-value-subst-cons "x" (CtfeI64 5) SpecValueSubst.Nil)]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr (AstExprVar (intern "x")) subs)
-        [(OkSpecSubExpr e)
+        [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)
             [(AstExprLiteral lit)
               (match lit
                 [(AstLitInt n _) (= n 5)]
                 [_ false])]
             [_ false])]
-        [(ErrSpecSubExpr _) false])
+        [(ResultSpecSubExpr.Err _) false])
       ;; unmapped variable y -> unchanged
       (match (spec-substitute-values-expr (AstExprVar (intern "y")) subs)
-        [(OkSpecSubExpr e)
+        [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)
             [(AstExprVar name) (string.string-eq (intern-str name) "y")]
             [_ false])]
-        [(ErrSpecSubExpr _) false])
+        [(ResultSpecSubExpr.Err _) false])
       ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
       (match (spec-substitute-values-expr
         (AstExprIf
@@ -5014,7 +5100,7 @@
           (ast-node-push (AstExprLiteral (ast-lit-int 1)))
           (ast-node-push (AstExprVar (intern "y"))))
         subs)
-        [(OkSpecSubExpr e)
+        [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)
             [(AstExprIf cond-box _ else-branch-box)
               (let
@@ -5031,24 +5117,24 @@
                     [(AstExprVar name) (string.string-eq (intern-str name) "y")]
                     [_ false])))]
             [_ false])]
-        [(ErrSpecSubExpr _) false]))))
+        [(ResultSpecSubExpr.Err _) false]))))
 
 (define (compiler-specialize-boxed-tails-ok?) : bool
   (let
     [templates : SpecTemplateList
       (spec-template-cons
-        (SpecTemplate
+        (SpecTemplate.Item
           "first"
           AstParamNil
           (AstTyI64)
           (AstExprLiteral (ast-lit-int 1)))
         (spec-template-cons
-          (SpecTemplate
+          (SpecTemplate.Item
             "second"
             AstParamNil
             (AstTyBool)
             (AstExprLiteral (AstLitBool true)))
-          SpecTemplateNil))]
+          SpecTemplateList.Nil))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
     [cache : hashmap.StringStringMap
       (hashmap.string-string-map-put
@@ -5061,26 +5147,26 @@
     [values : SpecValueList
       (spec-value-cons
         (CtfeI64 1)
-        (spec-value-cons (CtfeBool true) SpecValueNil))]
+        (spec-value-cons (CtfeBool true) SpecValueList.Nil))]
     [value-subs : SpecValueSubst
       (spec-value-subst-cons
         "x"
         (CtfeI64 1)
-        (spec-value-subst-cons "flag" (CtfeBool true) SpecValueSubstNil))]
+        (spec-value-subst-cons "flag" (CtfeBool true) SpecValueSubst.Nil))]
     [type-subs : SpecTypeSubst
       (spec-type-subst-cons
         "T"
         (AstTyI64)
-        (spec-type-subst-cons "U" (AstTyBool) SpecTypeSubstNil))]
+        (spec-type-subst-cons "U" (AstTyBool) SpecTypeSubst.Nil))]
     (and
       (match (spec-template-lookup template-env "second")
-        [(SpecSomeTemplate template)
+        [(SpecMaybeTemplate.Some template)
           (match template
-            [(SpecTemplate name _ _ _) (string.string-eq name "second")])]
-        [(SpecNoTemplate) false])
+            [(SpecTemplate.Item name _ _ _) (string.string-eq name "second")])]
+        [(SpecMaybeTemplate.None) false])
       (match (spec-cache-lookup cache "two")
-        [(SpecSomeString name) (string.string-eq name "generated-two")]
-        [(SpecNoString) false])
+        [(SpecMaybeString.Some name) (string.string-eq name "generated-two")]
+        [(SpecMaybeString.None) false])
       (string.string-eq (spec-values-key values) "i64_1_bool_1_none")
       (match (spec-value-subst-value value-subs "flag")
         [(CtfeBool flag) flag]
@@ -5096,7 +5182,7 @@
   (match (parse-ast-source (compiler-specialize-reflection-string-param-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram specialized)
+        [(ResultSpecProgram.Ok specialized)
           (match specialized
             [(AstProgram decls-box)
               (let
@@ -5104,7 +5190,7 @@
                 (compiler-specialize-decl-list-defines?
                   decls
                   "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-reuse-source) : String
@@ -5169,13 +5255,13 @@
   (match (parse-ast-source source)
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram normalized)
+        [(ResultSpecProgram.Ok normalized)
           (match normalized
             [(AstProgram decls-box)
               (compiler-specialize-decl-list-count-visible
                 (box-get decls-box)
                 name)])]
-        [(ErrSpecProgram _) -1])]
+        [(ResultSpecProgram.Err _) -1])]
     [(ErrAstProgram _) -1]))
 
 (define (compiler-generated-decl-reuse-ok?) : bool
@@ -5184,7 +5270,7 @@
       (and
         (compiler-specialize-needed? program)
         (match (compiler-specialize-program program)
-          [(OkSpecProgram normalized)
+          [(ResultSpecProgram.Ok normalized)
             (match normalized
               [(AstProgram decls-box)
                 (let
@@ -5194,14 +5280,14 @@
                       decls
                       "Box_String")
                     1))])]
-          [(ErrSpecProgram _) false]))]
+          [(ResultSpecProgram.Err _) false]))]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-function-reuse-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-function-reuse-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram normalized)
+        [(ResultSpecProgram.Ok normalized)
           (match normalized
             [(AstProgram decls-box)
               (let
@@ -5211,23 +5297,23 @@
                     decls
                     "make-box-string")
                   1))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-incompatible-rejected?) : bool
   (match (parse-ast-source (compiler-generated-decl-incompatible-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram _) true])]
+        [(ResultSpecProgram.Ok _) false]
+        [(ResultSpecProgram.Err _) true])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-incompatible-note-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-incompatible-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram diag)
+        [(ResultSpecProgram.Ok _) false]
+        [(ResultSpecProgram.Err diag)
           (match (compiler-diagnostic-notes (box-get diag))
             [(CompilerDiagnosticNoteCons note _)
               (string.string-eq
@@ -5242,23 +5328,23 @@
   (match (parse-ast-source (compiler-generated-decl-item-mismatch-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram _) true])]
+        [(ResultSpecProgram.Ok _) false]
+        [(ResultSpecProgram.Err _) true])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-non-string-key-rejected?) : bool
   (match (parse-ast-source (compiler-generated-decl-non-string-key-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram _) false]
-        [(ErrSpecProgram _) true])]
+        [(ResultSpecProgram.Ok _) false]
+        [(ResultSpecProgram.Err _) true])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-duplicate-visible-left-for-symbols?) : bool
   (match (parse-ast-source (compiler-generated-decl-duplicate-visible-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram normalized)
+        [(ResultSpecProgram.Ok normalized)
           (match normalized
             [(AstProgram decls-box)
               (let
@@ -5268,7 +5354,7 @@
                     decls
                     "Box_String")
                   2))])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-decl-cross-module-reuse-ok?) : bool
@@ -5289,7 +5375,7 @@
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
     [(OkAstProgram program)
       (match (compiler-specialize-program program)
-        [(OkSpecProgram normalized)
+        [(ResultSpecProgram.Ok normalized)
           (match normalized
             [(AstProgram decls-box)
               (match (box-get decls-box)
@@ -5312,7 +5398,7 @@
                           [_ false]))]
                     [_ false])]
                 [(AstDeclNil) false])])]
-        [(ErrSpecProgram _) false])]
+        [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-generated-registry-map-ok?) : bool
@@ -5326,8 +5412,8 @@
     [registry : GenRegistry
       (gen-registry-insert (gen-registry-empty) "generated-key" decl)]
     (match (gen-registry-lookup registry "generated-key")
-      [(GenSomeEntry found) (gen-decl-eq? found decl)]
-      [(GenNoEntry) false])))
+      [(GenMaybeEntry.Some found) (gen-decl-eq? found decl)]
+      [(GenMaybeEntry.None) false])))
 
 (define (compiler-specialize-self-test) : i64
   (begin

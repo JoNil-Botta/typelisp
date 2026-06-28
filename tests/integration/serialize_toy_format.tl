@@ -79,3 +79,6 @@
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing field"))])]
     [_ (return (,err-ctor "toy format: expected object"))]))
+
+(defmacro (extra-decls [_T : type]) : Decls
+  `(begin))

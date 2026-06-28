@@ -19805,16 +19805,6 @@
     [(IrBlockArray seq)
       (optimize-block-list (compiler-ir-block-seq-to-list seq))]))
 
-(define (optimize-block-list-fast [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match blocks
-    [(IrBlockNil) (IrBlockNil)]
-    [(IrBlockCons block rest)
-      (compiler-ir-block-cons
-        (optimize-block-fast block)
-        (optimize-block-list-fast (box-get rest)))]
-    [(IrBlockArray seq)
-      (optimize-block-list-fast (compiler-ir-block-seq-to-list seq))]))
-
 ;; Block-count ceiling for the super-linear dominator-based passes (GVN, LICM,
 ;; induction, global GVN). Functions with more basic blocks than this skip those
 ;; passes at opt-level 2 so a few huge self-host functions cannot blow up compile
@@ -20565,20 +20555,6 @@
   (optimize-function-once-level2-with-summaries
     func
     (opt-loop-bce-empty-summaries)))
-
-(define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
-  (match func
-    [(IrFunction name params ret-ty frame blocks)
-      (let
-        [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
-        [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : (Array i64) (opt-collect-blocks-uses-array frame cfg)]
-        (IrFunction
-          name
-          params
-          ret-ty
-          frame
-          (opt-dce-block-list-array used cfg)))]))
 
 (define (optimize-function-pass-with-summaries
   [func : CompilerIrFunction]

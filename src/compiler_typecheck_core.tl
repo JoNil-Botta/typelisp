@@ -44060,12 +44060,7 @@
                   same-identity-body
                   generated-key-body))]
             (if same-body?
-              (match (macro-check-generated-import-collisions
-                orig-decls
-                generated-body
-                module
-                alias
-                identity)
+              (match CompilerNoString
                 [CompilerNoString
                   (let
                     [expanded : AstDeclList
@@ -44081,12 +44076,7 @@
                     (box (macro-generated-import-diag span message)))])
               (ErrMacroDeclExpansion
                 (box (macro-module-incompatible-output-diag call-expr identity)))))
-          (match (macro-check-generated-import-collisions
-            orig-decls
-            generated-body
-            module
-            alias
-            identity)
+          (match CompilerNoString
             [CompilerNoString
               (let
                 [expanded : AstDeclList
@@ -44105,12 +44095,7 @@
               (ErrMacroDeclExpansion
                 (box (macro-generated-import-diag span message)))]))]
       [(MacroNoDeclList)
-        (match (macro-check-generated-import-collisions
-          orig-decls
-          generated-body
-          module
-          alias
-          identity)
+        (match CompilerNoString
           [CompilerNoString
             (let
               [expanded : AstDeclList
@@ -44627,30 +44612,6 @@
 
 (define (macro-generated-import-diag [span : AstSourceSpan] [message : String]) : CompilerDiagnostic
   (tc-canonical-diagnostic (compiler-diagnostic-from-ast-span "" span message)))
-
-(define (macro-check-generated-import-collisions-in
-  [all-decls : AstDeclList]
-  [generated-body : AstDeclList]
-  [import-module : String]
-  [identity : String]) : CompilerMaybeString
-  (match generated-body
-    [(AstDeclNil) CompilerNoString]
-    [(AstDeclCons decl rest-box)
-      (match decl
-        [_
-          (macro-check-generated-import-collisions-in
-            all-decls
-            (box-get rest-box)
-            import-module
-            identity)])]))
-
-(define (macro-check-generated-import-collisions
-  [_all-decls : AstDeclList]
-  [_generated-body : AstDeclList]
-  [_import-module : String]
-  [_alias : AstMaybeImportAlias]
-  [_identity : String]) : CompilerMaybeString
-  CompilerNoString)
 
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in

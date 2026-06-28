@@ -306,7 +306,7 @@
           (compiler-reg-string-cons "%rbx" CompilerRegStringNil))))))
 
 (define (compiler-reg-sysv-integer-register-count) : i64
-  5)
+  (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers)))
 
 ;; Conservative caller-saved extension for the scalar opt2 pass. These registers
 ;; are caller-saved on both SysV and Win64, are not callee-saved registers that
@@ -4340,52 +4340,6 @@
         [_ false])]
     [(CompilerRegNoLocation) false]))
 
-;; Drop candidates whose var already holds a register in `assignments`, preserving
-;; order. The call-spanning-aware pre-pass (#perf) homes non-call-spanning values
-;; in the caller-saved zero-call pool first; filtering them out keeps the primary
-;; callee-saved pass from re-homing them, so the callee-saved registers stay free
-;; for the call-spanning values that genuinely need them.
-(define (compiler-reg-filter-unassigned-candidates
-  [candidates : CompilerRegIntervalList]
-  [assignments : CompilerRegAssignmentTable]) : CompilerRegIntervalList
-  (match candidates
-    [(CompilerRegIntervalNil) CompilerRegIntervalNil]
-    [(CompilerRegIntervalCons interval rest)
-      (match interval
-        [(CompilerRegInterval var _ _)
-          (let
-            [tail : CompilerRegIntervalList
-              (compiler-reg-filter-unassigned-candidates
-                (box-get rest)
-                assignments)]
-            (if (compiler-reg-assignment-table-register-assigned?
-              assignments
-              var)
-              tail
-              (compiler-reg-interval-cons interval tail)))])]))
-
-;; Count candidates whose live range crosses a caller-clobber point, i.e. values
-;; that MUST be homed in the callee-saved pool (they cannot live in a caller-saved
-;; register a call/shift/div would clobber). When this exceeds the callee-saved
-;; register count the pool is oversubscribed and the call-spanning-aware pre-pass
-;; pays off; below it, the callee-saved pool has slack and forcing scratch into
-;; the small caller-saved pool would only add scratch-register churn.
-(define (compiler-reg-count-clobber-spanning-candidates
-  [candidates : CompilerRegIntervalList]
-  [clobber-points : CompilerLiveI64Set]) : i64
-  (match candidates
-    [(CompilerRegIntervalNil) 0]
-    [(CompilerRegIntervalCons interval rest)
-      (match interval
-        [(CompilerRegInterval _ start end)
-          (+
-            (if (compiler-reg-call-set-in-range? clobber-points start end)
-              1
-              0)
-            (compiler-reg-count-clobber-spanning-candidates
-              (box-get rest)
-              clobber-points))])]))
-
 (define (compiler-reg-copy-hints-add-move!
   [hints : (Array i64)]
   [parents : (Array i64)]
@@ -4945,118 +4899,6 @@
   [start : i64]
   [end : i64]) : i64
   (compiler-reg-call-set-count-in-range-model-words set start end 0))
-
-(define (compiler-reg-caller-saved-zero-call-candidate?
-  [assignments : CompilerRegAssignmentTable]
-  [interval-index : CompilerRegIntervalIndex]
-  [group-vars : CompilerLiveI64Set]
-  [clobber-points : CompilerLiveI64Set]
-  [var : i64]
-  [start : i64]
-  [end : i64]
-  [reg : String]) : bool
-  (and
-    (not (compiler-live-set-contains? group-vars var))
-    (not (compiler-reg-call-set-in-range? clobber-points start end))
-    (not
-      (compiler-reg-assignment-table-location-conflicts?
-        assignments
-        interval-index
-        var
-        (- 0 1)
-        (CompilerRegRegister reg)))
-    (match (compiler-reg-assignment-table-lookup assignments var)
-      [(CompilerRegSomeLocation location)
-        (match location
-          [(CompilerRegSpill _) true]
-          [_ false])]
-      [(CompilerRegNoLocation) true])))
-
-(define (compiler-reg-first-safe-caller-saved-zero-call-register
-  [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentTable]
-  [interval-index : CompilerRegIntervalIndex]
-  [group-vars : CompilerLiveI64Set]
-  [clobber-points : CompilerLiveI64Set]
-  [var : i64]
-  [start : i64]
-  [end : i64]) : CompilerRegMaybeString
-  (match regs
-    [(CompilerRegStringNil) CompilerRegNoString]
-    [(CompilerRegStringCons reg rest)
-      (if (and
-        (not (compiler-reg-active-contains-register? active reg))
-        (compiler-reg-caller-saved-zero-call-candidate?
-          assignments
-          interval-index
-          group-vars
-          clobber-points
-          var
-          start
-          end
-          reg))
-        (CompilerRegSomeString reg)
-        (compiler-reg-first-safe-caller-saved-zero-call-register
-          (box-get rest)
-          active
-          assignments
-          interval-index
-          group-vars
-          clobber-points
-          var
-          start
-          end))]))
-
-(define (compiler-reg-assign-caller-saved-zero-call-candidates
-  [candidates : CompilerRegIntervalList]
-  [regs : CompilerRegStringList]
-  [active : CompilerRegActiveList]
-  [assignments : CompilerRegAssignmentTable]
-  [interval-index : CompilerRegIntervalIndex]
-  [group-vars : CompilerLiveI64Set]
-  [clobber-points : CompilerLiveI64Set]) : CompilerRegAssignState
-  (match candidates
-    [(CompilerRegIntervalNil) (CompilerRegAssignState active assignments)]
-    [(CompilerRegIntervalCons interval rest)
-      (match interval
-        [(CompilerRegInterval var start end)
-          (let
-            [expired : CompilerRegActiveList
-              (compiler-reg-expire-active active start)]
-            (match (compiler-reg-first-safe-caller-saved-zero-call-register
-              regs
-              expired
-              assignments
-              interval-index
-              group-vars
-              clobber-points
-              var
-              start
-              end)
-              [(CompilerRegNoString)
-                (compiler-reg-assign-caller-saved-zero-call-candidates
-                  (box-get rest)
-                  regs
-                  expired
-                  assignments
-                  interval-index
-                  group-vars
-                  clobber-points)]
-              [(CompilerRegSomeString reg)
-                (compiler-reg-assign-caller-saved-zero-call-candidates
-                  (box-get rest)
-                  regs
-                  (compiler-reg-active-insert
-                    expired
-                    (CompilerRegActive var end reg))
-                  (compiler-reg-assignment-table-insert
-                    assignments
-                    var
-                    (CompilerRegRegister reg))
-                  interval-index
-                  group-vars
-                  clobber-points)]))])]))
 
 (define (compiler-reg-direct-call-points-seq
   [instrs : CompilerIrInstrSeq]
@@ -8832,12 +8674,14 @@
               (compiler-reg-sysv-integer-registers)))))))))))
 
 (define (compiler-reg-greedy-caller-saved-count) : i64
-  9)
+  (-
+    (compiler-reg-string-list-count (compiler-reg-greedy-integer-pool))
+    (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers))))
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
-;; (= the old caller-saved-zero-call-candidate? gate, sans the conflict check
-;; which the LiveIntervalUnion test already covers.) Out-of-range -> conservative
-;; spanning (callee-saved only).
+;; (The clobber-span half of the old per-register zero-call gate, sans the
+;; conflict check which the LiveIntervalUnion test already covers.)
+;; Out-of-range -> conservative spanning (callee-saved only).
 (define (compiler-reg-greedy-var-spans-clobber?
   [interval-index : CompilerRegIntervalIndex]
   [clobber-points : CompilerLiveI64Set]

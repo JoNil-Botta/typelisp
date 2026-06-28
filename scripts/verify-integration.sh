@@ -570,6 +570,16 @@ assert_contains() {
     fi
 }
 
+assert_matches() {
+    _file=$1
+    _regex=$2
+    _label=$3
+    if ! grep -E "$_regex" "$_file" >/dev/null 2>&1; then
+        echo "FAIL: $_label missing regex: $_regex" >&2
+        exit 1
+    fi
+}
+
 assert_not_contains() {
     _file=$1
     _snippet=$2
@@ -585,15 +595,16 @@ check_u64_float_cast_asm() {
     _label="u64_float_casts assembly"
     assert_contains "$_asm" "cast_u64_float_" "$_label"
     assert_contains "$_asm" "    js " "$_label"
-    assert_contains "$_asm" "    movq %rax, %r11" "$_label"
-    assert_contains "$_asm" "    orq %r11, %rax" "$_label"
-    assert_contains "$_asm" "    addsd %xmm0, %xmm0" "$_label"
-    assert_contains "$_asm" "    addss %xmm0, %xmm0" "$_label"
+    assert_contains "$_asm" '    andq $1, ' "$_label"
+    assert_contains "$_asm" '    shrq $1, ' "$_label"
+    assert_contains "$_asm" "    orq " "$_label"
+    assert_contains "$_asm" "    addsd " "$_label"
+    assert_contains "$_asm" "    addss " "$_label"
     assert_contains "$_asm" "    movzbq" "$_label"
     if ! awk '
         /u8_to_f64/ { in_u8 = 1 }
         in_u8 && /ret/ { exit bad }
-        in_u8 && (/cast_u64_float_/ || /addsd %xmm0, %xmm0/ || /testq %rax, %rax/) { bad = 1 }
+        in_u8 && (/cast_u64_float_/ || /addsd / || /testq / || /andq \$1, / || /shrq \$1, /) { bad = 1 }
         END { exit bad }
     ' "$_asm"; then
         echo "FAIL: $_label used the u64 high-bit path in u8_to_f64" >&2
@@ -818,9 +829,6 @@ EOF
     "$_stack_driver" "$_stack_asm" linux-x86_64
     for _snippet in \
         "subq \$16, %rsp" \
-        "movq %r11, 0(%rsp)" \
-        "movsd %xmm15, 0(%rsp)" \
-        "movsd %xmm15, 8(%rsp)" \
         "addq \$16, %rsp" \
         "call _tl_add8" \
         "call _tl_f10check" \
@@ -828,6 +836,8 @@ EOF
     do
         assert_contains "$_stack_asm" "$_snippet" backend-stack-args
     done
+    assert_matches "$_stack_asm" '^[[:space:]]+movq .* 0\(%rsp\)$' backend-stack-args
+    assert_matches "$_stack_asm" '^[[:space:]]+movq .* 8\(%rsp\)$' backend-stack-args
     assert_not_contains "$_stack_asm" "backend: too many call args" backend-stack-args
     as "$_stack_asm" -o "$_stack_obj"
     ld "$_stack_obj" -o "$_stack_bin" -e "$(linux_entry_symbol_for_asm "$_stack_asm")"
@@ -859,11 +869,11 @@ EOF
         "call _tl_write_i64" \
         "call _tl_read_i64" \
         "call tl_alloc" \
-        "tl_alloc:" \
-        "movq (%r10), %rax"
+        "tl_alloc:"
     do
         assert_contains "$_raw_ptr_asm" "$_snippet" backend-raw-pointer
     done
+    assert_matches "$_raw_ptr_asm" '^[[:space:]]+movq \(%r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)\), %r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)$' backend-raw-pointer
     assert_not_contains "$_raw_ptr_asm" "# TODO" backend-raw-pointer
     # This direct backend fixture bypasses the driver-owned runtime prelude.
     # Provide freestanding support for runtime calls this fixture can emit:

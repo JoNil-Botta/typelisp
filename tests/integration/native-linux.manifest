@@ -39,7 +39,7 @@ clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdl
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|3|-|-|-
 comptime_type_specialization|tests/integration/comptime_type_specialization.tl|42|-|-|-
-generated_option_result_families|tests/integration/generated_option_result_families.tl|134|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl
+generated_option_result_families|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl
 generated_string_vector_private_intrinsics|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl
 cond|tests/integration/cond.tl|42|-|-|-
 control_flow|tests/integration/control_flow.tl|15|-|-|-

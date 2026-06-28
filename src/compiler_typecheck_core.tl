@@ -23285,14 +23285,19 @@
   [name : String]
   [handle : i64]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
-  (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
-    (tc-inline-aggregate-enum-layout-with-stack ctx name stack)
-    (if (=
-      (compiler-symbol-handle-kind handle)
-      (compiler-symbol-kind-defstruct))
-      (tc-inline-aggregate-struct-layout-with-stack ctx name stack)
-      (ErrTcInlineAggregateLayout
-        (string.string-append "typecheck: unknown aggregate " name)))))
+  (let
+    [layout-ctx : TcContext
+      (tc-context-with-nominal-owner-index-module
+        ctx
+        (compiler-symbol-handle-index handle))]
+    (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
+      (tc-inline-aggregate-enum-layout-with-stack layout-ctx name stack)
+      (if (=
+        (compiler-symbol-handle-kind handle)
+        (compiler-symbol-kind-defstruct))
+        (tc-inline-aggregate-struct-layout-with-stack layout-ctx name stack)
+        (ErrTcInlineAggregateLayout
+          (string.string-append "typecheck: unknown aggregate " name))))))
 
 (define (tc-inline-aggregate-layout-fill-cache
   [ctx : TcContext]

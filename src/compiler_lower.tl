@@ -8518,7 +8518,10 @@
                           enum-name
                           (intern-str variant-name))]
                       (compiler-ir-global-cons
-                        (CompilerIrGlobal.Global object-name (AstTyI64) (CompilerIrValue.I64 tag))
+                        (CompilerIrGlobal.Global
+                          object-name
+                          (AstTyI64)
+                          (CompilerIrValue.I64 tag))
                         globals))]
                   [_ globals])]
               (lower-nullary-variant-globals enum-name rest (+ tag 1) next))]))]))
@@ -8605,7 +8608,11 @@
       (LowerExpr
         (lower-state-emit
           allocated
-          (CompilerIrInstr.Call var-id "tl_alloc" (CompilerIrCallArgs.One (CompilerIrValue.I64 size)) ty))
+          (CompilerIrInstr.Call
+            var-id
+            "tl_alloc"
+            (CompilerIrCallArgs.One (CompilerIrValue.I64 size))
+            ty))
         (CompilerIrValue.Var var-id)
         ty)]))
 
@@ -8639,7 +8646,9 @@
       (match (lower-state-alloc-var storage-state)
         [(LowerAlloc addr-alloc addr-var)
           (LowerExpr
-            (lower-state-emit addr-alloc (CompilerIrInstr.AddrOf addr-var storage-var))
+            (lower-state-emit
+              addr-alloc
+              (CompilerIrInstr.AddrOf addr-var storage-var))
             (CompilerIrValue.Var addr-var)
             ty)])]))
 
@@ -8652,7 +8661,11 @@
       (LowerExpr
         (lower-state-emit
           allocated
-          (CompilerIrInstr.Gep var-id base (CompilerIrValue.I64 offset) (AstTyU8)))
+          (CompilerIrInstr.Gep
+            var-id
+            base
+            (CompilerIrValue.I64 offset)
+            (AstTyU8)))
         (CompilerIrValue.Var var-id)
         (AstTyU64))]))
 
@@ -8744,7 +8757,9 @@
                       dst-addr
                       (compiler-ir-value-cons
                         src-addr
-                        (compiler-ir-value-cons (CompilerIrValue.I64 size) (IrValueNil)))))
+                        (compiler-ir-value-cons
+                          (CompilerIrValue.I64 size)
+                          (IrValueNil)))))
                   (AstTyUnit)))])])]))
 
 (define (lower-emit-memcpy-value
@@ -9214,7 +9229,9 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc allocated var-id)
       (LowerExpr
-        (lower-state-emit allocated (CompilerIrInstr.Word var-id group index word-ty))
+        (lower-state-emit
+          allocated
+          (CompilerIrInstr.Word var-id group index word-ty))
         (CompilerIrValue.Var var-id)
         word-ty)]))
 
@@ -9354,13 +9371,19 @@
           (match (lower-gep-byte
             (lower-state-emit
               s1
-              (CompilerIrInstr.StorePtr ptr w0 (lower-register-word-type ctx ty 0)))
+              (CompilerIrInstr.StorePtr
+                ptr
+                w0
+                (lower-register-word-type ctx ty 0)))
             ptr
             8)
             [(LowerExpr s2 ptr8 _)
               (lower-state-emit
                 s2
-                (CompilerIrInstr.StorePtr ptr8 w1 (lower-register-word-type ctx ty 1)))])])]))
+                (CompilerIrInstr.StorePtr
+                  ptr8
+                  w1
+                  (lower-register-word-type ctx ty 1)))])])]))
 
 ;; #2386: load a 2-word register-group from memory at pointer `ptr` and reassemble
 ;; it with CompilerIrInstr.Pack (word0 from [ptr], word1 from [ptr+8]).
@@ -9577,7 +9600,8 @@
           (match (lower-emit-pack
             w1-state
             (IrValueCons
-              (CompilerIrValue.I64 (compiler-registry-handle-child-index handle))
+              (CompilerIrValue.I64
+                (compiler-registry-handle-child-index handle))
               (box (IrValueCons word1 (box IrValueNil))))
             enum-ty)
             [(LowerExpr ps pv _) (OkLowerExpr (LowerExpr ps pv enum-ty))])])]
@@ -9835,7 +9859,11 @@
     [(LowerAlloc allocated var-id)
       (lower-state-emit
         allocated
-        (CompilerIrInstr.Call var-id "tl_oob_abort" (CompilerIrCallArgs.Nil) (AstTyUnit)))]))
+        (CompilerIrInstr.Call
+          var-id
+          "tl_oob_abort"
+          (CompilerIrCallArgs.Nil)
+          (AstTyUnit)))]))
 
 (define (lower-string-fields [state : LowerState] [value : CompilerIrValue]) : LowerStringFields
   (match (lower-load-at-offset state value 0 (AstTyU64))
@@ -10360,7 +10388,9 @@
     (match (lower-state-alloc-var state)
       [(LowerAlloc allocated var-id)
         (LowerExpr
-          (lower-state-emit allocated (CompilerIrInstr.Load var-id slot stored-ty))
+          (lower-state-emit
+            allocated
+            (CompilerIrInstr.Load var-id slot stored-ty))
           (CompilerIrValue.Var var-id)
           result-ty)])
     (LowerExpr state slot result-ty)))
@@ -12070,7 +12100,8 @@
                                                       (lower-state-emit
                                                         ok-state
                                                         (CompilerIrInstr.Branch
-                                                          (CompilerIrValue.Var eq-var)
+                                                          (CompilerIrValue.Var
+                                                            eq-var)
                                                           ok-label
                                                           fail-label))
                                                       ok-label)
@@ -12359,7 +12390,10 @@
     (if (compiler-symbols-handle-found? id)
       (OkLowerExpr (LowerExpr state (CompilerIrValue.Var id) ty))
       (OkLowerExpr
-        (LowerExpr state (CompilerIrValue.Global (lower-resolve-name state name)) ty)))))
+        (LowerExpr
+          state
+          (CompilerIrValue.Global (lower-resolve-name state name))
+          ty)))))
 
 (define (lower-var-id
   [state : LowerState]
@@ -12374,7 +12408,8 @@
       (OkLowerExpr
         (LowerExpr
           state
-          (CompilerIrValue.Global (lower-resolve-name state (intern-str name-id)))
+          (CompilerIrValue.Global
+            (lower-resolve-name state (intern-str name-id)))
           ty)))))
 
 (define (lower-function-type? [ty : AstType]) : bool
@@ -12613,7 +12648,9 @@
                 [(LowerAlloc allocated var-id)
                   (OkLowerExpr
                     (LowerExpr
-                      (lower-state-emit allocated (CompilerIrInstr.Mov var-id value ty))
+                      (lower-state-emit
+                        allocated
+                        (CompilerIrInstr.Mov var-id value ty))
                       (CompilerIrValue.Var var-id)
                       ty))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -12621,7 +12658,10 @@
         (lower-function-type? ty)
         (lower-symbol-function-value? ctx state name))
       (OkLowerExpr
-        (LowerExpr state (CompilerIrValue.Function (lower-resolve-name state name)) ty))]
+        (LowerExpr
+          state
+          (CompilerIrValue.Function (lower-resolve-name state name))
+          ty))]
     [else (lower-var state env name ty)]))
 
 (define (lower-lambda-captures-env?
@@ -12850,7 +12890,11 @@
   [value : CompilerIrValue]) : ResultLowerExpr
   (match (lower-string-fields state value)
     [(LowerStringFields fields-state ptr len)
-      (lower-substring-call-runtime fields-state ptr (CompilerIrValue.I64 0) len)]))
+      (lower-substring-call-runtime
+        fields-state
+        ptr
+        (CompilerIrValue.I64 0)
+        len)]))
 
 (define (lower-capture-snapshot-dynarray-copy
   [ctx : TcContext]
@@ -14342,7 +14386,8 @@
                     base-state
                     base
                     0
-                    (CompilerIrValue.I64 (compiler-registry-handle-child-index handle))
+                    (CompilerIrValue.I64
+                      (compiler-registry-handle-child-index handle))
                     (AstTyI64))]
                 [payload-state : LowerState
                   (match err-ty
@@ -14375,7 +14420,8 @@
                       (OkLowerState
                         (lower-state-emit
                           loaded-state
-                          (CompilerIrInstr.Return (lower-return-maybe loaded ret-ty))))])
+                          (CompilerIrInstr.Return
+                            (lower-return-maybe loaded ret-ty))))])
                   (OkLowerState
                     (lower-state-emit
                       payload-state
@@ -15008,7 +15054,10 @@
                   (CompilerIrValue.Var index-var)
                   (CompilerIrValue.I64 1)
                   (AstTyI64)))
-              (CompilerIrInstr.Mov index-var (CompilerIrValue.Var inc-var) (AstTyI64)))
+              (CompilerIrInstr.Mov
+                index-var
+                (CompilerIrValue.Var inc-var)
+                (AstTyI64)))
             (CompilerIrInstr.Jump header-label))
           exit-label))]))
 
@@ -15109,7 +15158,10 @@
                         (lower-state-emit
                           (lower-state-emit
                             index-alloc
-                            (CompilerIrInstr.Mov index-var (CompilerIrValue.I64 0) (AstTyI64)))
+                            (CompilerIrInstr.Mov
+                              index-var
+                              (CompilerIrValue.I64 0)
+                              (AstTyI64)))
                           (CompilerIrInstr.Jump header-label))
                         header-label)]
                     (match (lower-state-alloc-var header-start)
@@ -15873,7 +15925,8 @@
               (OkLowerExpr
                 (LowerExpr
                   state
-                  (CompilerIrValue.I64 (compiler-registry-handle-child-index handle))
+                  (CompilerIrValue.I64
+                    (compiler-registry-handle-child-index handle))
                   enum-ty)))
             (let
               [layout-variant-name : String
@@ -15931,7 +15984,8 @@
                 state
                 dst
                 0
-                (CompilerIrValue.I64 (compiler-registry-handle-child-index handle))
+                (CompilerIrValue.I64
+                  (compiler-registry-handle-child-index handle))
                 (AstTyI64))]
             (lower-store-inline-payload-values
               ctx
@@ -16681,7 +16735,8 @@
           (lower-init-scalar state (CompilerIrValue.Bool false) expr-ty origin)]
         [(AstTyChar)
           (lower-init-scalar state (CompilerIrValue.Char '\0') expr-ty origin)]
-        [(AstTyUnit) (OkLowerExpr (LowerExpr state CompilerIrValue.Unit expr-ty))]
+        [(AstTyUnit)
+          (OkLowerExpr (LowerExpr state CompilerIrValue.Unit expr-ty))]
         [(AstTyString)
           (lower-init-scalar state (CompilerIrValue.String "") expr-ty origin)]
         [(AstTyPtr _)
@@ -17896,7 +17951,11 @@
         expr-ty
         origin)]
     [(AstExprBinaryData bytes)
-      (lower-materialize-at-expr state (CompilerIrValue.Bytes bytes) expr-ty origin)]
+      (lower-materialize-at-expr
+        state
+        (CompilerIrValue.Bytes bytes)
+        expr-ty
+        origin)]
     [(AstExprSpmdProgramIndex)
       (lower-materialize-at-expr state (CompilerIrValue.I64 0) expr-ty origin)]
     [(AstExprSpmdProgramCount)
@@ -18212,7 +18271,10 @@
                                 (LowerExpr
                                   (lower-state-emit-at-expr
                                     assign-state
-                                    (CompilerIrInstr.Mov id value-ir target-ir-ty)
+                                    (CompilerIrInstr.Mov
+                                      id
+                                      value-ir
+                                      target-ir-ty)
                                     origin)
                                   CompilerIrValue.Unit
                                   expr-ty)))
@@ -19733,7 +19795,10 @@
               (LowerExpr
                 (lower-state-emit
                   load-alloc
-                  (CompilerIrInstr.Load load-var (CompilerIrValue.Var gep-var) (AstTyChar)))
+                  (CompilerIrInstr.Load
+                    load-var
+                    (CompilerIrValue.Var gep-var)
+                    (AstTyChar)))
                 (CompilerIrValue.Var load-var)
                 (AstTyChar)))]))]))
 
@@ -19752,7 +19817,10 @@
                   (lower-string-ref-byte
                     (lower-state-emit
                       bounds-ok-state
-                      (CompilerIrInstr.BoundsCheck index-u len-u bounds-ok-label))
+                      (CompilerIrInstr.BoundsCheck
+                        index-u
+                        len-u
+                        bounds-ok-label))
                     data-ptr
                     index-value)])])])]))
 
@@ -19834,11 +19902,16 @@
       (lower-state-finish-block
         (lower-state-emit
           state
-          (CompilerIrInstr.Branch (CompilerIrValue.Var len-ok-var) copy-label fail-label))
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var len-ok-var)
+            copy-label
+            fail-label))
         fail-label)]
     [copy-start : LowerState
       (lower-state-finish-block
-        (lower-state-emit (lower-oob-abort fail-start) (CompilerIrInstr.Jump copy-label))
+        (lower-state-emit
+          (lower-oob-abort fail-start)
+          (CompilerIrInstr.Jump copy-label))
         copy-label)]
     (lower-substring-call-runtime copy-start src-ptr start-value len-value)))
 
@@ -19856,7 +19929,12 @@
         [rem-state : LowerState
           (lower-state-emit
             rem-alloc
-            (CompilerIrInstr.BinOp rem-var CompilerIrBinOp.Sub src-len start-value (AstTyI64)))]
+            (CompilerIrInstr.BinOp
+              rem-var
+              CompilerIrBinOp.Sub
+              src-len
+              start-value
+              (AstTyI64)))]
         (match (lower-cast-value
           rem-state
           (CompilerIrValue.Var rem-var)
@@ -22002,7 +22080,10 @@
         (lower-state-emit
           (lower-state-emit
             state
-            (CompilerIrInstr.Mov result-var (CompilerIrValue.Bool true) (AstTyBool)))
+            (CompilerIrInstr.Mov
+              result-var
+              (CompilerIrValue.Bool true)
+              (AstTyBool)))
           (CompilerIrInstr.Jump done-label))
         false-label)]
     [done-start : LowerState
@@ -22022,7 +22103,11 @@
   [left-ptr : CompilerIrValue]
   [right-ptr : CompilerIrValue]
   [result-ty : AstType]) : LowerExpr
-  (match (lower-emit-gep state left-ptr (CompilerIrValue.Var index-var) (AstTyU8))
+  (match (lower-emit-gep
+    state
+    left-ptr
+    (CompilerIrValue.Var index-var)
+    (AstTyU8))
     [(LowerExpr left-gep-state left-addr _)
       (match (lower-emit-load left-gep-state left-addr (AstTyU8))
         [(LowerExpr left-load-state left-byte _)
@@ -22170,7 +22255,10 @@
       (lower-state-finish-block
         (lower-state-emit
           state
-          (CompilerIrInstr.Branch (CompilerIrValue.Var negative-var) negate-label done-label))
+          (CompilerIrInstr.Branch
+            (CompilerIrValue.Var negative-var)
+            negate-label
+            done-label))
         negate-label)]
     (match (lower-emit-binop
       negate-start
@@ -22274,7 +22362,12 @@
   [index-var : i64]
   [negative-var : i64]
   [result-ty : AstType]) : LowerExpr
-  (match (lower-emit-binop state CompilerIrBinOp.Lt (CompilerIrValue.Var index-var) len (AstTyBool))
+  (match (lower-emit-binop
+    state
+    CompilerIrBinOp.Lt
+    (CompilerIrValue.Var index-var)
+    len
+    (AstTyBool))
     [(LowerExpr cond-state cond-value _)
       (lower-inline-string-to-int-body
         (lower-state-finish-block
@@ -22328,7 +22421,10 @@
                       (lower-state-finish-block
                         (lower-state-emit
                           minus-test-state
-                          (CompilerIrInstr.Branch minus? minus-label header-label))
+                          (CompilerIrInstr.Branch
+                            minus?
+                            minus-label
+                            header-label))
                         minus-label)]
                     [header-start : LowerState
                       (lower-state-finish-block
@@ -22340,7 +22436,10 @@
                                 negative-var
                                 (CompilerIrValue.Bool true)
                                 (AstTyBool)))
-                            (CompilerIrInstr.Mov index-var (CompilerIrValue.I64 1) (AstTyI64)))
+                            (CompilerIrInstr.Mov
+                              index-var
+                              (CompilerIrValue.I64 1)
+                              (AstTyI64)))
                           (CompilerIrInstr.Jump header-label))
                         header-label)]
                     (lower-inline-string-to-int-loop
@@ -23595,14 +23694,21 @@
                 [gep-state : LowerState
                   (lower-state-emit
                     gep-alloc
-                    (CompilerIrInstr.Gep gep-var arr-value (CompilerIrValue.I64 1) (AstTyI64)))]
+                    (CompilerIrInstr.Gep
+                      gep-var
+                      arr-value
+                      (CompilerIrValue.I64 1)
+                      (AstTyI64)))]
                 (match (lower-state-alloc-var gep-state)
                   [(LowerAlloc load-alloc load-var)
                     (OkLowerExpr
                       (LowerExpr
                         (lower-state-emit
                           load-alloc
-                          (CompilerIrInstr.Load load-var (CompilerIrValue.Var gep-var) (AstTyI64)))
+                          (CompilerIrInstr.Load
+                            load-var
+                            (CompilerIrValue.Var gep-var)
+                            (AstTyI64)))
                         (CompilerIrValue.Var load-var)
                         (AstTyI64)))]))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
@@ -23988,7 +24094,10 @@
   [ty : AstType]) : LowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc s v)
-      (LowerExpr (lower-state-emit s (CompilerIrInstr.Load v addr ty)) (CompilerIrValue.Var v) ty)]))
+      (LowerExpr
+        (lower-state-emit s (CompilerIrInstr.Load v addr ty))
+        (CompilerIrValue.Var v)
+        ty)]))
 
 (define (lower-emit-binop
   [state : LowerState]
@@ -24063,7 +24172,11 @@
     [(LowerExpr s1 idx-u _)
       (match (lower-emit-cast s1 idx-value idx-ty (AstTyI64))
         [(LowerExpr s2 idx-off _)
-          (match (lower-emit-gep s2 arr-value (CompilerIrValue.I64 1) (AstTyI64))
+          (match (lower-emit-gep
+            s2
+            arr-value
+            (CompilerIrValue.I64 1)
+            (AstTyI64))
             [(LowerExpr s3 len-gep _)
               (match (lower-emit-load s3 len-gep (AstTyI64))
                 [(LowerExpr s4 len-val _)
@@ -24853,7 +24966,10 @@
                   (CompilerIrValue.Var index-var)
                   (CompilerIrValue.I64 1)
                   (AstTyI64)))
-              (CompilerIrInstr.Mov index-var (CompilerIrValue.Var inc-var) (AstTyI64)))
+              (CompilerIrInstr.Mov
+                index-var
+                (CompilerIrValue.Var inc-var)
+                (AstTyI64)))
             (CompilerIrInstr.Jump header-label))
           exit-label))]))
 
@@ -24933,7 +25049,10 @@
             (lower-state-emit
               (lower-state-emit
                 index-alloc
-                (CompilerIrInstr.Mov index-var (CompilerIrValue.I64 0) (AstTyI64)))
+                (CompilerIrInstr.Mov
+                  index-var
+                  (CompilerIrValue.I64 0)
+                  (AstTyI64)))
               (CompilerIrInstr.Jump header-label))
             header-label)]
         (match (lower-emit-binop
@@ -24980,7 +25099,10 @@
             (lower-state-emit
               (lower-state-emit
                 index-alloc
-                (CompilerIrInstr.Mov index-var (CompilerIrValue.I64 0) (AstTyI64)))
+                (CompilerIrInstr.Mov
+                  index-var
+                  (CompilerIrValue.I64 0)
+                  (AstTyI64)))
               (CompilerIrInstr.Jump header-label))
             header-label)]
         (match (lower-emit-binop
@@ -25600,7 +25722,8 @@
         elem-count)
         [(LowerExpr addr-state elem-ptr _)
           (if (= (lower-type-size ctx elem-ir-ty) 0)
-            (OkLowerExpr (LowerExpr addr-state CompilerIrValue.Unit (AstTyUnit)))
+            (OkLowerExpr
+              (LowerExpr addr-state CompilerIrValue.Unit (AstTyUnit)))
             (OkLowerExpr
               (LowerExpr
                 (lower-array-elem-store-state
@@ -25700,7 +25823,8 @@
       (OkLowerExpr
         (LowerExpr
           state
-          (CompilerIrValue.GlobalAddr (lower-resolve-name state (intern-str name)))
+          (CompilerIrValue.GlobalAddr
+            (lower-resolve-name state (intern-str name)))
           place-ty)))))
 
 (define (lower-mutable-var-address-id
@@ -26467,7 +26591,10 @@
                         (lower-state-emit
                           (lower-state-emit
                             index-alloc
-                            (CompilerIrInstr.Mov index-var (CompilerIrValue.I64 0) (AstTyI64)))
+                            (CompilerIrInstr.Mov
+                              index-var
+                              (CompilerIrValue.I64 0)
+                              (AstTyI64)))
                           (CompilerIrInstr.Jump header-label))
                         header-label)]
                     (match (lower-state-alloc-var header-start)
@@ -26527,14 +26654,16 @@
                                                   (CompilerIrInstr.BinOp
                                                     inc-var
                                                     CompilerIrBinOp.Add
-                                                    (CompilerIrValue.Var index-var)
+                                                    (CompilerIrValue.Var
+                                                      index-var)
                                                     (CompilerIrValue.I64 1)
                                                     (AstTyI64)))
                                                 (CompilerIrInstr.Mov
                                                   index-var
                                                   (CompilerIrValue.Var inc-var)
                                                   (AstTyI64)))
-                                              (CompilerIrInstr.Jump header-label))
+                                              (CompilerIrInstr.Jump
+                                                header-label))
                                             exit-label)])])])]))]))])])])]))
 
 (define (lower-array-push-finish
@@ -26583,7 +26712,12 @@
   [elem-size : i64]
   [elem-ty : AstType]
   [value-ir : CompilerIrValue]) : LowerExpr
-  (match (lower-emit-binop state CompilerIrBinOp.Add old-len (CompilerIrValue.I64 1) (AstTyI64))
+  (match (lower-emit-binop
+    state
+    CompilerIrBinOp.Add
+    old-len
+    (CompilerIrValue.I64 1)
+    (AstTyI64))
     [(LowerExpr len-state new-len _)
       (match (lower-emit-binop
         len-state
@@ -26673,7 +26807,10 @@
                           ctx
                           (lower-state-emit
                             check-state
-                            (CompilerIrInstr.Branch within-max alloc-label fail-label))
+                            (CompilerIrInstr.Branch
+                              within-max
+                              alloc-label
+                              fail-label))
                           fail-label
                           alloc-label
                           arr-value
@@ -26776,7 +26913,9 @@
             (LowerExpr
               (lower-state-emit
                 allocated
-                (CompilerIrInstr.Syscall var-id (compiler-ir-call-args-from-list values)))
+                (CompilerIrInstr.Syscall
+                  var-id
+                  (compiler-ir-call-args-from-list values)))
               (CompilerIrValue.Var var-id)
               (AstTyI64)))])]
     [(ErrLowerArgs message) (ErrLowerExpr message)]))
@@ -26938,7 +27077,10 @@
                                 ctx
                                 (lower-state-emit
                                   allocated
-                                  (CompilerIrInstr.Mov var-id init-value binding-ir-ty))
+                                  (CompilerIrInstr.Mov
+                                    var-id
+                                    init-value
+                                    binding-ir-ty))
                                 (sym-i64-bind-id env name-id var-id)
                                 next-type-env
                                 rest))]))])]
@@ -27065,7 +27207,8 @@
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : ResultLowerExpr
   (match exprs
-    [(AstExprNil) (OkLowerExpr (LowerExpr state CompilerIrValue.Unit (AstTyUnit)))]
+    [(AstExprNil)
+      (OkLowerExpr (LowerExpr state CompilerIrValue.Unit (AstTyUnit)))]
     [(AstExprCons expr rest)
       (let
         [expr : AstExpr (ast-node-get expr)]
@@ -27091,7 +27234,8 @@
   [exprs : AstExprList]
   [expected-ty : AstType]) : ResultLowerExpr
   (match exprs
-    [(AstExprNil) (OkLowerExpr (LowerExpr state CompilerIrValue.Unit (AstTyUnit)))]
+    [(AstExprNil)
+      (OkLowerExpr (LowerExpr state CompilerIrValue.Unit (AstTyUnit)))]
     [(AstExprCons expr rest)
       (let
         [expr : AstExpr (ast-node-get expr)]
@@ -27129,7 +27273,11 @@
         [marked-state : LowerState
           (lower-state-emit
             mark-allocated
-            (CompilerIrInstr.Call mark-var "tl_region_mark" (CompilerIrCallArgs.Nil) (AstTyU64)))]
+            (CompilerIrInstr.Call
+              mark-var
+              "tl_region_mark"
+              (CompilerIrCallArgs.Nil)
+              (AstTyU64)))]
         [region-env : SymI64Env (sym-i64-bind env hidden-name mark-var)]
         [region-type-env : TcTypeEnv
           (lower-type-env-push-region-reset type-env hidden-name)]
@@ -27148,7 +27296,8 @@
                             (CompilerIrInstr.Call
                               reset-var
                               "tl_region_reset"
-                              (CompilerIrCallArgs.One (CompilerIrValue.Var mark-var))
+                              (CompilerIrCallArgs.One
+                                (CompilerIrValue.Var mark-var))
                               (AstTyUnit)))
                           value
                           body-ty))]))])]
@@ -27192,7 +27341,11 @@
         [saved-state : LowerState
           (lower-state-emit
             saved-allocated
-            (CompilerIrInstr.Call saved-var "tl_arena_current" CompilerIrCallArgs.Nil (AstTyI64)))]
+            (CompilerIrInstr.Call
+              saved-var
+              "tl_arena_current"
+              CompilerIrCallArgs.Nil
+              (AstTyI64)))]
         (match (lower-arena-handle
           ctx
           saved-state
@@ -27714,7 +27867,9 @@
               (if (tc-never-type? then-ty)
                 (lower-state-finish-block then-state else-label)
                 (lower-state-finish-block
-                  (lower-state-emit then-state (CompilerIrInstr.Jump merge-label))
+                  (lower-state-emit
+                    then-state
+                    (CompilerIrInstr.Jump merge-label))
                   else-label))]
             (lower-if-else
               ctx
@@ -27753,7 +27908,10 @@
                           [branch-state : LowerState
                             (lower-state-emit
                               merge-label-state
-                              (CompilerIrInstr.Branch cond-value then-label else-label))]
+                              (CompilerIrInstr.Branch
+                                cond-value
+                                then-label
+                                else-label))]
                           (lower-if-then
                             ctx
                             (lower-state-finish-block branch-state then-label)
@@ -27800,7 +27958,10 @@
                             (lower-state-finish-block
                               (lower-state-emit
                                 cond-state
-                                (CompilerIrInstr.Branch cond-value body-label exit-label))
+                                (CompilerIrInstr.Branch
+                                  cond-value
+                                  body-label
+                                  exit-label))
                               body-label)]
                           (match (lower-expr ctx body-start env type-env body)
                             [(OkLowerExpr body-lowered)
@@ -28452,7 +28613,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-simple-spmd-broadcast-lane env type-env inner))]
-    [(AstExprLiteral (AstLitInt n _)) (LowerSomeIrValue (CompilerIrValue.I64 n))]
+    [(AstExprLiteral (AstLitInt n _))
+      (LowerSomeIrValue (CompilerIrValue.I64 n))]
     [(AstExprVar name)
       (let
         [var-id : i64
@@ -31660,7 +31822,11 @@
   [state : LowerState]
   [index-var : i64]
   [lanes : i64]) : LowerExpr
-  (match (lower-emit-splat state (CompilerIrValue.Var index-var) lanes (AstTyI64))
+  (match (lower-emit-splat
+    state
+    (CompilerIrValue.Var index-var)
+    lanes
+    (AstTyI64))
     [(LowerExpr base-state base-value _)
       (match (lower-emit-lane-id base-state lanes (AstTyI64))
         [(LowerExpr lane-state lane-value _)
@@ -31736,17 +31902,32 @@
     [then-bits : CompilerIrValue CompilerIrValue.Unit]
     [else-bits : CompilerIrValue CompilerIrValue.Unit]
     (begin
-      (match (lower-emit-mask-binop s (CompilerIrMaskBinOp.And) then-mask then-value lanes)
+      (match (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.And)
+        then-mask
+        then-value
+        lanes)
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
             (set! then-bits value))])
-      (match (lower-emit-mask-binop s (CompilerIrMaskBinOp.And) else-mask else-value lanes)
+      (match (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.And)
+        else-mask
+        else-value
+        lanes)
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
             (set! else-bits value))])
-      (lower-emit-mask-binop s (CompilerIrMaskBinOp.Or) then-bits else-bits lanes))))
+      (lower-emit-mask-binop
+        s
+        (CompilerIrMaskBinOp.Or)
+        then-bits
+        else-bits
+        lanes))))
 
 (define (lower-emit-select
   [state : LowerState]
@@ -31771,7 +31952,9 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc s v)
       (LowerExpr
-        (lower-state-emit s (CompilerIrInstr.VectorReduce v op src lanes elem-ty))
+        (lower-state-emit
+          s
+          (CompilerIrInstr.VectorReduce v op src lanes elem-ty))
         (CompilerIrValue.Var v)
         elem-ty)]))
 
@@ -31840,7 +32023,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index end-value (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        end-value
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -31850,7 +32038,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index array-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        array-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -31878,7 +32071,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index end-value (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        end-value
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -31930,7 +32128,10 @@
                         (LowerExpr
                           (lower-state-emit
                             update-state
-                            (CompilerIrInstr.Mov index-var next-index (AstTyI64)))
+                            (CompilerIrInstr.Mov
+                              index-var
+                              next-index
+                              (AstTyI64)))
                           CompilerIrValue.Unit
                           (AstTyUnit)))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -31984,7 +32185,10 @@
                         (LowerExpr
                           (lower-state-emit
                             update-state
-                            (CompilerIrInstr.Mov index-var next-index (AstTyI64)))
+                            (CompilerIrInstr.Mov
+                              index-var
+                              next-index
+                              (AstTyI64)))
                           CompilerIrValue.Unit
                           (AstTyUnit)))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -32141,7 +32345,9 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc acc-alloc acc-var)
       (match (lower-state-alloc-var
-        (lower-state-emit acc-alloc (CompilerIrInstr.Mov acc-var init-value elem-ty)))
+        (lower-state-emit
+          acc-alloc
+          (CompilerIrInstr.Mov acc-var init-value elem-ty)))
         [(LowerAlloc index-alloc index-var)
           (let
             [s : LowerState
@@ -32219,7 +32425,10 @@
                 (lower-state-finish-block
                   (lower-state-emit
                     s
-                    (CompilerIrInstr.Branch vector-ok body-label tail-header-label))
+                    (CompilerIrInstr.Branch
+                      vector-ok
+                      body-label
+                      tail-header-label))
                   body-label))
               (match (lower-avx2-reduce-vector-body
                 ctx
@@ -32242,7 +32451,9 @@
                         (set!
                           s
                           (lower-state-finish-block
-                            (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                            (lower-state-emit
+                              s
+                              (CompilerIrInstr.Jump header-label))
                             tail-header-label))
                         (match (lower-emit-binop
                           s
@@ -32307,7 +32518,9 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc acc-alloc acc-var)
       (match (lower-state-alloc-var
-        (lower-state-emit acc-alloc (CompilerIrInstr.Mov acc-var init-value elem-ty)))
+        (lower-state-emit
+          acc-alloc
+          (CompilerIrInstr.Mov acc-var init-value elem-ty)))
         [(LowerAlloc index-alloc index-var)
           (match (lower-state-alloc-var
             (lower-state-emit
@@ -32393,7 +32606,10 @@
                     (lower-state-finish-block
                       (lower-state-emit
                         s
-                        (CompilerIrInstr.Branch vector-ok body-label tail-init-label))
+                        (CompilerIrInstr.Branch
+                          vector-ok
+                          body-label
+                          tail-init-label))
                       body-label))
                   (match (lower-avx2-reduce-vector-value-body
                     ctx
@@ -32416,7 +32632,9 @@
                             (set!
                               s
                               (lower-state-finish-block
-                                (lower-state-emit s (CompilerIrInstr.Jump header-label))
+                                (lower-state-emit
+                                  s
+                                  (CompilerIrInstr.Jump header-label))
                                 tail-init-label))
                             (set!
                               s
@@ -32485,7 +32703,8 @@
                                         (lower-state-finish-block
                                           (lower-state-emit
                                             tail-state
-                                            (CompilerIrInstr.Jump tail-check-label))
+                                            (CompilerIrInstr.Jump
+                                              tail-check-label))
                                           exit-label)
                                         (CompilerIrValue.Var acc-var)
                                         elem-ty))])]
@@ -32843,7 +33062,8 @@
         (CompilerIrValue.Var current-index-var)
         (CompilerIrValue.Var base-index-var)
         elem-ty)]
-    [(LowerVectorMapLaneCount) (LowerExpr state (CompilerIrValue.I64 lanes) elem-ty)]
+    [(LowerVectorMapLaneCount)
+      (LowerExpr state (CompilerIrValue.I64 lanes) elem-ty)]
     [(LowerVectorMapBinOp op lhs rhs)
       (match (lower-emit-scalar-vector-map-value
         ctx
@@ -32882,7 +33102,10 @@
         [s : LowerState
           (lower-state-emit
             alloc-state
-            (CompilerIrInstr.Mov tail-var (CompilerIrValue.Var index-var) (AstTyI64)))]
+            (CompilerIrInstr.Mov
+              tail-var
+              (CompilerIrValue.Var index-var)
+              (AstTyI64)))]
         [header-label : String ""]
         [body-label : String ""]
         [active-lanes : CompilerIrValue CompilerIrValue.Unit]
@@ -32974,7 +33197,10 @@
                             (CompilerIrValue.Var tail-var)
                             (CompilerIrValue.I64 1)
                             (AstTyI64)))
-                        (CompilerIrInstr.Mov tail-var (CompilerIrValue.Var inc-var) (AstTyI64)))
+                        (CompilerIrInstr.Mov
+                          tail-var
+                          (CompilerIrValue.Var inc-var)
+                          (AstTyI64)))
                       (CompilerIrInstr.Jump header-label))
                     exit-label)
                   CompilerIrValue.Unit
@@ -33053,7 +33279,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index end-value (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        end-value
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33063,7 +33294,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index out-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        out-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33073,7 +33309,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index lhs-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        lhs-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33083,7 +33324,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index rhs-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        rhs-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33127,7 +33373,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) end-value out-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        end-value
+        out-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33137,7 +33388,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) end-value lhs-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        end-value
+        lhs-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33147,7 +33403,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) end-value rhs-len (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        end-value
+        rhs-len
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33159,7 +33420,12 @@
   [base : CompilerIrValue]
   [offset : i64]) : LowerExpr
   (if (> offset 0)
-    (lower-emit-binop state (CompilerIrBinOp.Add) base (CompilerIrValue.I64 offset) (AstTyI64))
+    (lower-emit-binop
+      state
+      (CompilerIrBinOp.Add)
+      base
+      (CompilerIrValue.I64 offset)
+      (AstTyI64))
     (LowerExpr state base (AstTyI64))))
 
 (define (lower-avx512-array-set-next-ok
@@ -33294,7 +33560,12 @@
           (begin
             (set! s next-s)
             (set! ok value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.Le) next-index end-value (AstTyBool))
+      (match (lower-emit-binop
+        s
+        (CompilerIrBinOp.Le)
+        next-index
+        end-value
+        (AstTyBool))
         [(LowerExpr next-s value _)
           (begin
             (set! s next-s)
@@ -33372,7 +33643,8 @@
         expr
         "non-contiguous array indexes in this AVX-512 slice")
       (if (= offset 0)
-        (OkLowerExpr (LowerExpr state (CompilerIrValue.Var index-var) (AstTyI64)))
+        (OkLowerExpr
+          (LowerExpr state (CompilerIrValue.Var index-var) (AstTyI64)))
         (OkLowerExpr
           (lower-emit-binop
             state
@@ -33409,7 +33681,10 @@
         (match (tc-lookup type-env name)
           [(OkTcType ty)
             (OkLowerExpr
-              (LowerExpr state (CompilerIrValue.Var var-id) (tc-type-without-regions ty)))]
+              (LowerExpr
+                state
+                (CompilerIrValue.Var var-id)
+                (tc-type-without-regions ty)))]
           [(ErrTcType message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])
         (lower-avx512-masked-unsupported expr "unknown lane-local binding")))
@@ -33427,7 +33702,11 @@
                   (lower-simd-lanes-for-elem (lower-state-mode state) lane-ty)
                   0)
                   (OkLowerExpr
-                    (lower-emit-splat state (CompilerIrValue.Var var-id) lanes lane-ty))
+                    (lower-emit-splat
+                      state
+                      (CompilerIrValue.Var var-id)
+                      lanes
+                      lane-ty))
                   (lower-avx512-masked-unsupported
                     expr
                     "uniform non-lane values inside masked vector expressions")))]
@@ -33659,7 +33938,8 @@
   [lanes : i64]
   [exprs : AstExprList]) : ResultLowerExpr
   (match exprs
-    [(AstExprNil) (OkLowerExpr (LowerExpr state CompilerIrValue.Unit (AstTyUnit)))]
+    [(AstExprNil)
+      (OkLowerExpr (LowerExpr state CompilerIrValue.Unit (AstTyUnit)))]
     [(AstExprCons expr rest)
       (let
         [expr : AstExpr (ast-node-get expr)]
@@ -34721,7 +35001,8 @@
     [(AstExprSpmdProgramIndex)
       (OkLowerExpr (lower-emit-lane-id state lanes (AstTyI64)))]
     [(AstExprSpmdProgramCount)
-      (OkLowerExpr (lower-emit-splat state (CompilerIrValue.I64 lanes) lanes (AstTyI64)))]
+      (OkLowerExpr
+        (lower-emit-splat state (CompilerIrValue.I64 lanes) lanes (AstTyI64)))]
     [(AstExprVar name)
       (lower-avx512-masked-var
         ctx
@@ -35020,7 +35301,11 @@
         [mask : CompilerIrValue CompilerIrValue.Unit]
         [result-vec : CompilerIrValue CompilerIrValue.Unit]
         (begin
-          (match (lower-emit-tail-mask s (CompilerIrValue.Var index-var) end-value lanes)
+          (match (lower-emit-tail-mask
+            s
+            (CompilerIrValue.Var index-var)
+            end-value
+            lanes)
             [(LowerExpr next-s value _)
               (begin
                 (set! s next-s)
@@ -35174,7 +35459,10 @@
                 (lower-state-finish-block
                   (lower-state-emit
                     s
-                    (CompilerIrInstr.Branch vector-ok body-label tail-header-label))
+                    (CompilerIrInstr.Branch
+                      vector-ok
+                      body-label
+                      tail-header-label))
                   body-label))
               (match (lower-emit-tail-mask
                 s
@@ -35225,7 +35513,10 @@
                 (lower-state-finish-block
                   (lower-state-emit
                     s
-                    (CompilerIrInstr.Branch tail-cond tail-check-label exit-label))
+                    (CompilerIrInstr.Branch
+                      tail-cond
+                      tail-check-label
+                      exit-label))
                   tail-check-label))
               (match (lower-avx512-masked-tail-ok s index-var end-value arrays)
                 [(LowerExpr next-s value _)
@@ -35237,7 +35528,10 @@
                 (lower-state-finish-block
                   (lower-state-emit
                     s
-                    (CompilerIrInstr.Branch tail-safe tail-mask-label tail-body-label))
+                    (CompilerIrInstr.Branch
+                      tail-safe
+                      tail-mask-label
+                      tail-body-label))
                   tail-mask-label))
               (match (lower-emit-tail-mask
                 s
@@ -35265,7 +35559,9 @@
                       (set!
                         s
                         (lower-state-finish-block
-                          (lower-state-emit tail-state (CompilerIrInstr.Jump exit-label))
+                          (lower-state-emit
+                            tail-state
+                            (CompilerIrInstr.Jump exit-label))
                           tail-body-label))])]
                 [(ErrLowerExpr message) (return (ErrLowerExpr message))])
               (match (lower-expr ctx s body-env body-type-env body)
@@ -35337,7 +35633,9 @@
                 [(LowerLabel exit-ls exit-label)
                   (match (lower-state-alloc-var
                     (lower-state-finish-block
-                      (lower-state-emit exit-ls (CompilerIrInstr.Jump header-label))
+                      (lower-state-emit
+                        exit-ls
+                        (CompilerIrInstr.Jump header-label))
                       header-label))
                     [(LowerAlloc cond-alloc cond-var)
                       (match (lower-expr
@@ -35491,7 +35789,10 @@
                 (lower-state-finish-block
                   (lower-state-emit
                     s
-                    (CompilerIrInstr.Branch vector-ok body-label tail-header-label))
+                    (CompilerIrInstr.Branch
+                      vector-ok
+                      body-label
+                      tail-header-label))
                   body-label))
               (set!
                 s
@@ -35517,12 +35818,18 @@
                   (lower-state-finish-block
                     (lower-state-emit
                       s
-                      (CompilerIrInstr.Branch tail-cond tail-check-label exit-label))
+                      (CompilerIrInstr.Branch
+                        tail-cond
+                        tail-check-label
+                        exit-label))
                     tail-check-label)
                   (lower-state-finish-block
                     (lower-state-emit
                       s
-                      (CompilerIrInstr.Branch tail-cond tail-body-label exit-label))
+                      (CompilerIrInstr.Branch
+                        tail-cond
+                        tail-body-label
+                        exit-label))
                     tail-body-label)))
               (if (lower-mode-avx512? (lower-state-mode s))
                 (begin
@@ -36150,7 +36457,11 @@
     [scrut-words : i64 (lower-type-register-words ctx scrut-ty)]
     (if (and (> scrut-words 0) (not force-memory))
       (if (= scrut-words 2)
-        (match (lower-emit-word state (CompilerIrValue.Var scrut-var) 0 (AstTyI64))
+        (match (lower-emit-word
+          state
+          (CompilerIrValue.Var scrut-var)
+          0
+          (AstTyI64))
           [(LowerExpr tag-state tag-value _)
             (match tag-value
               [(CompilerIrValue.Var tag-var)
@@ -36186,7 +36497,11 @@
           borrow-lifetime
           CompilerIrPhiInputList.Nil
           false))
-      (match (lower-load-at-offset state (CompilerIrValue.Var scrut-var) 0 (AstTyI64))
+      (match (lower-load-at-offset
+        state
+        (CompilerIrValue.Var scrut-var)
+        0
+        (AstTyI64))
         [(LowerExpr tag-state tag-value _)
           (match tag-value
             [(CompilerIrValue.Var tag-var)
@@ -36873,7 +37188,9 @@
                   (if (tc-never-type? body-ty)
                     (lower-state-finish-block body-state next-label)
                     (lower-state-finish-block
-                      (lower-state-emit body-state (CompilerIrInstr.Jump merge-label))
+                      (lower-state-emit
+                        body-state
+                        (CompilerIrInstr.Jump merge-label))
                       next-label))
                   env
                   type-env
@@ -37144,7 +37461,8 @@
     (if (lower-phi-input-list-empty? phi-inputs)
       (OkLowerExpr (LowerExpr merge-start CompilerIrValue.Unit (AstTyNever)))
       (match expr-ty
-        [(AstTyUnit) (OkLowerExpr (LowerExpr merge-start CompilerIrValue.Unit expr-ty))]
+        [(AstTyUnit)
+          (OkLowerExpr (LowerExpr merge-start CompilerIrValue.Unit expr-ty))]
         [_
           (match (lower-state-alloc-var merge-start)
             [(LowerAlloc allocated var-id)
@@ -37465,7 +37783,8 @@
       (OkLowerState
         (lower-state-emit
           (lower-copy-bytes state (CompilerIrValue.Var sret-var) 0 value 0 size)
-          (CompilerIrInstr.Return (lower-return-maybe (CompilerIrValue.Var sret-var) ret-ty))))]
+          (CompilerIrInstr.Return
+            (lower-return-maybe (CompilerIrValue.Var sret-var) ret-ty))))]
     [(ErrLowerSize message) (ErrLowerState (box (lower-diagnostic message)))]))
 
 (define (lower-return-expr-generic
@@ -37503,7 +37822,8 @@
   (OkLowerState
     (lower-state-emit
       state
-      (CompilerIrInstr.Return (lower-return-maybe (CompilerIrValue.Var sret-var) ret-ty)))))
+      (CompilerIrInstr.Return
+        (lower-return-maybe (CompilerIrValue.Var sret-var) ret-ty)))))
 
 (define (lower-rvo-node-has-early-return? [id : i64]) : bool
   (lower-rvo-expr-has-early-return? (ast-node-get id)))
@@ -38307,7 +38627,8 @@
       (OkLowerState
         (lower-state-emit
           state
-          (CompilerIrInstr.Return (lower-return-maybe CompilerIrValue.Unit ret-ty))))]
+          (CompilerIrInstr.Return
+            (lower-return-maybe CompilerIrValue.Unit ret-ty))))]
     [(AstExprCons expr rest)
       (let
         [expr : AstExpr (ast-node-get expr)]
@@ -38354,7 +38675,10 @@
                     [branch-state : LowerState
                       (lower-state-emit
                         else-label-state
-                        (CompilerIrInstr.Branch cond-value then-label else-label))]
+                        (CompilerIrInstr.Branch
+                          cond-value
+                          then-label
+                          else-label))]
                     (match (lower-tail-expr
                       ctx
                       (lower-state-finish-block branch-state then-label)
@@ -38589,7 +38913,11 @@
     [scrut-words : i64 (lower-type-register-words ctx scrut-ty)]
     (if (and (> scrut-words 0) (not force-memory))
       (if (= scrut-words 2)
-        (match (lower-emit-word state (CompilerIrValue.Var scrut-var) 0 (AstTyI64))
+        (match (lower-emit-word
+          state
+          (CompilerIrValue.Var scrut-var)
+          0
+          (AstTyI64))
           [(LowerExpr tag-state tag-value _)
             (match tag-value
               [(CompilerIrValue.Var tag-var)
@@ -38623,7 +38951,11 @@
           sret-var
           (TcNoString)
           false))
-      (match (lower-load-at-offset state (CompilerIrValue.Var scrut-var) 0 (AstTyI64))
+      (match (lower-load-at-offset
+        state
+        (CompilerIrValue.Var scrut-var)
+        0
+        (AstTyI64))
         [(LowerExpr tag-state tag-value _)
           (match tag-value
             [(CompilerIrValue.Var tag-var)
@@ -39261,7 +39593,9 @@
   [sret-var : i64]) : CompilerIrParamList
   (match params
     [(IrParamNil)
-      (compiler-ir-param-cons (CompilerIrParam.Param "__sret" (AstTyU64) sret-var) IrParamNil)]
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "__sret" (AstTyU64) sret-var)
+        IrParamNil)]
     [(IrParamCons head rest)
       (compiler-ir-param-cons
         head
@@ -39469,7 +39803,8 @@
     [(AstExprSpmdProgramCount) (OkLowerValue (CompilerIrValue.I64 1))]
     [(AstExprVar name)
       (OkLowerValue
-        (CompilerIrValue.Global (lower-name-cache-resolve names (intern-str name))))]
+        (CompilerIrValue.Global
+          (lower-name-cache-resolve names (intern-str name))))]
     [_
       (ErrLowerValue
         (box (lower-diagnostic "lower: unsupported global initializer")))]))
@@ -39992,7 +40327,8 @@
                 wanted))]))]))
 
 (define (lower-dispatch-call-return-instr [call-var : i64] [ret-ty : AstType]) : CompilerIrInstr
-  (CompilerIrInstr.Return (lower-return-maybe (CompilerIrValue.Var call-var) ret-ty)))
+  (CompilerIrInstr.Return
+    (lower-return-maybe (CompilerIrValue.Var call-var) ret-ty)))
 
 (define (lower-dispatch-cached-block
   [cache-name : String]
@@ -40002,7 +40338,11 @@
   (compiler-ir-block
     "cached"
     (compiler-ir-instr-cons
-      (CompilerIrInstr.CallIndirect call-var (CompilerIrValue.Global cache-name) args ret-ty)
+      (CompilerIrInstr.CallIndirect
+        call-var
+        (CompilerIrValue.Global cache-name)
+        args
+        ret-ty)
       (compiler-ir-instr-cons
         (lower-dispatch-call-return-instr call-var ret-ty)
         CompilerIrInstrList.Nil))))
@@ -40018,9 +40358,16 @@
   (compiler-ir-block
     label
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Store cache-name (CompilerIrValue.Function fn-name) fn-ty)
+      (CompilerIrInstr.Store
+        cache-name
+        (CompilerIrValue.Function fn-name)
+        fn-ty)
       (compiler-ir-instr-cons
-        (CompilerIrInstr.CallIndirect call-var (CompilerIrValue.Function fn-name) args ret-ty)
+        (CompilerIrInstr.CallIndirect
+          call-var
+          (CompilerIrValue.Function fn-name)
+          args
+          ret-ty)
         (compiler-ir-instr-cons
           (lower-dispatch-call-return-instr call-var ret-ty)
           CompilerIrInstrList.Nil)))))
@@ -40040,7 +40387,10 @@
         (CompilerIrValue.I64 0)
         (AstTyBool))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Branch (CompilerIrValue.Var cached-var) "cached" resolve-label)
+        (CompilerIrInstr.Branch
+          (CompilerIrValue.Var cached-var)
+          "cached"
+          resolve-label)
         CompilerIrInstrList.Nil))))
 
 (define (lower-dispatch-feature-blocks
@@ -40071,7 +40421,11 @@
       (compiler-ir-block
         check-label
         (compiler-ir-instr-cons
-          (CompilerIrInstr.CpuId max-leaf-var (CompilerIrValue.I64 0) (CompilerIrValue.I64 0) 0)
+          (CompilerIrInstr.CpuId
+            max-leaf-var
+            (CompilerIrValue.I64 0)
+            (CompilerIrValue.I64 0)
+            0)
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               max-ok-var
@@ -40089,7 +40443,11 @@
         (compiler-ir-block
           osxsave-label
           (compiler-ir-instr-cons
-            (CompilerIrInstr.CpuId leaf1-ecx-var (CompilerIrValue.I64 1) (CompilerIrValue.I64 0) 2)
+            (CompilerIrInstr.CpuId
+              leaf1-ecx-var
+              (CompilerIrValue.I64 1)
+              (CompilerIrValue.I64 0)
+              2)
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
                 osxsave-mask-var
@@ -40139,7 +40497,11 @@
             (compiler-ir-block
               leaf7-label
               (compiler-ir-instr-cons
-                (CompilerIrInstr.CpuId leaf7-ebx-var (CompilerIrValue.I64 7) (CompilerIrValue.I64 0) 1)
+                (CompilerIrInstr.CpuId
+                  leaf7-ebx-var
+                  (CompilerIrValue.I64 7)
+                  (CompilerIrValue.I64 0)
+                  1)
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.BinOp
                     feature-mask-var
@@ -40726,7 +41088,10 @@
                                 (set!
                                   cur-globals
                                   (compiler-ir-global-cons
-                                    (CompilerIrGlobal.Global global-name global-ty value)
+                                    (CompilerIrGlobal.Global
+                                      global-name
+                                      global-ty
+                                      value)
                                     cur-globals))
                                 (set! cur-decls rest))]
                             ;; A global whose initializer is not a compile-time
@@ -43946,7 +44311,8 @@
   [name : String]
   [want-line : i64]) : bool
   (match (compiler-source-spans-lookup spans name)
-    [(CompilerMaybeSourceSpan.Some span) (= (struct-get span start-line) want-line)]
+    [(CompilerMaybeSourceSpan.Some span)
+      (= (struct-get span start-line) want-line)]
     [(CompilerMaybeSourceSpan.No) false]))
 
 (define (compiler-lower-spans-ok? [src : String]) : bool
@@ -44104,7 +44470,8 @@
   [name : String]) : i64
   (match args
     [(CompilerIrCallArgs.Nil) 0]
-    [(CompilerIrCallArgs.One value) (lower-test-value-function-count value name)]
+    [(CompilerIrCallArgs.One value)
+      (lower-test-value-function-count value name)]
     [(CompilerIrCallArgs.Two a b)
       (+
         (lower-test-value-function-count a name)
@@ -44252,7 +44619,13 @@
         0)]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ _ _ actual-lanes actual-ty)
+        [(CompilerIrInstrVectorBinOpPayload.Payload
+            _
+            _
+            _
+            _
+            actual-lanes
+            actual-ty)
           (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
             1
             0)])]
@@ -44262,19 +44635,36 @@
         0)]
     [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload _ _ _ actual-lanes actual-ty)
+        [(CompilerIrInstrVectorStorePayload.Payload
+            _
+            _
+            _
+            actual-lanes
+            actual-ty)
           (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
             1
             0)])]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ actual-lanes actual-ty)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload
+            _
+            _
+            _
+            _
+            actual-lanes
+            actual-ty)
           (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
             1
             0)])]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ actual-lanes actual-ty)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            _
+            _
+            _
+            _
+            actual-lanes
+            actual-ty)
           (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
             1
             0)])]
@@ -47512,7 +47902,10 @@
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-binop-op-count functions "bits" CompilerIrBinOp.BitOr)
+                (lower-test-function-binop-op-count
+                  functions
+                  "bits"
+                  CompilerIrBinOp.BitOr)
                 0)
                 unit
                 (set! ok false))
@@ -47525,22 +47918,34 @@
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-binop-op-count functions "bits" CompilerIrBinOp.Shl)
+                (lower-test-function-binop-op-count
+                  functions
+                  "bits"
+                  CompilerIrBinOp.Shl)
                 0)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-binop-op-count functions "bits" CompilerIrBinOp.Shr)
+                (lower-test-function-binop-op-count
+                  functions
+                  "bits"
+                  CompilerIrBinOp.Shr)
                 0)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-binop-op-count functions "floaty" CompilerIrBinOp.Add)
+                (lower-test-function-binop-op-count
+                  functions
+                  "floaty"
+                  CompilerIrBinOp.Add)
                 0)
                 unit
                 (set! ok false))
               (if (>
-                (lower-test-function-binop-op-count functions "floaty" CompilerIrBinOp.Lt)
+                (lower-test-function-binop-op-count
+                  functions
+                  "floaty"
+                  CompilerIrBinOp.Lt)
                 0)
                 unit
                 (set! ok false))

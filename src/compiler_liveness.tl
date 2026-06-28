@@ -546,7 +546,8 @@
     [(CompilerIrCallArgs.Nil) (compiler-live-set-empty)]
     [(CompilerIrCallArgs.One value) (compiler-live-value-vars value)]
     [(CompilerIrCallArgs.Two a b) (compiler-live-values2-vars a b)]
-    [(CompilerIrCallArgs.Array values) (compiler-live-call-args-array-vars values 0)]))
+    [(CompilerIrCallArgs.Array values)
+      (compiler-live-call-args-array-vars values 0)]))
 
 (define (compiler-live-spmd-call-args-vars [args : CompilerIrSpmdCallArgList]) : CompilerLiveI64Set
   (match args
@@ -594,7 +595,8 @@
     [(CompilerIrInstr.Mov _ src _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.Alloc _ _) (compiler-live-set-empty)]
     [(CompilerIrInstr.AddrOf _ src) (compiler-live-set1 src)]
-    [(CompilerIrInstr.Gep _ base offset _) (compiler-live-values2-vars base offset)]
+    [(CompilerIrInstr.Gep _ base offset _)
+      (compiler-live-values2-vars base offset)]
     [(CompilerIrInstr.Load _ src _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.StorePtr dst src _) (compiler-live-values2-vars dst src)]
     [(CompilerIrInstr.CopyBytes dst src _) (compiler-live-values2-vars dst src)]
@@ -615,7 +617,8 @@
       (match (box-get payload-box)
         [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
           (compiler-live-values2-vars lhs rhs)])]
-    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _) (compiler-live-values2-vars lhs rhs)]
+    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
+      (compiler-live-values2-vars lhs rhs)]
     [(CompilerIrInstr.MaskNot _ src _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.MaskReduce _ _ src _) (compiler-live-value-vars src)]
     [(CompilerIrInstr.Select payload-box)
@@ -630,17 +633,25 @@
           (compiler-live-values3-vars base index value)])]
     [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload base index value mask _ _)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            _
+            _)
           (compiler-live-values4-vars base index value mask)])]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
           (compiler-live-values3-vars base index mask)])]
-    [(CompilerIrInstr.TailMask _ index len _) (compiler-live-values2-vars index len)]
+    [(CompilerIrInstr.TailMask _ index len _)
+      (compiler-live-values2-vars index len)]
     [(CompilerIrInstr.EntryArgc _) (compiler-live-set-empty)]
     [(CompilerIrInstr.EntryArgv _) (compiler-live-set-empty)]
     [(CompilerIrInstr.EntryEnvp _) (compiler-live-set-empty)]
-    [(CompilerIrInstr.CpuId _ leaf subleaf _) (compiler-live-values2-vars leaf subleaf)]
+    [(CompilerIrInstr.CpuId _ leaf subleaf _)
+      (compiler-live-values2-vars leaf subleaf)]
     [(CompilerIrInstr.Xgetbv _ index) (compiler-live-value-vars index)]
     [(CompilerIrInstr.Syscall _ args) (compiler-live-call-args-vars args)]
     [(CompilerIrInstr.Call _ _ args _) (compiler-live-call-args-vars args)]
@@ -656,7 +667,11 @@
             base)])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload base func args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+            base
+            func
+            args
+            _)
           (compiler-live-value-vars-into
             (compiler-live-value-vars-into
               (compiler-live-call-args-vars args)
@@ -707,7 +722,8 @@
     [(CompilerIrInstr.MaskReduce dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _) (compiler-live-set1 dst)])]
+        [(CompilerIrInstrSelectPayload.Payload dst _ _ _ _ _)
+          (compiler-live-set1 dst)])]
     [(CompilerIrInstr.VectorLoad dst _ _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
@@ -806,11 +822,15 @@
               (CompilerLiveLabelSet.Cons target (box CompilerLiveLabelSet.Nil))]
             [(CompilerIrInstr.Branch _ true-label false-label)
               (compiler-live-label-set-insert
-                (CompilerLiveLabelSet.Cons true-label (box CompilerLiveLabelSet.Nil))
+                (CompilerLiveLabelSet.Cons
+                  true-label
+                  (box CompilerLiveLabelSet.Nil))
                 false-label)]
             [(CompilerIrInstr.Switch _ _ cases default-label)
               (compiler-live-switch-case-successors
-                (CompilerLiveLabelSet.Cons default-label (box CompilerLiveLabelSet.Nil))
+                (CompilerLiveLabelSet.Cons
+                  default-label
+                  (box CompilerLiveLabelSet.Nil))
                 cases)]
             [_ CompilerLiveLabelSet.Nil])])]))
 
@@ -1335,7 +1355,8 @@
               (CompilerIrValue.Var 2)
               (compiler-live-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
               CompilerIrInstrList.Nil))))
       CompilerIrBlockList.Nil)))
 
@@ -1355,13 +1376,15 @@
         (compiler-ir-block
           "then"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
             CompilerIrInstrList.Nil))
         (compiler-ir-block-cons
           (compiler-ir-block
             "else"
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
               CompilerIrInstrList.Nil))
           CompilerIrBlockList.Nil)))))
 
@@ -1381,14 +1404,24 @@
         (compiler-ir-block
           "left"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (compiler-live-i64-ty))
-            (compiler-ir-instr-cons (CompilerIrInstr.Jump "join") CompilerIrInstrList.Nil)))
+            (CompilerIrInstr.Mov
+              1
+              (CompilerIrValue.I64 10)
+              (compiler-live-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump "join")
+              CompilerIrInstrList.Nil)))
         (compiler-ir-block-cons
           (compiler-ir-block
             "right"
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (compiler-live-i64-ty))
-              (compiler-ir-instr-cons (CompilerIrInstr.Jump "join") CompilerIrInstrList.Nil)))
+              (CompilerIrInstr.Mov
+                2
+                (CompilerIrValue.I64 20)
+                (compiler-live-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Jump "join")
+                CompilerIrInstrList.Nil)))
           (compiler-ir-block-cons
             (compiler-ir-block
               "join"
@@ -1404,7 +1437,8 @@
                       CompilerIrPhiInputList.Nil))
                   (compiler-live-i64-ty))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
                   CompilerIrInstrList.Nil)))
             CompilerIrBlockList.Nil))))))
 
@@ -1420,15 +1454,24 @@
           (CompilerIrValue.Var 11)
           (compiler-live-i64-ty))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.UnOp 2 CompilerIrUnOp.Neg (CompilerIrValue.Var 12) (compiler-live-i64-ty))
+          (CompilerIrInstr.UnOp
+            2
+            CompilerIrUnOp.Neg
+            (CompilerIrValue.Var 12)
+            (compiler-live-i64-ty))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               3
               "f"
-              (CompilerIrCallArgs.Two (CompilerIrValue.Var 1) (CompilerIrValue.Var 13))
+              (CompilerIrCallArgs.Two
+                (CompilerIrValue.Var 1)
+                (CompilerIrValue.Var 13))
               (compiler-live-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Store "g" (CompilerIrValue.Var 14) (compiler-live-i64-ty))
+              (CompilerIrInstr.Store
+                "g"
+                (CompilerIrValue.Var 14)
+                (compiler-live-i64-ty))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch (CompilerIrValue.Var 15) "a" "b")
                 (compiler-ir-instr-cons
@@ -1440,7 +1483,8 @@
                       CompilerIrPhiInputList.Nil)
                     (compiler-live-i64-ty))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
                     CompilerIrInstrList.Nil)))))))))
     [(CompilerLiveUseDef.Def uses defs)
       (and
@@ -1454,16 +1498,27 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.AddrOf 1 0)
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Gep 2 (CompilerIrValue.Var 1) (CompilerIrValue.Var 10) (compiler-live-i64-ty))
+          (CompilerIrInstr.Gep
+            2
+            (CompilerIrValue.Var 1)
+            (CompilerIrValue.Var 10)
+            (compiler-live-i64-ty))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (compiler-live-i64-ty))
+            (CompilerIrInstr.Load
+              3
+              (CompilerIrValue.Var 2)
+              (compiler-live-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.StorePtr
                 (CompilerIrValue.Var 2)
                 (CompilerIrValue.Var 11)
                 (compiler-live-i64-ty))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Cast 4 (CompilerIrValue.Var 3) (compiler-live-i64-ty) (AstTyI32))
+                (CompilerIrInstr.Cast
+                  4
+                  (CompilerIrValue.Var 3)
+                  (compiler-live-i64-ty)
+                  (AstTyI32))
                 CompilerIrInstrList.Nil)))))))
     [(CompilerLiveUseDef.Def uses defs)
       (and
@@ -1475,7 +1530,11 @@
     (compiler-ir-instr-cons
       (CompilerIrInstr.LaneId 0 4 (compiler-live-i64-ty))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Splat 1 (CompilerIrValue.Var 10) 4 (compiler-live-i64-ty))
+        (CompilerIrInstr.Splat
+          1
+          (CompilerIrValue.Var 10)
+          4
+          (compiler-live-i64-ty))
         (compiler-ir-instr-cons
           (ir-instr-vector-bin-op
             2
@@ -1485,7 +1544,11 @@
             4
             (compiler-live-i64-ty))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.TailMask 3 (CompilerIrValue.Var 11) (CompilerIrValue.Var 12) 4)
+            (CompilerIrInstr.TailMask
+              3
+              (CompilerIrValue.Var 11)
+              (CompilerIrValue.Var 12)
+              4)
             (compiler-ir-instr-cons
               (ir-instr-predicated-load
                 4
@@ -1503,7 +1566,11 @@
                   4
                   (compiler-live-i64-ty))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.MaskReduce 5 (CompilerIrMaskReduceOp.Any) (CompilerIrValue.Var 3) 4)
+                  (CompilerIrInstr.MaskReduce
+                    5
+                    (CompilerIrMaskReduceOp.Any)
+                    (CompilerIrValue.Var 3)
+                    4)
                   CompilerIrInstrList.Nil))))))))
     [(CompilerLiveUseDef.Def uses defs)
       (and
@@ -1596,8 +1663,10 @@
         4
         "four"
         (compiler-ir-switch-case-cons 5 "five" IrSwitchCaseNil))]
-    [instr : CompilerIrInstr (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
-    [instrs : CompilerIrInstrList (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]
+    [instr : CompilerIrInstr
+      (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]
     [block : CompilerIrBlock (compiler-ir-block "entry" instrs)]
     [successors : CompilerLiveLabelSet (compiler-live-block-successors block)]
     (match (compiler-live-block-use-def instrs)

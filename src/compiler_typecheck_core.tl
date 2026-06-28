@@ -24750,7 +24750,8 @@
     [registries : CompilerRegistries (tc-context-registries ctx)]
     [lookup-id : i64 (tc-name-id lookup-name)]
     (match (compiler-registries-lookup-variant-id registries lookup-id)
-      [(option_i64.Some handle) (tc-variant-constructor-type-for-handle ctx handle)]
+      [(option_i64.Some handle)
+        (tc-variant-constructor-type-for-handle ctx handle)]
       [(option_i64.None)
         (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
           [(OkTcString variant-key)

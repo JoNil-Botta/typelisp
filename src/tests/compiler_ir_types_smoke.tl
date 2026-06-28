@@ -68,7 +68,10 @@
       (ir-spmd-call-arg-cons
         (IrSpmdCallArg (IrSpmdValueUniform) (CompilerIrValue.Var 21) (AstTyI64))
         (ir-spmd-call-arg-cons
-          (IrSpmdCallArg (IrSpmdValueVarying) (CompilerIrValue.Var 22) (AstTyI64))
+          (IrSpmdCallArg
+            (IrSpmdValueVarying)
+            (CompilerIrValue.Var 22)
+            (AstTyI64))
           IrSpmdCallArgNil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call

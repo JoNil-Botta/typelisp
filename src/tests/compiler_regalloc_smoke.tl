@@ -25,11 +25,20 @@
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (compiler-reg-i64-ty))
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 1)
+              (compiler-reg-i64-ty))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 2) (compiler-reg-i64-ty))
+              (CompilerIrInstr.Mov
+                1
+                (CompilerIrValue.I64 2)
+                (compiler-reg-i64-ty))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 3) (compiler-reg-i64-ty))
+                (CompilerIrInstr.Mov
+                  2
+                  (CompilerIrValue.I64 3)
+                  (compiler-reg-i64-ty))
                 (compiler-ir-instr-cons
                   (ir-instr-spmd-call
                     "spmd_helper"
@@ -42,9 +51,13 @@
                       (IrSpmdValueVarying)
                       (compiler-reg-i64-ty)))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Mov 4 (CompilerIrValue.Var 3) (compiler-reg-i64-ty))
+                    (CompilerIrInstr.Mov
+                      4
+                      (CompilerIrValue.Var 3)
+                      (compiler-reg-i64-ty))
                     (compiler-ir-instr-cons
-                      (CompilerIrInstr.Return (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
+                      (CompilerIrInstr.Return
+                        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 4)))
                       CompilerIrInstrList.Nil)))))))
         CompilerIrBlockList.Nil))))
 

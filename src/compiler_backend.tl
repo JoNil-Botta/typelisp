@@ -16832,8 +16832,9 @@
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
     [count : i64 (compiler-backend-call-args-count args)]
+    [limit : i64 (if (compiler-backend-target-windows? target) 4 6)]
     (and
-      (and (> count 0) (<= count 4))
+      (and (> count 0) (<= count limit))
       (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
 
 (define (compiler-backend-emit-call-args-with-assignments

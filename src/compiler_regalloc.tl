@@ -2639,9 +2639,20 @@
       (compiler-reg-call-arg-int-class? (array.array-ref values index) types)
       (compiler-reg-call-args-array-int-class? values types (+ index 1) count))))
 
+;; Per-ABI GP integer arg-register count: SysV has 6 (%rdi/%rsi/%rdx/%rcx/%r8/%r9),
+;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Direct-call args within this arity (and all
+;; integer-class) are register-passed and left eligible; the backend parallel
+;; move resolves any source/dest conflict (and uses the matching target-aware
+;; threshold, so a 5..6-arg SysV conflict is never naive-marshalled).
+(define (compiler-reg-arg-reg-limit-for-abi [abi : CompilerRegTargetAbi]) : i64
+  (match abi
+    [(CompilerRegAbiLinux) 6]
+    [(CompilerRegAbiWindows) 4]))
+
 (define (compiler-reg-call-simple?
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]) : bool
+  [types : CompilerRegVarTypeList]
+  [limit : i64]) : bool
   (match args
     [(IrCallArgsNil) true]
     [(IrCallArgsOne v) (compiler-reg-call-arg-int-class? v types)]
@@ -2650,7 +2661,7 @@
         (compiler-reg-call-arg-int-class? a types)
         (compiler-reg-call-arg-int-class? b types))]
     [(IrCallArgsArray values)
-      (if (> (array.array-length values) 4)
+      (if (> (array.array-length values) limit)
         false
         (compiler-reg-call-args-array-int-class?
           values
@@ -2661,7 +2672,8 @@
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  [types : CompilerRegVarTypeList]
+  [limit : i64]) : CompilerLiveI64Set
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -2674,7 +2686,7 @@
             out
             (match (array.array-ref slots index)
               [(IrInstrCall _ _ args _)
-                (if (compiler-reg-call-simple? args types)
+                (if (compiler-reg-call-simple? args types limit)
                   out
                   (compiler-live-set-union
                     out
@@ -2718,7 +2730,8 @@
 (define (compiler-reg-call-arg-vars-blocks-scalar
   [blocks : CompilerIrBlockList]
   [set : CompilerLiveI64Set]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  [types : CompilerRegVarTypeList]
+  [limit : i64]) : CompilerLiveI64Set
   (match blocks
     [(IrBlockNil) set]
     [(IrBlockCons block rest)
@@ -2726,13 +2739,15 @@
         [(IrBlock _ instrs)
           (compiler-reg-call-arg-vars-blocks-scalar
             (box-get rest)
-            (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types)
-            types)])]
+            (compiler-reg-call-arg-vars-instr-seq-scalar instrs set types limit)
+            types
+            limit)])]
     [(IrBlockArray seq)
       (compiler-reg-call-arg-vars-blocks-scalar
         (compiler-ir-block-seq-to-list seq)
         set
-        types)]))
+        types
+        limit)]))
 
 ;; Ineligible variables are computed structurally (non-scalar/non-handle types,
 ;; call-argument vars, address-taken/memory targets). A value live across a call
@@ -2743,7 +2758,8 @@
 ;; rejects any interval spanning a modeled caller-clobber point.
 (define (compiler-reg-ineligible-vars-non-params
   [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  [types : CompilerRegVarTypeList]
+  [limit : i64]) : CompilerLiveI64Set
   (match func
     [(IrFunction _ _ _ _ blocks)
       (compiler-reg-ineligible-memory
@@ -2754,7 +2770,8 @@
             types
             (compiler-live-set-empty)
             true)
-          types))]))
+          types
+          limit))]))
 
 (define (compiler-reg-ineligible-vars
   [func : CompilerIrFunction]
@@ -2763,7 +2780,7 @@
     [(IrFunction _ params _ _ _)
       (compiler-reg-ineligible-params
         params
-        (compiler-reg-ineligible-vars-non-params func types))]))
+        (compiler-reg-ineligible-vars-non-params func types 4))]))
 
 ;; SIMD/AVX register planning keeps the original (pre-#perf) ineligibility: every
 ;; value live across a call is ineligible (the vector/mask/XMM pools are
@@ -9537,7 +9554,10 @@
               intervals
               type-info
               (compiler-reg-call-points func)
-              (compiler-reg-ineligible-vars-non-params func types))]
+              (compiler-reg-ineligible-vars-non-params
+                func
+                types
+                (compiler-reg-arg-reg-limit-for-abi abi)))]
           [param-plan : CompilerRegParamAssignPlan
             (compiler-reg-param-assign-plan
               abi

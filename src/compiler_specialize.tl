@@ -1854,55 +1854,55 @@
             origin
             "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]
     [(CtfeTypeInfo _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeInfo value into runtime expression")))]
     [(CtfeTypeInfoBox _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeInfo box value into runtime expression")))]
     [(CtfeTypeInfoList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeInfoList value into runtime expression")))]
     [(CtfeTypeField _ _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeField value into runtime expression")))]
     [(CtfeTypeFieldList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeFieldList value into runtime expression")))]
     [(CtfeTypeVariantPayload _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeVariantPayload value into runtime expression")))]
     [(CtfeTypeVariantPayloadList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeVariantPayloadList value into runtime expression")))]
     [(CtfeTypeVariant _ _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeVariant value into runtime expression")))]
     [(CtfeTypeVariantList _)
-      (ErrSpecSubExpr
+      (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin

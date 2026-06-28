@@ -3773,12 +3773,12 @@
         (box
           (ctfe-diagnostic-at-expr expr "string.int->string expects one i64")))]))
 
-;; User-facing stdlib.comptime helpers. Constructors and dense sequence helpers
-;; remain CTFE bridge calls while CTFE lacks general stdlib function calls and
-;; syntax values still carry compiler-owned provenance/type metadata. Simple
-;; public inspectors may also have ordinary stdlib bodies; the intercepts keep
-;; existing macro code behavior-compatible until the representation migration is
-;; complete (#2653).
+;; User-facing stdlib.comptime helpers. Constructors, dense sequence helpers,
+;; and provenance-sensitive reflection helpers remain CTFE bridge calls while
+;; CTFE lacks general stdlib function calls and syntax values still carry
+;; compiler-owned provenance/type metadata. Simple public inspectors are routed
+;; through source-shaped match bodies below so their behavior follows the
+;; ordinary stdlib.comptime definitions (#3988).
 (define (ctfe-stdlib-comptime-helper-name?
   [name : String]
   [qualified : bool]
@@ -3839,6 +3839,38 @@
     (string.string-eq name "string->int")
     (ctfe-stdlib-string-helper-name? name "string->int")))
 
+(define (ctfe-comptime-source-helper-call-name [name : String]) : String
+  (let
+    [qualified : bool (ctfe-string-has-module-separator? name)]
+    (cond
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool?")
+        "expr-bool?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool-value")
+        "expr-bool-value"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if?") "expr-if?"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-cond")
+        "expr-if-cond"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-then")
+        "expr-if-then"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-else")
+        "expr-if-else"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-first")
+        "expr-clause-first"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-second")
+        "expr-clause-second"]
+      [else name])))
+
+(define (ctfe-comptime-source-helper-name? [name : String]) : bool
+  (or
+    (string.string-eq name "expr-bool?")
+    (string.string-eq name "expr-bool-value")
+    (string.string-eq name "expr-if?")
+    (string.string-eq name "expr-if-cond")
+    (string.string-eq name "expr-if-then")
+    (string.string-eq name "expr-if-else")
+    (string.string-eq name "expr-clause-first")
+    (string.string-eq name "expr-clause-second")))
+
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (let
     [qualified : bool (ctfe-string-has-module-separator? name)]
@@ -3864,17 +3896,6 @@
         "module-export-macro?"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "module-hook")
         "module-hook"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool?")
-        "expr-bool?"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool-value")
-        "expr-bool-value"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if?") "expr-if?"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-cond")
-        "expr-if-cond"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-then")
-        "expr-if-then"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-else")
-        "expr-if-else"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-empty?")
         "expr-list-empty?"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-length")
@@ -3885,10 +3906,6 @@
         "expr-list-tail"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-nth")
         "expr-list-nth"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-first")
-        "expr-clause-first"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-second")
-        "expr-clause-second"]
       [(ctfe-stdlib-comptime-helper-name?
           name
           qualified
@@ -4522,15 +4539,6 @@
             expr
             "expr-struct-set expects exactly three args")))]))
 
-(define (ctfe-expr-inspector-name? [name : String]) : bool
-  (or
-    (string.string-eq name "expr-bool?")
-    (string.string-eq name "expr-bool-value")
-    (string.string-eq name "expr-if?")
-    (string.string-eq name "expr-if-cond")
-    (string.string-eq name "expr-if-then")
-    (string.string-eq name "expr-if-else")))
-
 (define (ctfe-eval-expr-type-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -4587,11 +4595,6 @@
     (string.string-eq name "expr-list-head")
     (string.string-eq name "expr-list-tail")
     (string.string-eq name "expr-list-nth")))
-
-(define (ctfe-expr-clause-inspector-name? [name : String]) : bool
-  (or
-    (string.string-eq name "expr-clause-first")
-    (string.string-eq name "expr-clause-second")))
 
 (define (ctfe-expr-clause-list-inspector-name? [name : String]) : bool
   (or
@@ -4663,85 +4666,6 @@
           (ctfe-diagnostic-at-expr
             expr
             "expr-list-nth expects exactly two args")))]))
-
-(define (ctfe-eval-expr-inspector-call
-  [name : String]
-  [args : AstExprList]
-  [expr : AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (match args
-    [(AstExprCons arg rest)
-      (let
-        [arg : AstExpr (ctfe-ast-get env arg)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprNil)
-            (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
-                (match value
-                  [(CtfeExpr node ty)
-                    (cond
-                      [(string.string-eq name "expr-bool?")
-                        (OkCtfe
-                          (CtfeBool (ctfe-expr-bool?-in-env env node))
-                          arg-fuel)]
-                      [(string.string-eq name "expr-bool-value")
-                        (if (ctfe-expr-bool?-in-env env node)
-                          (OkCtfe
-                            (CtfeBool (ctfe-expr-bool-value-in-env env node))
-                            arg-fuel)
-                          (ErrCtfe
-                            (box
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                "expr-bool-value expects bool literal Expr"))))]
-                      [(string.string-eq name "expr-if?")
-                        (OkCtfe
-                          (CtfeBool (ctfe-expr-if?-in-env env node))
-                          arg-fuel)]
-                      [(ctfe-expr-if?-in-env env node)
-                        (cond
-                          [(string.string-eq name "expr-if-cond")
-                            (OkCtfe
-                              (CtfeExpr
-                                (ctfe-expr-if-cond-in-env env node)
-                                (AstTyBool))
-                              arg-fuel)]
-                          [(string.string-eq name "expr-if-then")
-                            (OkCtfe
-                              (CtfeExpr (ctfe-expr-if-then-in-env env node) ty)
-                              arg-fuel)]
-                          [(string.string-eq name "expr-if-else")
-                            (OkCtfe
-                              (CtfeExpr (ctfe-expr-if-else-in-env env node) ty)
-                              arg-fuel)]
-                          [else (ctfe-unsupported-form expr)])]
-                      [else
-                        (ErrCtfe
-                          (box
-                            (ctfe-diagnostic-at-expr
-                              expr
-                              (string.string-append name " expects if Expr"))))])]
-                  [_
-                    (ErrCtfe
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          (string.string-append name " expects Expr"))))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
-          [_
-            (ErrCtfe
-              (box
-                (ctfe-diagnostic-at-expr
-                  expr
-                  (string.string-append name " expects exactly one arg"))))]))]
-    [_
-      (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            (string.string-append name " expects exactly one arg"))))]))
 
 (define (ctfe-eval-expr-list-inspector-call
   [name : String]
@@ -4817,56 +4741,6 @@
                   (ctfe-diagnostic-at-expr
                     expr
                     (string.string-append name " expects exactly one arg"))))])))]
-    [_
-      (ErrCtfe
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            (string.string-append name " expects exactly one arg"))))]))
-
-(define (ctfe-eval-expr-clause-inspector-call
-  [name : String]
-  [args : AstExprList]
-  [expr : AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (match args
-    [(AstExprCons arg rest)
-      (let
-        [arg : AstExpr (ctfe-ast-get env arg)]
-        [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprNil)
-            (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
-                (match value
-                  [(CtfeExprClause clause)
-                    (if (string.string-eq name "expr-clause-first")
-                      (OkCtfe
-                        (CtfeExpr
-                          (ctfe-expr-clause-first clause)
-                          (ctfe-untyped-expr-type))
-                        arg-fuel)
-                      (if (string.string-eq name "expr-clause-second")
-                        (OkCtfe
-                          (CtfeExpr
-                            (ctfe-expr-clause-second clause)
-                            (ctfe-untyped-expr-type))
-                          arg-fuel)
-                        (ctfe-unsupported-form expr)))]
-                  [_
-                    (ErrCtfe
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          (string.string-append name " expects ExprClause"))))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
-          [_
-            (ErrCtfe
-              (box
-                (ctfe-diagnostic-at-expr
-                  expr
-                  (string.string-append name " expects exactly one arg"))))]))]
     [_
       (ErrCtfe
         (box
@@ -5333,6 +5207,181 @@
         (box
           (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))]))
 
+(define (ctfe-source-helper-var [env : CtfeEnv] [name : String]) : i64
+  (ctfe-ast-push env (AstExprVar (intern name))))
+
+(define (ctfe-source-helper-bool [env : CtfeEnv] [value : bool]) : i64
+  (ctfe-ast-push env (AstExprLiteral (AstLitBool value))))
+
+(define (ctfe-source-helper-match-with-fallback
+  [env : CtfeEnv]
+  [scrutinee : i64]
+  [pattern : AstPattern]
+  [body : i64]
+  [fallback : i64]) : i64
+  (ast-expr-match-with-pools
+    (ctfe-env-pools env)
+    scrutinee
+    (ast-match-arm-cons
+      (ast-match-arm pattern body)
+      (ast-match-arm-cons
+        (ast-match-arm AstPatWildcard fallback)
+        AstMatchArmNil))))
+
+(define (ctfe-source-helper-match-single
+  [env : CtfeEnv]
+  [scrutinee : i64]
+  [pattern : AstPattern]
+  [body : i64]) : i64
+  (ast-expr-match-with-pools
+    (ctfe-env-pools env)
+    scrutinee
+    (ast-match-arm-cons (ast-match-arm pattern body) AstMatchArmNil)))
+
+(define (ctfe-source-helper-expr-bool-pattern [arg : AstPattern]) : AstPattern
+  (ast-pat-variant "ExprBool" (ast-pattern-cons arg AstPatternNil)))
+
+(define (ctfe-source-helper-expr-if-pattern
+  [cond : AstPattern]
+  [then-expr : AstPattern]
+  [else-expr : AstPattern]) : AstPattern
+  (ast-pat-variant
+    "ExprIf"
+    (ast-pattern-cons
+      cond
+      (ast-pattern-cons then-expr (ast-pattern-cons else-expr AstPatternNil)))))
+
+(define (ctfe-source-helper-expr-clause-pattern
+  [first : AstPattern]
+  [second : AstPattern]) : AstPattern
+  (ast-pat-variant
+    "ExprClause"
+    (ast-pattern-cons first (ast-pattern-cons second AstPatternNil))))
+
+(define (ctfe-comptime-source-helper-param-name [name : String]) : String
+  (if (or
+    (string.string-eq name "expr-clause-first")
+    (string.string-eq name "expr-clause-second"))
+    "clause"
+    "value"))
+
+(define (ctfe-comptime-source-helper-body [name : String] [env : CtfeEnv]) : i64
+  (let
+    [param : String (ctfe-comptime-source-helper-param-name name)]
+    [scrutinee : i64 (ctfe-source-helper-var env param)]
+    (cond
+      [(string.string-eq name "expr-bool?")
+        (ctfe-source-helper-match-with-fallback
+          env
+          scrutinee
+          (ctfe-source-helper-expr-bool-pattern AstPatWildcard)
+          (ctfe-source-helper-bool env true)
+          (ctfe-source-helper-bool env false))]
+      [(string.string-eq name "expr-bool-value")
+        (ctfe-source-helper-match-with-fallback
+          env
+          scrutinee
+          (ctfe-source-helper-expr-bool-pattern (ast-pat-binding "found"))
+          (ctfe-source-helper-var env "found")
+          (ctfe-source-helper-bool env false))]
+      [(string.string-eq name "expr-if?")
+        (ctfe-source-helper-match-with-fallback
+          env
+          scrutinee
+          (ctfe-source-helper-expr-if-pattern
+            AstPatWildcard
+            AstPatWildcard
+            AstPatWildcard)
+          (ctfe-source-helper-bool env true)
+          (ctfe-source-helper-bool env false))]
+      [(string.string-eq name "expr-if-cond")
+        (ctfe-source-helper-match-with-fallback
+          env
+          scrutinee
+          (ctfe-source-helper-expr-if-pattern
+            (ast-pat-binding "cond")
+            AstPatWildcard
+            AstPatWildcard)
+          (ctfe-source-helper-var env "cond")
+          scrutinee)]
+      [(string.string-eq name "expr-if-then")
+        (ctfe-source-helper-match-with-fallback
+          env
+          scrutinee
+          (ctfe-source-helper-expr-if-pattern
+            AstPatWildcard
+            (ast-pat-binding "then-expr")
+            AstPatWildcard)
+          (ctfe-source-helper-var env "then-expr")
+          scrutinee)]
+      [(string.string-eq name "expr-if-else")
+        (ctfe-source-helper-match-with-fallback
+          env
+          scrutinee
+          (ctfe-source-helper-expr-if-pattern
+            AstPatWildcard
+            AstPatWildcard
+            (ast-pat-binding "else-expr"))
+          (ctfe-source-helper-var env "else-expr")
+          scrutinee)]
+      [(string.string-eq name "expr-clause-first")
+        (ctfe-source-helper-match-single
+          env
+          scrutinee
+          (ctfe-source-helper-expr-clause-pattern
+            (ast-pat-binding "first")
+            AstPatWildcard)
+          (ctfe-source-helper-var env "first"))]
+      [(string.string-eq name "expr-clause-second")
+        (ctfe-source-helper-match-single
+          env
+          scrutinee
+          (ctfe-source-helper-expr-clause-pattern
+            AstPatWildcard
+            (ast-pat-binding "second"))
+          (ctfe-source-helper-var env "second"))]
+      [else scrutinee])))
+
+(define (ctfe-eval-comptime-source-helper-call
+  [name : String]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons arg rest)
+      (let
+        [arg : AstExpr (ctfe-ast-get env arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(OkCtfe value arg-fuel)
+                (let
+                  [body-env : CtfeEnv
+                    (ctfe-env-extend
+                      env
+                      (ctfe-comptime-source-helper-param-name name)
+                      value)]
+                  [body : i64 (ctfe-comptime-source-helper-body name body-env)]
+                  (compiler-ctfe-eval
+                    (ctfe-ast-get body-env body)
+                    body-env
+                    arg-fuel))]
+              [(ErrCtfe diag) (ErrCtfe diag)])]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (string.string-append name " expects exactly one arg"))))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            (string.string-append name " expects exactly one arg"))))]))
+
 ;; Dispatch a comptime call. Layout and reflection queries are compile-time-only
 ;; compiler metadata; selected String and Expr helpers make that metadata usable
 ;; in generator decisions without lowering it as runtime values.
@@ -5351,6 +5400,8 @@
       (let
         [raw-name : String (intern-str name)]
         [lookup-name : String (ctfe-hygiene-global-call-name raw-name)]
+        [source-call-name : String
+          (ctfe-comptime-source-helper-call-name lookup-name)]
         [call-name : String (ctfe-comptime-helper-call-name lookup-name)]
         [string-helper-candidate : bool
           (ctfe-string-helper-candidate-name? lookup-name)]
@@ -5409,12 +5460,15 @@
             (ctfe-eval-module-export-macro-call args expr env fuel)]
           [(string.string-eq call-name "module-hook")
             (ctfe-eval-module-hook-call args expr env fuel)]
-          [(ctfe-expr-inspector-name? call-name)
-            (ctfe-eval-expr-inspector-call call-name args expr env fuel)]
+          [(ctfe-comptime-source-helper-name? source-call-name)
+            (ctfe-eval-comptime-source-helper-call
+              source-call-name
+              args
+              expr
+              env
+              fuel)]
           [(ctfe-expr-list-inspector-name? call-name)
             (ctfe-eval-expr-list-inspector-call call-name args expr env fuel)]
-          [(ctfe-expr-clause-inspector-name? call-name)
-            (ctfe-eval-expr-clause-inspector-call call-name args expr env fuel)]
           [(ctfe-expr-clause-list-inspector-name? call-name)
             (ctfe-eval-expr-clause-list-inspector-call
               call-name
@@ -10735,18 +10789,35 @@
     [if-expr : i64
       (compiler-ctfe-call3-in-env env "expr-if" true-expr false-expr true-expr)]
     [if-predicate : i64 (compiler-ctfe-call1-in-env env "expr-if?" if-expr)]
+    [not-if-predicate : i64
+      (compiler-ctfe-call1-in-env env "expr-if?" true-expr)]
     [bool-predicate : i64
       (compiler-ctfe-call1-in-env env "expr-bool?" true-expr)]
+    [not-bool-predicate : i64
+      (compiler-ctfe-call1-in-env env "expr-bool?" if-expr)]
     [bool-value : i64
       (compiler-ctfe-call1-in-env env "expr-bool-value" false-expr)]
+    [bool-value-fallback : i64
+      (compiler-ctfe-call1-in-env env "expr-bool-value" if-expr)]
     [cond-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-cond" if-expr)]
     [then-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-then" if-expr)]
-    [bad-cond-expr : i64
+    [else-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-else" if-expr)]
+    [fallback-cond-expr : i64
       (compiler-ctfe-call1-in-env env "expr-if-cond" true-expr)]
+    [clause : AstExprClause (AstExprClause true-lit false-lit)]
+    [clause-env : CtfeEnv (ctfe-env-extend env "arm" (CtfeExprClause clause))]
+    [clause-var : i64 (ctfe-ast-push clause-env (AstExprVar (intern "arm")))]
+    [clause-first : i64
+      (compiler-ctfe-call1-in-env clause-env "expr-clause-first" clause-var)]
+    [clause-second : i64
+      (compiler-ctfe-call1-in-env clause-env "expr-clause-second" clause-var)]
     (and
       (compiler-ctfe-eval-bool-ok? if-predicate env true)
+      (compiler-ctfe-eval-bool-ok? not-if-predicate env false)
       (compiler-ctfe-eval-bool-ok? bool-predicate env true)
+      (compiler-ctfe-eval-bool-ok? not-bool-predicate env false)
       (compiler-ctfe-eval-bool-ok? bool-value env false)
+      (compiler-ctfe-eval-bool-ok? bool-value-fallback env false)
       (match (compiler-ctfe-eval
         (ctfe-ast-get env cond-expr)
         env
@@ -10771,10 +10842,50 @@
                 (ctfe-test-expr-eq-in-env env node false-lit))]
             [_ false])]
         [(ErrCtfe _) false])
-      (compiler-ctfe-eval-error-ok?
-        bad-cond-expr
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env else-expr)
         env
-        "expr-if-cond expects if Expr"))))
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyBool))
+                (ctfe-test-expr-eq-in-env env node true-lit))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env fallback-cond-expr)
+        env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node checked-ty)
+              (and
+                (ctfe-type-eq checked-ty (AstTyBool))
+                (ctfe-test-expr-eq-in-env env node true-lit))]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get clause-env clause-first)
+        clause-env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node _)
+              (ctfe-test-expr-eq-in-env clause-env node true-lit)]
+            [_ false])]
+        [(ErrCtfe _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get clause-env clause-second)
+        clause-env
+        (ctfe-fuel-limit))
+        [(OkCtfe value _)
+          (match value
+            [(CtfeExpr node _)
+              (ctfe-test-expr-eq-in-env clause-env node false-lit)]
+            [_ false])]
+        [(ErrCtfe _) false]))))
 
 (define (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) : bool
   (let
@@ -10981,10 +11092,46 @@
           [_ false])]
       [(ErrCtfe _) false])))
 
+(define (compiler-ctfe-expr-pattern-match-clause-ok?) : bool
+  (let
+    [base-env : CtfeEnv (ctfe-env-empty)]
+    [true-lit : i64 (ctfe-ast-push base-env (AstExprLiteral (AstLitBool true)))]
+    [false-lit : i64
+      (ctfe-ast-push base-env (AstExprLiteral (AstLitBool false)))]
+    [clause : AstExprClause (AstExprClause true-lit false-lit)]
+    [subject : CompilerCtfeValue (CtfeExprClause clause)]
+    [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
+    [scrutinee : i64 (ctfe-ast-push env (AstExprVar (intern "subject")))]
+    [clause-pattern : AstPattern
+      (ast-pat-variant
+        "ExprClause"
+        (ast-pattern-cons
+          (ast-pat-binding "first")
+          (ast-pattern-cons (ast-pat-binding "second") AstPatternNil)))]
+    [clause-arm : AstMatchArm
+      (ast-match-arm
+        clause-pattern
+        (ctfe-ast-push env (AstExprVar (intern "second"))))]
+    [match-expr : i64
+      (ast-expr-match-with-pools
+        (ctfe-env-pools env)
+        scrutinee
+        (ast-match-arm-cons clause-arm AstMatchArmNil))]
+    (match (compiler-ctfe-eval
+      (ctfe-ast-get env match-expr)
+      env
+      (ctfe-fuel-limit))
+      [(OkCtfe value _)
+        (match value
+          [(CtfeExpr node _) (ctfe-test-expr-eq-in-env env node false-lit)]
+          [_ false])]
+      [(ErrCtfe _) false])))
+
 (define (compiler-ctfe-expr-pattern-match-ok?) : bool
   (and
     (compiler-ctfe-expr-pattern-match-int-ok?)
-    (compiler-ctfe-expr-pattern-match-if-ok?)))
+    (compiler-ctfe-expr-pattern-match-if-ok?)
+    (compiler-ctfe-expr-pattern-match-clause-ok?)))
 
 (define (compiler-ctfe-self-test) : i64
   (begin

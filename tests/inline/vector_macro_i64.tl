@@ -1,7 +1,7 @@
 ;; vector_macro_i64.tl - runnable scalar coverage for stdlib `(vector T)`.
 (import "stdlib/test.tl")
 (import "stdlib/vector.tl")
-(import (vector i64))
+(import (vector i64) as ivec)
 (import (vector String) as svec)
 
 (define (vector-macro-i64-triple [x : i64]) : i64
@@ -10,38 +10,53 @@
 (define (vector-macro-i64-add [a : i64] [b : i64]) : i64
   (+ a b))
 
-(define (vector-macro-i64-mut-len [v : (&mut v Vec)]) : i64
-  (len-mut v))
+(define (vector-macro-i64-mut-len [v : (&mut v ivec.Vec)]) : i64
+  (ivec.len-mut v))
 
-(define (vector-macro-i64-fill [n : i64]) : Vec
+(define (vector-macro-i64-fill [n : i64]) : ivec.Vec
   (let
-    [v : Vec (new)]
+    [v : ivec.Vec (ivec.new)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (push (&mut v) (* i 3))
+          (ivec.push (&mut v) (* i 3))
           (set! i (+ i 1))))
       v)))
 
 (test
   vector-macro-i64-growth
   (let
-    [v : Vec (vector-macro-i64-fill 9)]
+    [v : ivec.Vec (vector-macro-i64-fill 9)]
     (begin
-      (assert-i64-eq (len (& v)) 9 "i64 vector macro length")
+      (assert-i64-eq (ivec.len (& v)) 9 "i64 vector macro length")
       (assert-i64-eq
         (vector-macro-i64-mut-len (&mut v))
         9
         "i64 vector macro mutable length")
-      (assert-i64-eq (capacity (& v)) 16 "i64 vector macro doubled capacity")
-      (assert-i64-eq (get (& v) 0 -1) 0 "i64 vector macro keeps first element")
-      (assert-i64-eq (get (& v) 7 -1) 21 "i64 vector macro keeps grown element")
-      (assert-i64-eq (get (& v) 9 -1) -1 "i64 vector macro get at len fallback")
-      (assert-i64-eq (get (& v) -1 -1) -1 "i64 vector macro negative fallback")
-      (set (&mut v) 2 99)
-      (assert-i64-eq (get (& v) 2 -1) 99 "i64 vector macro set in place")
-      (assert-i64-eq (len (& v)) 9 "i64 vector macro set keeps len"))))
+      (assert-i64-eq
+        (ivec.capacity (& v))
+        16
+        "i64 vector macro doubled capacity")
+      (assert-i64-eq
+        (ivec.get (& v) 0 -1)
+        0
+        "i64 vector macro keeps first element")
+      (assert-i64-eq
+        (ivec.get (& v) 7 -1)
+        21
+        "i64 vector macro keeps grown element")
+      (assert-i64-eq
+        (ivec.get (& v) 9 -1)
+        -1
+        "i64 vector macro get at len fallback")
+      (assert-i64-eq
+        (ivec.get (& v) -1 -1)
+        -1
+        "i64 vector macro negative fallback")
+      (ivec.set (&mut v) 2 99)
+      (assert-i64-eq (ivec.get (& v) 2 -1) 99 "i64 vector macro set in place")
+      (assert-i64-eq (ivec.len (& v)) 9 "i64 vector macro set keeps len"))))
 
 (test
   vector-macro-i64-derived-helpers
@@ -52,33 +67,35 @@
       (array-set! src 1 5)
       (array-set! src 2 6)
       (let
-        [v : Vec (from-array (& src) 3)]
+        [v : ivec.Vec (ivec.from-array (& src) 3)]
         (begin
-          (extend (&mut v) (& src) 2)
-          (reverse! (&mut v))
-          (assert-i64-eq (len (& v)) 5 "extend mutates vector length")
-          (assert-i64-eq (get (& v) 0 -1) 5 "reverse mutates first slot")
-          (assert-i64-eq (get (& v) 4 -1) 4 "reverse mutates last slot")
+          (ivec.extend (&mut v) (& src) 2)
+          (ivec.reverse! (&mut v))
+          (assert-i64-eq (ivec.len (& v)) 5 "extend mutates vector length")
+          (assert-i64-eq (ivec.get (& v) 0 -1) 5 "reverse mutates first slot")
+          (assert-i64-eq (ivec.get (& v) 4 -1) 4 "reverse mutates last slot")
           (assert-i64-eq
-            (fold (& v) 0 vector-macro-i64-add)
+            (ivec.fold (& v) 0 vector-macro-i64-add)
             24
             "fold sees all live values")
           (let
-            [mapped : Vec (map (& v) vector-macro-i64-triple)]
-            [snapshot : (Array i64) (to-array (& mapped))]
+            [mapped : ivec.Vec (ivec.map (& v) vector-macro-i64-triple)]
+            [snapshot : (Array i64) (ivec.to-array (& mapped))]
             (begin
-              (assert-i64-eq (len (& mapped)) 5 "map preserves length")
+              (assert-i64-eq (ivec.len (& mapped)) 5 "map preserves length")
               (assert-i64-eq
                 (array-ref snapshot 0)
                 15
                 "to-array snapshots mapped first")
-              (assert-true (contains? (& mapped) 18) "contains? finds scalar")
-              (match (pop (&mut v))
-                [(Pop.Ok value)
+              (assert-true
+                (ivec.contains? (& mapped) 18)
+                "contains? finds scalar")
+              (match (ivec.pop (&mut v))
+                [(ivec.Pop.Ok value)
                   (begin
                     (assert-i64-eq value 4 "pop returns last value")
-                    (assert-i64-eq (len (& v)) 4 "pop shrinks in place"))]
-                [Pop.Empty (assert-true false "pop should return a value")]))))))))
+                    (assert-i64-eq (ivec.len (& v)) 4 "pop shrinks in place"))]
+                [ivec.Pop.Empty (assert-true false "pop should return a value")]))))))))
 
 (test
   vector-macro-string-alias

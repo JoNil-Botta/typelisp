@@ -24,6 +24,7 @@
 ;# `i64` overflow and remains portable across current TypeLisp targets.
 (module stdlib.random)
 
+(import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -199,7 +200,7 @@
   (if (>= index count)
     (OkRandomWeightTotal acc)
     (let
-      [weight : i64 (array-ref weights index)]
+      [weight : i64 (array.array-ref weights index)]
       (if (< weight 0)
         (ErrRandomWeightTotal "random: weight must not be negative")
         (random-weight-array-total-from
@@ -228,7 +229,7 @@
   (if (>= index count)
     -1
     (let
-      [weight : i64 (array-ref weights index)]
+      [weight : i64 (array.array-ref weights index)]
       (if (<= weight 0)
         (random-weight-array-scan-from weights count target (+ index 1))
         (if (< target weight)
@@ -269,7 +270,7 @@
   (random-weighted-index-array-prefix
     state
     (& weights)
-    (array-length weights)
+    (array.array-length weights)
     "random: weight array must not be empty"))
 
 ;: Choose an index from the live prefix of `weights`, skipping zero weights.
@@ -299,14 +300,14 @@
     [(RandomWeightNil) unit]
     [(RandomWeightCons weight rest)
       (begin
-        (array-set! out index weight)
+        (array.array-set! out index weight)
         (random-weight-list-fill-array out (box-get rest) (+ index 1)))]))
 
 ;: Return a fresh array containing the weight list in list order.
 (define (random-weight-list-to-array [weights : RandomWeightList]) : (Array i64)
   (let
     [count : i64 (random-weight-list-count-from weights 0)]
-    [out : (Array i64) (make-array i64 count)]
+    [out : (Array i64) (array.make-array i64 count)]
     (begin
       (random-weight-list-fill-array out weights 0)
       out)))
@@ -319,7 +320,7 @@
       [array-weights : (Array i64) (random-weight-list-to-array weights)]
       (random-weight-array-total-prefix
         array-weights
-        (array-length array-weights)
+        (array.array-length array-weights)
         "random: weight list must not be empty"))))
 
 ;: Choose an index from `weights`, skipping zero weights.
@@ -336,7 +337,7 @@
       (random-weighted-index-array-prefix
         state
         array-weights
-        (array-length array-weights)
+        (array.array-length array-weights)
         "random: weight list must not be empty"))))
 
 ;: Return the shared system-seed failure result.
@@ -349,7 +350,7 @@
   (not windows)
   (define (random-linux-system-seed) : ResultSystemSeed
     (let
-      [seed : (Array i64) (make-array i64 1)]
+      [seed : (Array i64) (array.make-array i64 1)]
       [read-count : i64
         (random-linux-syscall-getrandom
           (unsafe
@@ -357,7 +358,7 @@
           8
           0)]
       (if (= read-count 8)
-        (OkSystemSeed (array-ref seed 0))
+        (OkSystemSeed (array.array-ref seed 0))
         (random-system-seed-unavailable)))))
 
 ;: Rotate a 64-bit value left by 17 bits.
@@ -383,8 +384,8 @@
   windows
   (define (random-windows-system-seed) : ResultSystemSeed
     (let
-      [counter : (Array i64) (make-array i64 1)]
-      [file-time : (Array i64) (make-array i64 1)]
+      [counter : (Array i64) (array.make-array i64 1)]
+      [file-time : (Array i64) (array.make-array i64 1)]
       [_counter-ok : i32
         (random-windows-query-performance-counter
           (unsafe
@@ -393,8 +394,9 @@
         (random-windows-get-system-time-as-file-time
           (unsafe
             (array-data file-time)))]
-      [counter-seed : u64 (cast (array-ref counter 0) : u64)]
-      [time-seed : u64 (random-rotl64-17 (cast (array-ref file-time 0) : u64))]
+      [counter-seed : u64 (cast (array.array-ref counter 0) : u64)]
+      [time-seed : u64
+        (random-rotl64-17 (cast (array.array-ref file-time 0) : u64))]
       [pid-seed : u64
         (shl (cast (random-windows-get-current-process-id) : u64) 32)]
       [thread-seed : u64 (cast (random-windows-get-current-thread-id) : u64)]
@@ -563,25 +565,25 @@
 ;: Weighted-array fixture with zeros around positive buckets.
 (define (random-test-weighted-array-fixture) : (Array i64)
   (let
-    [weights : (Array i64) (make-array i64 4)]
+    [weights : (Array i64) (array.make-array i64 4)]
     (begin
-      (array-set! weights 0 0)
-      (array-set! weights 1 10)
-      (array-set! weights 2 0)
-      (array-set! weights 3 5)
+      (array.array-set! weights 0 0)
+      (array.array-set! weights 1 10)
+      (array.array-set! weights 2 0)
+      (array.array-set! weights 3 5)
       weights)))
 
 ;: Weighted-array fixture whose total is zero.
 (define (random-test-weighted-zero-array) : (Array i64)
-  (make-array i64 2))
+  (array.make-array i64 2))
 
 ;: Weighted-array fixture with a negative weight.
 (define (random-test-weighted-negative-array) : (Array i64)
   (let
-    [weights : (Array i64) (make-array i64 2)]
+    [weights : (Array i64) (array.make-array i64 2)]
     (begin
-      (array-set! weights 0 1)
-      (array-set! weights 1 -1)
+      (array.array-set! weights 0 1)
+      (array.array-set! weights 1 -1)
       weights)))
 
 ;: Weighted-vector fixture with zeros around positive buckets.
@@ -660,7 +662,7 @@
           (random-weight-list-cons -1 (random-weight-list-empty))))
       "random: weight must not be negative")
     (random-test-assert-weighted-error
-      (random-weighted-index-array (random-seed 1) (make-array i64 0))
+      (random-weighted-index-array (random-seed 1) (array.make-array i64 0))
       "random: weight array must not be empty")
     (random-test-assert-weighted-error
       (random-weighted-index-array

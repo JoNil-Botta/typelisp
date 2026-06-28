@@ -26,6 +26,7 @@
 ;# ```
 (module stdlib.thread)
 
+(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -407,13 +408,13 @@
 ;: Copy a dynamic `i64` array into fresh active-arena storage.
 (define (thread-array-i64-copy [src : (Array i64)]) : (Array i64)
   (let
-    [n : i64 (array-length src)]
-    [out : (Array i64) (make-array i64 n)]
+    [n : i64 (array.array-length src)]
+    [out : (Array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array-set! out i (array-ref src i))
+          (array.array-set! out i (array.array-ref src i))
           (set! i (+ i 1))))
       out)))
 
@@ -464,17 +465,17 @@
 ;: Linux implementation of `thread-spawn`.
 (define (thread-linux-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
   (let
-    [stack : (Array u8) (make-array u8 thread-default-stack-size)]
-    [clear-cell : (Array i32) (make-array i32 1)]
-    [started-cell : (Array i32) (make-array i32 1)]
-    [result-cell : (Array i64) (make-array i64 1)]
+    [stack : (Array u8) (array.make-array u8 thread-default-stack-size)]
+    [clear-cell : (Array i32) (array.make-array i32 1)]
+    [started-cell : (Array i32) (array.make-array i32 1)]
+    [result-cell : (Array i64) (array.make-array i64 1)]
     [clear-addr : i64 (thread-array-i32-addr clear-cell)]
     [started-addr : i64 (thread-array-i32-addr started-cell)]
     [result-addr : i64 (thread-array-i64-addr result-cell)]
     [stack-top : i64
       (bit-and (+ (thread-array-u8-addr stack) thread-default-stack-size) -16)]
     (begin
-      (array-set! clear-cell 0 (cast 1 : i32))
+      (array.array-set! clear-cell 0 (cast 1 : i32))
       (let
         [tid : i64
           (unsafe
@@ -501,21 +502,21 @@
   windows
   (define (thread-windows-spawn [entry : (-> i64 i64)] [arg : i64]) : ThreadSpawnResult
     (let
-      [context : (Array u64) (make-array u64 4)]
-      [started-cell : (Array i32) (make-array i32 1)]
-      [result-cell : (Array i64) (make-array i64 1)]
+      [context : (Array u64) (array.make-array u64 4)]
+      [started-cell : (Array i32) (array.make-array i32 1)]
+      [result-cell : (Array i64) (array.make-array i64 1)]
       [context-addr : i64 (thread-array-u64-addr context)]
       [started-addr : i64 (thread-array-i32-addr started-cell)]
       [result-addr : i64 (thread-array-i64-addr result-cell)]
       (begin
-        (array-set!
+        (array.array-set!
           context
           0
           (unsafe
             (cast entry : u64)))
-        (array-set! context 1 (cast arg : u64))
-        (array-set! context 2 (cast result-addr : u64))
-        (array-set! context 3 (cast started-addr : u64))
+        (array.array-set! context 1 (cast arg : u64))
+        (array.array-set! context 2 (cast result-addr : u64))
+        (array.array-set! context 3 (cast started-addr : u64))
         (let
           [handle : i64
             (thread-windows-create-thread
@@ -569,7 +570,7 @@
 (define (thread-spawn-string [task : (-> String)]) : ThreadStringSpawnResult
   (let
     [owner : arena.Arena (arena.arena-make-atomic)]
-    [result : (Array String) (in-arena owner (make-array String 1))]
+    [result : (Array String) (in-arena owner (array.make-array String 1))]
     [result-addr : i64 (thread-array-string-addr result)]
     (match (thread-spawn
       (lambda ([_ignored : i64]) : i64
@@ -591,7 +592,8 @@
 (define (thread-spawn-array-i64 [task : (-> (Array i64))]) : ThreadArrayI64SpawnResult
   (let
     [owner : arena.Arena (arena.arena-make-atomic)]
-    [result : (Array (Array i64)) (in-arena owner (make-array (Array i64) 1))]
+    [result : (Array (Array i64))
+      (in-arena owner (array.make-array (Array i64) 1))]
     [result-addr : i64 (thread-array-array-i64-addr result)]
     (match (thread-spawn
       (lambda ([_ignored : i64]) : i64
@@ -614,7 +616,7 @@
 (define (thread-spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
   (let
     [owner : arena.Arena (arena.arena-make-atomic)]
-    [result : (Array i64) (in-arena owner (make-array i64 1))]
+    [result : (Array i64) (in-arena owner (array.make-array i64 1))]
     [result-addr : i64 (thread-array-i64-addr result)]
     (match (thread-spawn
       (lambda ([_ignored : i64]) : i64
@@ -701,18 +703,20 @@
     [i : i64 0]
     [count : i64 0]
     (begin
-      (while (< i (array-length mask))
+      (while (< i (array.array-length mask))
         (begin
           (set!
             count
-            (+ count (thread-count-byte-bits (cast (array-ref mask i) : i64))))
+            (+
+              count
+              (thread-count-byte-bits (cast (array.array-ref mask i) : i64))))
           (set! i (+ i 1))))
       count)))
 
 ;: Linux implementation of `thread-default-worker-count`.
 (define (thread-linux-default-worker-count) : i64
   (let
-    [mask : (Array u8) (make-array u8 128)]
+    [mask : (Array u8) (array.make-array u8 128)]
     [rc : i64
       (unsafe
         (syscall 204 0 128 (thread-array-u8-addr mask)))]
@@ -788,7 +792,7 @@
       (thread-windows-wait-single (struct-get sem handle) (cast -1 : i32))
       (cast 0 : i32))
     (let
-      [buf : (Array u64) (make-array u64 1)]
+      [buf : (Array u64) (array.make-array u64 1)]
       [done : bool false]
       [ok : bool false]
       (begin
@@ -822,9 +826,9 @@
           0)
         (cast 0 : i32)))
     (let
-      [buf : (Array u64) (make-array u64 1)]
+      [buf : (Array u64) (array.make-array u64 1)]
       (begin
-        (array-set! buf 0 (cast 1 : u64))
+        (array.array-set! buf 0 (cast 1 : u64))
         (=
           (unsafe
             (syscall 1 (struct-get sem handle) (thread-array-u64-addr buf) 8))
@@ -864,12 +868,12 @@
 (test
   thread-api
   (let
-    [mask : (Array u8) (make-array u8 4)]
+    [mask : (Array u8) (array.make-array u8 4)]
     (begin
-      (array-set! mask 0 (cast 0 : u8))
-      (array-set! mask 1 (cast 1 : u8))
-      (array-set! mask 2 (cast 3 : u8))
-      (array-set! mask 3 (cast 255 : u8))
+      (array.array-set! mask 0 (cast 0 : u8))
+      (array.array-set! mask 1 (cast 1 : u8))
+      (array.array-set! mask 2 (cast 3 : u8))
+      (array.array-set! mask 3 (cast 255 : u8))
       (thread-test-assert (>= (thread-default-worker-count) 1))
       (thread-test-assert-i64-eq (thread-count-byte-bits 0) 0)
       (thread-test-assert-i64-eq (thread-count-byte-bits 1) 1)

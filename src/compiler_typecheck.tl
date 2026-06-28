@@ -6928,7 +6928,8 @@
 (define (main) : i64 (field-x (Point 42 7)))")
 
 (define (compiler-typecheck-defmacro-comptime-qualified-helper-source) : String
-  "(defmacro (all [args : bool ...]) : bool
+  "(import stdlib.comptime)
+(defmacro (all [args : bool ...]) : bool
   (if (comptime.expr-list-empty? args)
     (comptime.expr-bool true)
     `(if ,(comptime.expr-list-head args)
@@ -6945,6 +6946,32 @@
   (if (all true true)
     (pick [false 1] [true 42])
     0))")
+
+(define (compiler-typecheck-defmacro-comptime-qualified-source-inspectors-source) : String
+  "(import stdlib.comptime)
+(defmacro (pick-if [value : bool]) : i64
+  (let [expr : Expr (expr-if value (expr-int 7) (expr-int 9))]
+    (match expr
+      [(ExprIf _ _ _)
+        (if (comptime.expr-if? expr)
+          (if (comptime.expr-bool? (comptime.expr-if-cond expr))
+            (if (comptime.expr-bool-value (comptime.expr-if-cond expr))
+              (comptime.expr-if-then expr)
+              (comptime.expr-if-else expr))
+            (expr-int 0))
+          (expr-int 0))]
+      [_ (expr-int 0)])))
+(defmacro (pick-clause [arm : ExprClause] [take-first : bool]) : i64
+  (match arm
+    [(ExprClause _ _)
+      (if (comptime.expr-bool-value take-first)
+        (comptime.expr-clause-first arm)
+        (comptime.expr-clause-second arm))]))
+(define (main) : i64
+  (+ (pick-if true)
+     (+ (pick-if false)
+        (+ (pick-clause [1 25] true)
+           (pick-clause [99 25] false)))))")
 
 (define (compiler-typecheck-defmacro-unsafe-source) : String
   "(defmacro (bad) : bool (unsafe (expr-bool true)))
@@ -6996,6 +7023,8 @@
       (compiler-typecheck-defmacro-expr-struct-get-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defmacro-comptime-qualified-helper-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-defmacro-comptime-qualified-source-inspectors-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-produced-mismatch-source)
       "typecheck: macro body produced type does not match declaration")

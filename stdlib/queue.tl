@@ -36,6 +36,7 @@
     [pop-ok-name : Expr (expr-var "Pop.Ok")]
     `(begin
       (module ,module-name)
+      (import stdlib.array as array_ops)
       (defstruct ,deque-name
         (slots (Array ,T))
         (head i64)
@@ -54,7 +55,7 @@
       (define (len-mut [q : (&mut q ,deque-name)]) : i64
         (struct-get q len))
       (define (capacity [q : (& q ,deque-name)]) : i64
-        (array-length (slots q)))
+        (array_ops.array-length (slots q)))
       (define (is-empty? [q : (& q ,deque-name)]) : bool
         (<= (len q) 0))
       (define (with-capacity [capacity : i64]) : ,deque-name
@@ -63,7 +64,7 @@
             (if (< capacity 1)
               1
               capacity)]
-          (,deque-name (make-array ,T cap) 0 0)))
+          (,deque-name (array_ops.make-array ,T cap) 0 0)))
       (define (new) : ,deque-name
         (with-capacity 4))
       (define (next-index [index : i64] [capacity : i64]) : i64
@@ -80,7 +81,7 @@
         (if (if (>= index 0)
           (< index (len q))
           false)
-          (array-ref (slots q) (physical-index q index))
+          (array_ops.array-ref (slots q) (physical-index q index))
           fallback))
       (define (peek-front [q : (& q ,deque-name)] [fallback : ,T]) : ,T
         (get q 0 fallback))
@@ -96,20 +97,22 @@
         (if (>= index count)
           unit
           (begin
-            (array-set!
+            (array_ops.array-set!
               dst
               index
-              (array-ref src (physical-index-from head capacity index)))
+              (array_ops.array-ref
+                src
+                (physical-index-from head capacity index)))
             (copy-live! dst src head capacity count (+ index 1)))))
       (define (grow [q : (&mut q ,deque-name)]) : unit
         (let
           [n : i64 (struct-get q len)]
-          [old-cap : i64 (array-length (struct-get q slots))]
+          [old-cap : i64 (array_ops.array-length (struct-get q slots))]
           [new-cap : i64
             (if (< old-cap 1)
               1
               (* old-cap 2))]
-          [bigger : (Array ,T) (make-array ,T new-cap)]
+          [bigger : (Array ,T) (array_ops.make-array ,T new-cap)]
           (begin
             (copy-live!
               (&mut bigger)
@@ -122,7 +125,9 @@
             (set! (struct-get q head) 0))))
       (define (push-back [q : (&mut q ,deque-name)] [value : ,T]) : unit
         (begin
-          (if (< (struct-get q len) (array-length (struct-get q slots)))
+          (if (<
+            (struct-get q len)
+            (array_ops.array-length (struct-get q slots)))
             unit
             (grow q))
           (let
@@ -130,23 +135,25 @@
             [tail : i64
               (physical-index-from
                 (struct-get q head)
-                (array-length (struct-get q slots))
+                (array_ops.array-length (struct-get q slots))
                 old-len)]
             (begin
-              (array-set! (struct-get q slots) tail value)
+              (array_ops.array-set! (struct-get q slots) tail value)
               (set! (struct-get q len) (+ old-len 1))))))
       (define (push-front [q : (&mut q ,deque-name)] [value : ,T]) : unit
         (begin
-          (if (< (struct-get q len) (array-length (struct-get q slots)))
+          (if (<
+            (struct-get q len)
+            (array_ops.array-length (struct-get q slots)))
             unit
             (grow q))
           (let
             [new-head : i64
               (prev-index
                 (struct-get q head)
-                (array-length (struct-get q slots)))]
+                (array_ops.array-length (struct-get q slots)))]
             (begin
-              (array-set! (struct-get q slots) new-head value)
+              (array_ops.array-set! (struct-get q slots) new-head value)
               (set! (struct-get q head) new-head)
               (set! (struct-get q len) (+ (struct-get q len) 1))))))
       (define (pop-front [q : (&mut q ,deque-name)]) : ,pop-name
@@ -154,14 +161,15 @@
           (,pop-empty-name)
           (let
             [value : ,T
-              (clone (array-ref (struct-get q slots) (struct-get q head)))]
+              (clone
+                (array_ops.array-ref (struct-get q slots) (struct-get q head)))]
             [new-len : i64 (- (struct-get q len) 1)]
             [new-head : i64
               (if (= new-len 0)
                 0
                 (next-index
                   (struct-get q head)
-                  (array-length (struct-get q slots))))]
+                  (array_ops.array-length (struct-get q slots))))]
             (begin
               (set! (struct-get q head) new-head)
               (set! (struct-get q len) new-len)
@@ -173,9 +181,10 @@
             [last-index : i64
               (physical-index-from
                 (struct-get q head)
-                (array-length (struct-get q slots))
+                (array_ops.array-length (struct-get q slots))
                 (- (struct-get q len) 1))]
-            [value : ,T (clone (array-ref (struct-get q slots) last-index))]
+            [value : ,T
+              (clone (array_ops.array-ref (struct-get q slots) last-index))]
             [new-len : i64 (- (struct-get q len) 1)]
             [new-head : i64
               (if (= new-len 0)

@@ -13,12 +13,15 @@
   (let
     [module-name : Expr
       (expr-var (string-append "stdlib.vector_slice.generated." (type-key T)))]
+    [vec-module-name : String
+      (string-append "stdlib.vector.generated." (type-key T))]
+    [vec-type-name : Expr (expr-var (string-append vec-module-name ".Vec"))]
     `(begin
       (module ,module-name)
       (import (vector ,T) as vec)
       (defenum Source
         (:lifetimes source)
-        (FromVec (& source vec.Vec))
+        (FromVec (& source ,vec-type-name))
         (FromArray (& source (Array ,T))))
       (defstruct Slice
         (:lifetimes source)
@@ -55,10 +58,12 @@
         (if (< count 0)
           false
           (<= count (array-length items))))
-      (define (all-vec [v : (& source vec.Vec)]) : (Slice source)
+      (define (all-vec [v : (& source ,vec-type-name)]) : (Slice source)
         (Slice (vec.slots v) 0 (vec.len v)))
-      (define (from-vec [v : (& source vec.Vec)] [start : i64] [len : i64]) : (Slice
-          source)
+      (define (from-vec
+        [v : (& source ,vec-type-name)]
+        [start : i64]
+        [len : i64]) : (Slice source)
         (if (range-valid? (vec.len v) start len)
           (Slice (vec.slots v) start len)
           (Slice (vec.slots v) 0 0)))
@@ -72,10 +77,11 @@
             (Slice items start len)
             (Slice items 0 0))
           (Slice items 0 0)))
-      (define (all-vec-mut [v : (&mut source vec.Vec)]) : (MutSlice source)
+      (define (all-vec-mut [v : (&mut source ,vec-type-name)]) : (MutSlice
+          source)
         (MutSlice (vec.slots-mut v) 0 (vec.len-mut v)))
       (define (from-vec-mut
-        [v : (&mut source vec.Vec)]
+        [v : (&mut source ,vec-type-name)]
         [start : i64]
         [len : i64]) : (MutSlice source)
         (if (range-valid? (vec.len-mut v) start len)
@@ -192,25 +198,26 @@
                     (+ (struct-get slice start) i)))
                 (set! i (+ i 1))))
             out)))
-      (define (to-vec [slice : (Slice source)]) : vec.Vec
+      (define (to-vec [slice : (Slice source)]) : ,vec-type-name
         (let
           [items : (Array ,T) (to-array slice)]
           (vec.from-array (& items) (len slice)))))))
 
 (cfg test (import stdlib.test))
+(cfg test (import stdlib.array))
 (cfg test (import (stdlib.vector.vector i64) as i64v))
 (cfg test (import (stdlib.vector_slice.slice i64) as i64s))
 (cfg test (import (stdlib.vector_slice.slice i64) as i64s_again))
 
 (cfg
   test
-  (define (vector-slice-test-main) : unit
+  (define (vector-slice-test-basic) : unit
     (let
-      [src : (Array i64) (make-array i64 3)]
+      [src : (Array i64) (array.make-array i64 3)]
       (begin
-        (array-set! src 0 5)
-        (array-set! src 1 6)
-        (array-set! src 2 7)
+        (array.array-set! src 0 5)
+        (array.array-set! src 1 6)
+        (array.array-set! src 2 7)
         (let
           [fv : i64v.Vec (i64v.from-array (& src) 3)]
           [full : (i64s.Slice fv) (i64s.all-vec (& fv))]
@@ -250,7 +257,21 @@
                 (test.assert-i64-eq (i64s.get tail 0 -1) 7 "sub-slice value")
                 (test.assert-true
                   (i64s.is-empty? bad-tail)
-                  "sub-slice overrun -> empty")))
+                  "sub-slice overrun -> empty")))))))))
+
+(cfg
+  test
+  (define (vector-slice-test-array-copy) : unit
+    (let
+      [src : (Array i64) (array.make-array i64 3)]
+      (begin
+        (array.array-set! src 0 5)
+        (array.array-set! src 1 6)
+        (array.array-set! src 2 7)
+        (let
+          [fv : i64v.Vec (i64v.from-array (& src) 3)]
+          [middle : (i64s.Slice fv) (i64s.from-vec (& fv) 1 2)]
+          (begin
             (let
               [from-array : (i64s.Slice src) (i64s.from-array (& src) 3 0 2)]
               [bad-count : (i64s.Slice src) (i64s.from-array (& src) 4 0 1)]
@@ -272,14 +293,14 @@
               [slice-vec : i64v.Vec (i64s.to-vec middle)]
               (begin
                 (test.assert-i64-eq
-                  (array-length slice-copy)
+                  (array.array-length slice-copy)
                   2
                   "slice copy array length")
                 (test.assert-i64-eq
-                  (array-ref slice-copy 0)
+                  (array.array-ref slice-copy 0)
                   6
                   "slice copy array first")
-                (array-set! slice-copy 0 0)
+                (array.array-set! slice-copy 0 0)
                 (test.assert-i64-eq
                   (i64s.get middle 0 -1)
                   6
@@ -291,7 +312,21 @@
                 (test.assert-i64-eq
                   (i64v.get (& slice-vec) 1 -1)
                   7
-                  "slice to vec second")))
+                  "slice to vec second")))))))))
+
+(cfg
+  test
+  (define (vector-slice-test-iterator) : unit
+    (let
+      [src : (Array i64) (array.make-array i64 3)]
+      (begin
+        (array.array-set! src 0 5)
+        (array.array-set! src 1 6)
+        (array.array-set! src 2 7)
+        (let
+          [fv : i64v.Vec (i64v.from-array (& src) 3)]
+          [middle : (i64s.Slice fv) (i64s.from-vec (& fv) 1 2)]
+          (begin
             (let
               [iter : (i64s.Iter fv) (i64s.iterator middle)]
               (begin
@@ -320,42 +355,54 @@
               [empty-iter : (i64s.Iter fv) (i64s.iterator empty-slice)]
               (test.assert-true
                 (i64s.iter-done? (i64s.next (&mut empty-iter)))
-                "empty slice iterator exhausted"))
-            (let
-              [dst : i64v.Vec (i64v.with-capacity 3)]
-              (begin
-                (i64v.push (&mut dst) 0)
-                (i64v.push (&mut dst) 0)
-                (i64v.push (&mut dst) 0)
-                (let
-                  [full-mut : (i64s.MutSlice dst) (i64s.all-vec-mut (&mut dst))]
-                  (begin
-                    (test.assert-i64-eq
-                      (i64s.mut-len full-mut)
-                      3
-                      "full mutable slice len")
-                    (test.assert-false
-                      (i64s.mut-is-empty? full-mut)
-                      "full mutable slice not empty")
-                    (i64s.set full-mut 1 44)
-                    (array-set!
-                      (struct-get full-mut slots)
-                      (struct-get full-mut start)
-                      33)))
-                (test.assert-i64-eq
-                  (i64v.get (& dst) 0 -1)
-                  33
-                  "mutable slice field write updates vector")
-                (test.assert-i64-eq
-                  (i64v.get (& dst) 1 -1)
-                  44
-                  "mutable slice set updates vector")
-                (let
-                  [bad-mut : (i64s.MutSlice dst)
-                    (i64s.from-vec-mut (&mut dst) 2 2)]
-                  (test.assert-true
-                    (i64s.mut-is-empty? bad-mut)
-                    "mutable slice overrun -> empty"))))))))))
+                "empty slice iterator exhausted"))))))))
+
+(cfg
+  test
+  (define (vector-slice-test-mut) : unit
+    (let
+      [dst : i64v.Vec (i64v.with-capacity 3)]
+      (begin
+        (i64v.push (&mut dst) 0)
+        (i64v.push (&mut dst) 0)
+        (i64v.push (&mut dst) 0)
+        (let
+          [full-mut : (i64s.MutSlice dst) (i64s.all-vec-mut (&mut dst))]
+          (begin
+            (test.assert-i64-eq
+              (i64s.mut-len full-mut)
+              3
+              "full mutable slice len")
+            (test.assert-false
+              (i64s.mut-is-empty? full-mut)
+              "full mutable slice not empty")
+            (i64s.set full-mut 1 44)
+            (array.array-set!
+              (struct-get full-mut slots)
+              (struct-get full-mut start)
+              33)))
+        (test.assert-i64-eq
+          (i64v.get (& dst) 0 -1)
+          33
+          "mutable slice field write updates vector")
+        (test.assert-i64-eq
+          (i64v.get (& dst) 1 -1)
+          44
+          "mutable slice set updates vector")
+        (let
+          [bad-mut : (i64s.MutSlice dst) (i64s.from-vec-mut (&mut dst) 2 2)]
+          (test.assert-true
+            (i64s.mut-is-empty? bad-mut)
+            "mutable slice overrun -> empty"))))))
+
+(cfg
+  test
+  (define (vector-slice-test-main) : unit
+    (begin
+      (vector-slice-test-basic)
+      (vector-slice-test-array-copy)
+      (vector-slice-test-iterator)
+      (vector-slice-test-mut))))
 
 (cfg
   test

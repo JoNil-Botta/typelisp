@@ -5,10 +5,12 @@
 ;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
 (module stdlib.profile)
 
+(import stdlib.array)
+
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at
 ;: module initialization so `now-ms` does not allocate on every sample.
 (define profile-now-scratch : (Array i64)
-  (make-array i64 2))
+  (array.make-array i64 2))
 
 ;: Windows kernel32 high-resolution performance counter bindings.
 (cfg
@@ -54,8 +56,8 @@
     (if (< status 0)
       0
       (+
-        (* (array-ref stdlib.profile.profile-now-scratch 0) 1000)
-        (/ (array-ref stdlib.profile.profile-now-scratch 1) 1000000)))))
+        (* (array.array-ref stdlib.profile.profile-now-scratch 0) 1000)
+        (/ (array.array-ref stdlib.profile.profile-now-scratch 1) 1000000)))))
 
 ;: Windows `QueryPerformanceCounter/Frequency` timestamp.
 (cfg
@@ -68,12 +70,14 @@
       [freq-ok : i32
         (stdlib.profile.profile-win-query-performance-frequency
           (stdlib.profile.scratch-ptr 1))]
-      [freq : i64 (array-ref stdlib.profile.profile-now-scratch 1)]
+      [freq : i64 (array.array-ref stdlib.profile.profile-now-scratch 1)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
         0
         (if (= freq 0)
           0
-          (/ (* (array-ref stdlib.profile.profile-now-scratch 0) 1000) freq))))))
+          (/
+            (* (array.array-ref stdlib.profile.profile-now-scratch 0) 1000)
+            freq))))))
 
 ;: Return a coarse monotonic timestamp in milliseconds.
 (define (now-ms) : i64
@@ -113,9 +117,9 @@
 ;: Allocate an array so allocation counters have observable work.
 (define (test-allocation) : (Array i64)
   (let
-    [items : (Array i64) (make-array i64 4)]
+    [items : (Array i64) (array.make-array i64 4)]
     (begin
-      (array-set! items 0 12)
+      (array.array-set! items 0 12)
       items)))
 
 (test
@@ -131,8 +135,8 @@
       [after-live : i64 (stdlib.profile.alloc-live)]
       [peak : i64 (stdlib.profile.alloc-peak)]
       (begin
-        (stdlib.profile.test-assert (= (array-length items) 4))
-        (stdlib.profile.test-assert (= (array-ref items 0) 12))
+        (stdlib.profile.test-assert (= (array.array-length items) 4))
+        (stdlib.profile.test-assert (= (array.array-ref items 0) 12))
         (stdlib.profile.test-assert (>= after-total before-total))
         (stdlib.profile.test-assert (>= after-live before-live))
         (stdlib.profile.test-assert (>= peak after-live))))))

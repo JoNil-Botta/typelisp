@@ -1505,11 +1505,14 @@
   [slots : (Array StringI64MapSlot)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (array-set! slots index (StringI64MapEmpty))
-      (stdlib.hashmap.string-i64-map-fill-empty slots (+ index 1) count))))
+      (while (< i count)
+        (begin
+          (array-set! slots i (StringI64MapEmpty))
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Create an empty map with `capacity` rounded up to a positive power of two.
 (define (string-i64-map-with-capacity [capacity : i64]) : StringI64Map
@@ -2069,25 +2072,23 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (stdlib.hashmap.string-i64-map-slot-at src index)
-        [(StringI64MapOccupied key value hash)
-          (stdlib.hashmap.string-i64-map-insert-into-empty
-            dst
-            dst-capacity
-            key
-            value
-            hash)]
-        [(StringI64MapEmpty) unit]
-        [(StringI64MapTombstone) unit])
-      (stdlib.hashmap.string-i64-map-rehash-from
-        src
-        dst
-        dst-capacity
-        (+ index 1)
-        count))))
+      (while (< i count)
+        (begin
+          (match (stdlib.hashmap.string-i64-map-slot-at src i)
+            [(StringI64MapOccupied key value hash)
+              (stdlib.hashmap.string-i64-map-insert-into-empty
+                dst
+                dst-capacity
+                key
+                value
+                hash)]
+            [(StringI64MapEmpty) unit]
+            [(StringI64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Borrowed-source variant used by in-place resize helpers.
 (define (string-i64-map-rehash-from-ref
@@ -2096,25 +2097,23 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (array-ref src index)
-        [(StringI64MapOccupied key value hash)
-          (stdlib.hashmap.string-i64-map-insert-into-empty
-            dst
-            dst-capacity
-            key
-            value
-            hash)]
-        [(StringI64MapEmpty) unit]
-        [(StringI64MapTombstone) unit])
-      (stdlib.hashmap.string-i64-map-rehash-from-ref
-        src
-        dst
-        dst-capacity
-        (+ index 1)
-        count))))
+      (while (< i count)
+        (begin
+          (match (array-ref src i)
+            [(StringI64MapOccupied key value hash)
+              (stdlib.hashmap.string-i64-map-insert-into-empty
+                dst
+                dst-capacity
+                key
+                value
+                hash)]
+            [(StringI64MapEmpty) unit]
+            [(StringI64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Rebuild `map` as a fresh power-of-two table holding only its live entries
 ;: (tombstones dropped, so the deleted count resets to 0). The backing array is
@@ -2534,20 +2533,15 @@
   [slots : (Array StringI64MapSlot)]
   [index : i64]
   [capacity : i64]) : i64
-  (if (>= index capacity)
-    capacity
-    (match (stdlib.hashmap.string-i64-map-slot-at slots index)
-      [(StringI64MapOccupied _ _ _) index]
-      [(StringI64MapEmpty)
-        (stdlib.hashmap.string-i64-map-next-occupied-from
-          slots
-          (+ index 1)
-          capacity)]
-      [(StringI64MapTombstone)
-        (stdlib.hashmap.string-i64-map-next-occupied-from
-          slots
-          (+ index 1)
-          capacity)])))
+  (let
+    [i : i64 index]
+    (begin
+      (while (< i capacity)
+        (match (stdlib.hashmap.string-i64-map-slot-at slots i)
+          [(StringI64MapOccupied _ _ _) (return i)]
+          [(StringI64MapEmpty) (set! i (+ i 1))]
+          [(StringI64MapTombstone) (set! i (+ i 1))]))
+      capacity)))
 
 ;: Iteration cursor: the index of the first occupied slot at or after `from`
 ;: (in ascending bucket order), or the capacity when no live entry remains.
@@ -3486,11 +3480,14 @@
   [slots : (Array I64I64MapSlot)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (array-set! slots index (I64I64MapEmpty))
-      (i64-i64-map-fill-empty slots (+ index 1) count))))
+      (while (< i count)
+        (begin
+          (array-set! slots i (I64I64MapEmpty))
+          (set! i (+ i 1))))
+      unit)))
 
 (define (i64-i64-map-with-capacity [capacity : i64]) : I64I64Map
   (let
@@ -3676,15 +3673,18 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (array-ref src index)
-        [(I64I64MapOccupied key value hash)
-          (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
-        [(I64I64MapEmpty) unit]
-        [(I64I64MapTombstone) unit])
-      (i64-i64-map-rehash-from src dst dst-capacity (+ index 1) count))))
+      (while (< i count)
+        (begin
+          (match (array-ref src i)
+            [(I64I64MapOccupied key value hash)
+              (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
+            [(I64I64MapEmpty) unit]
+            [(I64I64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 (define (i64-i64-map-resized [map : I64I64Map] [new-capacity : i64]) : I64I64Map
   (let
@@ -3861,14 +3861,15 @@
   [slots : (Array I64I64MapSlot)]
   [index : i64]
   [capacity : i64]) : i64
-  (if (>= index capacity)
-    capacity
-    (match (array-ref slots index)
-      [(I64I64MapOccupied _ _ _) index]
-      [(I64I64MapEmpty)
-        (i64-i64-map-next-occupied-from slots (+ index 1) capacity)]
-      [(I64I64MapTombstone)
-        (i64-i64-map-next-occupied-from slots (+ index 1) capacity)])))
+  (let
+    [i : i64 index]
+    (begin
+      (while (< i capacity)
+        (match (array-ref slots i)
+          [(I64I64MapOccupied _ _ _) (return i)]
+          [(I64I64MapEmpty) (set! i (+ i 1))]
+          [(I64I64MapTombstone) (set! i (+ i 1))]))
+      capacity)))
 
 (define (i64-i64-map-next-occupied [map : I64I64Map] [from : i64]) : i64
   (i64-i64-map-next-occupied-from
@@ -4909,15 +4910,18 @@
   [dst-capacity : i64]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (let
+    [i : i64 index]
     (begin
-      (match (array-ref src index)
-        [(I64I64MapOccupied key value hash)
-          (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
-        [(I64I64MapEmpty) unit]
-        [(I64I64MapTombstone) unit])
-      (i64-i64-map-rehash-from-ref src dst dst-capacity (+ index 1) count))))
+      (while (< i count)
+        (begin
+          (match (array-ref src i)
+            [(I64I64MapOccupied key value hash)
+              (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
+            [(I64I64MapEmpty) unit]
+            [(I64I64MapTombstone) unit])
+          (set! i (+ i 1))))
+      unit)))
 
 ;: Resize a generated i64 -> i64 map in place.
 (define (i64-i64-map-resize! [map : (&mut map I64I64Map)] [new-capacity : i64]) : unit

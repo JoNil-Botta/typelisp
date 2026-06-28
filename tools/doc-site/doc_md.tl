@@ -13,7 +13,6 @@
 (import "../../src/doc_html.tl")
 (import "../../stdlib/string.tl")
 (import "../../stdlib/vector.tl")
-(import "../../stdlib/vector_family.tl")
 (import "../../stdlib/str_cat.tl")
 (import (vector String) as svec)
 

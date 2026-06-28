@@ -77,7 +77,6 @@
 (include-str compiler-embedded-stdlib-text-buf "stdlib/text_buf.tl")
 (include-str compiler-embedded-stdlib-text-buf-borrowed "stdlib/text_buf_borrowed.tl")
 (include-str compiler-embedded-stdlib-vector "stdlib/vector.tl")
-(include-str compiler-embedded-stdlib-vector-family "stdlib/vector_family.tl")
 (include-str compiler-embedded-stdlib-vector-slice "stdlib/vector_slice.tl")
 
 (define (compiler-embedded-stdlib-lookup-modules [suffix : String]) : CompilerEmbeddedStdlibSource
@@ -160,8 +159,6 @@
         compiler-embedded-stdlib-text-buf-borrowed)]
     [(embedded-eq? suffix "vector.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
-    [(embedded-eq? suffix "vector_family.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-family)]
     [(embedded-eq? suffix "vector_slice.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-slice)]
     [else (CompilerEmbeddedStdlibNoSource)]))

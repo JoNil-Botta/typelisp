@@ -1440,6 +1440,14 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-fingerprint-cache-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-fingerprint-cache-misses : i64
+    0))
+(cfg
+  compile-profile
   (define tc-lp-counts : (Array i64)
     (array.make-array i64 15)))
 
@@ -1487,6 +1495,20 @@
     (set!
       compiler-tc-macro-generated-compare-passes
       (+ compiler-tc-macro-generated-compare-passes 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-fingerprint-cache-hit) : unit
+    (set!
+      compiler-tc-macro-generated-fingerprint-cache-hits
+      (+ compiler-tc-macro-generated-fingerprint-cache-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-fingerprint-cache-miss) : unit
+    (set!
+      compiler-tc-macro-generated-fingerprint-cache-misses
+      (+ compiler-tc-macro-generated-fingerprint-cache-misses 1))))
 
 (cfg
   compile-profile
@@ -1546,6 +1568,8 @@
       (set! compiler-tc-env-profile-module-local-hits 0)
       (set! compiler-tc-env-profile-module-local-misses 0)
       (set! compiler-tc-macro-generated-compare-passes 0)
+      (set! compiler-tc-macro-generated-fingerprint-cache-hits 0)
+      (set! compiler-tc-macro-generated-fingerprint-cache-misses 0)
       (compiler-tc-reinfer-profile-reset)
       (tc-lp-reset 0))))
 
@@ -1949,6 +1973,12 @@
       (compiler-tc-macro-counter-profile-line
         "generated_compare_passes"
         compiler-tc-macro-generated-compare-passes)
+      (compiler-tc-macro-counter-profile-line
+        "generated_fingerprint_cache_hits"
+        compiler-tc-macro-generated-fingerprint-cache-hits)
+      (compiler-tc-macro-counter-profile-line
+        "generated_fingerprint_cache_misses"
+        compiler-tc-macro-generated-fingerprint-cache-misses)
       (compiler-tc-reinfer-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
       (tc-lp-line "repr_c_field_visits" 1)
@@ -36721,6 +36751,753 @@
                 (macro-decl-list-structural-eq? a-rest b-rest)))]
           [_ false]))]))
 
+(defenum MacroGeneratedFingerprintCacheLookup
+  (MacroGeneratedFingerprintCacheMiss)
+  (MacroGeneratedFingerprintCacheTooLarge)
+  (MacroGeneratedFingerprintCacheHit String))
+
+(defenum MacroGeneratedFingerprintKey
+  (MacroGeneratedFingerprintKey String i64)
+  (MacroGeneratedFingerprintTooLarge))
+
+(define macro-generated-fingerprint-cache-capacity : i64
+  4096)
+(define macro-generated-fingerprint-cache-module-keys : (Array i64)
+  (array.make-array i64 4096))
+(define macro-generated-fingerprint-cache-identity-keys : (Array i64)
+  (array.make-array i64 4096))
+(define macro-generated-fingerprint-cache-values : (Array String)
+  (array.make-array String 4096))
+(define macro-generated-fingerprint-cache-count : i64
+  0)
+(define macro-generated-fingerprint-cache-generation : i64
+  -1)
+(define macro-generated-fingerprint-cache-ready : bool
+  false)
+(define macro-generated-fingerprint-cache-too-large-value : String
+  "__typelisp_macro_generated_fingerprint_too_large__")
+
+(define (macro-generated-fingerprint-cache-reset!) : unit
+  (set! macro-generated-fingerprint-cache-ready false))
+
+(define (macro-generated-fingerprint-cache-ensure!) : unit
+  (if (if macro-generated-fingerprint-cache-ready
+    (= macro-generated-fingerprint-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i macro-generated-fingerprint-cache-capacity)
+          (begin
+            (array.array-set! macro-generated-fingerprint-cache-module-keys i 0)
+            (set! i (+ i 1))))
+        (set! macro-generated-fingerprint-cache-count 0)
+        (set! macro-generated-fingerprint-cache-generation (intern-generation))
+        (set! macro-generated-fingerprint-cache-ready true)))))
+
+(define (macro-generated-fingerprint-cache-bucket
+  [module-id : i64]
+  [identity-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2654435761) (* identity-id 40503))
+    (- macro-generated-fingerprint-cache-capacity 1)))
+
+(define (macro-generated-fingerprint-cache-get
+  [target-module : String]
+  [identity : String]) : MacroGeneratedFingerprintCacheLookup
+  (let
+    [module-id : i64 (intern target-module)]
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-fingerprint-cache-ensure!)
+      (let
+        [cursor : i64
+          (macro-generated-fingerprint-cache-bucket module-id identity-id)]
+        [module-key : i64 (+ module-id 1)]
+        [identity-key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : MacroGeneratedFingerprintCacheLookup
+          (MacroGeneratedFingerprintCacheMiss)]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps macro-generated-fingerprint-cache-capacity))
+            (let
+              [slot : i64
+                (array.array-ref
+                  macro-generated-fingerprint-cache-module-keys
+                  cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (and
+                  (= slot module-key)
+                  (=
+                    (array.array-ref
+                      macro-generated-fingerprint-cache-identity-keys
+                      cursor)
+                    identity-key))
+                  (begin
+                    (set!
+                      out
+                      (let
+                        [value : String
+                          (array.array-ref
+                            macro-generated-fingerprint-cache-values
+                            cursor)]
+                        (if (string.string-eq
+                          value
+                          macro-generated-fingerprint-cache-too-large-value)
+                          (MacroGeneratedFingerprintCacheTooLarge)
+                          (MacroGeneratedFingerprintCacheHit value))))
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- macro-generated-fingerprint-cache-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (macro-generated-fingerprint-cache-put!
+  [target-module : String]
+  [identity : String]
+  [value : String]) : unit
+  (let
+    [module-id : i64 (intern target-module)]
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-fingerprint-cache-ensure!)
+      (if (>=
+        (* macro-generated-fingerprint-cache-count 2)
+        macro-generated-fingerprint-cache-capacity)
+        unit
+        (let
+          [cursor : i64
+            (macro-generated-fingerprint-cache-bucket module-id identity-id)]
+          [module-key : i64 (+ module-id 1)]
+          [identity-key : i64 (+ identity-id 1)]
+          [stored : String (intern-persistent-copy value)]
+          [steps : i64 0]
+          [done : bool false]
+          (begin
+            (while (if done
+              false
+              (< steps macro-generated-fingerprint-cache-capacity))
+              (let
+                [slot : i64
+                  (array.array-ref
+                    macro-generated-fingerprint-cache-module-keys
+                    cursor)]
+                (if (= slot 0)
+                  (begin
+                    (array.array-set!
+                      macro-generated-fingerprint-cache-module-keys
+                      cursor
+                      module-key)
+                    (array.array-set!
+                      macro-generated-fingerprint-cache-identity-keys
+                      cursor
+                      identity-key)
+                    (array.array-set!
+                      macro-generated-fingerprint-cache-values
+                      cursor
+                      stored)
+                    (set!
+                      macro-generated-fingerprint-cache-count
+                      (+ macro-generated-fingerprint-cache-count 1))
+                    (set! done true))
+                  (if (and
+                    (= slot module-key)
+                    (=
+                      (array.array-ref
+                        macro-generated-fingerprint-cache-identity-keys
+                        cursor)
+                      identity-key))
+                    (begin
+                      (array.array-set!
+                        macro-generated-fingerprint-cache-values
+                        cursor
+                        stored)
+                      (set! done true))
+                    (begin
+                      (set!
+                        cursor
+                        (bit-and
+                          (+ cursor 1)
+                          (- macro-generated-fingerprint-cache-capacity 1)))
+                      (set! steps (+ steps 1)))))))
+            unit))))))
+
+(define (macro-generated-fingerprint-join
+  [tag : String]
+  [left : String]
+  [right : String]) : String
+  (str_cat.str-cat tag ":" (spec-string-key left) ":" (spec-string-key right)))
+
+(define (macro-generated-fingerprint-join3
+  [tag : String]
+  [a : String]
+  [b : String]
+  [c : String]) : String
+  (str_cat.str-cat
+    tag
+    ":"
+    (spec-string-key a)
+    ":"
+    (spec-string-key b)
+    ":"
+    (spec-string-key c)))
+
+(define (macro-generated-fingerprint-bool [value : bool]) : String
+  (if value
+    "1"
+    "0"))
+
+(define (macro-generated-fingerprint-maybe-type [ty : AstMaybeType]) : String
+  (match ty
+    [(AstNoType) "type:none"]
+    [(AstSomeType actual)
+      (macro-generated-fingerprint-join "type:some" (spec-type-key actual) "")]))
+
+(define (macro-generated-fingerprint-lifetimes [items : AstLifetimeList]) : String
+  (spec-lifetime-list-key items))
+
+(define (macro-generated-fingerprint-param [param : AstParam]) : String
+  (match param
+    [(AstParam name ty comptime?)
+      (macro-generated-fingerprint-join3
+        "param"
+        (intern-str name)
+        (spec-type-key ty)
+        (macro-generated-fingerprint-bool comptime?))]))
+
+(define (macro-generated-fingerprint-param-list [params : AstParamList]) : String
+  (match params
+    [(AstParamNil) "params:nil"]
+    [(AstParamCons head rest)
+      (macro-generated-fingerprint-join
+        "params:cons"
+        (macro-generated-fingerprint-param head)
+        (macro-generated-fingerprint-param-list (box-get rest)))]))
+
+(define (macro-generated-fingerprint-macro-param [param : AstMacroParam]) : String
+  (match param
+    [(AstMacroParam name ty variadic?)
+      (macro-generated-fingerprint-join3
+        "macro-param"
+        (intern-str name)
+        (spec-type-key ty)
+        (macro-generated-fingerprint-bool variadic?))]))
+
+(define (macro-generated-fingerprint-macro-param-list
+  [params : AstMacroParamList]) : String
+  (match params
+    [(AstMacroParamNil) "macro-params:nil"]
+    [(AstMacroParamCons head rest)
+      (macro-generated-fingerprint-join
+        "macro-params:cons"
+        (macro-generated-fingerprint-macro-param head)
+        (macro-generated-fingerprint-macro-param-list (box-get rest)))]))
+
+(define (macro-generated-fingerprint-field-cleanup [cleanup : AstFieldCleanup]) : String
+  (match cleanup
+    [(AstFieldNoCleanup) "field-cleanup:none"]
+    [(AstFieldCleanupFn name)
+      (macro-generated-fingerprint-join "field-cleanup:fn" (intern-str name) "")]
+    [(AstFieldOwnedCleanup) "field-cleanup:owned"]))
+
+(define (macro-generated-fingerprint-field [field : AstFieldDef]) : String
+  (match field
+    [(AstFieldDef name ty cleanup)
+      (macro-generated-fingerprint-join3
+        "field"
+        (intern-str name)
+        (spec-type-key ty)
+        (macro-generated-fingerprint-field-cleanup cleanup))]))
+
+(define (macro-generated-fingerprint-field-list [fields : AstFieldDefList]) : String
+  (match fields
+    [(AstFieldDefNil) "fields:nil"]
+    [(AstFieldDefCons head rest)
+      (macro-generated-fingerprint-join
+        "fields:cons"
+        (macro-generated-fingerprint-field head)
+        (macro-generated-fingerprint-field-list (box-get rest)))]))
+
+(define (macro-generated-fingerprint-struct-repr [repr : AstStructRepr]) : String
+  (match repr
+    [(AstStructReprDefault) "repr:default"]
+    [(AstStructReprC) "repr:c"]))
+
+(define (macro-generated-fingerprint-struct-cleanup
+  [cleanup : AstStructCleanup]) : String
+  (match cleanup
+    [(AstStructNoCleanup) "struct-cleanup:none"]
+    [(AstStructCleanupFn name)
+      (macro-generated-fingerprint-join
+        "struct-cleanup:fn"
+        (intern-str name)
+        "")]))
+
+(define (macro-generated-fingerprint-enum-cleanup [cleanup : AstEnumCleanup]) : String
+  (match cleanup
+    [(AstEnumNoCleanup) "enum-cleanup:none"]
+    [(AstEnumCleanupFn name)
+      (macro-generated-fingerprint-join "enum-cleanup:fn" (intern-str name) "")]))
+
+(define (macro-generated-fingerprint-payload-cleanup
+  [cleanup : AstVariantPayloadCleanup]) : String
+  (match cleanup
+    [(AstVariantPayloadNoCleanup) "payload-cleanup:none"]
+    [(AstVariantPayloadCleanupFn name)
+      (macro-generated-fingerprint-join
+        "payload-cleanup:fn"
+        (intern-str name)
+        "")]
+    [(AstVariantPayloadOwnedCleanup) "payload-cleanup:owned"]))
+
+(define (macro-generated-fingerprint-payload-cleanup-list
+  [cleanups : AstVariantPayloadCleanupList]) : String
+  (match cleanups
+    [(AstVariantPayloadCleanupNil) "payload-cleanups:nil"]
+    [(AstVariantPayloadCleanupCons head rest)
+      (macro-generated-fingerprint-join
+        "payload-cleanups:cons"
+        (macro-generated-fingerprint-payload-cleanup head)
+        (macro-generated-fingerprint-payload-cleanup-list (box-get rest)))]))
+
+(define (macro-generated-fingerprint-variant [variant : AstVariantDef]) : String
+  (match variant
+    [(AstVariantDef name payloads cleanups)
+      (macro-generated-fingerprint-join3
+        "variant"
+        (intern-str name)
+        (spec-type-list-key payloads)
+        (macro-generated-fingerprint-payload-cleanup-list cleanups))]))
+
+(define (macro-generated-fingerprint-variant-list
+  [variants : AstVariantDefList]) : String
+  (match variants
+    [(AstVariantDefNil) "variants:nil"]
+    [(AstVariantDefCons head rest)
+      (macro-generated-fingerprint-join
+        "variants:cons"
+        (macro-generated-fingerprint-variant head)
+        (macro-generated-fingerprint-variant-list (box-get rest)))]))
+
+(define (macro-generated-fingerprint-fn-export [export : AstFnExport]) : String
+  (match export
+    [(AstFnNoExport) "export:none"]
+    [(AstFnExport symbol)
+      (macro-generated-fingerprint-join "export:symbol" (intern-str symbol) "")]))
+
+(define macro-generated-fingerprint-sexpr-fuel : i64
+  128)
+
+;; Bound allocation before AST -> sexpr conversion; oversized generated bodies
+;; use the structural fallback instead of materializing huge temporary syntax.
+(define (macro-generated-fingerprint-budget-tick [fuel : i64]) : i64
+  (if (<= fuel 0)
+    -1
+    (- fuel 1)))
+
+(define (macro-generated-fingerprint-expr-id-budget
+  [expr-id : i64]
+  [fuel : i64]) : i64
+  (macro-generated-fingerprint-expr-budget (ast-node-get expr-id) fuel))
+
+(define (macro-generated-fingerprint-two-exprs-budget
+  [first-id : i64]
+  [second-id : i64]
+  [fuel : i64]) : i64
+  (let
+    [remaining : i64 (macro-generated-fingerprint-expr-id-budget first-id fuel)]
+    (if (< remaining 0)
+      -1
+      (macro-generated-fingerprint-expr-id-budget second-id remaining))))
+
+(define (macro-generated-fingerprint-three-exprs-budget
+  [first-id : i64]
+  [second-id : i64]
+  [third-id : i64]
+  [fuel : i64]) : i64
+  (let
+    [remaining : i64
+      (macro-generated-fingerprint-two-exprs-budget first-id second-id fuel)]
+    (if (< remaining 0)
+      -1
+      (macro-generated-fingerprint-expr-id-budget third-id remaining))))
+
+(define (macro-generated-fingerprint-expr-list-budget
+  [exprs : AstExprList]
+  [fuel : i64]) : i64
+  (let
+    [cur : AstExprList exprs]
+    [remaining : i64 fuel]
+    [done : bool false]
+    [ok : bool true]
+    (begin
+      (while (if done
+        false
+        ok)
+        (match cur
+          [(AstExprNil) (set! done true)]
+          [(AstExprCons head rest)
+            (let
+              [next-remaining : i64
+                (macro-generated-fingerprint-expr-id-budget head remaining)]
+              (if (< next-remaining 0)
+                (set! ok false)
+                (begin
+                  (set! remaining next-remaining)
+                  (set! cur (box-get rest)))))]))
+      (if ok
+        remaining
+        -1))))
+
+(define (macro-generated-fingerprint-let-binding-budget
+  [binding : AstLetBinding]
+  [fuel : i64]) : i64
+  (match binding
+    [(AstLetBinding _ _ value-id)
+      (macro-generated-fingerprint-expr-id-budget value-id fuel)]))
+
+(define (macro-generated-fingerprint-let-bindings-budget
+  [bindings : AstLetBindingList]
+  [fuel : i64]) : i64
+  (let
+    [cur : AstLetBindingList bindings]
+    [remaining : i64 fuel]
+    [done : bool false]
+    [ok : bool true]
+    (begin
+      (while (if done
+        false
+        ok)
+        (match cur
+          [(AstLetBindingNil) (set! done true)]
+          [(AstLetBindingCons head rest)
+            (let
+              [next-remaining : i64
+                (macro-generated-fingerprint-let-binding-budget head remaining)]
+              (if (< next-remaining 0)
+                (set! ok false)
+                (begin
+                  (set! remaining next-remaining)
+                  (set! cur (box-get rest)))))]))
+      (if ok
+        remaining
+        -1))))
+
+(define (macro-generated-fingerprint-expr-budget [expr : AstExpr] [fuel : i64]) : i64
+  (let
+    [next : i64 (macro-generated-fingerprint-budget-tick fuel)]
+    (if (< next 0)
+      -1
+      (match expr
+        [(AstExprSpanned inner-id _)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprLiteral _) next]
+        [(AstExprVar _) next]
+        [(AstExprBinary _ left-id right-id)
+          (macro-generated-fingerprint-two-exprs-budget left-id right-id next)]
+        [(AstExprUnary _ inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprCall func-id args)
+          (let
+            [remaining : i64
+              (macro-generated-fingerprint-expr-id-budget func-id next)]
+            (if (< remaining 0)
+              -1
+              (macro-generated-fingerprint-expr-list-budget args remaining)))]
+        [(AstExprIf cond-id then-id else-id)
+          (macro-generated-fingerprint-three-exprs-budget
+            cond-id
+            then-id
+            else-id
+            next)]
+        [(AstExprLet let-box)
+          (match (box-get let-box)
+            [(AstLet bindings body-id)
+              (let
+                [remaining : i64
+                  (macro-generated-fingerprint-let-bindings-budget
+                    bindings
+                    next)]
+                (if (< remaining 0)
+                  -1
+                  (macro-generated-fingerprint-expr-id-budget body-id remaining)))])]
+        [(AstExprTuple exprs)
+          (macro-generated-fingerprint-expr-list-budget exprs next)]
+        [(AstExprTupleRef tuple-id _)
+          (macro-generated-fingerprint-expr-id-budget tuple-id next)]
+        [(AstExprArray exprs)
+          (macro-generated-fingerprint-expr-list-budget exprs next)]
+        [(AstExprMakeArray _ len-id)
+          (macro-generated-fingerprint-expr-id-budget len-id next)]
+        [(AstExprArrayRef array-id index-id)
+          (macro-generated-fingerprint-two-exprs-budget array-id index-id next)]
+        [(AstExprArraySet array-id index-id value-id)
+          (macro-generated-fingerprint-three-exprs-budget
+            array-id
+            index-id
+            value-id
+            next)]
+        [(AstExprArrayPush array-id value-id)
+          (macro-generated-fingerprint-two-exprs-budget array-id value-id next)]
+        [(AstExprStringRef string-id index-id)
+          (macro-generated-fingerprint-two-exprs-budget string-id index-id next)]
+        [(AstExprWhile cond-id body-id)
+          (macro-generated-fingerprint-two-exprs-budget cond-id body-id next)]
+        [(AstExprBegin exprs)
+          (macro-generated-fingerprint-expr-list-budget exprs next)]
+        [(AstExprUnsafe exprs)
+          (macro-generated-fingerprint-expr-list-budget exprs next)]
+        [(AstExprSet _ value-id)
+          (macro-generated-fingerprint-expr-id-budget value-id next)]
+        [(AstExprAnn inner-id _)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprCast inner-id _)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprBorrow _ _ place-id)
+          (macro-generated-fingerprint-expr-id-budget place-id next)]
+        [(AstExprStructGet receiver-id _)
+          (macro-generated-fingerprint-expr-id-budget receiver-id next)]
+        [(AstExprStructSet receiver-id _ value-id)
+          (macro-generated-fingerprint-two-exprs-budget
+            receiver-id
+            value-id
+            next)]
+        [(AstExprBox inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprBoxGet inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprBoxTake inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprBoxSet receiver-id value-id)
+          (macro-generated-fingerprint-two-exprs-budget
+            receiver-id
+            value-id
+            next)]
+        [(AstExprTypeLiteral _) next]
+        [(AstExprInit _) next]
+        [(AstExprQuote inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprQuasiquote inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprUnquote inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprUnquoteSplicing inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprBracketClause exprs)
+          (macro-generated-fingerprint-expr-list-budget exprs next)]
+        [(AstExprTry inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [(AstExprReturn inner-id)
+          (macro-generated-fingerprint-expr-id-budget inner-id next)]
+        [_ -1]))))
+
+(define (macro-generated-fingerprint-sexpr [sexpr : SpannedSexpr] [fuel : i64]) : MacroGeneratedFingerprintKey
+  (if (<= fuel 0)
+    (MacroGeneratedFingerprintTooLarge)
+    (match sexpr
+      [(SpSInt _ text _)
+        (MacroGeneratedFingerprintKey
+          (str_cat.str-cat "int:" (spec-string-key text))
+          (- fuel 1))]
+      [(SpSSym name _)
+        (MacroGeneratedFingerprintKey
+          (str_cat.str-cat "sym:" (spec-string-key name))
+          (- fuel 1))]
+      [(SpSNil _) (MacroGeneratedFingerprintKey "nil" (- fuel 1))]
+      [(SpSCons head tail _)
+        (match (macro-generated-fingerprint-sexpr (sp-node-get head) (- fuel 1))
+          [(MacroGeneratedFingerprintKey head-key head-fuel)
+            (match (macro-generated-fingerprint-sexpr
+              (sp-node-get tail)
+              head-fuel)
+              [(MacroGeneratedFingerprintKey tail-key tail-fuel)
+                (MacroGeneratedFingerprintKey
+                  (str_cat.str-cat
+                    "cons:"
+                    (spec-string-key head-key)
+                    ":"
+                    (spec-string-key tail-key))
+                  tail-fuel)]
+              [(MacroGeneratedFingerprintTooLarge)
+                (MacroGeneratedFingerprintTooLarge)])]
+          [(MacroGeneratedFingerprintTooLarge)
+            (MacroGeneratedFingerprintTooLarge)])]
+      [(SpSStr text _)
+        (MacroGeneratedFingerprintKey
+          (str_cat.str-cat "str:" (spec-string-key text))
+          (- fuel 1))]
+      [(SpSChar c _)
+        (MacroGeneratedFingerprintKey
+          (str_cat.str-cat "char:" (string.int->string (cast c : i64)))
+          (- fuel 1))]
+      [(SpSFloat text _)
+        (MacroGeneratedFingerprintKey
+          (str_cat.str-cat "float:" (spec-string-key text))
+          (- fuel 1))]
+      [(SpSBracketList items _)
+        (match (macro-generated-fingerprint-sexpr
+          (sp-node-get items)
+          (- fuel 1))
+          [(MacroGeneratedFingerprintKey items-key items-fuel)
+            (MacroGeneratedFingerprintKey
+              (str_cat.str-cat "bracket:" (spec-string-key items-key))
+              items-fuel)]
+          [(MacroGeneratedFingerprintTooLarge)
+            (MacroGeneratedFingerprintTooLarge)])])))
+
+(define (macro-generated-fingerprint-expr [expr : AstExpr]) : TcMaybeString
+  (if (<
+    (macro-generated-fingerprint-expr-budget
+      expr
+      macro-generated-fingerprint-sexpr-fuel)
+    0)
+    (TcNoString)
+    (let
+      [mark : i64 (sp-node-pool-len)]
+      (match (macro-expr-to-spanned-sexpr expr expr)
+        [(OkMacroSexpr sexpr)
+          (match (macro-generated-fingerprint-sexpr
+            sexpr
+            macro-generated-fingerprint-sexpr-fuel)
+            [(MacroGeneratedFingerprintKey key _)
+              (begin
+                (sp-node-pool-truncate! mark)
+                (TcSomeString key))]
+            [(MacroGeneratedFingerprintTooLarge)
+              (begin
+                (sp-node-pool-truncate! mark)
+                (TcNoString))])]
+        [(ErrMacroSexpr _)
+          (begin
+            (sp-node-pool-truncate! mark)
+            (TcNoString))]))))
+
+(define (macro-generated-fingerprint-decl [decl : AstDecl]) : TcMaybeString
+  (match decl
+    [(AstDeclModule name)
+      (TcSomeString
+        (macro-generated-fingerprint-join "decl:module" (intern-str name) ""))]
+    [(AstDeclDef name ty value-box)
+      (match (macro-generated-fingerprint-expr (ast-node-get value-box))
+        [(TcSomeString value-key)
+          (TcSomeString
+            (macro-generated-fingerprint-join3
+              "decl:def"
+              (intern-str name)
+              (macro-generated-fingerprint-maybe-type ty)
+              value-key))]
+        [(TcNoString) (TcNoString)])]
+    [(AstDeclDefFn name params ret body-box export)
+      (match (macro-generated-fingerprint-expr (ast-node-get body-box))
+        [(TcSomeString body-key)
+          (TcSomeString
+            (macro-generated-fingerprint-join3
+              "decl:fn"
+              (intern-str name)
+              (macro-generated-fingerprint-param-list params)
+              (macro-generated-fingerprint-join3
+                "fn-tail"
+                (spec-type-key ret)
+                body-key
+                (macro-generated-fingerprint-fn-export export))))]
+        [(TcNoString) (TcNoString)])]
+    [(AstDeclDefEnum name cleanup variants)
+      (TcSomeString
+        (macro-generated-fingerprint-join3
+          "decl:enum"
+          (intern-str name)
+          (macro-generated-fingerprint-enum-cleanup cleanup)
+          (macro-generated-fingerprint-variant-list variants)))]
+    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      (TcSomeString
+        (macro-generated-fingerprint-join3
+          "decl:enum-lifetimes"
+          (intern-str name)
+          (macro-generated-fingerprint-lifetimes lifetimes)
+          (macro-generated-fingerprint-join
+            "enum-tail"
+            (macro-generated-fingerprint-enum-cleanup cleanup)
+            (macro-generated-fingerprint-variant-list variants))))]
+    [(AstDeclDefStruct name repr cleanup fields)
+      (TcSomeString
+        (macro-generated-fingerprint-join3
+          "decl:struct"
+          (intern-str name)
+          (macro-generated-fingerprint-struct-repr repr)
+          (macro-generated-fingerprint-join
+            "struct-tail"
+            (macro-generated-fingerprint-struct-cleanup cleanup)
+            (macro-generated-fingerprint-field-list fields))))]
+    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+      (TcSomeString
+        (macro-generated-fingerprint-join3
+          "decl:struct-lifetimes"
+          (intern-str name)
+          (macro-generated-fingerprint-lifetimes lifetimes)
+          (macro-generated-fingerprint-join3
+            "struct-tail"
+            (macro-generated-fingerprint-struct-repr repr)
+            (macro-generated-fingerprint-struct-cleanup cleanup)
+            (macro-generated-fingerprint-field-list fields))))]
+    [(AstDeclDefMacro name params ret body-box)
+      (match (macro-generated-fingerprint-expr (ast-node-get body-box))
+        [(TcSomeString body-key)
+          (TcSomeString
+            (macro-generated-fingerprint-join3
+              "decl:macro"
+              (intern-str name)
+              (macro-generated-fingerprint-macro-param-list params)
+              (macro-generated-fingerprint-join
+                "macro-tail"
+                (spec-type-key ret)
+                body-key)))]
+        [(TcNoString) (TcNoString)])]
+    [(AstDeclIncludeStr name path)
+      (TcSomeString
+        (macro-generated-fingerprint-join "decl:include-str" name path))]
+    [(AstDeclIncludeBin name path)
+      (TcSomeString
+        (macro-generated-fingerprint-join "decl:include-bin" name path))]
+    [(AstDeclTest name body-box _)
+      (match (macro-generated-fingerprint-expr (ast-node-get body-box))
+        [(TcSomeString body-key)
+          (TcSomeString
+            (macro-generated-fingerprint-join
+              "decl:test"
+              (intern-str name)
+              body-key))]
+        [(TcNoString) (TcNoString)])]
+    [(AstDeclUnsafe inner-box)
+      (macro-generated-fingerprint-decl (box-get inner-box))]
+    [(AstDeclComptimeDecl _ inner-box)
+      (macro-generated-fingerprint-decl (box-get inner-box))]
+    [_ (TcNoString)]))
+
+(define (macro-generated-fingerprint-decl-list [decls : AstDeclList]) : TcMaybeString
+  (match decls
+    [(AstDeclNil) (TcSomeString "decls:nil")]
+    [(AstDeclCons decl rest)
+      (match (macro-generated-fingerprint-decl decl)
+        [(TcSomeString head-key)
+          (match (macro-generated-fingerprint-decl-list (box-get rest))
+            [(TcSomeString rest-key)
+              (TcSomeString
+                (macro-generated-fingerprint-join
+                  "decls:cons"
+                  head-key
+                  rest-key))]
+            [(TcNoString) (TcNoString)])]
+        [(TcNoString) (TcNoString)])]))
+
 (define (macro-generated-key-body-for-compare
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -36758,6 +37535,167 @@
             (macro-decls-filter-generated-key expanded identity))]
         [(ErrMacroDeclsWithPaths _)
           (macro-decls-filter-generated-key body identity)]))))
+
+(define (macro-generated-key-body-normalized-fingerprint
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [decl-path : String]
+  [identity : String]
+  [body : AstDeclList]) : TcMaybeString
+  (macro-generated-fingerprint-decl-list
+    (macro-generated-key-body-for-compare
+      ctx
+      top-env
+      orig-decls
+      target-module
+      decl-path
+      identity
+      body
+      (macro-expand-fixed-point-limit))))
+
+(define (macro-generated-key-body-cached-existing-fingerprint
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [decl-path : String]
+  [identity : String]
+  [body : AstDeclList]) : TcMaybeString
+  (match (macro-generated-fingerprint-cache-get target-module identity)
+    [(MacroGeneratedFingerprintCacheHit fingerprint)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-macro-profile-note-generated-fingerprint-cache-hit))
+        (TcSomeString fingerprint))]
+    [(MacroGeneratedFingerprintCacheTooLarge)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-macro-profile-note-generated-fingerprint-cache-hit))
+        (TcNoString))]
+    [(MacroGeneratedFingerprintCacheMiss)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-macro-profile-note-generated-fingerprint-cache-miss))
+        (match (macro-generated-key-body-normalized-fingerprint
+          ctx
+          top-env
+          orig-decls
+          target-module
+          decl-path
+          identity
+          body)
+          [(TcSomeString fingerprint)
+            (begin
+              (macro-generated-fingerprint-cache-put!
+                target-module
+                identity
+                fingerprint)
+              (TcSomeString fingerprint))]
+          [(TcNoString)
+            (begin
+              (macro-generated-fingerprint-cache-put!
+                target-module
+                identity
+                macro-generated-fingerprint-cache-too-large-value)
+              (TcNoString))]))]))
+
+(define (macro-generated-key-body-normalized-structural-eq?
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [decl-path : String]
+  [identity : String]
+  [existing-body : AstDeclList]
+  [generated-body : AstDeclList]) : bool
+  (let
+    [compare-existing-body : AstDeclList
+      (macro-generated-key-body-for-compare
+        ctx
+        top-env
+        orig-decls
+        target-module
+        decl-path
+        identity
+        existing-body
+        (macro-expand-fixed-point-limit))]
+    [compare-generated-body : AstDeclList
+      (macro-generated-key-body-for-compare
+        ctx
+        top-env
+        orig-decls
+        target-module
+        decl-path
+        identity
+        generated-body
+        (macro-expand-fixed-point-limit))]
+    (macro-decl-list-structural-eq?
+      compare-existing-body
+      compare-generated-body)))
+
+(define (macro-generated-key-body-replay-compatible?
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [decl-path : String]
+  [identity : String]
+  [existing-body : AstDeclList]
+  [generated-body : AstDeclList]) : bool
+  (match (macro-generated-key-body-cached-existing-fingerprint
+    ctx
+    top-env
+    orig-decls
+    target-module
+    decl-path
+    identity
+    existing-body)
+    [(TcSomeString existing-fingerprint)
+      (match (macro-generated-key-body-normalized-fingerprint
+        ctx
+        top-env
+        orig-decls
+        target-module
+        decl-path
+        identity
+        generated-body)
+        [(TcSomeString generated-fingerprint)
+          (if (string.string-eq existing-fingerprint generated-fingerprint)
+            (macro-generated-key-body-normalized-structural-eq?
+              ctx
+              top-env
+              orig-decls
+              target-module
+              decl-path
+              identity
+              existing-body
+              generated-body)
+            false)]
+        [(TcNoString)
+          (macro-generated-key-body-normalized-structural-eq?
+            ctx
+            top-env
+            orig-decls
+            target-module
+            decl-path
+            identity
+            existing-body
+            generated-body)])]
+    [(TcNoString)
+      (macro-generated-key-body-normalized-structural-eq?
+        ctx
+        top-env
+        orig-decls
+        target-module
+        decl-path
+        identity
+        existing-body
+        generated-body)]))
 
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
@@ -37568,8 +38506,8 @@
       (string.string-eq definition-module "stdlib.vector")
       (string.string-eq macro-name "stdlib.vector/vector"))
     (and
-      (string.string-eq definition-module "stdlib.vector_family")
-      (string.string-eq macro-name "stdlib.vector_family/vector-family"))))
+      (string.string-eq definition-module "stdlib.vector")
+      (string.string-eq macro-name "stdlib.vector/vector-family"))))
 
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]
@@ -39015,6 +39953,7 @@
     (set! macro-unqualified-import-cache-ready false)
     (set! macro-flat-import-target-cache-ready false)
     (macro-surface-call-decl-cache-reset!)
+    (macro-generated-fingerprint-cache-reset!)
     (tc-source-dotted-alias-key-cache-reset!)
     (tc-imported-module-identity-cache-reset!)))
 
@@ -41010,14 +41949,14 @@
       rewrite-env
       decls)))
 
-;; Fast path for the hot stdlib.vector_family declaration macro. The macro body
+;; Fast path for the hot stdlib.vector declaration macro. The macro body
 ;; is a deterministic quasiquote that emits a fixed growable-vector declaration
 ;; family, so building the AST directly avoids CTFE plus macro-output parsing.
 (define (macro-vector-family-decls-macro?
   [macro-name : String]
   [definition-module : String]) : bool
   (and
-    (string.string-eq definition-module "stdlib.vector_family")
+    (string.string-eq definition-module "stdlib.vector")
     (tc-name-base-eq? macro-name "vector-family")))
 
 (define (macro-vf-name-expr [expr : AstExpr]) : TcMaybeString
@@ -43081,30 +44020,15 @@
                 same-identity-body
                 generated-key-body)
                 true
-                (let
-                  [compare-existing-body : AstDeclList
-                    (macro-generated-key-body-for-compare
-                      ctx
-                      top-env
-                      orig-decls
-                      target-module
-                      decl-path
-                      identity
-                      same-identity-body
-                      (macro-expand-fixed-point-limit))]
-                  [compare-generated-body : AstDeclList
-                    (macro-generated-key-body-for-compare
-                      ctx
-                      top-env
-                      orig-decls
-                      target-module
-                      decl-path
-                      identity
-                      generated-key-body
-                      (macro-expand-fixed-point-limit))]
-                  (macro-decl-list-structural-eq?
-                    compare-existing-body
-                    compare-generated-body)))]
+                (macro-generated-key-body-replay-compatible?
+                  ctx
+                  top-env
+                  orig-decls
+                  target-module
+                  decl-path
+                  identity
+                  same-identity-body
+                  generated-key-body))]
             (if same-body?
               (match (macro-check-generated-import-collisions
                 orig-decls
@@ -44833,7 +45757,7 @@
 ;; Whether the program contains any `(type T)` literal (AstExprTypeLiteral). ALL
 ;; CTFE reflection/layout queries (ctfe-reflect-resolve-type for a `(type T)`,
 ;; and every reflection/layout builtin -- size-of/struct-field-*/enum-variant-*/
-;; …) take a type-literal argument, and type literals are comptime-only (they
+;; ...) take a type-literal argument, and type literals are comptime-only (they
 ;; can't appear in runtime code). So a program with no type literal never queries
 ;; the CTFE metadata, and `tc-ctfe-env` can hand back an empty env instead of
 ;; building the whole-program reflection + layout tables (tens of MB, O(types^2)).

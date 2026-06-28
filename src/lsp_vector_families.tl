@@ -1,5 +1,5 @@
-;; lsp_vector_families.tl - generated vector families for LSP state.
-(import stdlib.vector_family as vf)
+;; lsp_vector_families.tl - named generated vector families for LSP state.
+(import stdlib.vector)
 
 (defstruct LspDeclEntry
   (kind String)
@@ -12,7 +12,7 @@
   (form-end-line i64)
   (form-end-col i64))
 
-(vf.vector-family LspDeclEntry LspDeclList lsp-decl-list)
+(vector.vector-family LspDeclEntry LspDeclList lsp-decl-list)
 
 (defstruct LspDocument
   (uri String)
@@ -22,4 +22,4 @@
   (decls LspDeclList)
   (decls-valid bool))
 
-(vf.vector-family LspDocument LspDocuments lsp-documents)
+(vector.vector-family LspDocument LspDocuments lsp-documents)

@@ -2,6 +2,7 @@
 ;;
 ;; This module is deliberately dormant: it specifies and validates the tlci
 ;; container and metadata schema, but does not change package build behavior.
+(import stdlib.byte_buf_core)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat)
@@ -332,10 +333,14 @@
 (define (tlci-byte [value : i64]) : u8
   (cast (bit-and value 0xff) : u8))
 
-(define (tlci-push-u8! [out : (Array u8)] [value : i64]) : unit
-  (array-push! out (tlci-byte value)))
+(define (tlci-push-u8!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
+  (byte_buf_core.byte-buf-builder-push out (tlci-byte value)))
 
-(define (tlci-push-u64! [out : (Array u8)] [value : i64]) : unit
+(define (tlci-push-u64!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [value : i64]) : unit
   (begin
     (tlci-push-u8! out value)
     (tlci-push-u8! out (shr value 8))
@@ -377,7 +382,9 @@
                 (shl (tlci-byte-at bytes (+ offset 6)) 48)
                 (shl (tlci-byte-at bytes (+ offset 7)) 56)))))))))
 
-(define (tlci-push-zeroes! [out : (Array u8)] [count : i64]) : unit
+(define (tlci-push-zeroes!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [count : i64]) : unit
   (let
     [i : i64 0]
     (begin
@@ -396,10 +403,12 @@
         offset
         (+ offset (- align rem))))))
 
-(define (tlci-pad-to! [out : (Array u8)] [offset : i64]) : unit
-  (tlci-push-zeroes! out (- offset (array-length out))))
+(define (tlci-pad-to!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [offset : i64]) : unit
+  (tlci-push-zeroes! out (- offset (struct-get out len))))
 
-(define (tlci-push-magic! [out : (Array u8)]) : unit
+(define (tlci-push-magic! [out : (&mut out byte_buf_core.ByteBufBuilder)]) : unit
   (begin
     (tlci-push-u8! out 84)
     (tlci-push-u8! out 76)
@@ -421,23 +430,27 @@
     (= (tlci-byte-at bytes 6) 26)
     (= (tlci-byte-at bytes 7) 10)))
 
-(define (tlci-push-string-bytes! [out : (Array u8)] [text : String]) : unit
+(define (tlci-push-string-bytes!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [text : String]) : unit
   (let
     [i : i64 0]
     [n : i64 (tlci-string-length text)]
     (begin
       (while (< i n)
         (begin
-          (array-push! out (cast (tlci-string-ref text i) : u8))
+          (byte_buf_core.byte-buf-builder-push
+            out
+            (cast (tlci-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
 
 (define (tlci-string->bytes [text : String]) : (Array u8)
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (tlci-push-string-bytes! out text)
-      out)))
+      (tlci-push-string-bytes! (&mut out) text)
+      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
 
 (define (tlci-bytes->string [bytes : (Array u8)] [offset : i64] [len : i64]) : String
   (let
@@ -466,16 +479,10 @@
 (define (tlci-copy-bytes [bytes : (Array u8)]) : (Array u8)
   (tlci-slice-bytes bytes 0 (array-length bytes)))
 
-(define (tlci-append-bytes! [out : (Array u8)] [bytes : (Array u8)]) : unit
-  (let
-    [i : i64 0]
-    [n : i64 (array-length bytes)]
-    (begin
-      (while (< i n)
-        (begin
-          (array-push! out (array-ref bytes i))
-          (set! i (+ i 1))))
-      unit)))
+(define (tlci-append-bytes!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [bytes : (Array u8)]) : unit
+  (byte_buf_core.byte-buf-builder-append-array out (& bytes)))
 
 (define (tlci-bytes-eq? [left : (Array u8)] [right : (Array u8)]) : bool
   (let
@@ -817,58 +824,72 @@
         [symbols-offset : i64 (tlci-section-offset after-entries symbols-len 8)]
         [file-size : i64
           (tlci-section-end after-entries symbols-offset symbols-len)]
-        [out : (Array u8) (make-array u8 0)]
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-new)]
         (begin
-          (tlci-push-magic! out)
-          (tlci-push-u64! out tlci-format-version)
-          (tlci-push-u64! out (struct-get image host-arch))
-          (tlci-push-u64! out (struct-get image callback-abi-version))
-          (tlci-push-u64! out hash-offset)
-          (tlci-push-u64! out (array-length compiler-hash-bytes))
-          (tlci-push-u64! out 0)
-          (tlci-push-u64! out metadata-offset)
-          (tlci-push-u64! out (array-length metadata-bytes))
-          (tlci-push-u64! out rodata-offset)
-          (tlci-push-u64! out rodata-len)
-          (tlci-push-u64! out code-offset)
-          (tlci-push-u64! out code-len)
-          (tlci-push-u64! out fixups-offset)
-          (tlci-push-u64! out (/ fixups-len tlci-section-fixup-record-size))
-          (tlci-push-u64! out entries-offset)
-          (tlci-push-u64! out (/ entries-len tlci-section-entry-record-size))
-          (tlci-push-u64! out symbols-offset)
-          (tlci-push-u64! out (/ symbols-len tlci-section-symbol-record-size))
-          (tlci-push-u64! out file-size)
-          (tlci-append-bytes! out compiler-hash-bytes)
-          (tlci-pad-to! out metadata-offset)
-          (tlci-append-bytes! out metadata-bytes)
+          (tlci-push-magic! (&mut out))
+          (tlci-push-u64! (&mut out) tlci-format-version)
+          (tlci-push-u64! (&mut out) (struct-get image host-arch))
+          (tlci-push-u64! (&mut out) (struct-get image callback-abi-version))
+          (tlci-push-u64! (&mut out) hash-offset)
+          (tlci-push-u64! (&mut out) (array-length compiler-hash-bytes))
+          (tlci-push-u64! (&mut out) 0)
+          (tlci-push-u64! (&mut out) metadata-offset)
+          (tlci-push-u64! (&mut out) (array-length metadata-bytes))
+          (tlci-push-u64! (&mut out) rodata-offset)
+          (tlci-push-u64! (&mut out) rodata-len)
+          (tlci-push-u64! (&mut out) code-offset)
+          (tlci-push-u64! (&mut out) code-len)
+          (tlci-push-u64! (&mut out) fixups-offset)
+          (tlci-push-u64!
+            (&mut out)
+            (/ fixups-len tlci-section-fixup-record-size))
+          (tlci-push-u64! (&mut out) entries-offset)
+          (tlci-push-u64!
+            (&mut out)
+            (/ entries-len tlci-section-entry-record-size))
+          (tlci-push-u64! (&mut out) symbols-offset)
+          (tlci-push-u64!
+            (&mut out)
+            (/ symbols-len tlci-section-symbol-record-size))
+          (tlci-push-u64! (&mut out) file-size)
+          (tlci-append-bytes! (&mut out) compiler-hash-bytes)
+          (tlci-pad-to! (&mut out) metadata-offset)
+          (tlci-append-bytes! (&mut out) metadata-bytes)
           (if (> rodata-len 0)
             (begin
-              (tlci-pad-to! out rodata-offset)
-              (tlci-append-bytes! out (struct-get image rodata)))
+              (tlci-pad-to! (&mut out) rodata-offset)
+              (tlci-append-bytes! (&mut out) (struct-get image rodata)))
             unit)
           (if (> code-len 0)
             (begin
-              (tlci-pad-to! out code-offset)
-              (tlci-append-bytes! out (struct-get image code)))
+              (tlci-pad-to! (&mut out) code-offset)
+              (tlci-append-bytes! (&mut out) (struct-get image code)))
             unit)
           (if (> fixups-len 0)
             (begin
-              (tlci-pad-to! out fixups-offset)
-              (tlci-append-bytes! out (struct-get image fixups)))
+              (tlci-pad-to! (&mut out) fixups-offset)
+              (tlci-append-bytes! (&mut out) (struct-get image fixups)))
             unit)
           (if (> entries-len 0)
             (begin
-              (tlci-pad-to! out entries-offset)
-              (tlci-append-bytes! out (struct-get image entries)))
+              (tlci-pad-to! (&mut out) entries-offset)
+              (tlci-append-bytes! (&mut out) (struct-get image entries)))
             unit)
           (if (> symbols-len 0)
             (begin
-              (tlci-pad-to! out symbols-offset)
-              (tlci-append-bytes! out (struct-get image symbols)))
+              (tlci-pad-to! (&mut out) symbols-offset)
+              (tlci-append-bytes! (&mut out) (struct-get image symbols)))
             unit)
-          (tlci-set-u64! out tlci-hash-field-offset (tlci-content-hash out))
-          (ResultTlciBytes.Ok out)))]))
+          (let
+            [out-bytes : (Array u8)
+              (byte_buf_core.byte-buf-builder-finish-array (& out))]
+            (begin
+              (tlci-set-u64!
+                out-bytes
+                tlci-hash-field-offset
+                (tlci-content-hash out-bytes))
+              (ResultTlciBytes.Ok out-bytes)))))]))
 
 (define (tlci-section-range-ok? [file-size : i64] [offset : i64] [len : i64]) : bool
   (if (= len 0)
@@ -1043,19 +1064,19 @@
 
 (define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (Array u8)
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (tlci-push-u8! out a)
-      (tlci-push-u8! out b)
-      (tlci-push-u8! out c)
-      out)))
+      (tlci-push-u8! (&mut out) a)
+      (tlci-push-u8! (&mut out) b)
+      (tlci-push-u8! (&mut out) c)
+      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
 
 (define (tlci-test-zero-records [record-size : i64] [count : i64]) : (Array u8)
   (let
-    [out : (Array u8) (make-array u8 0)]
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     (begin
-      (tlci-push-zeroes! out (* record-size count))
-      out)))
+      (tlci-push-zeroes! (&mut out) (* record-size count))
+      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
 
 (define (tlci-test-metadata-only-image) : TlciImage
   (TlciImage

@@ -14,7 +14,10 @@
 ;# export a concrete `Value` type and these hook macros for the struct subset:
 ;# `encode-bool`, `decode-bool`, `encode-int`, `decode-int`, `encode-float`,
 ;# `decode-float`, `encode-string`, `decode-string`, `object-empty`,
-;# `object-field`, `object-finish`, `expect-object`, and `field-value`.
+;# `object-field`, `object-finish`, `expect-object`, `field-value`, and
+;# `extra-decls`. `extra-decls` may emit format-specific helper aliases in the
+;# generated module, or `(begin)` when the generic `encode` / `decode` API is
+;# enough.
 (module stdlib.serialize)
 
 (import stdlib.comptime)
@@ -164,7 +167,7 @@
                   field-name
                   `(,hook __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["String"
@@ -176,7 +179,7 @@
                   field-name
                   `(,hook __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["i64"
@@ -188,7 +191,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["i32"
@@ -200,7 +203,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["i16"
@@ -212,7 +215,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["i8"
@@ -224,7 +227,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["u64"
@@ -236,7 +239,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["u32"
@@ -248,7 +251,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["u16"
@@ -260,7 +263,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["u8"
@@ -272,7 +275,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["f64"
@@ -284,7 +287,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           ["f32"
@@ -296,7 +299,7 @@
                   field-name
                   `(,hook ,field-type __serialize_field ,err-ctor))]
               `(let
-                [__serialize_field : __serialize_format.Value
+                [__serialize_field
                   (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                 ,set-expr))]
           [_
@@ -316,7 +319,7 @@
                   [set-expr : Expr
                     (comptime.expr-struct-set out field-name `parsed)]
                   `(let
-                    [__serialize_field : __serialize_format.Value
+                    [__serialize_field
                       (,field-value-hook ,value ,field-key-expr ,err-ctor)]
                     [__serialize_nested_result : ,_nested-result-type
                       (,nested-decode __serialize_field)]
@@ -426,6 +429,7 @@
           (comptime.module-hook format "object-finish")]
         [expect-object-hook : Expr
           (comptime.module-hook format "expect-object")]
+        [extra-decls-hook : Expr (comptime.module-hook format "extra-decls")]
         [type-name : String (type-nominal-name T)]
         `(begin
           (module ,module-name-expr)
@@ -470,7 +474,8 @@
                     value
                     __serialize_out
                     ,err-ctor)
-                  (,ok-ctor __serialize_out)))))))]
+                  (,ok-ctor __serialize_out)))))
+          (,extra-decls-hook ,T)))]
     [_
       (comptime.comptime-error
         (string-append "serialize: expected struct type, got " (type-key T)))]))

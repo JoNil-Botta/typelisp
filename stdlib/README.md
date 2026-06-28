@@ -177,10 +177,10 @@ use.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON
-  number conversion helpers. Import it with `(import "stdlib/json.tl")`.
-- `json_derive.tl`: module-emitting JSON encode/decode helpers for structs.
-  Import it with `(import stdlib.json_derive)` and instantiate with an alias
-  such as `(import (json_derive.json-derive Person) as person_json)`.
+  number conversion helpers. It is also the first `serialize.tl` strategy:
+  instantiate with `(import (serialize.serialize json Person) as person_json)`
+  to get `to-json` / `from-json` aliases alongside generic `encode` / `decode`.
+  Import it with `(import "stdlib/json.tl")`.
 - `math.tl`: pure scalar math helpers with no imports or platform externs:
   absolute value, min, max, clamp, and sign predicates for `i64` and `f64`.
   Transcendental/libm-style functions such as `sqrt`, trigonometry,
@@ -208,10 +208,11 @@ use.
 - `serialize.tl`: format-generic struct derive macro. Import it with
   `(import stdlib.serialize)`, import a format strategy module, then instantiate
   with `(import (serialize.serialize fmt Person) as person_ser)`. The generated
-  module exposes `encode` / `decode` over the strategy's `Value` type and a
-  local `Result` enum. The first implementation covers scalar fields and nested
-  structs through strategy hook macros; enum, sequence, and JSON hook-module
-  integration remain follow-up slices under #3837.
+  module exposes `encode` / `decode` over the strategy's `Value` type, a local
+  `Result` enum, and any format-specific declarations emitted by the strategy's
+  `extra-decls` hook. The first implementation covers scalar fields and nested
+  structs through strategy hook macros; enum and sequence support remain
+  follow-up slices under #3837.
 - `process.tl`: process command/output/error data model and the public
   `process-output`/`process-start`/`process-wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

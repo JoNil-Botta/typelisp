@@ -10,13 +10,13 @@
 
 (define (main) : i64
   (begin
-    (if (cpu-runs-avx2?)
+    (if (runs-avx2?)
       (print-string "avx2\n")
       unit)
-    (if (cpu-runs-avx512f?)
+    (if (runs-avx512f?)
       (print-string "avx512f\n")
       unit)
-    (if (cpu-runs-avx512bw?)
+    (if (runs-avx512bw?)
       (print-string "avx512bw\n")
       unit)
     0))

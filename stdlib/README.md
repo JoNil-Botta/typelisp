@@ -84,11 +84,11 @@ use.
   `env-path-list-vec`, `env-path-split-vec`, and `env-path-join-vec`. Import it
   with `(import "stdlib/env.tl")`.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
-  wrappers over backend runtime symbols (#1167). `cpu-runs-avx2?` /
-  `cpu-runs-avx512f?` / `cpu-runs-avx512bw?` report an ISA as runnable only
-  when both the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
-  underlying `cpu-osxsave?` / `cpu-xcr0` / `cpu-max-leaf` / `cpu-has-avx2?` /
-  `cpu-has-avx512f?` / `cpu-has-avx512bw?` accessors. Backs
+  wrappers over backend runtime symbols (#1167). `runs-avx2?` /
+  `runs-avx512f?` / `runs-avx512bw?` report an ISA as runnable only when both
+  the CPUID feature bit and OS XSAVE state (XCR0) are present, plus the
+  underlying `osxsave?` / `xcr0` / `max-leaf` / `has-avx2?` /
+  `has-avx512f?` / `has-avx512bw?` accessors. Backs
   `scripts/detect_simd_isa.tl`, which replaced the C cpuid probe (#1168). The
   `defdispatch` runtime SIMD dispatch design in `SPEC.md` uses the same
   capability model internally; ordinary dispatched calls should not require user
@@ -272,8 +272,8 @@ use.
   syscalls; Windows uses kernel32 threads and semaphores. Import it with
   `(import "stdlib/thread.tl")`.
 - `time.tl`: portable millisecond timestamp helpers separate from profiling
-  counters. `time-unix-ms` returns wall-clock Unix epoch milliseconds and
-  `time-monotonic-ms` returns monotonic elapsed milliseconds, both as
+  counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
+  `monotonic-ms` returns monotonic elapsed milliseconds, both as
   `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
   sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String

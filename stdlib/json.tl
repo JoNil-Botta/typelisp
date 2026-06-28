@@ -304,6 +304,17 @@
     [(JsonListNil) 0]
     [(JsonListCons _ rest) (+ 1 (stdlib.json.json-list-count (box-get rest)))]))
 
+;: Look up an array element by zero-based index.
+(define (json-list-get-index [items : JsonList] [index : i64]) : JsonLookup
+  (if (< index 0)
+    JsonMissing
+    (match items
+      [(JsonListNil) JsonMissing]
+      [(JsonListCons head rest)
+        (if (= index 0)
+          (JsonFound head)
+          (stdlib.json.json-list-get-index (box-get rest) (- index 1)))])))
+
 ;: Return the number of key/value entries in a JSON object member list.
 (define (json-member-list-count [items : JsonMemberList]) : i64
   (match items
@@ -1208,6 +1219,44 @@
       (match (stdlib.json.json-object-get-owned __json_object ,name)
         [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
         [(stdlib.json.JsonMissing) (return (,err-ctor "json: missing field"))])]))
+
+;: `stdlib.serialize` hook for beginning a sequence element list.
+(defmacro (sequence-empty) : JsonList
+  `JsonListNil)
+
+;: `stdlib.serialize` hook for adding one encoded sequence element.
+(defmacro (sequence-element [_index : Expr] [value : Expr] [rest : Expr]) : JsonList
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (stdlib.json.JsonListCons __json_value (box ,rest))]))
+
+;: `stdlib.serialize` hook for finishing a sequence value.
+(defmacro (sequence-finish [items : Expr]) : Value
+  `(stdlib.json.JsonValue (stdlib.json.JsonArray (box ,items))))
+
+;: `stdlib.serialize` hook for reading a sequence length.
+(defmacro (sequence-length [value : Expr] [err-ctor : Expr]) : i64
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (match __json_value
+        [(stdlib.json.JsonArray items)
+          (stdlib.json.json-list-count (box-get items))]
+        [_ (return (,err-ctor "json: expected array"))])]))
+
+;: `stdlib.serialize` hook for reading one decoded sequence element.
+(defmacro (sequence-element-value
+  [value : Expr]
+  [index : Expr]
+  [err-ctor : Expr]) : Expr
+  `(match ,value
+    [(stdlib.json.JsonValue __json_value)
+      (match __json_value
+        [(stdlib.json.JsonArray items)
+          (match (stdlib.json.json-list-get-index (box-get items) ,index)
+            [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
+            [(stdlib.json.JsonMissing)
+              (return (,err-ctor "json: missing array element"))])]
+        [_ (return (,err-ctor "json: expected array"))])]))
 
 ;: Emit JSON-native aliases for generated `stdlib.serialize` modules.
 (defmacro (extra-decls [T : type]) : Decls

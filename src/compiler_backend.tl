@@ -12133,8 +12133,10 @@
       (array-set! a 10 extra)
       a)))
 
-;; The binop-scavenge exclude superset [rax,rdx,rcx,r10,r11] PLUS one more
-;; already-chosen register (so a second scavenge at the same point avoids it).
+;; The fixed-register exclude superset [rax,rdx,rcx] PLUS one more already-chosen
+;; register (so a second scavenge at the same point avoids it). Pooled scratch
+;; registers such as r10/r11 stay available unless the caller passes one as
+;; `extra`.
 (define (compiler-backend-scavenge-exclude-with [extra : String]) : (Array String)
   (let
     [a : (Array String) (make-array String 6)]
@@ -12142,8 +12144,8 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
+      (array-set! a 3 "%rax")
+      (array-set! a 4 "%rax")
       (array-set! a 5 extra)
       a)))
 
@@ -19496,9 +19498,12 @@
     [r11-occupied : bool (compiler-backend-assignments-use-reg? assignments "%r11")]
     [exclude : (Array String)
       (if r11-occupied
-        (compiler-backend-scavenge-exclude-with "%r8")
+        (compiler-backend-scavenge-exclude-append
+          (compiler-backend-scavenge-exclude-with "%r8")
+          6
+          "%r11")
         (compiler-backend-c-abi-return-store-base-exclude))]
-    [exclude-n : i64 (if r11-occupied 6 2)]
+    [exclude-n : i64 (if r11-occupied 7 2)]
     [scratch-reg : String
       (compiler-backend-scavenge-reg
         dst

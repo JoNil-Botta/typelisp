@@ -1,5 +1,4 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
-(import stdlib.io)
 (import stdlib.array)
 (import stdlib.hashmap)
 (import "compiler_backend.tl")
@@ -6732,36 +6731,35 @@
 
 (define (compiler-backend-register-splat-fallback-ok?) : bool
   (and
-    (and
-      (match (compiler-backend-emit-avx2-splat
-        (compiler-backend-stack-splat-register-assignments)
-        0
-        (IrValueVar 1)
-        4
-        (AstTyI64)
-        (compiler-diagnostic-at-start "" ""))
-        [(OkCompilerBackend asm)
-          (and
-            (string-eq
-              asm
-              "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
-            (not (compiler-backend-string-contains? asm "%rax"))
-            (not (compiler-backend-string-contains? asm "%xmm0")))]
-        [(ErrCompilerBackend _) false])
-      (match (compiler-backend-emit-avx2-splat
-        (compiler-backend-stack-splat-float-register-assignments)
-        0
-        (IrValueVar 1)
-        4
-        (AstTyF64)
-        (compiler-diagnostic-at-start "" ""))
-        [(OkCompilerBackend asm)
-          (and
-            (string-eq
-              asm
-              "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
-            (not (compiler-backend-string-contains? asm "%xmm0")))]
-        [(ErrCompilerBackend _) false]))
+    (match (compiler-backend-emit-avx2-splat
+      (compiler-backend-stack-splat-register-assignments)
+      0
+      (IrValueVar 1)
+      4
+      (AstTyI64)
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend asm)
+        (and
+          (string-eq
+            asm
+            "    movq %r12, %r8\n    vmovq %r8, %xmm2\n    vpbroadcastq %xmm2, %ymm6\n")
+          (not (compiler-backend-string-contains? asm "%rax"))
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
+    (match (compiler-backend-emit-avx2-splat
+      (compiler-backend-stack-splat-float-register-assignments)
+      0
+      (IrValueVar 1)
+      4
+      (AstTyF64)
+      (compiler-diagnostic-at-start "" ""))
+      [(OkCompilerBackend asm)
+        (and
+          (string-eq
+            asm
+            "    movsd %xmm3, %xmm2\n    vbroadcastsd %xmm2, %ymm6\n")
+          (not (compiler-backend-string-contains? asm "%xmm0")))]
+      [(ErrCompilerBackend _) false])
     (match (compiler-backend-emit-avx512-splat
       (compiler-backend-stack-splat-register-assignments)
       0
@@ -9987,15 +9985,12 @@
           (compiler-backend-string-contains?
             asm
             "    movzbq (%r12,%r8,1), %rcx\n")
-          (and
-            (not (compiler-backend-string-contains? asm "    movq %r8, %r9\n"))
-            (and
-              (not
-                (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
-              (not
-                (compiler-backend-string-contains?
-                  asm
-                  (compiler-backend-todo-marker))))))]
+          (not (compiler-backend-string-contains? asm "    movq %r8, %r9\n"))
+          (not (compiler-backend-string-contains? asm "    movq %r12, %r10\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker))))]
       [(ErrCompilerBackend _) false])))
 
 (define (compiler-backend-gep-load-live-through-home-asm) : ResultCompilerBackend
@@ -11395,19 +11390,16 @@
               asm
               "    leaq (%rax,%r8,8), %rax\n"))
           (not (compiler-backend-string-contains? asm "tl_oob_abort:\n")))
-        (and
-          (not
-            (compiler-backend-string-contains?
-              asm
-              (compiler-backend-todo-marker)))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              "    movq %rax, (%r10,%r8,8)\n"))
-          (not
-            (compiler-backend-string-contains?
-              asm
-              "    movq (%r10,%r8,8), %rax\n"))))]
+        (not
+          (compiler-backend-string-contains? asm (compiler-backend-todo-marker)))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq %rax, (%r10,%r8,8)\n"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq (%r10,%r8,8), %rax\n")))]
     [(ErrCompilerBackend _) false]))
 
 (define (compiler-backend-fixed-array-literal-source) : String
@@ -15842,35 +15834,34 @@
             7
             "%r8")
           "%r10")
-        (and
-          (string-eq
-            (compiler-backend-scavenge-pick
-              starts
-              ends
+        (string-eq
+          (compiler-backend-scavenge-pick
+            starts
+            ends
+            assignments
+            7
+            5
+            (compiler-backend-scavenge-exclude-ops2
               assignments
-              7
-              5
-              (compiler-backend-scavenge-exclude-ops2
-                assignments
-                (IrValueVar 5)
-                (IrValueVar 6))
-              7
-              "%r8")
-            "%r10")
-          (string-eq
-            (compiler-backend-scavenge-pick
-              starts
-              ends
+              (IrValueVar 5)
+              (IrValueVar 6))
+            7
+            "%r8")
+          "%r10")
+        (string-eq
+          (compiler-backend-scavenge-pick
+            starts
+            ends
+            assignments
+            7
+            5
+            (compiler-backend-scavenge-exclude-ops2-r8
               assignments
-              7
-              5
-              (compiler-backend-scavenge-exclude-ops2-r8
-                assignments
-                (IrValueVar 5)
-                (IrValueVar 6))
-              8
-              "%r8")
-            "%r10"))))))
+              (IrValueVar 5)
+              (IrValueVar 6))
+            8
+            "%r8")
+          "%r10")))))
 
 (define (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?) : bool
   (let
@@ -15931,13 +15922,10 @@
         [ok : bool
           (and
             (string-eq reg "%r12")
-            (and
-              compiler-backend-emergency-pending
-              (and
-                (string-eq compiler-backend-emergency-reg "%r12")
-                (and
-                  (= compiler-backend-emergency-pending-count 1)
-                  (= compiler-backend-emergency-used-count 1)))))]
+            compiler-backend-emergency-pending
+            (string-eq compiler-backend-emergency-reg "%r12")
+            (= compiler-backend-emergency-pending-count 1)
+            (= compiler-backend-emergency-used-count 1))]
         (begin
           (set! compiler-backend-emergency-pending false)
           (set! compiler-backend-emergency-used false)
@@ -16018,16 +16006,15 @@
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
-        (and
-          (compiler-backend-numeric-cast-shape-ok?)
-          (compiler-backend-direct-float-precision-cast-home-ok?)
-          (compiler-backend-spill-float-precision-cast-home-ok?)
-          (compiler-backend-direct-int-to-float-cast-home-ok?)
-          (compiler-backend-spill-int-to-float-cast-home-ok?)
-          (compiler-backend-spill-u64-to-float-cast-home-ok?)
-          (compiler-backend-direct-float-to-int-cast-home-ok?)
-          (compiler-backend-spill-float-to-int-cast-home-ok?)
-          (compiler-backend-spill-int-cast-home-ok?))
+        (compiler-backend-numeric-cast-shape-ok?)
+        (compiler-backend-direct-float-precision-cast-home-ok?)
+        (compiler-backend-spill-float-precision-cast-home-ok?)
+        (compiler-backend-direct-int-to-float-cast-home-ok?)
+        (compiler-backend-spill-int-to-float-cast-home-ok?)
+        (compiler-backend-spill-u64-to-float-cast-home-ok?)
+        (compiler-backend-direct-float-to-int-cast-home-ok?)
+        (compiler-backend-spill-float-to-int-cast-home-ok?)
+        (compiler-backend-spill-int-cast-home-ok?)
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)
@@ -16067,13 +16054,12 @@
         (compiler-backend-float-return-binop-home-ok?)
         (compiler-backend-float-return-compare-home-ok?)
         (compiler-backend-int-return-binop-r8-live-ok?)
-        (and
-          (compiler-backend-bitcast-shape-ok?)
-          (compiler-backend-direct-bitcast-home-ok?)
-          (compiler-backend-spill-float-to-int-bitcast-home-ok?)
-          (compiler-backend-spill-int-to-float-bitcast-home-ok?)
-          (compiler-backend-spill-float-to-float-bitcast-home-ok?)
-          (compiler-backend-spill-int-to-int-bitcast-home-ok?)))
+        (compiler-backend-bitcast-shape-ok?)
+        (compiler-backend-direct-bitcast-home-ok?)
+        (compiler-backend-spill-float-to-int-bitcast-home-ok?)
+        (compiler-backend-spill-int-to-float-bitcast-home-ok?)
+        (compiler-backend-spill-float-to-float-bitcast-home-ok?)
+        (compiler-backend-spill-int-to-int-bitcast-home-ok?))
       (compiler-backend-bool-control-flow-ok?)
       (and
         (compiler-backend-stack-args-ok?)

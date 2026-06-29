@@ -7321,7 +7321,7 @@
     (tc-source-leading-segment-wins-over-exact-id?
       env
       name-id
-      (intern-slice (intern-str name-id) 0 first-dot))))
+      (intern-leading-dot-id name-id))))
 
 (define (tc-source-leading-segment-wins-over-exact?
   [env : TcTypeEnv]
@@ -7344,7 +7344,10 @@
   (if (<= first-dot 0)
     false
     (let
-      [prefix-id : i64 (intern-slice name 0 first-dot)]
+      [prefix-id : i64
+        (if (= first-dot (intern-first-dot name-id))
+          (intern-leading-dot-id name-id)
+          (intern-slice name 0 first-dot))]
       (tc-source-leading-segment-wins-over-exact-id? env name-id prefix-id))))
 
 (define (tc-dotted-field-index-message [name : String]) : String
@@ -15682,6 +15685,61 @@
         (not (tc-name-local-bound-before-module? env base))
         (string.eq (tc-context-module ctx) (tc-arena-module-name))))))
 
+(define (tc-arena-owner-canonical-call-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [base : String]) : bool
+  (if (tc-name-qualified? name)
+    (and
+      (tc-stdlib-arena-module-name? (tc-qualified-name-module name))
+      (string.eq (tc-qualified-name-base name) base))
+    (and
+      (string.eq name base)
+      (string.eq (tc-context-module ctx) (tc-arena-module-name))
+      (not (tc-name-local-bound-before-module? env base)))))
+
+(define (tc-arena-owner-source-name-last-dot [name : String]) : i64
+  (let
+    [first : i64 (tc-name-first-dot name)]
+    (if (< first 0)
+      -1
+      (let
+        [i : i64 (+ first 1)]
+        [n : i64 (string.string-length name)]
+        [last : i64 first]
+        (begin
+          (while (< i n)
+            (begin
+              (if (string.char-eq (string.string-ref name i) '.')
+                (set! last i)
+                unit)
+              (set! i (+ i 1))))
+          last)))))
+
+(define (tc-arena-owner-source-name-base [name : String]) : String
+  (if (tc-name-qualified? name)
+    (tc-qualified-name-base name)
+    (let
+      [dot : i64 (tc-arena-owner-source-name-last-dot name)]
+      (if (and (>= dot 0) (< dot (- (string.string-length name) 1)))
+        (string.substring
+          name
+          (+ dot 1)
+          (- (string.string-length name) (+ dot 1)))
+        name))))
+
+(define (tc-arena-owner-source-base-kind [base : String]) : i64
+  (cond
+    [(or (string.eq base "arena-make-atomic") (string.eq base "make-atomic"))
+      (tc-arena-owner-kind-atomic)]
+    [(or (string.eq base "arena-make") (string.eq base "make"))
+      (tc-arena-owner-kind-ordinary)]
+    [else (tc-arena-owner-kind-none)]))
+
+(define (tc-arena-owner-source-name-kind [name : String]) : i64
+  (tc-arena-owner-source-base-kind (tc-arena-owner-source-name-base name)))
+
 (define (tc-arena-owner-call-lookup-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15699,6 +15757,48 @@
 (define (tc-arena-owner-kind-atomic) : i64
   2)
 
+(define (tc-arena-owner-call-kind-from-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : i64
+  (let
+    [source-kind : i64 (tc-arena-owner-source-name-kind name)]
+    (if (= source-kind (tc-arena-owner-kind-none))
+      (tc-arena-owner-kind-none)
+      (if (and
+        (= source-kind (tc-arena-owner-kind-atomic))
+        (tc-arena-owner-call-name? ctx env name "arena-make-atomic"))
+        (tc-arena-owner-kind-atomic)
+        (if (and
+          (= source-kind (tc-arena-owner-kind-ordinary))
+          (tc-arena-owner-call-name? ctx env name "arena-make"))
+          (tc-arena-owner-kind-ordinary)
+          (let
+            [lookup-name : String
+              (tc-arena-owner-call-lookup-name ctx env name)]
+            (cond
+              [(or
+                  (tc-arena-owner-call-name?
+                    ctx
+                    env
+                    lookup-name
+                    "arena-make-atomic")
+                  (tc-arena-owner-canonical-call-name?
+                    ctx
+                    env
+                    lookup-name
+                    "make-atomic"))
+                (tc-arena-owner-kind-atomic)]
+              [(or
+                  (tc-arena-owner-call-name? ctx env lookup-name "arena-make")
+                  (tc-arena-owner-canonical-call-name?
+                    ctx
+                    env
+                    lookup-name
+                    "make"))
+                (tc-arena-owner-kind-ordinary)]
+              [else (tc-arena-owner-kind-none)])))))))
+
 (define (tc-arena-owner-call-kind
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15709,31 +15809,7 @@
         [(AstExprList.Nil)
           (match (tc-expr-var-name (ast-node-get func-box))
             [(TcMaybeString.Some name)
-              (let
-                [lookup-name : String
-                  (tc-arena-owner-call-lookup-name ctx env name)]
-                (cond
-                  [(or
-                      (tc-arena-owner-call-name?
-                        ctx
-                        env
-                        lookup-name
-                        "arena-make-atomic")
-                      (tc-arena-owner-call-name?
-                        ctx
-                        env
-                        lookup-name
-                        "make-atomic"))
-                    (tc-arena-owner-kind-atomic)]
-                  [(or
-                      (tc-arena-owner-call-name?
-                        ctx
-                        env
-                        lookup-name
-                        "arena-make")
-                      (tc-arena-owner-call-name? ctx env lookup-name "make"))
-                    (tc-arena-owner-kind-ordinary)]
-                  [else (tc-arena-owner-kind-none)]))]
+              (tc-arena-owner-call-kind-from-name ctx env name)]
             [(TcMaybeString.No) (tc-arena-owner-kind-none)])]
         [_ (tc-arena-owner-kind-none)])]
     [_ (tc-arena-owner-kind-none)]))

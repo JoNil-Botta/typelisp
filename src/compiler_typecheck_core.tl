@@ -2786,18 +2786,37 @@
   (tc-binding-unsafe-id? env (tc-name-id name)))
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeEnv.Nil) 0]
-    [(TcTypeEnv.Bind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (tc-env-cache-count (box-get rest))]))
+  (let
+    [cur : TcTypeEnv env]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Nil) (set! done true)]
+          [(TcTypeEnv.Bind _ _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! cur (box-get rest)))]
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
+      count)))
 
 (define (tc-env-cache-count-prefix [env : TcTypeEnv] [remaining : i64]) : i64
-  (if (<= remaining 0)
-    0
-    (match env
-      [(TcTypeEnv.Bind _ _ rest)
-        (+ 1 (tc-env-cache-count-prefix (box-get rest) (- remaining 1)))]
-      [_ 0])))
+  (let
+    [cur : TcTypeEnv env]
+    [left : i64 remaining]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> left 0))
+        (match cur
+          [(TcTypeEnv.Bind _ _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! left (- left 1))
+              (set! cur (box-get rest)))]
+          [_ (set! done true)]))
+      count)))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -2860,43 +2879,42 @@
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : hashmap.I64I64Map
-  (match env
-    [(TcTypeEnv.Nil) ids]
-    [(TcTypeEnv.Bind name-id ty rest)
-      (let
-        ;; The boundary bind itself and everything below it are not default
-        ;; shadows.
-        [still-above : bool
-          (if above-boundary
-            (not (= name-id (tc-default-boundary-id)))
-            false)]
-        (tc-env-cache-fill
-          (box-get rest)
-          (tc-env-cache-add
-            ids
-            values
-            unsafe-flags
-            c-abi-fnptr-flags
-            shadow-flags
-            name-id
-            ty
-            (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
-            (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
-            still-above)
-          values
-          unsafe-flags
-          c-abi-fnptr-flags
-          shadow-flags
-          still-above))]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-env-cache-fill
-        (box-get rest)
-        ids
-        values
-        unsafe-flags
-        c-abi-fnptr-flags
-        shadow-flags
-        above-boundary)]))
+  (let
+    [cur : TcTypeEnv env]
+    [cur-ids : hashmap.I64I64Map ids]
+    [cur-above-boundary : bool above-boundary]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Nil) (set! done true)]
+          [(TcTypeEnv.Bind name-id ty rest)
+            (let
+              [rest-env : TcTypeEnv (box-get rest)]
+              ;; The boundary bind itself and everything below it are not
+              ;; default shadows.
+              [still-above : bool
+                (if cur-above-boundary
+                  (not (= name-id (tc-default-boundary-id)))
+                  false)]
+              (begin
+                (set!
+                  cur-ids
+                  (tc-env-cache-add
+                    cur-ids
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    name-id
+                    ty
+                    (tc-binding-unsafe-marker-head-id? rest-env name-id)
+                    (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+                    still-above))
+                (set! cur rest-env)
+                (set! cur-above-boundary still-above)))]
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
+      cur-ids)))
 
 (define (tc-env-cache-fill-prefix
   [env : TcTypeEnv]
@@ -2907,36 +2925,41 @@
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : hashmap.I64I64Map
-  (if (<= remaining 0)
-    ids
-    (match env
-      [(TcTypeEnv.Bind name-id ty rest)
-        (let
-          [rest-env : TcTypeEnv (box-get rest)]
-          [still-above : bool
-            (if above-boundary
-              (not (= name-id (tc-default-boundary-id)))
-              false)]
-          (tc-env-cache-fill-prefix
-            rest-env
-            (- remaining 1)
-            (tc-env-cache-add
-              ids
-              values
-              unsafe-flags
-              c-abi-fnptr-flags
-              shadow-flags
-              name-id
-              ty
-              (tc-binding-unsafe-marker-head-id? rest-env name-id)
-              (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-              still-above)
-            values
-            unsafe-flags
-            c-abi-fnptr-flags
-            shadow-flags
-            still-above))]
-      [_ ids])))
+  (let
+    [cur : TcTypeEnv env]
+    [left : i64 remaining]
+    [cur-ids : hashmap.I64I64Map ids]
+    [cur-above-boundary : bool above-boundary]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> left 0))
+        (match cur
+          [(TcTypeEnv.Bind name-id ty rest)
+            (let
+              [rest-env : TcTypeEnv (box-get rest)]
+              [still-above : bool
+                (if cur-above-boundary
+                  (not (= name-id (tc-default-boundary-id)))
+                  false)]
+              (begin
+                (set!
+                  cur-ids
+                  (tc-env-cache-add
+                    cur-ids
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    name-id
+                    ty
+                    (tc-binding-unsafe-marker-head-id? rest-env name-id)
+                    (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+                    still-above))
+                (set! left (- left 1))
+                (set! cur rest-env)
+                (set! cur-above-boundary still-above)))]
+          [_ (set! done true)]))
+      cur-ids)))
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (begin
@@ -13626,7 +13649,9 @@
                   cached-env
                   "")
                   [(ResultTcEnv.Ok aliases)
-                    (ResultTcEnv.Ok (tc-env-with-cache aliases))]
+                    (let
+                      [out : TcTypeEnv (tc-env-with-cache aliases)]
+                      (ResultTcEnv.Ok out))]
                   [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
             [(ResultTcEnv.Err message)
               (begin

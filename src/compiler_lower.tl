@@ -5106,130 +5106,75 @@
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [module : String]) : CloneNameList
-  (match decls
-    [(AstDeclList.Nil) roots]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Unsafe inner-box)
+  (let
+    [cur : AstDeclList decls]
+    [cur-local-env : TcTypeEnv local-env]
+    [cur-roots : CloneNameList roots]
+    [cur-module : String module]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
             (let
-              [inner : AstDecl (box-get inner-box)]
-              (lower-clone-roots-decls-in-module
-                ctx
-                top-env
-                local-env
-                (ast-decl-cons inner rest)
-                all-decls
-                able
-                roots
-                names
-                name-cache
-                module))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (lower-clone-roots-decls-in-module
-                ctx
-                top-env
-                local-env
-                (ast-decl-cons template rest)
-                all-decls
-                able
-                roots
-                names
-                name-cache
-                module))]
-          [(AstDecl.Def _ _ expr-box)
-            (let
-              [expr : AstExpr (ast-node-get expr-box)]
-              (lower-clone-roots-decls-in-module
-                ctx
-                top-env
-                local-env
-                rest
-                all-decls
-                able
-                (lower-clone-roots-expr
-                  (tc-context-with-module ctx module)
-                  local-env
-                  all-decls
-                  able
-                  roots
-                  expr)
-                names
-                name-cache
-                module))]
-          [(AstDecl.DefFn _ params ret body-box _)
-            (let
-              [decl-ctx : TcContext (tc-context-with-module ctx module)]
-              [body : AstExpr (ast-node-get body-box)]
-              [fn-env : TcTypeEnv
-                (tc-bind-return-type
-                  (tc-bind-params decl-ctx local-env params)
-                  (tc-resolve-type decl-ctx ret))]
-              (lower-clone-roots-decls-in-module
-                ctx
-                top-env
-                local-env
-                rest
-                all-decls
-                able
-                (lower-clone-roots-expr
-                  decl-ctx
-                  fn-env
-                  all-decls
-                  able
-                  roots
-                  body)
-                names
-                name-cache
-                module))]
-          [(AstDecl.Module next-module)
-            (let
-              [next-module-str : String (intern-str next-module)]
-              (match (lower-module-local-envs
-                ctx
-                top-env
-                names
-                name-cache
-                next-module-str)
-                [(OkLowerModuleLocalEnv next-local-env _ _ _)
-                  (lower-clone-roots-decls-in-module
-                    ctx
-                    top-env
-                    next-local-env
-                    rest
-                    all-decls
-                    able
-                    roots
-                    names
-                    name-cache
-                    next-module-str)]
-                [(ErrLowerModuleLocalEnv _)
-                  (lower-clone-roots-decls-in-module
-                    ctx
-                    top-env
-                    top-env
-                    rest
-                    all-decls
-                    able
-                    roots
-                    names
-                    name-cache
-                    next-module-str)]))]
-          [_
-            (lower-clone-roots-decls-in-module
-              ctx
-              top-env
-              local-env
-              rest
-              all-decls
-              able
-              roots
-              names
-              name-cache
-              module)]))]))
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDecl.Unsafe inner-box)
+                  (set! cur (ast-decl-cons (box-get inner-box) rest))]
+                [(AstDecl.ComptimeDecl _ template-box)
+                  (set! cur (ast-decl-cons (box-get template-box) rest))]
+                [(AstDecl.Def _ _ expr-box)
+                  (let
+                    [expr : AstExpr (ast-node-get expr-box)]
+                    (begin
+                      (set!
+                        cur-roots
+                        (lower-clone-roots-expr
+                          (tc-context-with-module ctx cur-module)
+                          cur-local-env
+                          all-decls
+                          able
+                          cur-roots
+                          expr))
+                      (set! cur rest)))]
+                [(AstDecl.DefFn _ params ret body-box _)
+                  (let
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [body : AstExpr (ast-node-get body-box)]
+                    [fn-env : TcTypeEnv
+                      (tc-bind-return-type
+                        (tc-bind-params decl-ctx cur-local-env params)
+                        (tc-resolve-type decl-ctx ret))]
+                    (begin
+                      (set!
+                        cur-roots
+                        (lower-clone-roots-expr
+                          decl-ctx
+                          fn-env
+                          all-decls
+                          able
+                          cur-roots
+                          body))
+                      (set! cur rest)))]
+                [(AstDecl.Module next-module)
+                  (let
+                    [next-module-str : String (intern-str next-module)]
+                    (begin
+                      (match (lower-module-local-envs
+                        ctx
+                        top-env
+                        names
+                        name-cache
+                        next-module-str)
+                        [(OkLowerModuleLocalEnv next-local-env _ _ _)
+                          (set! cur-local-env next-local-env)]
+                        [(ErrLowerModuleLocalEnv _) unit])
+                      (set! cur-module next-module-str)
+                      (set! cur rest)))]
+                [_ (set! cur rest)]))]))
+      cur-roots)))
 
 (define (lower-clone-roots-program
   [ctx : TcContext]
@@ -5321,12 +5266,14 @@
                       [(ResultTcEnv.Ok top-env)
                         (begin
                           (tc-context-capture-active-pools! ctx)
-                          (OkLowerCloneRoots
-                            (lower-clone-roots-program
-                              ctx
-                              top-env
-                              names
-                              program)))]
+                          (let
+                            [roots : CloneNameList
+                              (lower-clone-roots-program
+                                ctx
+                                top-env
+                                names
+                                program)]
+                            (OkLowerCloneRoots roots)))]
                       [(ResultTcEnv.Err message)
                         (ErrLowerCloneRoots (box (lower-diagnostic message)))]))]
                 [(ResultCompilerRegistries.Err message)

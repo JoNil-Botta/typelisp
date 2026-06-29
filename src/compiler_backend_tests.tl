@@ -2895,7 +2895,7 @@
     (compiler-backend-aggregate-global-init-shape-ok?)))
 
 ;; Backend-owned replacement for closure/lambda emit-shape checks (#1415).
-;; The source uses synthetic lambda lowered names because AstExprLambda lowering
+;; The source uses synthetic lambda lowered names because AstExpr.Lambda lowering
 ;; is tracked separately; this pins the backend descriptor, adapter, and
 ;; indirect-call shape produced by the same IR names.
 (define (compiler-backend-closure-literal-source) : String

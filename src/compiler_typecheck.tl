@@ -1258,7 +1258,7 @@
       (AstGeneratedDeclMeta.Some
         "policy-family"
         "GeneratedStruct"
-        AstExprNil
+        AstExprList.Nil
         "policy-key")]
     [decl : AstDecl
       (ast-decl-comptime-decl-with-meta
@@ -2178,19 +2178,19 @@
   (AstTypeNil)
   (AstTypeCons (Box AstType) (Box AstTypeList)))
 (defenum AstPattern
-  (AstPatWildcard)
-  (AstPatTuple (Box AstPatternList)))
+  (AstPattern.Wildcard)
+  (AstPattern.Tuple (Box AstPatternList)))
 (defenum AstPatternList
-  (AstPatternNil)
-  (AstPatternCons (Box AstPattern) (Box AstPatternList)))
+  (AstPatternList.Nil)
+  (AstPatternList.Cons (Box AstPattern) (Box AstPatternList)))
 (defenum AstExpr
-  (AstExprLiteral i64)
-  (AstExprCall (Box AstExpr) AstExprList)
-  (AstExprTuple AstExprList)
-  (AstExprMatch (Box AstExpr) AstPatternList))
+  (AstExpr.Literal i64)
+  (AstExpr.Call (Box AstExpr) AstExprList)
+  (AstExpr.Tuple AstExprList)
+  (AstExpr.Match (Box AstExpr) AstPatternList))
 (defenum AstExprList
-  (AstExprNil)
-  (AstExprCons (Box AstExpr) (Box AstExprList)))")
+  (AstExprList.Nil)
+  (AstExprList.Cons (Box AstExpr) (Box AstExprList)))")
 
 (define (compiler-typecheck-inline-ast-list-layout-ok?) : bool
   (let
@@ -4631,7 +4631,7 @@
 
 ;; A type error whose offending expression (`missing`) is on source line 2, so
 ;; the diagnostic must locate it there (not at the 1:1 fallback), proving the
-;; typechecker carries the nearest declaration-body `AstExprSpanned` span (#681).
+;; typechecker carries the nearest declaration-body `AstExpr.Spanned` span (#681).
 (define (compiler-typecheck-located-fn-source) : String
   "(define (main) : i64
   missing)")
@@ -9001,8 +9001,8 @@
 
 (define (compiler-typecheck-moved-set-metrics-ok?) : bool
   (let
-    [origin-a : AstExpr (AstExprVar (intern "origin-a"))]
-    [origin-b : AstExpr (AstExprVar (intern "origin-b"))]
+    [origin-a : AstExpr (AstExpr.Var (intern "origin-a"))]
+    [origin-b : AstExpr (AstExpr.Var (intern "origin-b"))]
     [empty : TcMovedSet (tc-moved-empty)]
     [one : TcMovedSet (tc-moved-add empty "alpha")]
     [dupe : TcMovedSet (tc-moved-add (tc-moved-clone one) "alpha")]

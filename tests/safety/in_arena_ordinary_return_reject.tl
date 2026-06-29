@@ -1,10 +1,10 @@
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (build-text) : String
   (let
     [owner : arena.Arena (arena.make)]
-    (in-arena owner (append "not-" "returned"))))
+    (in-arena owner (string.append "not-" "returned"))))
 
 (define (main) : i64
-  (string-length (build-text)))
+  (string.string-length (build-text)))

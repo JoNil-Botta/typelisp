@@ -207,6 +207,7 @@ sync.tl
 string.tl
 string_caller_result.tl
 str_cat.tl
+str_cat_runtime.tl
 test.tl
 thread.tl
 time.tl

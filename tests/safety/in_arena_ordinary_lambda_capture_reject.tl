@@ -1,11 +1,11 @@
 (import stdlib.arena)
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
   (let
     [owner : arena.Arena (arena.make)]
-    [text : String (in-arena owner (append "not-" "captured"))]
+    [text : String (in-arena owner (string.append "not-" "captured"))]
     [read : (-> i64)
       (lambda () : i64
-        (string-length text))]
+        (string.string-length text))]
     (read)))

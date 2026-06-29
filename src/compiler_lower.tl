@@ -47412,7 +47412,7 @@
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
+(define (eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (module pkg.args)
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
@@ -47429,9 +47429,7 @@
     [(OkCompilerLower lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
-          (>
-            (lower-test-functions-call-count functions "pkg.string/string-eq")
-            0)])]
+          (> (lower-test-functions-call-count functions "pkg.string/eq") 0)])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-module-function-returning-struct-source) : String

@@ -1,5 +1,6 @@
 (import stdlib.array)
 (import stdlib.byte_buf)
+(import stdlib.string)
 (import stdlib.test)
 
 (define (assert-u8-eq [actual : u8] [expected : i64] [message : String]) : unit
@@ -197,7 +198,7 @@
         (make-u8 255))]
     [text : String (byte_buf.to-string binary)]
     (begin
-      (test.assert-i64-eq (string-length text) 3 "binary string length")
+      (test.assert-i64-eq (string.string-length text) 3 "binary string length")
       (assert-u8-eq (string-byte text 0) 0 "binary nul byte")
       (assert-u8-eq (string-byte text 1) 128 "binary high byte")
       (assert-u8-eq (string-byte text 2) 255 "binary max byte"))))

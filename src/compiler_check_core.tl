@@ -483,7 +483,7 @@
     (begin
       (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
       (unless (or false false false) (set! value (+ value 20)))
-      (arr.set! items 0 value)
+      (array-set! items 0 value)
       (arr.push! items 2)
       (+
         (arr.length items)

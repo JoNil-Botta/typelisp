@@ -1106,7 +1106,7 @@
         [(ResultCompilerDriver.Ok summary)
           (and
             (> (string.string-length summary) 0)
-            (string.string-contains (& summary) (& needle)))]
+            (string.contains (& summary) (& needle)))]
         [(ResultCompilerDriver.Err _) false]))))
 
 (define (main) : i64

@@ -15637,6 +15637,18 @@
 (define (tc-arena-module-name) : String
   "stdlib.arena")
 
+(define (tc-stdlib-arena-module-name? [module-name : String]) : bool
+  (or
+    (string.eq module-name "arena")
+    (string.eq module-name "arena.tl")
+    (string.eq module-name "stdlib.arena")
+    (string.eq module-name "stdlib/arena")
+    (string.eq module-name "stdlib/arena.tl")
+    (tc-string-has-suffix? module-name "/stdlib/arena.tl")
+    (tc-string-has-suffix? module-name "\\stdlib\\arena.tl")
+    (tc-string-has-suffix? module-name "\\stdlib/arena.tl")
+    (tc-string-has-suffix? module-name "/stdlib\\arena.tl")))
+
 (define (tc-arena-mark-type-name) : String
   "stdlib.arena/ArenaMark")
 
@@ -15661,12 +15673,22 @@
   [name : String]
   [base : String]) : bool
   (if (tc-name-qualified? name)
-    (string.eq (tc-qualified-name-base name) base)
+    (and
+      (tc-stdlib-arena-module-name? (tc-qualified-name-module name))
+      (string.eq (tc-qualified-name-base name) base))
     (and
       (string.eq name base)
       (or
         (not (tc-name-local-bound-before-module? env base))
         (string.eq (tc-context-module ctx) (tc-arena-module-name))))))
+
+(define (tc-arena-owner-call-lookup-name
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : String
+  (match (tc-source-name-lookup-key ctx env name)
+    [(ResultTcString.Ok lookup-name) lookup-name]
+    [(ResultTcString.Err _) name]))
 
 (define (tc-arena-owner-kind-none) : i64
   0)
@@ -15687,12 +15709,31 @@
         [(AstExprList.Nil)
           (match (tc-expr-var-name (ast-node-get func-box))
             [(TcMaybeString.Some name)
-              (cond
-                [(tc-arena-owner-call-name? ctx env name "arena-make-atomic")
-                  (tc-arena-owner-kind-atomic)]
-                [(tc-arena-owner-call-name? ctx env name "arena-make")
-                  (tc-arena-owner-kind-ordinary)]
-                [else (tc-arena-owner-kind-none)])]
+              (let
+                [lookup-name : String
+                  (tc-arena-owner-call-lookup-name ctx env name)]
+                (cond
+                  [(or
+                      (tc-arena-owner-call-name?
+                        ctx
+                        env
+                        lookup-name
+                        "arena-make-atomic")
+                      (tc-arena-owner-call-name?
+                        ctx
+                        env
+                        lookup-name
+                        "make-atomic"))
+                    (tc-arena-owner-kind-atomic)]
+                  [(or
+                      (tc-arena-owner-call-name?
+                        ctx
+                        env
+                        lookup-name
+                        "arena-make")
+                      (tc-arena-owner-call-name? ctx env lookup-name "make"))
+                    (tc-arena-owner-kind-ordinary)]
+                  [else (tc-arena-owner-kind-none)]))]
             [(TcMaybeString.No) (tc-arena-owner-kind-none)])]
         [_ (tc-arena-owner-kind-none)])]
     [_ (tc-arena-owner-kind-none)]))

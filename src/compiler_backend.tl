@@ -20302,22 +20302,35 @@
         leaf
         "%rax")
         [(OkCompilerBackend leaf-asm)
-          (OkCompilerBackend
-            (string.string-append
-              subleaf-asm
-              (string.string-append
-                leaf-asm
-                (string.string-append
-                  "    pushq %rbx\n    cpuid\n"
+          (let
+            [ex : (Array String) (make-array String 3)]
+            (begin
+              (array-set! ex 0 "%rcx")
+              (array-set! ex 1 "%rdx")
+              (array-set! ex 2 "%rbx")
+              (let
+                ;; cpuid clobbers rax/rbx/rcx/rdx; preserve the caller's %rbx in a
+                ;; scavenged free reg instead of pushq/popq (the no-stack-staging
+                ;; goal). rax/rsi/rdi aren't scavenge candidates, so excluding
+                ;; rcx/rdx/rbx leaves the temp in {r8-r15}, none of which cpuid
+                ;; touches. Falls back to %r8 / the emergency wrap if none free.
+                [scav : String (compiler-backend-scavenge-reg-here ex 3 "%r8")]
+                (OkCompilerBackend
                   (string.string-append
-                    (compiler-backend-cpuid-result-move reg-index)
+                    subleaf-asm
                     (string.string-append
-                      "    popq %rbx\n"
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        "%rax"
-                        (AstTyI64))))))))]
+                      leaf-asm
+                      (string.string-append
+                        (str-cat "    movq %rbx, " scav "\n    cpuid\n")
+                        (string.string-append
+                          (compiler-backend-cpuid-result-move reg-index)
+                          (string.string-append
+                            (str-cat "    movq " scav ", %rbx\n")
+                            (compiler-backend-emit-store-typed-var-with-plan
+                              assignments
+                              dst
+                              "%rax"
+                              (AstTyI64)))))))))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 

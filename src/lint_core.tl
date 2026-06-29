@@ -856,8 +856,8 @@
     (string.string-eq name "spmd-shuffle")))
 
 (define (lint-token-name [tok : token.Token]) : String
-  (if (= (token.token-tag tok) (token.tag-sym))
-    (token.token-sym tok)
+  (if (= (token.tag tok) (token.tag-sym))
+    (token.sym tok)
     ""))
 
 (define (lint-deprecated-string-concat-depth [in-loop : bool] [in-chain : bool]) : i64
@@ -1176,7 +1176,7 @@
               (let
                 [spanned : token.SpannedToken (array-ref toks i)]
                 [tok : token.Token (token.spanned-token-tok spanned)]
-                [tag : i64 (token.token-tag tok)]
+                [tag : i64 (token.tag tok)]
                 (cond
                   [(= tag (token.tag-end)) (set! done true)]
                   [(= tag (token.tag-lparen))

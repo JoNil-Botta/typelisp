@@ -41393,29 +41393,33 @@
                 [(AstDeclTest _ _ _) (set! cur-decls rest)]
                 [(AstDeclDefEnum name _ variants)
                   (begin
-                    (set!
-                      cur-globals
-                      (lower-nullary-variant-globals
-                        (lower-current-decl-logical-name-cache
-                          cur-name-cache
-                          cur-module
-                          (intern-str name))
-                        variants
-                        0
-                        cur-globals))
+                    (if (lower-comptime-runtime-skip-module? cur-module)
+                      unit
+                      (set!
+                        cur-globals
+                        (lower-nullary-variant-globals
+                          (lower-current-decl-logical-name-cache
+                            cur-name-cache
+                            cur-module
+                            (intern-str name))
+                          variants
+                          0
+                          cur-globals)))
                     (set! cur-decls rest))]
                 [(AstDeclDefEnumLifetimes name _ _ variants)
                   (begin
-                    (set!
-                      cur-globals
-                      (lower-nullary-variant-globals
-                        (lower-current-decl-logical-name
-                          names
-                          cur-module
-                          (intern-str name))
-                        variants
-                        0
-                        cur-globals))
+                    (if (lower-comptime-runtime-skip-module? cur-module)
+                      unit
+                      (set!
+                        cur-globals
+                        (lower-nullary-variant-globals
+                          (lower-current-decl-logical-name
+                            names
+                            cur-module
+                            (intern-str name))
+                          variants
+                          0
+                          cur-globals)))
                     (set! cur-decls rest))]
                 [(AstDeclDefStruct name _ cleanup fields)
                   (let
@@ -52600,6 +52604,19 @@
                 (lower-test-decl-list-defines? kept "main")
                 (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper"))))])])))
 
+(define (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?) : bool
+  (match (lower-compiler-source
+    "(import stdlib.comptime)
+(define (main) : i64 0)")
+    [(OkCompilerLower program _)
+      (match program
+        [(CompilerIrProgram.Program globals _ _)
+          (not
+            (lower-test-global-list-has-name?
+              globals
+              "__enum_obj_stdlib.comptime/Pattern_PatternWildcard"))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-unsafe-ast-dce-source) : String
   "(define (main) : i64 (unsafe (unsafe-entry)))
 (define (unsafe-helper) : i64 41)
@@ -53457,6 +53474,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-unsafe-ast-dce-ok?)

@@ -76,7 +76,7 @@
       (match arm
         [(ExprClause test result)
           (match test
-            [(ExprVar name)
+            [(comptime.ExprVar name)
               (if (string-eq name "else")
                 (if (comptime.expr-clause-list-empty? rest)
                   result

@@ -4190,22 +4190,34 @@
 
 (define (tc-macro-expr-clause-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyVar name) (= name (intern "ExprClause"))]
+    [(AstTyVar name)
+      (or
+        (= name (intern "ExprClause"))
+        (= name (intern "stdlib.comptime/ExprClause")))]
     [_ false]))
 
 (define (tc-macro-expr-clause-list-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyVar name) (= name (intern "ExprClauseList"))]
+    [(AstTyVar name)
+      (or
+        (= name (intern "ExprClauseList"))
+        (= name (intern "stdlib.comptime/ExprClauseList")))]
     [_ false]))
 
 (define (tc-macro-expr-binding-clause-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyVar name) (= name (intern "ExprBindingClause"))]
+    [(AstTyVar name)
+      (or
+        (= name (intern "ExprBindingClause"))
+        (= name (intern "stdlib.comptime/ExprBindingClause")))]
     [_ false]))
 
 (define (tc-macro-expr-binding-clause-list-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyVar name) (= name (intern "ExprBindingClauseList"))]
+    [(AstTyVar name)
+      (or
+        (= name (intern "ExprBindingClauseList"))
+        (= name (intern "stdlib.comptime/ExprBindingClauseList")))]
     [_ false]))
 
 (define (tc-macro-type-param-kind? [ty : AstType]) : bool
@@ -5174,8 +5186,6 @@
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
     [expr : AstType (AstTyExpr)]
-    [type-info : AstType
-      (AstTyVar (intern (tc-stdlib-comptime-type-key "TypeInfo")))]
     [clause : AstType (tc-macro-expr-clause-type)]
     [clause-list : AstType (tc-macro-expr-clause-list-type)]
     [binding-clause : AstType (tc-macro-expr-binding-clause-type)]
@@ -5186,6 +5196,10 @@
     [match-arm-list : AstType (tc-macro-match-arm-list-type)]
     [out : TcTypeEnv env]
     (begin
+      ;; Legacy bridge for unqualified macro helper names. New stdlib macro
+      ;; code imports `stdlib.comptime` and calls the public helpers via that
+      ;; module; keep only the old names still covered by compatibility tests
+      ;; and by the legacy type-query surface.
       (set!
         out
         (tc-bind
@@ -5222,15 +5236,7 @@
       (set! out (tc-bind out "int->string" (tc-fn1 (AstTyI64) (AstTyString))))
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
-      (set! out (tc-bind out "expr-string" (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
-      (set!
-        out
-        (tc-bind out "expr-struct-get" (tc-fn2 expr (AstTyString) expr)))
-      (set!
-        out
-        (tc-bind out "expr-struct-set" (tc-fn3 expr (AstTyString) expr expr)))
-      (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "pattern-wildcard" (tc-fn0 pattern)))
       (set! out (tc-bind out "pattern-binding" (tc-fn1 (AstTyString) pattern)))
@@ -5257,16 +5263,6 @@
           (tc-fn2 match-arm match-arm-list match-arm-list)))
       (set! out (tc-bind out "expr-match" (tc-fn2 expr match-arm-list expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
-      (set! out (tc-bind out "type-info" (tc-fn1 expr type-info)))
-      (set!
-        out
-        (tc-bind out "module-name" (tc-fn1 (AstTyString) (AstTyString))))
-      (set!
-        out
-        (tc-bind
-          out
-          "module-export-macro?"
-          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
       (set!
         out
         (tc-bind out "module-hook" (tc-fn2 (AstTyString) (AstTyString) expr)))

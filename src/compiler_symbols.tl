@@ -9,7 +9,7 @@
 (import "sym_i64_env.tl")
 (import stdlib.hashmap)
 (import stdlib.string)
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (defenum CompilerSymbols

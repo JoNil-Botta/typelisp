@@ -4,7 +4,7 @@
 ;# for tools that need JSON without a private selfhost-only implementation.
 ;#
 ;# Primitives required from the compiler/runtime: `string-length`,
-;# `string-ref`, `substring`, `string-append`, and the imported
+;# `string-ref`, `substring`, `comptime.string-append`, and the imported
 ;# `stdlib/string.tl`, `stdlib/io.tl`, and `stdlib/text_buf.tl` helpers.
 ;#
 ;# Usage: `(import stdlib.json)`
@@ -1079,7 +1079,7 @@
   `(stdlib.json.JsonValue (stdlib.json.JsonBool ,value)))
 
 ;: `stdlib.serialize` hook for bool fields.
-(defmacro (decode-bool [value : Expr] [err-ctor : Expr]) : Expr
+(defmacro (decode-bool [value : comptime.Expr] [err-ctor : comptime.Expr]) : comptime.Expr
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
@@ -1087,7 +1087,7 @@
         [_ (return (,err-ctor "json: expected bool"))])]))
 
 ;: `stdlib.serialize` hook for integer fields.
-(defmacro (encode-int [T : type] [value : Expr]) : Value
+(defmacro (encode-int [T : type] [value : comptime.Expr]) : Value
   (match (type-key T)
     ["u64"
       (comptime.comptime-error "serialize json: u64 fields are not supported")]
@@ -1096,7 +1096,10 @@
         (stdlib.json.json-i64->number (cast ,value : i64)))]))
 
 ;: `stdlib.serialize` hook for integer fields.
-(defmacro (decode-int [T : type] [value : Expr] [err-ctor : Expr]) : Expr
+(defmacro (decode-int
+  [T : type]
+  [value : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   (let
     [field-key : String (type-key T)]
     (match field-key
@@ -1104,13 +1107,13 @@
         (comptime.comptime-error "serialize json: u64 fields are not supported")]
       [_
         (let
-          [min-expr : Expr
+          [min-expr : comptime.Expr
             (match field-key
               ["i32" (comptime.expr-int (- 0 2147483648))]
               ["i16" (comptime.expr-int (- 0 32768))]
               ["i8" (comptime.expr-int (- 0 128))]
               [_ (comptime.expr-int 0)])]
-          [max-expr : Expr
+          [max-expr : comptime.Expr
             (match field-key
               ["i32" (comptime.expr-int 2147483647)]
               ["i16" (comptime.expr-int 32767)]
@@ -1119,12 +1122,12 @@
               ["u16" (comptime.expr-int 65535)]
               ["u8" (comptime.expr-int 255)]
               [_ (comptime.expr-int 9223372036854775807)])]
-          [range-error : Expr
+          [range-error : comptime.Expr
             (comptime.expr-string
-              (string-append
-                (string-append "json: integer outside " field-key)
+              (comptime.string-append
+                (comptime.string-append "json: integer outside " field-key)
                 " range"))]
-          [parsed-expr : Expr
+          [parsed-expr : comptime.Expr
             (if (string=? field-key "i64")
               `parsed
               `(if (if (< parsed ,min-expr)
@@ -1143,16 +1146,21 @@
                 [_ (return (,err-ctor "json: expected integer number"))])]))])))
 
 ;: `stdlib.serialize` hook for float fields.
-(defmacro (encode-float [T : type] [value : Expr]) : Value
+(defmacro (encode-float [T : type] [value : comptime.Expr]) : Value
   (match (type-key T)
     ["f64" `(stdlib.json.JsonValue (stdlib.json.json-f64->number ,value))]
     ["f32" `(stdlib.json.JsonValue (stdlib.json.json-f32->number ,value))]
     [_
       (comptime.comptime-error
-        (string-append "serialize json: expected float type, got " (type-key T)))]))
+        (comptime.string-append
+          "serialize json: expected float type, got "
+          (type-key T)))]))
 
 ;: `stdlib.serialize` hook for float fields.
-(defmacro (decode-float [T : type] [value : Expr] [err-ctor : Expr]) : Expr
+(defmacro (decode-float
+  [T : type]
+  [value : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   (match (type-key T)
     ["f64"
       `(match ,value
@@ -1176,14 +1184,16 @@
             [_ (return (,err-ctor "json: expected finite number"))])])]
     [_
       (comptime.comptime-error
-        (string-append "serialize json: expected float type, got " (type-key T)))]))
+        (comptime.string-append
+          "serialize json: expected float type, got "
+          (type-key T)))]))
 
 ;: `stdlib.serialize` hook for string fields.
 (defmacro (encode-string [value : String]) : Value
   `(stdlib.json.JsonValue (stdlib.json.JsonString ,value)))
 
 ;: `stdlib.serialize` hook for string fields.
-(defmacro (decode-string [value : Expr] [err-ctor : Expr]) : Expr
+(defmacro (decode-string [value : comptime.Expr] [err-ctor : comptime.Expr]) : comptime.Expr
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
@@ -1195,17 +1205,23 @@
   `stdlib.json.JsonMemberListNil)
 
 ;: `stdlib.serialize` hook for adding one encoded object field.
-(defmacro (object-field [name : Expr] [value : Expr] [rest : Expr]) : JsonMemberList
+(defmacro (object-field
+  [name : comptime.Expr]
+  [value : comptime.Expr]
+  [rest : comptime.Expr]) : JsonMemberList
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (stdlib.json.JsonMemberListCons ,name __json_value (box ,rest))]))
 
 ;: `stdlib.serialize` hook for finishing an object value.
-(defmacro (object-finish [fields : Expr]) : Value
+(defmacro (object-finish [fields : comptime.Expr]) : Value
   `(stdlib.json.JsonValue (stdlib.json.JsonObject (box ,fields))))
 
 ;: `stdlib.serialize` hook for validating the decode input shape.
-(defmacro (expect-object [value : Expr] [_type-name : Expr] [err-ctor : Expr]) : unit
+(defmacro (expect-object
+  [value : comptime.Expr]
+  [_type-name : comptime.Expr]
+  [err-ctor : comptime.Expr]) : unit
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
@@ -1213,7 +1229,10 @@
         [_ (return (,err-ctor "json: expected object"))])]))
 
 ;: `stdlib.serialize` hook for looking up one decoded object field.
-(defmacro (field-value [object : Expr] [name : Expr] [err-ctor : Expr]) : Expr
+(defmacro (field-value
+  [object : comptime.Expr]
+  [name : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   `(match ,object
     [(stdlib.json.JsonValue __json_object)
       (match (stdlib.json.json-object-get-owned __json_object ,name)
@@ -1225,17 +1244,20 @@
   `JsonListNil)
 
 ;: `stdlib.serialize` hook for adding one encoded sequence element.
-(defmacro (sequence-element [_index : Expr] [value : Expr] [rest : Expr]) : JsonList
+(defmacro (sequence-element
+  [_index : comptime.Expr]
+  [value : comptime.Expr]
+  [rest : comptime.Expr]) : JsonList
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (stdlib.json.JsonListCons __json_value (box ,rest))]))
 
 ;: `stdlib.serialize` hook for finishing a sequence value.
-(defmacro (sequence-finish [items : Expr]) : Value
+(defmacro (sequence-finish [items : comptime.Expr]) : Value
   `(stdlib.json.JsonValue (stdlib.json.JsonArray (box ,items))))
 
 ;: `stdlib.serialize` hook for reading a sequence length.
-(defmacro (sequence-length [value : Expr] [err-ctor : Expr]) : i64
+(defmacro (sequence-length [value : comptime.Expr] [err-ctor : comptime.Expr]) : i64
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
@@ -1245,9 +1267,9 @@
 
 ;: `stdlib.serialize` hook for reading one decoded sequence element.
 (defmacro (sequence-element-value
-  [value : Expr]
-  [index : Expr]
-  [err-ctor : Expr]) : Expr
+  [value : comptime.Expr]
+  [index : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value

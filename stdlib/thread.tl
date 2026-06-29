@@ -28,6 +28,7 @@
 
 (import stdlib.array)
 (import stdlib.arena)
+(import stdlib.comptime)
 (import stdlib.string)
 
 ;: Opaque native thread handle plus runtime-owned join state.
@@ -53,8 +54,9 @@
 ;: `(import (thread.thread-handle i64) as thread_i64)`.
 (defmacro (thread-handle [T : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var (string-append "stdlib.thread.generated." (type-key T)))]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.thread.generated." (type-key T)))]
     (match (type-key T)
       ["i64"
         `(begin

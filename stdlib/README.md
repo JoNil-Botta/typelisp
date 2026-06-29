@@ -156,7 +156,7 @@ use.
   removal wrappers. Use a set
   when only key membership matters; use a map when each key carries a meaningful
   value rather than modeling membership with dummy map values. Import it with
-  `(import "stdlib/set.tl")` and instantiate with `(import (set i64) as iset)`.
+  `(import stdlib.set)` and instantiate with `(import (set i64) as iset)`.
 - `sort.tl`: generated stable deterministic in-place insertion sort helpers for
   `(vector T)` modules. `(vec T)` extends the matching generated vector
   module with `sort!`; scalar element types use built-in `<`, while String and
@@ -191,14 +191,14 @@ use.
   explicit platform-extern policy is chosen. Import it with
   `(import "stdlib/math.tl")`.
 - `option.tl`: module-emitting `(option T)` macro for absence-only results.
-  Import it with `(import "stdlib/option.tl")` and instantiate with a module
+  Import it with `(import stdlib.option)` and instantiate with a module
   alias such as `(import (option i64) as option_i64)`. Each generated module
   exposes `Option`, `some`, `none`, borrowed predicates `is-some?` /
   `is-none?`, consuming `value-or`, and same-payload `map`; duplicate imports
   for the same payload type share the generated module/type.
 - `result.tl`: module-emitting `(result T E)` macro for recoverable-error
   results with success payload `T` and error payload `E`. Import it with
-  `(import "stdlib/result.tl")` and instantiate with a module alias such as
+  `(import stdlib.result)` and instantiate with a module alias such as
   `(import (result i64 String) as result_i64_string)`. Each generated module
   exposes `Result`, `ok`, `err`, borrowed predicates `is-ok?` / `is-err?`,
   consuming `value-or`, and same-payload `map`; duplicate imports for the same
@@ -239,7 +239,7 @@ use.
   `peek-front`, `peek-back`, `get`, `len`, `capacity`, and `is-empty?` in that
   generated module namespace. Mutators take `&mut` and update in place; reads
   take `&`, peeks/get use caller fallbacks, and empty pops return `Pop.Empty`.
-  Import the macro with `(import "stdlib/queue.tl")`.
+  Import the macro with `(import stdlib.queue)`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an
   OS-entropy seed source. Import it with `(import "stdlib/random.tl")`.
@@ -562,7 +562,7 @@ Stdlib modules are imported explicitly:
 (import "stdlib/process.tl")
 (import "stdlib/random.tl")
 (import "stdlib/serialize.tl")
-(import "stdlib/set.tl")
+(import stdlib.set)
 (import "stdlib/sort.tl")
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")

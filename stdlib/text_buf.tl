@@ -30,6 +30,7 @@
 (module stdlib.text_buf)
 
 (import stdlib.array)
+(import stdlib.comptime)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -64,7 +65,7 @@
   (TextBufChunkCons chunk (box rest)))
 
 ;: Mutably append `chunk` to the owned `buf` place without rendering its prefix.
-(defmacro (text-buf-append! [buf : Expr] [chunk : String]) : unit
+(defmacro (text-buf-append! [buf : comptime.Expr] [chunk : String]) : unit
   `(let
     [text-buf-append-chunk : String ,chunk]
     [text-buf-append-chunk-len : i64 (string-length text-buf-append-chunk)]
@@ -105,7 +106,7 @@
   (stdlib.text_buf.text-buf-append buf (stdlib.text_buf.text-buf-char-string c)))
 
 ;: Mutably append one char byte to `buf`.
-(defmacro (text-buf-append-char! [buf : Expr] [c : char]) : unit
+(defmacro (text-buf-append-char! [buf : comptime.Expr] [c : char]) : unit
   `(text-buf-append! ,buf (text-buf-char-string ,c)))
 
 ;: Append the decimal text for `value` to `buf`.
@@ -117,7 +118,7 @@
   (string.int->string value))
 
 ;: Mutably append the decimal text for `value` to `buf`.
-(defmacro (text-buf-append-int! [buf : Expr] [value : i64]) : unit
+(defmacro (text-buf-append-int! [buf : comptime.Expr] [value : i64]) : unit
   `(text-buf-append! ,buf (text-buf-int-string ,value)))
 
 ;: Concatenate chunk lists while preserving their current order.
@@ -428,7 +429,7 @@
     (set! (struct-get buf len) 0)))
 
 ;: Mutably clear the owned `buf` place, leaving it ready for reuse.
-(defmacro (text-buf-clear! [buf : Expr]) : unit
+(defmacro (text-buf-clear! [buf : comptime.Expr]) : unit
   `(text-buf-clear-ref! (&mut ,buf)))
 
 ;: Return an empty buffer, leaving the old immutable `buf` value unchanged.
@@ -436,7 +437,7 @@
   (stdlib.text_buf.text-buf-empty))
 
 ;: Mutably reset `buf`, leaving it ready for reuse.
-(defmacro (text-buf-reset! [buf : Expr]) : unit
+(defmacro (text-buf-reset! [buf : comptime.Expr]) : unit
   `(text-buf-clear-ref! (&mut ,buf)))
 
 ;: Alias for `text-buf-clear` for call sites that model builder reuse as reset.

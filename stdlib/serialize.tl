@@ -23,45 +23,49 @@
 (module stdlib.serialize)
 
 (import stdlib.comptime)
+(import stdlib.string)
 
 ;: Emit the fixed length suffix from array type keys such as `array_i64_3`.
 (defmacro (array-fixed-length [T : type]) : i64
   (let
     [key : String (type-key T)]
-    [n : i64 (string-length key)]
+    [n : i64 (string.string-length key)]
     [underscore : i64 95]
-    [d0 : i64 (- (cast (string-ref key (- n 1)) : i64) 48)]
+    [d0 : i64 (- (cast (string.string-ref key (- n 1)) : i64) 48)]
     [p1 : i64 (- n 2)]
-    (if (= (cast (string-ref key p1) : i64) underscore)
+    (if (= (cast (string.string-ref key p1) : i64) underscore)
       (comptime.expr-int d0)
       (let
-        [d1 : i64 (- (cast (string-ref key p1) : i64) 48)]
+        [d1 : i64 (- (cast (string.string-ref key p1) : i64) 48)]
         [p2 : i64 (- n 3)]
-        (if (= (cast (string-ref key p2) : i64) underscore)
+        (if (= (cast (string.string-ref key p2) : i64) underscore)
           (comptime.expr-int (+ (* d1 10) d0))
           (let
-            [d2 : i64 (- (cast (string-ref key p2) : i64) 48)]
+            [d2 : i64 (- (cast (string.string-ref key p2) : i64) 48)]
             [p3 : i64 (- n 4)]
-            (if (= (cast (string-ref key p3) : i64) underscore)
+            (if (= (cast (string.string-ref key p3) : i64) underscore)
               (comptime.expr-int (+ (* d2 100) (+ (* d1 10) d0)))
               (let
-                [d3 : i64 (- (cast (string-ref key p3) : i64) 48)]
+                [d3 : i64 (- (cast (string.string-ref key p3) : i64) 48)]
                 [p4 : i64 (- n 5)]
-                (if (= (cast (string-ref key p4) : i64) underscore)
+                (if (= (cast (string.string-ref key p4) : i64) underscore)
                   (comptime.expr-int
                     (+ (* d3 1000) (+ (* d2 100) (+ (* d1 10) d0))))
                   (let
-                    [d4 : i64 (- (cast (string-ref key p4) : i64) 48)]
+                    [d4 : i64 (- (cast (string.string-ref key p4) : i64) 48)]
                     [p5 : i64 (- n 6)]
-                    (if (= (cast (string-ref key p5) : i64) underscore)
+                    (if (= (cast (string.string-ref key p5) : i64) underscore)
                       (comptime.expr-int
                         (+
                           (* d4 10000)
                           (+ (* d3 1000) (+ (* d2 100) (+ (* d1 10) d0)))))
                       (let
-                        [d5 : i64 (- (cast (string-ref key p5) : i64) 48)]
+                        [d5 : i64
+                          (- (cast (string.string-ref key p5) : i64) 48)]
                         [p6 : i64 (- n 7)]
-                        (if (= (cast (string-ref key p6) : i64) underscore)
+                        (if (=
+                          (cast (string.string-ref key p6) : i64)
+                          underscore)
                           (comptime.expr-int
                             (+
                               (* d5 100000)
@@ -75,82 +79,86 @@
 (defmacro (encode-value
   [format : Module]
   [value-type : type]
-  [nested-alias : Expr]
-  [value : Expr]) : Expr
+  [nested-alias : comptime.Expr]
+  [value : comptime.Expr]) : comptime.Expr
   (let
     [nested-alias-text : String
       (match nested-alias
-        [(ExprVar found) found]
+        [(comptime.ExprVar found) found]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-key : String (type-key value-type)]
     [value-kind : String (type-kind value-type)]
-    [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+    [format-expr : comptime.Expr
+      (comptime.expr-var (comptime.module-name format))]
     (match value-key
       ["bool"
         (let
-          [hook : Expr (comptime.module-hook format "encode-bool")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-bool")]
           `(,hook ,value))]
       ["String"
         (let
-          [hook : Expr (comptime.module-hook format "encode-string")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-string")]
           `(,hook ,value))]
       ["i64"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["i32"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["i16"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["i8"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["u64"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["u32"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["u16"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["u8"
         (let
-          [hook : Expr (comptime.module-hook format "encode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-int")]
           `(,hook ,value-type ,value))]
       ["f64"
         (let
-          [hook : Expr (comptime.module-hook format "encode-float")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-float")]
           `(,hook ,value-type ,value))]
       ["f32"
         (let
-          [hook : Expr (comptime.module-hook format "encode-float")]
+          [hook : comptime.Expr (comptime.module-hook format "encode-float")]
           `(,hook ,value-type ,value))]
       [_
         (match value-kind
           ["struct"
             (let
-              [nested-encode : Expr
-                (comptime.expr-var (string-append nested-alias-text ".encode"))]
+              [nested-encode : comptime.Expr
+                (comptime.expr-var
+                  (comptime.string-append nested-alias-text ".encode"))]
               `(,nested-encode ,value))]
           ["array"
             (let
-              [element-type : Expr (array-element-type value-type)]
-              [element-alias : String (string-append nested-alias-text "_elem")]
-              [empty-hook : Expr (comptime.module-hook format "sequence-empty")]
-              [element-hook : Expr
+              [element-type : comptime.Expr (array-element-type value-type)]
+              [element-alias : String
+                (comptime.string-append nested-alias-text "_elem")]
+              [empty-hook : comptime.Expr
+                (comptime.module-hook format "sequence-empty")]
+              [element-hook : comptime.Expr
                 (comptime.module-hook format "sequence-element")]
-              [finish-hook : Expr
+              [finish-hook : comptime.Expr
                 (comptime.module-hook format "sequence-finish")]
-              [length-expr : Expr
+              [length-expr : comptime.Expr
                 `(stdlib.serialize.array-fixed-length ,value-type)]
               `(let
                 [__serialize_items (,empty-hook)]
@@ -172,12 +180,14 @@
                   (,finish-hook __serialize_items))))]
           ["dyn-array"
             (let
-              [element-type : Expr (array-element-type value-type)]
-              [element-alias : String (string-append nested-alias-text "_elem")]
-              [empty-hook : Expr (comptime.module-hook format "sequence-empty")]
-              [element-hook : Expr
+              [element-type : comptime.Expr (array-element-type value-type)]
+              [element-alias : String
+                (comptime.string-append nested-alias-text "_elem")]
+              [empty-hook : comptime.Expr
+                (comptime.module-hook format "sequence-empty")]
+              [element-hook : comptime.Expr
                 (comptime.module-hook format "sequence-element")]
-              [finish-hook : Expr
+              [finish-hook : comptime.Expr
                 (comptime.module-hook format "sequence-finish")]
               `(let
                 [__serialize_items (,empty-hook)]
@@ -199,78 +209,80 @@
                   (,finish-hook __serialize_items))))]
           [_
             (comptime.comptime-error
-              (string-append "serialize: unsupported type " value-key))])])))
+              (comptime.string-append "serialize: unsupported type " value-key))])])))
 
 ;: Emit the decoded value expression for one supported value type.
 (defmacro (decode-value
   [format : Module]
   [value-type : type]
-  [nested-alias : Expr]
-  [value : Expr]
-  [err-ctor : Expr]) : Expr
+  [nested-alias : comptime.Expr]
+  [value : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   (let
     [nested-alias-text : String
       (match nested-alias
-        [(ExprVar found) found]
+        [(comptime.ExprVar found) found]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-key : String (type-key value-type)]
     [value-kind : String (type-kind value-type)]
-    [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+    [format-expr : comptime.Expr
+      (comptime.expr-var (comptime.module-name format))]
     (match value-key
       ["bool"
         (let
-          [hook : Expr (comptime.module-hook format "decode-bool")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-bool")]
           `(,hook ,value ,err-ctor))]
       ["String"
         (let
-          [hook : Expr (comptime.module-hook format "decode-string")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-string")]
           `(,hook ,value ,err-ctor))]
       ["i64"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["i32"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["i16"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["i8"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["u64"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["u32"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["u16"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["u8"
         (let
-          [hook : Expr (comptime.module-hook format "decode-int")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-int")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["f64"
         (let
-          [hook : Expr (comptime.module-hook format "decode-float")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-float")]
           `(,hook ,value-type ,value ,err-ctor))]
       ["f32"
         (let
-          [hook : Expr (comptime.module-hook format "decode-float")]
+          [hook : comptime.Expr (comptime.module-hook format "decode-float")]
           `(,hook ,value-type ,value ,err-ctor))]
       [_
         (match value-kind
           ["struct"
             (let
-              [nested-decode : Expr
-                (comptime.expr-var (string-append nested-alias-text ".decode"))]
+              [nested-decode : comptime.Expr
+                (comptime.expr-var
+                  (comptime.string-append nested-alias-text ".decode"))]
               `(let
                 [__serialize_nested_result (,nested-decode ,value)]
                 (match __serialize_nested_result
@@ -278,13 +290,14 @@
                   [(Err err) (return (,err-ctor err))])))]
           ["array"
             (let
-              [element-type : Expr (array-element-type value-type)]
-              [element-alias : String (string-append nested-alias-text "_elem")]
-              [length-hook : Expr
+              [element-type : comptime.Expr (array-element-type value-type)]
+              [element-alias : String
+                (comptime.string-append nested-alias-text "_elem")]
+              [length-hook : comptime.Expr
                 (comptime.module-hook format "sequence-length")]
-              [element-hook : Expr
+              [element-hook : comptime.Expr
                 (comptime.module-hook format "sequence-element-value")]
-              [length-expr : Expr
+              [length-expr : comptime.Expr
                 `(stdlib.serialize.array-fixed-length ,value-type)]
               `(let
                 [__serialize_count : i64 (,length-hook ,value ,err-ctor)]
@@ -311,11 +324,12 @@
                       __serialize_out)))))]
           ["dyn-array"
             (let
-              [element-type : Expr (array-element-type value-type)]
-              [element-alias : String (string-append nested-alias-text "_elem")]
-              [length-hook : Expr
+              [element-type : comptime.Expr (array-element-type value-type)]
+              [element-alias : String
+                (comptime.string-append nested-alias-text "_elem")]
+              [length-hook : comptime.Expr
                 (comptime.module-hook format "sequence-length")]
-              [element-hook : Expr
+              [element-hook : comptime.Expr
                 (comptime.module-hook format "sequence-element-value")]
               `(let
                 [__serialize_count : i64 (,length-hook ,value ,err-ctor)]
@@ -338,23 +352,27 @@
                   __serialize_out)))]
           [_
             (comptime.comptime-error
-              (string-append "serialize: unsupported type " value-key))])])))
+              (comptime.string-append "serialize: unsupported type " value-key))])])))
 
 ;: Emit the encoded value expression for one struct field.
 (defmacro (encode-field
   [format : Module]
   [T : type]
-  [index-expr : Expr]
-  [value : Expr]) : Expr
+  [index-expr : comptime.Expr]
+  [value : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(ExprInt index)
+    [(comptime.ExprInt index)
       (let
         [field-name : String (struct-field-name T index)]
-        [field-type : Expr (struct-field-type T index)]
-        [field-access : Expr (comptime.expr-struct-get value field-name)]
+        [field-type : comptime.Expr (struct-field-type T index)]
+        [field-access : comptime.Expr
+          (comptime.expr-struct-get value field-name)]
         [nested-alias-text : String
-          (string-append "__serialize_nested_f" (comptime.int->string index))]
-        [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+          (comptime.string-append
+            "__serialize_nested_f"
+            (comptime.int->string index))]
+        [format-expr : comptime.Expr
+          (comptime.expr-var (comptime.module-name format))]
         `(stdlib.serialize.encode-value
           ,format-expr
           ,field-type
@@ -368,20 +386,23 @@
 (defmacro (encode-fields
   [format : Module]
   [T : type]
-  [index-expr : Expr]
-  [value : Expr]) : Expr
+  [index-expr : comptime.Expr]
+  [value : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(ExprInt index)
+    [(comptime.ExprInt index)
       (if (>= index (struct-field-count T))
         (let
-          [empty-hook : Expr (comptime.module-hook format "object-empty")]
+          [empty-hook : comptime.Expr
+            (comptime.module-hook format "object-empty")]
           `(,empty-hook))
         (let
-          [field-hook : Expr (comptime.module-hook format "object-field")]
+          [field-hook : comptime.Expr
+            (comptime.module-hook format "object-field")]
           [field-name : String (struct-field-name T index)]
-          [field-key-expr : Expr (comptime.expr-string field-name)]
-          [next-index : Expr (comptime.expr-int (+ index 1))]
-          [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+          [field-key-expr : comptime.Expr (comptime.expr-string field-name)]
+          [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
           `(,field-hook
             ,field-key-expr
             (stdlib.serialize.encode-field
@@ -398,28 +419,33 @@
 (defmacro (decode-field
   [format : Module]
   [T : type]
-  [index-expr : Expr]
-  [value : Expr]
-  [out : Expr]
-  [err-ctor : Expr]) : Expr
+  [index-expr : comptime.Expr]
+  [value : comptime.Expr]
+  [out : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(ExprInt index)
+    [(comptime.ExprInt index)
       (let
         [field-name : String (struct-field-name T index)]
-        [field-type : Expr (struct-field-type T index)]
-        [field-key-expr : Expr (comptime.expr-string field-name)]
-        [field-value-hook : Expr (comptime.module-hook format "field-value")]
+        [field-type : comptime.Expr (struct-field-type T index)]
+        [field-key-expr : comptime.Expr (comptime.expr-string field-name)]
+        [field-value-hook : comptime.Expr
+          (comptime.module-hook format "field-value")]
         [nested-alias-text : String
-          (string-append "__serialize_nested_f" (comptime.int->string index))]
-        [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
-        [decoded-expr : Expr
+          (comptime.string-append
+            "__serialize_nested_f"
+            (comptime.int->string index))]
+        [format-expr : comptime.Expr
+          (comptime.expr-var (comptime.module-name format))]
+        [decoded-expr : comptime.Expr
           `(stdlib.serialize.decode-value
             ,format-expr
             ,field-type
             ,(comptime.expr-var nested-alias-text)
             __serialize_field
             ,err-ctor)]
-        [set-expr : Expr (comptime.expr-struct-set out field-name decoded-expr)]
+        [set-expr : comptime.Expr
+          (comptime.expr-struct-set out field-name decoded-expr)]
         `(let
           [__serialize_field
             (,field-value-hook ,value ,field-key-expr ,err-ctor)]
@@ -432,17 +458,18 @@
 (defmacro (decode-fields
   [format : Module]
   [T : type]
-  [index-expr : Expr]
-  [value : Expr]
-  [out : Expr]
-  [err-ctor : Expr]) : Expr
+  [index-expr : comptime.Expr]
+  [value : comptime.Expr]
+  [out : comptime.Expr]
+  [err-ctor : comptime.Expr]) : comptime.Expr
   (match index-expr
-    [(ExprInt index)
+    [(comptime.ExprInt index)
       (if (>= index (struct-field-count T))
         `unit
         (let
-          [next-index : Expr (comptime.expr-int (+ index 1))]
-          [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+          [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
           `(begin
             (stdlib.serialize.decode-field
               ,format-expr
@@ -466,29 +493,32 @@
 (defmacro (nested-import-for-type
   [format : Module]
   [value-type : type]
-  [nested-alias : Expr]) : Decls
+  [nested-alias : comptime.Expr]) : Decls
   (let
     [nested-alias-text : String
       (match nested-alias
-        [(ExprVar found) found]
+        [(comptime.ExprVar found) found]
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-kind : String (type-kind value-type)]
-    [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+    [format-expr : comptime.Expr
+      (comptime.expr-var (comptime.module-name format))]
     (match value-kind
       ["struct"
         `(import (stdlib.serialize.serialize ,format-expr ,value-type) as ,nested-alias)]
       ["array"
         (let
-          [element-type : Expr (array-element-type value-type)]
-          [element-alias : String (string-append nested-alias-text "_elem")]
+          [element-type : comptime.Expr (array-element-type value-type)]
+          [element-alias : String
+            (comptime.string-append nested-alias-text "_elem")]
           `(stdlib.serialize.nested-import-for-type
             ,format-expr
             ,element-type
             ,(comptime.expr-var element-alias)))]
       ["dyn-array"
         (let
-          [element-type : Expr (array-element-type value-type)]
-          [element-alias : String (string-append nested-alias-text "_elem")]
+          [element-type : comptime.Expr (array-element-type value-type)]
+          [element-alias : String
+            (comptime.string-append nested-alias-text "_elem")]
           `(stdlib.serialize.nested-import-for-type
             ,format-expr
             ,element-type
@@ -496,17 +526,23 @@
       [_ `(begin)])))
 
 ;: Emit recursive generated serializer imports needed for nested struct fields.
-(defmacro (nested-imports [format : Module] [T : type] [index-expr : Expr]) : Decls
+(defmacro (nested-imports
+  [format : Module]
+  [T : type]
+  [index-expr : comptime.Expr]) : Decls
   (match index-expr
-    [(ExprInt index)
+    [(comptime.ExprInt index)
       (if (>= index (struct-field-count T))
         `(begin)
         (let
-          [field-type : Expr (struct-field-type T index)]
-          [next-index : Expr (comptime.expr-int (+ index 1))]
-          [format-expr : Expr (comptime.expr-var (comptime.module-name format))]
+          [field-type : comptime.Expr (struct-field-type T index)]
+          [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
           [nested-alias-text : String
-            (string-append "__serialize_nested_f" (comptime.int->string index))]
+            (comptime.string-append
+              "__serialize_nested_f"
+              (comptime.int->string index))]
           `(begin
             (stdlib.serialize.nested-imports ,format-expr ,T ,next-index)
             (stdlib.serialize.nested-import-for-type
@@ -524,23 +560,25 @@
       (let
         [format-name : String (comptime.module-name format)]
         [module-name-text : String
-          (string-append
-            (string-append
-              (string-append "stdlib.serialize.generated." format-name)
+          (comptime.string-append
+            (comptime.string-append
+              (comptime.string-append "stdlib.serialize.generated." format-name)
               ".")
             (type-key T))]
-        [module-name-expr : Expr (comptime.expr-var module-name-text)]
-        [format-module-expr : Expr (comptime.expr-var format-name)]
-        [value-type : Expr (comptime.expr-var "__serialize_format.Value")]
-        [ok-ctor : Expr
-          (comptime.expr-var (string-append module-name-text ".Ok"))]
-        [err-ctor : Expr
-          (comptime.expr-var (string-append module-name-text ".Err"))]
-        [object-finish-hook : Expr
+        [module-name-expr : comptime.Expr (comptime.expr-var module-name-text)]
+        [format-module-expr : comptime.Expr (comptime.expr-var format-name)]
+        [value-type : comptime.Expr
+          (comptime.expr-var "__serialize_format.Value")]
+        [ok-ctor : comptime.Expr
+          (comptime.expr-var (comptime.string-append module-name-text ".Ok"))]
+        [err-ctor : comptime.Expr
+          (comptime.expr-var (comptime.string-append module-name-text ".Err"))]
+        [object-finish-hook : comptime.Expr
           (comptime.module-hook format "object-finish")]
-        [expect-object-hook : Expr
+        [expect-object-hook : comptime.Expr
           (comptime.module-hook format "expect-object")]
-        [extra-decls-hook : Expr (comptime.module-hook format "extra-decls")]
+        [extra-decls-hook : comptime.Expr
+          (comptime.module-hook format "extra-decls")]
         [type-name : String (type-nominal-name T)]
         `(begin
           (module ,module-name-expr)
@@ -585,4 +623,6 @@
           (,extra-decls-hook ,T)))]
     [_
       (comptime.comptime-error
-        (string-append "serialize: expected struct type, got " (type-key T)))]))
+        (comptime.string-append
+          "serialize: expected struct type, got "
+          (type-key T)))]))

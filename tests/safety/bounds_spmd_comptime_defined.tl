@@ -2,7 +2,7 @@
 ;: construction, race-free SPMD, and valid comptime values have defined results.
 (import stdlib.array)
 (import "stdlib/string.tl")
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (defstruct Point

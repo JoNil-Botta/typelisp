@@ -29,7 +29,7 @@
 (import stdlib.hashmap)
 (import stdlib.string)
 (cfg compile-profile (import stdlib.str_cat))
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (defenum ResultCompilerOptimizeLevel

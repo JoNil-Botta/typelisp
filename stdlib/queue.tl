@@ -14,7 +14,7 @@
 ;# Usage:
 ;#
 ;# ```typelisp
-;# (import "stdlib/queue.tl")
+;# (import stdlib.queue)
 ;# (import (deque i64) as deque_i64)
 ;#
 ;# (define (main) : i64
@@ -25,15 +25,20 @@
 ;#       (deque_i64.push-back (&mut q) 32)
 ;#       (deque_i64.peek-front (& q) 0))))
 ;# ```
+(module stdlib.queue)
+
+(import stdlib.comptime)
+
 ;: Emit a generated growable deque module for element type `T`.
 (defmacro (deque [T : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var (string-append "stdlib.queue.deque.generated." (type-key T)))]
-    [deque-name : Expr (expr-var "Deque")]
-    [pop-name : Expr (expr-var "Pop")]
-    [pop-empty-name : Expr (expr-var "Pop.Empty")]
-    [pop-ok-name : Expr (expr-var "Pop.Ok")]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.queue.deque.generated." (type-key T)))]
+    [deque-name : comptime.Expr (comptime.expr-var "Deque")]
+    [pop-name : comptime.Expr (comptime.expr-var "Pop")]
+    [pop-empty-name : comptime.Expr (comptime.expr-var "Pop.Empty")]
+    [pop-ok-name : comptime.Expr (comptime.expr-var "Pop.Ok")]
     `(begin
       (module ,module-name)
       (import stdlib.array as array_ops)

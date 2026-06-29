@@ -21,6 +21,7 @@
 (module stdlib.string)
 
 (import stdlib.array)
+(import stdlib.comptime)
 
 ;: Runtime bounds-check trap shared with array/string indexing.
 (extern (tl_oob_abort) : never)
@@ -65,22 +66,22 @@
 ;: capability cfg is enabled.
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_length [text : Expr]) : i64
+  (defmacro (__tl_string_length [text : comptime.Expr]) : i64
     `(string-length ,text)))
 
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_ref [text : Expr] [index : Expr]) : char
+  (defmacro (__tl_string_ref [text : comptime.Expr] [index : comptime.Expr]) : char
     `(string-ref ,text ,index)))
 
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_eq [left : Expr] [right : Expr]) : bool
+  (defmacro (__tl_string_eq [left : comptime.Expr] [right : comptime.Expr]) : bool
     `(string-eq ,left ,right)))
 
 (cfg
   (not feature-compiler-private-string-intrinsics)
-  (defmacro (__tl_string_to_int [text : Expr]) : i64
+  (defmacro (__tl_string_to_int [text : comptime.Expr]) : i64
     `(string->int ,text)))
 
 ;: Return the byte length of borrowed or owned text without allocating.

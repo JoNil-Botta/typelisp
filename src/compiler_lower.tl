@@ -44254,7 +44254,7 @@
 (define (main) : i64 (score (Wrap (A 2))))")
 
 (define (compiler-lower-result-try-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (read [flag : bool] [n : i64]) : result_i64_string.Result
   (if flag (result_i64_string.Ok n) (result_i64_string.Err \"read failed\")))
@@ -44270,7 +44270,7 @@
   (chain flag))")
 
 (define (compiler-lower-option-try-source) : String
-  "(import \"stdlib/option.tl\")
+  "(import stdlib.option)
 (import (option i64) as option_i64)
 (define (read [flag : bool] [n : i64]) : option_i64.Option
   (if flag (option_i64.Some n) option_i64.None))
@@ -44301,7 +44301,7 @@
   (make-big flag))")
 
 (define (compiler-lower-resource-with-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (open-a [ok : bool]) : result_i64_string.Result
   (if ok (result_i64_string.Ok 10) (result_i64_string.Err \"open a\")))
@@ -44317,7 +44317,7 @@
     (result_i64_string.Ok (+ (try (use-a use-ok a)) b))))")
 
 (define (compiler-lower-resource-with-nested-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (close-a [h : i64]) : unit unit)
 (define (close-b [h : i64]) : unit unit)
@@ -44327,7 +44327,7 @@
       (result_i64_string.Ok (+ a b)))))")
 
 (define (compiler-lower-cleanup-struct-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (close-fd [fd : i64]) : unit unit)
 (define (use-fd [ok : bool] [fd : i64]) : result_i64_string.Result

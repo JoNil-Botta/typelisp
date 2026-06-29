@@ -20,7 +20,7 @@
 (import "build_run_core.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (defenum DocTestExpectation

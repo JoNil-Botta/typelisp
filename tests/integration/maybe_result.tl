@@ -1,8 +1,8 @@
 ; maybe_result.tl - Monomorphic Maybe/Result convention witness for #228.
 (import "stdlib/string.tl")
-(import "stdlib/result.tl")
+(import stdlib.result)
 (import (result i64 String) as result_i64_string)
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (define (find-answer [name : String]) : option_i64.Option

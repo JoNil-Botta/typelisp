@@ -1,7 +1,7 @@
 ; refs #331: aggregate globals are initialized through hidden runtime
 ; initializer functions, whose returned pointers are stored before main.
 (import "stdlib/string.tl")
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (defstruct Pair

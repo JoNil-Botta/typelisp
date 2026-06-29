@@ -64,6 +64,7 @@
 (module stdlib.vector)
 
 (import stdlib.array)
+(import stdlib.comptime)
 
 ;: Local string equality fallback used when bootstrapping with a compiler that
 ;: does not yet expose private string intrinsics.
@@ -88,14 +89,15 @@
 ;: Emit a generated growable vector module for element type `T`.
 (defmacro (vector [T : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var (string-append "stdlib.vector.generated." (type-key T)))]
-    [vec-name : Expr (expr-var "Vec")]
-    [pop-name : Expr (expr-var "Pop")]
-    [pop-empty-name : Expr (expr-var "Pop.Empty")]
-    [pop-ok-name : Expr (expr-var "Pop.Ok")]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.vector.generated." (type-key T)))]
+    [vec-name : comptime.Expr (comptime.expr-var "Vec")]
+    [pop-name : comptime.Expr (comptime.expr-var "Pop")]
+    [pop-empty-name : comptime.Expr (comptime.expr-var "Pop.Empty")]
+    [pop-ok-name : comptime.Expr (comptime.expr-var "Pop.Ok")]
     [kind : String (type-kind T)]
-    [eq-body : Expr
+    [eq-body : comptime.Expr
       (match kind
         ["string"
           `(cfg
@@ -128,7 +130,7 @@
         ["f64" `(= a b)]
         ["f32" `(= a b)]
         [_ `false])]
-    [contains-hit : Expr
+    [contains-hit : comptime.Expr
       (match kind
         ["string"
           `(cfg
@@ -367,22 +369,30 @@
 ;: `pop`, so it can store aggregate values that are not cloneable.
 (defmacro (vector-family [T : type] [vec-name : Expr] [prefix : Expr]) : Decls
   (match prefix
-    [(ExprVar base)
+    [(comptime.ExprVar base)
       (match vec-name
-        [(ExprVar _)
+        [(comptime.ExprVar _)
           (let
-            [slots-name : Expr (expr-var (string-append base "-slots"))]
-            [len-name : Expr (expr-var (string-append base "-len"))]
-            [capacity-name : Expr (expr-var (string-append base "-capacity"))]
-            [with-capacity-name : Expr
-              (expr-var (string-append base "-with-capacity"))]
-            [new-name : Expr (expr-var (string-append base "-new"))]
-            [get-name : Expr (expr-var (string-append base "-get"))]
-            [set-name : Expr (expr-var (string-append base "-set!"))]
-            [copy-range-name : Expr
-              (expr-var (string-append base "-copy-range"))]
-            [grow-name : Expr (expr-var (string-append base "-grow"))]
-            [push-name : Expr (expr-var (string-append base "-push"))]
+            [slots-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-slots"))]
+            [len-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-len"))]
+            [capacity-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-capacity"))]
+            [with-capacity-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-with-capacity"))]
+            [new-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-new"))]
+            [get-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-get"))]
+            [set-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-set!"))]
+            [copy-range-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-copy-range"))]
+            [grow-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-grow"))]
+            [push-name : comptime.Expr
+              (comptime.expr-var (comptime.string-append base "-push"))]
             `(begin
               (defstruct ,vec-name
                 (slots (Array ,T))

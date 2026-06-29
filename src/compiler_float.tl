@@ -1,6 +1,6 @@
 ;; compiler_float.tl - Compiler-facing wrappers for deterministic float helpers.
 (import stdlib.io)
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 (import "compiler_ast_types.tl")
 

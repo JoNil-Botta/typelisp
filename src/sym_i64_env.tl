@@ -3,7 +3,7 @@
 (module sym_i64_env)
 
 (import compiler_intern as ci)
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (defenum SymI64Env

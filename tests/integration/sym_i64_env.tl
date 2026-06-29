@@ -4,7 +4,7 @@
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
 (import "sym_i64_env_core.tl")
 (import "compiler_intern.tl")
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (define (check-equal [got : i64] [want : i64] [msg : String]) : unit

@@ -303,7 +303,7 @@
                   (build-package-obj-path
                     manifest-dir
                     name
-                    (BackendTargetLinux)))))
+                    (CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -315,7 +315,7 @@
                   (build-package-obj-path
                     manifest-dir
                     name
-                    (BackendTargetWindows)))))
+                    (CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -327,7 +327,7 @@
                   (build-package-bin-path
                     manifest-dir
                     name
-                    (BackendTargetLinux)))))
+                    (CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -339,7 +339,7 @@
                   (build-package-bin-path
                     manifest-dir
                     name
-                    (BackendTargetWindows)))))
+                    (CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status
@@ -351,7 +351,7 @@
                   (build-package-lib-path
                     manifest-dir
                     name
-                    (BackendTargetLinux)))))
+                    (CompilerBackendTarget.Linux)))))
             (set!
               status
               (clean-merge-status
@@ -363,7 +363,7 @@
                   (build-package-lib-path
                     manifest-dir
                     name
-                    (BackendTargetWindows)))))
+                    (CompilerBackendTarget.Windows)))))
             (set!
               status
               (clean-merge-status

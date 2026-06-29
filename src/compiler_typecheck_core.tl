@@ -7527,9 +7527,24 @@
   -1)
 (define tc-source-dotted-alias-key-cache-ready : bool
   false)
+(define tc-source-dotted-full-path-key-cache-capacity : i64
+  8192)
+(define tc-source-dotted-full-path-key-cache-module-keys : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-dotted-full-path-key-cache-name-keys : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-dotted-full-path-key-cache-values : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-dotted-full-path-key-cache-generation : i64
+  -1)
+(define tc-source-dotted-full-path-key-cache-ready : bool
+  false)
 
 (define (tc-source-dotted-alias-key-cache-reset!) : unit
   (set! tc-source-dotted-alias-key-cache-ready false))
+
+(define (tc-source-dotted-full-path-key-cache-reset!) : unit
+  (set! tc-source-dotted-full-path-key-cache-ready false))
 
 (define (tc-source-dotted-alias-key-cache-ensure!) : unit
   (if (if tc-source-dotted-alias-key-cache-ready
@@ -7546,12 +7561,39 @@
         (set! tc-source-dotted-alias-key-cache-generation (intern-generation))
         (set! tc-source-dotted-alias-key-cache-ready true)))))
 
+(define (tc-source-dotted-full-path-key-cache-ensure!) : unit
+  (if (if tc-source-dotted-full-path-key-cache-ready
+    (= tc-source-dotted-full-path-key-cache-generation (intern-generation))
+    false)
+    unit
+    (let
+      [i : i64 0]
+      (begin
+        (while (< i tc-source-dotted-full-path-key-cache-capacity)
+          (begin
+            (array.array-set!
+              tc-source-dotted-full-path-key-cache-module-keys
+              i
+              0)
+            (set! i (+ i 1))))
+        (set!
+          tc-source-dotted-full-path-key-cache-generation
+          (intern-generation))
+        (set! tc-source-dotted-full-path-key-cache-ready true)))))
+
 (define (tc-source-dotted-alias-key-cache-bucket
   [module-id : i64]
   [name-id : i64]) : i64
   (bit-and
     (+ (* module-id 2654435761) (* name-id 40503))
     (- tc-source-dotted-alias-key-cache-capacity 1)))
+
+(define (tc-source-dotted-full-path-key-cache-bucket
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (bit-and
+    (+ (* module-id 2246822519) (* name-id 3266489917))
+    (- tc-source-dotted-full-path-key-cache-capacity 1)))
 
 ;; Returns the cached lookup-name id, -1 for no alias import, or -2 when absent.
 (define (tc-source-dotted-alias-key-cache-get [module-id : i64] [name-id : i64]) : i64
@@ -7569,6 +7611,31 @@
           (array.array-ref tc-source-dotted-alias-key-cache-name-keys cursor)
           name-key))
         (array.array-ref tc-source-dotted-alias-key-cache-values cursor)
+        -2))))
+
+;; Returns the cached lookup-name id, -1 for no full path, or -2 when absent.
+(define (tc-source-dotted-full-path-key-cache-get
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (begin
+    (tc-source-dotted-full-path-key-cache-ensure!)
+    (let
+      [cursor : i64
+        (tc-source-dotted-full-path-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array.array-ref
+            tc-source-dotted-full-path-key-cache-module-keys
+            cursor)
+          module-key)
+        (=
+          (array.array-ref
+            tc-source-dotted-full-path-key-cache-name-keys
+            cursor)
+          name-key))
+        (array.array-ref tc-source-dotted-full-path-key-cache-values cursor)
         -2))))
 
 (define (tc-source-dotted-alias-key-cache-put!
@@ -7590,6 +7657,29 @@
           (+ name-id 1))
         (array.array-set! tc-source-dotted-alias-key-cache-values cursor value)))))
 
+(define (tc-source-dotted-full-path-key-cache-put!
+  [module-id : i64]
+  [name-id : i64]
+  [value : i64]) : unit
+  (begin
+    (tc-source-dotted-full-path-key-cache-ensure!)
+    (let
+      [cursor : i64
+        (tc-source-dotted-full-path-key-cache-bucket module-id name-id)]
+      (begin
+        (array.array-set!
+          tc-source-dotted-full-path-key-cache-module-keys
+          cursor
+          (+ module-id 1))
+        (array.array-set!
+          tc-source-dotted-full-path-key-cache-name-keys
+          cursor
+          (+ name-id 1))
+        (array.array-set!
+          tc-source-dotted-full-path-key-cache-values
+          cursor
+          value)))))
+
 (define tc-lazy-import-stubs : TcLazyImportStubList
   (TcLazyImportStubNil))
 (define tc-lazy-import-stub-record-count : i64
@@ -7604,7 +7694,8 @@
     (set! tc-lazy-import-stubs (TcLazyImportStubNil))
     (set! tc-lazy-import-stub-record-count 0)
     (set! tc-lazy-import-summary-backed-count 0)
-    (tc-source-dotted-alias-key-cache-reset!)))
+    (tc-source-dotted-alias-key-cache-reset!)
+    (tc-source-dotted-full-path-key-cache-reset!)))
 
 (define (tc-lazy-import-stub-count) : i64
   tc-lazy-import-stub-record-count)
@@ -7642,7 +7733,8 @@
         tc-lazy-import-summary-backed-count
         (+ tc-lazy-import-summary-backed-count 1))
       unit)
-    (tc-source-dotted-alias-key-cache-reset!)))
+    (tc-source-dotted-alias-key-cache-reset!)
+    (tc-source-dotted-full-path-key-cache-reset!)))
 
 (define (tc-lazy-import-stub-target-in
   [stubs : TcLazyImportStubList]
@@ -7799,29 +7891,51 @@
 
 (define (tc-source-dotted-full-path-key [ctx : TcContext] [name : String]) : TcMaybeString
   (let
-    [n : i64 (string.string-length name)]
-    [i : i64 0]
-    [best-dot : i64 -1]
-    (begin
-      (while (< i n)
+    [name-id : i64 (tc-name-id name)]
+    [current-module-id : i64 (intern (tc-context-module ctx))]
+    [cached : i64
+      (tc-source-dotted-full-path-key-cache-get current-module-id name-id)]
+    (if (= cached -2)
+      (let
+        [n : i64 (string.string-length name)]
+        [i : i64 0]
+        [best-dot : i64 -1]
         (begin
-          (if (string.char-eq (string.string-ref name i) '.')
+          (while (< i n)
+            (begin
+              (if (string.char-eq (string.string-ref name i) '.')
+                (let
+                  [candidate : String (string.substring name 0 i)]
+                  (if (or
+                    (string.string-eq candidate (tc-context-module ctx))
+                    (tc-imported-module-identity? ctx candidate))
+                    (set! best-dot i)
+                    unit))
+                unit)
+              (set! i (+ i 1))))
+          (if (and (> best-dot 0) (< best-dot (- n 1)))
             (let
-              [candidate : String (string.substring name 0 i)]
-              (if (or
-                (string.string-eq candidate (tc-context-module ctx))
-                (tc-imported-module-identity? ctx candidate))
-                (set! best-dot i)
-                unit))
-            unit)
-          (set! i (+ i 1))))
-      (if (and (> best-dot 0) (< best-dot (- n 1)))
-        (let
-          [base-start : i64 (+ best-dot 1)]
-          [module-name : String (string.substring name 0 best-dot)]
-          [base : String (string.substring name base-start (- n base-start))]
-          (TcSomeString (compiler-symbol-module-key module-name base)))
-        (TcNoString)))))
+              [base-start : i64 (+ best-dot 1)]
+              [module-name : String (string.substring name 0 best-dot)]
+              [base : String
+                (string.substring name base-start (- n base-start))]
+              [lookup-name : String
+                (compiler-symbol-module-key module-name base)]
+              (begin
+                (tc-source-dotted-full-path-key-cache-put!
+                  current-module-id
+                  name-id
+                  (intern lookup-name))
+                (TcSomeString lookup-name)))
+            (begin
+              (tc-source-dotted-full-path-key-cache-put!
+                current-module-id
+                name-id
+                -1)
+              (TcNoString)))))
+      (if (< cached 0)
+        (TcNoString)
+        (TcSomeString (intern-str cached))))))
 
 (define (tc-unresolved-dotted-name-message [name : String]) : String
   (str_cat.str-cat
@@ -7919,30 +8033,26 @@
 
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name? name)
-    (match ctx
-      [(TcContext _ _ registries module _)
-        (let
-          [missing : i64 (compiler-symbols-missing-handle)]
-          [direct-found : bool
-            (compiler-symbols-handle-found?
-              (compiler-registries-lookup-variant-or registries name missing))]
+    (let
+      [name-id : i64 (tc-name-id name)]
+      (match ctx
+        [(TcContext _ _ registries module _)
           (if (and
             (> (string.string-length module) 0)
             (not (tc-name-qualified? name)))
             (let
               [module-key : String (compiler-symbol-module-key module name)]
-              (if (compiler-symbols-handle-found?
-                (compiler-registries-lookup-variant-or
-                  registries
-                  module-key
-                  missing))
-                (OkTcString module-key)
-                (if direct-found
-                  (OkTcString name)
-                  (ErrTcString ""))))
-            (if direct-found
-              (OkTcString name)
-              (ErrTcString ""))))])
+              (match (compiler-registries-lookup-variant registries module-key)
+                [(option_i64.Some _) (OkTcString module-key)]
+                [(option_i64.None)
+                  (match (compiler-registries-lookup-variant-id
+                    registries
+                    name-id)
+                    [(option_i64.Some _) (OkTcString name)]
+                    [(option_i64.None) (ErrTcString "")])]))
+            (match (compiler-registries-lookup-variant-id registries name-id)
+              [(option_i64.Some _) (OkTcString name)]
+              [(option_i64.None) (ErrTcString "")]))]))
     (ErrTcString "")))
 
 (define (tc-source-name-lookup-key-with-field-check
@@ -7980,16 +8090,16 @@
                 (match (tc-source-dotted-alias-key ctx name name-id first-dot)
                   [(TcSomeString key) (OkTcString key)]
                   [(TcNoString)
-                    (match (tc-source-dotted-full-path-key ctx name)
-                      [(TcSomeString key) (OkTcString key)]
-                      [(TcNoString)
-                        (if (tc-source-name-bound-exact-id? env name-id)
-                          (OkTcString name)
-                          (match (tc-enum-qualified-variant-lookup-key ctx name)
-                            [(OkTcString key) (OkTcString key)]
-                            [(ErrTcString _)
+                    (match (tc-enum-qualified-variant-lookup-key ctx name)
+                      [(OkTcString key) (OkTcString key)]
+                      [(ErrTcString _)
+                        (match (tc-source-dotted-full-path-key ctx name)
+                          [(TcSomeString key) (OkTcString key)]
+                          [(TcNoString)
+                            (if (tc-source-name-bound-exact-id? env name-id)
+                              (OkTcString name)
                               (ErrTcString
-                                (tc-unresolved-dotted-name-message name))]))])])])))))))
+                                (tc-unresolved-dotted-name-message name)))])])])])))))))
 
 (define (tc-source-name-lookup-key
   [ctx : TcContext]
@@ -24617,39 +24727,42 @@
                 [_ (ErrTcString "typecheck: variant owner is not enum")])
               (tc-variant-owner-name-list rest target (+ index 1) module))]))]))
 
+(define (tc-variant-constructor-type-for-handle
+  [ctx : TcContext]
+  [handle : i64]) : ResultTcType
+  (match (tc-variant-owner-name ctx handle)
+    [(OkTcString owner)
+      (match (compiler-registries-variant-fields-indexed
+        (tc-context-symbols ctx)
+        handle)
+        [(OkAstTypeList fields)
+          (match (tc-nominal-lifetimes ctx owner)
+            [(OkTcLifetimeList lifetimes)
+              (OkTcType
+                (tc-enum-variant-constructor-type ctx owner lifetimes fields))]
+            [(ErrTcLifetimeList message) (ErrTcType message)])]
+        [(ErrAstTypeList message) (ErrTcType message)])]
+    [(ErrTcString message) (ErrTcType message)]))
+
 (define (tc-variant-constructor-type-for-lookup-or
   [ctx : TcContext]
   [lookup-name : String]
   [_display-name : String]
   [not-found-message : String]) : ResultTcType
-  (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
-    [(OkTcString variant-key)
-      (let
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            (tc-context-registries ctx)
-            variant-key
-            (compiler-symbols-missing-handle))]
-        (if (compiler-symbols-handle-found? handle)
-          (match (tc-variant-owner-name ctx handle)
-            [(OkTcString owner)
-              (match (compiler-registries-variant-fields-indexed
-                (tc-context-symbols ctx)
-                handle)
-                [(OkAstTypeList fields)
-                  (match (tc-nominal-lifetimes ctx owner)
-                    [(OkTcLifetimeList lifetimes)
-                      (OkTcType
-                        (tc-enum-variant-constructor-type
-                          ctx
-                          owner
-                          lifetimes
-                          fields))]
-                    [(ErrTcLifetimeList message) (ErrTcType message)])]
-                [(ErrAstTypeList message) (ErrTcType message)])]
-            [(ErrTcString message) (ErrTcType message)])
-          (ErrTcType not-found-message)))]
-    [(ErrTcString _) (ErrTcType not-found-message)]))
+  (let
+    [registries : CompilerRegistries (tc-context-registries ctx)]
+    [lookup-id : i64 (tc-name-id lookup-name)]
+    (match (compiler-registries-lookup-variant-id registries lookup-id)
+      [(option_i64.Some handle)
+        (tc-variant-constructor-type-for-handle ctx handle)]
+      [(option_i64.None)
+        (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
+          [(OkTcString variant-key)
+            (match (compiler-registries-lookup-variant registries variant-key)
+              [(option_i64.Some handle)
+                (tc-variant-constructor-type-for-handle ctx handle)]
+              [(option_i64.None) (ErrTcType not-found-message)])]
+          [(ErrTcString _) (ErrTcType not-found-message)])])))
 
 (define (tc-struct-field-type
   [ctx : TcContext]
@@ -26077,10 +26190,10 @@
   (if (tc-name-qualified? variant-name)
     variant-name
     (if (>= (tc-name-first-dot variant-name) 0)
-      (match (tc-dotted-type-name-lookup-key ctx variant-name)
+      (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
         [(OkTcString lookup-name) lookup-name]
         [(ErrTcString _)
-          (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
+          (match (tc-dotted-type-name-lookup-key ctx variant-name)
             [(OkTcString lookup-name) lookup-name]
             [(ErrTcString _) variant-name])])
       (let
@@ -37253,6 +37366,21 @@
   (Key String i64)
   (TooLarge))
 
+(defenum MacroMaybeAstDecl
+  (No)
+  (Some AstDecl))
+
+(defenum MacroGeneratedTargetReplayScan
+  (NoRelevant)
+  (AllMatched)
+  (MissingOnly)
+  (Incompatible))
+
+(defenum MacroGeneratedTargetReplay
+  (NoReplay)
+  (ReplayCompatible)
+  (ReplayIncompatible))
+
 (define macro-generated-fingerprint-cache-capacity : i64
   4096)
 (define macro-generated-fingerprint-cache-module-keys : (Array i64)
@@ -38189,6 +38317,103 @@
         identity
         existing-body
         generated-body)]))
+
+(define (macro-decl-generated? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDeclComptimeDecl meta template-box)
+      (match meta
+        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
+        [(AstNoGeneratedDeclMeta)
+          (macro-decl-generated? (box-get template-box))])]
+    [(AstDeclUnsafe inner-box) (macro-decl-generated? (box-get inner-box))]
+    [_ false]))
+
+(define (macro-generated-visible-name [decl : AstDecl]) : SpecMaybeString
+  (if (and (macro-decl-generated? decl) (not (macro-decl-import? decl)))
+    (gen-decl-visible-name decl)
+    (SpecMaybeString.None)))
+
+(define (macro-find-generated-visible-decl
+  [decls : AstDeclList]
+  [name : String]) : MacroMaybeAstDecl
+  (match decls
+    [(AstDeclNil) (MacroMaybeAstDecl.No)]
+    [(AstDeclCons decl rest-box)
+      (match (macro-generated-visible-name decl)
+        [(SpecMaybeString.Some candidate)
+          (if (string.string-eq candidate name)
+            (MacroMaybeAstDecl.Some decl)
+            (macro-find-generated-visible-decl (box-get rest-box) name))]
+        [(SpecMaybeString.None)
+          (macro-find-generated-visible-decl (box-get rest-box) name)])]))
+
+(define (macro-generated-target-replay-scan-step
+  [state : MacroGeneratedTargetReplayScan]
+  [matched? : bool]
+  [same? : bool]) : MacroGeneratedTargetReplayScan
+  (if matched?
+    (if same?
+      (match state
+        [(MacroGeneratedTargetReplayScan.NoRelevant)
+          (MacroGeneratedTargetReplayScan.AllMatched)]
+        [(MacroGeneratedTargetReplayScan.AllMatched)
+          (MacroGeneratedTargetReplayScan.AllMatched)]
+        [(MacroGeneratedTargetReplayScan.MissingOnly)
+          (MacroGeneratedTargetReplayScan.Incompatible)]
+        [(MacroGeneratedTargetReplayScan.Incompatible)
+          (MacroGeneratedTargetReplayScan.Incompatible)])
+      (MacroGeneratedTargetReplayScan.Incompatible))
+    (match state
+      [(MacroGeneratedTargetReplayScan.NoRelevant)
+        (MacroGeneratedTargetReplayScan.MissingOnly)]
+      [(MacroGeneratedTargetReplayScan.AllMatched)
+        (MacroGeneratedTargetReplayScan.Incompatible)]
+      [(MacroGeneratedTargetReplayScan.MissingOnly)
+        (MacroGeneratedTargetReplayScan.MissingOnly)]
+      [(MacroGeneratedTargetReplayScan.Incompatible)
+        (MacroGeneratedTargetReplayScan.Incompatible)])))
+
+(define (macro-generated-target-replay-scan-in
+  [existing-body : AstDeclList]
+  [generated-body : AstDeclList]
+  [state : MacroGeneratedTargetReplayScan]) : MacroGeneratedTargetReplayScan
+  (match generated-body
+    [(AstDeclNil) state]
+    [(AstDeclCons decl rest-box)
+      (match (macro-generated-visible-name decl)
+        [(SpecMaybeString.Some name)
+          (match (macro-find-generated-visible-decl existing-body name)
+            [(MacroMaybeAstDecl.Some existing-decl)
+              (macro-generated-target-replay-scan-in
+                existing-body
+                (box-get rest-box)
+                (macro-generated-target-replay-scan-step
+                  state
+                  true
+                  (gen-decl-eq? existing-decl decl)))]
+            [(MacroMaybeAstDecl.No)
+              (macro-generated-target-replay-scan-in
+                existing-body
+                (box-get rest-box)
+                (macro-generated-target-replay-scan-step state false false))])]
+        [(SpecMaybeString.None)
+          (macro-generated-target-replay-scan-in
+            existing-body
+            (box-get rest-box)
+            state)])]))
+
+(define (macro-generated-target-replay
+  [existing-body : AstDeclList]
+  [generated-body : AstDeclList]) : MacroGeneratedTargetReplay
+  (match (macro-generated-target-replay-scan-in
+    existing-body
+    generated-body
+    (MacroGeneratedTargetReplayScan.NoRelevant))
+    [(MacroGeneratedTargetReplayScan.AllMatched)
+      (MacroGeneratedTargetReplay.ReplayCompatible)]
+    [(MacroGeneratedTargetReplayScan.Incompatible)
+      (MacroGeneratedTargetReplay.ReplayIncompatible)]
+    [_ (MacroGeneratedTargetReplay.NoReplay)]))
 
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
@@ -44840,29 +45065,60 @@
                     (box (macro-generated-import-diag span message)))])
               (ResultMacroDeclExpansion.Err
                 (box (macro-module-incompatible-output-diag call-expr identity)))))
-          (match (macro-check-generated-import-collisions
-            orig-decls
-            generated-body
-            module
-            alias
-            identity)
-            [CompilerNoString
-              (let
-                [expanded : AstDeclList
-                  (macro-decl-list-append
-                    materialized
-                    (ast-decl-cons
-                      (ast-decl-module module)
-                      (macro-module-import-marker-decls
-                        target-module
-                        alias
-                        span)))]
-                (ResultMacroDeclExpansion.Ok
-                  expanded
-                  (macro-paths-for-decls expanded decl-path)))]
-            [(CompilerSomeString message)
-              (ResultMacroDeclExpansion.Err
-                (box (macro-generated-import-diag span message)))]))]
+          (let
+            [generated-key-body : AstDeclList
+              (macro-decls-filter-generated-key generated-body identity)]
+            (match (macro-generated-target-replay
+              existing-body
+              generated-key-body)
+              [(MacroGeneratedTargetReplay.ReplayCompatible)
+                (match (macro-check-generated-import-collisions
+                  orig-decls
+                  generated-body
+                  module
+                  alias
+                  identity)
+                  [CompilerNoString
+                    (let
+                      [expanded : AstDeclList
+                        (macro-module-import-marker-decls
+                          target-module
+                          alias
+                          span)]
+                      (ResultMacroDeclExpansion.Ok
+                        expanded
+                        (macro-paths-for-decls expanded decl-path)))]
+                  [(CompilerSomeString message)
+                    (ResultMacroDeclExpansion.Err
+                      (box (macro-generated-import-diag span message)))])]
+              [(MacroGeneratedTargetReplay.ReplayIncompatible)
+                (ResultMacroDeclExpansion.Err
+                  (box
+                    (macro-module-incompatible-output-diag call-expr identity)))]
+              [(MacroGeneratedTargetReplay.NoReplay)
+                (match (macro-check-generated-import-collisions
+                  orig-decls
+                  generated-body
+                  module
+                  alias
+                  identity)
+                  [CompilerNoString
+                    (let
+                      [expanded : AstDeclList
+                        (macro-decl-list-append
+                          materialized
+                          (ast-decl-cons
+                            (ast-decl-module module)
+                            (macro-module-import-marker-decls
+                              target-module
+                              alias
+                              span)))]
+                      (ResultMacroDeclExpansion.Ok
+                        expanded
+                        (macro-paths-for-decls expanded decl-path)))]
+                  [(CompilerSomeString message)
+                    (ResultMacroDeclExpansion.Err
+                      (box (macro-generated-import-diag span message)))])])))]
       [(MacroMaybeDeclList.No)
         (match (macro-check-generated-import-collisions
           orig-decls
@@ -47585,7 +47841,8 @@
 (define (macro-materialize-seen-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [seen : SymI64Env]) : SymI64Env
+  [seen : SymI64Env]
+  [module : String]) : SymI64Env
   (match decls
     [(AstDeclNil) seen]
     [(AstDeclCons decl rest-box)
@@ -47602,9 +47859,16 @@
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
             [(AstDeclPathNil) AstDeclPathNil])]
+        [next-module : String
+          (match decl
+            [(AstDeclModule name) (intern-str name)]
+            [_ module])]
         [seen-path : SymI64Env
           (if (> (string.string-length decl-path) 0)
-            (sym-i64-bind seen (compiler-load-seen-path-key decl-path) 1)
+            (sym-i64-bind
+              seen
+              (compiler-load-seen-path-key-in-module decl-path module)
+              1)
             seen)]
         [seen-decl : SymI64Env
           (match decl
@@ -47615,7 +47879,7 @@
                   (sym-i64-bind seen-path module-name 1)
                   seen-path))]
             [_ seen-path])]
-        (macro-materialize-seen-from rest rest-paths seen-decl))]))
+        (macro-materialize-seen-from rest rest-paths seen-decl next-module))]))
 
 (define (macro-materialize-import-diagnostic
   [path : String]
@@ -47656,14 +47920,15 @@
           import-path
           stdlib-roots)
           [(ResultPkgResolve.Ok resolved)
-            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
+            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-context-with-pools
               resolved
               seen
               stdlib-roots
               expected
               import-root
               cfgs
-              pools)
+              pools
+              module)
               [(ResultCompilerLoadWithPaths.Ok
                   imported-decls
                   imported-paths
@@ -47725,7 +47990,8 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (let
-    [seen : SymI64Env (macro-materialize-seen-from decls paths (sym-i64-empty))]
+    [seen : SymI64Env
+      (macro-materialize-seen-from decls paths (sym-i64-empty) "")]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String ""]

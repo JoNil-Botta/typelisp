@@ -2,7 +2,7 @@
 ;;
 ;; `compiler-backend-instr-outgoing-stack-space` and
 ;; `compiler-backend-instr-needs-outgoing-space?` must account for
-;; `IrInstrTailCall`, not just `IrInstrCall`/`IrInstrCallIndirect`.
+;; `CompilerIrInstr.TailCall`, not just `CompilerIrInstr.Call`/`CompilerIrInstr.CallIndirect`.
 ;;
 ;; A tail-recursive function with more than four parameters passes its later
 ;; arguments (here the accumulator) on the stack under the Win64 ABI, and the

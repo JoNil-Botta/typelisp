@@ -115,104 +115,101 @@
   compile-profile
   (define (compiler-backend-profile-function-name [func : CompilerIrFunction]) : String
     (match func
-      [(IrFunction name _ _ _ _) name])))
+      [(CompilerIrFunction.Function name _ _ _ _) name])))
 
 (defenum ResultBackendReg
-  (OkBackendReg String)
-  (ErrBackendReg String))
+  (Ok String)
+  (Err String))
 
 (defenum ResultBackendValue
-  (OkBackendValue CompilerIrValue)
-  (ErrBackendValue String))
+  (Ok CompilerIrValue)
+  (Err String))
 
 (defenum CompilerBackendVectorMemFold
-  (CompilerBackendNoVectorMemFold)
-  (CompilerBackendSomeVectorMemFold CompilerIrValue))
+  (No)
+  (Some CompilerIrValue))
 
 (defenum CompilerBackendPhiSource
-  (BackendPhiSourceValue CompilerIrValue)
-  (BackendPhiSourceTemp))
+  (Value CompilerIrValue)
+  (Temp))
 
 (defenum CompilerBackendPhiCopy
-  (BackendPhiCopy i64 CompilerBackendPhiSource AstType))
+  (Copy i64 CompilerBackendPhiSource AstType))
 
 (defenum CompilerBackendPhiCopyList
-  (BackendPhiCopyNil)
-  (BackendPhiCopyCons CompilerBackendPhiCopy (Box CompilerBackendPhiCopyList)))
+  (Nil)
+  (Cons CompilerBackendPhiCopy (Box CompilerBackendPhiCopyList)))
 
 (define (compiler-backend-phi-copy-cons
   [copy : CompilerBackendPhiCopy]
   [rest : CompilerBackendPhiCopyList]) : CompilerBackendPhiCopyList
-  (BackendPhiCopyCons copy (box rest)))
+  (CompilerBackendPhiCopyList.Cons copy (box rest)))
 
 (defenum CompilerBackendMaybePhiCopy
-  (BackendNoPhiCopy)
-  (BackendSomePhiCopy CompilerBackendPhiCopy))
+  (No)
+  (Some CompilerBackendPhiCopy))
 
 (defenum ResultBackendPhiCopies
-  (OkBackendPhiCopies CompilerBackendPhiCopyList)
-  (ErrBackendPhiCopies String))
+  (Ok CompilerBackendPhiCopyList)
+  (Err String))
 
 (defenum CompilerBackendPhiReturnMatch
-  (BackendNoPhiReturnMatch)
-  (BackendSomePhiReturnMatch CompilerIrValue))
+  (No)
+  (Some CompilerIrValue))
 
 (defenum ResultBackendPhiReturnMatch
-  (OkBackendPhiReturnMatch CompilerBackendPhiReturnMatch)
-  (ErrBackendPhiReturnMatch String))
+  (Ok CompilerBackendPhiReturnMatch)
+  (Err String))
 
 (defenum CompilerBackendMaybeImmediate
-  (CompilerBackendNoImmediate)
-  (CompilerBackendSomeImmediate String))
+  (No)
+  (Some String))
 
 (defenum CompilerBackendMaybeAsm
-  (CompilerBackendNoAsm)
-  (CompilerBackendSomeAsm String))
+  (No)
+  (Some String))
 
 (defenum CompilerBackendMaybeStackOperand
-  (CompilerBackendNoStackOperand)
-  (CompilerBackendSomeStackOperand String))
+  (No)
+  (Some String))
 
 (defenum CompilerBackendPeepholeMove
-  (CompilerBackendPeepholeNoMove)
-  (CompilerBackendPeepholeMove String String))
+  (NoMove)
+  (Move String String))
 
 (defstruct CompilerBackendPeepholeEmitResult
   (buf text_buf.TextBuf)
   (rax-owner String))
 
 (defenum CompilerBackendUnsignedDivMagic
-  (CompilerBackendNoUnsignedDivMagic)
-  (CompilerBackendUnsignedDivMagicRoundUp u64 i64)
-  (CompilerBackendUnsignedDivMagicRoundDown u64 i64))
+  (No)
+  (RoundUp u64 i64)
+  (RoundDown u64 i64))
 
 (defenum CompilerBackendMaybeLabel
-  (CompilerBackendNoLabel)
-  (CompilerBackendSomeLabel String))
+  (No)
+  (Some String))
 
 (defenum CompilerBackendMaybeSignature
-  (CompilerBackendNoSignature)
-  (CompilerBackendSomeSignature AstTypeList AstType))
+  (No)
+  (Some AstTypeList AstType))
 
 (defenum CompilerBackendGlobalTypeList
-  (CompilerBackendGlobalTypeNil)
-  (CompilerBackendGlobalTypeCons
-    String
-    AstType
-    (Box CompilerBackendGlobalTypeList))
-  (CompilerBackendGlobalTypeCache hashmap.StringI64Map (Array AstType)))
+  (Nil)
+  (Cons String AstType (Box CompilerBackendGlobalTypeList))
+  (Cache hashmap.StringI64Map (Array AstType)))
 
 (defenum ResultCompilerBackend
-  (OkCompilerBackend String)
-  (ErrCompilerBackend (Box CompilerDiagnostic)))
+  (Ok String)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerBackendObject
-  (OkCompilerBackendObject CompilerObjectImage)
-  (ErrCompilerBackendObject (Box CompilerDiagnostic)))
+  (Ok CompilerObjectImage)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendSwitchValidation
-  (CompilerBackendSwitchValidationOk)
-  (CompilerBackendSwitchValidationErr String))
+  (Ok)
+  (Err String))
 
 (defstruct CompilerBackendPicOutput
   (asm String)
@@ -223,16 +220,16 @@
   (reg String))
 
 (defenum ResultCompilerBackendAddressBase
-  (OkCompilerBackendAddressBase CompilerBackendAddressBase)
-  (ErrCompilerBackendAddressBase (Box CompilerDiagnostic)))
+  (Ok CompilerBackendAddressBase)
+  (Err (Box CompilerDiagnostic)))
 
 (defstruct CompilerBackendSimdIndexedAddress
   (asm String)
   (addr String))
 
 (defenum ResultCompilerBackendSimdIndexedAddress
-  (OkCompilerBackendSimdIndexedAddress CompilerBackendSimdIndexedAddress)
-  (ErrCompilerBackendSimdIndexedAddress (Box CompilerDiagnostic)))
+  (Ok CompilerBackendSimdIndexedAddress)
+  (Err (Box CompilerDiagnostic)))
 
 (defstruct CompilerBackendU64DivPow2
   (quot u64)
@@ -244,31 +241,31 @@
   (shift i64))
 
 (defenum ResultCompilerBackendPic
-  (OkCompilerBackendPic CompilerBackendPicOutput)
-  (ErrCompilerBackendPic (Box CompilerDiagnostic)))
+  (Ok CompilerBackendPicOutput)
+  (Err (Box CompilerDiagnostic)))
 
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
   (hash-string bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
-  (BackendRuntimeOwnerUnknown)
-  (BackendRuntimeOwnerCore)
-  (BackendRuntimeOwnerStdlibFfi)
-  (BackendRuntimeOwnerStdlibTypeLisp)
-  (BackendRuntimeOwnerCompatibilityAlias)
-  (BackendRuntimeOwnerDeprecated))
+  (Unknown)
+  (Core)
+  (StdlibFfi)
+  (StdlibTypeLisp)
+  (CompatibilityAlias)
+  (Deprecated))
 
 (defenum ResultCompilerBackendBuffer
-  (OkCompilerBackendBuffer text_buf.TextBuf)
-  (ErrCompilerBackendBuffer (Box CompilerDiagnostic)))
+  (Ok text_buf.TextBuf)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerBackendSymbolValidation
-  (OkCompilerBackendSymbolValidation hashmap.StringI64Map)
-  (ErrCompilerBackendSymbolValidation (Box CompilerDiagnostic)))
+  (Ok hashmap.StringI64Map)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendRuntimePlan
-  (BackendRuntimePlan
+  (Plan
     bool
     bool
     bool
@@ -349,22 +346,22 @@
 ;; Backend code-generation target (#646). Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
 (defenum CompilerBackendTarget
-  (BackendTargetLinux)
-  (BackendTargetWindows))
+  (Linux)
+  (Windows))
 
 (define (compiler-backend-regalloc-abi [target : CompilerBackendTarget]) : CompilerRegTargetAbi
   (match target
-    [(BackendTargetLinux) CompilerRegAbiLinux]
-    [(BackendTargetWindows) CompilerRegAbiWindows]))
+    [(CompilerBackendTarget.Linux) CompilerRegTargetAbi.Linux]
+    [(CompilerBackendTarget.Windows) CompilerRegTargetAbi.Windows]))
 
 (defenum CompilerBackendMode
-  (BackendModeScalar)
-  (BackendModeAvx2)
-  (BackendModeAvx512))
+  (Scalar)
+  (Avx2)
+  (Avx512))
 
 (define (compiler-backend-mode-scalar? [mode : CompilerBackendMode]) : bool
   (match mode
-    [(BackendModeScalar) true]
+    [(CompilerBackendMode.Scalar) true]
     [_ false]))
 
 ;; Whether scalar functions get full register allocation (#perf). Register
@@ -435,19 +432,19 @@
   (array.make-array i64 0))
 
 (defenum CompilerBackendEmitInstrsMode
-  (CompilerBackendEmitInstrsModeNormal)
-  (CompilerBackendEmitInstrsModeRax i64 AstType)
-  (CompilerBackendEmitInstrsModeCallRax i64 AstType))
+  (Normal)
+  (Rax i64 AstType)
+  (CallRax i64 AstType))
 
 (define compiler-backend-emit-instrs-loop-active : bool
   false)
 (define compiler-backend-emit-instrs-continue-pending : bool
   false)
 (define compiler-backend-emit-instrs-next-mode : CompilerBackendEmitInstrsMode
-  (CompilerBackendEmitInstrsModeNormal))
+  (CompilerBackendEmitInstrsMode.Normal))
 
 (define (compiler-backend-empty-instr-list) : CompilerIrInstrList
-  IrInstrNil)
+  CompilerIrInstrList.Nil)
 
 (define compiler-backend-emit-instrs-next-instrs : CompilerIrInstrList
   (compiler-backend-empty-instr-list))
@@ -463,37 +460,37 @@
     (set! compiler-backend-emit-instrs-next-mode mode)
     (set! compiler-backend-emit-instrs-next-instrs instrs)
     (set! compiler-backend-emit-instrs-next-buf buf)
-    (OkCompilerBackend "")))
+    (ResultCompilerBackend.Ok "")))
 
 (defenum ResultBackendRuntimePlan
-  (OkBackendRuntimePlan CompilerBackendRuntimePlan)
-  (ErrBackendRuntimePlan String))
+  (Ok CompilerBackendRuntimePlan)
+  (Err String))
 
 (defenum ResultBackendRuntimePlanWithIndex
-  (OkBackendRuntimePlanWithIndex CompilerBackendRuntimePlanWithIndex)
-  (ErrBackendRuntimePlanWithIndex String))
+  (Ok CompilerBackendRuntimePlanWithIndex)
+  (Err String))
 
 (defenum BackendStringList
-  (BackendStringNil)
-  (BackendStringCons String (Box BackendStringList)))
+  (Nil)
+  (Cons String (Box BackendStringList)))
 
 (defenum BackendFloatList
-  (BackendFloatNil)
-  (BackendFloatCons AstType u64 (Box BackendFloatList)))
+  (Nil)
+  (Cons AstType u64 (Box BackendFloatList)))
 
 (define (compiler-backend-string-cons
   [head : String]
   [rest : BackendStringList]) : BackendStringList
-  (BackendStringCons head (box rest)))
+  (BackendStringList.Cons head (box rest)))
 
 (define (compiler-backend-float-cons
   [ty : AstType]
   [bits : u64]
   [rest : BackendFloatList]) : BackendFloatList
-  (BackendFloatCons ty bits (box rest)))
+  (BackendFloatList.Cons ty bits (box rest)))
 
 (define (compiler-backend-empty-string-list) : BackendStringList
-  BackendStringNil)
+  BackendStringList.Nil)
 
 (define compiler-backend-current-phi-targets : BackendStringList
   (compiler-backend-empty-string-list))
@@ -506,8 +503,8 @@
   [items : BackendStringList]
   [needle : String]) : bool
   (match items
-    [(BackendStringNil) false]
-    [(BackendStringCons head rest)
+    [(BackendStringList.Nil) false]
+    [(BackendStringList.Cons head rest)
       (if (string.string-eq head needle)
         true
         (compiler-backend-string-list-contains? (box-get rest) needle))]))
@@ -530,14 +527,14 @@
   (uses-f64-neg bool))
 
 (defenum CompilerBackendCollectState
-  (BackendCollectCollections CompilerBackendProgramCollections)
-  (BackendCollectGroupCounts hashmap.StringI64Map)
-  (BackendCollectGroupClassMasks hashmap.StringI64Map CompilerRegVarTypes))
+  (Collections CompilerBackendProgramCollections)
+  (GroupCounts hashmap.StringI64Map)
+  (GroupClassMasks hashmap.StringI64Map CompilerRegVarTypes))
 
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet
     (hashmap.string-i64-map-with-capacity capacity)
-    BackendStringNil))
+    BackendStringList.Nil))
 
 (define (compiler-backend-float-payload-bits [ty : AstType] [bits : u64]) : u64
   (if (compiler-backend-f64-type? ty)
@@ -556,7 +553,7 @@
 (define (compiler-backend-float-set-new [capacity : i64]) : BackendFloatSet
   (BackendFloatSet
     (hashmap.string-i64-map-with-capacity capacity)
-    BackendFloatNil))
+    BackendFloatList.Nil))
 
 (define (compiler-backend-string-set-add
   [set : BackendStringSet]
@@ -792,7 +789,7 @@
   (if (>= index (array.array-length values))
     unit
     (begin
-      (array.array-set! values index (CompilerNoSourceSpan))
+      (array.array-set! values index (CompilerMaybeSourceSpan.No))
       (compiler-backend-source-span-index-fill values (+ index 1)))))
 
 (define (compiler-backend-source-span-index-add
@@ -801,10 +798,10 @@
   [values : (Array CompilerMaybeSourceSpan)]
   [index : i64]) : hashmap.StringI64Map
   (match entries
-    [(CompilerSourceSpansEntryNil) map]
-    [(CompilerSourceSpansEntryCons entry rest)
+    [(CompilerSourceSpansEntryList.Nil) map]
+    [(CompilerSourceSpansEntryList.Cons entry rest)
       (match entry
-        [(CompilerSourceSpansEntry name span)
+        [(CompilerSourceSpansEntry.Entry name span)
           (if (hashmap.string-i64-map-contains? map name)
             (compiler-backend-source-span-index-add
               (box-get rest)
@@ -814,7 +811,10 @@
             (match (hashmap.string-i64-map-insert map name index)
               [(hashmap.StringI64MapInsertOk next-map)
                 (begin
-                  (array.array-set! values index (CompilerSomeSourceSpan span))
+                  (array.array-set!
+                    values
+                    index
+                    (CompilerMaybeSourceSpan.Some span))
                   (compiler-backend-source-span-index-add
                     (box-get rest)
                     next-map
@@ -824,7 +824,7 @@
 
 (define (compiler-backend-source-span-index-build [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
   (match spans
-    [(CompilerSourceSpans entries _ _)
+    [(CompilerSourceSpans.Spans entries _ _)
       (let
         [count : i64 (compiler-source-spans-count spans)]
         [values : (Array CompilerMaybeSourceSpan)
@@ -848,26 +848,26 @@
         (>= slot 0)
         (< slot (array.array-length (struct-get index values))))
         (array.array-ref (struct-get index values) slot)
-        (CompilerNoSourceSpan))]
-    [(hashmap.StringI64MapMissing) (CompilerNoSourceSpan)]))
+        (CompilerMaybeSourceSpan.No))]
+    [(hashmap.StringI64MapMissing) (CompilerMaybeSourceSpan.No)]))
 
 (define (compiler-backend-function-diagnostic-index
   [index : CompilerBackendSourceSpanIndex]
   [function : String]
   [message : String]) : CompilerDiagnostic
   (match (compiler-backend-source-span-index-lookup index function)
-    [(CompilerSomeSourceSpan span)
+    [(CompilerMaybeSourceSpan.Some span)
       (compiler-diagnostic-from-ast-span "" span message)]
-    [(CompilerNoSourceSpan) (compiler-diagnostic-at-start "" message)]))
+    [(CompilerMaybeSourceSpan.No) (compiler-diagnostic-at-start "" message)]))
 
 (define (compiler-backend-function-diagnostic
   [spans : CompilerSourceSpans]
   [function : String]
   [message : String]) : CompilerDiagnostic
   (match (compiler-source-spans-lookup spans function)
-    [(CompilerSomeSourceSpan span)
+    [(CompilerMaybeSourceSpan.Some span)
       (compiler-diagnostic-from-ast-span "" span message)]
-    [(CompilerNoSourceSpan) (compiler-diagnostic-at-start "" message)]))
+    [(CompilerMaybeSourceSpan.No) (compiler-diagnostic-at-start "" message)]))
 
 (define (compiler-backend-instr-diagnostic
   [spans : CompilerSourceSpans]
@@ -876,9 +876,10 @@
   [fallback : CompilerDiagnostic]
   [message : String]) : CompilerDiagnostic
   (match (compiler-source-spans-lookup-instr spans function instr)
-    [(CompilerSomeSourceSpan span)
+    [(CompilerMaybeSourceSpan.Some span)
       (compiler-diagnostic-from-ast-span "" span message)]
-    [(CompilerNoSourceSpan) (compiler-diagnostic-with-message fallback message)]))
+    [(CompilerMaybeSourceSpan.No)
+      (compiler-diagnostic-with-message fallback message)]))
 
 (define (compiler-backend-apply-instr-diagnostic
   [diag : CompilerDiagnostic]
@@ -889,7 +890,7 @@
 
 (define (compiler-backend-vector-mask-unimplemented
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (ErrCompilerBackend
+  (ResultCompilerBackend.Err
     (box
       (compiler-diagnostic-with-message
         instr-diag
@@ -897,7 +898,7 @@
 
 (define (compiler-backend-spmd-call-unimplemented
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (ErrCompilerBackend
+  (ResultCompilerBackend.Err
     (box
       (compiler-diagnostic-with-message
         instr-diag
@@ -905,7 +906,7 @@
 
 (define (compiler-backend-mode-prologue [mode : CompilerBackendMode]) : String
   (match mode
-    [(BackendModeAvx2) "    vzeroupper\n"]
+    [(CompilerBackendMode.Avx2) "    vzeroupper\n"]
     [_ ""]))
 
 (define (compiler-backend-dispatch-avx2-prefix) : String
@@ -921,19 +922,19 @@
     name
     (compiler-backend-dispatch-avx512-prefix)
     0)
-    (BackendModeAvx512)
+    (CompilerBackendMode.Avx512)
     (if (compiler-backend-string-prefix-at?
       name
       (compiler-backend-dispatch-avx2-prefix)
       0)
-      (BackendModeAvx2)
+      (CompilerBackendMode.Avx2)
       mode)))
 
 (define (compiler-backend-effective-function-mode
   [mode : CompilerBackendMode]
   [func : CompilerIrFunction]) : CompilerBackendMode
   (match func
-    [(IrFunction name _ _ _ _)
+    [(CompilerIrFunction.Function name _ _ _ _)
       (compiler-backend-effective-mode-for-function-name mode name)]))
 
 (define (compiler-backend-avx2-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
@@ -954,7 +955,7 @@
   [instr-diag : CompilerDiagnostic]
   [elem-ty : AstType]
   [lanes : i64]) : ResultCompilerBackend
-  (ErrCompilerBackend
+  (ResultCompilerBackend.Err
     (box
       (compiler-diagnostic-with-message
         instr-diag
@@ -1021,24 +1022,25 @@
   [var : i64]
   [role : String]) : ResultBackendReg
   (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister home)
+        [(CompilerRegLocation.Register home)
           (if (compiler-backend-vector-home-valid? home)
-            (OkBackendReg home)
-            (ErrBackendReg (compiler-backend-vector-home-unavailable role)))]
-        [(CompilerRegRegisterPair _ _)
-          (ErrBackendReg (compiler-backend-vector-home-unavailable role))]
-        [(CompilerRegSpill _)
-          (ErrBackendReg
+            (ResultBackendReg.Ok home)
+            (ResultBackendReg.Err
+              (compiler-backend-vector-home-unavailable role)))]
+        [(CompilerRegLocation.RegisterPair _ _)
+          (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))]
+        [(CompilerRegLocation.Spill _)
+          (ResultBackendReg.Err
             (string.string-append
               "backend: vector spills are not implemented for "
               role))]
         ;; A rematerialised value is an i64-class constant/address, never a vector.
-        [(CompilerRegRemat _)
-          (ErrBackendReg (compiler-backend-vector-home-unavailable role))])]
-    [(CompilerRegNoLocation)
-      (ErrBackendReg (compiler-backend-vector-home-unavailable role))]))
+        [(CompilerRegLocation.Remat _)
+          (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))])]
+    [(CompilerRegMaybeLocation.No)
+      (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))]))
 
 (define (compiler-backend-mask-home-unavailable [role : String]) : String
   (str_cat.str-cat
@@ -1052,49 +1054,49 @@
   [role : String]
   [width : String]) : ResultBackendReg
   (match (compiler-backend-vector-var-home assignments var role)
-    [(OkBackendReg home)
+    [(ResultBackendReg.Ok home)
       (let
         [reg : String (compiler-backend-vector-home-to-reg home width)]
         (if (= (string.string-length reg) 0)
-          (ErrBackendReg (compiler-backend-vector-home-unavailable role))
-          (OkBackendReg reg)))]
-    [(ErrBackendReg message) (ErrBackendReg message)]))
+          (ResultBackendReg.Err (compiler-backend-vector-home-unavailable role))
+          (ResultBackendReg.Ok reg)))]
+    [(ResultBackendReg.Err message) (ResultBackendReg.Err message)]))
 
 (define (compiler-backend-mask-var-reg
   [assignments : CompilerRegAssignmentList]
   [var : i64]
   [role : String]) : ResultBackendReg
   (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister home)
+        [(CompilerRegLocation.Register home)
           (if (compiler-reg-string-list-contains?
             (compiler-reg-mask-registers)
             home)
-            (OkBackendReg home)
-            (ErrBackendReg (compiler-backend-mask-home-unavailable role)))]
-        [(CompilerRegRegisterPair _ _)
-          (ErrBackendReg (compiler-backend-mask-home-unavailable role))]
-        [(CompilerRegSpill _)
-          (ErrBackendReg
+            (ResultBackendReg.Ok home)
+            (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role)))]
+        [(CompilerRegLocation.RegisterPair _ _)
+          (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role))]
+        [(CompilerRegLocation.Spill _)
+          (ResultBackendReg.Err
             (string.string-append
               "backend: mask spills are not implemented for "
               role))]
         ;; A rematerialised value is i64-class, never a mask register.
-        [(CompilerRegRemat _)
-          (ErrBackendReg (compiler-backend-mask-home-unavailable role))])]
-    [(CompilerRegNoLocation)
-      (ErrBackendReg (compiler-backend-mask-home-unavailable role))]))
+        [(CompilerRegLocation.Remat _)
+          (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role))])]
+    [(CompilerRegMaybeLocation.No)
+      (ResultBackendReg.Err (compiler-backend-mask-home-unavailable role))]))
 
 (define (compiler-backend-avx2-vector-value-reg
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [role : String]) : ResultBackendReg
   (match value
-    [(IrValueVar var)
+    [(CompilerIrValue.Var var)
       (compiler-backend-vector-var-reg assignments var role "ymm")]
     [_
-      (ErrBackendReg
+      (ResultBackendReg.Err
         (string.string-append "backend: unsupported AVX2 vector " role))]))
 
 (define (compiler-backend-avx2-vector-move [elem-ty : AstType]) : String
@@ -1107,7 +1109,7 @@
   [op : CompilerIrBinOp]
   [elem-ty : AstType]) : String
   (match op
-    [(IrBinAdd)
+    [(CompilerIrBinOp.Add)
       (match elem-ty
         [(AstTyI64) "vpaddq"]
         [(AstTyU64) "vpaddq"]
@@ -1120,7 +1122,7 @@
         [(AstTyF64) "vaddpd"]
         [(AstTyF32) "vaddps"]
         [_ ""])]
-    [(IrBinSub)
+    [(CompilerIrBinOp.Sub)
       (match elem-ty
         [(AstTyI64) "vpsubq"]
         [(AstTyU64) "vpsubq"]
@@ -1133,7 +1135,7 @@
         [(AstTyF64) "vsubpd"]
         [(AstTyF32) "vsubps"]
         [_ ""])]
-    [(IrBinMul)
+    [(CompilerIrBinOp.Mul)
       (match elem-ty
         [(AstTyI32) "vpmulld"]
         [(AstTyU32) "vpmulld"]
@@ -1142,7 +1144,7 @@
         [(AstTyF64) "vmulpd"]
         [(AstTyF32) "vmulps"]
         [_ ""])]
-    [(IrBinBitAnd)
+    [(CompilerIrBinOp.BitAnd)
       (match elem-ty
         [(AstTyI64) "vpand"]
         [(AstTyU64) "vpand"]
@@ -1153,7 +1155,7 @@
         [(AstTyI8) "vpand"]
         [(AstTyU8) "vpand"]
         [_ ""])]
-    [(IrBinBitOr)
+    [(CompilerIrBinOp.BitOr)
       (match elem-ty
         [(AstTyI64) "vpor"]
         [(AstTyU64) "vpor"]
@@ -1164,7 +1166,7 @@
         [(AstTyI8) "vpor"]
         [(AstTyU8) "vpor"]
         [_ ""])]
-    [(IrBinBitXor)
+    [(CompilerIrBinOp.BitXor)
       (match elem-ty
         [(AstTyI64) "vpxor"]
         [(AstTyU64) "vpxor"]
@@ -1181,7 +1183,7 @@
   [op : CompilerIrBinOp]
   [elem-ty : AstType]) : bool
   (match op
-    [(IrBinMul)
+    [(CompilerIrBinOp.Mul)
       (match elem-ty
         [(AstTyI64) true]
         [(AstTyU64) true]
@@ -1192,17 +1194,17 @@
   [op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]) : String
   (match op
-    [(IrVectorReduceSum)
+    [(CompilerIrVectorReduceOp.Sum)
       (match elem-ty
         [(AstTyI64) "vpaddq"]
         [(AstTyI32) "vpaddd"]
         [(AstTyF64) "vaddpd"]
         [_ ""])]
-    [(IrVectorReduceMin)
+    [(CompilerIrVectorReduceOp.Min)
       (match elem-ty
         [(AstTyI32) "vpminsd"]
         [_ ""])]
-    [(IrVectorReduceMax)
+    [(CompilerIrVectorReduceOp.Max)
       (match elem-ty
         [(AstTyI32) "vpmaxsd"]
         [_ ""])]))
@@ -1226,33 +1228,33 @@
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]) : String
   (match base
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister home) home]
+              [(CompilerRegLocation.Register home) home]
               [_ ""])]
-          [(CompilerRegNoLocation) ""]))]
+          [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
 (define (compiler-backend-simd-index-home
   [assignments : CompilerRegAssignmentList]
   [index : CompilerIrValue]) : String
   (match index
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister home)
+              [(CompilerRegLocation.Register home)
                 (if (string.string-eq home "%rsp")
                   ""
                   home)]
               [_ ""])]
-          [(CompilerRegNoLocation) ""]))]
+          [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
 (define (compiler-backend-simd-index-scratch
@@ -1272,8 +1274,8 @@
     (if (string.string-eq home "")
       (compiler-backend-emit-load-value-with-plan assignments base "%rax")
       (if (string.string-eq home "%rax")
-        (OkCompilerBackend "")
-        (OkCompilerBackend (str_cat.str-cat "    movq " home ", %rax\n"))))))
+        (ResultCompilerBackend.Ok "")
+        (ResultCompilerBackend.Ok (str_cat.str-cat "    movq " home ", %rax\n"))))))
 
 (define (compiler-backend-emit-simd-indexed-address
   [assignments : CompilerRegAssignmentList]
@@ -1283,14 +1285,14 @@
   (match (compiler-backend-value-as-i64 index)
     [(option_i64.Some n)
       (match (compiler-backend-emit-simd-base-data-pointer assignments base)
-        [(OkCompilerBackend base-asm)
-          (OkCompilerBackendSimdIndexedAddress
+        [(ResultCompilerBackend.Ok base-asm)
+          (ResultCompilerBackendSimdIndexedAddress.Ok
             (CompilerBackendSimdIndexedAddress
               base-asm
               (compiler-backend-simd-rax-offset-address
                 (* n (compiler-backend-type-size elem-ty)))))]
-        [(ErrCompilerBackend message)
-          (ErrCompilerBackendSimdIndexedAddress message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackendSimdIndexedAddress.Err message)])]
     [(option_i64.None)
       (let
         [index-home : String
@@ -1299,15 +1301,15 @@
           (not (string.string-eq index-home ""))
           (not (string.string-eq index-home "%rax")))
           (match (compiler-backend-emit-simd-base-data-pointer assignments base)
-            [(OkCompilerBackend base-asm)
-              (OkCompilerBackendSimdIndexedAddress
+            [(ResultCompilerBackend.Ok base-asm)
+              (ResultCompilerBackendSimdIndexedAddress.Ok
                 (CompilerBackendSimdIndexedAddress
                   base-asm
                   (compiler-backend-simd-index-register-address
                     index-home
                     elem-ty)))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackendSimdIndexedAddress message)])
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackendSimdIndexedAddress.Err message)])
           (if (string.string-eq index-home "%rax")
             (let
               [scratch : String
@@ -1316,40 +1318,40 @@
                 assignments
                 index
                 scratch)
-                [(OkCompilerBackend index-asm)
+                [(ResultCompilerBackend.Ok index-asm)
                   (match (compiler-backend-emit-simd-base-data-pointer
                     assignments
                     base)
-                    [(OkCompilerBackend base-asm)
-                      (OkCompilerBackendSimdIndexedAddress
+                    [(ResultCompilerBackend.Ok base-asm)
+                      (ResultCompilerBackendSimdIndexedAddress.Ok
                         (CompilerBackendSimdIndexedAddress
                           (string.string-append index-asm base-asm)
                           (compiler-backend-simd-index-register-address
                             scratch
                             elem-ty)))]
-                    [(ErrCompilerBackend message)
-                      (ErrCompilerBackendSimdIndexedAddress message)])]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackendSimdIndexedAddress message)]))
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackendSimdIndexedAddress.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackendSimdIndexedAddress.Err message)]))
             (match (compiler-backend-emit-simd-base-data-pointer
               assignments
               base)
-              [(OkCompilerBackend base-asm)
+              [(ResultCompilerBackend.Ok base-asm)
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   index
                   "%rcx")
-                  [(OkCompilerBackend index-asm)
-                    (OkCompilerBackendSimdIndexedAddress
+                  [(ResultCompilerBackend.Ok index-asm)
+                    (ResultCompilerBackendSimdIndexedAddress.Ok
                       (CompilerBackendSimdIndexedAddress
                         (string.string-append base-asm index-asm)
                         (compiler-backend-simd-index-register-address
                           "%rcx"
                           elem-ty)))]
-                  [(ErrCompilerBackend message)
-                    (ErrCompilerBackendSimdIndexedAddress message)])]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackendSimdIndexedAddress message)]))))]))
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackendSimdIndexedAddress.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackendSimdIndexedAddress.Err message)]))))]))
 
 (define (compiler-backend-emit-avx2-vector-load
   [assignments : CompilerRegAssignmentList]
@@ -1361,17 +1363,17 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "load dst" "ymm")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
           assignments
           base
           index
           elem-ty)
-          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
               [addr-asm : String (struct-get addr-plan asm)]
               [addr : String (struct-get addr-plan addr)]
-              (OkCompilerBackend
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   addr-asm
                   (string.string-append
@@ -1382,14 +1384,14 @@
                       addr
                       ", ")
                     (str_cat.str-cat dst-reg "\n")))))]
-          [(ErrCompilerBackendSimdIndexedAddress message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackendSimdIndexedAddress.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -1397,19 +1399,20 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : CompilerBackendMaybeStackOperand
   (match value
-    [(IrValueVar var-id)
+    [(CompilerIrValue.Var var-id)
       (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
-        (CompilerBackendNoStackOperand)
+        (CompilerBackendMaybeStackOperand.No)
         (match (compiler-reg-assignment-lookup assignments var-id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegSpill offset)
-                (CompilerBackendSomeStackOperand
+              [(CompilerRegLocation.Spill offset)
+                (CompilerBackendMaybeStackOperand.Some
                   (compiler-backend-frame-offset offset))]
-              [_ (CompilerBackendNoStackOperand)])]
-          [(CompilerRegNoLocation)
-            (CompilerBackendSomeStackOperand (compiler-backend-slot var-id))]))]
-    [_ (CompilerBackendNoStackOperand)]))
+              [_ (CompilerBackendMaybeStackOperand.No)])]
+          [(CompilerRegMaybeLocation.No)
+            (CompilerBackendMaybeStackOperand.Some
+              (compiler-backend-slot var-id))]))]
+    [_ (CompilerBackendMaybeStackOperand.No)]))
 
 (define (compiler-backend-splat-memory-mnemonic [elem-ty : AstType]) : String
   (match elem-ty
@@ -1428,23 +1431,23 @@
   [value : CompilerIrValue]
   [elem-ty : AstType]) : CompilerBackendMaybeAsm
   (match (compiler-backend-stack-memory-operand assignments value)
-    [(CompilerBackendSomeStackOperand operand)
-      (CompilerBackendSomeAsm
+    [(CompilerBackendMaybeStackOperand.Some operand)
+      (CompilerBackendMaybeAsm.Some
         (str_cat.str-cat
           "    "
           (compiler-backend-splat-memory-mnemonic elem-ty)
           " "
           operand
           ", "))]
-    [(CompilerBackendNoStackOperand) (CompilerBackendNoAsm)]))
+    [(CompilerBackendMaybeStackOperand.No) (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-avx2-splat-load
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load assignments value elem-ty)
-    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
+    [(CompilerBackendMaybeAsm.No)
       (match elem-ty
         [(AstTyF64)
           (match (compiler-backend-emit-load-float-value-with-plan
@@ -1452,97 +1455,97 @@
             value
             elem-ty
             "%xmm0")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vbroadcastsd %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyF32)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             value
             elem-ty
             "%xmm0")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vbroadcastss %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyI32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyU32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyI16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyU16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyI8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyU8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [_
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovq %rax, %xmm0\n    vpbroadcastq %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])])]))
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])])]))
 
 (define (compiler-backend-emit-avx2-splat
   [assignments : CompilerRegAssignmentList]
@@ -1553,18 +1556,18 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "splat dst" "ymm")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx2-splat-load assignments value elem-ty)
-          [(OkCompilerBackend load-asm)
-            (OkCompilerBackend (str_cat.str-cat load-asm dst-reg "\n"))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok load-asm)
+            (ResultCompilerBackend.Ok (str_cat.str-cat load-asm dst-reg "\n"))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -1575,16 +1578,16 @@
   [rhs : CompilerIrValue]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match (compiler-backend-avx2-vector-value-reg assignments lhs "lhs")
-    [(OkBackendReg lhs-reg)
+    [(ResultBackendReg.Ok lhs-reg)
       (match (compiler-backend-avx2-vector-value-reg assignments rhs "rhs")
-        [(OkBackendReg rhs-reg)
+        [(ResultBackendReg.Ok rhs-reg)
           (match (compiler-backend-vector-var-reg
             assignments
             dst
             "binop dst"
             "ymm")
-            [(OkBackendReg dst-reg)
-              (OkCompilerBackend
+            [(ResultBackendReg.Ok dst-reg)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   (str_cat.str-cat "    vpsrlq $32, " lhs-reg ", %ymm0\n")
                   (string.string-append
@@ -1613,14 +1616,14 @@
                                 ", "
                                 dst-reg
                                 "\n")))))))))]
-            [(ErrBackendReg message)
-              (ErrCompilerBackend
+            [(ResultBackendReg.Err message)
+              (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-with-message instr-diag message)))])]
-        [(ErrBackendReg message)
-          (ErrCompilerBackend
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))])]
-    [(ErrBackendReg message)
-      (ErrCompilerBackend
+    [(ResultBackendReg.Err message)
+      (ResultCompilerBackend.Err
         (box (compiler-diagnostic-with-message instr-diag message)))]))
 
 (define (compiler-backend-emit-avx2-vector-binop
@@ -1644,37 +1647,37 @@
           rhs
           instr-diag)
         (if (= (string.string-length mnemonic) 0)
-          (ErrCompilerBackend
+          (ResultCompilerBackend.Err
             (box
               (compiler-diagnostic-with-message
                 instr-diag
                 "backend: unsupported AVX2 vector binary op")))
           (match (compiler-backend-avx2-vector-value-reg assignments lhs "lhs")
-            [(OkBackendReg lhs-reg)
+            [(ResultBackendReg.Ok lhs-reg)
               (match (compiler-backend-avx2-vector-value-reg
                 assignments
                 rhs
                 "rhs")
-                [(OkBackendReg rhs-reg)
+                [(ResultBackendReg.Ok rhs-reg)
                   (match (compiler-backend-vector-var-reg
                     assignments
                     dst
                     "binop dst"
                     "ymm")
-                    [(OkBackendReg dst-reg)
-                      (OkCompilerBackend
+                    [(ResultBackendReg.Ok dst-reg)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           (str_cat.str-cat "    " mnemonic " " rhs-reg ", ")
                           (str_cat.str-cat lhs-reg ", " dst-reg "\n")))]
-                    [(ErrBackendReg message)
-                      (ErrCompilerBackend
+                    [(ResultBackendReg.Err message)
+                      (ResultCompilerBackend.Err
                         (box
                           (compiler-diagnostic-with-message instr-diag message)))])]
-                [(ErrBackendReg message)
-                  (ErrCompilerBackend
+                [(ResultBackendReg.Err message)
+                  (ResultCompilerBackend.Err
                     (box (compiler-diagnostic-with-message instr-diag message)))])]
-            [(ErrBackendReg message)
-              (ErrCompilerBackend
+            [(ResultBackendReg.Err message)
+              (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-with-message instr-diag message)))]))))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -1693,7 +1696,7 @@
       [mnemonic : String
         (compiler-backend-avx2-vector-binop-mnemonic op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
@@ -1702,23 +1705,23 @@
           assignments
           reg-value
           "memory binop register operand")
-          [(OkBackendReg reg)
+          [(ResultBackendReg.Ok reg)
             (match (compiler-backend-vector-var-reg
               assignments
               dst
               "binop dst"
               "ymm")
-              [(OkBackendReg dst-reg)
+              [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
                   index
                   elem-ty)
-                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
                       [addr : String (struct-get addr-plan addr)]
-                      (OkCompilerBackend
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           addr-asm
                           (str_cat.str-cat
@@ -1731,17 +1734,17 @@
                             ", "
                             dst-reg
                             "\n"))))]
-                  [(ErrCompilerBackendSimdIndexedAddress message)
-                    (ErrCompilerBackend
+                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
                           (box-get message)
                           instr-diag)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -1758,17 +1761,17 @@
       assignments
       value
       "store value")
-      [(OkBackendReg value-reg)
+      [(ResultBackendReg.Ok value-reg)
         (match (compiler-backend-emit-simd-indexed-address
           assignments
           base
           index
           elem-ty)
-          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
               [addr-asm : String (struct-get addr-plan asm)]
               [addr : String (struct-get addr-plan addr)]
-              (OkCompilerBackend
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   addr-asm
                   (string.string-append
@@ -1779,14 +1782,14 @@
                       value-reg
                       ", ")
                     (str_cat.str-cat addr "\n")))))]
-          [(ErrCompilerBackendSimdIndexedAddress message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackendSimdIndexedAddress.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -1808,7 +1811,7 @@
   [instr-diag : CompilerDiagnostic]
   [elem-ty : AstType]
   [lanes : i64]) : ResultCompilerBackend
-  (ErrCompilerBackend
+  (ResultCompilerBackend.Err
     (box
       (compiler-diagnostic-with-message
         instr-diag
@@ -1823,10 +1826,10 @@
   [value : CompilerIrValue]
   [role : String]) : ResultBackendReg
   (match value
-    [(IrValueVar var)
+    [(CompilerIrValue.Var var)
       (compiler-backend-vector-var-reg assignments var role "zmm")]
     [_
-      (ErrBackendReg
+      (ResultBackendReg.Err
         (string.string-append "backend: unsupported AVX-512 vector " role))]))
 
 (define (compiler-backend-avx512-mask-value-reg
@@ -1834,9 +1837,10 @@
   [value : CompilerIrValue]
   [role : String]) : ResultBackendReg
   (match value
-    [(IrValueVar var) (compiler-backend-mask-var-reg assignments var role)]
+    [(CompilerIrValue.Var var)
+      (compiler-backend-mask-var-reg assignments var role)]
     [_
-      (ErrBackendReg
+      (ResultBackendReg.Err
         (string.string-append "backend: unsupported AVX-512 mask " role))]))
 
 (define (compiler-backend-avx512-vector-move [elem-ty : AstType]) : String
@@ -1857,7 +1861,7 @@
   [op : CompilerIrBinOp]
   [elem-ty : AstType]) : String
   (match op
-    [(IrBinAdd)
+    [(CompilerIrBinOp.Add)
       (match elem-ty
         [(AstTyI64) "vpaddq"]
         [(AstTyU64) "vpaddq"]
@@ -1870,7 +1874,7 @@
         [(AstTyF64) "vaddpd"]
         [(AstTyF32) "vaddps"]
         [_ ""])]
-    [(IrBinSub)
+    [(CompilerIrBinOp.Sub)
       (match elem-ty
         [(AstTyI64) "vpsubq"]
         [(AstTyU64) "vpsubq"]
@@ -1883,7 +1887,7 @@
         [(AstTyF64) "vsubpd"]
         [(AstTyF32) "vsubps"]
         [_ ""])]
-    [(IrBinMul)
+    [(CompilerIrBinOp.Mul)
       (match elem-ty
         [(AstTyI64) "vpmullq"]
         [(AstTyU64) "vpmullq"]
@@ -1894,7 +1898,7 @@
         [(AstTyF64) "vmulpd"]
         [(AstTyF32) "vmulps"]
         [_ ""])]
-    [(IrBinBitAnd)
+    [(CompilerIrBinOp.BitAnd)
       (match elem-ty
         [(AstTyI64) "vpandq"]
         [(AstTyU64) "vpandq"]
@@ -1905,7 +1909,7 @@
         [(AstTyI8) "vpandd"]
         [(AstTyU8) "vpandd"]
         [_ ""])]
-    [(IrBinBitOr)
+    [(CompilerIrBinOp.BitOr)
       (match elem-ty
         [(AstTyI64) "vporq"]
         [(AstTyU64) "vporq"]
@@ -1916,7 +1920,7 @@
         [(AstTyI8) "vpord"]
         [(AstTyU8) "vpord"]
         [_ ""])]
-    [(IrBinBitXor)
+    [(CompilerIrBinOp.BitXor)
       (match elem-ty
         [(AstTyI64) "vpxorq"]
         [(AstTyU64) "vpxorq"]
@@ -1946,12 +1950,12 @@
 (define (compiler-backend-avx512-compare-predicate-separator
   [op : CompilerIrBinOp]) : String
   (match op
-    [(IrBinEq) " $0, "]
-    [(IrBinLt) " $1, "]
-    [(IrBinLe) " $2, "]
-    [(IrBinNe) " $4, "]
-    [(IrBinGe) " $5, "]
-    [(IrBinGt) " $6, "]
+    [(CompilerIrBinOp.Eq) " $0, "]
+    [(CompilerIrBinOp.Lt) " $1, "]
+    [(CompilerIrBinOp.Le) " $2, "]
+    [(CompilerIrBinOp.Ne) " $4, "]
+    [(CompilerIrBinOp.Ge) " $5, "]
+    [(CompilerIrBinOp.Gt) " $6, "]
     [_ ""]))
 
 (define (compiler-backend-avx512-splat-load
@@ -1959,8 +1963,8 @@
   [value : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load assignments value elem-ty)
-    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
+    [(CompilerBackendMaybeAsm.No)
       (match elem-ty
         [(AstTyF64)
           (match (compiler-backend-emit-load-float-value-with-plan
@@ -1968,101 +1972,101 @@
             value
             elem-ty
             "%xmm0")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vbroadcastsd %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyF32)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             value
             elem-ty
             "%xmm0")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vbroadcastss %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyI32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vpbroadcastd %eax, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyU32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vpbroadcastd %eax, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyI16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyU16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyI8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [(AstTyU8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])]
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
         [_
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%rax")
-            [(OkCompilerBackend asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append asm "    vpbroadcastq %rax, "))]
-            [(ErrCompilerBackend diag) (ErrCompilerBackend diag)])])]))
+            [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])])]))
 
 (define (compiler-backend-avx512-vector-reduce-op-mnemonic
   [op : CompilerIrVectorReduceOp]
   [elem-ty : AstType]) : String
   (match op
-    [(IrVectorReduceMin)
+    [(CompilerIrVectorReduceOp.Min)
       (match elem-ty
         [(AstTyI64) "vpminsq"]
         [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
-    [(IrVectorReduceMax)
+    [(CompilerIrVectorReduceOp.Max)
       (match elem-ty
         [(AstTyI64) "vpmaxsq"]
         [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
@@ -2219,18 +2223,18 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-lane-id-avx512-i64-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "lane id dst" "zmm")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (let
           [data-label : String (compiler-backend-avx512-i64-lane-id-label)]
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               "    vmovdqa64 "
               data-label
               "(%rip), "
               dst-reg
               "\n")))]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (if (compiler-backend-lane-id-avx2-i64-shape-ok? elem-ty lanes)
       (match (compiler-backend-vector-var-reg
@@ -2238,18 +2242,18 @@
         dst
         "lane id dst"
         "ymm")
-        [(OkBackendReg dst-reg)
+        [(ResultBackendReg.Ok dst-reg)
           (let
             [data-label : String (compiler-backend-avx2-i64-lane-id-label)]
-            (OkCompilerBackend
+            (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 "    vmovdqa "
                 data-label
                 "(%rip), "
                 dst-reg
                 "\n")))]
-        [(ErrBackendReg message)
-          (ErrCompilerBackend
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))])
       (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))))
 
@@ -2263,17 +2267,17 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "load dst" "zmm")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-emit-simd-indexed-address
           assignments
           base
           index
           elem-ty)
-          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
               [addr-asm : String (struct-get addr-plan asm)]
               [addr : String (struct-get addr-plan addr)]
-              (OkCompilerBackend
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   addr-asm
                   (string.string-append
@@ -2284,14 +2288,14 @@
                       addr
                       ", ")
                     (str_cat.str-cat dst-reg "\n")))))]
-          [(ErrCompilerBackendSimdIndexedAddress message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackendSimdIndexedAddress.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -2304,18 +2308,18 @@
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-var-reg assignments dst "splat dst" "zmm")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx512-splat-load assignments value elem-ty)
-          [(OkCompilerBackend load-asm)
-            (OkCompilerBackend (str_cat.str-cat load-asm dst-reg "\n"))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok load-asm)
+            (ResultCompilerBackend.Ok (str_cat.str-cat load-asm dst-reg "\n"))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -2356,37 +2360,37 @@
       [mnemonic : String
         (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 vector binary op")))
         (match (compiler-backend-avx512-vector-value-reg assignments lhs "lhs")
-          [(OkBackendReg lhs-reg)
+          [(ResultBackendReg.Ok lhs-reg)
             (match (compiler-backend-avx512-vector-value-reg
               assignments
               rhs
               "rhs")
-              [(OkBackendReg rhs-reg)
+              [(ResultBackendReg.Ok rhs-reg)
                 (match (compiler-backend-vector-var-reg
                   assignments
                   dst
                   "binop dst"
                   "zmm")
-                  [(OkBackendReg dst-reg)
-                    (OkCompilerBackend
+                  [(ResultBackendReg.Ok dst-reg)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         (str_cat.str-cat "    " mnemonic " " rhs-reg ", ")
                         (str_cat.str-cat lhs-reg ", " dst-reg "\n")))]
-                  [(ErrBackendReg message)
-                    (ErrCompilerBackend
+                  [(ResultBackendReg.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message instr-diag message)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -2405,7 +2409,7 @@
       [mnemonic : String
         (compiler-backend-avx512-vector-binop-mnemonic op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
@@ -2414,23 +2418,23 @@
           assignments
           reg-value
           "memory binop register operand")
-          [(OkBackendReg reg)
+          [(ResultBackendReg.Ok reg)
             (match (compiler-backend-vector-var-reg
               assignments
               dst
               "binop dst"
               "zmm")
-              [(OkBackendReg dst-reg)
+              [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
                   index
                   elem-ty)
-                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
                       [addr : String (struct-get addr-plan addr)]
-                      (OkCompilerBackend
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           addr-asm
                           (str_cat.str-cat
@@ -2443,17 +2447,17 @@
                             ", "
                             dst-reg
                             "\n"))))]
-                  [(ErrCompilerBackendSimdIndexedAddress message)
-                    (ErrCompilerBackend
+                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
                           (box-get message)
                           instr-diag)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -2475,7 +2479,7 @@
       (if (or
         (= (string.string-length mnemonic) 0)
         (= (string.string-length predicate-separator) 0))
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
@@ -2484,15 +2488,15 @@
           assignments
           lhs
           "cmp lhs")
-          [(OkBackendReg lhs-reg)
+          [(ResultBackendReg.Ok lhs-reg)
             (match (compiler-backend-avx512-vector-value-reg
               assignments
               rhs
               "cmp rhs")
-              [(OkBackendReg rhs-reg)
+              [(ResultBackendReg.Ok rhs-reg)
                 (match (compiler-backend-mask-var-reg assignments dst "cmp dst")
-                  [(OkBackendReg dst-reg)
-                    (OkCompilerBackend
+                  [(ResultBackendReg.Ok dst-reg)
+                    (ResultCompilerBackend.Ok
                       (str_cat.str-cat
                         "    "
                         mnemonic
@@ -2503,15 +2507,15 @@
                         ", "
                         dst-reg
                         "\n"))]
-                  [(ErrBackendReg message)
-                    (ErrCompilerBackend
+                  [(ResultBackendReg.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message instr-diag message)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -2528,17 +2532,17 @@
       assignments
       value
       "store value")
-      [(OkBackendReg value-reg)
+      [(ResultBackendReg.Ok value-reg)
         (match (compiler-backend-emit-simd-indexed-address
           assignments
           base
           index
           elem-ty)
-          [(OkCompilerBackendSimdIndexedAddress addr-plan)
+          [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
             (let
               [addr-asm : String (struct-get addr-plan asm)]
               [addr : String (struct-get addr-plan addr)]
-              (OkCompilerBackend
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   addr-asm
                   (string.string-append
@@ -2549,14 +2553,14 @@
                       value-reg
                       ", ")
                     (str_cat.str-cat addr "\n")))))]
-          [(ErrCompilerBackendSimdIndexedAddress message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackendSimdIndexedAddress.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -2669,12 +2673,12 @@
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]) : CompilerBackendVectorMemFold
   (if (compiler-backend-branch-uses-var? rhs load-dst)
-    (CompilerBackendSomeVectorMemFold lhs)
+    (CompilerBackendVectorMemFold.Some lhs)
     (if (and
       (compiler-backend-branch-uses-var? lhs load-dst)
       (compiler-backend-commutative-binop? op))
-      (CompilerBackendSomeVectorMemFold rhs)
-      (CompilerBackendNoVectorMemFold))))
+      (CompilerBackendVectorMemFold.Some rhs)
+      (CompilerBackendVectorMemFold.No))))
 
 (define (compiler-backend-vector-load-binop-foldable?
   [use-counts : (Array i64)]
@@ -2695,8 +2699,8 @@
       bin-lanes
       bin-elem-ty)
     (match (compiler-backend-vector-load-binop-fold-value load-dst op lhs rhs)
-      [(CompilerBackendSomeVectorMemFold _) true]
-      [(CompilerBackendNoVectorMemFold) false])))
+      [(CompilerBackendVectorMemFold.Some _) true]
+      [(CompilerBackendVectorMemFold.No) false])))
 
 (define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
   (let
@@ -2812,12 +2816,12 @@
   (let
     [full-mask : i64 (compiler-backend-avx512-lane-mask lanes)]
     (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
-      [(OkCompilerBackend index-asm)
+      [(ResultCompilerBackend.Ok index-asm)
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           end-value
           "%rcx")
-          [(OkCompilerBackend end-asm)
+          [(ResultCompilerBackend.Ok end-asm)
             (let
               [full-label : String
                 (compiler-backend-avx512-mask-label
@@ -2914,15 +2918,16 @@
                   body-full-b
                   body-full-c
                   body-zero)]
-              (OkCompilerBackend (str_cat.str-cat index-asm end-asm body-asm)))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+              (ResultCompilerBackend.Ok
+                (str_cat.str-cat index-asm end-asm body-asm)))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -2940,12 +2945,12 @@
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
     (match (compiler-backend-mask-var-reg assignments dst "tail mask dst")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (match index
-          [(IrValueI64 index-imm)
+          [(CompilerIrValue.I64 index-imm)
             (match end-value
-              [(IrValueI64 end-imm)
-                (OkCompilerBackend
+              [(CompilerIrValue.I64 end-imm)
+                (ResultCompilerBackend.Ok
                   (compiler-backend-emit-avx512-mask-immediate
                     dst-reg
                     (compiler-backend-avx512-tail-mask-immediate
@@ -2975,8 +2980,8 @@
               end-value
               lanes
               instr-diag)])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-predicated-load
@@ -3004,23 +3009,23 @@
           assignments
           mask
           "load mask")
-          [(OkBackendReg mask-reg)
+          [(ResultBackendReg.Ok mask-reg)
             (match (compiler-backend-vector-var-reg
               assignments
               dst
               "load dst"
               "zmm")
-              [(OkBackendReg dst-reg)
+              [(ResultBackendReg.Ok dst-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
                   index
                   elem-ty)
-                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
                       [addr : String (struct-get addr-plan addr)]
-                      (OkCompilerBackend
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           addr-asm
                           (str_cat.str-cat
@@ -3033,17 +3038,17 @@
                             "{"
                             mask-reg
                             "}{z}\n"))))]
-                  [(ErrCompilerBackendSimdIndexedAddress message)
-                    (ErrCompilerBackend
+                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
                           (box-get message)
                           instr-diag)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])
         (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))]))
 
@@ -3072,22 +3077,22 @@
           assignments
           value
           "store value")
-          [(OkBackendReg value-reg)
+          [(ResultBackendReg.Ok value-reg)
             (match (compiler-backend-avx512-mask-value-reg
               assignments
               mask
               "store mask")
-              [(OkBackendReg mask-reg)
+              [(ResultBackendReg.Ok mask-reg)
                 (match (compiler-backend-emit-simd-indexed-address
                   assignments
                   base
                   index
                   elem-ty)
-                  [(OkCompilerBackendSimdIndexedAddress addr-plan)
+                  [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                     (let
                       [addr-asm : String (struct-get addr-plan asm)]
                       [addr : String (struct-get addr-plan addr)]
-                      (OkCompilerBackend
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           addr-asm
                           (str_cat.str-cat
@@ -3100,17 +3105,17 @@
                             "{"
                             mask-reg
                             "}\n"))))]
-                  [(ErrCompilerBackendSimdIndexedAddress message)
-                    (ErrCompilerBackend
+                  [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
                           (box-get message)
                           instr-diag)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])
         (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes))]))
 
@@ -3125,22 +3130,22 @@
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyBool) lanes)
     (match (compiler-backend-mask-var-reg assignments dst "mask load dst")
-      [(OkBackendReg dst-reg)
+      [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx512-mask-value-reg
           assignments
           mask
           "mask load active mask")
-          [(OkBackendReg mask-reg)
+          [(ResultBackendReg.Ok mask-reg)
             (match (compiler-backend-emit-simd-indexed-address
               assignments
               base
               index
               (AstTyBool))
-              [(OkCompilerBackendSimdIndexedAddress addr-plan)
+              [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
                   [addr : String (struct-get addr-plan addr)]
-                  (OkCompilerBackend
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       addr-asm
                       (str_cat.str-cat
@@ -3153,17 +3158,17 @@
                         "    vpcmpub $4, %zmm14, %zmm15, "
                         dst-reg
                         "\n"))))]
-              [(ErrCompilerBackendSimdIndexedAddress message)
-                (ErrCompilerBackend
+              [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
                       (box-get message)
                       instr-diag)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-store
@@ -3180,22 +3185,22 @@
       assignments
       value
       "mask store value")
-      [(OkBackendReg value-reg)
+      [(ResultBackendReg.Ok value-reg)
         (match (compiler-backend-avx512-mask-value-reg
           assignments
           mask
           "mask store active mask")
-          [(OkBackendReg mask-reg)
+          [(ResultBackendReg.Ok mask-reg)
             (match (compiler-backend-emit-simd-indexed-address
               assignments
               base
               index
               (AstTyBool))
-              [(OkCompilerBackendSimdIndexedAddress addr-plan)
+              [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
                   [addr : String (struct-get addr-plan addr)]
-                  (OkCompilerBackend
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       addr-asm
                       (str_cat.str-cat
@@ -3208,28 +3213,28 @@
                         "{"
                         mask-reg
                         "}\n"))))]
-              [(ErrCompilerBackendSimdIndexedAddress message)
-                (ErrCompilerBackend
+              [(ResultCompilerBackendSimdIndexedAddress.Err message)
+                (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
                       (box-get message)
                       instr-diag)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-mask-binop-mnemonic
   [op : CompilerIrMaskBinOp]
   [lanes : i64]) : String
   (match op
-    [(IrMaskAnd)
+    [(CompilerIrMaskBinOp.And)
       (string.string-append
         "kand"
         (compiler-backend-avx512-mask-op-suffix lanes))]
-    [(IrMaskOr)
+    [(CompilerIrMaskBinOp.Or)
       (string.string-append
         "kor"
         (compiler-backend-avx512-mask-op-suffix lanes))]))
@@ -3245,15 +3250,15 @@
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
     (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
     (match (compiler-backend-avx512-mask-value-reg assignments lhs "lhs")
-      [(OkBackendReg lhs-reg)
+      [(ResultBackendReg.Ok lhs-reg)
         (match (compiler-backend-avx512-mask-value-reg assignments rhs "rhs")
-          [(OkBackendReg rhs-reg)
+          [(ResultBackendReg.Ok rhs-reg)
             (match (compiler-backend-mask-var-reg
               assignments
               dst
               "mask binop dst")
-              [(OkBackendReg dst-reg)
-                (OkCompilerBackend
+              [(ResultBackendReg.Ok dst-reg)
+                (ResultCompilerBackend.Ok
                   (if (string.string-eq lhs-reg rhs-reg)
                     (if (string.string-eq lhs-reg dst-reg)
                       ""
@@ -3275,14 +3280,14 @@
                       ", "
                       dst-reg
                       "\n")))]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])]
-      [(ErrBackendReg message)
-        (ErrCompilerBackend
+      [(ResultBackendReg.Err message)
+        (ResultCompilerBackend.Err
           (box (compiler-diagnostic-with-message instr-diag message)))])))
 
 (define (compiler-backend-emit-avx512-mask-not
@@ -3303,10 +3308,10 @@
         assignments
         src
         "not source")
-        [(OkBackendReg src-reg)
+        [(ResultBackendReg.Ok src-reg)
           (match (compiler-backend-mask-var-reg assignments dst "mask not dst")
-            [(OkBackendReg dst-reg)
-              (OkCompilerBackend
+            [(ResultBackendReg.Ok dst-reg)
+              (ResultCompilerBackend.Ok
                 (if (compiler-backend-avx512-mask-not-full-width? lanes)
                   (str_cat.str-cat
                     "    "
@@ -3335,11 +3340,11 @@
                     ", "
                     dst-reg
                     "\n")))]
-            [(ErrBackendReg message)
-              (ErrCompilerBackend
+            [(ResultBackendReg.Err message)
+              (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-with-message instr-diag message)))])]
-        [(ErrBackendReg message)
-          (ErrCompilerBackend
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-avx512-mask-reduce
@@ -3361,13 +3366,13 @@
         assignments
         src
         "reduce source")
-        [(OkBackendReg src-reg)
+        [(ResultBackendReg.Ok src-reg)
           (let
             [src-reg-copy : String (string.string-copy (& src-reg))]
             [mask-gpr-copy : String (string.string-copy (& mask-gpr))]
             [reduce-asm : String
               (match op
-                [(IrMaskReduceAny)
+                [(CompilerIrMaskReduceOp.Any)
                   (str_cat.str-cat
                     "    "
                     kortest-op
@@ -3376,7 +3381,7 @@
                     ", "
                     src-reg
                     "\n    setne %al\n")]
-                [(IrMaskReduceAll)
+                [(CompilerIrMaskReduceOp.All)
                   (if (or (= full-mask 0xffff) (= full-mask -1))
                     (str_cat.str-cat
                       "    "
@@ -3407,9 +3412,9 @@
                   assignments
                   dst
                   "%rax"))]
-            (OkCompilerBackend (str_cat.str-cat reduce-asm store-asm)))]
-        [(ErrBackendReg message)
-          (ErrCompilerBackend
+            (ResultCompilerBackend.Ok (str_cat.str-cat reduce-asm store-asm)))]
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message instr-diag message)))]))))
 
 (define (compiler-backend-emit-avx512-select
@@ -3425,7 +3430,7 @@
     (let
       [move : String (compiler-backend-avx512-vector-move elem-ty)]
       (if (= (string.string-length move) 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
@@ -3434,24 +3439,24 @@
           assignments
           on-false
           "select false")
-          [(OkBackendReg false-reg)
+          [(ResultBackendReg.Ok false-reg)
             (match (compiler-backend-avx512-vector-value-reg
               assignments
               on-true
               "select true")
-              [(OkBackendReg true-reg)
+              [(ResultBackendReg.Ok true-reg)
                 (match (compiler-backend-avx512-mask-value-reg
                   assignments
                   mask
                   "select mask")
-                  [(OkBackendReg mask-reg)
+                  [(ResultBackendReg.Ok mask-reg)
                     (match (compiler-backend-vector-var-reg
                       assignments
                       dst
                       "select dst"
                       "zmm")
-                      [(OkBackendReg dst-reg)
-                        (OkCompilerBackend
+                      [(ResultBackendReg.Ok dst-reg)
+                        (ResultCompilerBackend.Ok
                           (cond
                             [(and
                                 (string.string-eq (& dst-reg) (& true-reg))
@@ -3509,21 +3514,21 @@
                                 "{"
                                 mask-reg
                                 "}\n")]))]
-                      [(ErrBackendReg message)
-                        (ErrCompilerBackend
+                      [(ResultBackendReg.Err message)
+                        (ResultCompilerBackend.Err
                           (box
                             (compiler-diagnostic-with-message
                               instr-diag
                               message)))])]
-                  [(ErrBackendReg message)
-                    (ErrCompilerBackend
+                  [(ResultBackendReg.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message instr-diag message)))])]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])))
     (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)))
 
@@ -3545,16 +3550,16 @@
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) false]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) false]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment _ location)
+        [(CompilerRegAssignment.Assignment _ location)
           (match location
-            [(CompilerRegRegister found)
+            [(CompilerRegLocation.Register found)
               (if (string.string-eq found reg)
                 true
                 (compiler-backend-plan-uses-reg? (box-get rest) reg))]
-            [(CompilerRegRegisterPair a b)
+            [(CompilerRegLocation.RegisterPair a b)
               (if (or (string.string-eq a reg) (string.string-eq b reg))
                 true
                 (compiler-backend-plan-uses-reg? (box-get rest) reg))]
@@ -3602,7 +3607,7 @@
     [(IrParamNil) false]
     [(IrParamCons param rest)
       (match param
-        [(IrParam _ _ param-var)
+        [(CompilerIrParam.Param _ _ param-var)
           (if (= var param-var)
             true
             (compiler-backend-param-var? (box-get rest) var))])]))
@@ -3611,10 +3616,10 @@
   [assignments : CompilerRegAssignmentList]
   [params : CompilerIrParamList]) : CompilerRegAssignmentList
   (match assignments
-    [(CompilerRegAssignmentNil) CompilerRegAssignmentNil]
-    [(CompilerRegAssignmentCons item rest)
+    [(CompilerRegAssignmentList.Nil) CompilerRegAssignmentList.Nil]
+    [(CompilerRegAssignmentList.Cons item rest)
       (match item
-        [(CompilerRegAssignment var _)
+        [(CompilerRegAssignment.Assignment var _)
           (let
             [tail : CompilerRegAssignmentList
               (compiler-backend-drop-param-assignments (box-get rest) params)]
@@ -3630,25 +3635,25 @@
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
   (cond
-    [(= idx 0) (OkBackendReg "%rdi")]
-    [(= idx 1) (OkBackendReg "%rsi")]
-    [(= idx 2) (OkBackendReg "%rdx")]
-    [(= idx 3) (OkBackendReg "%rcx")]
-    [(= idx 4) (OkBackendReg "%r8")]
-    [(= idx 5) (OkBackendReg "%r9")]
-    [else (ErrBackendReg "backend: too many call args")]))
+    [(= idx 0) (ResultBackendReg.Ok "%rdi")]
+    [(= idx 1) (ResultBackendReg.Ok "%rsi")]
+    [(= idx 2) (ResultBackendReg.Ok "%rdx")]
+    [(= idx 3) (ResultBackendReg.Ok "%rcx")]
+    [(= idx 4) (ResultBackendReg.Ok "%r8")]
+    [(= idx 5) (ResultBackendReg.Ok "%r9")]
+    [else (ResultBackendReg.Err "backend: too many call args")]))
 
 (define (compiler-backend-float-arg-reg [idx : i64]) : ResultBackendReg
   (cond
-    [(= idx 0) (OkBackendReg "%xmm0")]
-    [(= idx 1) (OkBackendReg "%xmm1")]
-    [(= idx 2) (OkBackendReg "%xmm2")]
-    [(= idx 3) (OkBackendReg "%xmm3")]
-    [(= idx 4) (OkBackendReg "%xmm4")]
-    [(= idx 5) (OkBackendReg "%xmm5")]
-    [(= idx 6) (OkBackendReg "%xmm6")]
-    [(= idx 7) (OkBackendReg "%xmm7")]
-    [else (ErrBackendReg "backend: too many call args")]))
+    [(= idx 0) (ResultBackendReg.Ok "%xmm0")]
+    [(= idx 1) (ResultBackendReg.Ok "%xmm1")]
+    [(= idx 2) (ResultBackendReg.Ok "%xmm2")]
+    [(= idx 3) (ResultBackendReg.Ok "%xmm3")]
+    [(= idx 4) (ResultBackendReg.Ok "%xmm4")]
+    [(= idx 5) (ResultBackendReg.Ok "%xmm5")]
+    [(= idx 6) (ResultBackendReg.Ok "%xmm6")]
+    [(= idx 7) (ResultBackendReg.Ok "%xmm7")]
+    [else (ResultBackendReg.Err "backend: too many call args")]))
 
 (define (compiler-backend-emit-stack-sub
   [target : CompilerBackendTarget]
@@ -3656,7 +3661,7 @@
   (if (= frame 0)
     ""
     (match target
-      [(BackendTargetWindows)
+      [(CompilerBackendTarget.Windows)
         (if (>= frame 4096)
           (str_cat.str-cat
             "    movl $"
@@ -3669,7 +3674,7 @@
             (string.int->string frame)
             ", %rsp\n"
             ""))]
-      [(BackendTargetLinux)
+      [(CompilerBackendTarget.Linux)
         (str_cat.str-cat "    subq $" (string.int->string frame) ", %rsp\n" "")])))
 
 (define (compiler-backend-emit-windows-seh-proc
@@ -3785,20 +3790,20 @@
         reg
         "\n")
       (match (compiler-reg-assignment-lookup assignments var-id)
-        [(CompilerRegSomeLocation location)
+        [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegRegister home)
+            [(CompilerRegLocation.Register home)
               (if (string.string-eq home reg)
                 ""
                 (str_cat.str-cat "    movq " home ", " reg "\n"))]
-            [(CompilerRegRegisterPair home _)
+            [(CompilerRegLocation.RegisterPair home _)
               ;; #2386: loading a whole register-group var into one register is not a
               ;; scalar op; word extraction goes through IrInstrWord. Word0's home is
               ;; the low register -- used only by the (unreached here) group paths.
               (if (string.string-eq home reg)
                 ""
                 (str_cat.str-cat "    movq " home ", " reg "\n"))]
-            [(CompilerRegSpill offset)
+            [(CompilerRegLocation.Spill offset)
               (str_cat.str-cat
                 "    movq "
                 (compiler-backend-frame-offset offset)
@@ -3807,14 +3812,14 @@
                 "\n")]
             ;; Rematerialise: recompute the value into `reg` instead of reloading
             ;; from a slot. remat-recompute-value? guarantees this load succeeds.
-            [(CompilerRegRemat value)
+            [(CompilerRegLocation.Remat value)
               (match (compiler-backend-emit-load-value-with-plan
-                CompilerRegAssignmentNil
+                CompilerRegAssignmentList.Nil
                 value
                 reg)
-                [(OkCompilerBackend asm) asm]
-                [(ErrCompilerBackend _) ""])])]
-        [(CompilerRegNoLocation)
+                [(ResultCompilerBackend.Ok asm) asm]
+                [(ResultCompilerBackend.Err _) ""])])]
+        [(CompilerRegMaybeLocation.No)
           (str_cat.str-cat
             "    movq "
             (compiler-backend-slot var-id)
@@ -3827,17 +3832,17 @@
   [var-id : i64]
   [reg : String]) : String
   (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister home)
+        [(CompilerRegLocation.Register home)
           (if (string.string-eq home reg)
             ""
             (str_cat.str-cat "    movq " reg ", " home "\n"))]
-        [(CompilerRegRegisterPair home _)
+        [(CompilerRegLocation.RegisterPair home _)
           (if (string.string-eq home reg)
             ""
             (str_cat.str-cat "    movq " reg ", " home "\n"))]
-        [(CompilerRegSpill offset)
+        [(CompilerRegLocation.Spill offset)
           (str_cat.str-cat
             "    movq "
             reg
@@ -3846,8 +3851,8 @@
             "\n")]
         ;; Rematerialised value: its single def store is dead (every use
         ;; recomputes), so emit nothing.
-        [(CompilerRegRemat _) ""])]
-    [(CompilerRegNoLocation) (compiler-backend-emit-store-var var-id reg)]))
+        [(CompilerRegLocation.Remat _) ""])]
+    [(CompilerRegMaybeLocation.No) (compiler-backend-emit-store-var var-id reg)]))
 
 (define (compiler-backend-emit-load-float-var-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -3857,15 +3862,15 @@
   (let
     [mov : String (compiler-backend-float-move ty)]
     (match (compiler-reg-assignment-lookup assignments var-id)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (match location
-          [(CompilerRegRegister home)
+          [(CompilerRegLocation.Register home)
             (if (string.string-eq home reg)
               ""
               (str_cat.str-cat "    " mov " " home ", " reg "\n"))]
           ;; #2386: a register-group var is never float-class; unreachable.
-          [(CompilerRegRegisterPair _ _) ""]
-          [(CompilerRegSpill offset)
+          [(CompilerRegLocation.RegisterPair _ _) ""]
+          [(CompilerRegLocation.Spill offset)
             (str_cat.str-cat
               "    "
               mov
@@ -3876,8 +3881,8 @@
               "\n")]
           ;; A rematerialisable value is a constant/address (i64-class), never a
           ;; float; unreachable here.
-          [(CompilerRegRemat _) ""])]
-      [(CompilerRegNoLocation)
+          [(CompilerRegLocation.Remat _) ""])]
+      [(CompilerRegMaybeLocation.No)
         (str_cat.str-cat
           "    "
           mov
@@ -3905,15 +3910,15 @@
   (let
     [mov : String (compiler-backend-float-move ty)]
     (match (compiler-reg-assignment-lookup assignments var-id)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (match location
-          [(CompilerRegRegister home)
+          [(CompilerRegLocation.Register home)
             (if (string.string-eq home reg)
               ""
               (str_cat.str-cat "    " mov " " reg ", " home "\n"))]
           ;; #2386: a register-group var is never float-class; unreachable.
-          [(CompilerRegRegisterPair _ _) ""]
-          [(CompilerRegSpill offset)
+          [(CompilerRegLocation.RegisterPair _ _) ""]
+          [(CompilerRegLocation.Spill offset)
             (str_cat.str-cat
               "    "
               mov
@@ -3923,8 +3928,8 @@
               (compiler-backend-frame-offset offset)
               "\n")]
           ;; A rematerialised value is never float-class; unreachable.
-          [(CompilerRegRemat _) ""])]
-      [(CompilerRegNoLocation)
+          [(CompilerRegLocation.Remat _) ""])]
+      [(CompilerRegMaybeLocation.No)
         (compiler-backend-emit-store-float-var var-id reg ty)])))
 
 (define (compiler-backend-emit-store-f64-var-with-plan
@@ -4073,34 +4078,34 @@
 
 (define (compiler-backend-immediate-i64 [n : i64]) : CompilerBackendMaybeImmediate
   (if (compiler-backend-imm32? n)
-    (CompilerBackendSomeImmediate
+    (CompilerBackendMaybeImmediate.Some
       (string.string-append "$" (string.int->string n)))
-    (CompilerBackendNoImmediate)))
+    (CompilerBackendMaybeImmediate.No)))
 
 (define (compiler-backend-immediate-operand [value : CompilerIrValue]) : CompilerBackendMaybeImmediate
   (match value
-    [(IrValueI64 n) (compiler-backend-immediate-i64 n)]
-    [(IrValueBool b)
+    [(CompilerIrValue.I64 n) (compiler-backend-immediate-i64 n)]
+    [(CompilerIrValue.Bool b)
       (if b
-        (CompilerBackendSomeImmediate "$1")
-        (CompilerBackendSomeImmediate "$0"))]
-    [(IrValueChar c)
-      (CompilerBackendSomeImmediate
+        (CompilerBackendMaybeImmediate.Some "$1")
+        (CompilerBackendMaybeImmediate.Some "$0"))]
+    [(CompilerIrValue.Char c)
+      (CompilerBackendMaybeImmediate.Some
         (string.string-append
           "$"
           (string.int->string (compiler-backend-char-code c))))]
-    [(IrValueUnit) (CompilerBackendSomeImmediate "$0")]
-    [_ (CompilerBackendNoImmediate)]))
+    [(CompilerIrValue.Unit) (CompilerBackendMaybeImmediate.Some "$0")]
+    [_ (CompilerBackendMaybeImmediate.No)]))
 
 (define (compiler-backend-value-as-i64 [value : CompilerIrValue]) : option_i64.Option
   (match value
-    [(IrValueI64 n) (option_i64.Some n)]
-    [(IrValueBool b)
+    [(CompilerIrValue.I64 n) (option_i64.Some n)]
+    [(CompilerIrValue.Bool b)
       (if b
         (option_i64.Some 1)
         (option_i64.Some 0))]
-    [(IrValueChar c) (option_i64.Some (compiler-backend-char-code c))]
-    [(IrValueUnit) (option_i64.Some 0)]
+    [(CompilerIrValue.Char c) (option_i64.Some (compiler-backend-char-code c))]
+    [(CompilerIrValue.Unit) (option_i64.Some 0)]
     [_ (option_i64.None)]))
 
 (define (compiler-backend-symbol-char [text : String] [idx : i64] [c : char]) : String
@@ -4760,11 +4765,11 @@
   (let
     [mov : String (compiler-backend-float-move ty)]
     (match value
-      [(IrValueVar id)
-        (OkCompilerBackend
+      [(CompilerIrValue.Var id)
+        (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-float-var-with-plan assignments id ty reg))]
-      [(IrValueGlobal name)
-        (OkCompilerBackend
+      [(CompilerIrValue.Global name)
+        (ResultCompilerBackend.Ok
           (str_cat.str-cat
             "    "
             mov
@@ -4773,16 +4778,16 @@
             "(%rip), "
             reg
             "\n"))]
-      [(IrValueF64 bits)
+      [(CompilerIrValue.F64 bits)
         (if (compiler-backend-f64-type? ty)
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               "    movsd "
               (compiler-backend-float-label ty bits)
               "(%rip), "
               reg
               "\n"))
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               "    movss "
               (compiler-backend-float-label ty bits)
@@ -4790,7 +4795,7 @@
               reg
               "\n")))]
       [_
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
@@ -4833,62 +4838,66 @@
   [value : CompilerIrValue]
   [reg : String]) : ResultCompilerBackend
   (match value
-    [(IrValueVar id)
-      (OkCompilerBackend
+    [(CompilerIrValue.Var id)
+      (ResultCompilerBackend.Ok
         (compiler-backend-emit-load-var-with-plan assignments id reg))]
-    [(IrValueGlobal name)
-      (OkCompilerBackend
+    [(CompilerIrValue.Global name)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    movq "
           (compiler-backend-user-symbol name)
           "(%rip), "
           reg
           "\n"))]
-    [(IrValueGlobalAddr name)
-      (OkCompilerBackend
+    [(CompilerIrValue.GlobalAddr name)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    leaq "
           (compiler-backend-user-symbol name)
           "(%rip), "
           reg
           "\n"))]
-    [(IrValueFunction name)
-      (OkCompilerBackend
+    [(CompilerIrValue.Function name)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    leaq "
           (compiler-backend-closure-descriptor-label name)
           "(%rip), "
           reg
           "\n"))]
-    [(IrValueI64 n)
-      (OkCompilerBackend (compiler-backend-emit-load-i64-immediate n reg))]
-    [(IrValueBool b)
+    [(CompilerIrValue.I64 n)
+      (ResultCompilerBackend.Ok
+        (compiler-backend-emit-load-i64-immediate n reg))]
+    [(CompilerIrValue.Bool b)
       (if b
-        (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 1 reg))
-        (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 0 reg)))]
-    [(IrValueChar c)
-      (OkCompilerBackend
+        (ResultCompilerBackend.Ok
+          (compiler-backend-emit-load-i64-immediate 1 reg))
+        (ResultCompilerBackend.Ok
+          (compiler-backend-emit-load-i64-immediate 0 reg)))]
+    [(CompilerIrValue.Char c)
+      (ResultCompilerBackend.Ok
         (compiler-backend-emit-load-i64-immediate
           (compiler-backend-char-code c)
           reg))]
-    [(IrValueUnit)
-      (OkCompilerBackend (compiler-backend-emit-load-i64-immediate 0 reg))]
-    [(IrValueF64 _)
-      (ErrCompilerBackend
+    [(CompilerIrValue.Unit)
+      (ResultCompilerBackend.Ok
+        (compiler-backend-emit-load-i64-immediate 0 reg))]
+    [(CompilerIrValue.F64 _)
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
             "backend: f64 values are not supported yet")))]
-    [(IrValueString text)
-      (OkCompilerBackend
+    [(CompilerIrValue.String text)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    leaq "
           (compiler-backend-string-fat-label text)
           "(%rip), "
           reg
           "\n"))]
-    [(IrValueBytes text)
-      (OkCompilerBackend
+    [(CompilerIrValue.Bytes text)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    leaq "
           (compiler-backend-bytes-fat-label text)
@@ -4900,7 +4909,7 @@
   [value : CompilerIrValue]
   [reg : String]) : ResultCompilerBackend
   (compiler-backend-emit-load-value-with-plan
-    CompilerRegAssignmentNil
+    CompilerRegAssignmentList.Nil
     value
     reg))
 
@@ -4910,29 +4919,29 @@
   [ty : AstType]
   [reg : String]) : String
   (match (compiler-reg-assignment-lookup assignments id)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister home)
+        [(CompilerRegLocation.Register home)
           (compiler-backend-emit-load-register-to-reg home ty reg)]
         ;; #2386: a whole register-group is loaded word-wise by the group
         ;; ABI paths; reaching the generic scalar load means word0's home.
-        [(CompilerRegRegisterPair home _)
+        [(CompilerRegLocation.RegisterPair home _)
           (compiler-backend-emit-load-register-to-reg home ty reg)]
-        [(CompilerRegSpill offset)
+        [(CompilerRegLocation.Spill offset)
           (compiler-backend-emit-load-memory-to-reg
             (compiler-backend-frame-offset offset)
             ty
             reg)]
         ;; Rematerialise the value into `reg` (constants/addresses are i64-class,
         ;; so the immediate/leaq materialisation is width-correct for any use).
-        [(CompilerRegRemat value)
+        [(CompilerRegLocation.Remat value)
           (match (compiler-backend-emit-load-value-with-plan
-            CompilerRegAssignmentNil
+            CompilerRegAssignmentList.Nil
             value
             reg)
-            [(OkCompilerBackend asm) asm]
-            [(ErrCompilerBackend _) ""])])]
-    [(CompilerRegNoLocation)
+            [(ResultCompilerBackend.Ok asm) asm]
+            [(ResultCompilerBackend.Err _) ""])])]
+    [(CompilerRegMaybeLocation.No)
       (compiler-backend-emit-load-memory-to-reg
         (compiler-backend-slot id)
         ty
@@ -4954,18 +4963,18 @@
   [value : CompilerIrValue]
   [avoid : String]) : String
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister home)
+              [(CompilerRegLocation.Register home)
                 (if (compiler-backend-address-base-register-ok? home avoid)
                   home
                   "")]
               [_ ""])]
-          [(CompilerRegNoLocation) ""]))]
+          [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
 (define (compiler-backend-emit-address-base-with-avoid
@@ -4980,11 +4989,12 @@
         assignments
         value
         fallback-reg)
-        [(OkCompilerBackend asm)
-          (OkCompilerBackendAddressBase
+        [(ResultCompilerBackend.Ok asm)
+          (ResultCompilerBackendAddressBase.Ok
             (CompilerBackendAddressBase asm fallback-reg))]
-        [(ErrCompilerBackend message) (ErrCompilerBackendAddressBase message)])
-      (OkCompilerBackendAddressBase (CompilerBackendAddressBase "" home)))))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackendAddressBase.Err message)])
+      (ResultCompilerBackendAddressBase.Ok (CompilerBackendAddressBase "" home)))))
 
 (define (compiler-backend-emit-address-base
   [assignments : CompilerRegAssignmentList]
@@ -5274,46 +5284,47 @@
   [addr : String]
   [ty : AstType]) : CompilerBackendMaybeAsm
   (if (compiler-backend-float-type? ty)
-    (CompilerBackendNoAsm)
+    (CompilerBackendMaybeAsm.No)
     (match (compiler-backend-immediate-operand value)
-      [(CompilerBackendSomeImmediate imm)
+      [(CompilerBackendMaybeImmediate.Some imm)
         (let
           [mnemonic : String (compiler-backend-store-immediate-mnemonic ty)]
           (if (string.string-eq mnemonic "")
-            (CompilerBackendNoAsm)
-            (CompilerBackendSomeAsm
+            (CompilerBackendMaybeAsm.No)
+            (CompilerBackendMaybeAsm.Some
               (str_cat.str-cat "    " mnemonic " " imm ", " addr "\n"))))]
-      [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])))
+      [(CompilerBackendMaybeImmediate.No) (CompilerBackendMaybeAsm.No)])))
 
 (define (compiler-backend-emit-load-immediate-to-reg
   [value : CompilerIrValue]
   [reg : String]) : CompilerBackendMaybeAsm
   (match (compiler-backend-value-as-i64 value)
     [(option_i64.Some n)
-      (CompilerBackendSomeAsm (compiler-backend-emit-load-i64-immediate n reg))]
+      (CompilerBackendMaybeAsm.Some
+        (compiler-backend-emit-load-i64-immediate n reg))]
     [(option_i64.None)
       (match (compiler-backend-immediate-operand value)
-        [(CompilerBackendSomeImmediate imm)
-          (CompilerBackendSomeAsm
+        [(CompilerBackendMaybeImmediate.Some imm)
+          (CompilerBackendMaybeAsm.Some
             (str_cat.str-cat "    movq " imm ", " reg "\n"))]
-        [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)])]))
+        [(CompilerBackendMaybeImmediate.No) (CompilerBackendMaybeAsm.No)])]))
 
 (define (compiler-backend-emit-store-immediate-to-var-home
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]
   [value : CompilerIrValue]) : CompilerBackendMaybeAsm
   (match (compiler-backend-immediate-operand value)
-    [(CompilerBackendSomeImmediate imm)
+    [(CompilerBackendMaybeImmediate.Some imm)
       (match (compiler-reg-assignment-lookup assignments var-id)
-        [(CompilerRegSomeLocation location)
+        [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegRegister home)
+            [(CompilerRegLocation.Register home)
               (compiler-backend-emit-load-immediate-to-reg value home)]
             ;; #2386: an immediate never targets a whole register-group; unreached.
-            [(CompilerRegRegisterPair home _)
+            [(CompilerRegLocation.RegisterPair home _)
               (compiler-backend-emit-load-immediate-to-reg value home)]
-            [(CompilerRegSpill offset)
-              (CompilerBackendSomeAsm
+            [(CompilerRegLocation.Spill offset)
+              (CompilerBackendMaybeAsm.Some
                 (str_cat.str-cat
                   "    movq "
                   imm
@@ -5322,16 +5333,16 @@
                   "\n"))]
             ;; Rematerialised dst: this immediate store IS its (single) def, and the
             ;; value is recomputed at every use, so the store is dead -> emit nothing.
-            [(CompilerRegRemat _) (CompilerBackendSomeAsm "")])]
-        [(CompilerRegNoLocation)
-          (CompilerBackendSomeAsm
+            [(CompilerRegLocation.Remat _) (CompilerBackendMaybeAsm.Some "")])]
+        [(CompilerRegMaybeLocation.No)
+          (CompilerBackendMaybeAsm.Some
             (str_cat.str-cat
               "    movq "
               imm
               ", "
               (compiler-backend-slot var-id)
               "\n"))])]
-    [(CompilerBackendNoImmediate) (CompilerBackendNoAsm)]))
+    [(CompilerBackendMaybeImmediate.No) (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
   (match elem-ty
@@ -5355,21 +5366,21 @@
   [assignments : CompilerRegAssignmentList]
   [var-id : i64]) : String
   (match (compiler-reg-assignment-lookup assignments var-id)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister home)
+        [(CompilerRegLocation.Register home)
           (str_cat.str-cat "    vmovq %xmm0, " home "\n")]
-        [(CompilerRegRegisterPair home _)
+        [(CompilerRegLocation.RegisterPair home _)
           (str_cat.str-cat "    vmovq %xmm0, " home "\n")]
-        [(CompilerRegSpill offset)
+        [(CompilerRegLocation.Spill offset)
           (str_cat.str-cat
             "    vmovq %xmm0, "
             (compiler-backend-frame-offset offset)
             "\n")]
         ;; Rematerialised values are static scalar/address defs, never vector
         ;; reduction destinations.
-        [(CompilerRegRemat _) ""])]
-    [(CompilerRegNoLocation)
+        [(CompilerRegLocation.Remat _) ""])]
+    [(CompilerRegMaybeLocation.No)
       (str_cat.str-cat "    vmovq %xmm0, " (compiler-backend-slot var-id) "\n")]))
 
 (define (compiler-backend-vector-reduce-store-scalar
@@ -5454,31 +5465,31 @@
       [mnemonic : String
         (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX2 vector reduction")))
         (match src
-          [(IrValueVar src-var)
+          [(CompilerIrValue.Var src-var)
             (match (compiler-backend-vector-var-home
               assignments
               src-var
               "reduce source")
-              [(OkBackendReg src-home)
+              [(ResultBackendReg.Ok src-home)
                 (let
                   [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
                   [xmm : String (compiler-backend-vector-home-to-xmm src-home)]
                   (if (or
                     (= (string.string-length ymm) 0)
                     (= (string.string-length xmm) 0))
-                    (ErrCompilerBackend
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message
                           instr-diag
                           (compiler-backend-vector-home-unavailable
                             "reduce source"))))
-                    (OkCompilerBackend
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         (compiler-backend-avx2-vector-reduce-horizontal-asm
                           mnemonic
@@ -5489,11 +5500,11 @@
                           assignments
                           dst
                           elem-ty)))))]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
           [_
-            (ErrCompilerBackend
+            (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-with-message
                   instr-diag
@@ -5586,31 +5597,31 @@
       [mnemonic : String
         (compiler-backend-avx512-vector-reduce-op-mnemonic op elem-ty)]
       (if (= (string.string-length mnemonic) 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
               "backend: unsupported AVX-512 vector reduction")))
         (match src
-          [(IrValueVar src-var)
+          [(CompilerIrValue.Var src-var)
             (match (compiler-backend-vector-var-home
               assignments
               src-var
               "reduce source")
-              [(OkBackendReg src-home)
+              [(ResultBackendReg.Ok src-home)
                 (let
                   [zmm : String (compiler-backend-vector-home-to-zmm src-home)]
                   [ymm : String (compiler-backend-vector-home-to-ymm src-home)]
                   (if (or
                     (= (string.string-length zmm) 0)
                     (= (string.string-length ymm) 0))
-                    (ErrCompilerBackend
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message
                           instr-diag
                           (compiler-backend-vector-home-unavailable
                             "reduce source"))))
-                    (OkCompilerBackend
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         (compiler-backend-avx512-vector-reduce-horizontal-asm
                           mnemonic
@@ -5621,11 +5632,11 @@
                           assignments
                           dst
                           elem-ty)))))]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
           [_
-            (ErrCompilerBackend
+            (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-with-message
                   instr-diag
@@ -5642,7 +5653,7 @@
     (compiler-backend-emit-store-var-with-plan assignments var-id reg)))
 
 ;; #2386: backend emission for multi-word register-resident aggregate groups.
-;; IrInstrPack/IrInstrWord are only produced once the size-16 register-resident
+;; CompilerIrInstr.Pack/CompilerIrInstr.Word are only produced once the size-16 register-resident
 ;; gate is enabled (the enable step adds the register-allocator group location and
 ;; the word-marshalling here). Until then they are never emitted, so reaching this
 ;; path means a lowering/backend representation mismatch -- surface it loudly
@@ -5689,7 +5700,7 @@
   [dst : String]
   [sse? : bool]) : CompilerBackendMaybeAsm
   (if sse?
-    (CompilerBackendNoAsm)
+    (CompilerBackendMaybeAsm.No)
     (if (compiler-backend-pack-word-dst-register? dst)
       (compiler-backend-emit-load-immediate-to-reg word dst)
       (compiler-backend-emit-store-immediate-to-memory word dst (AstTyI64)))))
@@ -5701,8 +5712,8 @@
   [reg : String]
   [immediate-store : CompilerBackendMaybeAsm]) : ResultCompilerBackend
   (match immediate-store
-    [(CompilerBackendSomeAsm _) (OkCompilerBackend "")]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some _) (ResultCompilerBackend.Ok "")]
+    [(CompilerBackendMaybeAsm.No)
       (compiler-backend-emit-load-pack-word assignments word sse? reg)]))
 
 (define (compiler-backend-emit-pack-word-store
@@ -5711,8 +5722,8 @@
   [sse? : bool]
   [immediate-store : CompilerBackendMaybeAsm]) : String
   (match immediate-store
-    [(CompilerBackendSomeAsm asm) asm]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some asm) asm]
+    [(CompilerBackendMaybeAsm.No)
       (compiler-backend-emit-group-word-move scratch dst sse?)]))
 
 (define (compiler-backend-emit-pack-words-direct-registers
@@ -5733,11 +5744,11 @@
       (not (string.string-eq src1 ""))
       (not (string.string-eq src0 dst1))
       (not (string.string-eq src1 dst0)))
-      (CompilerBackendSomeAsm
+      (CompilerBackendMaybeAsm.Some
         (string.string-append
           (compiler-backend-emit-group-word-move src0 dst0 sse0?)
           (compiler-backend-emit-group-word-move src1 dst1 sse1?)))
-      (CompilerBackendNoAsm))))
+      (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-emit-pack-words
   [assignments : CompilerRegAssignmentList]
@@ -5756,8 +5767,8 @@
     dst1
     sse0?
     sse1?)
-    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
+    [(CompilerBackendMaybeAsm.No)
       (let
         [scratch0 : String
           (if sse0?
@@ -5777,15 +5788,15 @@
           sse0?
           scratch0
           store0)
-          [(OkCompilerBackend a0)
+          [(ResultCompilerBackend.Ok a0)
             (match (compiler-backend-emit-load-pack-word-unless-immediate
               assignments
               w1
               sse1?
               scratch1
               store1)
-              [(OkCompilerBackend a1)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok a1)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     (string.string-append a0 a1)
                     (string.string-append
@@ -5799,8 +5810,8 @@
                         dst1
                         sse1?
                         store1))))]
-              [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
-          [(ErrCompilerBackend m) (ErrCompilerBackend m)]))]))
+              [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
+          [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)]))]))
 
 ;; #2386: stack-slot offsets for a group var's two words when it has no register
 ;; home (stack-only/opt-level<2). word0 reuses the var's ordinary 8-byte slot;
@@ -5843,9 +5854,9 @@
             [w1-sse : bool
               (compiler-backend-group-word-sse? program-index ty 1)]
             (match (compiler-reg-assignment-lookup assignments dst)
-              [(CompilerRegSomeLocation location)
+              [(CompilerRegMaybeLocation.Some location)
                 (match location
-                  [(CompilerRegRegisterPair reg-a reg-b)
+                  [(CompilerRegLocation.RegisterPair reg-a reg-b)
                     (compiler-backend-emit-pack-words
                       assignments
                       w0
@@ -5855,7 +5866,7 @@
                       w0-sse
                       w1-sse
                       instr-diag)]
-                  [(CompilerRegSpill offset)
+                  [(CompilerRegLocation.Spill offset)
                     ;; spilled group: words at [offset] and [offset-8].
                     (compiler-backend-emit-pack-words
                       assignments
@@ -5867,12 +5878,12 @@
                       w1-sse
                       instr-diag)]
                   [_
-                    (ErrCompilerBackend
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-with-message
                           instr-diag
-                          "backend: IrInstrPack dst is not a register-group location")))])]
-              [(CompilerRegNoLocation)
+                          "backend: CompilerIrInstr.Pack dst is not a register-group location")))])]
+              [(CompilerRegMaybeLocation.No)
                 ;; stack-only: the group var lives in two stack slots.
                 (compiler-backend-emit-pack-words
                   assignments
@@ -5886,17 +5897,17 @@
                   w1-sse
                   instr-diag)]))]
         [(IrValueNil)
-          (ErrCompilerBackend
+          (ResultCompilerBackend.Err
             (box
               (compiler-diagnostic-with-message
                 instr-diag
-                "backend: IrInstrPack requires exactly two words (#2386)")))])]
+                "backend: CompilerIrInstr.Pack requires exactly two words (#2386)")))])]
     [(IrValueNil)
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-with-message
             instr-diag
-            "backend: IrInstrPack requires exactly two words (#2386)")))]))
+            "backend: CompilerIrInstr.Pack requires exactly two words (#2386)")))]))
 
 ;; #2386: extract word `index` of a register-group value into `dst`'s home.
 (define (compiler-backend-emit-word
@@ -5908,7 +5919,7 @@
   [vars : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match src
-    [(IrValueVar src-var)
+    [(CompilerIrValue.Var src-var)
       (let
         [is-float : bool (compiler-backend-float-type? ty)]
         [scratch : String
@@ -5920,8 +5931,8 @@
           src-var
           index
           vars)
-          [(OkCompilerBackend operand)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok operand)
+            (ResultCompilerBackend.Ok
               (if (compiler-backend-peephole-register-operand? operand)
                 (compiler-backend-emit-store-typed-var-with-plan
                   assignments
@@ -5938,18 +5949,18 @@
                     dst
                     scratch
                     ty))))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-with-message
                   instr-diag
                   (compiler-diagnostic-message (box-get message)))))]))]
     [_
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-with-message
             instr-diag
-            "backend: IrInstrWord src must be a register-group var (#2386)")))]))
+            "backend: CompilerIrInstr.Word src must be a register-group var (#2386)")))]))
 
 ;; #2386: the assembly operand (register name or memory slot) holding word `index`
 ;; of a register-group var, regardless of how the allocator homed it. Used by the
@@ -5960,39 +5971,39 @@
   [index : i64]
   [vars : i64]) : ResultCompilerBackend
   (if (not (or (= index 0) (= index 1)))
-    (ErrCompilerBackend
+    (ResultCompilerBackend.Err
       (box
         (compiler-diagnostic-at-start
           ""
           "backend: register-group word index must be 0 or 1 (#2386)")))
     (match (compiler-reg-assignment-lookup assignments var)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (match location
-          [(CompilerRegRegisterPair reg-a reg-b)
-            (OkCompilerBackend
+          [(CompilerRegLocation.RegisterPair reg-a reg-b)
+            (ResultCompilerBackend.Ok
               (if (= index 0)
                 reg-a
                 reg-b))]
-          [(CompilerRegSpill _)
-            (ErrCompilerBackend
+          [(CompilerRegLocation.Spill _)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-at-start
                   ""
                   "backend: register-group var assigned spill slot (#2386)")))]
-          [(CompilerRegRegister _)
-            (ErrCompilerBackend
+          [(CompilerRegLocation.Register _)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-at-start
                   ""
                   "backend: register-group var assigned scalar register home (#2386)")))]
-          [(CompilerRegRemat _)
-            (ErrCompilerBackend
+          [(CompilerRegLocation.Remat _)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-diagnostic-at-start
                   ""
                   "backend: register-group var rematerialised (#2386)")))])]
-      [(CompilerRegNoLocation)
-        (OkCompilerBackend
+      [(CompilerRegMaybeLocation.No)
+        (ResultCompilerBackend.Ok
           (compiler-backend-frame-offset
             (if (= index 0)
               (compiler-backend-group-word0-slot var)
@@ -6009,12 +6020,12 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match value
-    [(IrValueVar v)
+    [(CompilerIrValue.Var v)
       (match (compiler-backend-group-word-operand assignments v 0 vars)
-        [(OkCompilerBackend word0)
+        [(ResultCompilerBackend.Ok word0)
           (match (compiler-backend-group-word-operand assignments v 1 vars)
-            [(OkCompilerBackend word1)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok word1)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   (compiler-backend-emit-group-word-move
                     word0
@@ -6024,10 +6035,12 @@
                     word1
                     reg1
                     (compiler-backend-group-word-sse? program-index ty 1))))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
     [_
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -6044,10 +6057,10 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-group-word-operand assignments var 0 vars)
-    [(OkCompilerBackend word0)
+    [(ResultCompilerBackend.Ok word0)
       (match (compiler-backend-group-word-operand assignments var 1 vars)
-        [(OkCompilerBackend word1)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok word1)
+          (ResultCompilerBackend.Ok
             (string.string-append
               (compiler-backend-emit-group-word-move
                 reg0
@@ -6057,8 +6070,9 @@
                 reg1
                 word1
                 (compiler-backend-group-word-sse? program-index ty 1))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-group-return-reg
   [program-index : CompilerBackendProgramIndex]
@@ -6097,12 +6111,12 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match value
-    [(IrValueVar v)
+    [(CompilerIrValue.Var v)
       (match (compiler-backend-group-word-operand assignments v 0 vars)
-        [(OkCompilerBackend word0)
+        [(ResultCompilerBackend.Ok word0)
           (match (compiler-backend-group-word-operand assignments v 1 vars)
-            [(OkCompilerBackend word1)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok word1)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   (compiler-backend-emit-group-word-move
                     word0
@@ -6148,10 +6162,12 @@
                           "(%rsp)"
                           "")
                         (compiler-backend-group-word-sse? program-index ty 1))))))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
     [_
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -6175,8 +6191,8 @@
     vars
     ty
     program-index)
-    [(OkCompilerBackend store)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok store)
+      (ResultCompilerBackend.Ok
         (string.string-append
           (compiler-backend-emit-group-word-move
             (str_cat.str-cat
@@ -6198,7 +6214,7 @@
               (compiler-backend-group-return-reg program-index ty 1)
               (compiler-backend-group-word-sse? program-index ty 1))
             store)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-group-word-arg-reg
   [target : CompilerBackendTarget]
@@ -6228,7 +6244,7 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match value
-    [(IrValueVar v)
+    [(CompilerIrValue.Var v)
       (let
         [sse? : bool
           (compiler-backend-group-word-sse? program-index ty word-index)]
@@ -6241,8 +6257,8 @@
           v
           word-index
           vars)
-          [(OkCompilerBackend operand)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok operand)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 (compiler-backend-emit-group-word-move operand scratch sse?)
                 (compiler-backend-emit-group-word-move
@@ -6255,9 +6271,10 @@
                     "(%rsp)"
                     "")
                   sse?)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
     [_
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -6299,26 +6316,27 @@
         int-idx
         float-idx
         position)
-        [(OkBackendReg reg)
+        [(ResultBackendReg.Ok reg)
           (match value
-            [(IrValueVar v)
+            [(CompilerIrValue.Var v)
               (match (compiler-backend-group-word-operand
                 assignments
                 v
                 word-index
                 vars)
-                [(OkCompilerBackend operand)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok operand)
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-emit-group-word-move operand reg sse?))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
             [_
-              (ErrCompilerBackend
+              (ResultCompilerBackend.Err
                 (box
                   (compiler-diagnostic-with-message
                     func-diag
                     "backend: register-group call argument requires var operand (#2386)")))])]
-        [(ErrBackendReg message)
-          (ErrCompilerBackend
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
             (box (compiler-diagnostic-with-message func-diag message)))]))))
 
 (define (compiler-backend-emit-group-word-store
@@ -6330,13 +6348,13 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-group-word-operand assignments var word-index vars)
-    [(OkCompilerBackend operand)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok operand)
+      (ResultCompilerBackend.Ok
         (compiler-backend-emit-group-word-move
           reg
           operand
           (compiler-backend-group-word-sse? program-index ty word-index)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-group-word-param
   [target : CompilerBackendTarget]
@@ -6368,8 +6386,8 @@
         vars
         ty
         program-index)
-        [(OkCompilerBackend store)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok store)
+          (ResultCompilerBackend.Ok
             (string.string-append
               (compiler-backend-emit-group-word-move
                 (str_cat.str-cat
@@ -6382,14 +6400,15 @@
                 scratch
                 sse?)
               store))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])
       (match (compiler-backend-group-word-arg-reg
         target
         sse?
         int-idx
         float-idx
         position)
-        [(OkBackendReg reg)
+        [(ResultBackendReg.Ok reg)
           (compiler-backend-emit-group-word-store
             assignments
             var
@@ -6398,8 +6417,8 @@
             vars
             ty
             program-index)]
-        [(ErrBackendReg _)
-          (ErrCompilerBackend
+        [(ResultBackendReg.Err _)
+          (ResultCompilerBackend.Err
             (box (compiler-diagnostic-at-start "" "backend: too many params")))]))))
 
 (define (compiler-backend-emit-load-typed-value-with-plan
@@ -6409,8 +6428,8 @@
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
     (match value
-      [(IrValueGlobal name)
-        (OkCompilerBackend
+      [(CompilerIrValue.Global name)
+        (ResultCompilerBackend.Ok
           (str_cat.str-cat
             "    "
             (compiler-backend-float-move ty)
@@ -6426,43 +6445,43 @@
           ty
           "%xmm0")])
     (match value
-      [(IrValueVar id)
+      [(CompilerIrValue.Var id)
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister home)
-                (OkCompilerBackend
+              [(CompilerRegLocation.Register home)
+                (ResultCompilerBackend.Ok
                   (compiler-backend-emit-load-register home ty))]
               ;; #2386: a whole register-group is loaded word-wise by the group
               ;; ABI paths; reaching the generic scalar load means word0's home.
-              [(CompilerRegRegisterPair home _)
-                (OkCompilerBackend
+              [(CompilerRegLocation.RegisterPair home _)
+                (ResultCompilerBackend.Ok
                   (compiler-backend-emit-load-register home ty))]
-              [(CompilerRegSpill offset)
-                (OkCompilerBackend
+              [(CompilerRegLocation.Spill offset)
+                (ResultCompilerBackend.Ok
                   (compiler-backend-emit-load-memory
                     (compiler-backend-frame-offset offset)
                     ty))]
               ;; Rematerialise into %rax (this loader's implicit destination, as the
-              ;; IrValueGlobalAddr arm below also uses).
-              [(CompilerRegRemat value)
+              ;; CompilerIrValue.GlobalAddr arm below also uses).
+              [(CompilerRegLocation.Remat value)
                 (compiler-backend-emit-load-value-with-plan
-                  CompilerRegAssignmentNil
+                  CompilerRegAssignmentList.Nil
                   value
                   "%rax")])]
-          [(CompilerRegNoLocation)
-            (OkCompilerBackend
+          [(CompilerRegMaybeLocation.No)
+            (ResultCompilerBackend.Ok
               (compiler-backend-emit-load-memory (compiler-backend-slot id) ty))])]
-      [(IrValueGlobal name)
-        (OkCompilerBackend
+      [(CompilerIrValue.Global name)
+        (ResultCompilerBackend.Ok
           (compiler-backend-emit-load-memory
             (str_cat.str-cat
               (compiler-backend-global-symbol-index program-index name)
               "(%rip)"
               "")
             ty))]
-      [(IrValueGlobalAddr name)
-        (OkCompilerBackend
+      [(CompilerIrValue.GlobalAddr name)
+        (ResultCompilerBackend.Ok
           (str_cat.str-cat
             "    leaq "
             (compiler-backend-function-or-global-addr-symbol program-index name)
@@ -6475,10 +6494,12 @@
   [value : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (compiler-backend-emit-load-typed-value-with-plan
-    CompilerRegAssignmentNil
+    CompilerRegAssignmentList.Nil
     value
     ty
-    (compiler-backend-program-index-build IrFunctionNil IrExternNil)))
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-function-or-global-addr-symbol
   [program-index : CompilerBackendProgramIndex]
@@ -6506,43 +6527,43 @@
   [types : CompilerBackendGlobalTypeList]
   [name : String]) : CompilerRegMaybeType
   (match types
-    [(CompilerBackendGlobalTypeNil) (CompilerRegNoType)]
-    [(CompilerBackendGlobalTypeCons key ty rest)
+    [(CompilerBackendGlobalTypeList.Nil) (CompilerRegMaybeType.No)]
+    [(CompilerBackendGlobalTypeList.Cons key ty rest)
       (if (string.string-eq key name)
-        (CompilerRegSomeType ty)
+        (CompilerRegMaybeType.Some ty)
         (compiler-backend-global-type-lookup (box-get rest) name))]
-    [(CompilerBackendGlobalTypeCache ids values)
+    [(CompilerBackendGlobalTypeList.Cache ids values)
       (match (hashmap.string-i64-map-get ids name)
         [(hashmap.StringI64MapFound index)
-          (CompilerRegSomeType (array.array-ref values index))]
-        [(hashmap.StringI64MapMissing) (CompilerRegNoType)])]))
+          (CompilerRegMaybeType.Some (array.array-ref values index))]
+        [(hashmap.StringI64MapMissing) (CompilerRegMaybeType.No)])]))
 
 (define (compiler-backend-global-type-list-boxed-ok?) : bool
   (let
     [types : CompilerBackendGlobalTypeList
-      (CompilerBackendGlobalTypeCons
+      (CompilerBackendGlobalTypeList.Cons
         "left"
         (AstTyI64)
         (box
-          (CompilerBackendGlobalTypeCons
+          (CompilerBackendGlobalTypeList.Cons
             "right"
             (AstTyBool)
-            (box CompilerBackendGlobalTypeNil))))]
+            (box CompilerBackendGlobalTypeList.Nil))))]
     (and
       (match (compiler-backend-global-type-lookup types "left")
-        [(CompilerRegSomeType (AstTyI64)) true]
+        [(CompilerRegMaybeType.Some (AstTyI64)) true]
         [_ false])
       (match (compiler-backend-global-type-lookup types "right")
-        [(CompilerRegSomeType (AstTyBool)) true]
+        [(CompilerRegMaybeType.Some (AstTyBool)) true]
         [_ false])
       (match (compiler-backend-global-type-lookup types "missing")
-        [(CompilerRegNoType) true]
+        [(CompilerRegMaybeType.No) true]
         [_ false]))))
 
 (define (compiler-backend-global-type-count [globals : CompilerIrGlobalList]) : i64
   (match globals
-    [(IrGlobalNil) 0]
-    [(IrGlobalCons _ rest)
+    [(CompilerIrGlobalList.Nil) 0]
+    [(CompilerIrGlobalList.Cons _ rest)
       (+ 1 (compiler-backend-global-type-count (box-get rest)))]))
 
 (define (compiler-backend-global-types-fill
@@ -6551,10 +6572,10 @@
   [values : (Array AstType)]
   [index : i64]) : hashmap.StringI64Map
   (match globals
-    [(IrGlobalNil) ids]
-    [(IrGlobalCons global rest)
+    [(CompilerIrGlobalList.Nil) ids]
+    [(CompilerIrGlobalList.Cons global rest)
       (match global
-        [(IrGlobal name ty _)
+        [(CompilerIrGlobal.Global name ty _)
           (begin
             (array.array-set! values index ty)
             (compiler-backend-global-types-fill
@@ -6567,7 +6588,7 @@
   (let
     [count : i64 (compiler-backend-global-type-count globals)]
     [values : (Array AstType) (array.make-array AstType count)]
-    (CompilerBackendGlobalTypeCache
+    (CompilerBackendGlobalTypeList.Cache
       (compiler-backend-global-types-fill
         globals
         (hashmap.string-i64-map-with-capacity (+ (* count 2) 16))
@@ -6580,36 +6601,37 @@
   [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : CompilerRegMaybeType
   (match value
-    [(IrValueVar id) (compiler-reg-var-type-lookup types id)]
-    [(IrValueGlobal name)
+    [(CompilerIrValue.Var id) (compiler-reg-var-type-lookup types id)]
+    [(CompilerIrValue.Global name)
       (compiler-backend-global-type-lookup global-types name)]
-    [(IrValueGlobalAddr _) (CompilerRegSomeType (AstTyU64))]
-    [(IrValueI64 _) (CompilerRegSomeType (AstTyI64))]
-    [(IrValueBool _) (CompilerRegSomeType (AstTyBool))]
-    [(IrValueChar _) (CompilerRegSomeType (AstTyChar))]
-    [(IrValueF64 _) (CompilerRegSomeType (AstTyF64))]
-    [(IrValueString _) (CompilerRegSomeType (AstTyString))]
-    [(IrValueBytes _) (CompilerRegSomeType (ast-ty-dyn-array (AstTyU8)))]
-    [(IrValueFunction _) (CompilerRegSomeType (AstTyU64))]
-    [_ (CompilerRegNoType)]))
+    [(CompilerIrValue.GlobalAddr _) (CompilerRegMaybeType.Some (AstTyU64))]
+    [(CompilerIrValue.I64 _) (CompilerRegMaybeType.Some (AstTyI64))]
+    [(CompilerIrValue.Bool _) (CompilerRegMaybeType.Some (AstTyBool))]
+    [(CompilerIrValue.Char _) (CompilerRegMaybeType.Some (AstTyChar))]
+    [(CompilerIrValue.F64 _) (CompilerRegMaybeType.Some (AstTyF64))]
+    [(CompilerIrValue.String _) (CompilerRegMaybeType.Some (AstTyString))]
+    [(CompilerIrValue.Bytes _)
+      (CompilerRegMaybeType.Some (ast-ty-dyn-array (AstTyU8)))]
+    [(CompilerIrValue.Function _) (CompilerRegMaybeType.Some (AstTyU64))]
+    [_ (CompilerRegMaybeType.No)]))
 
 (define (compiler-backend-binop-compare-result? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinEq) true]
-    [(IrBinNe) true]
-    [(IrBinLt) true]
-    [(IrBinLe) true]
-    [(IrBinGt) true]
-    [(IrBinGe) true]
+    [(CompilerIrBinOp.Eq) true]
+    [(CompilerIrBinOp.Ne) true]
+    [(CompilerIrBinOp.Lt) true]
+    [(CompilerIrBinOp.Le) true]
+    [(CompilerIrBinOp.Gt) true]
+    [(CompilerIrBinOp.Ge) true]
     [_ false]))
 
 (define (compiler-backend-binop-bit-or-shift? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinBitAnd) true]
-    [(IrBinBitOr) true]
-    [(IrBinBitXor) true]
-    [(IrBinShl) true]
-    [(IrBinShr) true]
+    [(CompilerIrBinOp.BitAnd) true]
+    [(CompilerIrBinOp.BitOr) true]
+    [(CompilerIrBinOp.BitXor) true]
+    [(CompilerIrBinOp.Shl) true]
+    [(CompilerIrBinOp.Shr) true]
     [_ false]))
 
 (define (compiler-backend-missing-compare-operand-ty [result-ty : AstType]) : AstType
@@ -6626,16 +6648,16 @@
   [result-ty : AstType]) : AstType
   (if (compiler-backend-binop-compare-result? op)
     (match (compiler-backend-value-type types global-types lhs)
-      [(CompilerRegSomeType ty) ty]
-      [(CompilerRegNoType)
+      [(CompilerRegMaybeType.Some ty) ty]
+      [(CompilerRegMaybeType.No)
         (match (compiler-backend-value-type types global-types rhs)
-          [(CompilerRegSomeType ty) ty]
-          [(CompilerRegNoType)
+          [(CompilerRegMaybeType.Some ty) ty]
+          [(CompilerRegMaybeType.No)
             (compiler-backend-missing-compare-operand-ty result-ty)])])
     (if (compiler-backend-binop-bit-or-shift? op)
       (match (compiler-backend-value-type types global-types lhs)
-        [(CompilerRegSomeType ty) ty]
-        [(CompilerRegNoType) result-ty])
+        [(CompilerRegMaybeType.Some ty) ty]
+        [(CompilerRegMaybeType.No) result-ty])
       result-ty)))
 
 (define (compiler-backend-value-f64?
@@ -6643,15 +6665,15 @@
   [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : bool
   (match value
-    [(IrValueF64 _) true]
-    [(IrValueVar id)
+    [(CompilerIrValue.F64 _) true]
+    [(CompilerIrValue.Var id)
       (match (compiler-reg-var-type-lookup types id)
-        [(CompilerRegSomeType ty) (compiler-backend-f64-type? ty)]
-        [(CompilerRegNoType) false])]
-    [(IrValueGlobal name)
+        [(CompilerRegMaybeType.Some ty) (compiler-backend-f64-type? ty)]
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerIrValue.Global name)
       (match (compiler-backend-global-type-lookup global-types name)
-        [(CompilerRegSomeType ty) (compiler-backend-f64-type? ty)]
-        [(CompilerRegNoType) false])]
+        [(CompilerRegMaybeType.Some ty) (compiler-backend-f64-type? ty)]
+        [(CompilerRegMaybeType.No) false])]
     [_ false]))
 
 (define (compiler-backend-value-float?
@@ -6659,15 +6681,15 @@
   [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : bool
   (match value
-    [(IrValueF64 _) true]
-    [(IrValueVar id)
+    [(CompilerIrValue.F64 _) true]
+    [(CompilerIrValue.Var id)
       (match (compiler-reg-var-type-lookup types id)
-        [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
-        [(CompilerRegNoType) false])]
-    [(IrValueGlobal name)
+        [(CompilerRegMaybeType.Some ty) (compiler-backend-float-type? ty)]
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerIrValue.Global name)
       (match (compiler-backend-global-type-lookup global-types name)
-        [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
-        [(CompilerRegNoType) false])]
+        [(CompilerRegMaybeType.Some ty) (compiler-backend-float-type? ty)]
+        [(CompilerRegMaybeType.No) false])]
     [_ false]))
 
 ;; True when a binary op operates on floating-point values (f32 OR f64), so it
@@ -6922,7 +6944,7 @@
   (let
     [shift : i64 0]
     [done : bool false]
-    [out : CompilerBackendUnsignedDivMagic (CompilerBackendNoUnsignedDivMagic)]
+    [out : CompilerBackendUnsignedDivMagic (CompilerBackendUnsignedDivMagic.No)]
     (begin
       (while (and (not done) (< shift 64))
         (let
@@ -6944,7 +6966,7 @@
               (begin
                 (set!
                   out
-                  (CompilerBackendUnsignedDivMagicRoundUp
+                  (CompilerBackendUnsignedDivMagic.RoundUp
                     (if needs-inc
                       (+ quot (cast 1 : u64))
                       quot)
@@ -6958,7 +6980,7 @@
   (let
     [shift : i64 0]
     [done : bool false]
-    [out : CompilerBackendUnsignedDivMagic (CompilerBackendNoUnsignedDivMagic)]
+    [out : CompilerBackendUnsignedDivMagic (CompilerBackendUnsignedDivMagic.No)]
     (begin
       (while (and (not done) (< shift 64))
         (let
@@ -6971,7 +6993,9 @@
           (begin
             (if (and (not overflow) (<= rem limit))
               (begin
-                (set! out (CompilerBackendUnsignedDivMagicRoundDown quot shift))
+                (set!
+                  out
+                  (CompilerBackendUnsignedDivMagic.RoundDown quot shift))
                 (set! done true))
               unit)
             (set! shift (+ shift 1)))))
@@ -6979,12 +7003,12 @@
 
 (define (compiler-backend-unsigned-divisor-magic [divisor : u64]) : CompilerBackendUnsignedDivMagic
   (match (compiler-backend-unsigned-divisor-round-up-magic divisor)
-    [(CompilerBackendNoUnsignedDivMagic)
+    [(CompilerBackendUnsignedDivMagic.No)
       (compiler-backend-unsigned-divisor-round-down-magic divisor)]
-    [(CompilerBackendUnsignedDivMagicRoundUp magic shift)
-      (CompilerBackendUnsignedDivMagicRoundUp magic shift)]
-    [(CompilerBackendUnsignedDivMagicRoundDown magic shift)
-      (CompilerBackendUnsignedDivMagicRoundDown magic shift)]))
+    [(CompilerBackendUnsignedDivMagic.RoundUp magic shift)
+      (CompilerBackendUnsignedDivMagic.RoundUp magic shift)]
+    [(CompilerBackendUnsignedDivMagic.RoundDown magic shift)
+      (CompilerBackendUnsignedDivMagic.RoundDown magic shift)]))
 
 (define (compiler-backend-signed-divisor-magic [divisor : i64]) : CompilerBackendSignedDivMagic
   (let
@@ -7093,7 +7117,7 @@
   [divisor : u64]
   [want-remainder : bool]) : CompilerBackendMaybeAsm
   (match (compiler-backend-unsigned-divisor-magic divisor)
-    [(CompilerBackendUnsignedDivMagicRoundUp magic shift)
+    [(CompilerBackendUnsignedDivMagic.RoundUp magic shift)
       (let
         [quotient-asm : String
           (if want-remainder
@@ -7109,7 +7133,7 @@
               (string.string-append
                 "    mulq %r8\n    movq %rdx, %rax\n"
                 (compiler-backend-divmod-shift-rax "shr" shift))))]
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.Some
           (if want-remainder
             (string.string-append
               quotient-asm
@@ -7117,7 +7141,7 @@
                 divisor
                 "%rdx"))
             quotient-asm)))]
-    [(CompilerBackendUnsignedDivMagicRoundDown magic shift)
+    [(CompilerBackendUnsignedDivMagic.RoundDown magic shift)
       (let
         [quotient-asm : String
           (if want-remainder
@@ -7133,7 +7157,7 @@
               (string.string-append
                 "    mulq %r8\n    addq %r8, %rax\n    adcq $0, %rdx\n    movq %rdx, %rax\n"
                 (compiler-backend-divmod-shift-rax "shr" shift))))]
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.Some
           (if want-remainder
             (string.string-append
               quotient-asm
@@ -7141,7 +7165,7 @@
                 divisor
                 "%rdx"))
             quotient-asm)))]
-    [(CompilerBackendNoUnsignedDivMagic) (CompilerBackendNoAsm)]))
+    [(CompilerBackendUnsignedDivMagic.No) (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-signed-power-divmod-asm
   [divisor : u64]
@@ -7209,12 +7233,12 @@
   [divisor : i64]
   [want-remainder : bool]) : CompilerBackendMaybeAsm
   (if (= divisor 1)
-    (CompilerBackendSomeAsm
+    (CompilerBackendMaybeAsm.Some
       (if want-remainder
         "    xorq %rax, %rax\n"
         ""))
     (if (= divisor (compiler-backend-i64-min-value))
-      (CompilerBackendNoAsm)
+      (CompilerBackendMaybeAsm.No)
       (let
         [negative-divisor : bool (< divisor 0)]
         [abs-divisor : i64
@@ -7222,7 +7246,7 @@
             (- 0 divisor)
             divisor)]
         [abs-u64 : u64 (cast abs-divisor : u64)]
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.Some
           (if (compiler-backend-u64-power-of-two? abs-u64)
             (compiler-backend-signed-power-divmod-asm
               abs-u64
@@ -7237,7 +7261,7 @@
   [divisor : u64]
   [want-remainder : bool]) : CompilerBackendMaybeAsm
   (if (compiler-backend-u64-power-of-two? divisor)
-    (CompilerBackendSomeAsm
+    (CompilerBackendMaybeAsm.Some
       (compiler-backend-unsigned-power-divmod-asm divisor want-remainder))
     (compiler-backend-unsigned-magic-divmod-asm divisor want-remainder)))
 
@@ -7259,9 +7283,9 @@
   [want-remainder : bool]) : CompilerBackendMaybeAsm
   (cond
     [(not (compiler-backend-divmod-safe-literal-i64? n ty))
-      (CompilerBackendNoAsm)]
+      (CompilerBackendMaybeAsm.No)]
     [(not (= (compiler-backend-type-size ty) 8))
-      (CompilerBackendSomeAsm
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))]
     [(compiler-backend-type-signed? ty)
       (let
@@ -7269,9 +7293,10 @@
         (match (compiler-backend-signed-constant-divmod-strength-asm
           divisor
           want-remainder)
-          [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
-          [(CompilerBackendNoAsm)
-            (CompilerBackendSomeAsm
+          [(CompilerBackendMaybeAsm.Some asm)
+            (CompilerBackendMaybeAsm.Some asm)]
+          [(CompilerBackendMaybeAsm.No)
+            (CompilerBackendMaybeAsm.Some
               (compiler-backend-constant-divmod-unguarded-asm
                 n
                 ty
@@ -7283,16 +7308,17 @@
         ;; overflow while generating constants. Wider unsigned literals reduce to
         ;; a compare because the quotient can only be 0 or 1.
         (if (compiler-backend-u64-high-bit? divisor)
-          (CompilerBackendSomeAsm
+          (CompilerBackendMaybeAsm.Some
             (compiler-backend-unsigned-high-bit-divmod-asm
               divisor
               want-remainder))
           (match (compiler-backend-unsigned-constant-divmod-strength-asm
             divisor
             want-remainder)
-            [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
-            [(CompilerBackendNoAsm)
-              (CompilerBackendSomeAsm
+            [(CompilerBackendMaybeAsm.Some asm)
+              (CompilerBackendMaybeAsm.Some asm)]
+            [(CompilerBackendMaybeAsm.No)
+              (CompilerBackendMaybeAsm.Some
                 (compiler-backend-constant-divmod-unguarded-asm
                   n
                   ty
@@ -7303,39 +7329,39 @@
   [ty : AstType]
   [want-remainder : bool]) : CompilerBackendMaybeAsm
   (match (compiler-backend-constant-divmod-asm n ty want-remainder)
-    [(CompilerBackendSomeAsm asm) (CompilerBackendSomeAsm asm)]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some asm) (CompilerBackendMaybeAsm.Some asm)]
+    [(CompilerBackendMaybeAsm.No)
       (if (and
         (compiler-backend-type-signed? ty)
         (= (compiler-backend-normalized-signed-immediate n ty) (- 0 1)))
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.Some
           (compiler-backend-constant-divmod-unguarded-asm n ty want-remainder))
-        (CompilerBackendNoAsm))]))
+        (CompilerBackendMaybeAsm.No))]))
 
 (define (compiler-backend-binop-literal-divmod-asm
   [op : CompilerIrBinOp]
   [rhs : CompilerIrValue]
   [ty : AstType]) : CompilerBackendMaybeAsm
   (match op
-    [(IrBinDiv)
+    [(CompilerIrBinOp.Div)
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n) (compiler-backend-constant-divmod-asm n ty false)]
-        [(option_i64.None) (CompilerBackendNoAsm)])]
-    [(IrBinMod)
+        [(option_i64.None) (CompilerBackendMaybeAsm.No)])]
+    [(CompilerIrBinOp.Mod)
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n) (compiler-backend-constant-divmod-asm n ty true)]
-        [(option_i64.None) (CompilerBackendNoAsm)])]
-    [(IrBinSafeDiv)
+        [(option_i64.None) (CompilerBackendMaybeAsm.No)])]
+    [(CompilerIrBinOp.SafeDiv)
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n)
           (compiler-backend-constant-safe-divmod-asm n ty false)]
-        [(option_i64.None) (CompilerBackendNoAsm)])]
-    [(IrBinSafeMod)
+        [(option_i64.None) (CompilerBackendMaybeAsm.No)])]
+    [(CompilerIrBinOp.SafeMod)
       (match (compiler-backend-value-as-i64 rhs)
         [(option_i64.Some n)
           (compiler-backend-constant-safe-divmod-asm n ty true)]
-        [(option_i64.None) (CompilerBackendNoAsm)])]
-    [_ (CompilerBackendNoAsm)]))
+        [(option_i64.None) (CompilerBackendMaybeAsm.No)])]
+    [_ (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-shift-count-width [ty : AstType]) : i64
   (* (compiler-backend-type-size ty) 8))
@@ -7375,19 +7401,23 @@
     [rhs : String (compiler-backend-sized-reg "%r8" ty)]
     [_suffix : String (compiler-backend-int-instruction-suffix ty)]
     (match op
-      [(IrBinAdd) (compiler-backend-binop-reg-asm "add" ty rhs lhs)]
-      [(IrBinSub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
-      [(IrBinMul)
+      [(CompilerIrBinOp.Add) (compiler-backend-binop-reg-asm "add" ty rhs lhs)]
+      [(CompilerIrBinOp.Sub) (compiler-backend-binop-reg-asm "sub" ty rhs lhs)]
+      [(CompilerIrBinOp.Mul)
         (if (= (compiler-backend-type-size ty) 1)
           "    imulq %r8, %rax\n"
           (compiler-backend-binop-reg-asm "imul" ty rhs lhs))]
-      [(IrBinDiv) (compiler-backend-binop-divmod-asm ty false)]
-      [(IrBinMod) (compiler-backend-binop-divmod-asm ty true)]
-      [(IrBinSafeDiv) (compiler-backend-binop-divmod-core-asm ty false)]
-      [(IrBinSafeMod) (compiler-backend-binop-divmod-core-asm ty true)]
-      [(IrBinEq) (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete")]
-      [(IrBinNe) (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne")]
-      [(IrBinLt)
+      [(CompilerIrBinOp.Div) (compiler-backend-binop-divmod-asm ty false)]
+      [(CompilerIrBinOp.Mod) (compiler-backend-binop-divmod-asm ty true)]
+      [(CompilerIrBinOp.SafeDiv)
+        (compiler-backend-binop-divmod-core-asm ty false)]
+      [(CompilerIrBinOp.SafeMod)
+        (compiler-backend-binop-divmod-core-asm ty true)]
+      [(CompilerIrBinOp.Eq)
+        (compiler-backend-binop-cmp-set-asm ty rhs lhs "sete")]
+      [(CompilerIrBinOp.Ne)
+        (compiler-backend-binop-cmp-set-asm ty rhs lhs "setne")]
+      [(CompilerIrBinOp.Lt)
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7395,7 +7425,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl"))]
-      [(IrBinLe)
+      [(CompilerIrBinOp.Le)
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7403,7 +7433,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle"))]
-      [(IrBinGt)
+      [(CompilerIrBinOp.Gt)
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7411,7 +7441,7 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg"))]
-      [(IrBinGe)
+      [(CompilerIrBinOp.Ge)
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7419,13 +7449,15 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge"))]
-      [(IrBinAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
-      [(IrBinOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
-      [(IrBinBitAnd) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
-      [(IrBinBitOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
-      [(IrBinBitXor) (compiler-backend-binop-reg-asm "xor" ty rhs lhs)]
-      [(IrBinShl) (compiler-backend-binop-shift-asm "shl" ty lhs)]
-      [(IrBinShr)
+      [(CompilerIrBinOp.And) (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
+      [(CompilerIrBinOp.Or) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
+      [(CompilerIrBinOp.BitAnd)
+        (compiler-backend-binop-reg-asm "and" ty rhs lhs)]
+      [(CompilerIrBinOp.BitOr) (compiler-backend-binop-reg-asm "or" ty rhs lhs)]
+      [(CompilerIrBinOp.BitXor)
+        (compiler-backend-binop-reg-asm "xor" ty rhs lhs)]
+      [(CompilerIrBinOp.Shl) (compiler-backend-binop-shift-asm "shl" ty lhs)]
+      [(CompilerIrBinOp.Shr)
         (compiler-backend-binop-shift-asm
           (if (compiler-backend-type-signed? ty)
             "sar"
@@ -7459,7 +7491,7 @@
       (string.string->int
         (string.substring imm 1 (- (string.string-length imm) 1)))]
     (if (compiler-backend-shift-count-valid? count ty)
-      (CompilerBackendSomeAsm
+      (CompilerBackendMaybeAsm.Some
         (string.string-append
           (str_cat.str-cat
             "    "
@@ -7468,7 +7500,7 @@
             " "
             imm)
           (str_cat.str-cat ", " (compiler-backend-sized-reg "%rax" ty) "\n")))
-      (CompilerBackendNoAsm))))
+      (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-binop-immediate-reg-asm
   [mnemonic : String]
@@ -7485,69 +7517,69 @@
   [imm : String]
   [ty : AstType]) : CompilerBackendMaybeAsm
   (match op
-    [(IrBinAdd)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Add)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "add" ty imm))]
-    [(IrBinSub)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Sub)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "sub" ty imm))]
-    [(IrBinMul)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Mul)
+      (CompilerBackendMaybeAsm.Some
         (if (= (compiler-backend-type-size ty) 1)
           (str_cat.str-cat "    imulq " imm ", %rax\n")
           (compiler-backend-binop-immediate-reg-asm "imul" ty imm)))]
-    [(IrBinEq)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Eq)
+      (CompilerBackendMaybeAsm.Some
         (if (string.string-eq imm "$0")
           (compiler-backend-binop-test-zero-asm ty "sete")
           (compiler-backend-binop-immediate-cmp-asm ty imm "sete")))]
-    [(IrBinNe)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Ne)
+      (CompilerBackendMaybeAsm.Some
         (if (string.string-eq imm "$0")
           (compiler-backend-binop-test-zero-asm ty "setne")
           (compiler-backend-binop-immediate-cmp-asm ty imm "setne")))]
-    [(IrBinLt)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Lt)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")))]
-    [(IrBinLe)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Le)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")))]
-    [(IrBinGt)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Gt)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")))]
-    [(IrBinGe)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Ge)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-cmp-asm
           ty
           imm
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")))]
-    [(IrBinAnd)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.And)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "and" ty imm))]
-    [(IrBinOr)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Or)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
-    [(IrBinBitAnd)
+    [(CompilerIrBinOp.BitAnd)
       (let
         [size : i64 (compiler-backend-type-size ty)]
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.Some
           (if (string.string-eq imm "$255")
             (if (= size 8)
               "    movzbq %al, %rax\n"
@@ -7557,33 +7589,34 @@
                 "    movzwq %ax, %rax\n"
                 "    movzwl %ax, %eax\n")
               (compiler-backend-binop-immediate-reg-asm "and" ty imm)))))]
-    [(IrBinBitOr)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.BitOr)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "or" ty imm))]
-    [(IrBinBitXor)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.BitXor)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-immediate-reg-asm "xor" ty imm))]
-    [(IrBinShl) (compiler-backend-binop-immediate-shift-asm "shl" ty imm)]
-    [(IrBinShr)
+    [(CompilerIrBinOp.Shl)
+      (compiler-backend-binop-immediate-shift-asm "shl" ty imm)]
+    [(CompilerIrBinOp.Shr)
       (compiler-backend-binop-immediate-shift-asm
         (if (compiler-backend-type-signed? ty)
           "sar"
           "shr")
         ty
         imm)]
-    [_ (CompilerBackendNoAsm)]))
+    [_ (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-unop-asm [op : CompilerIrUnOp]) : String
   (match op
-    [(IrUnNeg) "    negq %rax\n"]
-    [(IrUnNot) "    xorq $1, %rax\n"]
-    [(IrUnBitNot) "    notq %rax\n"]))
+    [(CompilerIrUnOp.Neg) "    negq %rax\n"]
+    [(CompilerIrUnOp.Not) "    xorq $1, %rax\n"]
+    [(CompilerIrUnOp.BitNot) "    notq %rax\n"]))
 
 (define (compiler-backend-unop-reg-asm [op : CompilerIrUnOp] [reg : String]) : String
   (match op
-    [(IrUnNeg) (str_cat.str-cat "    negq " reg "\n")]
-    [(IrUnNot) (str_cat.str-cat "    xorq $1, " reg "\n")]
-    [(IrUnBitNot) (str_cat.str-cat "    notq " reg "\n")]))
+    [(CompilerIrUnOp.Neg) (str_cat.str-cat "    negq " reg "\n")]
+    [(CompilerIrUnOp.Not) (str_cat.str-cat "    xorq $1, " reg "\n")]
+    [(CompilerIrUnOp.BitNot) (str_cat.str-cat "    notq " reg "\n")]))
 
 ;; Scalar floating-point binary ops. `fty` selects single (`ss`, f32) vs double
 ;; (`sd`, f64) precision; comparisons use ucomiss/ucomisd accordingly. Operands
@@ -7602,75 +7635,75 @@
         "ucomisd"
         "ucomiss")]
     (match op
-      [(IrBinAdd)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Add)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    add"
             (string.string-append s " %xmm1, %xmm0\n")))]
-      [(IrBinSub)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Sub)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    sub"
             (string.string-append s " %xmm1, %xmm0\n")))]
-      [(IrBinMul)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Mul)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    mul"
             (string.string-append s " %xmm1, %xmm0\n")))]
-      [(IrBinDiv)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Div)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    div"
             (string.string-append s " %xmm1, %xmm0\n")))]
-      [(IrBinSafeDiv)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.SafeDiv)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    div"
             (string.string-append s " %xmm1, %xmm0\n")))]
-      [(IrBinEq)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Eq)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    "
             (string.string-append
               c
               " %xmm1, %xmm0\n    sete %al\n    movzbl %al, %eax\n")))]
-      [(IrBinNe)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Ne)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    "
             (string.string-append
               c
               " %xmm1, %xmm0\n    setne %al\n    movzbl %al, %eax\n")))]
-      [(IrBinLt)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Lt)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    "
             (string.string-append
               c
               " %xmm1, %xmm0\n    setb %al\n    movzbl %al, %eax\n")))]
-      [(IrBinLe)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Le)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    "
             (string.string-append
               c
               " %xmm1, %xmm0\n    setbe %al\n    movzbl %al, %eax\n")))]
-      [(IrBinGt)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Gt)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    "
             (string.string-append
               c
               " %xmm1, %xmm0\n    seta %al\n    movzbl %al, %eax\n")))]
-      [(IrBinGe)
-        (OkCompilerBackend
+      [(CompilerIrBinOp.Ge)
+        (ResultCompilerBackend.Ok
           (string.string-append
             "    "
             (string.string-append
               c
               " %xmm1, %xmm0\n    setae %al\n    movzbl %al, %eax\n")))]
       [_
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
@@ -7681,14 +7714,14 @@
 
 (define (compiler-backend-f64-unop-asm [op : CompilerIrUnOp]) : ResultCompilerBackend
   (match op
-    [(IrUnNeg)
-      (OkCompilerBackend
+    [(CompilerIrUnOp.Neg)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    xorpd "
           (compiler-backend-f64-sign-bit-label)
           "(%rip), %xmm0\n"))]
     [_
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start "" "backend: unsupported f64 unary op")))]))
 
@@ -7698,35 +7731,35 @@
 ;; need %rax/%rdx/%rcx or setcc) and return "".
 (define (compiler-backend-binop-direct-mnemonic [op : CompilerIrBinOp]) : String
   (match op
-    [(IrBinAdd) "addq"]
-    [(IrBinSub) "subq"]
-    [(IrBinMul) "imulq"]
-    [(IrBinAnd) "andq"]
-    [(IrBinOr) "orq"]
-    [(IrBinBitAnd) "andq"]
-    [(IrBinBitOr) "orq"]
-    [(IrBinBitXor) "xorq"]
+    [(CompilerIrBinOp.Add) "addq"]
+    [(CompilerIrBinOp.Sub) "subq"]
+    [(CompilerIrBinOp.Mul) "imulq"]
+    [(CompilerIrBinOp.And) "andq"]
+    [(CompilerIrBinOp.Or) "orq"]
+    [(CompilerIrBinOp.BitAnd) "andq"]
+    [(CompilerIrBinOp.BitOr) "orq"]
+    [(CompilerIrBinOp.BitXor) "xorq"]
     [_ ""]))
 
 ;; #2386 (roadmap #1): the scalar register home of a value if it is a var the
 ;; allocator placed in a single GP register, else "". Used by the direct binop
 ;; path to source an operand straight from its home register instead of staging
 ;; it through %r8 (`movq %r13,%r8 ; addq %r8,%r12` -> `addq %r13,%r12`). Only a
-;; plain CompilerRegRegister qualifies; group register-pairs are aggregates and
+;; plain CompilerRegLocation.Register qualifies; group register-pairs are aggregates and
 ;; never appear as scalar binop operands.
 (define (compiler-backend-value-scalar-register
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister r) r]
+              [(CompilerRegLocation.Register r) r]
               [_ ""])]
-          [(CompilerRegNoLocation) ""]))]
+          [(CompilerRegMaybeLocation.No) ""]))]
     [_ ""]))
 
 ;; Stack address of a scalar variable value that can be used as an instruction
@@ -7736,15 +7769,16 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegSpill offset) (compiler-backend-frame-offset offset)]
+              [(CompilerRegLocation.Spill offset)
+                (compiler-backend-frame-offset offset)]
               [_ ""])]
-          [(CompilerRegNoLocation) (compiler-backend-slot id)]))]
+          [(CompilerRegMaybeLocation.No) (compiler-backend-slot id)]))]
     [_ ""]))
 
 (define (compiler-backend-immediate-displacement [imm : String]) : String
@@ -7755,45 +7789,45 @@
   [ty : AstType]
   [rhs : String]) : CompilerBackendMaybeAsm
   (match op
-    [(IrBinAdd)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Add)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "add"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [(IrBinSub)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Sub)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "sub"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [(IrBinMul)
+    [(CompilerIrBinOp.Mul)
       (if (= (compiler-backend-type-size ty) 1)
-        (CompilerBackendNoAsm)
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.No)
+        (CompilerBackendMaybeAsm.Some
           (compiler-backend-binop-reg-asm
             "imul"
             ty
             rhs
             (compiler-backend-sized-reg "%rax" ty))))]
-    [(IrBinEq)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Eq)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)
           "sete"))]
-    [(IrBinNe)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Ne)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)
           "setne"))]
-    [(IrBinLt)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Lt)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7801,8 +7835,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setb"
             "setl")))]
-    [(IrBinLe)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Le)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7810,8 +7844,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setbe"
             "setle")))]
-    [(IrBinGt)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Gt)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7819,8 +7853,8 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "seta"
             "setg")))]
-    [(IrBinGe)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Ge)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-cmp-set-asm
           ty
           rhs
@@ -7828,42 +7862,42 @@
           (if (compiler-backend-unsigned-rel-ty? ty)
             "setae"
             "setge")))]
-    [(IrBinAnd)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.And)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "and"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [(IrBinOr)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.Or)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "or"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [(IrBinBitAnd)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.BitAnd)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "and"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [(IrBinBitOr)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.BitOr)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "or"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [(IrBinBitXor)
-      (CompilerBackendSomeAsm
+    [(CompilerIrBinOp.BitXor)
+      (CompilerBackendMaybeAsm.Some
         (compiler-backend-binop-reg-asm
           "xor"
           ty
           rhs
           (compiler-backend-sized-reg "%rax" ty)))]
-    [_ (CompilerBackendNoAsm)]))
+    [_ (CompilerBackendMaybeAsm.No)]))
 
 (define (compiler-backend-emit-binop-direct-immediate
   [assignments : CompilerRegAssignmentList]
@@ -7877,18 +7911,18 @@
     (if (and
       (not (string.string-eq lhs-reg ""))
       (match op
-        [(IrBinMul) true]
+        [(CompilerIrBinOp.Mul) true]
         [_ false]))
-      (OkCompilerBackend
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n"))
       (if (and
         (not (string.string-eq lhs-reg ""))
         (not (string.string-eq lhs-reg dst-home))
         (not (string.string-eq imm "$0"))
         (match op
-          [(IrBinAdd) true]
+          [(CompilerIrBinOp.Add) true]
           [_ false]))
-        (OkCompilerBackend
+        (ResultCompilerBackend.Ok
           (str_cat.str-cat
             "    leaq "
             (compiler-backend-immediate-displacement imm)
@@ -7901,12 +7935,12 @@
           assignments
           lhs
           dst-home)
-          [(OkCompilerBackend lhs-asm)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok lhs-asm)
+            (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 lhs-asm
                 (if (match op
-                  [(IrBinBitAnd) true]
+                  [(CompilerIrBinOp.BitAnd) true]
                   [_ false])
                   (if (string.string-eq imm "$255")
                     (str_cat.str-cat
@@ -7928,7 +7962,8 @@
                         "\n")
                       (str_cat.str-cat "    " mnem " " imm ", " dst-home "\n")))
                   (str_cat.str-cat "    " mnem " " imm ", " dst-home "\n"))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-binop
   [types : CompilerRegVarTypeList]
@@ -7948,16 +7983,16 @@
         lhs
         fty
         "%xmm0")
-        [(OkCompilerBackend lhs-asm)
+        [(ResultCompilerBackend.Ok lhs-asm)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             rhs
             fty
             "%xmm1")
-            [(OkCompilerBackend rhs-asm)
+            [(ResultCompilerBackend.Ok rhs-asm)
               (match (compiler-backend-float-binop-asm op fty)
-                [(OkCompilerBackend op-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok op-asm)
+                  (ResultCompilerBackend.Ok
                     (str_cat.str-cat
                       lhs-asm
                       rhs-asm
@@ -7972,9 +8007,12 @@
                           assignments
                           dst
                           "%rax"))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))
     (let
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
@@ -7994,7 +8032,7 @@
         ;; goes into dst's home register, which may itself be rhs's home, and
         ;; loading lhs first would clobber rhs.
         (match (compiler-backend-immediate-operand rhs)
-          [(CompilerBackendSomeImmediate imm)
+          [(CompilerBackendMaybeImmediate.Some imm)
             (compiler-backend-emit-binop-direct-immediate
               assignments
               dst-home
@@ -8002,7 +8040,7 @@
               op
               lhs
               imm)]
-          [(CompilerBackendNoImmediate)
+          [(CompilerBackendMaybeImmediate.No)
             (let
               [rhs-reg : String
                 (compiler-backend-value-scalar-register assignments rhs)]
@@ -8018,7 +8056,7 @@
                 ;; "movq lhs,dst-home" tie copy is never produced -- dst-home =
                 ;; lhs-reg + rhs-reg. LEA does not set flags, but this SSA backend
                 ;; never consumes a binop's flags (comparisons emit their own cmp).
-                (OkCompilerBackend
+                (ResultCompilerBackend.Ok
                   (str_cat.str-cat
                     "    leaq ("
                     lhs-reg
@@ -8034,8 +8072,8 @@
                     assignments
                     lhs
                     dst-home)
-                    [(OkCompilerBackend lhs-asm)
-                      (OkCompilerBackend
+                    [(ResultCompilerBackend.Ok lhs-asm)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           lhs-asm
                           (str_cat.str-cat
@@ -8046,18 +8084,19 @@
                             (string.string-append
                               ", "
                               (string.string-append dst-home "\n")))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
                     rhs
                     "%r8")
-                    [(OkCompilerBackend rhs-asm)
+                    [(ResultCompilerBackend.Ok rhs-asm)
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
                         lhs
                         dst-home)
-                        [(OkCompilerBackend lhs-asm)
-                          (OkCompilerBackend
+                        [(ResultCompilerBackend.Ok lhs-asm)
+                          (ResultCompilerBackend.Ok
                             (string.string-append
                               rhs-asm
                               (string.string-append
@@ -8068,17 +8107,18 @@
                                   " %r8, "
                                   dst-home
                                   "\n"))))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))])
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)]))))])
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           lhs
           "%rax")
-          [(OkCompilerBackend lhs-asm)
+          [(ResultCompilerBackend.Ok lhs-asm)
             (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
-              [(CompilerBackendSomeAsm op-asm)
-                (OkCompilerBackend
+              [(CompilerBackendMaybeAsm.Some op-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     lhs-asm
                     (string.string-append
@@ -8088,15 +8128,15 @@
                         dst
                         "%rax"
                         ty))))]
-              [(CompilerBackendNoAsm)
+              [(CompilerBackendMaybeAsm.No)
                 (match (compiler-backend-immediate-operand rhs)
-                  [(CompilerBackendSomeImmediate imm)
+                  [(CompilerBackendMaybeImmediate.Some imm)
                     (match (compiler-backend-binop-immediate-asm
                       op
                       imm
                       operand-ty)
-                      [(CompilerBackendSomeAsm op-asm)
-                        (OkCompilerBackend
+                      [(CompilerBackendMaybeAsm.Some op-asm)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             lhs-asm
                             (string.string-append
@@ -8106,13 +8146,13 @@
                                 dst
                                 "%rax"
                                 ty))))]
-                      [(CompilerBackendNoAsm)
+                      [(CompilerBackendMaybeAsm.No)
                         (match (compiler-backend-emit-load-value-with-plan
                           assignments
                           rhs
                           "%r8")
-                          [(OkCompilerBackend rhs-asm)
-                            (OkCompilerBackend
+                          [(ResultCompilerBackend.Ok rhs-asm)
+                            (ResultCompilerBackend.Ok
                               (string.string-append
                                 lhs-asm
                                 (string.string-append
@@ -8124,9 +8164,9 @@
                                       dst
                                       "%rax"
                                       ty)))))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])])]
-                  [(CompilerBackendNoImmediate)
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])])]
+                  [(CompilerBackendMaybeImmediate.No)
                     (let
                       [rhs-address : String
                         (compiler-backend-value-stack-address assignments rhs)]
@@ -8135,8 +8175,8 @@
                           op
                           operand-ty
                           rhs-address)
-                          [(CompilerBackendSomeAsm op-asm)
-                            (OkCompilerBackend
+                          [(CompilerBackendMaybeAsm.Some op-asm)
+                            (ResultCompilerBackend.Ok
                               (string.string-append
                                 lhs-asm
                                 (string.string-append
@@ -8146,13 +8186,13 @@
                                     dst
                                     "%rax"
                                     ty))))]
-                          [(CompilerBackendNoAsm)
+                          [(CompilerBackendMaybeAsm.No)
                             (match (compiler-backend-emit-load-value-with-plan
                               assignments
                               rhs
                               "%r8")
-                              [(OkCompilerBackend rhs-asm)
-                                (OkCompilerBackend
+                              [(ResultCompilerBackend.Ok rhs-asm)
+                                (ResultCompilerBackend.Ok
                                   (string.string-append
                                     lhs-asm
                                     (string.string-append
@@ -8166,8 +8206,8 @@
                                           dst
                                           "%rax"
                                           ty)))))]
-                              [(ErrCompilerBackend message)
-                                (ErrCompilerBackend message)])])
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err message)])])
                         ;; #perf: rhs has no stack address, so it is register-
                         ;; homed (or a non-addressable value). When it lives in a
                         ;; register distinct from %rax (the temp holding lhs),
@@ -8190,9 +8230,9 @@
                               op
                               operand-ty
                               (compiler-backend-sized-reg rhs-reg operand-ty))
-                            (CompilerBackendNoAsm))
-                            [(CompilerBackendSomeAsm op-asm)
-                              (OkCompilerBackend
+                            (CompilerBackendMaybeAsm.No))
+                            [(CompilerBackendMaybeAsm.Some op-asm)
+                              (ResultCompilerBackend.Ok
                                 (string.string-append
                                   lhs-asm
                                   (string.string-append
@@ -8202,13 +8242,13 @@
                                       dst
                                       "%rax"
                                       ty))))]
-                            [(CompilerBackendNoAsm)
+                            [(CompilerBackendMaybeAsm.No)
                               (match (compiler-backend-emit-load-value-with-plan
                                 assignments
                                 rhs
                                 "%r8")
-                                [(OkCompilerBackend rhs-asm)
-                                  (OkCompilerBackend
+                                [(ResultCompilerBackend.Ok rhs-asm)
+                                  (ResultCompilerBackend.Ok
                                     (string.string-append
                                       lhs-asm
                                       (string.string-append
@@ -8222,25 +8262,26 @@
                                             dst
                                             "%rax"
                                             ty)))))]
-                                [(ErrCompilerBackend message)
-                                  (ErrCompilerBackend message)])]))))])])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+                                [(ResultCompilerBackend.Err message)
+                                  (ResultCompilerBackend.Err message)])]))))])])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-empty-assignments?
   [assignments : CompilerRegAssignmentList]) : bool
   (match assignments
-    [(CompilerRegAssignmentNil) true]
+    [(CompilerRegAssignmentList.Nil) true]
     [_ false]))
 
 (define (compiler-backend-commutative-binop? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinAdd) true]
-    [(IrBinMul) true]
-    [(IrBinAnd) true]
-    [(IrBinOr) true]
-    [(IrBinBitAnd) true]
-    [(IrBinBitOr) true]
-    [(IrBinBitXor) true]
+    [(CompilerIrBinOp.Add) true]
+    [(CompilerIrBinOp.Mul) true]
+    [(CompilerIrBinOp.And) true]
+    [(CompilerIrBinOp.Or) true]
+    [(CompilerIrBinOp.BitAnd) true]
+    [(CompilerIrBinOp.BitOr) true]
+    [(CompilerIrBinOp.BitXor) true]
     [_ false]))
 
 (define (compiler-backend-rax-forwardable-binop?
@@ -8281,40 +8322,42 @@
         result-ty
         store-result)]
     (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
-      [(CompilerBackendSomeAsm op-asm)
-        (OkCompilerBackend (string.string-append op-asm store))]
-      [(CompilerBackendNoAsm)
+      [(CompilerBackendMaybeAsm.Some op-asm)
+        (ResultCompilerBackend.Ok (string.string-append op-asm store))]
+      [(CompilerBackendMaybeAsm.No)
         (match (compiler-backend-immediate-operand rhs)
-          [(CompilerBackendSomeImmediate imm)
+          [(CompilerBackendMaybeImmediate.Some imm)
             (match (compiler-backend-binop-immediate-asm op imm operand-ty)
-              [(CompilerBackendSomeAsm op-asm)
-                (OkCompilerBackend (string.string-append op-asm store))]
-              [(CompilerBackendNoAsm)
+              [(CompilerBackendMaybeAsm.Some op-asm)
+                (ResultCompilerBackend.Ok (string.string-append op-asm store))]
+              [(CompilerBackendMaybeAsm.No)
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   rhs
                   "%r8")
-                  [(OkCompilerBackend rhs-asm)
-                    (OkCompilerBackend
+                  [(ResultCompilerBackend.Ok rhs-asm)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         rhs-asm
                         (string.string-append
                           (compiler-backend-binop-asm op operand-ty)
                           store)))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-          [(CompilerBackendNoImmediate)
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])])]
+          [(CompilerBackendMaybeImmediate.No)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               rhs
               "%r8")
-              [(OkCompilerBackend rhs-asm)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok rhs-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     rhs-asm
                     (string.string-append
                       (compiler-backend-binop-asm op operand-ty)
                       store)))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])))
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])])])))
 
 (define (compiler-backend-emit-binop-to-rax
   [types : CompilerRegVarTypeList]
@@ -8338,7 +8381,7 @@
       [operand-ty : AstType
         (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
       (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
-        [(OkCompilerBackend lhs-asm)
+        [(ResultCompilerBackend.Ok lhs-asm)
           (match (compiler-backend-emit-binop-rax-rhs
             assignments
             dst
@@ -8347,10 +8390,12 @@
             operand-ty
             ty
             store-result)
-            [(OkCompilerBackend op-asm)
-              (OkCompilerBackend (string.string-append lhs-asm op-asm))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+            [(ResultCompilerBackend.Ok op-asm)
+              (ResultCompilerBackend.Ok (string.string-append lhs-asm op-asm))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))
     (compiler-backend-emit-binop
       types
       global-types
@@ -8445,24 +8490,27 @@
           lhs
           fty
           "%xmm0")
-          [(OkCompilerBackend lhs-asm)
+          [(ResultCompilerBackend.Ok lhs-asm)
             (match (compiler-backend-emit-load-float-value-with-plan
               assignments
               rhs
               fty
               "%xmm1")
-              [(OkCompilerBackend rhs-asm)
+              [(ResultCompilerBackend.Ok rhs-asm)
                 (match (compiler-backend-float-binop-asm op fty)
-                  [(OkCompilerBackend op-asm)
-                    (OkCompilerBackend
+                  [(ResultCompilerBackend.Ok op-asm)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         lhs-asm
                         (string.string-append
                           rhs-asm
                           (string.string-append op-asm return-tail))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))
       (let
         [operand-ty : AstType
           (compiler-backend-binop-operand-ty types global-types op lhs rhs ty)]
@@ -8470,32 +8518,32 @@
           assignments
           lhs
           "%rax")
-          [(OkCompilerBackend lhs-asm)
+          [(ResultCompilerBackend.Ok lhs-asm)
             (match (compiler-backend-binop-literal-divmod-asm op rhs operand-ty)
-              [(CompilerBackendSomeAsm op-asm)
-                (OkCompilerBackend
+              [(CompilerBackendMaybeAsm.Some op-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     lhs-asm
                     (string.string-append op-asm return-tail)))]
-              [(CompilerBackendNoAsm)
+              [(CompilerBackendMaybeAsm.No)
                 (match (compiler-backend-immediate-operand rhs)
-                  [(CompilerBackendSomeImmediate imm)
+                  [(CompilerBackendMaybeImmediate.Some imm)
                     (match (compiler-backend-binop-immediate-asm
                       op
                       imm
                       operand-ty)
-                      [(CompilerBackendSomeAsm op-asm)
-                        (OkCompilerBackend
+                      [(CompilerBackendMaybeAsm.Some op-asm)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             lhs-asm
                             (string.string-append op-asm return-tail)))]
-                      [(CompilerBackendNoAsm)
+                      [(CompilerBackendMaybeAsm.No)
                         (match (compiler-backend-emit-load-value-with-plan
                           assignments
                           rhs
                           "%r8")
-                          [(OkCompilerBackend rhs-asm)
-                            (OkCompilerBackend
+                          [(ResultCompilerBackend.Ok rhs-asm)
+                            (ResultCompilerBackend.Ok
                               (string.string-append
                                 lhs-asm
                                 (string.string-append
@@ -8503,15 +8551,15 @@
                                   (string.string-append
                                     (compiler-backend-binop-asm op operand-ty)
                                     return-tail))))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])])]
-                  [(CompilerBackendNoImmediate)
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])])]
+                  [(CompilerBackendMaybeImmediate.No)
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
                       "%r8")
-                      [(OkCompilerBackend rhs-asm)
-                        (OkCompilerBackend
+                      [(ResultCompilerBackend.Ok rhs-asm)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             lhs-asm
                             (string.string-append
@@ -8519,9 +8567,10 @@
                               (string.string-append
                                 (compiler-backend-binop-asm op operand-ty)
                                 return-tail))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])])])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-jump-label [function : String] [label : String]) : String
   (str_cat.str-cat
@@ -8534,8 +8583,8 @@
   [target : String]
   [fallthrough : CompilerBackendMaybeLabel]) : bool
   (match fallthrough
-    [(CompilerBackendSomeLabel label) (string.string-eq target label)]
-    [(CompilerBackendNoLabel) false]))
+    [(CompilerBackendMaybeLabel.Some label) (string.string-eq target label)]
+    [(CompilerBackendMaybeLabel.No) false]))
 
 (define (compiler-backend-emit-branch-jumps
   [function : String]
@@ -8567,28 +8616,28 @@
   (if (>= (compiler-backend-forwarded-addr-of-src var-id) 0)
     ""
     (match (compiler-reg-assignment-lookup assignments var-id)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (match location
-          [(CompilerRegRegister home)
+          [(CompilerRegLocation.Register home)
             (str_cat.str-cat "    testq " home ", " home "\n")]
-          [(CompilerRegRegisterPair _ _) ""]
-          [(CompilerRegSpill offset)
+          [(CompilerRegLocation.RegisterPair _ _) ""]
+          [(CompilerRegLocation.Spill offset)
             (str_cat.str-cat
               "    cmpq $0, "
               (compiler-backend-frame-offset offset)
               "\n")]
           ;; Rematerialise into %rax, then test it (constant branch conditions are
           ;; normally folded away, so this is rare but must stay correct).
-          [(CompilerRegRemat value)
+          [(CompilerRegLocation.Remat value)
             (str_cat.str-cat
               (match (compiler-backend-emit-load-value-with-plan
-                CompilerRegAssignmentNil
+                CompilerRegAssignmentList.Nil
                 value
                 "%rax")
-                [(OkCompilerBackend asm) asm]
-                [(ErrCompilerBackend _) ""])
+                [(ResultCompilerBackend.Ok asm) asm]
+                [(ResultCompilerBackend.Err _) ""])
               "    testq %rax, %rax\n")])]
-      [(CompilerRegNoLocation)
+      [(CompilerRegMaybeLocation.No)
         (str_cat.str-cat "    cmpq $0, " (compiler-backend-slot var-id) "\n")])))
 
 (define (compiler-backend-emit-load-test-branch
@@ -8599,8 +8648,8 @@
   [false-label : String]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments cond "%rax")
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok load)
+      (ResultCompilerBackend.Ok
         (string.string-append
           load
           (string.string-append
@@ -8610,7 +8659,7 @@
               true-label
               false-label
               fallthrough))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-branch
   [assignments : CompilerRegAssignmentList]
@@ -8620,21 +8669,21 @@
   [false-label : String]
   [fallthrough : CompilerBackendMaybeLabel]) : ResultCompilerBackend
   (match cond
-    [(IrValueBool b)
+    [(CompilerIrValue.Bool b)
       (if b
-        (OkCompilerBackend
+        (ResultCompilerBackend.Ok
           (if (compiler-backend-jump-target-is-fallthrough?
             true-label
             fallthrough)
             ""
             (compiler-backend-jump-label function true-label)))
-        (OkCompilerBackend
+        (ResultCompilerBackend.Ok
           (if (compiler-backend-jump-target-is-fallthrough?
             false-label
             fallthrough)
             ""
             (compiler-backend-jump-label function false-label))))]
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (let
         [test-asm : String
           (compiler-backend-branch-test-var-asm assignments id)]
@@ -8646,7 +8695,7 @@
             true-label
             false-label
             fallthrough)
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (string.string-append
               test-asm
               (compiler-backend-emit-branch-jumps
@@ -8659,8 +8708,8 @@
         assignments
         cond
         "%rax")
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok load)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               load
               "    testq %rax, %rax\n"
@@ -8688,45 +8737,46 @@
                     "\n    jmp "
                     (compiler-backend-asm-label function false-label)
                     "\n")))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]))
 
 (define (compiler-backend-compare-op? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinEq) true]
-    [(IrBinNe) true]
-    [(IrBinLt) true]
-    [(IrBinLe) true]
-    [(IrBinGt) true]
-    [(IrBinGe) true]
+    [(CompilerIrBinOp.Eq) true]
+    [(CompilerIrBinOp.Ne) true]
+    [(CompilerIrBinOp.Lt) true]
+    [(CompilerIrBinOp.Le) true]
+    [(CompilerIrBinOp.Gt) true]
+    [(CompilerIrBinOp.Ge) true]
     [_ false]))
 
 (define (compiler-backend-divmod-op? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinDiv) true]
-    [(IrBinMod) true]
-    [(IrBinSafeDiv) true]
-    [(IrBinSafeMod) true]
+    [(CompilerIrBinOp.Div) true]
+    [(CompilerIrBinOp.Mod) true]
+    [(CompilerIrBinOp.SafeDiv) true]
+    [(CompilerIrBinOp.SafeMod) true]
     [_ false]))
 
 (define (compiler-backend-compare-true-jcc
   [op : CompilerIrBinOp]
   [ty : AstType]) : String
   (match op
-    [(IrBinEq) "je"]
-    [(IrBinNe) "jne"]
-    [(IrBinLt)
+    [(CompilerIrBinOp.Eq) "je"]
+    [(CompilerIrBinOp.Ne) "jne"]
+    [(CompilerIrBinOp.Lt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jb"
         "jl")]
-    [(IrBinLe)
+    [(CompilerIrBinOp.Le)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jbe"
         "jle")]
-    [(IrBinGt)
+    [(CompilerIrBinOp.Gt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "ja"
         "jg")]
-    [(IrBinGe)
+    [(CompilerIrBinOp.Ge)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jae"
         "jge")]
@@ -8736,21 +8786,21 @@
   [op : CompilerIrBinOp]
   [ty : AstType]) : String
   (match op
-    [(IrBinEq) "jne"]
-    [(IrBinNe) "je"]
-    [(IrBinLt)
+    [(CompilerIrBinOp.Eq) "jne"]
+    [(CompilerIrBinOp.Ne) "je"]
+    [(CompilerIrBinOp.Lt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jae"
         "jge")]
-    [(IrBinLe)
+    [(CompilerIrBinOp.Le)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "ja"
         "jg")]
-    [(IrBinGt)
+    [(CompilerIrBinOp.Gt)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jbe"
         "jle")]
-    [(IrBinGe)
+    [(CompilerIrBinOp.Ge)
       (if (compiler-backend-unsigned-rel-ty? ty)
         "jb"
         "jl")]
@@ -8784,8 +8834,8 @@
 
 (define (compiler-backend-compare-uses-zero-test? [op : CompilerIrBinOp]) : bool
   (match op
-    [(IrBinEq) true]
-    [(IrBinNe) true]
+    [(CompilerIrBinOp.Eq) true]
+    [(CompilerIrBinOp.Ne) true]
     [_ false]))
 
 (define (compiler-backend-emit-compare-flags
@@ -8820,13 +8870,13 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (if (>= (compiler-backend-forwarded-addr-of-src id) 0)
         ""
         (match (compiler-reg-assignment-lookup assignments id)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister r) r]
+              [(CompilerRegLocation.Register r) r]
               [_ ""])]
           [_ ""]))]
     [_ ""]))
@@ -8845,16 +8895,16 @@
     [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string.string-eq true-jcc "")
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
             "backend: unsupported compare branch")))
       (match (compiler-backend-emit-load-value-with-plan assignments lhs "%rax")
-        [(OkCompilerBackend lhs-asm)
+        [(ResultCompilerBackend.Ok lhs-asm)
           (match (compiler-backend-immediate-operand rhs)
-            [(CompilerBackendSomeImmediate imm)
-              (OkCompilerBackend
+            [(CompilerBackendMaybeImmediate.Some imm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   lhs-asm
                   (string.string-append
@@ -8866,12 +8916,12 @@
                       fallthrough
                       true-jcc
                       false-jcc))))]
-            [(CompilerBackendNoImmediate)
+            [(CompilerBackendMaybeImmediate.No)
               (let
                 [rhs-home : String
                   (compiler-backend-value-scalar-register-home assignments rhs)]
                 (if (not (string.string-eq rhs-home ""))
-                  (OkCompilerBackend
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       lhs-asm
                       (string.string-append
@@ -8890,8 +8940,8 @@
                     assignments
                     rhs
                     "%r8")
-                    [(OkCompilerBackend rhs-asm)
-                      (OkCompilerBackend
+                    [(ResultCompilerBackend.Ok rhs-asm)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           lhs-asm
                           (string.string-append
@@ -8908,8 +8958,10 @@
                                 fallthrough
                                 true-jcc
                                 false-jcc)))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])))])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
   (and
@@ -8938,16 +8990,16 @@
     [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string.string-eq true-jcc "")
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
             "backend: unsupported load compare branch")))
       (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
-        [(OkCompilerBackend ptr-asm)
+        [(ResultCompilerBackend.Ok ptr-asm)
           (match (compiler-backend-immediate-operand rhs)
-            [(CompilerBackendSomeImmediate imm)
-              (OkCompilerBackend
+            [(CompilerBackendMaybeImmediate.Some imm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   ptr-asm
                   (string.string-append
@@ -8959,13 +9011,13 @@
                       fallthrough
                       true-jcc
                       false-jcc))))]
-            [(CompilerBackendNoImmediate)
+            [(CompilerBackendMaybeImmediate.No)
               (match (compiler-backend-emit-load-value-with-plan
                 assignments
                 rhs
                 "%r8")
-                [(OkCompilerBackend rhs-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok rhs-asm)
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       ptr-asm
                       (string.string-append
@@ -8979,8 +9031,10 @@
                             fallthrough
                             true-jcc
                             false-jcc)))))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-emit-gep-load-compare-branch
   [assignments : CompilerRegAssignmentList]
@@ -8998,7 +9052,7 @@
     [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
     (if (string.string-eq true-jcc "")
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -9012,10 +9066,10 @@
               assignments
               base
               "%r10")
-              [(OkCompilerBackend base-asm)
+              [(ResultCompilerBackend.Ok base-asm)
                 (match (compiler-backend-immediate-operand rhs)
-                  [(CompilerBackendSomeImmediate imm)
-                    (OkCompilerBackend
+                  [(CompilerBackendMaybeImmediate.Some imm)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         base-asm
                         (string.string-append
@@ -9029,13 +9083,13 @@
                             fallthrough
                             true-jcc
                             false-jcc))))]
-                  [(CompilerBackendNoImmediate)
+                  [(CompilerBackendMaybeImmediate.No)
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       rhs
                       "%r8")
-                      [(OkCompilerBackend rhs-asm)
-                        (OkCompilerBackend
+                      [(ResultCompilerBackend.Ok rhs-asm)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             base-asm
                             (string.string-append
@@ -9051,11 +9105,12 @@
                                   fallthrough
                                   true-jcc
                                   false-jcc)))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)]))]
         [(option_i64.None)
-          (ErrCompilerBackend
+          (ResultCompilerBackend.Err
             (box
               (compiler-diagnostic-at-start
                 ""
@@ -9065,8 +9120,8 @@
   [assignments : CompilerRegAssignmentList]
   [length : CompilerIrValue]) : String
   (match (compiler-backend-immediate-operand length)
-    [(CompilerBackendSomeImmediate imm) imm]
-    [(CompilerBackendNoImmediate)
+    [(CompilerBackendMaybeImmediate.Some imm) imm]
+    [(CompilerBackendMaybeImmediate.No)
       (let
         [length-reg : String
           (compiler-backend-value-scalar-register-home assignments length)]
@@ -9133,7 +9188,7 @@
     [call-space : i64
       (compiler-backend-call-arg-space
         target
-        (IrCallArgsNil)
+        (CompilerIrCallArgs.Nil)
         AstTypeNil
         false
         program-index)]
@@ -9149,12 +9204,12 @@
         assignments
         index
         "%rax")
-        [(OkCompilerBackend index-asm)
+        [(ResultCompilerBackend.Ok index-asm)
           (let
             [length-operand : String
               (compiler-backend-bounds-length-operand assignments length)]
             (if (not (string.string-eq length-operand ""))
-              (OkCompilerBackend
+              (ResultCompilerBackend.Ok
                 (compiler-backend-bounds-check-asm
                   index-asm
                   ""
@@ -9168,8 +9223,8 @@
                 assignments
                 length
                 "%r11")
-                [(OkCompilerBackend length-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok length-asm)
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-bounds-check-asm
                       index-asm
                       length-asm
@@ -9179,13 +9234,15 @@
                       ok-symbol
                       plan
                       program-index))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])
       (let
         [length-operand : String
           (compiler-backend-bounds-length-operand assignments length)]
         (if (not (string.string-eq length-operand ""))
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (compiler-backend-bounds-check-asm
               ""
               ""
@@ -9199,8 +9256,8 @@
             assignments
             length
             "%r11")
-            [(OkCompilerBackend length-asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok length-asm)
+              (ResultCompilerBackend.Ok
                 (compiler-backend-bounds-check-asm
                   ""
                   length-asm
@@ -9210,7 +9267,8 @@
                   ok-symbol
                   plan
                   program-index))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))))
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)]))))))
 
 (define (compiler-backend-emit-unop
   [assignments : CompilerRegAssignmentList]
@@ -9223,10 +9281,10 @@
       assignments
       src
       "%xmm0")
-      [(OkCompilerBackend src-asm)
+      [(ResultCompilerBackend.Ok src-asm)
         (match (compiler-backend-f64-unop-asm op)
-          [(OkCompilerBackend op-asm)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok op-asm)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 src-asm
                 (string.string-append
@@ -9235,8 +9293,9 @@
                     assignments
                     dst
                     "%xmm0"))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])
     (let
       [dst-home : String (compiler-backend-var-register-home assignments dst)]
       (if (string.string-eq dst-home "")
@@ -9244,8 +9303,8 @@
           assignments
           src
           "%rax")
-          [(OkCompilerBackend src-asm)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok src-asm)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 src-asm
                 (string.string-append
@@ -9254,35 +9313,37 @@
                     assignments
                     dst
                     "%rax"))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           src
           dst-home)
-          [(OkCompilerBackend src-asm)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok src-asm)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 src-asm
                 (compiler-backend-unop-reg-asm op dst-home)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])))))
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-addr-of
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : i64]) : ResultCompilerBackend
   (if (>= (compiler-backend-forwarded-addr-of-src dst) 0)
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [slot : String (compiler-backend-slot src)]
-      (OkCompilerBackend
+      (ResultCompilerBackend.Ok
         (match (compiler-reg-assignment-lookup assignments dst)
-          [(CompilerRegSomeLocation location)
+          [(CompilerRegMaybeLocation.Some location)
             (match location
-              [(CompilerRegRegister home)
+              [(CompilerRegLocation.Register home)
                 (str_cat.str-cat "    leaq " slot ", " home "\n")]
-              [(CompilerRegRegisterPair home _)
+              [(CompilerRegLocation.RegisterPair home _)
                 (str_cat.str-cat "    leaq " slot ", " home "\n")]
-              [(CompilerRegSpill offset)
+              [(CompilerRegLocation.Spill offset)
                 (string.string-append
                   (str_cat.str-cat "    leaq " slot ", " "%rax" "\n")
                   (str_cat.str-cat
@@ -9291,10 +9352,10 @@
                     "\n"
                     ""
                     ""))]
-              ;; The address-of result is defined by IrInstrAddrOf, never a remat
+              ;; The address-of result is defined by CompilerIrInstr.AddrOf, never a remat
               ;; Mov; unreachable.
-              [(CompilerRegRemat _) ""])]
-          [(CompilerRegNoLocation)
+              [(CompilerRegLocation.Remat _) ""])]
+          [(CompilerRegMaybeLocation.No)
             (string.string-append
               (str_cat.str-cat "    leaq " slot ", " "%rax" "\n")
               (compiler-backend-emit-store-var-with-plan assignments dst "%rax"))])))))
@@ -9347,19 +9408,19 @@
 
 (define (compiler-backend-gep-immediate-asm [disp : i64]) : CompilerBackendMaybeAsm
   (if (= disp 0)
-    (CompilerBackendSomeAsm "")
+    (CompilerBackendMaybeAsm.Some "")
     (if (compiler-backend-imm32? disp)
-      (CompilerBackendSomeAsm
+      (CompilerBackendMaybeAsm.Some
         (str_cat.str-cat "    addq $" (string.int->string disp) ", %rax\n" ""))
-      (CompilerBackendNoAsm))))
+      (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-gep-immediate-r10-asm [disp : i64]) : CompilerBackendMaybeAsm
   (if (= disp 0)
-    (CompilerBackendSomeAsm "")
+    (CompilerBackendMaybeAsm.Some "")
     (if (compiler-backend-imm32? disp)
-      (CompilerBackendSomeAsm
+      (CompilerBackendMaybeAsm.Some
         (str_cat.str-cat "    addq $" (string.int->string disp) ", %r10\n" ""))
-      (CompilerBackendNoAsm))))
+      (CompilerBackendMaybeAsm.No))))
 
 (define (compiler-backend-emit-gep
   [assignments : CompilerRegAssignmentList]
@@ -9386,8 +9447,8 @@
             (if (if (= disp 0)
               (string.string-eq base-reg dst-home)
               false)
-              (OkCompilerBackend "")
-              (OkCompilerBackend
+              (ResultCompilerBackend.Ok "")
+              (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   "    leaq "
                   (compiler-backend-copy-address disp base-reg)
@@ -9405,14 +9466,14 @@
   [offset : CompilerIrValue]
   [elem-ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments base "%rax")
-    [(OkCompilerBackend base-asm)
+    [(ResultCompilerBackend.Ok base-asm)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
         (match (compiler-backend-value-as-i64 offset)
           [(option_i64.Some n)
             (match (compiler-backend-gep-immediate-asm (* n scale))
-              [(CompilerBackendSomeAsm offset-asm)
-                (OkCompilerBackend
+              [(CompilerBackendMaybeAsm.Some offset-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     base-asm
                     (string.string-append
@@ -9421,13 +9482,13 @@
                         assignments
                         dst
                         "%rax"))))]
-              [(CompilerBackendNoAsm)
+              [(CompilerBackendMaybeAsm.No)
                 (match (compiler-backend-emit-load-value-with-plan
                   assignments
                   offset
                   "%r8")
-                  [(OkCompilerBackend offset-asm)
-                    (OkCompilerBackend
+                  [(ResultCompilerBackend.Ok offset-asm)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         base-asm
                         (string.string-append
@@ -9438,14 +9499,15 @@
                               assignments
                               dst
                               "%rax")))))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])])]
           [(option_i64.None)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
               "%r8")
-              [(OkCompilerBackend offset-asm)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok offset-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     base-asm
                     (string.string-append
@@ -9456,8 +9518,9 @@
                           assignments
                           dst
                           "%rax")))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]))]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-load-instr
   [assignments : CompilerRegAssignmentList]
@@ -9465,8 +9528,8 @@
   [src : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments src "%r10")
-    [(OkCompilerBackend ptr-asm)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok ptr-asm)
+      (ResultCompilerBackend.Ok
         (if (compiler-backend-float-type? ty)
           (string.string-append
             ptr-asm
@@ -9499,7 +9562,7 @@
                     assignments
                     dst
                     "%rax")))))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-r10-address [disp : i64]) : String
   (if (= disp 0)
@@ -9588,7 +9651,7 @@
   [src : CompilerIrValue]
   [size : i64]) : ResultCompilerBackend
   (if (<= size 0)
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [dst-home : String (compiler-backend-value-register-home assignments dst)]
       [dst-reg : String
@@ -9597,8 +9660,8 @@
           dst-home)]
       (match (if (string.string-eq dst-home "")
         (compiler-backend-emit-load-value-with-plan assignments dst "%r10")
-        (OkCompilerBackend ""))
-        [(OkCompilerBackend dst-asm)
+        (ResultCompilerBackend.Ok ""))
+        [(ResultCompilerBackend.Ok dst-asm)
           (let
             [src-home : String
               (compiler-backend-value-register-home assignments src)]
@@ -9611,9 +9674,9 @@
                 assignments
                 src
                 "%r11")
-              (OkCompilerBackend ""))
-              [(OkCompilerBackend src-asm)
-                (OkCompilerBackend
+              (ResultCompilerBackend.Ok ""))
+              [(ResultCompilerBackend.Ok src-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     dst-asm
                     (string.string-append
@@ -9623,8 +9686,10 @@
                         src-reg
                         0
                         size))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)]))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-emit-copy-bytes-from-gep
   [assignments : CompilerRegAssignmentList]
@@ -9634,21 +9699,21 @@
   [src : CompilerIrValue]
   [size : i64]) : ResultCompilerBackend
   (if (<= size 0)
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (match (compiler-backend-emit-load-value-with-plan assignments base "%r10")
-      [(OkCompilerBackend base-asm)
+      [(ResultCompilerBackend.Ok base-asm)
         (let
           [scale : i64 (compiler-backend-type-size elem-ty)]
           (match (compiler-backend-value-as-i64 offset)
             [(option_i64.Some n)
               (match (compiler-backend-gep-immediate-r10-asm (* n scale))
-                [(CompilerBackendSomeAsm offset-asm)
+                [(CompilerBackendMaybeAsm.Some offset-asm)
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
                     src
                     "%r11")
-                    [(OkCompilerBackend src-asm)
-                      (OkCompilerBackend
+                    [(ResultCompilerBackend.Ok src-asm)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           base-asm
                           (string.string-append
@@ -9660,9 +9725,10 @@
                                 "%r11"
                                 0
                                 size)))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(CompilerBackendNoAsm)
-                  (ErrCompilerBackend
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(CompilerBackendMaybeAsm.No)
+                  (ResultCompilerBackend.Err
                     (box
                       (compiler-diagnostic-at-start
                         ""
@@ -9672,13 +9738,13 @@
                 assignments
                 offset
                 "%r8")
-                [(OkCompilerBackend offset-asm)
+                [(ResultCompilerBackend.Ok offset-asm)
                   (match (compiler-backend-emit-load-value-with-plan
                     assignments
                     src
                     "%r11")
-                    [(OkCompilerBackend src-asm)
-                      (OkCompilerBackend
+                    [(ResultCompilerBackend.Ok src-asm)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           base-asm
                           (string.string-append
@@ -9692,9 +9758,11 @@
                                   "%r11"
                                   0
                                   size))))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]))]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-c-memory-stack-arg
   [target : CompilerBackendTarget]
@@ -9703,8 +9771,8 @@
   [stack-idx : i64]
   [size : i64]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments value "%r11")
-    [(OkCompilerBackend src-asm)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok src-asm)
+      (ResultCompilerBackend.Ok
         (string.string-append
           src-asm
           (string.string-append
@@ -9714,7 +9782,7 @@
                 (compiler-backend-outgoing-stack-arg-offset target stack-idx))
               "(%rsp), %r10\n")
             (compiler-backend-emit-copy-bytes-chunks "%r10" "%r11" 0 size))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-load-from-gep
   [assignments : CompilerRegAssignmentList]
@@ -9732,8 +9800,8 @@
           assignments
           base
           "%r10")
-          [(OkCompilerBackend base-asm)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok base-asm)
+            (ResultCompilerBackend.Ok
               (if (compiler-backend-float-type? load-ty)
                 (string.string-append
                   base-asm
@@ -9771,7 +9839,8 @@
                           assignments
                           dst
                           "%rax")))))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
     [(option_i64.None)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
@@ -9788,13 +9857,13 @@
           assignments
           base
           "%r10")
-          [(OkCompilerBackend base-asm)
+          [(ResultCompilerBackend.Ok base-asm)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
               "%r8")
-              [(OkCompilerBackend offset-asm)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok offset-asm)
+                (ResultCompilerBackend.Ok
                   (if (compiler-backend-float-type? load-ty)
                     (string.string-append
                       base-asm
@@ -9842,8 +9911,10 @@
                                   assignments
                                   dst
                                   "%rax")))))))))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-emit-load-from-gep-r10-live
   [assignments : CompilerRegAssignmentList]
@@ -9856,7 +9927,7 @@
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         [addr : String (compiler-backend-r10-address disp)]
-        (OkCompilerBackend
+        (ResultCompilerBackend.Ok
           (if (compiler-backend-float-type? load-ty)
             (string.string-append
               (compiler-backend-emit-load-float-memory addr "%xmm0" load-ty)
@@ -9879,7 +9950,7 @@
                     dst
                     "%rax")))))))]
     [(option_i64.None)
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -9903,17 +9974,18 @@
     offset0
     elem-ty0
     load-ty0)
-    [(OkCompilerBackend first-asm)
+    [(ResultCompilerBackend.Ok first-asm)
       (match (compiler-backend-emit-load-from-gep-r10-live
         assignments
         load-dst1
         offset1
         elem-ty1
         load-ty1)
-        [(OkCompilerBackend second-asm)
-          (OkCompilerBackend (string.string-append first-asm second-asm))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        [(ResultCompilerBackend.Ok second-asm)
+          (ResultCompilerBackend.Ok (string.string-append first-asm second-asm))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-load-load
   [assignments : CompilerRegAssignmentList]
@@ -9926,8 +9998,8 @@
     [_first-dst : i64 first-dst]
     (if (= (compiler-backend-type-size first-ty) 8)
       (match (compiler-backend-emit-load-value-with-plan assignments ptr "%r10")
-        [(OkCompilerBackend ptr-asm)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok ptr-asm)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               ptr-asm
               "    movq (%r10), %r10\n"
@@ -9958,7 +10030,8 @@
                         assignments
                         second-dst
                         "%rax")))))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])
       (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
 
 (define (compiler-backend-emit-store-value-to-address
@@ -9968,15 +10041,16 @@
   [addr : String]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-immediate-to-memory src addr ty)
-    [(CompilerBackendSomeAsm store-asm) (OkCompilerBackend store-asm)]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some store-asm)
+      (ResultCompilerBackend.Ok store-asm)]
+    [(CompilerBackendMaybeAsm.No)
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         src
         ty
         program-index)
-        [(OkCompilerBackend src-asm)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok src-asm)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               src-asm
               (if (compiler-backend-float-type? ty)
@@ -9985,7 +10059,8 @@
                   "%xmm0"
                   ty)
                 (compiler-backend-emit-store-rax-to-memory addr ty))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]))
 
 (define (compiler-backend-emit-store-ptr
   [assignments : CompilerRegAssignmentList]
@@ -9994,7 +10069,7 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-address-base assignments dst "%r10")
-    [(OkCompilerBackendAddressBase base)
+    [(ResultCompilerBackendAddressBase.Ok base)
       (let
         [ptr-asm : String (struct-get base asm)]
         [addr : String (compiler-backend-copy-address 0 (struct-get base reg))]
@@ -10004,10 +10079,12 @@
           ty
           addr
           program-index)
-          [(OkCompilerBackend store-asm)
-            (OkCompilerBackend (string.string-append ptr-asm store-asm))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))
+          [(ResultCompilerBackend.Ok store-asm)
+            (ResultCompilerBackend.Ok (string.string-append ptr-asm store-asm))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
+    [(ResultCompilerBackendAddressBase.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-store-to-gep
   [assignments : CompilerRegAssignmentList]
@@ -10022,7 +10099,7 @@
       (let
         [disp : i64 (* n (compiler-backend-type-size elem-ty))]
         (match (compiler-backend-emit-address-base assignments base "%r10")
-          [(OkCompilerBackendAddressBase base-plan)
+          [(ResultCompilerBackendAddressBase.Ok base-plan)
             (let
               [base-asm : String (struct-get base-plan asm)]
               [addr : String
@@ -10033,10 +10110,13 @@
                 store-ty
                 addr
                 program-index)
-                [(OkCompilerBackend store-asm)
-                  (OkCompilerBackend (string.string-append base-asm store-asm))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]
+                [(ResultCompilerBackend.Ok store-asm)
+                  (ResultCompilerBackend.Ok
+                    (string.string-append base-asm store-asm))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackendAddressBase.Err message)
+            (ResultCompilerBackend.Err message)]))]
     [(option_i64.None)
       (let
         [scale : i64 (compiler-backend-type-size elem-ty)]
@@ -10045,12 +10125,12 @@
           base
           "%r10"
           "%r8")
-          [(OkCompilerBackendAddressBase base-plan)
+          [(ResultCompilerBackendAddressBase.Ok base-plan)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
               "%r8")
-              [(OkCompilerBackend offset-asm)
+              [(ResultCompilerBackend.Ok offset-asm)
                 (let
                   [base-reg : String (struct-get base-plan reg)]
                   [addr : String
@@ -10078,16 +10158,19 @@
                     store-ty
                     store-addr
                     program-index)
-                    [(OkCompilerBackend store-asm)
-                      (OkCompilerBackend
+                    [(ResultCompilerBackend.Ok store-asm)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           (struct-get base-plan asm)
                           (string.string-append
                             offset-asm
                             (string.string-append addr-asm store-asm))))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))]))
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)]))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackendAddressBase.Err message)
+            (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-emit-store-ptr-pair
   [assignments : CompilerRegAssignmentList]
@@ -10099,7 +10182,7 @@
   [ty1 : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match (compiler-backend-emit-address-base assignments ptr "%r10")
-    [(OkCompilerBackendAddressBase base-plan)
+    [(ResultCompilerBackendAddressBase.Ok base-plan)
       (let
         [base-asm : String (struct-get base-plan asm)]
         [base-reg : String (struct-get base-plan reg)]
@@ -10111,21 +10194,24 @@
           ty0
           addr0
           program-index)
-          [(OkCompilerBackend store0)
+          [(ResultCompilerBackend.Ok store0)
             (match (compiler-backend-emit-store-value-to-address
               assignments
               value1
               ty1
               addr1
               program-index)
-              [(OkCompilerBackend store1)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok store1)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     base-asm
                     (string.string-append store0 store1)))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-    [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)]))
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]
+    [(ResultCompilerBackendAddressBase.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-float-precision-cast-asm
   [from-ty : AstType]
@@ -10215,8 +10301,8 @@
     src
     from-ty
     "%xmm0")
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok load)
+      (ResultCompilerBackend.Ok
         (string.string-append
           load
           (string.string-append
@@ -10226,7 +10312,7 @@
               dst
               "%xmm0"
               to-ty))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-int-to-float-cast
   [function : String]
@@ -10242,8 +10328,8 @@
     src
     from-ty
     program-index)
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok load)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           load
           (match from-ty
@@ -10259,7 +10345,7 @@
             dst
             "%xmm0"
             to-ty)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-float-to-int-cast
   [assignments : CompilerRegAssignmentList]
@@ -10272,8 +10358,8 @@
     src
     from-ty
     "%xmm0")
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok load)
+      (ResultCompilerBackend.Ok
         (string.string-append
           load
           (string.string-append
@@ -10283,7 +10369,7 @@
               dst
               "%rax"
               to-ty))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-cast
   [function : String]
@@ -10297,7 +10383,7 @@
   (if (and
     (opt-type-eq from-ty to-ty)
     (compiler-backend-value-same-home? assignments dst src))
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [from-is-float : bool (compiler-backend-float-type? from-ty)]
       [to-is-float : bool (compiler-backend-float-type? to-ty)]
@@ -10340,12 +10426,12 @@
                 (< from-size to-size)
                 (< from-size 8)))
               (match src
-                [(IrValueVar src-id)
+                [(CompilerIrValue.Var src-id)
                   ;; #2981: widening int/char/bool casts can extend straight
                   ;; into the destination register home. This preserves the
                   ;; typed sign/zero-extension load while skipping the
                   ;; %rax store round-trip.
-                  (OkCompilerBackend
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-emit-load-typed-var-to-reg-with-plan
                       assignments
                       src-id
@@ -10357,8 +10443,8 @@
                     src
                     from-ty
                     program-index)
-                    [(OkCompilerBackend load)
-                      (OkCompilerBackend
+                    [(ResultCompilerBackend.Ok load)
+                      (ResultCompilerBackend.Ok
                         (string.string-append
                           load
                           (compiler-backend-emit-store-typed-var-with-plan
@@ -10368,7 +10454,8 @@
                               "%xmm0"
                               "%rax")
                             to-ty)))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])])
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])])
               (if (if (string.string-eq dst-home "")
                 false
                 (= from-size to-size))
@@ -10388,8 +10475,8 @@
                   src
                   from-ty
                   program-index)
-                  [(OkCompilerBackend load)
-                    (OkCompilerBackend
+                  [(ResultCompilerBackend.Ok load)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         load
                         (compiler-backend-emit-store-typed-var-with-plan
@@ -10399,7 +10486,8 @@
                             "%xmm0"
                             "%rax")
                           to-ty)))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))))
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)]))))]))))
 
 (define (compiler-backend-bitcast-width [ty : AstType]) : i64
   (match ty
@@ -10471,7 +10559,7 @@
               to-float
               from-int
               to-int)))
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
@@ -10482,8 +10570,8 @@
           src
           from-ty
           "%xmm0")
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok load)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 load
                 (string.string-append
@@ -10493,15 +10581,16 @@
                     dst
                     "%rax"
                     to-ty))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
       [(and from-int to-float)
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
           src
           from-ty
           program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok load)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 load
                 (string.string-append
@@ -10511,15 +10600,16 @@
                     dst
                     "%xmm0"
                     to-ty))))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
       [(and from-int to-int)
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
           src
           from-ty
           program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok load)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 load
                 (compiler-backend-emit-store-typed-var-with-plan
@@ -10527,15 +10617,16 @@
                   dst
                   "%rax"
                   to-ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
       [(and from-float to-float)
         (match (compiler-backend-emit-load-float-value-with-plan
           assignments
           src
           from-ty
           "%xmm0")
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok load)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 load
                 (compiler-backend-emit-store-float-var-with-plan
@@ -10543,9 +10634,10 @@
                   dst
                   "%xmm0"
                   to-ty)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
       [else
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
@@ -10559,29 +10651,29 @@
 
 (define (compiler-backend-call-args-count [args : CompilerIrCallArgs]) : i64
   (match args
-    [(IrCallArgsNil) 0]
-    [(IrCallArgsOne _) 1]
-    [(IrCallArgsTwo _ _) 2]
-    [(IrCallArgsArray values) (array.array-length values)]))
+    [(CompilerIrCallArgs.Nil) 0]
+    [(CompilerIrCallArgs.One _) 1]
+    [(CompilerIrCallArgs.Two _ _) 2]
+    [(CompilerIrCallArgs.Array values) (array.array-length values)]))
 
 (define (compiler-backend-call-arg-at [args : CompilerIrCallArgs] [index : i64]) : CompilerIrValue
   (match args
-    [(IrCallArgsNil) (IrValueUnit)]
-    [(IrCallArgsOne value)
+    [(CompilerIrCallArgs.Nil) (CompilerIrValue.Unit)]
+    [(CompilerIrCallArgs.One value)
       (if (= index 0)
         value
-        (IrValueUnit))]
-    [(IrCallArgsTwo a b)
+        (CompilerIrValue.Unit))]
+    [(CompilerIrCallArgs.Two a b)
       (if (= index 0)
         a
         (if (= index 1)
           b
-          (IrValueUnit)))]
-    [(IrCallArgsArray values) (array.array-ref values index)]))
+          (CompilerIrValue.Unit)))]
+    [(CompilerIrCallArgs.Array values) (array.array-ref values index)]))
 
 (define (compiler-backend-fast-alloc-size [args : CompilerIrCallArgs]) : i64
   (match args
-    [(IrCallArgsOne (IrValueI64 size))
+    [(CompilerIrCallArgs.One (CompilerIrValue.I64 size))
       (if (or (<= size 0) (> size 64))
         0
         (* (/ (+ size 7) 8) 8))]
@@ -10674,16 +10766,16 @@
 
 (define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
   (match target
-    [(BackendTargetLinux) 6]
-    [(BackendTargetWindows) 4]))
+    [(CompilerBackendTarget.Linux) 6]
+    [(CompilerBackendTarget.Windows) 4]))
 
 ;; Number of f64 argument registers (#750). System V uses xmm0..xmm7 (8) and
 ;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
 (define (compiler-backend-call-float-register-count
   [target : CompilerBackendTarget]) : i64
   (match target
-    [(BackendTargetLinux) 8]
-    [(BackendTargetWindows) 4]))
+    [(CompilerBackendTarget.Linux) 8]
+    [(CompilerBackendTarget.Windows) 4]))
 
 (define (compiler-backend-emit-call-space-sub [space : i64]) : String
   (if (= space 0)
@@ -10706,9 +10798,9 @@
   [float-idx : i64]
   [position : i64]) : bool
   (match target
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (>= position (compiler-backend-call-register-count target))]
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (if is-float
         (>= float-idx (compiler-backend-call-float-register-count target))
         (>= int-idx (compiler-backend-call-register-count target)))]))
@@ -10718,7 +10810,7 @@
     [(IrParamNil) AstTypeNil]
     [(IrParamCons param rest)
       (match param
-        [(IrParam _ ty _)
+        [(CompilerIrParam.Param _ ty _)
           (ast-type-cons ty (compiler-backend-param-type-list (box-get rest)))])]))
 
 (define (compiler-backend-type-list-count [types : AstTypeList]) : i64
@@ -10739,28 +10831,31 @@
         [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
-          (IrParam (string.string-append "arg" (string.int->string idx)) ty idx)
+          (CompilerIrParam.Param
+            (string.string-append "arg" (string.int->string idx))
+            ty
+            idx)
           (compiler-backend-param-list-from-types rest (+ idx 1))))]))
 
 (define (compiler-backend-var-value-list [count : i64] [idx : i64]) : CompilerIrValueList
   (if (>= idx count)
     IrValueNil
     (compiler-ir-value-cons
-      (IrValueVar idx)
+      (CompilerIrValue.Var idx)
       (compiler-backend-var-value-list count (+ idx 1)))))
 
 (define (compiler-backend-function-param-types
   [functions : CompilerIrFunctionList]
   [name : String]) : AstTypeList
   (match functions
-    [(IrFunctionNil) AstTypeNil]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) AstTypeNil]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction fname params _ _ _)
+        [(CompilerIrFunction.Function fname params _ _ _)
           (if (string.string-eq fname name)
             (compiler-backend-param-type-list params)
             (compiler-backend-function-param-types (box-get rest) name))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-function-param-types
         (compiler-ir-function-seq-to-list seq)
         name)]))
@@ -10769,10 +10864,10 @@
   [externs : CompilerIrExternList]
   [name : String]) : AstTypeList
   (match externs
-    [(IrExternNil) AstTypeNil]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) AstTypeNil]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name ty _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
           (if (string.string-eq extern-name name)
             (match ty
               [(AstTyFunc args _) (box-get args)]
@@ -10783,16 +10878,16 @@
   [functions : CompilerIrFunctionList]
   [name : String]) : CompilerBackendMaybeSignature
   (match functions
-    [(IrFunctionNil) (CompilerBackendNoSignature)]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) (CompilerBackendMaybeSignature.No)]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction fname params ret-ty _ _)
+        [(CompilerIrFunction.Function fname params ret-ty _ _)
           (if (string.string-eq fname name)
-            (CompilerBackendSomeSignature
+            (CompilerBackendMaybeSignature.Some
               (compiler-backend-param-type-list params)
               ret-ty)
             (compiler-backend-function-signature (box-get rest) name))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-function-signature
         (compiler-ir-function-seq-to-list seq)
         name)]))
@@ -10801,31 +10896,31 @@
   [externs : CompilerIrExternList]
   [name : String]) : CompilerBackendMaybeSignature
   (match externs
-    [(IrExternNil) (CompilerBackendNoSignature)]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) (CompilerBackendMaybeSignature.No)]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name ty _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
           (if (string.string-eq extern-name name)
             (match ty
               [(AstTyFunc args ret-ty)
-                (CompilerBackendSomeSignature
+                (CompilerBackendMaybeSignature.Some
                   (box-get args)
                   (ast-node-pool-reader-type-get ret-ty))]
-              [_ (CompilerBackendNoSignature)])
+              [_ (CompilerBackendMaybeSignature.No)])
             (compiler-backend-extern-signature (box-get rest) name))])]))
 
 (define (compiler-backend-function-list-count
   [functions : CompilerIrFunctionList]) : i64
   (match functions
-    [(IrFunctionNil) 0]
-    [(IrFunctionCons _ rest)
+    [(CompilerIrFunctionList.Nil) 0]
+    [(CompilerIrFunctionList.Cons _ rest)
       (+ 1 (compiler-backend-function-list-count (box-get rest)))]
-    [(IrFunctionArray seq) (compiler-ir-function-seq-count seq)]))
+    [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-count seq)]))
 
 (define (compiler-backend-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
-    [(IrExternNil) 0]
-    [(IrExternCons _ rest)
+    [(CompilerIrExternList.Nil) 0]
+    [(CompilerIrExternList.Cons _ rest)
       (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
 
 ;; Intern the name (instead of intern-lookup) so EVERY indexed entry is
@@ -10850,16 +10945,16 @@
   [signatures : (Array CompilerBackendMaybeSignature)]
   [index : i64]) : hashmap.I64I64Map
   (match functions
-    [(IrFunctionNil) ids]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) ids]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name params ret-ty _ _)
+        [(CompilerIrFunction.Function name params ret-ty _ _)
           (begin
             (array.array-set! names index name)
             (array.array-set!
               signatures
               index
-              (CompilerBackendSomeSignature
+              (CompilerBackendMaybeSignature.Some
                 (compiler-backend-param-type-list params)
                 ret-ty))
             (compiler-backend-program-index-functions-into
@@ -10868,7 +10963,7 @@
               names
               signatures
               (+ index 1)))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-program-index-functions-into
         (compiler-ir-function-seq-to-list seq)
         ids
@@ -10879,10 +10974,10 @@
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
     [(AstTyFunc args ret-ty)
-      (CompilerBackendSomeSignature
+      (CompilerBackendMaybeSignature.Some
         (box-get args)
         (ast-node-pool-reader-type-get ret-ty))]
-    [_ (CompilerBackendNoSignature)]))
+    [_ (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-program-index-extern-signatures-into
   [externs : CompilerIrExternList]
@@ -10891,10 +10986,10 @@
   [signatures : (Array CompilerBackendMaybeSignature)]
   [index : i64]) : hashmap.I64I64Map
   (match externs
-    [(IrExternNil) signature-ids]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) signature-ids]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name ty _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
           (begin
             (array.array-set! names index extern-name)
             (array.array-set!
@@ -10919,10 +11014,10 @@
   [provideds : (Array bool)]
   [index : i64]) : hashmap.I64I64Map
   (match externs
-    [(IrExternNil) reference-ids]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) reference-ids]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern _ _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ _ _ link-symbol _ provided)
           (begin
             (array.array-set! link-symbols index link-symbol)
             (array.array-set! provideds index provided)
@@ -10945,10 +11040,10 @@
   [reference-ids : hashmap.I64I64Map]
   [index : i64]) : hashmap.I64I64Map
   (match externs
-    [(IrExternNil) reference-ids]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) reference-ids]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name _ _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name _ _ _ _ _)
           (compiler-backend-program-index-extern-reference-names-into
             (box-get rest)
             (compiler-backend-program-index-bind-name
@@ -10974,7 +11069,7 @@
   [map : hashmap.StringI64Map]
   [instr : CompilerIrInstr]) : hashmap.StringI64Map
   (match instr
-    [(IrInstrPack _ words ty)
+    [(CompilerIrInstr.Pack _ words ty)
       (let
         [name : String (compiler-backend-aggregate-type-name ty)]
         (if (string.string-eq name "")
@@ -10993,9 +11088,9 @@
   [map : hashmap.StringI64Map]
   [functions : CompilerIrFunctionList]) : hashmap.StringI64Map
   (match (compiler-backend-collect-functions-shared
-    (BackendCollectGroupCounts map)
+    (CompilerBackendCollectState.GroupCounts map)
     functions)
-    [(BackendCollectGroupCounts out) out]
+    [(CompilerBackendCollectState.GroupCounts out) out]
     [_ map]))
 
 (define (compiler-backend-group-word-sse-bit [index : i64]) : i64
@@ -11007,11 +11102,11 @@
   [type-info : CompilerRegVarTypes]
   [value : CompilerIrValue]) : bool
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (match (compiler-reg-var-types-lookup type-info id)
-        [(CompilerRegSomeType ty) (compiler-backend-float-type? ty)]
-        [(CompilerRegNoType) false])]
-    [(IrValueF64 _) true]
+        [(CompilerRegMaybeType.Some ty) (compiler-backend-float-type? ty)]
+        [(CompilerRegMaybeType.No) false])]
+    [(CompilerIrValue.F64 _) true]
     [_ false]))
 
 (define (compiler-backend-pack-word-class-mask
@@ -11032,7 +11127,7 @@
 
 (define (compiler-backend-empty-reg-var-types) : CompilerRegVarTypes
   (CompilerRegVarTypes
-    CompilerRegVarTypeNil
+    CompilerRegVarTypeList.Nil
     (array.make-array i64 0)
     (array.make-array AstType 0)))
 
@@ -11071,16 +11166,16 @@
   [state : CompilerBackendCollectState]
   [block : CompilerIrBlock]) : CompilerBackendCollectState
   (match block
-    [(IrBlock _ instrs)
+    [(CompilerIrBlock.Block _ instrs)
       (match state
-        [(BackendCollectCollections collections)
-          (BackendCollectCollections
+        [(CompilerBackendCollectState.Collections collections)
+          (CompilerBackendCollectState.Collections
             (compiler-backend-collect-instr-seq-collections collections instrs))]
-        [(BackendCollectGroupCounts map)
-          (BackendCollectGroupCounts
+        [(CompilerBackendCollectState.GroupCounts map)
+          (CompilerBackendCollectState.GroupCounts
             (compiler-backend-collect-group-counts-instr-seq map instrs 0))]
-        [(BackendCollectGroupClassMasks map type-info)
-          (BackendCollectGroupClassMasks
+        [(CompilerBackendCollectState.GroupClassMasks map type-info)
+          (CompilerBackendCollectState.GroupClassMasks
             (compiler-backend-collect-group-class-masks-instr-seq
               map
               type-info
@@ -11105,26 +11200,29 @@
   [state : CompilerBackendCollectState]
   [blocks : CompilerIrBlockList]) : CompilerBackendCollectState
   (match blocks
-    [(IrBlockNil) state]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) state]
+    [(CompilerIrBlockList.Cons block rest)
       (compiler-backend-collect-blocks-shared
         (compiler-backend-collect-block-shared state block)
         (box-get rest))]
-    [(IrBlockArray seq) (compiler-backend-collect-block-seq-shared state seq 0)]))
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-collect-block-seq-shared state seq 0)]))
 
 (define (compiler-backend-collect-enter-function-shared
   [state : CompilerBackendCollectState]
   [func : CompilerIrFunction]) : CompilerBackendCollectState
   (match state
-    [(BackendCollectGroupClassMasks map _)
-      (BackendCollectGroupClassMasks map (compiler-reg-function-var-types func))]
+    [(CompilerBackendCollectState.GroupClassMasks map _)
+      (CompilerBackendCollectState.GroupClassMasks
+        map
+        (compiler-reg-function-var-types func))]
     [_ state]))
 
 (define (compiler-backend-collect-function-shared
   [state : CompilerBackendCollectState]
   [func : CompilerIrFunction]) : CompilerBackendCollectState
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (compiler-backend-collect-blocks-shared
         (compiler-backend-collect-enter-function-shared state func)
         blocks)]))
@@ -11146,12 +11244,12 @@
   [state : CompilerBackendCollectState]
   [functions : CompilerIrFunctionList]) : CompilerBackendCollectState
   (match functions
-    [(IrFunctionNil) state]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) state]
+    [(CompilerIrFunctionList.Cons func rest)
       (compiler-backend-collect-functions-shared
         (compiler-backend-collect-function-shared state func)
         (box-get rest))]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-collect-function-seq-shared state seq 0)]))
 
 (define (compiler-backend-merge-group-class-mask
@@ -11170,7 +11268,7 @@
   [type-info : CompilerRegVarTypes]
   [instr : CompilerIrInstr]) : hashmap.StringI64Map
   (match instr
-    [(IrInstrPack _ words ty)
+    [(CompilerIrInstr.Pack _ words ty)
       (compiler-backend-merge-group-class-mask
         map
         (compiler-backend-aggregate-type-name ty)
@@ -11181,9 +11279,11 @@
   [map : hashmap.StringI64Map]
   [functions : CompilerIrFunctionList]) : hashmap.StringI64Map
   (match (compiler-backend-collect-functions-shared
-    (BackendCollectGroupClassMasks map (compiler-backend-empty-reg-var-types))
+    (CompilerBackendCollectState.GroupClassMasks
+      map
+      (compiler-backend-empty-reg-var-types))
     functions)
-    [(BackendCollectGroupClassMasks out _) out]
+    [(CompilerBackendCollectState.GroupClassMasks out _) out]
     [_ map]))
 
 (define (compiler-backend-program-index-build
@@ -11333,7 +11433,7 @@
   (match (hashmap.i64-i64-map-get (struct-get index functions) name-id)
     [(hashmap.I64I64MapFound slot)
       (array.array-ref (struct-get index function-signatures) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
+    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
@@ -11341,7 +11441,7 @@
   (match (compiler-backend-index-function-slot index name)
     [(hashmap.I64I64MapFound slot)
       (array.array-ref (struct-get index function-signatures) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
+    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-extern-signature-id
   [index : CompilerBackendProgramIndex]
@@ -11349,7 +11449,7 @@
   (match (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)
     [(hashmap.I64I64MapFound slot)
       (array.array-ref (struct-get index extern-signature-values) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
+    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-extern-signature
   [index : CompilerBackendProgramIndex]
@@ -11357,24 +11457,24 @@
   (match (compiler-backend-index-extern-signature-slot index name)
     [(hashmap.I64I64MapFound slot)
       (array.array-ref (struct-get index extern-signature-values) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendNoSignature)]))
+    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-signature-id index name-id)
-    [(CompilerBackendSomeSignature args ret-ty)
-      (CompilerBackendSomeSignature args ret-ty)]
-    [(CompilerBackendNoSignature)
+    [(CompilerBackendMaybeSignature.Some args ret-ty)
+      (CompilerBackendMaybeSignature.Some args ret-ty)]
+    [(CompilerBackendMaybeSignature.No)
       (compiler-backend-index-extern-signature-id index name-id)]))
 
 (define (compiler-backend-index-signature
   [index : CompilerBackendProgramIndex]
   [name : String]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-signature index name)
-    [(CompilerBackendSomeSignature args ret-ty)
-      (CompilerBackendSomeSignature args ret-ty)]
-    [(CompilerBackendNoSignature)
+    [(CompilerBackendMaybeSignature.Some args ret-ty)
+      (CompilerBackendMaybeSignature.Some args ret-ty)]
+    [(CompilerBackendMaybeSignature.No)
       (compiler-backend-index-extern-signature index name)]))
 
 (define (compiler-backend-index-function-defines-id?
@@ -11434,7 +11534,7 @@
     [(hashmap.I64I64MapMissing) false]))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
-  (ErrCompilerBackendSymbolValidation
+  (ResultCompilerBackendSymbolValidation.Err
     (box (compiler-diagnostic-at-start "" message))))
 
 (define (compiler-backend-emits-extern-symbol?
@@ -11455,10 +11555,10 @@
   [globals : CompilerIrGlobalList]
   [seen : hashmap.StringI64Map]) : ResultCompilerBackendSymbolValidation
   (match globals
-    [(IrGlobalNil) (OkCompilerBackendSymbolValidation seen)]
-    [(IrGlobalCons global rest)
+    [(CompilerIrGlobalList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
+    [(CompilerIrGlobalList.Cons global rest)
       (match global
-        [(IrGlobal name _ _)
+        [(CompilerIrGlobal.Global name _ _)
           (let
             [symbol : String (compiler-backend-user-symbol name)]
             (if (hashmap.string-i64-map-contains? seen symbol)
@@ -11496,10 +11596,11 @@
   [index : CompilerBackendProgramIndex]
   [seen : hashmap.StringI64Map]) : ResultCompilerBackendSymbolValidation
   (match functions
-    [(IrFunctionNil) (OkCompilerBackendSymbolValidation seen)]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil)
+      (ResultCompilerBackendSymbolValidation.Ok seen)]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name _ _ _ _)
+        [(CompilerIrFunction.Function name _ _ _ _)
           (let
             [symbol : String
               (compiler-backend-function-symbol-index index name)]
@@ -11538,7 +11639,7 @@
                   _plan
                   index
                   (hashmap.string-i64-map-put seen symbol 1))]))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-validate-function-symbols-into
         (compiler-ir-function-seq-to-list seq)
         _plan
@@ -11550,10 +11651,10 @@
   [plan : CompilerBackendRuntimePlan]
   [seen : hashmap.StringI64Map]) : ResultCompilerBackendSymbolValidation
   (match externs
-    [(IrExternNil) (OkCompilerBackendSymbolValidation seen)]
-    [(IrExternCons ext rest)
+    [(CompilerIrExternList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
+    [(CompilerIrExternList.Cons ext rest)
       (match ext
-        [(IrExtern name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
           (if (compiler-backend-emits-extern-symbol?
             name
             link-symbol
@@ -11591,30 +11692,30 @@
             (compiler-backend-function-list-count functions))
           2)
         1)))
-    [(OkCompilerBackendSymbolValidation seen)
+    [(ResultCompilerBackendSymbolValidation.Ok seen)
       (match (compiler-backend-validate-function-symbols-into
         functions
         plan
         index
         seen)
-        [(OkCompilerBackendSymbolValidation function-seen)
+        [(ResultCompilerBackendSymbolValidation.Ok function-seen)
           (compiler-backend-validate-extern-symbols-into
             externs
             plan
             function-seen)]
-        [(ErrCompilerBackendSymbolValidation message)
-          (ErrCompilerBackendSymbolValidation message)])]
-    [(ErrCompilerBackendSymbolValidation message)
-      (ErrCompilerBackendSymbolValidation message)]))
+        [(ResultCompilerBackendSymbolValidation.Err message)
+          (ResultCompilerBackendSymbolValidation.Err message)])]
+    [(ResultCompilerBackendSymbolValidation.Err message)
+      (ResultCompilerBackendSymbolValidation.Err message)]))
 
 (define (compiler-backend-signature
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [name : String]) : CompilerBackendMaybeSignature
   (match (compiler-backend-function-signature functions name)
-    [(CompilerBackendSomeSignature args ret-ty)
-      (CompilerBackendSomeSignature args ret-ty)]
-    [(CompilerBackendNoSignature)
+    [(CompilerBackendMaybeSignature.Some args ret-ty)
+      (CompilerBackendMaybeSignature.Some args ret-ty)]
+    [(CompilerBackendMaybeSignature.No)
       (compiler-backend-extern-signature externs name)]))
 
 (define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
@@ -11640,8 +11741,9 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : AstTypeList
   (match (compiler-backend-signature functions externs name)
-    [(CompilerBackendSomeSignature param-types _) param-types]
-    [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
+    [(CompilerBackendMaybeSignature.Some param-types _) param-types]
+    [(CompilerBackendMaybeSignature.No)
+      (compiler-backend-runtime-param-types name)]))
 
 (define (compiler-backend-extern-fixed-param-count [ty : AstType]) : i64
   (match ty
@@ -11652,10 +11754,10 @@
   [externs : CompilerIrExternList]
   [name : String]) : i64
   (match externs
-    [(IrExternNil) -1]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) -1]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name ty abi link-symbol _ _)
+        [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
           (if (or
             (string.string-eq name extern-name)
             (string.string-eq name link-symbol))
@@ -11734,7 +11836,7 @@
     (if (< fixed-count 0)
       ""
       (match target
-        [(BackendTargetLinux)
+        [(CompilerBackendTarget.Linux)
           (str_cat.str-cat
             "    movb $"
             (string.int->string
@@ -11742,23 +11844,24 @@
             ", %al\n"
             ""
             "")]
-        [(BackendTargetWindows)
+        [(CompilerBackendTarget.Windows)
           (compiler-backend-windows-vararg-dup-asm param-types fixed-count 0)]))))
 
 (define (compiler-backend-call-param-types-index
   [name : String]
   [index : CompilerBackendProgramIndex]) : AstTypeList
   (match (compiler-backend-index-signature index name)
-    [(CompilerBackendSomeSignature param-types _) param-types]
-    [(CompilerBackendNoSignature) (compiler-backend-runtime-param-types name)]))
+    [(CompilerBackendMaybeSignature.Some param-types _) param-types]
+    [(CompilerBackendMaybeSignature.No)
+      (compiler-backend-runtime-param-types name)]))
 
 (define (compiler-backend-call-actual-type
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [value : CompilerIrValue]) : AstType
   (match (compiler-backend-value-type types global-types value)
-    [(CompilerRegSomeType ty) ty]
-    [(CompilerRegNoType) (AstTyI64)]))
+    [(CompilerRegMaybeType.Some ty) ty]
+    [(CompilerRegMaybeType.No) (AstTyI64)]))
 
 (define (compiler-backend-call-actual-param-types-from
   [types : CompilerRegVarTypeList]
@@ -11943,10 +12046,10 @@
   [externs : CompilerIrExternList]
   [name : String]) : bool
   (match externs
-    [(IrExternNil) false]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) false]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name ty abi link-symbol _ _)
+        [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
           (if (or
             (string.string-eq name extern-name)
             (string.string-eq name link-symbol))
@@ -12027,9 +12130,9 @@
   [index : i64]) : i64
   (if (< (+ index 1) (compiler-backend-call-args-count args))
     (match (compiler-backend-call-arg-at args index)
-      [(IrValueI64 size)
+      [(CompilerIrValue.I64 size)
         (match (compiler-backend-call-arg-at args (+ index 1))
-          [(IrValueUnit) size]
+          [(CompilerIrValue.Unit) size]
           [_ 0])]
       [_ 0])
     0))
@@ -12352,12 +12455,12 @@
           [(AstTypeNil) false]
           [(AstTypeCons target-ty target-rest)
             (match param
-              [(IrParam _ source-ty var-id)
+              [(CompilerIrParam.Param _ source-ty var-id)
                 (let
                   [callee-ty : AstType
                     (ast-node-pool-reader-type-get target-ty)]
                   (match (compiler-backend-call-arg-at args arg-index)
-                    [(IrValueVar arg-var)
+                    [(CompilerIrValue.Var arg-var)
                       (and
                         (= arg-var var-id)
                         (compiler-backend-identity-tail-forwarder-type-ok?
@@ -12415,10 +12518,10 @@
   [block : CompilerIrBlock]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match block
-    [(IrBlock _ instrs)
+    [(CompilerIrBlock.Block _ instrs)
       (if (= (compiler-ir-instr-seq-count instrs) 1)
         (match (compiler-ir-instr-seq-ref instrs 0)
-          [(IrInstrTailCall name args _)
+          [(CompilerIrInstr.TailCall name args _)
             (compiler-backend-identity-tail-forwarder-call?
               target
               source-function
@@ -12436,10 +12539,10 @@
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
       (match (box-get rest)
-        [(IrBlockNil)
+        [(CompilerIrBlockList.Nil)
           (compiler-backend-identity-tail-forwarder-block?
             target
             source-function
@@ -12447,7 +12550,7 @@
             block
             program-index)]
         [_ false])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (if (= (compiler-ir-block-seq-count seq) 1)
         (compiler-backend-identity-tail-forwarder-block?
           target
@@ -12501,8 +12604,8 @@
         0
         program-index)]
     (match target
-      [(BackendTargetWindows) 0]
-      [(BackendTargetLinux)
+      [(CompilerBackendTarget.Windows) 0]
+      [(CompilerBackendTarget.Linux)
         (if (= stack-count 0)
           0
           (compiler-backend-round-up-16 (* stack-count 8)))])))
@@ -12592,21 +12695,22 @@
 
 (define (compiler-backend-instr-needs-outgoing-space? [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrCall _ _ _ _) true]
-    [(IrInstrCallIndirect _ _ _ _) true]
-    [(IrInstrCallIndirectC _ _ _ _) true]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.Call _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirect _ _ _ _) true]
+    [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ _ _ _) true])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ _ _) true])]
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ _ _) true])]
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
+          true])]
     [(IrInstrSpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
-    [(IrInstrTailCall _ _ _) true]
-    [(IrInstrTailCallIndirect _ _ _) true]
-    [(IrInstrBoundsCheck _ _ _) true]
+    [(CompilerIrInstr.TailCall _ _ _) true]
+    [(CompilerIrInstr.TailCallIndirect _ _ _) true]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
 (define (compiler-backend-instr-seq-need-outgoing-space?
@@ -12629,14 +12733,14 @@
 (define (compiler-backend-blocks-need-outgoing-space?
   [blocks : CompilerIrBlockList]) : bool
   (match blocks
-    [(IrBlockNil) false]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
             true
             (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-need-outgoing-space?
         (compiler-ir-block-seq-to-list seq))]))
 
@@ -12644,34 +12748,34 @@
   [instr : CompilerIrInstr]
   [program-index : CompilerBackendProgramIndex]) : i64
   (match instr
-    [(IrInstrCall _ name args _)
+    [(CompilerIrInstr.Call _ name args _)
       (compiler-backend-windows-stack-arg-space
         args
         (compiler-backend-call-param-types-index name program-index)
         program-index)]
-    [(IrInstrCallIndirect _ _ args _)
+    [(CompilerIrInstr.CallIndirect _ _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
-    [(IrInstrTailCall name args _)
+    [(CompilerIrInstr.TailCall name args _)
       (compiler-backend-windows-stack-arg-space
         args
         (compiler-backend-call-param-types-index name program-index)
         program-index)]
-    [(IrInstrCallIndirectC _ _ args _)
+    [(CompilerIrInstr.CallIndirectC _ _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ name args _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ name args _)
           (+
             (compiler-backend-windows-stack-arg-space
               args
               (compiler-backend-call-param-types-index name program-index)
               program-index)
             16)])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ args _)
           (+ (compiler-backend-windows-closure-stack-arg-space args) 16)])]
-    [(IrInstrTailCallIndirect _ args _)
+    [(CompilerIrInstr.TailCallIndirect _ args _)
       (compiler-backend-windows-closure-stack-arg-space args)]
     [_ 0]))
 
@@ -12702,10 +12806,10 @@
   [max-space : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
   (match blocks
-    [(IrBlockNil) max-space]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) max-space]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
             (box-get rest)
             (compiler-backend-instr-seq-outgoing-stack-space
@@ -12713,7 +12817,7 @@
               max-space
               program-index)
             program-index)])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-blocks-outgoing-stack-space
         (compiler-ir-block-seq-to-list seq)
         max-space
@@ -12725,7 +12829,7 @@
   [program-index : CompilerBackendProgramIndex]) : i64
   (if (compiler-backend-blocks-need-outgoing-space? blocks)
     (match target
-      [(BackendTargetWindows)
+      [(CompilerBackendTarget.Windows)
         (compiler-backend-round-up-16
           (+
             (compiler-backend-outgoing-shadow-space target)
@@ -12733,7 +12837,8 @@
               blocks
               0
               program-index)))]
-      [(BackendTargetLinux) (compiler-backend-outgoing-shadow-space target)])
+      [(CompilerBackendTarget.Linux)
+        (compiler-backend-outgoing-shadow-space target)])
     0))
 
 (define (compiler-backend-emit-scalar-stack-call-arg
@@ -12756,27 +12861,29 @@
         value
         arg-ty
         "%xmm15")
-        [(OkCompilerBackend head)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok head)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               head
               "    "
               (compiler-backend-float-move arg-ty)
               " %xmm15, "
               slot))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])
       (match (compiler-backend-immediate-operand value)
-        [(CompilerBackendSomeImmediate imm)
-          (OkCompilerBackend (str_cat.str-cat "    movq " imm ", " slot))]
-        [(CompilerBackendNoImmediate)
+        [(CompilerBackendMaybeImmediate.Some imm)
+          (ResultCompilerBackend.Ok (str_cat.str-cat "    movq " imm ", " slot))]
+        [(CompilerBackendMaybeImmediate.No)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%r11")
-            [(OkCompilerBackend head)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok head)
+              (ResultCompilerBackend.Ok
                 (str_cat.str-cat head "    movq %r11, " slot ""))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]))))
 
 (define (compiler-backend-emit-call-args-with-assignments
   [target : CompilerBackendTarget]
@@ -12793,7 +12900,7 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (if (>= arg-index (compiler-backend-call-args-count args))
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
@@ -12835,7 +12942,7 @@
             value
             stack-idx
             memory-size)
-            [(OkCompilerBackend head)
+            [(ResultCompilerBackend.Ok head)
               (match (compiler-backend-emit-call-args-with-assignments
                 target
                 arg-assignments
@@ -12852,10 +12959,12 @@
                 func-diag
                 program-index
                 vars)
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend (string.string-append head tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ResultCompilerBackend.Ok tail)
+                  (ResultCompilerBackend.Ok (string.string-append head tail))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
         [(compiler-backend-group-type? program-index arg-ty)
           (let
             [w0-sse : bool
@@ -12901,7 +13010,7 @@
               arg-ty
               program-index
               func-diag)
-              [(OkCompilerBackend head0)
+              [(ResultCompilerBackend.Ok head0)
                 (match (compiler-backend-emit-group-word-call-arg
                   target
                   arg-assignments
@@ -12915,7 +13024,7 @@
                   arg-ty
                   program-index
                   func-diag)
-                  [(OkCompilerBackend head1)
+                  [(ResultCompilerBackend.Ok head1)
                     (match (compiler-backend-emit-call-args-with-assignments
                       target
                       arg-assignments
@@ -12936,15 +13045,17 @@
                       func-diag
                       program-index
                       vars)
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend
+                      [(ResultCompilerBackend.Ok tail)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             head0
                             (string.string-append head1 tail)))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)]))]
         [(compiler-backend-stack-call-arg-for-banks?
             target
             is-float
@@ -12958,7 +13069,7 @@
             arg-ty
             is-float
             stack-idx)
-            [(OkCompilerBackend head)
+            [(ResultCompilerBackend.Ok head)
               (match (compiler-backend-emit-call-args-with-assignments
                 target
                 arg-assignments
@@ -12973,10 +13084,12 @@
                 func-diag
                 program-index
                 vars)
-                [(OkCompilerBackend tail)
-                  (OkCompilerBackend (string.string-append head tail))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+                [(ResultCompilerBackend.Ok tail)
+                  (ResultCompilerBackend.Ok (string.string-append head tail))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
         [else
           (match (if is-float
             (compiler-backend-target-float-arg-reg
@@ -12989,7 +13102,7 @@
               (if (compiler-backend-target-windows? target)
                 position
                 int-idx)))
-            [(OkBackendReg reg)
+            [(ResultBackendReg.Ok reg)
               (match (if is-float
                 (compiler-backend-emit-load-float-value-with-plan
                   arg-assignments
@@ -13000,7 +13113,7 @@
                   arg-assignments
                   value
                   reg))
-                [(OkCompilerBackend head)
+                [(ResultCompilerBackend.Ok head)
                   (match (compiler-backend-emit-call-args-with-assignments
                     target
                     arg-assignments
@@ -13015,12 +13128,15 @@
                     func-diag
                     program-index
                     vars)
-                    [(OkCompilerBackend tail)
-                      (OkCompilerBackend (string.string-append head tail))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrBackendReg message)
-              (ErrCompilerBackend
+                    [(ResultCompilerBackend.Ok tail)
+                      (ResultCompilerBackend.Ok
+                        (string.string-append head tail))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultBackendReg.Err message)
+              (ResultCompilerBackend.Err
                 (box (compiler-diagnostic-with-message func-diag message)))])]))))
 
 (define (compiler-backend-emit-call-args
@@ -13082,7 +13198,7 @@
     (compiler-reg-assignment-insert
       assignments
       rax-var
-      (CompilerRegRegister "%rax"))
+      (CompilerRegLocation.Register "%rax"))
     assignments))
 
 (define (compiler-backend-tail-final-stack-slot
@@ -13108,27 +13224,30 @@
         value
         arg-ty
         "%xmm15")
-        [(OkCompilerBackend head)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok head)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               head
               "    "
               (compiler-backend-float-move arg-ty)
               " %xmm15, "
               (string.string-append slot "\n")))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])
       (match (compiler-backend-immediate-operand value)
-        [(CompilerBackendSomeImmediate imm)
-          (OkCompilerBackend (str_cat.str-cat "    movq " imm ", " slot "\n"))]
-        [(CompilerBackendNoImmediate)
+        [(CompilerBackendMaybeImmediate.Some imm)
+          (ResultCompilerBackend.Ok
+            (str_cat.str-cat "    movq " imm ", " slot "\n"))]
+        [(CompilerBackendMaybeImmediate.No)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
             "%r11")
-            [(OkCompilerBackend head)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok head)
+              (ResultCompilerBackend.Ok
                 (str_cat.str-cat head "    movq %r11, " slot "\n" ""))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))))
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]))))
 
 (define (compiler-backend-emit-direct-tail-call-args-from
   [target : CompilerBackendTarget]
@@ -13142,7 +13261,7 @@
   [stack-idx : i64]
   [func-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (>= arg-index (compiler-backend-call-args-count args))
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
@@ -13178,7 +13297,7 @@
           arg-ty
           is-float
           stack-idx)
-          [(OkCompilerBackend head)
+          [(ResultCompilerBackend.Ok head)
             (match (compiler-backend-emit-direct-tail-call-args-from
               target
               assignments
@@ -13190,10 +13309,12 @@
               (+ position 1)
               (+ stack-idx 1)
               func-diag)
-              [(OkCompilerBackend tail)
-                (OkCompilerBackend (string.string-append head tail))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+              [(ResultCompilerBackend.Ok tail)
+                (ResultCompilerBackend.Ok (string.string-append head tail))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])
         (match (if is-float
           (compiler-backend-target-float-arg-reg
             target
@@ -13205,7 +13326,7 @@
             (if (compiler-backend-target-windows? target)
               position
               int-idx)))
-          [(OkBackendReg reg)
+          [(ResultBackendReg.Ok reg)
             (match (if is-float
               (compiler-backend-emit-load-float-value-with-plan
                 assignments
@@ -13213,7 +13334,7 @@
                 arg-ty
                 reg)
               (compiler-backend-emit-load-value-with-plan assignments value reg))
-              [(OkCompilerBackend head)
+              [(ResultCompilerBackend.Ok head)
                 (match (compiler-backend-emit-direct-tail-call-args-from
                   target
                   assignments
@@ -13225,12 +13346,14 @@
                   (+ position 1)
                   stack-idx
                   func-diag)
-                  [(OkCompilerBackend tail)
-                    (OkCompilerBackend (string.string-append head tail))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+                  [(ResultCompilerBackend.Ok tail)
+                    (ResultCompilerBackend.Ok (string.string-append head tail))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])]
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message func-diag message)))])))))
 
 (define (compiler-backend-emit-direct-tail-call-args
@@ -13255,12 +13378,12 @@
   [inputs : CompilerIrPhiInputList]
   [from-label : String]) : ResultBackendValue
   (match inputs
-    [(IrPhiInputNil)
-      (ErrBackendValue
+    [(CompilerIrPhiInputList.Nil)
+      (ResultBackendValue.Err
         (string.string-append "backend: missing phi input from " from-label))]
-    [(IrPhiInputCons value label rest)
+    [(CompilerIrPhiInputList.Cons value label rest)
       (if (string.string-eq label from-label)
-        (OkBackendValue value)
+        (ResultBackendValue.Ok value)
         (compiler-backend-phi-input-value (box-get rest) from-label))]))
 
 (define (compiler-backend-vars-same-home?
@@ -13270,19 +13393,19 @@
   (if (= left right)
     true
     (match (compiler-reg-assignment-lookup assignments left)
-      [(CompilerRegSomeLocation left-location)
+      [(CompilerRegMaybeLocation.Some left-location)
         (match (compiler-reg-assignment-lookup assignments right)
-          [(CompilerRegSomeLocation right-location)
+          [(CompilerRegMaybeLocation.Some right-location)
             (compiler-reg-location-eq? left-location right-location)]
-          [(CompilerRegNoLocation) false])]
-      [(CompilerRegNoLocation) false])))
+          [(CompilerRegMaybeLocation.No) false])]
+      [(CompilerRegMaybeLocation.No) false])))
 
 (define (compiler-backend-value-same-home?
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]) : bool
   (match src
-    [(IrValueVar src-var)
+    [(CompilerIrValue.Var src-var)
       (compiler-backend-vars-same-home? assignments dst src-var)]
     [_ false]))
 
@@ -13297,19 +13420,19 @@
   [source : CompilerBackendPhiSource]
   [dst : i64]) : bool
   (match source
-    [(BackendPhiSourceValue value)
+    [(CompilerBackendPhiSource.Value value)
       (match value
-        [(IrValueVar found)
+        [(CompilerIrValue.Var found)
           (compiler-backend-vars-same-home? assignments found dst)]
         [_ false])]
-    [(BackendPhiSourceTemp) false]))
+    [(CompilerBackendPhiSource.Temp) false]))
 
 (define (compiler-backend-phi-copy-source-uses-home?
   [assignments : CompilerRegAssignmentList]
   [copy : CompilerBackendPhiCopy]
   [dst : i64]) : bool
   (match copy
-    [(BackendPhiCopy _ source _)
+    [(CompilerBackendPhiCopy.Copy _ source _)
       (compiler-backend-phi-source-uses-home? assignments source dst)]))
 
 (define (compiler-backend-phi-copy-list-source-uses-home?
@@ -13317,8 +13440,8 @@
   [copies : CompilerBackendPhiCopyList]
   [dst : i64]) : bool
   (match copies
-    [(BackendPhiCopyNil) false]
-    [(BackendPhiCopyCons copy rest)
+    [(CompilerBackendPhiCopyList.Nil) false]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
       (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
         true
         (compiler-backend-phi-copy-list-source-uses-home?
@@ -13331,10 +13454,10 @@
   [remaining : CompilerBackendPhiCopyList]
   [all : CompilerBackendPhiCopyList]) : CompilerBackendMaybePhiCopy
   (match remaining
-    [(BackendPhiCopyNil) BackendNoPhiCopy]
-    [(BackendPhiCopyCons copy rest)
+    [(CompilerBackendPhiCopyList.Nil) CompilerBackendMaybePhiCopy.No]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
-        [(BackendPhiCopy dst _ _)
+        [(CompilerBackendPhiCopy.Copy dst _ _)
           (if (compiler-backend-phi-copy-list-source-uses-home?
             assignments
             all
@@ -13343,16 +13466,16 @@
               assignments
               (box-get rest)
               all)
-            (BackendSomePhiCopy copy))])]))
+            (CompilerBackendMaybePhiCopy.Some copy))])]))
 
 (define (compiler-backend-phi-copy-list-remove-dst
   [copies : CompilerBackendPhiCopyList]
   [dst : i64]) : CompilerBackendPhiCopyList
   (match copies
-    [(BackendPhiCopyNil) BackendPhiCopyNil]
-    [(BackendPhiCopyCons copy rest)
+    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
-        [(BackendPhiCopy found-dst _ _)
+        [(CompilerBackendPhiCopy.Copy found-dst _ _)
           (if (= found-dst dst)
             (compiler-backend-phi-copy-list-remove-dst (box-get rest) dst)
             (compiler-backend-phi-copy-cons
@@ -13364,26 +13487,26 @@
   [source : CompilerBackendPhiSource]
   [dst : i64]) : CompilerBackendPhiSource
   (match source
-    [(BackendPhiSourceValue value)
+    [(CompilerBackendPhiSource.Value value)
       (match value
-        [(IrValueVar found)
+        [(CompilerIrValue.Var found)
           (if (compiler-backend-vars-same-home? assignments found dst)
-            (BackendPhiSourceTemp)
+            (CompilerBackendPhiSource.Temp)
             source)]
         [_ source])]
-    [(BackendPhiSourceTemp) source]))
+    [(CompilerBackendPhiSource.Temp) source]))
 
 (define (compiler-backend-phi-copy-list-replace-source-home
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopyList]
   [dst-home-var : i64]) : CompilerBackendPhiCopyList
   (match copies
-    [(BackendPhiCopyNil) BackendPhiCopyNil]
-    [(BackendPhiCopyCons copy rest)
+    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
-        [(BackendPhiCopy dst source ty)
+        [(CompilerBackendPhiCopy.Copy dst source ty)
           (compiler-backend-phi-copy-cons
-            (BackendPhiCopy
+            (CompilerBackendPhiCopy.Copy
               dst
               (compiler-backend-phi-source-replace-home
                 assignments
@@ -13399,28 +13522,28 @@
   [source : CompilerBackendPhiSource]
   [var : i64]) : bool
   (match source
-    [(BackendPhiSourceValue value)
+    [(CompilerBackendPhiSource.Value value)
       (match value
-        [(IrValueVar id) (= id var)]
+        [(CompilerIrValue.Var id) (= id var)]
         [_ false])]
-    [(BackendPhiSourceTemp) false]))
+    [(CompilerBackendPhiSource.Temp) false]))
 
 (define (compiler-backend-phi-source-replace-var
   [source : CompilerBackendPhiSource]
   [var : i64]
   [replacement : CompilerIrValue]) : CompilerBackendPhiSource
   (if (compiler-backend-phi-source-is-var? source var)
-    (BackendPhiSourceValue replacement)
+    (CompilerBackendPhiSource.Value replacement)
     source))
 
 (define (compiler-backend-phi-copy-list-has-source-var?
   [copies : CompilerBackendPhiCopyList]
   [var : i64]) : bool
   (match copies
-    [(BackendPhiCopyNil) false]
-    [(BackendPhiCopyCons copy rest)
+    [(CompilerBackendPhiCopyList.Nil) false]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
-        [(BackendPhiCopy _ source _)
+        [(CompilerBackendPhiCopy.Copy _ source _)
           (or
             (compiler-backend-phi-source-is-var? source var)
             (compiler-backend-phi-copy-list-has-source-var? (box-get rest) var))])]))
@@ -13430,12 +13553,12 @@
   [var : i64]
   [replacement : CompilerIrValue]) : CompilerBackendPhiCopyList
   (match copies
-    [(BackendPhiCopyNil) BackendPhiCopyNil]
-    [(BackendPhiCopyCons copy rest)
+    [(CompilerBackendPhiCopyList.Nil) CompilerBackendPhiCopyList.Nil]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
-        [(BackendPhiCopy dst source ty)
+        [(CompilerBackendPhiCopy.Copy dst source ty)
           (compiler-backend-phi-copy-cons
-            (BackendPhiCopy
+            (CompilerBackendPhiCopy.Copy
               dst
               (compiler-backend-phi-source-replace-var source var replacement)
               ty)
@@ -13465,13 +13588,13 @@
   (if (compiler-backend-group-type? program-index ty)
     (compiler-backend-emit-group-load
       assignments
-      (IrValueVar dst)
+      (CompilerIrValue.Var dst)
       (compiler-backend-phi-group-temp-reg program-index ty 0)
       (compiler-backend-phi-group-temp-reg program-index ty 1)
       vars
       ty
       program-index)
-    (OkCompilerBackend
+    (ResultCompilerBackend.Ok
       (compiler-backend-emit-load-var-with-plan assignments dst "%r11"))))
 
 (define (compiler-backend-emit-phi-temp-restore
@@ -13489,7 +13612,7 @@
       vars
       ty
       program-index)
-    (OkCompilerBackend
+    (ResultCompilerBackend.Ok
       (compiler-backend-emit-store-var-with-plan assignments dst "%r11"))))
 
 (define (compiler-backend-emit-phi-source-load-store
@@ -13503,8 +13626,8 @@
     value
     ty
     program-index)
-    [(OkCompilerBackend load)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok load)
+      (ResultCompilerBackend.Ok
         (string.string-append
           load
           (compiler-backend-emit-store-typed-var-with-plan
@@ -13514,23 +13637,23 @@
               "%xmm0"
               "%rax")
             ty)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-phi-var-source-direct
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src-id : i64]) : CompilerBackendMaybeAsm
   (if (>= (compiler-backend-forwarded-addr-of-src src-id) 0)
-    (CompilerBackendNoAsm)
+    (CompilerBackendMaybeAsm.No)
     (match (compiler-reg-assignment-lookup assignments dst)
-      [(CompilerRegSomeLocation dst-location)
+      [(CompilerRegMaybeLocation.Some dst-location)
         (match dst-location
-          [(CompilerRegRegister dst-home)
+          [(CompilerRegLocation.Register dst-home)
             (match (compiler-reg-assignment-lookup assignments src-id)
-              [(CompilerRegSomeLocation src-location)
+              [(CompilerRegMaybeLocation.Some src-location)
                 (match src-location
-                  [(CompilerRegRegister src-home)
-                    (CompilerBackendSomeAsm
+                  [(CompilerRegLocation.Register src-home)
+                    (CompilerBackendMaybeAsm.Some
                       (if (string.string-eq src-home dst-home)
                         ""
                         (str_cat.str-cat
@@ -13539,9 +13662,10 @@
                           ", "
                           dst-home
                           "\n")))]
-                  [(CompilerRegRegisterPair _ _) (CompilerBackendNoAsm)]
-                  [(CompilerRegSpill src-offset)
-                    (CompilerBackendSomeAsm
+                  [(CompilerRegLocation.RegisterPair _ _)
+                    (CompilerBackendMaybeAsm.No)]
+                  [(CompilerRegLocation.Spill src-offset)
+                    (CompilerBackendMaybeAsm.Some
                       (str_cat.str-cat
                         "    movq "
                         (compiler-backend-frame-offset src-offset)
@@ -13550,45 +13674,45 @@
                         "\n"))]
                   ;; Remat src: no slot/register to copy from -> defer to the
                   ;; load-store fallback, which recomputes it.
-                  [(CompilerRegRemat _) (CompilerBackendNoAsm)])]
-              [(CompilerRegNoLocation)
-                (CompilerBackendSomeAsm
+                  [(CompilerRegLocation.Remat _) (CompilerBackendMaybeAsm.No)])]
+              [(CompilerRegMaybeLocation.No)
+                (CompilerBackendMaybeAsm.Some
                   (str_cat.str-cat
                     "    movq "
                     (compiler-backend-slot src-id)
                     ", "
                     dst-home
                     "\n"))])]
-          [(CompilerRegRegisterPair _ _) (CompilerBackendNoAsm)]
-          [(CompilerRegRemat _) (CompilerBackendNoAsm)]
-          [(CompilerRegSpill dst-offset)
+          [(CompilerRegLocation.RegisterPair _ _) (CompilerBackendMaybeAsm.No)]
+          [(CompilerRegLocation.Remat _) (CompilerBackendMaybeAsm.No)]
+          [(CompilerRegLocation.Spill dst-offset)
             (match (compiler-reg-assignment-lookup assignments src-id)
-              [(CompilerRegSomeLocation src-location)
+              [(CompilerRegMaybeLocation.Some src-location)
                 (match src-location
-                  [(CompilerRegRegister src-home)
-                    (CompilerBackendSomeAsm
+                  [(CompilerRegLocation.Register src-home)
+                    (CompilerBackendMaybeAsm.Some
                       (str_cat.str-cat
                         "    movq "
                         src-home
                         ", "
                         (compiler-backend-frame-offset dst-offset)
                         "\n"))]
-                  [_ (CompilerBackendNoAsm)])]
-              [(CompilerRegNoLocation) (CompilerBackendNoAsm)])])]
-      [(CompilerRegNoLocation)
+                  [_ (CompilerBackendMaybeAsm.No)])]
+              [(CompilerRegMaybeLocation.No) (CompilerBackendMaybeAsm.No)])])]
+      [(CompilerRegMaybeLocation.No)
         (match (compiler-reg-assignment-lookup assignments src-id)
-          [(CompilerRegSomeLocation src-location)
+          [(CompilerRegMaybeLocation.Some src-location)
             (match src-location
-              [(CompilerRegRegister src-home)
-                (CompilerBackendSomeAsm
+              [(CompilerRegLocation.Register src-home)
+                (CompilerBackendMaybeAsm.Some
                   (str_cat.str-cat
                     "    movq "
                     src-home
                     ", "
                     (compiler-backend-slot dst)
                     "\n"))]
-              [_ (CompilerBackendNoAsm)])]
-          [(CompilerRegNoLocation) (CompilerBackendNoAsm)])])))
+              [_ (CompilerBackendMaybeAsm.No)])]
+          [(CompilerRegMaybeLocation.No) (CompilerBackendMaybeAsm.No)])])))
 
 (define (compiler-backend-emit-phi-source-immediate-or-load-store
   [assignments : CompilerRegAssignmentList]
@@ -13600,8 +13724,8 @@
     assignments
     dst
     value)
-    [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-    [(CompilerBackendNoAsm)
+    [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
+    [(CompilerBackendMaybeAsm.No)
       (compiler-backend-emit-phi-source-load-store
         assignments
         dst
@@ -13623,13 +13747,13 @@
       ty
       program-index)
     (match value
-      [(IrValueVar src-id)
+      [(CompilerIrValue.Var src-id)
         (match (compiler-backend-emit-phi-var-source-direct
           assignments
           dst
           src-id)
-          [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-          [(CompilerBackendNoAsm)
+          [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
+          [(CompilerBackendMaybeAsm.No)
             (compiler-backend-emit-phi-source-immediate-or-load-store
               assignments
               dst
@@ -13652,16 +13776,16 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match source
-    [(BackendPhiSourceTemp)
+    [(CompilerBackendPhiSource.Temp)
       (compiler-backend-emit-phi-temp-restore
         assignments
         dst
         ty
         program-index
         vars)]
-    [(BackendPhiSourceValue value)
+    [(CompilerBackendPhiSource.Value value)
       (if (compiler-backend-phi-same-home? assignments dst value)
-        (OkCompilerBackend "")
+        (ResultCompilerBackend.Ok "")
         ;; #2386: a register-group phi value carries two words -- copy both halves
         ;; (rax:rdx) through the group ABI, not just word0 via the scalar path.
         (if (compiler-backend-group-type? program-index ty)
@@ -13673,7 +13797,7 @@
             vars
             ty
             program-index)
-            [(OkCompilerBackend load)
+            [(ResultCompilerBackend.Ok load)
               (match (compiler-backend-emit-group-store
                 assignments
                 dst
@@ -13682,10 +13806,12 @@
                 vars
                 ty
                 program-index)
-                [(OkCompilerBackend store)
-                  (OkCompilerBackend (string.string-append load store))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                [(ResultCompilerBackend.Ok store)
+                  (ResultCompilerBackend.Ok (string.string-append load store))]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])
           (compiler-backend-emit-phi-source-scalar-to-var
             assignments
             dst
@@ -13699,7 +13825,7 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match copy
-    [(BackendPhiCopy dst source ty)
+    [(CompilerBackendPhiCopy.Copy dst source ty)
       (compiler-backend-emit-phi-source-to-var
         assignments
         dst
@@ -13714,40 +13840,43 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match copies
-    [(BackendPhiCopyNil) (OkCompilerBackend "")]
-    [(BackendPhiCopyCons first _)
+    [(CompilerBackendPhiCopyList.Nil) (ResultCompilerBackend.Ok "")]
+    [(CompilerBackendPhiCopyList.Cons first _)
       (match (compiler-backend-phi-copy-list-find-unblocked
         assignments
         copies
         copies)
-        [(BackendSomePhiCopy copy)
+        [(CompilerBackendMaybePhiCopy.Some copy)
           (match copy
-            [(BackendPhiCopy dst _ _)
+            [(CompilerBackendPhiCopy.Copy dst _ _)
               (match (compiler-backend-emit-phi-copy-item
                 assignments
                 copy
                 program-index
                 vars)
-                [(OkCompilerBackend head)
+                [(ResultCompilerBackend.Ok head)
                   (match (compiler-backend-emit-phi-copy-list
                     assignments
                     (compiler-backend-phi-copy-list-remove-dst copies dst)
                     program-index
                     vars)
-                    [(OkCompilerBackend tail)
-                      (OkCompilerBackend (string.string-append head tail))]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])]
-        [(BackendNoPhiCopy)
+                    [(ResultCompilerBackend.Ok tail)
+                      (ResultCompilerBackend.Ok
+                        (string.string-append head tail))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])])]
+        [(CompilerBackendMaybePhiCopy.No)
           (match first
-            [(BackendPhiCopy dst source ty)
+            [(CompilerBackendPhiCopy.Copy dst source ty)
               (match (compiler-backend-emit-phi-temp-save
                 assignments
                 dst
                 ty
                 program-index
                 vars)
-                [(OkCompilerBackend save)
+                [(ResultCompilerBackend.Ok save)
                   (match (compiler-backend-emit-phi-source-to-var
                     assignments
                     dst
@@ -13755,7 +13884,7 @@
                     ty
                     program-index
                     vars)
-                    [(OkCompilerBackend head)
+                    [(ResultCompilerBackend.Ok head)
                       (match (compiler-backend-emit-phi-copy-list
                         assignments
                         (compiler-backend-phi-copy-list-replace-source-home
@@ -13764,41 +13893,49 @@
                           dst)
                         program-index
                         vars)
-                        [(OkCompilerBackend tail)
-                          (OkCompilerBackend
+                        [(ResultCompilerBackend.Ok tail)
+                          (ResultCompilerBackend.Ok
                             (string.string-append
                               save
                               (string.string-append head tail)))]
-                        [(ErrCompilerBackend message)
-                          (ErrCompilerBackend message)])]
-                    [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])])])]))
+                        [(ResultCompilerBackend.Err message)
+                          (ResultCompilerBackend.Err message)])]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])])])]))
 
 (define (compiler-backend-leading-phi-copies
   [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrList]
   [from-label : String]) : ResultBackendPhiCopies
   (match instrs
-    [(IrInstrNil) (OkBackendPhiCopies BackendPhiCopyNil)]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil)
+      (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)]
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrPhi dst inputs ty)
+        [(CompilerIrInstr.Phi dst inputs ty)
           (match (compiler-backend-phi-input-value inputs from-label)
-            [(OkBackendValue value)
+            [(ResultBackendValue.Ok value)
               (match (compiler-backend-leading-phi-copies
                 assignments
                 (box-get rest)
                 from-label)
-                [(OkBackendPhiCopies tail)
+                [(ResultBackendPhiCopies.Ok tail)
                   (if (compiler-backend-phi-same-home? assignments dst value)
-                    (OkBackendPhiCopies tail)
-                    (OkBackendPhiCopies
+                    (ResultBackendPhiCopies.Ok tail)
+                    (ResultBackendPhiCopies.Ok
                       (compiler-backend-phi-copy-cons
-                        (BackendPhiCopy dst (BackendPhiSourceValue value) ty)
+                        (CompilerBackendPhiCopy.Copy
+                          dst
+                          (CompilerBackendPhiSource.Value value)
+                          ty)
                         tail)))]
-                [(ErrBackendPhiCopies message) (ErrBackendPhiCopies message)])]
-            [(ErrBackendValue message) (ErrBackendPhiCopies message)])]
-        [_ (OkBackendPhiCopies BackendPhiCopyNil)])]))
+                [(ResultBackendPhiCopies.Err message)
+                  (ResultBackendPhiCopies.Err message)])]
+            [(ResultBackendValue.Err message)
+              (ResultBackendPhiCopies.Err message)])]
+        [_ (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)])]))
 
 (define (compiler-backend-leading-phi-copies-seq-from
   [assignments : CompilerRegAssignmentList]
@@ -13806,26 +13943,31 @@
   [index : i64]
   [from-label : String]) : ResultBackendPhiCopies
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OkBackendPhiCopies BackendPhiCopyNil)
+    (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)
     (match (compiler-ir-instr-seq-ref instrs index)
-      [(IrInstrPhi dst inputs ty)
+      [(CompilerIrInstr.Phi dst inputs ty)
         (match (compiler-backend-phi-input-value inputs from-label)
-          [(OkBackendValue value)
+          [(ResultBackendValue.Ok value)
             (match (compiler-backend-leading-phi-copies-seq-from
               assignments
               instrs
               (+ index 1)
               from-label)
-              [(OkBackendPhiCopies tail)
+              [(ResultBackendPhiCopies.Ok tail)
                 (if (compiler-backend-phi-same-home? assignments dst value)
-                  (OkBackendPhiCopies tail)
-                  (OkBackendPhiCopies
+                  (ResultBackendPhiCopies.Ok tail)
+                  (ResultBackendPhiCopies.Ok
                     (compiler-backend-phi-copy-cons
-                      (BackendPhiCopy dst (BackendPhiSourceValue value) ty)
+                      (CompilerBackendPhiCopy.Copy
+                        dst
+                        (CompilerBackendPhiSource.Value value)
+                        ty)
                       tail)))]
-              [(ErrBackendPhiCopies message) (ErrBackendPhiCopies message)])]
-          [(ErrBackendValue message) (ErrBackendPhiCopies message)])]
-      [_ (OkBackendPhiCopies BackendPhiCopyNil)])))
+              [(ResultBackendPhiCopies.Err message)
+                (ResultBackendPhiCopies.Err message)])]
+          [(ResultBackendValue.Err message)
+            (ResultBackendPhiCopies.Err message)])]
+      [_ (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)])))
 
 (define (compiler-backend-leading-phi-copies-seq
   [assignments : CompilerRegAssignmentList]
@@ -13840,14 +13982,15 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match (compiler-backend-leading-phi-copies-seq assignments instrs from-label)
-    [(OkBackendPhiCopies copies)
+    [(ResultBackendPhiCopies.Ok copies)
       (compiler-backend-emit-phi-copy-list
         assignments
         copies
         program-index
         vars)]
-    [(ErrBackendPhiCopies message)
-      (ErrCompilerBackend (box (compiler-diagnostic-at-start "" message)))]))
+    [(ResultBackendPhiCopies.Err message)
+      (ResultCompilerBackend.Err
+        (box (compiler-diagnostic-at-start "" message)))]))
 
 (define (compiler-backend-emit-phi-edge-copies
   [assignments : CompilerRegAssignmentList]
@@ -13857,15 +14000,15 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match blocks
-    [(IrBlockNil)
-      (ErrCompilerBackend
+    [(CompilerIrBlockList.Nil)
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
             (string.string-append "backend: unknown block " target-label))))]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock block-label instrs)
+        [(CompilerIrBlock.Block block-label instrs)
           (if (string.string-eq block-label target-label)
             (compiler-backend-emit-leading-phi-copies
               assignments
@@ -13880,7 +14023,7 @@
               from-label
               program-index
               vars))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-phi-edge-copies
         assignments
         (compiler-ir-block-seq-to-list seq)
@@ -13899,21 +14042,21 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match blocks
-    [(IrBlockNil)
-      (ErrCompilerBackend
+    [(CompilerIrBlockList.Nil)
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
             (string.string-append "backend: unknown block " target-label))))]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock block-label instrs)
+        [(CompilerIrBlock.Block block-label instrs)
           (if (string.string-eq block-label target-label)
             (match (compiler-backend-leading-phi-copies-seq
               assignments
               instrs
               from-label)
-              [(OkBackendPhiCopies copies)
+              [(ResultBackendPhiCopies.Ok copies)
                 (if (compiler-backend-phi-copy-list-has-source-var?
                   copies
                   moved-dst)
@@ -13925,9 +14068,9 @@
                       moved-src)
                     program-index
                     vars)
-                  (OkCompilerBackend ""))]
-              [(ErrBackendPhiCopies message)
-                (ErrCompilerBackend
+                  (ResultCompilerBackend.Ok ""))]
+              [(ResultBackendPhiCopies.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-at-start "" message)))])
             (compiler-backend-emit-mov-phi-copy-edge
               assignments
@@ -13938,7 +14081,7 @@
               moved-src
               program-index
               vars))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-phi-copy-edge
         assignments
         (compiler-ir-block-seq-to-list seq)
@@ -13954,17 +14097,17 @@
   (if (= (compiler-ir-instr-seq-count instrs) 0)
     false
     (match (compiler-ir-instr-seq-ref instrs 0)
-      [(IrInstrPhi _ _ _) true]
+      [(CompilerIrInstr.Phi _ _ _) true]
       [_ false])))
 
 (define (compiler-backend-phi-target-labels
   [blocks : CompilerIrBlockList]
   [out : BackendStringList]) : BackendStringList
   (match blocks
-    [(IrBlockNil) out]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) out]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (compiler-backend-phi-target-labels
             (box-get rest)
             (if (compiler-backend-instr-seq-starts-with-phi? instrs)
@@ -13974,7 +14117,7 @@
                   (+ compiler-backend-current-phi-target-count 1))
                 (compiler-backend-string-cons label out))
               out))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-phi-target-labels
         (compiler-ir-block-seq-to-list seq)
         out)]))
@@ -14019,10 +14162,10 @@
   [false-copies : String]
   [fallthrough : CompilerBackendMaybeLabel]) : CompilerBackendMaybeLabel
   (if (not (string.string-eq true-copies ""))
-    (CompilerBackendSomeLabel
+    (CompilerBackendMaybeLabel.Some
       (compiler-backend-branch-edge-label current-label "true"))
     (if (not (string.string-eq false-copies ""))
-      (CompilerBackendSomeLabel
+      (CompilerBackendMaybeLabel.Some
         (compiler-backend-branch-edge-label current-label "false"))
       fallthrough)))
 
@@ -14093,7 +14236,7 @@
       current-label
       program-index
       vars)
-      [(OkCompilerBackend true-copies)
+      [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
           blocks
@@ -14101,7 +14244,7 @@
           current-label
           program-index
           vars)
-          [(OkCompilerBackend false-copies)
+          [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
                 (compiler-backend-branch-edge-label current-label "true")]
@@ -14130,8 +14273,8 @@
                 true-target
                 false-target
                 edge-fallthrough)
-                [(OkCompilerBackend branch-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok branch-asm)
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
                       function
                       current-label
@@ -14140,9 +14283,11 @@
                       true-copies
                       false-copies
                       branch-asm))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-compare-branch-with-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -14176,7 +14321,7 @@
       current-label
       program-index
       vars)
-      [(OkCompilerBackend true-copies)
+      [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
           blocks
@@ -14184,7 +14329,7 @@
           current-label
           program-index
           vars)
-          [(OkCompilerBackend false-copies)
+          [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
                 (compiler-backend-branch-edge-label current-label "true")]
@@ -14216,8 +14361,8 @@
                 true-target
                 false-target
                 edge-fallthrough)
-                [(OkCompilerBackend branch-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok branch-asm)
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
                       function
                       current-label
@@ -14226,9 +14371,11 @@
                       true-copies
                       false-copies
                       branch-asm))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-load-compare-branch-with-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -14262,7 +14409,7 @@
       current-label
       program-index
       vars)
-      [(OkCompilerBackend true-copies)
+      [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
           blocks
@@ -14270,7 +14417,7 @@
           current-label
           program-index
           vars)
-          [(OkCompilerBackend false-copies)
+          [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
                 (compiler-backend-branch-edge-label current-label "true")]
@@ -14302,8 +14449,8 @@
                 true-target
                 false-target
                 edge-fallthrough)
-                [(OkCompilerBackend branch-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok branch-asm)
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
                       function
                       current-label
@@ -14312,9 +14459,11 @@
                       true-copies
                       false-copies
                       branch-asm))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-gep-load-compare-branch-with-phi-copies
   [assignments : CompilerRegAssignmentList]
@@ -14352,7 +14501,7 @@
       current-label
       program-index
       vars)
-      [(OkCompilerBackend true-copies)
+      [(ResultCompilerBackend.Ok true-copies)
         (match (compiler-backend-emit-phi-edge-copies
           assignments
           blocks
@@ -14360,7 +14509,7 @@
           current-label
           program-index
           vars)
-          [(OkCompilerBackend false-copies)
+          [(ResultCompilerBackend.Ok false-copies)
             (let
               [true-edge : String
                 (compiler-backend-branch-edge-label current-label "true")]
@@ -14394,8 +14543,8 @@
                 true-target
                 false-target
                 edge-fallthrough)
-                [(OkCompilerBackend branch-asm)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok branch-asm)
+                  (ResultCompilerBackend.Ok
                     (compiler-backend-emit-branch-edges
                       function
                       current-label
@@ -14404,9 +14553,11 @@
                       true-copies
                       false-copies
                       branch-asm))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-tail-call-return-normalize [ty : AstType]) : String
   (if (= (compiler-backend-type-size ty) 0)
@@ -14415,7 +14566,7 @@
 
 (define (compiler-backend-instr-return-count [instr : CompilerIrInstr]) : i64
   (match instr
-    [(IrInstrReturn _) 1]
+    [(CompilerIrInstr.Return _) 1]
     [_ 0]))
 
 (define (compiler-backend-instr-seq-return-count [instrs : CompilerIrInstrSeq]) : i64
@@ -14439,14 +14590,14 @@
 (define (compiler-backend-block-list-return-count
   [blocks : CompilerIrBlockList]) : i64
   (match blocks
-    [(IrBlockNil) 0]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (+
             (compiler-backend-instr-seq-return-count instrs)
             (compiler-backend-block-list-return-count (box-get rest)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-block-list-return-count
         (compiler-ir-block-seq-to-list seq))]))
 
@@ -14492,8 +14643,8 @@
   [ret-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match value
-    [(IrNoValue)
-      (OkCompilerBackend
+    [(CompilerIrMaybeValue.No)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           (if (string.string-eq source-function "main")
             "    xorl %eax, %eax\n"
@@ -14503,7 +14654,7 @@
             assignments
             vars
             blocks)))]
-    [(IrSomeValue v)
+    [(CompilerIrMaybeValue.Some v)
       ;; #2386: a register-group return goes in %rax:%rdx (word0:word1).
       (if (compiler-backend-group-type? program-index ret-ty)
         (match (compiler-backend-emit-group-load
@@ -14514,8 +14665,8 @@
           vars
           ret-ty
           program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok load)
+            (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load
                 (compiler-backend-return-tail
@@ -14523,14 +14674,15 @@
                   assignments
                   vars
                   blocks)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])
         (match (compiler-backend-emit-load-typed-value-with-plan
           assignments
           v
           ret-ty
           program-index)
-          [(OkCompilerBackend load)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok load)
+            (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load
                 (compiler-backend-return-tail
@@ -14538,7 +14690,8 @@
                   assignments
                   vars
                   blocks)))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)]))]))
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)]))]))
 
 (define (compiler-backend-emit-tail-call
   [target : CompilerBackendTarget]
@@ -14598,7 +14751,7 @@
       param-types
       program-index)
       (match (if compiler-backend-identity-tail-forwarder-active
-        (OkCompilerBackend "")
+        (ResultCompilerBackend.Ok "")
         (if (= tail-stack-count 0)
           (compiler-backend-emit-call-args
             target
@@ -14620,12 +14773,13 @@
             args
             param-types
             instr-diag)))
-        [(OkCompilerBackend args-asm)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok args-asm)
+          (ResultCompilerBackend.Ok
             (string.string-append
               args-asm
               (compiler-backend-tail-jump-tail assignments vars target-symbol)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])
       (match (compiler-backend-emit-call-args
         target
         assignments
@@ -14640,12 +14794,12 @@
         instr-diag
         program-index
         vars)
-        [(OkCompilerBackend args-asm)
+        [(ResultCompilerBackend.Ok args-asm)
           (if (and
             (= call-space 0)
             (= tail-stack-count 0)
             (string.string-eq return-normalize ""))
-            (OkCompilerBackend
+            (ResultCompilerBackend.Ok
               (string.string-append
                 args-asm
                 (string.string-append
@@ -14654,7 +14808,7 @@
                     assignments
                     vars
                     target-symbol))))
-            (OkCompilerBackend
+            (ResultCompilerBackend.Ok
               (string.string-append
                 (compiler-backend-emit-call-space-sub call-space)
                 (string.string-append
@@ -14675,7 +14829,8 @@
                             vars
                             blocks)))
                       ""))))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-trivial-phi-return-find
   [instrs : CompilerIrInstrSeq]
@@ -14685,11 +14840,11 @@
   [last-index : i64]
   [found : CompilerBackendPhiReturnMatch]) : ResultBackendPhiReturnMatch
   (if (>= index last-index)
-    (OkBackendPhiReturnMatch found)
+    (ResultBackendPhiReturnMatch.Ok found)
     (match (compiler-ir-instr-seq-ref instrs index)
-      [(IrInstrPhi dst inputs _)
+      [(CompilerIrInstr.Phi dst inputs _)
         (match (compiler-backend-phi-input-value inputs from-label)
-          [(OkBackendValue incoming)
+          [(ResultBackendValue.Ok incoming)
             (compiler-backend-trivial-phi-return-find
               instrs
               from-label
@@ -14697,10 +14852,11 @@
               (+ index 1)
               last-index
               (if (= dst returned-dst)
-                (BackendSomePhiReturnMatch incoming)
+                (CompilerBackendPhiReturnMatch.Some incoming)
                 found))]
-          [(ErrBackendValue message) (ErrBackendPhiReturnMatch message)])]
-      [_ (OkBackendPhiReturnMatch (BackendNoPhiReturnMatch))])))
+          [(ResultBackendValue.Err message)
+            (ResultBackendPhiReturnMatch.Err message)])]
+      [_ (ResultBackendPhiReturnMatch.Ok (CompilerBackendPhiReturnMatch.No))])))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]
@@ -14712,26 +14868,26 @@
   [ret-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (< (compiler-ir-instr-seq-count instrs) 2)
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [last-index : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
       [last : CompilerIrInstr (compiler-ir-instr-seq-ref instrs last-index)]
       (match last
-        [(IrInstrReturn maybe)
+        [(CompilerIrInstr.Return maybe)
           (match maybe
-            [(IrSomeValue value)
+            [(CompilerIrMaybeValue.Some value)
               (match value
-                [(IrValueVar returned-dst)
+                [(CompilerIrValue.Var returned-dst)
                   (match (compiler-backend-trivial-phi-return-find
                     instrs
                     from-label
                     returned-dst
                     0
                     last-index
-                    (BackendNoPhiReturnMatch))
-                    [(OkBackendPhiReturnMatch found)
+                    (CompilerBackendPhiReturnMatch.No))
+                    [(ResultBackendPhiReturnMatch.Ok found)
                       (match found
-                        [(BackendSomePhiReturnMatch incoming)
+                        [(CompilerBackendPhiReturnMatch.Some incoming)
                           ;; The real program-index must reach emit-return here:
                           ;; an empty index makes the register-group return check
                           ;; always false, so a 16-byte group return would load
@@ -14739,18 +14895,19 @@
                           (compiler-backend-emit-return
                             source-function
                             blocks
-                            (IrSomeValue incoming)
+                            (CompilerIrMaybeValue.Some incoming)
                             assignments
                             vars
                             ret-ty
                             program-index)]
-                        [(BackendNoPhiReturnMatch) (OkCompilerBackend "")])]
-                    [(ErrBackendPhiReturnMatch message)
-                      (ErrCompilerBackend
+                        [(CompilerBackendPhiReturnMatch.No)
+                          (ResultCompilerBackend.Ok "")])]
+                    [(ResultBackendPhiReturnMatch.Err message)
+                      (ResultCompilerBackend.Err
                         (box (compiler-diagnostic-at-start "" message)))])]
-                [_ (OkCompilerBackend "")])]
-            [(IrNoValue) (OkCompilerBackend "")])]
-        [_ (OkCompilerBackend "")]))))
+                [_ (ResultCompilerBackend.Ok "")])]
+            [(CompilerIrMaybeValue.No) (ResultCompilerBackend.Ok "")])]
+        [_ (ResultCompilerBackend.Ok "")]))))
 
 (define (compiler-backend-emit-trivial-phi-return-edge
   [source-function : String]
@@ -14762,10 +14919,10 @@
   [ret-ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match blocks
-    [(IrBlockNil) (OkCompilerBackend "")]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (ResultCompilerBackend.Ok "")]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock block-label instrs)
+        [(CompilerIrBlock.Block block-label instrs)
           (if (string.string-eq block-label target-label)
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
@@ -14785,7 +14942,7 @@
               vars
               ret-ty
               program-index))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-trivial-phi-return-edge
         source-function
         (compiler-ir-block-seq-to-list seq)
@@ -14808,26 +14965,26 @@
   [moved-src : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (< (compiler-ir-instr-seq-count instrs) 2)
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (let
       [last-index : i64 (- (compiler-ir-instr-seq-count instrs) 1)]
       [last : CompilerIrInstr (compiler-ir-instr-seq-ref instrs last-index)]
       (match last
-        [(IrInstrReturn maybe)
+        [(CompilerIrInstr.Return maybe)
           (match maybe
-            [(IrSomeValue value)
+            [(CompilerIrMaybeValue.Some value)
               (match value
-                [(IrValueVar returned-dst)
+                [(CompilerIrValue.Var returned-dst)
                   (match (compiler-backend-trivial-phi-return-find
                     instrs
                     from-label
                     returned-dst
                     0
                     last-index
-                    (BackendNoPhiReturnMatch))
-                    [(OkBackendPhiReturnMatch found)
+                    (CompilerBackendPhiReturnMatch.No))
+                    [(ResultBackendPhiReturnMatch.Ok found)
                       (match found
-                        [(BackendSomePhiReturnMatch incoming)
+                        [(CompilerBackendPhiReturnMatch.Some incoming)
                           (if (compiler-backend-branch-uses-var?
                             incoming
                             moved-dst)
@@ -14837,19 +14994,20 @@
                             (compiler-backend-emit-return
                               source-function
                               blocks
-                              (IrSomeValue moved-src)
+                              (CompilerIrMaybeValue.Some moved-src)
                               assignments
                               vars
                               ret-ty
                               program-index)
-                            (OkCompilerBackend ""))]
-                        [(BackendNoPhiReturnMatch) (OkCompilerBackend "")])]
-                    [(ErrBackendPhiReturnMatch message)
-                      (ErrCompilerBackend
+                            (ResultCompilerBackend.Ok ""))]
+                        [(CompilerBackendPhiReturnMatch.No)
+                          (ResultCompilerBackend.Ok "")])]
+                    [(ResultBackendPhiReturnMatch.Err message)
+                      (ResultCompilerBackend.Err
                         (box (compiler-diagnostic-at-start "" message)))])]
-                [_ (OkCompilerBackend "")])]
-            [(IrNoValue) (OkCompilerBackend "")])]
-        [_ (OkCompilerBackend "")]))))
+                [_ (ResultCompilerBackend.Ok "")])]
+            [(CompilerIrMaybeValue.No) (ResultCompilerBackend.Ok "")])]
+        [_ (ResultCompilerBackend.Ok "")]))))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge
   [source-function : String]
@@ -14863,10 +15021,10 @@
   [moved-src : CompilerIrValue]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match blocks
-    [(IrBlockNil) (OkCompilerBackend "")]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (ResultCompilerBackend.Ok "")]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock block-label instrs)
+        [(CompilerIrBlock.Block block-label instrs)
           (if (string.string-eq block-label target-label)
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
@@ -14890,7 +15048,7 @@
               moved-dst
               moved-src
               program-index))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-mov-trivial-phi-return-edge
         source-function
         (compiler-ir-block-seq-to-list seq)
@@ -14910,10 +15068,10 @@
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : String
   (match (compiler-reg-assignment-lookup assignments var)
-    [(CompilerRegSomeLocation location)
+    [(CompilerRegMaybeLocation.Some location)
       (match location
-        [(CompilerRegRegister r) r]
-        [(CompilerRegRegisterPair r _) r]
+        [(CompilerRegLocation.Register r) r]
+        [(CompilerRegLocation.RegisterPair r _) r]
         [_ ""])]
     [_ ""]))
 
@@ -14921,13 +15079,13 @@
   [assignments : CompilerRegAssignmentList]
   [value : CompilerIrValue]) : String
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (match (compiler-reg-assignment-lookup assignments id)
-        [(CompilerRegSomeLocation location)
+        [(CompilerRegMaybeLocation.Some location)
           (match location
-            [(CompilerRegRegister home) home]
+            [(CompilerRegLocation.Register home) home]
             [_ ""])]
-        [(CompilerRegNoLocation) ""])]
+        [(CompilerRegMaybeLocation.No) ""])]
     [_ ""]))
 
 (define (compiler-backend-emit-direct-global-store
@@ -14936,12 +15094,12 @@
   [value : CompilerIrValue]
   [ty : AstType]) : CompilerBackendMaybeAsm
   (if (compiler-backend-float-type? ty)
-    (CompilerBackendNoAsm)
+    (CompilerBackendMaybeAsm.No)
     (let
       [home : String (compiler-backend-value-register-home assignments value)]
       (if (string.string-eq home "")
-        (CompilerBackendNoAsm)
-        (CompilerBackendSomeAsm
+        (CompilerBackendMaybeAsm.No)
+        (CompilerBackendMaybeAsm.Some
           (str_cat.str-cat
             "    movq "
             home
@@ -14966,7 +15124,7 @@
         vars
         ty
         program-index)
-        [(OkCompilerBackend load)
+        [(ResultCompilerBackend.Ok load)
           (match (compiler-backend-emit-group-store
             assignments
             dst
@@ -14975,20 +15133,22 @@
             vars
             ty
             program-index)
-            [(OkCompilerBackend store)
-              (OkCompilerBackend (string.string-append load store))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+            [(ResultCompilerBackend.Ok store)
+              (ResultCompilerBackend.Ok (string.string-append load store))]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
     [(compiler-backend-value-same-home? assignments dst src)
-      (OkCompilerBackend "")]
+      (ResultCompilerBackend.Ok "")]
     [(compiler-backend-float-type? ty)
       (match (compiler-backend-emit-load-typed-value-with-plan
         assignments
         src
         ty
         program-index)
-        [(OkCompilerBackend load)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok load)
+          (ResultCompilerBackend.Ok
             (string.string-append
               load
               (compiler-backend-emit-store-typed-var-with-plan
@@ -14996,14 +15156,15 @@
                 dst
                 "%xmm0"
                 ty)))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
     [else
       (match (compiler-backend-emit-store-immediate-to-var-home
         assignments
         dst
         src)
-        [(CompilerBackendSomeAsm asm) (OkCompilerBackend asm)]
-        [(CompilerBackendNoAsm)
+        [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
+        [(CompilerBackendMaybeAsm.No)
           (let
             [dst-home : String
               (compiler-backend-var-register-home assignments dst)]
@@ -15022,15 +15183,15 @@
             (if (if (string.string-eq dst-home "")
               false
               (match src
-                [(IrValueVar _) true]
+                [(CompilerIrValue.Var _) true]
                 [_ (= (compiler-backend-type-size ty) 8)]))
               (compiler-backend-emit-load-value-with-plan
                 assignments
                 src
                 dst-home)
               (match (match src
-                [(IrValueGlobalAddr name)
-                  (OkCompilerBackend
+                [(CompilerIrValue.GlobalAddr name)
+                  (ResultCompilerBackend.Ok
                     (str_cat.str-cat
                       "    leaq "
                       (compiler-backend-function-or-global-addr-symbol
@@ -15045,8 +15206,8 @@
                     src
                     ty
                     program-index)])
-                [(OkCompilerBackend load)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok load)
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       load
                       (compiler-backend-emit-store-typed-var-with-plan
@@ -15054,7 +15215,8 @@
                         dst
                         "%rax"
                         ty)))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)])))])]))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])))])]))
 
 (define (compiler-backend-emit-call-result-store
   [assignments : CompilerRegAssignmentList]
@@ -15071,7 +15233,7 @@
       vars
       ty
       program-index)
-    (OkCompilerBackend
+    (ResultCompilerBackend.Ok
       (compiler-backend-emit-store-typed-var-with-plan
         assignments
         dst
@@ -15099,17 +15261,18 @@
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (cond
       [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
-        (OkCompilerBackend (compiler-backend-current-arena-load target "%rax"))]
+        (ResultCompilerBackend.Ok
+          (compiler-backend-current-arena-load target "%rax"))]
       [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
         (match (compiler-backend-target-arg-reg target 0)
-          [(OkBackendReg reg)
-            (OkCompilerBackend
+          [(ResultBackendReg.Ok reg)
+            (ResultCompilerBackend.Ok
               (compiler-backend-current-arena-store target reg))]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])]
       [else
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-with-message
               instr-diag
@@ -15160,20 +15323,20 @@
       instr-diag
       program-index
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-call-result-store
           assignments
           dst
           ty
           vars
           program-index)
-          [(OkCompilerBackend result-store)
+          [(ResultCompilerBackend.Ok result-store)
             (match (compiler-backend-tls-current-arena-inline-asm
               target
               name
               instr-diag)
-              [(OkCompilerBackend inline-asm)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok inline-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     (compiler-backend-emit-call-space-sub call-space)
                     (string.string-append
@@ -15183,20 +15346,20 @@
                         (string.string-append
                           (compiler-backend-emit-call-space-add call-space)
                           result-store)))))]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackend
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
                       (box-get message)
                       instr-diag)))])]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -15385,15 +15548,15 @@
       instr-diag
       program-index
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-call-result-store
           assignments
           dst
           ty
           vars
           program-index)
-          [(OkCompilerBackend result-store)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok result-store)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 (compiler-backend-emit-call-space-sub call-space)
                 (string.string-append
@@ -15403,14 +15566,14 @@
                     (string.string-append
                       (compiler-backend-emit-call-space-add call-space)
                       result-store)))))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -15473,7 +15636,7 @@
           (compiler-backend-plan-provides? plan "tl_alloc")
           (cbi.compiler-builtin-backend-tl-alloc-id?
             (compiler-backend-runtime-helper-name-id call-symbol)))
-        (OkCompilerBackend
+        (ResultCompilerBackend.Ok
           (str_cat.str-cat
             (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
               (compiler-backend-emit-inline-fast-alloc
@@ -15559,15 +15722,15 @@
             instr-diag
             program-index
             vars)
-            [(OkCompilerBackend args-asm)
+            [(ResultCompilerBackend.Ok args-asm)
               (match (compiler-backend-emit-call-result-store
                 assignments
                 dst
                 ty
                 vars
                 program-index)
-                [(OkCompilerBackend result-store)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok result-store)
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       (compiler-backend-emit-call-space-sub call-space)
                       (string.string-append
@@ -15586,14 +15749,14 @@
                               (compiler-backend-emit-call-space-add call-space)
                               result-store)
                             "")))))]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackend
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
                         (box-get message)
                         instr-diag)))])]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
@@ -15620,7 +15783,7 @@
   [int-idx : i64]
   [sse-idx : i64]) : String
   (match slot
-    [(IrCAbiReturnSlot ty offset)
+    [(CompilerIrCAbiReturnSlot.Slot ty offset)
       (let
         [sse? : bool (compiler-backend-float-type? ty)]
         [reg : String
@@ -15642,7 +15805,7 @@
     [(IrCAbiReturnSlotNil) ""]
     [(IrCAbiReturnSlotCons slot rest)
       (match slot
-        [(IrCAbiReturnSlot ty _)
+        [(CompilerIrCAbiReturnSlot.Slot ty _)
           (let
             [sse? : bool (compiler-backend-float-type? ty)]
             (string.string-append
@@ -15666,15 +15829,15 @@
   [base : CompilerIrValue]
   [save-offset : i64]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments base "%r11")
-    [(OkCompilerBackend base-asm)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok base-asm)
+      (ResultCompilerBackend.Ok
         (string.string-append
           base-asm
           (str_cat.str-cat
             "    movq %r11, "
             (string.int->string save-offset)
             "(%rsp)\n")))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-c-abi-return-stores
   [save-offset : i64]
@@ -15701,15 +15864,15 @@
           "%rax"
           ty))]
     (match (compiler-reg-assignment-lookup assignments dst)
-      [(CompilerRegSomeLocation location)
+      [(CompilerRegMaybeLocation.Some location)
         (match location
           ;; Entry loads produce one pointer-sized word; aggregate register-pair
           ;; homes stay on the scratch fallback.
-          [(CompilerRegRegister home)
-            (OkCompilerBackend
+          [(CompilerRegLocation.Register home)
+            (ResultCompilerBackend.Ok
               (str_cat.str-cat "    movq " label "(%rip), " home "\n"))]
-          [_ (OkCompilerBackend scratch-asm)])]
-      [(CompilerRegNoLocation) (OkCompilerBackend scratch-asm)])))
+          [_ (ResultCompilerBackend.Ok scratch-asm)])]
+      [(CompilerRegMaybeLocation.No) (ResultCompilerBackend.Ok scratch-asm)])))
 
 (define (compiler-backend-cpuid-result-move [reg-index : i64]) : String
   (cond
@@ -15726,13 +15889,13 @@
   [subleaf : CompilerIrValue]
   [reg-index : i64]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments subleaf "%rcx")
-    [(OkCompilerBackend subleaf-asm)
+    [(ResultCompilerBackend.Ok subleaf-asm)
       (match (compiler-backend-emit-load-value-with-plan
         assignments
         leaf
         "%rax")
-        [(OkCompilerBackend leaf-asm)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok leaf-asm)
+          (ResultCompilerBackend.Ok
             (string.string-append
               subleaf-asm
               (string.string-append
@@ -15748,16 +15911,17 @@
                         dst
                         "%rax"
                         (AstTyI64))))))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-xgetbv
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [index : CompilerIrValue]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments index "%rcx")
-    [(OkCompilerBackend index-asm)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok index-asm)
+      (ResultCompilerBackend.Ok
         (string.string-append
           index-asm
           (string.string-append
@@ -15767,7 +15931,7 @@
               dst
               "%rax"
               (AstTyI64)))))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 ;; Linux syscall argument register for operand position: 0=number, 1..6=args.
 (define (compiler-backend-syscall-reg [pos : i64]) : String
@@ -15790,21 +15954,22 @@
   [index : i64]
   [count : i64]) : ResultCompilerBackend
   (if (>= index count)
-    (OkCompilerBackend "")
+    (ResultCompilerBackend.Ok "")
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       (compiler-backend-call-arg-at args index)
       (compiler-backend-syscall-reg index))
-      [(OkCompilerBackend load-asm)
+      [(ResultCompilerBackend.Ok load-asm)
         (match (compiler-backend-emit-syscall-loads
           assignments
           args
           (+ index 1)
           count)
-          [(OkCompilerBackend rest-asm)
-            (OkCompilerBackend (string.string-append load-asm rest-asm))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+          [(ResultCompilerBackend.Ok rest-asm)
+            (ResultCompilerBackend.Ok (string.string-append load-asm rest-asm))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 ;; `syscall` clobbers %rcx/%r11 and uses Linux syscall arg registers. The primary
 ;; integer pool is callee-saved, and the scalar caller-saved extension rejects
@@ -15818,7 +15983,7 @@
   [dst : i64]
   [args : CompilerIrCallArgs]) : ResultCompilerBackend
   (if (compiler-backend-target-windows? target)
-    (ErrCompilerBackend
+    (ResultCompilerBackend.Err
       (box
         (compiler-diagnostic-at-start
           ""
@@ -15826,8 +15991,8 @@
     (let
       [count : i64 (compiler-backend-call-args-count args)]
       (match (compiler-backend-emit-syscall-loads assignments args 0 count)
-        [(OkCompilerBackend load-asm)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok load-asm)
+          (ResultCompilerBackend.Ok
             (string.string-append
               load-asm
               (string.string-append
@@ -15837,13 +16002,14 @@
                   dst
                   "%rax"
                   (AstTyI64)))))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-switch-phi-target-message) : String
-  "backend: IrInstrSwitch target requires unsupported phi edge copies")
+  "backend: CompilerIrInstr.Switch target requires unsupported phi edge copies")
 
 (define (compiler-backend-switch-shape-message) : String
-  "backend: IrInstrSwitch requires non-empty contiguous ordered cases")
+  "backend: CompilerIrInstr.Switch requires non-empty contiguous ordered cases")
 
 (define (compiler-backend-switch-case-count [cases : CompilerIrSwitchCaseList]) : i64
   (match cases
@@ -15858,7 +16024,7 @@
     [(IrSwitchCaseNil) true]
     [(IrSwitchCaseCons case rest)
       (match case
-        [(IrSwitchCase tag _)
+        [(CompilerIrSwitchCase.Case tag _)
           (and
             (= tag expected)
             (compiler-backend-switch-cases-contiguous-from?
@@ -15871,7 +16037,7 @@
     [(IrSwitchCaseNil) false]
     [(IrSwitchCaseCons case rest)
       (match case
-        [(IrSwitchCase _ label)
+        [(CompilerIrSwitchCase.Case _ label)
           (or
             (compiler-backend-string-list-contains?
               compiler-backend-current-phi-targets
@@ -15904,7 +16070,7 @@
     [(IrSwitchCaseNil) buf]
     [(IrSwitchCaseCons case rest)
       (match case
-        [(IrSwitchCase _ label)
+        [(CompilerIrSwitchCase.Case _ label)
           (compiler-backend-emit-switch-table-cases-into
             function
             (box-get rest)
@@ -15944,7 +16110,7 @@
       instrs
       (+ index 1)
       (match (compiler-ir-instr-seq-ref instrs index)
-        [(IrInstrSwitch _ _ cases _)
+        [(CompilerIrInstr.Switch _ _ cases _)
           (text_buf.text-buf-append
             buf
             (compiler-backend-emit-switch-table function current-label cases))]
@@ -15955,10 +16121,10 @@
   [blocks : CompilerIrBlockList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match blocks
-    [(IrBlockNil) buf]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) buf]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (compiler-backend-emit-switch-tables-blocks-into
             function
             (box-get rest)
@@ -15968,7 +16134,7 @@
               instrs
               0
               buf))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-switch-tables-blocks-into
         function
         (compiler-ir-block-seq-to-list seq)
@@ -15979,10 +16145,10 @@
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match functions
-    [(IrFunctionNil) buf]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) buf]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name _ _ _ blocks)
+        [(CompilerIrFunction.Function name _ _ _ blocks)
           (compiler-backend-emit-switch-tables-functions-into
             (box-get rest)
             program-index
@@ -15990,7 +16156,7 @@
               (compiler-backend-function-label-scope program-index name)
               (compiler-ir-block-list-force-cons blocks)
               buf))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-emit-switch-tables-functions-into
         (compiler-ir-function-seq-to-list seq)
         program-index
@@ -16005,8 +16171,8 @@
   [default-label : String]
   [assignments : CompilerRegAssignmentList]) : ResultCompilerBackend
   (match (compiler-backend-emit-load-value-with-plan assignments index "%rax")
-    [(OkCompilerBackend load-index)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok load-index)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           load-index
           (if (= base 0)
@@ -16023,7 +16189,7 @@
           "\n    leaq "
           (compiler-backend-switch-table-label function current-label)
           "(%rip), %r11\n    jmp *(%r11,%rax,8)\n"))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-switch
   [function : String]
@@ -16037,19 +16203,19 @@
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     (cond
       [(= case-count 0)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
               (compiler-backend-switch-shape-message))))]
       [(not (compiler-backend-switch-cases-contiguous-from? cases base))
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
               (compiler-backend-switch-shape-message))))]
       [(compiler-backend-switch-target-phi? cases default-label)
-        (ErrCompilerBackend
+        (ResultCompilerBackend.Err
           (box
             (compiler-diagnostic-at-start
               ""
@@ -16063,8 +16229,10 @@
           case-count
           default-label
           assignments)
-          [(OkCompilerBackend dispatch) (OkCompilerBackend dispatch)]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])])))
+          [(ResultCompilerBackend.Ok dispatch)
+            (ResultCompilerBackend.Ok dispatch)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])])))
 
 (define (compiler-backend-switch-validate-one
   [base : i64]
@@ -16074,67 +16242,67 @@
     [case-count : i64 (compiler-backend-switch-case-count cases)]
     (cond
       [(= case-count 0)
-        (CompilerBackendSwitchValidationErr
+        (CompilerBackendSwitchValidation.Err
           (compiler-backend-switch-shape-message))]
       [(not (compiler-backend-switch-cases-contiguous-from? cases base))
-        (CompilerBackendSwitchValidationErr
+        (CompilerBackendSwitchValidation.Err
           (compiler-backend-switch-shape-message))]
       [(compiler-backend-switch-target-phi? cases default-label)
-        (CompilerBackendSwitchValidationErr
+        (CompilerBackendSwitchValidation.Err
           (compiler-backend-switch-phi-target-message))]
-      [else (CompilerBackendSwitchValidationOk)])))
+      [else (CompilerBackendSwitchValidation.Ok)])))
 
 (define (compiler-backend-switch-validate-instr [instr : CompilerIrInstr]) : CompilerBackendSwitchValidation
   (match instr
-    [(IrInstrSwitch _ base cases default-label)
+    [(CompilerIrInstr.Switch _ base cases default-label)
       (compiler-backend-switch-validate-one base cases default-label)]
-    [_ (CompilerBackendSwitchValidationOk)]))
+    [_ (CompilerBackendSwitchValidation.Ok)]))
 
 (define (compiler-backend-switch-validate-instr-seq
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerBackendSwitchValidation
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    (CompilerBackendSwitchValidationOk)
+    (CompilerBackendSwitchValidation.Ok)
     (match (compiler-backend-switch-validate-instr
       (compiler-ir-instr-seq-ref instrs index))
-      [(CompilerBackendSwitchValidationOk)
+      [(CompilerBackendSwitchValidation.Ok)
         (compiler-backend-switch-validate-instr-seq instrs (+ index 1))]
-      [(CompilerBackendSwitchValidationErr message)
-        (CompilerBackendSwitchValidationErr message)])))
+      [(CompilerBackendSwitchValidation.Err message)
+        (CompilerBackendSwitchValidation.Err message)])))
 
 (define (compiler-backend-switch-validate-blocks [blocks : CompilerIrBlockList]) : CompilerBackendSwitchValidation
   (match blocks
-    [(IrBlockNil) (CompilerBackendSwitchValidationOk)]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) (CompilerBackendSwitchValidation.Ok)]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (match (compiler-backend-switch-validate-instr-seq instrs 0)
-            [(CompilerBackendSwitchValidationOk)
+            [(CompilerBackendSwitchValidation.Ok)
               (compiler-backend-switch-validate-blocks (box-get rest))]
-            [(CompilerBackendSwitchValidationErr message)
-              (CompilerBackendSwitchValidationErr message)])])]
-    [(IrBlockArray seq)
+            [(CompilerBackendSwitchValidation.Err message)
+              (CompilerBackendSwitchValidation.Err message)])])]
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-switch-validate-blocks
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-switch-validate-functions
   [functions : CompilerIrFunctionList]) : CompilerBackendSwitchValidation
   (match functions
-    [(IrFunctionNil) (CompilerBackendSwitchValidationOk)]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) (CompilerBackendSwitchValidation.Ok)]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction _ _ _ _ blocks)
+        [(CompilerIrFunction.Function _ _ _ _ blocks)
           (let
             [_phi-targets : unit
               (set!
                 compiler-backend-current-phi-targets
                 (compiler-backend-phi-target-labels-for-blocks blocks))]
             (match (compiler-backend-switch-validate-blocks blocks)
-              [(CompilerBackendSwitchValidationOk)
+              [(CompilerBackendSwitchValidation.Ok)
                 (compiler-backend-switch-validate-functions (box-get rest))]
-              [(CompilerBackendSwitchValidationErr message)
-                (CompilerBackendSwitchValidationErr message)]))])]
-    [(IrFunctionArray seq)
+              [(CompilerBackendSwitchValidation.Err message)
+                (CompilerBackendSwitchValidation.Err message)]))])]
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-switch-validate-functions
         (compiler-ir-function-seq-to-list seq))]))
 
@@ -16166,7 +16334,7 @@
         func-diag
         "")]
     (match instr
-      [(IrInstrMov dst src ty)
+      [(CompilerIrInstr.Mov dst src ty)
         (match (compiler-backend-emit-mov
           assignments
           dst
@@ -16174,65 +16342,65 @@
           ty
           program-index
           vars)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrAlloc _ _) (OkCompilerBackend "")]
-      [(IrInstrAddrOf dst src)
+      [(CompilerIrInstr.Alloc _ _) (ResultCompilerBackend.Ok "")]
+      [(CompilerIrInstr.AddrOf dst src)
         (match (compiler-backend-emit-addr-of assignments dst src)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrGep dst base offset elem-ty)
+      [(CompilerIrInstr.Gep dst base offset elem-ty)
         (match (compiler-backend-emit-gep assignments dst base offset elem-ty)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrLoad dst src ty)
+      [(CompilerIrInstr.Load dst src ty)
         (match (compiler-backend-emit-load-instr assignments dst src ty)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrStorePtr dst src ty)
+      [(CompilerIrInstr.StorePtr dst src ty)
         (match (compiler-backend-emit-store-ptr
           assignments
           dst
           src
           ty
           program-index)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrCopyBytes dst src size)
+      [(CompilerIrInstr.CopyBytes dst src size)
         (match (compiler-backend-emit-copy-bytes assignments dst src size)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrBoundsCheck index length ok-label)
+      [(CompilerIrInstr.BoundsCheck index length ok-label)
         (match (compiler-backend-emit-bounds-check
           target
           function
@@ -16244,14 +16412,14 @@
           functions
           externs
           program-index)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrCast dst src from-ty to-ty)
+      [(CompilerIrInstr.Cast dst src from-ty to-ty)
         (match (compiler-backend-emit-cast
           function
           current-label
@@ -16261,14 +16429,14 @@
           from-ty
           to-ty
           program-index)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrBitcast dst src from-ty to-ty)
+      [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
         (match (compiler-backend-emit-bitcast
           assignments
           dst
@@ -16276,14 +16444,14 @@
           from-ty
           to-ty
           program-index)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrBinOp dst op lhs rhs ty)
+      [(CompilerIrInstr.BinOp dst op lhs rhs ty)
         (match (compiler-backend-emit-binop
           types
           global-types
@@ -16293,23 +16461,23 @@
           lhs
           rhs
           ty)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrUnOp dst op src ty)
+      [(CompilerIrInstr.UnOp dst op src ty)
         (match (compiler-backend-emit-unop assignments dst op src ty)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrLaneId dst lanes elem-ty)
+      [(CompilerIrInstr.LaneId dst lanes elem-ty)
         (compiler-backend-emit-vector-lane-id
           function
           current-label
@@ -16318,7 +16486,7 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrSplat dst value lanes elem-ty)
+      [(CompilerIrInstr.Splat dst value lanes elem-ty)
         (compiler-backend-emit-vector-splat
           assignments
           dst
@@ -16326,9 +16494,15 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorBinOp payload-box)
+      [(CompilerIrInstr.VectorBinOp payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrVectorBinOpPayload dst op lhs rhs lanes elem-ty)
+          [(CompilerIrInstrVectorBinOpPayload.Payload
+              dst
+              op
+              lhs
+              rhs
+              lanes
+              elem-ty)
             (compiler-backend-emit-vector-binop
               assignments
               dst
@@ -16338,7 +16512,7 @@
               lanes
               elem-ty
               instr-diag)])]
-      [(IrInstrVectorReduce dst op src lanes elem-ty)
+      [(CompilerIrInstr.VectorReduce dst op src lanes elem-ty)
         (compiler-backend-emit-vector-reduce
           assignments
           dst
@@ -16347,9 +16521,15 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorCompare payload-box)
+      [(CompilerIrInstr.VectorCompare payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrVectorComparePayload dst op lhs rhs lanes elem-ty)
+          [(CompilerIrInstrVectorComparePayload.Payload
+              dst
+              op
+              lhs
+              rhs
+              lanes
+              elem-ty)
             (compiler-backend-emit-avx512-vector-compare
               assignments
               dst
@@ -16359,7 +16539,7 @@
               lanes
               elem-ty
               instr-diag)])]
-      [(IrInstrMaskBinOp dst op lhs rhs lanes)
+      [(CompilerIrInstr.MaskBinOp dst op lhs rhs lanes)
         (compiler-backend-emit-avx512-mask-binop
           assignments
           dst
@@ -16368,14 +16548,14 @@
           rhs
           lanes
           instr-diag)]
-      [(IrInstrMaskNot dst src lanes)
+      [(CompilerIrInstr.MaskNot dst src lanes)
         (compiler-backend-emit-avx512-mask-not
           assignments
           dst
           src
           lanes
           instr-diag)]
-      [(IrInstrMaskReduce dst op src lanes)
+      [(CompilerIrInstr.MaskReduce dst op src lanes)
         (compiler-backend-emit-avx512-mask-reduce
           assignments
           dst
@@ -16383,9 +16563,9 @@
           src
           lanes
           instr-diag)]
-      [(IrInstrSelect payload-box)
+      [(CompilerIrInstr.Select payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrSelectPayload
+          [(CompilerIrInstrSelectPayload.Payload
               dst
               mask
               on-true
@@ -16401,7 +16581,7 @@
               lanes
               elem-ty
               instr-diag)])]
-      [(IrInstrVectorLoad dst base index lanes elem-ty)
+      [(CompilerIrInstr.VectorLoad dst base index lanes elem-ty)
         (compiler-backend-emit-vector-load
           assignments
           dst
@@ -16410,9 +16590,14 @@
           lanes
           elem-ty
           instr-diag)]
-      [(IrInstrVectorStore payload-box)
+      [(CompilerIrInstr.VectorStore payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrVectorStorePayload base index value lanes elem-ty)
+          [(CompilerIrInstrVectorStorePayload.Payload
+              base
+              index
+              value
+              lanes
+              elem-ty)
             (compiler-backend-emit-vector-store
               assignments
               base
@@ -16421,9 +16606,9 @@
               lanes
               elem-ty
               instr-diag)])]
-      [(IrInstrPredicatedStore payload-box)
+      [(CompilerIrInstr.PredicatedStore payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrPredicatedStorePayload
+          [(CompilerIrInstrPredicatedStorePayload.Payload
               base
               index
               value
@@ -16439,9 +16624,9 @@
               lanes
               elem-ty
               instr-diag)])]
-      [(IrInstrPredicatedLoad payload-box)
+      [(CompilerIrInstr.PredicatedLoad payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrPredicatedLoadPayload
+          [(CompilerIrInstrPredicatedLoadPayload.Payload
               dst
               base
               index
@@ -16457,7 +16642,7 @@
               lanes
               elem-ty
               instr-diag)])]
-      [(IrInstrTailMask dst index len lanes)
+      [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-avx512-tail-mask
           function
           current-label
@@ -16467,35 +16652,35 @@
           len
           lanes
           instr-diag)]
-      [(IrInstrEntryArgc dst)
+      [(CompilerIrInstr.EntryArgc dst)
         (compiler-backend-emit-entry-load
           assignments
           dst
           ".L_tl_argc"
           (AstTyI64))]
-      [(IrInstrEntryArgv dst)
+      [(CompilerIrInstr.EntryArgv dst)
         (compiler-backend-emit-entry-load
           assignments
           dst
           ".L_tl_argv"
           (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
-      [(IrInstrEntryEnvp dst)
+      [(CompilerIrInstr.EntryEnvp dst)
         (compiler-backend-emit-entry-load
           assignments
           dst
           ".L_tl_envp"
           (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
-      [(IrInstrCpuId dst leaf subleaf reg-index)
+      [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
         (compiler-backend-emit-cpuid assignments dst leaf subleaf reg-index)]
-      [(IrInstrXgetbv dst index)
+      [(CompilerIrInstr.Xgetbv dst index)
         (compiler-backend-emit-xgetbv assignments dst index)]
-      [(IrInstrSyscall dst args)
+      [(CompilerIrInstr.Syscall dst args)
         (compiler-backend-emit-syscall target assignments dst args)]
       [(IrInstrSpmdCall payload-box)
         (match (box-get payload-box)
           [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
             (compiler-backend-spmd-call-unimplemented instr-diag)])]
-      [(IrInstrCall dst name args ty)
+      [(CompilerIrInstr.Call dst name args ty)
         (compiler-backend-emit-direct-call-with-arg-assignments
           target
           function
@@ -16513,7 +16698,7 @@
           program-index
           vars
           instr-diag)]
-      [(IrInstrCallIndirect dst func args ty)
+      [(CompilerIrInstr.CallIndirect dst func args ty)
         (compiler-backend-emit-indirect-call
           target
           dst
@@ -16527,7 +16712,7 @@
           program-index
           vars
           instr-diag)]
-      [(IrInstrCallIndirectC dst func args ty)
+      [(CompilerIrInstr.CallIndirectC dst func args ty)
         (compiler-backend-emit-indirect-c-call
           target
           dst
@@ -16541,9 +16726,13 @@
           program-index
           vars
           instr-diag)]
-      [(IrInstrCallCAbiStoreResult payload-box)
+      [(CompilerIrInstr.CallCAbiStoreResult payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrCallCAbiStoreResultPayload base name args slots)
+          [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
+              base
+              name
+              args
+              slots)
             (compiler-backend-emit-c-abi-store-result-call
               target
               base
@@ -16558,9 +16747,9 @@
               program-index
               vars
               instr-diag)])]
-      [(IrInstrCallIndirectCAbiStoreResult payload-box)
+      [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrCallIndirectCAbiStoreResultPayload
+          [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
               base
               func
               args
@@ -16578,7 +16767,7 @@
               program-index
               vars
               instr-diag)])]
-      [(IrInstrTailCall name args ty)
+      [(CompilerIrInstr.TailCall name args ty)
         (match (compiler-backend-emit-tail-call
           target
           source-function
@@ -16595,14 +16784,14 @@
           externs
           program-index
           instr-diag)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrStore name value ty)
+      [(CompilerIrInstr.Store name value ty)
         (let
           [addr : String
             (str_cat.str-cat (compiler-backend-user-symbol name) "(%rip)" "")]
@@ -16632,8 +16821,8 @@
                 vars
                 ty
                 program-index)
-                [(OkCompilerBackend load)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok load)
+                  (ResultCompilerBackend.Ok
                     (string.string-append
                       load
                       (string.string-append
@@ -16645,8 +16834,8 @@
                           reg1
                           sym1
                           (compiler-backend-group-word-sse? program-index ty 1)))))]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackend
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
                         (box-get message)
@@ -16655,23 +16844,24 @@
               value
               addr
               ty)
-              [(CompilerBackendSomeAsm store-asm) (OkCompilerBackend store-asm)]
-              [(CompilerBackendNoAsm)
+              [(CompilerBackendMaybeAsm.Some store-asm)
+                (ResultCompilerBackend.Ok store-asm)]
+              [(CompilerBackendMaybeAsm.No)
                 (match (compiler-backend-emit-direct-global-store
                   assignments
                   name
                   value
                   ty)
-                  [(CompilerBackendSomeAsm store-asm)
-                    (OkCompilerBackend store-asm)]
-                  [(CompilerBackendNoAsm)
+                  [(CompilerBackendMaybeAsm.Some store-asm)
+                    (ResultCompilerBackend.Ok store-asm)]
+                  [(CompilerBackendMaybeAsm.No)
                     (match (compiler-backend-emit-load-typed-value-with-plan
                       assignments
                       value
                       ty
                       program-index)
-                      [(OkCompilerBackend load)
-                        (OkCompilerBackend
+                      [(ResultCompilerBackend.Ok load)
+                        (ResultCompilerBackend.Ok
                           (str_cat.str-cat
                             load
                             (if (compiler-backend-float-type? ty)
@@ -16686,13 +16876,13 @@
                                 (compiler-backend-user-symbol name)
                                 "(%rip)\n"
                                 ""))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err
                           (box
                             (compiler-backend-apply-instr-diagnostic
                               (box-get message)
                               instr-diag)))])])])))]
-      [(IrInstrJump target)
+      [(CompilerIrInstr.Jump target)
         (match (compiler-backend-emit-trivial-phi-return-edge
           source-function
           blocks
@@ -16702,7 +16892,7 @@
           vars
           ret-ty
           program-index)
-          [(OkCompilerBackend direct-return)
+          [(ResultCompilerBackend.Ok direct-return)
             (if (string.string-eq direct-return "")
               (match (compiler-backend-emit-phi-edge-copies
                 assignments
@@ -16711,8 +16901,8 @@
                 current-label
                 program-index
                 vars)
-                [(OkCompilerBackend copies)
-                  (OkCompilerBackend
+                [(ResultCompilerBackend.Ok copies)
+                  (ResultCompilerBackend.Ok
                     (str_cat.str-cat
                       copies
                       (if (compiler-backend-jump-target-is-fallthrough?
@@ -16724,20 +16914,20 @@
                           (compiler-backend-asm-label function target)
                           "\n"
                           ""))))]
-                [(ErrCompilerBackend message)
-                  (ErrCompilerBackend
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err
                     (box
                       (compiler-backend-apply-instr-diagnostic
                         (box-get message)
                         instr-diag)))])
-              (OkCompilerBackend direct-return))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+              (ResultCompilerBackend.Ok direct-return))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrBranch cond true-label false-label)
+      [(CompilerIrInstr.Branch cond true-label false-label)
         (match (compiler-backend-emit-branch-with-phi-copies
           assignments
           function
@@ -16749,14 +16939,14 @@
           fallthrough
           program-index
           vars)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrReturn value)
+      [(CompilerIrInstr.Return value)
         (match (compiler-backend-emit-return
           source-function
           blocks
@@ -16765,15 +16955,15 @@
           vars
           ret-ty
           program-index)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrPhi _ _ _) (OkCompilerBackend "")]
-      [(IrInstrPack dst words ty)
+      [(CompilerIrInstr.Phi _ _ _) (ResultCompilerBackend.Ok "")]
+      [(CompilerIrInstr.Pack dst words ty)
         (compiler-backend-emit-pack
           assignments
           dst
@@ -16782,7 +16972,7 @@
           vars
           program-index
           instr-diag)]
-      [(IrInstrWord dst src index ty)
+      [(CompilerIrInstr.Word dst src index ty)
         (compiler-backend-emit-word
           assignments
           dst
@@ -16791,7 +16981,7 @@
           ty
           vars
           instr-diag)]
-      [(IrInstrTailCallIndirect func args ty)
+      [(CompilerIrInstr.TailCallIndirect func args ty)
         (match (compiler-backend-emit-tail-indirect-call
           target
           source-function
@@ -16806,14 +16996,14 @@
           externs
           program-index
           instr-diag)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(IrInstrSwitch index base cases default-label)
+      [(CompilerIrInstr.Switch index base cases default-label)
         (match (compiler-backend-emit-switch
           function
           current-label
@@ -16822,9 +17012,9 @@
           cases
           default-label
           assignments)
-          [(OkCompilerBackend asm) (OkCompilerBackend asm)]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
@@ -16843,7 +17033,7 @@
   [counts : (Array i64)]
   [value : CompilerIrValue]) : unit
   (match value
-    [(IrValueVar id) (compiler-backend-use-count-inc counts id)]
+    [(CompilerIrValue.Var id) (compiler-backend-use-count-inc counts id)]
     [_ unit]))
 
 (define (compiler-backend-count-value-list-uses
@@ -16870,13 +17060,14 @@
   [counts : (Array i64)]
   [args : CompilerIrCallArgs]) : unit
   (match args
-    [(IrCallArgsNil) unit]
-    [(IrCallArgsOne value) (compiler-backend-count-value-use counts value)]
-    [(IrCallArgsTwo a b)
+    [(CompilerIrCallArgs.Nil) unit]
+    [(CompilerIrCallArgs.One value)
+      (compiler-backend-count-value-use counts value)]
+    [(CompilerIrCallArgs.Two a b)
       (begin
         (compiler-backend-count-value-use counts a)
         (compiler-backend-count-value-use counts b))]
-    [(IrCallArgsArray values)
+    [(CompilerIrCallArgs.Array values)
       (compiler-backend-count-call-args-array-uses counts values 0)]))
 
 (define (compiler-backend-count-spmd-call-args-uses
@@ -16895,8 +17086,8 @@
   [counts : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
   (match inputs
-    [(IrPhiInputNil) unit]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (compiler-backend-count-value-use counts value)
         (compiler-backend-count-phi-input-uses counts (box-get rest)))]))
@@ -16905,120 +17096,138 @@
   [counts : (Array i64)]
   [instr : CompilerIrInstr]) : unit
   (match instr
-    [(IrInstrMov _ src _) (compiler-backend-count-value-use counts src)]
-    [(IrInstrAddrOf _ src) (compiler-backend-use-count-inc counts src)]
-    [(IrInstrGep _ base offset _)
+    [(CompilerIrInstr.Mov _ src _)
+      (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.AddrOf _ src) (compiler-backend-use-count-inc counts src)]
+    [(CompilerIrInstr.Gep _ base offset _)
       (begin
         (compiler-backend-count-value-use counts base)
         (compiler-backend-count-value-use counts offset))]
-    [(IrInstrLoad _ src _) (compiler-backend-count-value-use counts src)]
-    [(IrInstrStorePtr dst src _)
+    [(CompilerIrInstr.Load _ src _)
+      (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.StorePtr dst src _)
       (begin
         (compiler-backend-count-value-use counts dst)
         (compiler-backend-count-value-use counts src))]
-    [(IrInstrCopyBytes dst src _)
+    [(CompilerIrInstr.CopyBytes dst src _)
       (begin
         (compiler-backend-count-value-use counts dst)
         (compiler-backend-count-value-use counts src))]
-    [(IrInstrBoundsCheck index length _)
+    [(CompilerIrInstr.BoundsCheck index length _)
       (begin
         (compiler-backend-count-value-use counts index)
         (compiler-backend-count-value-use counts length))]
-    [(IrInstrCast _ src _ _) (compiler-backend-count-value-use counts src)]
-    [(IrInstrBitcast _ src _ _) (compiler-backend-count-value-use counts src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.Cast _ src _ _)
+      (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.Bitcast _ src _ _)
+      (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
       (begin
         (compiler-backend-count-value-use counts lhs)
         (compiler-backend-count-value-use counts rhs))]
-    [(IrInstrUnOp _ _ src _) (compiler-backend-count-value-use counts src)]
-    [(IrInstrSplat _ value _ _) (compiler-backend-count-value-use counts value)]
-    [(IrInstrVectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
-          (begin
-            (compiler-backend-count-value-use counts lhs)
-            (compiler-backend-count-value-use counts rhs))])]
-    [(IrInstrVectorReduce _ _ src _ _)
+    [(CompilerIrInstr.UnOp _ _ src _)
       (compiler-backend-count-value-use counts src)]
-    [(IrInstrVectorCompare payload-box)
+    [(CompilerIrInstr.Splat _ value _ _)
+      (compiler-backend-count-value-use counts value)]
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (begin
             (compiler-backend-count-value-use counts lhs)
             (compiler-backend-count-value-use counts rhs))])]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.VectorReduce _ _ src _ _)
+      (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.VectorCompare payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
+          (begin
+            (compiler-backend-count-value-use counts lhs)
+            (compiler-backend-count-value-use counts rhs))])]
+    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (begin
         (compiler-backend-count-value-use counts lhs)
         (compiler-backend-count-value-use counts rhs))]
-    [(IrInstrMaskNot _ src _) (compiler-backend-count-value-use counts src)]
-    [(IrInstrMaskReduce _ _ src _)
+    [(CompilerIrInstr.MaskNot _ src _)
       (compiler-backend-count-value-use counts src)]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.MaskReduce _ _ src _)
+      (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ _)
           (begin
             (compiler-backend-count-value-use counts mask)
             (compiler-backend-count-value-use counts on-true)
             (compiler-backend-count-value-use counts on-false))])]
-    [(IrInstrVectorLoad _ base index _ _)
+    [(CompilerIrInstr.VectorLoad _ base index _ _)
       (begin
         (compiler-backend-count-value-use counts base)
         (compiler-backend-count-value-use counts index))]
-    [(IrInstrVectorStore payload-box)
+    [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload base index value _ _)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
           (begin
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts index)
             (compiler-backend-count-value-use counts value))])]
-    [(IrInstrPredicatedStore payload-box)
+    [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            _
+            _)
           (begin
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts index)
             (compiler-backend-count-value-use counts value)
             (compiler-backend-count-value-use counts mask))])]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
           (begin
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts index)
             (compiler-backend-count-value-use counts mask))])]
-    [(IrInstrTailMask _ index length _)
+    [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-backend-count-value-use counts index)
         (compiler-backend-count-value-use counts length))]
-    [(IrInstrEntryArgc _) unit]
-    [(IrInstrEntryArgv _) unit]
-    [(IrInstrEntryEnvp _) unit]
-    [(IrInstrCpuId _ leaf subleaf _)
+    [(CompilerIrInstr.EntryArgc _) unit]
+    [(CompilerIrInstr.EntryArgv _) unit]
+    [(CompilerIrInstr.EntryEnvp _) unit]
+    [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (begin
         (compiler-backend-count-value-use counts leaf)
         (compiler-backend-count-value-use counts subleaf))]
-    [(IrInstrXgetbv _ index) (compiler-backend-count-value-use counts index)]
-    [(IrInstrSyscall _ args)
+    [(CompilerIrInstr.Xgetbv _ index)
+      (compiler-backend-count-value-use counts index)]
+    [(CompilerIrInstr.Syscall _ args)
       (compiler-backend-count-call-args-uses counts args)]
-    [(IrInstrCall _ _ args _)
+    [(CompilerIrInstr.Call _ _ args _)
       (compiler-backend-count-call-args-uses counts args)]
-    [(IrInstrCallIndirect _ callee args _)
+    [(CompilerIrInstr.CallIndirect _ callee args _)
       (begin
         (compiler-backend-count-value-use counts callee)
         (compiler-backend-count-call-args-uses counts args))]
-    [(IrInstrCallIndirectC _ callee args _)
+    [(CompilerIrInstr.CallIndirectC _ callee args _)
       (begin
         (compiler-backend-count-value-use counts callee)
         (compiler-backend-count-call-args-uses counts args))]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
           (begin
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-call-args-uses counts args))])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+            base
+            callee
+            args
+            _)
           (begin
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts callee)
@@ -17029,35 +17238,39 @@
           (begin
             (compiler-backend-count-value-use counts active-mask)
             (compiler-backend-count-spmd-call-args-uses counts args))])]
-    [(IrInstrTailCall _ args _)
+    [(CompilerIrInstr.TailCall _ args _)
       (compiler-backend-count-call-args-uses counts args)]
-    [(IrInstrTailCallIndirect callee args _)
+    [(CompilerIrInstr.TailCallIndirect callee args _)
       (begin
         (compiler-backend-count-value-use counts callee)
         (compiler-backend-count-call-args-uses counts args))]
-    [(IrInstrStore _ value _) (compiler-backend-count-value-use counts value)]
-    [(IrInstrBranch cond _ _) (compiler-backend-count-value-use counts cond)]
-    [(IrInstrReturn maybe)
+    [(CompilerIrInstr.Store _ value _)
+      (compiler-backend-count-value-use counts value)]
+    [(CompilerIrInstr.Branch cond _ _)
+      (compiler-backend-count-value-use counts cond)]
+    [(CompilerIrInstr.Return maybe)
       (match maybe
-        [(IrNoValue) unit]
-        [(IrSomeValue value) (compiler-backend-count-value-use counts value)])]
-    [(IrInstrPhi _ inputs _)
+        [(CompilerIrMaybeValue.No) unit]
+        [(CompilerIrMaybeValue.Some value)
+          (compiler-backend-count-value-use counts value)])]
+    [(CompilerIrInstr.Phi _ inputs _)
       (compiler-backend-count-phi-input-uses counts inputs)]
     ;; #2386 register-group instrs: count their operand uses so the
     ;; single-use fusion peepholes cannot elide the home store of a var a
     ;; Pack/Word still reads (-O2 copy-prop substitutes vars directly into
     ;; Pack/Word operands).
-    [(IrInstrPack _ words _)
+    [(CompilerIrInstr.Pack _ words _)
       (compiler-backend-count-value-list-uses counts words)]
-    [(IrInstrWord _ src _ _) (compiler-backend-count-value-use counts src)]
+    [(CompilerIrInstr.Word _ src _ _)
+      (compiler-backend-count-value-use counts src)]
     ;; Operand-free IR instructions intentionally add no value uses.
-    [(IrInstrAlloc _ _) unit]
-    [(IrInstrLaneId _ _ _) unit]
-    [(IrInstrEntryArgc _) unit]
-    [(IrInstrEntryArgv _) unit]
-    [(IrInstrEntryEnvp _) unit]
-    [(IrInstrJump _) unit]
-    [(IrInstrSwitch index _ _ _)
+    [(CompilerIrInstr.Alloc _ _) unit]
+    [(CompilerIrInstr.LaneId _ _ _) unit]
+    [(CompilerIrInstr.EntryArgc _) unit]
+    [(CompilerIrInstr.EntryArgv _) unit]
+    [(CompilerIrInstr.EntryEnvp _) unit]
+    [(CompilerIrInstr.Jump _) unit]
+    [(CompilerIrInstr.Switch index _ _ _)
       (compiler-backend-count-value-use counts index)]))
 
 (define (compiler-backend-count-instr-seq-uses
@@ -17080,14 +17293,14 @@
   [counts : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-backend-count-instr-seq-uses counts instrs)
             (compiler-backend-count-block-uses counts (box-get rest)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-count-block-uses
         counts
         (compiler-ir-block-seq-to-list seq))]))
@@ -17133,11 +17346,11 @@
   (if (<= j 0)
     (- 0 1)
     (match (array.array-ref slots j)
-      [(IrInstrBranch cond _ _)
+      [(CompilerIrInstr.Branch cond _ _)
         (match cond
-          [(IrValueVar v)
+          [(CompilerIrValue.Var v)
             (match (array.array-ref slots (- j 1))
-              [(IrInstrBinOp dst op _ _ _)
+              [(CompilerIrInstr.BinOp dst op _ _ _)
                 (if (and (compiler-backend-compare-op? op) (= dst v))
                   v
                   (- 0 1))]
@@ -17165,13 +17378,14 @@
   [free : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (begin
         (match block
-          [(IrBlock _ instrs) (compiler-backend-fuse-free-seq free instrs)])
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-backend-fuse-free-seq free instrs)])
         (compiler-backend-fuse-free-blocks free (box-get rest)))]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-fuse-free-blocks
         free
         (compiler-ir-block-seq-to-list seq))]))
@@ -17208,7 +17422,7 @@
   [use-counts : (Array i64)]
   [instr : CompilerIrInstr]) : unit
   (match instr
-    [(IrInstrAddrOf dst src)
+    [(CompilerIrInstr.AddrOf dst src)
       (if (and
         (>= dst 0)
         (< dst (array.array-length items))
@@ -17240,10 +17454,10 @@
   [use-counts : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
-    [(IrBlockNil) unit]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (begin
             (compiler-backend-addr-of-forwarding-record-seq!
               items
@@ -17253,7 +17467,7 @@
               items
               use-counts
               (box-get rest)))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-addr-of-forwarding-record-blocks!
         items
         use-counts
@@ -17281,7 +17495,7 @@
 
 (define (compiler-backend-branch-uses-var? [cond : CompilerIrValue] [var : i64]) : bool
   (match cond
-    [(IrValueVar id) (= id var)]
+    [(CompilerIrValue.Var id) (= id var)]
     [_ false]))
 
 (define (compiler-backend-rest-starts-load-compare-branch?
@@ -17291,9 +17505,9 @@
   [global-types : CompilerBackendGlobalTypeList]
   [use-counts : (Array i64)]) : bool
   (match rest
-    [(IrInstrCons maybe-cmp after-cmp)
+    [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
       (match maybe-cmp
-        [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
+        [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
           (if (and
             (compiler-backend-compare-op? op)
             (compiler-backend-branch-uses-var? lhs load-dst)
@@ -17301,9 +17515,9 @@
             (not
               (compiler-backend-binop-f64? types global-types lhs rhs cmp-ty)))
             (match (box-get after-cmp)
-              [(IrInstrCons branch _)
+              [(CompilerIrInstrList.Cons branch _)
                 (match branch
-                  [(IrInstrBranch cond _ _)
+                  [(CompilerIrInstr.Branch cond _ _)
                     (compiler-backend-branch-uses-var? cond cmp-dst)]
                   [_ false])]
               [_ false])
@@ -17315,8 +17529,8 @@
   [rest : CompilerIrInstrList]
   [fallthrough : CompilerBackendMaybeLabel]) : CompilerBackendMaybeLabel
   (match rest
-    [(IrInstrNil) fallthrough]
-    [_ (CompilerBackendNoLabel)]))
+    [(CompilerIrInstrList.Nil) fallthrough]
+    [_ (CompilerBackendMaybeLabel.No)]))
 
 ;; A block-terminator fusion (mov/call/binop directly into a return) emits the
 ;; whole tail of the block and does not recurse, so it must flush the buffer of
@@ -17326,10 +17540,10 @@
   [result : ResultCompilerBackend]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match result
-    [(OkCompilerBackend asm)
-      (OkCompilerBackend
+    [(ResultCompilerBackend.Ok asm)
+      (ResultCompilerBackend.Ok
         (text_buf.text-buf-render (text_buf.text-buf-append buf asm)))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-instr-with-call-rax
   [target : CompilerBackendTarget]
@@ -17367,7 +17581,7 @@
         func-diag
         "")]
     (match instr
-      [(IrInstrCall dst name args ty)
+      [(CompilerIrInstr.Call dst name args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
           (compiler-backend-emit-direct-call-with-arg-assignments
             target
@@ -17405,7 +17619,7 @@
             program-index
             spans
             func-diag))]
-      [(IrInstrCallIndirect dst func args ty)
+      [(CompilerIrInstr.CallIndirect dst func args ty)
         (if (compiler-backend-call-leading-arg-uses-var? args rax-var)
           (compiler-backend-emit-indirect-call-with-arg-assignments
             target
@@ -17469,9 +17683,9 @@
   (and
     (compiler-backend-rax-call-arg-eligible? program-index rax-ty)
     (match instr
-      [(IrInstrCall _ _ args _)
+      [(CompilerIrInstr.Call _ _ args _)
         (compiler-backend-call-leading-arg-uses-var? args rax-var)]
-      [(IrInstrCallIndirect _ _ args _)
+      [(CompilerIrInstr.CallIndirect _ _ args _)
         (compiler-backend-call-leading-arg-uses-var? args rax-var)]
       [_ false])))
 
@@ -17501,7 +17715,7 @@
   (let
     [next-buf : text_buf.TextBuf (text_buf.text-buf-append buf head)]
     (match instr
-      [(IrInstrCall dst _ _ ty)
+      [(CompilerIrInstr.Call dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
           target
           function
@@ -17525,7 +17739,7 @@
           func-diag
           use-counts
           next-buf)]
-      [(IrInstrCallIndirect dst _ _ ty)
+      [(CompilerIrInstr.CallIndirect dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
           target
           function
@@ -17549,7 +17763,7 @@
           func-diag
           use-counts
           next-buf)]
-      [(IrInstrCallIndirectC dst _ _ ty)
+      [(CompilerIrInstr.CallIndirectC dst _ _ ty)
         (compiler-backend-emit-instrs-with-call-rax
           target
           function
@@ -17625,8 +17839,8 @@
     blocks
     current-label
     (match rest
-      [(IrInstrNil) fallthrough]
-      [_ (CompilerBackendNoLabel)])
+      [(CompilerIrInstrList.Nil) fallthrough]
+      [_ (CompilerBackendMaybeLabel.No)])
     instr
     assignments
     vars
@@ -17639,7 +17853,7 @@
     program-index
     spans
     func-diag)
-    [(OkCompilerBackend head)
+    [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs-after-emitted
         target
         function
@@ -17663,7 +17877,7 @@
         func-diag
         use-counts
         buf)]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-fused-result-rest
   [target : CompilerBackendTarget]
@@ -17688,7 +17902,7 @@
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match result
-    [(OkCompilerBackend head)
+    [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
         function
@@ -17710,7 +17924,7 @@
         func-diag
         use-counts
         (text_buf.text-buf-append buf head))]
-    [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-rax-forwardable-consumer?
   [types : CompilerRegVarTypeList]
@@ -17719,7 +17933,7 @@
   [rax-var : i64]
   [instr : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrBinOp _ op lhs rhs ty)
+    [(CompilerIrInstr.BinOp _ op lhs rhs ty)
       (and
         (compiler-backend-rax-forwardable-binop?
           types
@@ -17734,11 +17948,13 @@
           (and
             (compiler-backend-branch-uses-var? rhs rax-var)
             (compiler-backend-commutative-binop? op))))]
-    [(IrInstrMov _ src _) (compiler-backend-branch-uses-var? src rax-var)]
-    [(IrInstrReturn maybe)
+    [(CompilerIrInstr.Mov _ src _)
+      (compiler-backend-branch-uses-var? src rax-var)]
+    [(CompilerIrInstr.Return maybe)
       (match maybe
-        [(IrSomeValue value) (compiler-backend-branch-uses-var? value rax-var)]
-        [(IrNoValue) false])]
+        [(CompilerIrMaybeValue.Some value)
+          (compiler-backend-branch-uses-var? value rax-var)]
+        [(CompilerIrMaybeValue.No) false])]
     [_ false]))
 
 (define (compiler-backend-rest-starts-rax-forwardable-consumer?
@@ -17748,14 +17964,14 @@
   [rax-var : i64]
   [rest : CompilerIrInstrList]) : bool
   (match rest
-    [(IrInstrCons instr _)
+    [(CompilerIrInstrList.Cons instr _)
       (compiler-backend-rax-forwardable-consumer?
         types
         global-types
         assignments
         rax-var
         instr)]
-    [(IrInstrNil) false]))
+    [(CompilerIrInstrList.Nil) false]))
 
 (define (compiler-backend-emit-instrs-materialize-rax
   [target : CompilerBackendTarget]
@@ -17832,8 +18048,8 @@
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match instrs
-    [(IrInstrNil)
-      (OkCompilerBackend
+    [(CompilerIrInstrList.Nil)
+      (ResultCompilerBackend.Ok
         (text_buf.text-buf-render
           (text_buf.text-buf-append
             buf
@@ -17842,9 +18058,9 @@
               rax-var
               "%rax"
               rax-ty))))]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrBinOp dst op lhs rhs ty)
+        [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (compiler-backend-rax-forwardable-consumer?
             types
             global-types
@@ -17865,7 +18081,7 @@
                 rhs
                 ty
                 (not keep-live))
-                [(OkCompilerBackend head)
+                [(ResultCompilerBackend.Ok head)
                   (if keep-live
                     (compiler-backend-emit-instrs-with-rax
                       target
@@ -17911,7 +18127,8 @@
                       func-diag
                       use-counts
                       (text_buf.text-buf-append buf head)))]
-                [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))
             (compiler-backend-emit-instrs-materialize-rax
               target
               function
@@ -17935,7 +18152,7 @@
               func-diag
               use-counts
               buf))]
-        [(IrInstrMov dst src ty)
+        [(CompilerIrInstr.Mov dst src ty)
           (if (compiler-backend-branch-uses-var? src rax-var)
             (if (compiler-backend-var-single-use? use-counts dst)
               (compiler-backend-emit-instrs-with-rax
@@ -18011,15 +18228,15 @@
               func-diag
               use-counts
               buf))]
-        [(IrInstrReturn maybe)
+        [(CompilerIrInstr.Return maybe)
           (match maybe
-            [(IrSomeValue value)
+            [(CompilerIrMaybeValue.Some value)
               (if (and
                 (compiler-backend-branch-uses-var? value rax-var)
                 (match (box-get rest)
-                  [(IrInstrNil) true]
+                  [(CompilerIrInstrList.Nil) true]
                   [_ false]))
-                (OkCompilerBackend
+                (ResultCompilerBackend.Ok
                   (text_buf.text-buf-render
                     (text_buf.text-buf-append
                       buf
@@ -18051,7 +18268,7 @@
                   func-diag
                   use-counts
                   buf))]
-            [(IrNoValue)
+            [(CompilerIrMaybeValue.No)
               (compiler-backend-emit-instrs-materialize-rax
                 target
                 function
@@ -18124,8 +18341,9 @@
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match instrs
-    [(IrInstrNil) (OkCompilerBackend (text_buf.text-buf-render buf))]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil)
+      (ResultCompilerBackend.Ok (text_buf.text-buf-render buf))]
+    [(CompilerIrInstrList.Cons instr rest)
       (if (compiler-backend-call-rax-forwardable-instr?
         instr
         program-index
@@ -18138,8 +18356,8 @@
           blocks
           current-label
           (match (box-get rest)
-            [(IrInstrNil) fallthrough]
-            [_ (CompilerBackendNoLabel)])
+            [(CompilerIrInstrList.Nil) fallthrough]
+            [_ (CompilerBackendMaybeLabel.No)])
           instr
           assignments
           rax-var
@@ -18154,7 +18372,7 @@
           program-index
           spans
           func-diag)
-          [(OkCompilerBackend head)
+          [(ResultCompilerBackend.Ok head)
             (compiler-backend-emit-instrs-after-emitted
               target
               function
@@ -18178,7 +18396,8 @@
               func-diag
               use-counts
               buf)]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])
         (compiler-backend-emit-instrs
           target
           function
@@ -18243,7 +18462,7 @@
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
     program-index
     vars)
-    [(OkCompilerBackend head)
+    [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
         function
@@ -18265,15 +18484,15 @@
         func-diag
         use-counts
         (text_buf.text-buf-append buf head))]
-    [(ErrCompilerBackend message)
-      (ErrCompilerBackend
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
               spans
               source-function
-              (IrInstrBinOp dst op lhs rhs ty)
+              (CompilerIrInstr.BinOp dst op lhs rhs ty)
               func-diag
               ""))))]))
 
@@ -18321,7 +18540,7 @@
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
     program-index
     vars)
-    [(OkCompilerBackend head)
+    [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
         function
@@ -18343,15 +18562,15 @@
         func-diag
         use-counts
         (text_buf.text-buf-append buf head))]
-    [(ErrCompilerBackend message)
-      (ErrCompilerBackend
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
               spans
               source-function
-              (IrInstrLoad load-dst ptr load-ty)
+              (CompilerIrInstr.Load load-dst ptr load-ty)
               func-diag
               ""))))]))
 
@@ -18404,7 +18623,7 @@
     (compiler-backend-fused-compare-fallthrough rest fallthrough)
     program-index
     vars)
-    [(OkCompilerBackend head)
+    [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
         function
@@ -18426,15 +18645,15 @@
         func-diag
         use-counts
         (text_buf.text-buf-append buf head))]
-    [(ErrCompilerBackend message)
-      (ErrCompilerBackend
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
               spans
               source-function
-              (IrInstrGep gep-dst base offset elem-ty)
+              (CompilerIrInstr.Gep gep-dst base offset elem-ty)
               func-diag
               ""))))]))
 
@@ -18477,18 +18696,18 @@
     (match (compiler-backend-value-as-i64 offset)
       [(option_i64.Some _)
         (match rest
-          [(IrInstrCons maybe-gep after-gep)
+          [(CompilerIrInstrList.Cons maybe-gep after-gep)
             (match maybe-gep
-              [(IrInstrGep gep-dst2 base2 offset2 elem-ty2)
+              [(CompilerIrInstr.Gep gep-dst2 base2 offset2 elem-ty2)
                 (if (and
                   (compiler-backend-var-single-use? use-counts gep-dst2)
                   (opt-value-eq base2 base))
                   (match (compiler-backend-value-as-i64 offset2)
                     [(option_i64.Some _)
                       (match (box-get after-gep)
-                        [(IrInstrCons maybe-load after-load2)
+                        [(CompilerIrInstrList.Cons maybe-load after-load2)
                           (match maybe-load
-                            [(IrInstrLoad load-dst2 src2 load-ty2)
+                            [(CompilerIrInstr.Load load-dst2 src2 load-ty2)
                               (if (and
                                 (compiler-backend-branch-uses-var?
                                   src2
@@ -18756,7 +18975,7 @@
     value
     store-ty
     program-index)
-    [(OkCompilerBackend head)
+    [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
         function
@@ -18778,15 +18997,15 @@
         func-diag
         use-counts
         (text_buf.text-buf-append buf head))]
-    [(ErrCompilerBackend message)
-      (ErrCompilerBackend
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
               spans
               source-function
-              (IrInstrGep gep-dst base offset elem-ty)
+              (CompilerIrInstr.Gep gep-dst base offset elem-ty)
               func-diag
               ""))))]))
 
@@ -18826,7 +19045,7 @@
     dst
     src
     program-index)
-    [(OkCompilerBackend direct-return)
+    [(ResultCompilerBackend.Ok direct-return)
       (if (string.string-eq direct-return "")
         (if (compiler-backend-var-single-use? use-counts dst)
           (match (compiler-backend-emit-mov-phi-copy-edge
@@ -18838,7 +19057,7 @@
             src
             program-index
             vars)
-            [(OkCompilerBackend fused-copies)
+            [(ResultCompilerBackend.Ok fused-copies)
               (if (string.string-eq fused-copies "")
                 (compiler-backend-emit-instrs-normal
                   target
@@ -18847,8 +19066,10 @@
                   blocks
                   current-label
                   fallthrough
-                  (IrInstrMov dst src ty)
-                  (compiler-ir-instr-cons (IrInstrJump target-label) after-jump)
+                  (CompilerIrInstr.Mov dst src ty)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Jump target-label)
+                    after-jump)
                   assignments
                   vars
                   types
@@ -18871,7 +19092,7 @@
                   vars
                   ret-ty
                   program-index)
-                  [(OkCompilerBackend plain-direct-return)
+                  [(ResultCompilerBackend.Ok plain-direct-return)
                     (compiler-backend-emit-instrs
                       target
                       function
@@ -18905,26 +19126,26 @@
                                 function
                                 target-label)))
                           plain-direct-return)))]
-                  [(ErrCompilerBackend message)
-                    (ErrCompilerBackend
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-backend-apply-instr-diagnostic
                           (box-get message)
                           (compiler-backend-instr-diagnostic
                             spans
                             source-function
-                            (IrInstrMov dst src ty)
+                            (CompilerIrInstr.Mov dst src ty)
                             func-diag
                             ""))))]))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
                     (compiler-backend-instr-diagnostic
                       spans
                       source-function
-                      (IrInstrMov dst src ty)
+                      (CompilerIrInstr.Mov dst src ty)
                       func-diag
                       ""))))])
           (compiler-backend-emit-instrs-normal
@@ -18934,8 +19155,10 @@
             blocks
             current-label
             fallthrough
-            (IrInstrMov dst src ty)
-            (compiler-ir-instr-cons (IrInstrJump target-label) after-jump)
+            (CompilerIrInstr.Mov dst src ty)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Jump target-label)
+              after-jump)
             assignments
             vars
             types
@@ -18970,15 +19193,15 @@
           func-diag
           use-counts
           (text_buf.text-buf-append buf direct-return)))]
-    [(ErrCompilerBackend message)
-      (ErrCompilerBackend
+    [(ResultCompilerBackend.Err message)
+      (ResultCompilerBackend.Err
         (box
           (compiler-backend-apply-instr-diagnostic
             (box-get message)
             (compiler-backend-instr-diagnostic
               spans
               source-function
-              (IrInstrMov dst src ty)
+              (CompilerIrInstr.Mov dst src ty)
               func-diag
               ""))))]))
 
@@ -19030,7 +19253,7 @@
       instr-diag
       program-index
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (if (and
           (compiler-backend-tls-current-arena-call-name? name)
           (not (compiler-backend-index-function-defines? program-index name)))
@@ -19038,8 +19261,8 @@
             target
             name
             instr-diag)
-            [(OkCompilerBackend inline-asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok inline-asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   (compiler-backend-emit-call-space-sub call-space)
                   (string.string-append
@@ -19053,14 +19276,14 @@
                           assignments
                           vars
                           blocks))))))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
                     instr-diag)))])
           (if (compiler-backend-atomic-call-name? call-symbol)
-            (OkCompilerBackend
+            (ResultCompilerBackend.Ok
               (string.string-append
                 (compiler-backend-emit-call-space-sub call-space)
                 (string.string-append
@@ -19074,7 +19297,7 @@
                         assignments
                         vars
                         blocks))))))
-            (OkCompilerBackend
+            (ResultCompilerBackend.Ok
               (string.string-append
                 (compiler-backend-emit-call-space-sub call-space)
                 (string.string-append
@@ -19097,8 +19320,8 @@
                           vars
                           blocks))
                       "")))))))]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -19111,20 +19334,20 @@
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : AstTypeList
   (match func
-    [(IrValueFunction name)
+    [(CompilerIrValue.Function name)
       (match (compiler-backend-index-signature program-index name)
-        [(CompilerBackendSomeSignature param-types _) param-types]
-        [(CompilerBackendNoSignature) AstTypeNil])]
+        [(CompilerBackendMaybeSignature.Some param-types _) param-types]
+        [(CompilerBackendMaybeSignature.No) AstTypeNil])]
     [_
       (match (compiler-backend-value-type
         types
-        (CompilerBackendGlobalTypeNil)
+        (CompilerBackendGlobalTypeList.Nil)
         func)
-        [(CompilerRegSomeType ty)
+        [(CompilerRegMaybeType.Some ty)
           (match ty
             [(AstTyFunc param-types _) (box-get param-types)]
             [_ AstTypeNil])]
-        [(CompilerRegNoType) AstTypeNil])]))
+        [(CompilerRegMaybeType.No) AstTypeNil])]))
 
 (define (compiler-backend-indirect-tail-call-register-only?
   [target : CompilerBackendTarget]
@@ -19190,19 +19413,19 @@
       ;; -(8*(vars+var+1))(%rbp), so 0 here made a stack-homed group arg read
       ;; its word0 slot for BOTH words (#2386 closure-arg miscompile).
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-target-arg-reg target 0)
-          [(OkBackendReg env-reg)
+          [(ResultBackendReg.Ok env-reg)
             (match (compiler-backend-emit-call-result-store
               assignments
               dst
               ty
               vars
               program-index)
-              [(OkCompilerBackend result-store)
+              [(ResultCompilerBackend.Ok result-store)
                 (match func
-                  [(IrValueFunction name)
-                    (OkCompilerBackend
+                  [(CompilerIrValue.Function name)
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         (compiler-backend-emit-call-space-sub call-space)
                         (string.string-append
@@ -19223,8 +19446,8 @@
                       assignments
                       func
                       "%r11")
-                      [(OkCompilerBackend func-asm)
-                        (OkCompilerBackend
+                      [(ResultCompilerBackend.Ok func-asm)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             (compiler-backend-emit-call-space-sub call-space)
                             (string.string-append
@@ -19240,23 +19463,23 @@
                                       call-space)
                                     result-store)
                                   "")))))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err
                           (box
                             (compiler-backend-apply-instr-diagnostic
                               (box-get message)
                               instr-diag)))])])]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackend
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
                       (box-get message)
                       instr-diag)))])]
-          [(ErrBackendReg message)
-            (ErrCompilerBackend
+          [(ResultBackendReg.Err message)
+            (ResultCompilerBackend.Err
               (box (compiler-diagnostic-with-message instr-diag message)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -19338,14 +19561,14 @@
       instr-diag
       program-index
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-load-value-with-plan
           assignments
           func
           "%r11")
-          [(OkCompilerBackend func-asm)
+          [(ResultCompilerBackend.Ok func-asm)
             (match (compiler-backend-target-arg-reg target 0)
-              [(OkBackendReg env-reg)
+              [(ResultBackendReg.Ok env-reg)
                 (let
                   [descriptor-asm : String
                     (str_cat.str-cat
@@ -19355,7 +19578,7 @@
                       "\n"
                       "")]
                   (if register-only
-                    (OkCompilerBackend
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         args-asm
                         (string.string-append
@@ -19364,7 +19587,7 @@
                             assignments
                             vars
                             "*(%r11)"))))
-                    (OkCompilerBackend
+                    (ResultCompilerBackend.Ok
                       (string.string-append
                         (compiler-backend-emit-call-space-sub call-space)
                         (string.string-append
@@ -19383,17 +19606,17 @@
                                   blocks))
                               ""
                               "")))))))]
-              [(ErrBackendReg message)
-                (ErrCompilerBackend
+              [(ResultBackendReg.Err message)
+                (ResultCompilerBackend.Err
                   (box (compiler-diagnostic-with-message instr-diag message)))])]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -19446,7 +19669,7 @@
       (if (compiler-backend-type-list-has-aggregate? declared-param-types)
         (compiler-backend-call-c-abi-param-types
           types
-          (CompilerBackendGlobalTypeNil)
+          (CompilerBackendGlobalTypeList.Nil)
           args
           declared-param-types
           program-index)
@@ -19456,7 +19679,7 @@
           declared-param-types
           (compiler-backend-call-actual-param-types
             types
-            (CompilerBackendGlobalTypeNil)
+            (CompilerBackendGlobalTypeList.Nil)
             args)))]
     [call-space : i64
       (compiler-backend-call-arg-space
@@ -19484,14 +19707,14 @@
       ;; emit-indirect-call): latent today because C-ABI lowering never passes
       ;; 16-byte aggregates by value, but keep it correct.
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (if (string.string-eq direct-home "")
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             func
             "%rax")
-            [(OkCompilerBackend func-asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok func-asm)
+              (ResultCompilerBackend.Ok
                 (string.string-append
                   (compiler-backend-emit-call-space-sub call-space)
                   (string.string-append
@@ -19510,13 +19733,13 @@
                           ty)
                         ""
                         "")))))]
-            [(ErrCompilerBackend message)
-              (ErrCompilerBackend
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err
                 (box
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
                     instr-diag)))])
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (string.string-append
               (compiler-backend-emit-call-space-sub call-space)
               (string.string-append
@@ -19535,8 +19758,8 @@
                     ty)
                   ""
                   "")))))]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -19590,13 +19813,13 @@
       instr-diag
       program-index
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-c-abi-return-base-save
           assignments
           base
           call-space)
-          [(OkCompilerBackend base-save)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok base-save)
+            (ResultCompilerBackend.Ok
               (string.string-append
                 (compiler-backend-emit-call-space-sub total-space)
                 (string.string-append
@@ -19619,14 +19842,14 @@
                             slots)
                           (compiler-backend-emit-call-space-add total-space))
                         ""))))))]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -19657,7 +19880,7 @@
       (if (compiler-backend-type-list-has-aggregate? declared-param-types)
         (compiler-backend-call-c-abi-param-types
           types
-          (CompilerBackendGlobalTypeNil)
+          (CompilerBackendGlobalTypeList.Nil)
           args
           declared-param-types
           program-index)
@@ -19667,7 +19890,7 @@
           declared-param-types
           (compiler-backend-call-actual-param-types
             types
-            (CompilerBackendGlobalTypeNil)
+            (CompilerBackendGlobalTypeList.Nil)
             args)))]
     [call-space : i64
       (compiler-backend-call-arg-space
@@ -19691,18 +19914,18 @@
       instr-diag
       program-index
       vars)
-      [(OkCompilerBackend args-asm)
+      [(ResultCompilerBackend.Ok args-asm)
         (match (compiler-backend-emit-c-abi-return-base-save
           assignments
           base
           call-space)
-          [(OkCompilerBackend base-save)
+          [(ResultCompilerBackend.Ok base-save)
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               func
               "%rax")
-              [(OkCompilerBackend func-asm)
-                (OkCompilerBackend
+              [(ResultCompilerBackend.Ok func-asm)
+                (ResultCompilerBackend.Ok
                   (string.string-append
                     (compiler-backend-emit-call-space-sub total-space)
                     (string.string-append
@@ -19719,20 +19942,20 @@
                             (compiler-backend-emit-call-space-add total-space)
                             ""
                             ""))))))]
-              [(ErrCompilerBackend message)
-                (ErrCompilerBackend
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err
                   (box
                     (compiler-backend-apply-instr-diagnostic
                       (box-get message)
                       instr-diag)))])]
-          [(ErrCompilerBackend message)
-            (ErrCompilerBackend
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err
               (box
                 (compiler-backend-apply-instr-diagnostic
                   (box-get message)
                   instr-diag)))])]
-      [(ErrCompilerBackend message)
-        (ErrCompilerBackend
+      [(ResultCompilerBackend.Err message)
+        (ResultCompilerBackend.Err
           (box
             (compiler-backend-apply-instr-diagnostic
               (box-get message)
@@ -19760,18 +19983,19 @@
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match instrs
-    [(IrInstrNil) (OkCompilerBackend (text_buf.text-buf-render buf))]
-    [(IrInstrCons instr rest)
+    [(CompilerIrInstrList.Nil)
+      (ResultCompilerBackend.Ok (text_buf.text-buf-render buf))]
+    [(CompilerIrInstrList.Cons instr rest)
       (match instr
-        [(IrInstrMov dst src ty)
+        [(CompilerIrInstr.Mov dst src ty)
           (match (box-get rest)
-            [(IrInstrCons next after-jump)
+            [(CompilerIrInstrList.Cons next after-jump)
               (match next
-                [(IrInstrCast cast-dst cast-src _ _)
+                [(CompilerIrInstr.Cast cast-dst cast-src _ _)
                   (match (box-get after-jump)
-                    [(IrInstrCons after-cast after-binop)
+                    [(CompilerIrInstrList.Cons after-cast after-binop)
                       (match after-cast
-                        [(IrInstrBinOp bin-dst op lhs rhs bin-ty)
+                        [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
                           (if (and
                             (compiler-backend-divmod-op? op)
                             (compiler-backend-branch-uses-var? cast-src dst)
@@ -19790,7 +20014,7 @@
                               lhs
                               src
                               bin-ty)
-                              [(OkCompilerBackend binop-asm)
+                              [(ResultCompilerBackend.Ok binop-asm)
                                 (compiler-backend-emit-instrs
                                   target
                                   function
@@ -19812,8 +20036,8 @@
                                   func-diag
                                   use-counts
                                   (text_buf.text-buf-append buf binop-asm))]
-                              [(ErrCompilerBackend message)
-                                (ErrCompilerBackend message)])
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err message)])
                             (compiler-backend-emit-instrs-normal
                               target
                               function
@@ -19882,13 +20106,13 @@
                         func-diag
                         use-counts
                         buf)])]
-                [(IrInstrBinOp bin-dst op lhs rhs bin-ty)
+                [(CompilerIrInstr.BinOp bin-dst op lhs rhs bin-ty)
                   (if (and
                     (compiler-backend-divmod-op? op)
                     (compiler-backend-branch-uses-var? rhs dst)
                     (compiler-backend-divmod-safe-literal? src bin-ty))
                     (match (if (compiler-backend-var-single-use? use-counts dst)
-                      (OkCompilerBackend "")
+                      (ResultCompilerBackend.Ok "")
                       (compiler-backend-emit-mov
                         assignments
                         dst
@@ -19896,7 +20120,7 @@
                         ty
                         program-index
                         vars))
-                      [(OkCompilerBackend prefix)
+                      [(ResultCompilerBackend.Ok prefix)
                         (match (compiler-backend-emit-binop
                           types
                           global-types
@@ -19906,7 +20130,7 @@
                           lhs
                           src
                           bin-ty)
-                          [(OkCompilerBackend binop-asm)
+                          [(ResultCompilerBackend.Ok binop-asm)
                             (compiler-backend-emit-instrs
                               target
                               function
@@ -19930,10 +20154,10 @@
                               (text_buf.text-buf-append
                                 (text_buf.text-buf-append buf prefix)
                                 binop-asm))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])
                     (compiler-backend-emit-instrs-normal
                       target
                       function
@@ -19956,7 +20180,7 @@
                       func-diag
                       use-counts
                       buf))]
-                [(IrInstrJump target-label)
+                [(CompilerIrInstr.Jump target-label)
                   (compiler-backend-emit-fused-mov-trivial-phi-return-rest
                     target
                     function
@@ -19982,26 +20206,26 @@
                     func-diag
                     use-counts
                     buf)]
-                [(IrInstrReturn maybe)
+                [(CompilerIrInstr.Return maybe)
                   (match (box-get after-jump)
-                    [(IrInstrNil)
+                    [(CompilerIrInstrList.Nil)
                       (match maybe
-                        [(IrSomeValue value)
+                        [(CompilerIrMaybeValue.Some value)
                           (if (compiler-backend-branch-uses-var? value dst)
                             (match (compiler-backend-emit-return
                               source-function
                               blocks
-                              (IrSomeValue src)
+                              (CompilerIrMaybeValue.Some src)
                               assignments
                               vars
                               ret-ty
                               program-index)
-                              [(OkCompilerBackend asm)
-                                (OkCompilerBackend
+                              [(ResultCompilerBackend.Ok asm)
+                                (ResultCompilerBackend.Ok
                                   (text_buf.text-buf-render
                                     (text_buf.text-buf-append buf asm)))]
-                              [(ErrCompilerBackend message)
-                                (ErrCompilerBackend
+                              [(ResultCompilerBackend.Err message)
+                                (ResultCompilerBackend.Err
                                   (box
                                     (compiler-backend-apply-instr-diagnostic
                                       (box-get message)
@@ -20033,7 +20257,7 @@
                               func-diag
                               use-counts
                               buf))]
-                        [(IrNoValue)
+                        [(CompilerIrMaybeValue.No)
                           (compiler-backend-emit-instrs-normal
                             target
                             function
@@ -20125,15 +20349,15 @@
                 func-diag
                 use-counts
                 buf)])]
-        [(IrInstrCall dst name args ty)
+        [(CompilerIrInstr.Call dst name args ty)
           (match (box-get rest)
-            [(IrInstrCons next after-return)
+            [(CompilerIrInstrList.Cons next after-return)
               (match next
-                [(IrInstrReturn maybe)
+                [(CompilerIrInstr.Return maybe)
                   (match (box-get after-return)
-                    [(IrInstrNil)
+                    [(CompilerIrInstrList.Nil)
                       (match maybe
-                        [(IrSomeValue value)
+                        [(CompilerIrMaybeValue.Some value)
                           (if (and
                             (compiler-backend-branch-uses-var? value dst)
                             (opt-type-eq ty ret-ty))
@@ -20181,7 +20405,7 @@
                               func-diag
                               use-counts
                               buf))]
-                        [(IrNoValue)
+                        [(CompilerIrMaybeValue.No)
                           (compiler-backend-emit-instrs-normal
                             target
                             function
@@ -20273,11 +20497,11 @@
                 func-diag
                 use-counts
                 buf)])]
-        [(IrInstrStorePtr ptr value0 ty0)
+        [(CompilerIrInstr.StorePtr ptr value0 ty0)
           (match (box-get rest)
-            [(IrInstrCons maybe-gep after-gep)
+            [(CompilerIrInstrList.Cons maybe-gep after-gep)
               (match maybe-gep
-                [(IrInstrGep gep-dst base offset elem-ty)
+                [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
                   (if (and
                     (opt-value-eq base ptr)
                     (compiler-backend-var-single-use? use-counts gep-dst))
@@ -20288,9 +20512,11 @@
                             (* n (compiler-backend-type-size elem-ty))]
                           (if (compiler-backend-imm32? disp)
                             (match (box-get after-gep)
-                              [(IrInstrCons maybe-store after-store)
+                              [(CompilerIrInstrList.Cons
+                                  maybe-store
+                                  after-store)
                                 (match maybe-store
-                                  [(IrInstrStorePtr dst value1 ty1)
+                                  [(CompilerIrInstr.StorePtr dst value1 ty1)
                                     (if (compiler-backend-branch-uses-var?
                                       dst
                                       gep-dst)
@@ -20505,14 +20731,14 @@
                 func-diag
                 use-counts
                 buf)])]
-        [(IrInstrGep gep-dst base offset elem-ty)
+        [(CompilerIrInstr.Gep gep-dst base offset elem-ty)
           (if (compiler-backend-var-single-use? use-counts gep-dst)
             (match (compiler-backend-value-as-i64 offset)
               [(option_i64.Some n)
                 (match (box-get rest)
-                  [(IrInstrCons next after-load)
+                  [(CompilerIrInstrList.Cons next after-load)
                     (match next
-                      [(IrInstrLoad load-dst src load-ty)
+                      [(CompilerIrInstr.Load load-dst src load-ty)
                         (if (compiler-backend-branch-uses-var? src gep-dst)
                           (if (and
                             (compiler-backend-load-compare-type? load-ty)
@@ -20520,9 +20746,14 @@
                               use-counts
                               load-dst))
                             (match (box-get after-load)
-                              [(IrInstrCons maybe-cmp after-cmp)
+                              [(CompilerIrInstrList.Cons maybe-cmp after-cmp)
                                 (match maybe-cmp
-                                  [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
+                                  [(CompilerIrInstr.BinOp
+                                      cmp-dst
+                                      op
+                                      lhs
+                                      rhs
+                                      cmp-ty)
                                     (if (and
                                       (compiler-backend-compare-op? op)
                                       (compiler-backend-branch-uses-var?
@@ -20539,9 +20770,11 @@
                                           rhs
                                           cmp-ty)))
                                       (match (box-get after-cmp)
-                                        [(IrInstrCons branch after-branch)
+                                        [(CompilerIrInstrList.Cons
+                                            branch
+                                            after-branch)
                                           (match branch
-                                            [(IrInstrBranch
+                                            [(CompilerIrInstr.Branch
                                                 cond
                                                 true-label
                                                 false-label)
@@ -20796,7 +21029,7 @@
                             func-diag
                             use-counts
                             buf))]
-                      [(IrInstrStorePtr dst value store-ty)
+                      [(CompilerIrInstr.StorePtr dst value store-ty)
                         (if (compiler-backend-branch-uses-var? dst gep-dst)
                           (compiler-backend-emit-fused-gep-store-rest
                             target
@@ -20847,7 +21080,7 @@
                             func-diag
                             use-counts
                             buf))]
-                      [(IrInstrCopyBytes copy-dst copy-src copy-size)
+                      [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
                         (if (and
                           (compiler-backend-branch-uses-var? copy-dst gep-dst)
                           (compiler-backend-imm32?
@@ -20950,16 +21183,16 @@
                       buf)])]
               [(option_i64.None)
                 (match (box-get rest)
-                  [(IrInstrCons next after-gep)
+                  [(CompilerIrInstrList.Cons next after-gep)
                     (match next
-                      [(IrInstrMov ptr-var src _)
+                      [(CompilerIrInstr.Mov ptr-var src _)
                         (if (and
                           (compiler-backend-branch-uses-var? src gep-dst)
                           (compiler-backend-var-single-use? use-counts ptr-var))
                           (match (box-get after-gep)
-                            [(IrInstrCons maybe-store after-store)
+                            [(CompilerIrInstrList.Cons maybe-store after-store)
                               (match maybe-store
-                                [(IrInstrStorePtr dst value store-ty)
+                                [(CompilerIrInstr.StorePtr dst value store-ty)
                                   (if (compiler-backend-branch-uses-var?
                                     dst
                                     ptr-var)
@@ -21080,7 +21313,7 @@
                             func-diag
                             use-counts
                             buf))]
-                      [(IrInstrLoad load-dst src load-ty)
+                      [(CompilerIrInstr.Load load-dst src load-ty)
                         (if (compiler-backend-branch-uses-var? src gep-dst)
                           (compiler-backend-emit-fused-gep-load-rest
                             target
@@ -21131,7 +21364,7 @@
                             func-diag
                             use-counts
                             buf))]
-                      [(IrInstrStorePtr dst value store-ty)
+                      [(CompilerIrInstr.StorePtr dst value store-ty)
                         (if (compiler-backend-branch-uses-var? dst gep-dst)
                           (compiler-backend-emit-fused-gep-store-rest
                             target
@@ -21182,7 +21415,7 @@
                             func-diag
                             use-counts
                             buf))]
-                      [(IrInstrCopyBytes copy-dst copy-src copy-size)
+                      [(CompilerIrInstr.CopyBytes copy-dst copy-src copy-size)
                         (if (compiler-backend-branch-uses-var? copy-dst gep-dst)
                           (compiler-backend-emit-fused-result-rest
                             target
@@ -21302,13 +21535,13 @@
               func-diag
               use-counts
               buf))]
-        [(IrInstrVectorLoad load-dst base index lanes elem-ty)
+        [(CompilerIrInstr.VectorLoad load-dst base index lanes elem-ty)
           (match (box-get rest)
-            [(IrInstrCons next after-binop)
+            [(CompilerIrInstrList.Cons next after-binop)
               (match next
-                [(IrInstrVectorBinOp payload-box)
+                [(CompilerIrInstr.VectorBinOp payload-box)
                   (match (box-get payload-box)
-                    [(CompilerIrInstrVectorBinOpPayload
+                    [(CompilerIrInstrVectorBinOpPayload.Payload
                         bin-dst
                         op
                         lhs
@@ -21330,7 +21563,7 @@
                           op
                           lhs
                           rhs)
-                          [(CompilerBackendSomeVectorMemFold reg-value)
+                          [(CompilerBackendVectorMemFold.Some reg-value)
                             (compiler-backend-emit-fused-result-rest
                               target
                               function
@@ -21367,7 +21600,7 @@
                               func-diag
                               use-counts
                               buf)]
-                          [(CompilerBackendNoVectorMemFold)
+                          [(CompilerBackendVectorMemFold.No)
                             (compiler-backend-emit-instrs-normal
                               target
                               function
@@ -21458,14 +21691,14 @@
                 func-diag
                 use-counts
                 buf)])]
-        [(IrInstrLoad load-dst ptr load-ty)
+        [(CompilerIrInstr.Load load-dst ptr load-ty)
           (if (and
             (compiler-backend-load-compare-type? load-ty)
             (compiler-backend-var-single-use? use-counts load-dst))
             (match (box-get rest)
-              [(IrInstrCons next after-cmp)
+              [(CompilerIrInstrList.Cons next after-cmp)
                 (match next
-                  [(IrInstrLoad second-dst second-src second-ty)
+                  [(CompilerIrInstr.Load second-dst second-src second-ty)
                     (if (compiler-backend-branch-uses-var? second-src load-dst)
                       (compiler-backend-emit-fused-result-rest
                         target
@@ -21517,7 +21750,7 @@
                         func-diag
                         use-counts
                         buf))]
-                  [(IrInstrBinOp cmp-dst op lhs rhs cmp-ty)
+                  [(CompilerIrInstr.BinOp cmp-dst op lhs rhs cmp-ty)
                     (if (and
                       (compiler-backend-compare-op? op)
                       (compiler-backend-branch-uses-var? lhs load-dst)
@@ -21530,9 +21763,12 @@
                           rhs
                           cmp-ty)))
                       (match (box-get after-cmp)
-                        [(IrInstrCons branch after-branch)
+                        [(CompilerIrInstrList.Cons branch after-branch)
                           (match branch
-                            [(IrInstrBranch cond true-label false-label)
+                            [(CompilerIrInstr.Branch
+                                cond
+                                true-label
+                                false-label)
                               (if (compiler-backend-branch-uses-var?
                                 cond
                                 cmp-dst)
@@ -21724,7 +21960,7 @@
               func-diag
               use-counts
               buf))]
-        [(IrInstrBinOp dst op lhs rhs ty)
+        [(CompilerIrInstr.BinOp dst op lhs rhs ty)
           (if (and
             (compiler-backend-var-single-use? use-counts dst)
             (compiler-backend-rax-forwardable-binop?
@@ -21751,7 +21987,7 @@
               rhs
               ty
               false)
-              [(OkCompilerBackend head)
+              [(ResultCompilerBackend.Ok head)
                 (compiler-backend-emit-instrs-with-rax
                   target
                   function
@@ -21775,7 +22011,8 @@
                   func-diag
                   use-counts
                   (text_buf.text-buf-append buf head))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])
             (if (and
               (compiler-backend-compare-op? op)
               (or
@@ -21783,13 +22020,13 @@
                 (compiler-backend-var-fuse-safe? dst))
               (not (compiler-backend-binop-f64? types global-types lhs rhs ty)))
               (match (box-get rest)
-                [(IrInstrCons next after-branch)
+                [(CompilerIrInstrList.Cons next after-branch)
                   (match next
-                    [(IrInstrReturn maybe)
+                    [(CompilerIrInstr.Return maybe)
                       (match (box-get after-branch)
-                        [(IrInstrNil)
+                        [(CompilerIrInstrList.Nil)
                           (match maybe
-                            [(IrSomeValue value)
+                            [(CompilerIrMaybeValue.Some value)
                               (if (compiler-backend-branch-uses-var? value dst)
                                 (compiler-backend-emit-terminator-into
                                   (compiler-backend-emit-binop-return
@@ -21826,7 +22063,7 @@
                                   func-diag
                                   use-counts
                                   buf))]
-                            [(IrNoValue)
+                            [(CompilerIrMaybeValue.No)
                               (compiler-backend-emit-instrs-normal
                                 target
                                 function
@@ -21872,7 +22109,7 @@
                             func-diag
                             use-counts
                             buf)])]
-                    [(IrInstrBranch cond true-label false-label)
+                    [(CompilerIrInstr.Branch cond true-label false-label)
                       (if (compiler-backend-branch-uses-var? cond dst)
                         (compiler-backend-emit-fused-compare-branch-rest
                           target
@@ -22055,7 +22292,7 @@
             (begin
               (set! compiler-backend-emit-instrs-continue-pending false)
               (match current-mode
-                [(CompilerBackendEmitInstrsModeNormal)
+                [(CompilerBackendEmitInstrsMode.Normal)
                   (compiler-backend-emit-instrs-step
                     target
                     function
@@ -22077,7 +22314,7 @@
                     func-diag
                     use-counts
                     current-buf)]
-                [(CompilerBackendEmitInstrsModeRax rax-var rax-ty)
+                [(CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-rax-step
                     target
                     function
@@ -22101,7 +22338,7 @@
                     func-diag
                     use-counts
                     current-buf)]
-                [(CompilerBackendEmitInstrsModeCallRax rax-var rax-ty)
+                [(CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
                   (compiler-backend-emit-instrs-with-call-rax-step
                     target
                     function
@@ -22126,7 +22363,7 @@
                     use-counts
                     current-buf)]))]
           (match step-result
-            [(OkCompilerBackend asm)
+            [(ResultCompilerBackend.Ok asm)
               (if compiler-backend-emit-instrs-continue-pending
                 (begin
                   (set! current-mode compiler-backend-emit-instrs-next-mode)
@@ -22135,15 +22372,15 @@
                 (begin
                   (set! asm-out asm)
                   (set! done true)))]
-            [(ErrCompilerBackend message)
+            [(ResultCompilerBackend.Err message)
               (begin
                 (set! diag-out message)
                 (set! ok false)
                 (set! done true))])))
       (set! compiler-backend-emit-instrs-loop-active false)
       (if ok
-        (OkCompilerBackend asm-out)
-        (ErrCompilerBackend diag-out)))))
+        (ResultCompilerBackend.Ok asm-out)
+        (ResultCompilerBackend.Err diag-out)))))
 
 (define (compiler-backend-emit-instrs
   [target : CompilerBackendTarget]
@@ -22168,7 +22405,7 @@
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
-      (CompilerBackendEmitInstrsModeNormal)
+      (CompilerBackendEmitInstrsMode.Normal)
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
@@ -22178,7 +22415,7 @@
       blocks
       current-label
       fallthrough
-      (CompilerBackendEmitInstrsModeNormal)
+      (CompilerBackendEmitInstrsMode.Normal)
       instrs
       assignments
       vars
@@ -22219,7 +22456,7 @@
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
-      (CompilerBackendEmitInstrsModeCallRax rax-var rax-ty)
+      (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
@@ -22229,7 +22466,7 @@
       blocks
       current-label
       fallthrough
-      (CompilerBackendEmitInstrsModeCallRax rax-var rax-ty)
+      (CompilerBackendEmitInstrsMode.CallRax rax-var rax-ty)
       instrs
       assignments
       vars
@@ -22270,7 +22507,7 @@
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (if compiler-backend-emit-instrs-loop-active
     (compiler-backend-emit-instrs-set-continue!
-      (CompilerBackendEmitInstrsModeRax rax-var rax-ty)
+      (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
       instrs
       buf)
     (compiler-backend-emit-instrs-loop
@@ -22280,7 +22517,7 @@
       blocks
       current-label
       fallthrough
-      (CompilerBackendEmitInstrsModeRax rax-var rax-ty)
+      (CompilerBackendEmitInstrsMode.Rax rax-var rax-ty)
       instrs
       assignments
       vars
@@ -22316,7 +22553,7 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]) : ResultCompilerBackend
   (match block
-    [(IrBlock label instrs)
+    [(CompilerIrBlock.Block label instrs)
       (match (compiler-backend-emit-instrs
         target
         function
@@ -22338,22 +22575,23 @@
         func-diag
         use-counts
         (text_buf.text-buf-empty))
-        [(OkCompilerBackend body)
-          (OkCompilerBackend
+        [(ResultCompilerBackend.Ok body)
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               (compiler-backend-asm-label function label)
               ":\n"
               body
               ""))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]))
 
 (define (compiler-backend-next-block-label [blocks : CompilerIrBlockList]) : CompilerBackendMaybeLabel
   (match blocks
-    [(IrBlockNil) (CompilerBackendNoLabel)]
-    [(IrBlockCons block _)
+    [(CompilerIrBlockList.Nil) (CompilerBackendMaybeLabel.No)]
+    [(CompilerIrBlockList.Cons block _)
       (match block
-        [(IrBlock label _) (CompilerBackendSomeLabel label)])]
-    [(IrBlockArray seq)
+        [(CompilerIrBlock.Block label _) (CompilerBackendMaybeLabel.Some label)])]
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-next-block-label (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-emit-blocks-into
@@ -22376,8 +22614,9 @@
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match blocks
-    [(IrBlockNil) (OkCompilerBackend (text_buf.text-buf-render buf))]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil)
+      (ResultCompilerBackend.Ok (text_buf.text-buf-render buf))]
+    [(CompilerIrBlockList.Cons block rest)
       (match (compiler-backend-emit-block
         target
         function
@@ -22397,7 +22636,7 @@
         spans
         func-diag
         use-counts)
-        [(OkCompilerBackend head)
+        [(ResultCompilerBackend.Ok head)
           (compiler-backend-emit-blocks-into
             target
             function
@@ -22417,8 +22656,9 @@
             func-diag
             use-counts
             (text_buf.text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(IrBlockArray seq)
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-emit-blocks-into
         target
         function
@@ -22493,10 +22733,10 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
   (match params
-    [(IrParamNil) (OkCompilerBackend "")]
+    [(IrParamNil) (ResultCompilerBackend.Ok "")]
     [(IrParamCons param rest)
       (match param
-        [(IrParam _ ty var-id)
+        [(CompilerIrParam.Param _ ty var-id)
           (let
             [is-float : bool (compiler-backend-float-type? ty)]
             [next-int : i64
@@ -22555,7 +22795,7 @@
                   vars
                   ty
                   program-index)
-                  [(OkCompilerBackend head0)
+                  [(ResultCompilerBackend.Ok head0)
                     (match (compiler-backend-emit-group-word-param
                       target
                       assignments
@@ -22568,7 +22808,7 @@
                       vars
                       ty
                       program-index)
-                      [(OkCompilerBackend head1)
+                      [(ResultCompilerBackend.Ok head1)
                         (match (compiler-backend-emit-param-spills
                           target
                           assignments
@@ -22585,16 +22825,17 @@
                             stack1)
                           program-index
                           vars)
-                          [(OkCompilerBackend tail)
-                            (OkCompilerBackend
+                          [(ResultCompilerBackend.Ok tail)
+                            (ResultCompilerBackend.Ok
                               (string.string-append
                                 head0
                                 (string.string-append head1 tail)))]
-                          [(ErrCompilerBackend message)
-                            (ErrCompilerBackend message)])]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
+                          [(ResultCompilerBackend.Err message)
+                            (ResultCompilerBackend.Err message)])]
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)]))
               (if (compiler-backend-stack-call-arg-for-banks?
                 target
                 is-float
@@ -22611,8 +22852,8 @@
                   (+ stack-idx 1)
                   program-index
                   vars)
-                  [(OkCompilerBackend tail)
-                    (OkCompilerBackend
+                  [(ResultCompilerBackend.Ok tail)
+                    (ResultCompilerBackend.Ok
                       (str_cat.str-cat
                         (if is-float
                           (str_cat.str-cat
@@ -22640,7 +22881,8 @@
                             "%rax")
                           ty)
                         tail))]
-                  [(ErrCompilerBackend message) (ErrCompilerBackend message)])
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])
                 (match (if is-float
                   (compiler-backend-target-float-arg-reg
                     target
@@ -22652,7 +22894,7 @@
                     (if (compiler-backend-target-windows? target)
                       position
                       int-idx)))
-                  [(OkBackendReg reg)
+                  [(ResultBackendReg.Ok reg)
                     (match (compiler-backend-emit-param-spills
                       target
                       assignments
@@ -22663,8 +22905,8 @@
                       stack-idx
                       program-index
                       vars)
-                      [(OkCompilerBackend tail)
-                        (OkCompilerBackend
+                      [(ResultCompilerBackend.Ok tail)
+                        (ResultCompilerBackend.Ok
                           (string.string-append
                             (compiler-backend-emit-store-typed-var-with-plan
                               assignments
@@ -22672,10 +22914,10 @@
                               reg
                               ty)
                             tail))]
-                      [(ErrCompilerBackend message)
-                        (ErrCompilerBackend message)])]
-                  [(ErrBackendReg _)
-                    (ErrCompilerBackend
+                      [(ResultCompilerBackend.Err message)
+                        (ResultCompilerBackend.Err message)])]
+                  [(ResultBackendReg.Err _)
+                    (ResultCompilerBackend.Err
                       (box
                         (compiler-diagnostic-at-start
                           ""
@@ -22729,7 +22971,7 @@
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
   (match func
-    [(IrFunction name params ret-ty vars raw-blocks)
+    [(CompilerIrFunction.Function name params ret-ty vars raw-blocks)
       ;; The provenance fallback diagnostic for this function (#605): backend
       ;; errors raised while emitting its body stamp this function's source span
       ;; (or `1:1` when none was recorded) rather than always `1:1`.
@@ -22737,7 +22979,7 @@
         [blocks : CompilerIrBlockList
           (compiler-ir-block-list-force-cons raw-blocks)]
         [walk-func : CompilerIrFunction
-          (IrFunction name params ret-ty vars blocks)]
+          (CompilerIrFunction.Function name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic
           (compiler-backend-function-diagnostic-index span-index name "")]
         ;; #2386: ensure the register allocator can see the program-wide group
@@ -22768,12 +23010,12 @@
               vars
               (compiler-reg-function-var-types walk-func)
               reg-plan)
-            (CompilerRegCallSaveRewrite
+            (CompilerRegCallSaveRewrite.Rewrite
               blocks
               vars
               vars
-              CompilerRegAssignmentNil
-              CompilerRegVarTypeNil))]
+              CompilerRegAssignmentList.Nil
+              CompilerRegVarTypeList.Nil))]
         [call-save-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -22782,12 +23024,17 @@
             reg-plan)]
         [call-save-blocks : CompilerIrBlockList
           (match call-save-rewrite
-            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
+            [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
         [call-save-vars : i64
           (match call-save-rewrite
-            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
+            [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars _ _) out-vars])]
         [loop-split-func : CompilerIrFunction
-          (IrFunction name params ret-ty call-save-vars call-save-blocks)]
+          (CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            call-save-vars
+            call-save-blocks)]
         [loop-split-rewrite : CompilerRegCallSaveRewrite
           (if call-save-enabled
             (compiler-reg-loop-split-rewrite-blocks
@@ -22796,12 +23043,12 @@
               call-save-vars
               (compiler-reg-function-var-types loop-split-func)
               call-save-reg-plan)
-            (CompilerRegCallSaveRewrite
+            (CompilerRegCallSaveRewrite.Rewrite
               call-save-blocks
               call-save-vars
               call-save-vars
-              CompilerRegAssignmentNil
-              CompilerRegVarTypeNil))]
+              CompilerRegAssignmentList.Nil
+              CompilerRegVarTypeList.Nil))]
         [rewrite-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -22810,12 +23057,17 @@
             reg-plan)]
         [rewritten-blocks : CompilerIrBlockList
           (match loop-split-rewrite
-            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
+            [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
         [rewritten-vars : i64
           (match loop-split-rewrite
-            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
+            [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars _ _) out-vars])]
         [remat-func : CompilerIrFunction
-          (IrFunction name params ret-ty rewritten-vars rewritten-blocks)]
+          (CompilerIrFunction.Function
+            name
+            params
+            ret-ty
+            rewritten-vars
+            rewritten-blocks)]
         [remat-rewrite : CompilerRegCallSaveRewrite
           (if call-save-enabled
             (compiler-reg-remat-rewrite-blocks
@@ -22824,12 +23076,12 @@
               rewritten-vars
               (compiler-reg-function-var-types remat-func)
               rewrite-reg-plan)
-            (CompilerRegCallSaveRewrite
+            (CompilerRegCallSaveRewrite.Rewrite
               rewritten-blocks
               rewritten-vars
               rewritten-vars
-              CompilerRegAssignmentNil
-              CompilerRegVarTypeNil))]
+              CompilerRegAssignmentList.Nil
+              CompilerRegVarTypeList.Nil))]
         [remat-reg-plan : CompilerRegPlan
           (if call-save-enabled
             (compiler-reg-plan-with-call-save-rewrite
@@ -22838,10 +23090,10 @@
             rewrite-reg-plan)]
         [remat-blocks : CompilerIrBlockList
           (match remat-rewrite
-            [(CompilerRegCallSaveRewrite out-blocks _ _ _ _) out-blocks])]
+            [(CompilerRegCallSaveRewrite.Rewrite out-blocks _ _ _ _) out-blocks])]
         [remat-vars : i64
           (match remat-rewrite
-            [(CompilerRegCallSaveRewrite _ _ out-vars _ _) out-vars])]
+            [(CompilerRegCallSaveRewrite.Rewrite _ _ out-vars _ _) out-vars])]
         [_regalloc-census : unit
           (cfg
             regalloc-census
@@ -22856,7 +23108,12 @@
         ;; costly to repeat).
         [fn-group-vars : CompilerLiveI64Set
           (compiler-reg-function-group-vars
-            (IrFunction name params ret-ty remat-vars remat-blocks)
+            (CompilerIrFunction.Function
+              name
+              params
+              ret-ty
+              remat-vars
+              remat-blocks)
             plan-types)]
         [has-group-vars : bool (> (compiler-live-set-count fn-group-vars) 0)]
         ;; #2598: compact the frame after regalloc by renumbering stack-resident
@@ -22878,26 +23135,26 @@
             remat-vars)]
         [assignments : CompilerRegAssignmentList
           (match coloring
-            [(CompilerRegColoringNone)
+            [(CompilerRegColoring.None)
               (compiler-reg-plan-assignments remat-reg-plan)]
-            [(CompilerRegColoringRemap remap _)
+            [(CompilerRegColoring.Remap remap _)
               (compiler-reg-color-rebuild-assignments
                 remap
                 remat-vars
                 (compiler-reg-plan-assignments remat-reg-plan))])]
         [emit-blocks-list : CompilerIrBlockList
           (match coloring
-            [(CompilerRegColoringNone) remat-blocks]
-            [(CompilerRegColoringRemap remap _)
+            [(CompilerRegColoring.None) remat-blocks]
+            [(CompilerRegColoring.Remap remap _)
               (compiler-reg-remap-blocks remap remat-blocks)])]
         [slot-vars : i64
           (match coloring
-            [(CompilerRegColoringNone) remat-vars]
-            [(CompilerRegColoringRemap _ slots) slots])]
+            [(CompilerRegColoring.None) remat-vars]
+            [(CompilerRegColoring.Remap _ slots) slots])]
         [types : CompilerRegVarTypeList
           (match coloring
-            [(CompilerRegColoringNone) plan-types]
-            [(CompilerRegColoringRemap remap _)
+            [(CompilerRegColoring.None) plan-types]
+            [(CompilerRegColoring.Remap remap _)
               (compiler-reg-color-rebuild-types remap remat-vars plan-types)])]
         [symbol : String
           (compiler-backend-function-symbol-index program-index name)]
@@ -22911,7 +23168,7 @@
             emit-blocks-list
             program-index)]
         (if (compiler-backend-atomic-call-name? symbol)
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (compiler-backend-emit-atomic-helper-function target symbol))
           (let
             [_phi-targets : unit
@@ -22919,7 +23176,7 @@
                 compiler-backend-current-phi-targets
                 (compiler-backend-phi-target-labels-for-blocks emit-blocks-list))]
             (match (if identity-tail-forwarder?
-              (OkCompilerBackend "")
+              (ResultCompilerBackend.Ok "")
               (compiler-backend-emit-param-spills
                 target
                 assignments
@@ -22930,7 +23187,7 @@
                 0
                 program-index
                 slot-vars))
-              [(OkCompilerBackend spills)
+              [(ResultCompilerBackend.Ok spills)
                 (let
                   [label-scope : String
                     (compiler-backend-function-label-scope program-index name)]
@@ -22966,7 +23223,7 @@
                     spans
                     func-diag
                     use-counts)
-                    [(OkCompilerBackend body)
+                    [(ResultCompilerBackend.Ok body)
                       (let
                         [frame : i64
                           (+
@@ -22986,7 +23243,7 @@
                               false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
-                        (OkCompilerBackend
+                        (ResultCompilerBackend.Ok
                           (str_cat.str-cat
                             (compiler-backend-function-symbol-map-comment
                               program-index
@@ -23034,7 +23291,7 @@
                               emit-blocks-list)
                             (compiler-backend-emit-windows-seh-endproc target)
                             "\n")))]
-                    [(ErrCompilerBackend message)
+                    [(ResultCompilerBackend.Err message)
                       (let
                         [_addr-forward-done : unit
                           (begin
@@ -23043,8 +23300,9 @@
                               false)
                             (compiler-backend-addr-of-forwarding-disable!)
                             (compiler-backend-fuse-need-disable!))]
-                        (ErrCompilerBackend message))]))]
-              [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))]))
+                        (ResultCompilerBackend.Err message))]))]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)]))))]))
 
 ;; 0: every function escapes through a per-function scratch arena. The old
 ;; limit of 24 sent small-function transients to the program arena to skip
@@ -23056,7 +23314,7 @@
 
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func
-    [(IrFunction _ _ _ _ blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (<=
         (compiler-ir-block-list-instruction-count blocks)
         (compiler-backend-direct-emit-instr-limit))]))
@@ -23163,8 +23421,9 @@
   [crt-entry : bool]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
   (match functions
-    [(IrFunctionNil) (OkCompilerBackend (text_buf.text-buf-render buf))]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil)
+      (ResultCompilerBackend.Ok (text_buf.text-buf-render buf))]
+    [(CompilerIrFunctionList.Cons func rest)
       (match (compiler-backend-emit-function-escaping
         target
         (compiler-backend-effective-function-mode mode func)
@@ -23179,7 +23438,7 @@
         span-index
         emit-entry
         crt-entry)
-        [(OkCompilerBackend head)
+        [(ResultCompilerBackend.Ok head)
           (compiler-backend-emit-functions-into
             target
             mode
@@ -23195,8 +23454,9 @@
             emit-entry
             crt-entry
             (text_buf.text-buf-append buf head))]
-        [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-    [(IrFunctionArray seq)
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-emit-functions-into
         target
         mode
@@ -23232,7 +23492,7 @@
       (compiler-backend-global-types globals)]
     ;; #2386: hand the program-wide group word-count map to the register allocator
     ;; so it recognises group-typed vars (call results, params, movs) that no local
-    ;; IrInstrPack produced.
+    ;; CompilerIrInstr.Pack produced.
     [_ra-grp : unit
       (compiler-reg-set-group-counts!
         (struct-get program-index group-word-counts))]
@@ -23256,7 +23516,7 @@
       (text_buf.text-buf-empty))))
 
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
-  (IrFunction
+  (CompilerIrFunction.Function
     "main"
     IrParamNil
     (AstTyI64)
@@ -23266,9 +23526,10 @@
         (compiler-ir-block
           "entry"
           (compiler-ir-instr-cons
-            (IrInstrReturn (IrSomeValue (IrValueI64 0)))
-            IrInstrNil))
-        IrBlockNil))))
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil))))
 
 (define (compiler-backend-functions-with-implicit-main
   [functions : CompilerIrFunctionList]
@@ -23297,8 +23558,8 @@
   [crt-entry : bool]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (match functions
-    [(IrFunctionNil) (OkCompilerBackendBuffer buf)]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(CompilerIrFunctionList.Cons func rest)
       (begin
         (cfg compile-profile (compiler-backend-profile-detail-start))
         (match (compiler-backend-emit-function-escaping
@@ -23315,7 +23576,7 @@
           span-index
           emit-entry
           crt-entry)
-          [(OkCompilerBackend head)
+          [(ResultCompilerBackend.Ok head)
             (begin
               (cfg
                 compile-profile
@@ -23337,15 +23598,15 @@
                 emit-entry
                 crt-entry
                 (text_buf.text-buf-append buf head)))]
-          [(ErrCompilerBackend message)
+          [(ResultCompilerBackend.Err message)
             (begin
               (cfg
                 compile-profile
                 (compiler-backend-profile-detail-finish
                   "function"
                   (compiler-backend-profile-function-name func)))
-              (ErrCompilerBackendBuffer message))]))]
-    [(IrFunctionArray seq)
+              (ResultCompilerBackendBuffer.Err message))]))]
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-emit-functions-buffer-into
         target
         mode
@@ -23416,11 +23677,11 @@
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match (compiler-backend-index-signature program-index name)
-    [(CompilerBackendSomeSignature _ _)
+    [(CompilerBackendMaybeSignature.Some _ _)
       (text_buf.text-buf-append
         buf
         (compiler-backend-emit-closure-descriptor-entry name))]
-    [(CompilerBackendNoSignature) buf]))
+    [(CompilerBackendMaybeSignature.No) buf]))
 
 (define (compiler-backend-emit-closure-descriptor-entries-into
   [names : BackendStringList]
@@ -23429,8 +23690,8 @@
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match names
-    [(BackendStringNil) buf]
-    [(BackendStringCons name rest)
+    [(BackendStringList.Nil) buf]
+    [(BackendStringList.Cons name rest)
       (compiler-backend-emit-closure-descriptor-entries-into
         (box-get rest)
         functions
@@ -23463,7 +23724,7 @@
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match names
-    [(BackendStringNil) buf]
+    [(BackendStringList.Nil) buf]
     [_
       (compiler-backend-emit-closure-descriptor-entries-into
         names
@@ -23476,8 +23737,8 @@
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]) : i64
   (match target
-    [(BackendTargetLinux) 0]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Linux) 0]
+    [(CompilerBackendTarget.Windows)
       ;; #2386: no callee signature here -- size conservatively at two positions
       ;; per forwarded argument so a register-group never overruns the area.
       (compiler-backend-round-up-16
@@ -23512,7 +23773,7 @@
           ;; outgoing stack-arg area would clobber them otherwise).
           (compiler-backend-frame-slots-with-groups
             vars
-            CompilerRegAssignmentNil
+            CompilerRegAssignmentList.Nil
             (compiler-backend-type-list-has-group? param-types program-index)))
         (compiler-backend-closure-adapter-outgoing-frame-space target args))]
     [call-space : i64
@@ -23525,7 +23786,7 @@
     [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
     (match (compiler-backend-emit-param-spills
       target
-      CompilerRegAssignmentNil
+      CompilerRegAssignmentList.Nil
       params
       1
       0
@@ -23533,10 +23794,10 @@
       0
       program-index
       vars)
-      [(OkCompilerBackend spills)
+      [(ResultCompilerBackend.Ok spills)
         (match (compiler-backend-emit-call-args
           target
-          CompilerRegAssignmentNil
+          CompilerRegAssignmentList.Nil
           args
           param-types
           false
@@ -23548,8 +23809,8 @@
           diag
           program-index
           vars)
-          [(OkCompilerBackend args-asm)
-            (OkCompilerBackend
+          [(ResultCompilerBackend.Ok args-asm)
+            (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 (compiler-backend-emit-function-entry
                   target
@@ -23586,8 +23847,9 @@
                                 "\n")))
                           "")))))
                 ""))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-emit-closure-entry-adapters-into
   [target : CompilerBackendTarget]
@@ -23605,9 +23867,10 @@
     plan
     program-index
     buf)
-    [(OkCompilerBackendBuffer out)
-      (OkCompilerBackend (text_buf.text-buf-render out))]
-    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackendBuffer.Ok out)
+      (ResultCompilerBackend.Ok (text_buf.text-buf-render out))]
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-into
   [target : CompilerBackendTarget]
@@ -23618,10 +23881,10 @@
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (match names
-    [(BackendStringNil) (OkCompilerBackendBuffer buf)]
-    [(BackendStringCons name rest)
+    [(BackendStringList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(BackendStringList.Cons name rest)
       (match (compiler-backend-index-signature program-index name)
-        [(CompilerBackendSomeSignature param-types ret-ty)
+        [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter
             target
             name
@@ -23631,7 +23894,7 @@
             functions
             externs
             program-index)
-            [(OkCompilerBackend head)
+            [(ResultCompilerBackend.Ok head)
               (compiler-backend-emit-closure-entry-adapters-buffer-into
                 target
                 (box-get rest)
@@ -23640,8 +23903,9 @@
                 plan
                 program-index
                 (text_buf.text-buf-append buf head))]
-            [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]
-        [(CompilerBackendNoSignature)
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackendBuffer.Err message)])]
+        [(CompilerBackendMaybeSignature.No)
           (compiler-backend-emit-closure-entry-adapters-buffer-into
             target
             (box-get rest)
@@ -23671,27 +23935,27 @@
   [strings : BackendStringList]
   [out : BackendStringList]) : BackendStringList
   (match strings
-    [(BackendStringNil) out]
-    [(BackendStringCons head rest)
+    [(BackendStringList.Nil) out]
+    [(BackendStringList.Cons head rest)
       (compiler-backend-string-list-reverse-into
         (box-get rest)
         (compiler-backend-string-cons head out))]))
 
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
-  (compiler-backend-string-list-reverse-into strings BackendStringNil))
+  (compiler-backend-string-list-reverse-into strings BackendStringList.Nil))
 
 (define (compiler-backend-float-list-reverse-into
   [floats : BackendFloatList]
   [out : BackendFloatList]) : BackendFloatList
   (match floats
-    [(BackendFloatNil) out]
-    [(BackendFloatCons ty bits rest)
+    [(BackendFloatList.Nil) out]
+    [(BackendFloatList.Cons ty bits rest)
       (compiler-backend-float-list-reverse-into
         (box-get rest)
         (compiler-backend-float-cons ty bits out))]))
 
 (define (compiler-backend-float-list-reverse [floats : BackendFloatList]) : BackendFloatList
-  (compiler-backend-float-list-reverse-into floats BackendFloatNil))
+  (compiler-backend-float-list-reverse-into floats BackendFloatList.Nil))
 
 (define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringList
   (compiler-backend-string-list-reverse (struct-get set items)))
@@ -23749,13 +24013,13 @@
   [collections : CompilerBackendProgramCollections]
   [value : CompilerIrValue]) : CompilerBackendProgramCollections
   (match value
-    [(IrValueFunction name)
+    [(CompilerIrValue.Function name)
       (compiler-backend-program-collections-add-function collections name)]
-    [(IrValueString text)
+    [(CompilerIrValue.String text)
       (compiler-backend-program-collections-add-string collections text)]
-    [(IrValueF64 bits)
+    [(CompilerIrValue.F64 bits)
       (compiler-backend-collect-float-both-collections collections bits)]
-    [(IrValueBytes text)
+    [(CompilerIrValue.Bytes text)
       (compiler-backend-program-collections-add-bytes collections text)]
     [_ collections]))
 
@@ -23763,8 +24027,8 @@
   [collections : CompilerBackendProgramCollections]
   [value : CompilerIrMaybeValue]) : CompilerBackendProgramCollections
   (match value
-    [(IrNoValue) collections]
-    [(IrSomeValue inner)
+    [(CompilerIrMaybeValue.No) collections]
+    [(CompilerIrMaybeValue.Some inner)
       (compiler-backend-collect-value-collections collections inner)]))
 
 (define (compiler-backend-collect-value-list-collections
@@ -23794,14 +24058,14 @@
   [collections : CompilerBackendProgramCollections]
   [args : CompilerIrCallArgs]) : CompilerBackendProgramCollections
   (match args
-    [(IrCallArgsNil) collections]
-    [(IrCallArgsOne value)
+    [(CompilerIrCallArgs.Nil) collections]
+    [(CompilerIrCallArgs.One value)
       (compiler-backend-collect-value-collections collections value)]
-    [(IrCallArgsTwo a b)
+    [(CompilerIrCallArgs.Two a b)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections a)
         b)]
-    [(IrCallArgsArray values)
+    [(CompilerIrCallArgs.Array values)
       (compiler-backend-collect-call-args-array-collections
         collections
         values
@@ -23823,8 +24087,8 @@
   [collections : CompilerBackendProgramCollections]
   [inputs : CompilerIrPhiInputList]) : CompilerBackendProgramCollections
   (match inputs
-    [(IrPhiInputNil) collections]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) collections]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-collect-phi-collections
         (compiler-backend-collect-value-collections collections value)
         (box-get rest))]))
@@ -23833,41 +24097,45 @@
   [collections : CompilerBackendProgramCollections]
   [instr : CompilerIrInstr]) : CompilerBackendProgramCollections
   (match instr
-    [(IrInstrMov _ src _)
+    [(CompilerIrInstr.Mov _ src _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
         rhs)]
-    [(IrInstrUnOp _ op src ty)
+    [(CompilerIrInstr.UnOp _ op src ty)
       (let
         [with-src : CompilerBackendProgramCollections
           (compiler-backend-collect-value-collections collections src)]
         (match op
-          [(IrUnNeg)
+          [(CompilerIrUnOp.Neg)
             (if (compiler-backend-f64-type? ty)
               (compiler-backend-program-collections-mark-f64-neg with-src)
               with-src)]
           [_ with-src]))]
-    [(IrInstrCall _ _ args _)
+    [(CompilerIrInstr.Call _ _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
-    [(IrInstrCallIndirect _ func args _)
+    [(CompilerIrInstr.CallIndirect _ func args _)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
-    [(IrInstrCallIndirectC _ func args _)
+    [(CompilerIrInstr.CallIndirectC _ func args _)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
           (compiler-backend-collect-call-args-collections
             (compiler-backend-collect-value-collections collections base)
             args)])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base func args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+            base
+            func
+            args
+            _)
           (compiler-backend-collect-call-args-collections
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections collections base)
@@ -23879,85 +24147,91 @@
           (compiler-backend-collect-spmd-call-args-collections
             (compiler-backend-collect-value-collections collections active-mask)
             args)])]
-    [(IrInstrTailCall _ args _)
+    [(CompilerIrInstr.TailCall _ args _)
       (compiler-backend-collect-call-args-collections collections args)]
-    [(IrInstrStore _ value _)
+    [(CompilerIrInstr.Store _ value _)
       (compiler-backend-collect-value-collections collections value)]
-    [(IrInstrBranch cond _ _)
+    [(CompilerIrInstr.Branch cond _ _)
       (compiler-backend-collect-value-collections collections cond)]
-    [(IrInstrReturn maybe)
+    [(CompilerIrInstr.Return maybe)
       (compiler-backend-collect-maybe-value-collections collections maybe)]
-    [(IrInstrPhi _ inputs _)
+    [(CompilerIrInstr.Phi _ inputs _)
       (compiler-backend-collect-phi-collections collections inputs)]
-    [(IrInstrGep _ base offset _)
+    [(CompilerIrInstr.Gep _ base offset _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections base)
         offset)]
-    [(IrInstrLoad _ src _)
+    [(CompilerIrInstr.Load _ src _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrStorePtr dst src _)
+    [(CompilerIrInstr.StorePtr dst src _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections dst)
         src)]
-    [(IrInstrCopyBytes dst src _)
+    [(CompilerIrInstr.CopyBytes dst src _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections dst)
         src)]
-    [(IrInstrBoundsCheck index length _)
+    [(CompilerIrInstr.BoundsCheck index length _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections index)
         length)]
-    [(IrInstrCast _ src _ _)
+    [(CompilerIrInstr.Cast _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrBitcast _ src _ _)
+    [(CompilerIrInstr.Bitcast _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrSplat _ value _ _)
+    [(CompilerIrInstr.Splat _ value _ _)
       (compiler-backend-collect-value-collections collections value)]
-    [(IrInstrVectorBinOp payload-box)
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ _)
+        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections lhs)
             rhs)])]
-    [(IrInstrVectorReduce _ _ src _ _)
+    [(CompilerIrInstr.VectorReduce _ _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrVectorCompare payload-box)
+    [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ _)
+        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections collections lhs)
             rhs)])]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections lhs)
         rhs)]
-    [(IrInstrMaskNot _ src _)
+    [(CompilerIrInstr.MaskNot _ src _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrMaskReduce _ _ src _)
+    [(CompilerIrInstr.MaskReduce _ _ src _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ _)
+        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ _)
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections collections mask)
               on-true)
             on-false)])]
-    [(IrInstrVectorLoad _ base index _ _)
+    [(CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections base)
         index)]
-    [(IrInstrVectorStore payload-box)
+    [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload base index value _ _)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections collections base)
               index)
             value)])]
-    [(IrInstrPredicatedStore payload-box)
+    [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload base index value mask _ _)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            _
+            _)
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections
@@ -23965,43 +24239,43 @@
                 index)
               value)
             mask)])]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
           (compiler-backend-collect-value-collections
             (compiler-backend-collect-value-collections
               (compiler-backend-collect-value-collections collections base)
               index)
             mask)])]
-    [(IrInstrTailMask _ index length _)
+    [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections index)
         length)]
-    [(IrInstrCpuId _ leaf subleaf _)
+    [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections leaf)
         subleaf)]
-    [(IrInstrXgetbv _ index)
+    [(CompilerIrInstr.Xgetbv _ index)
       (compiler-backend-collect-value-collections collections index)]
-    [(IrInstrSyscall _ args)
+    [(CompilerIrInstr.Syscall _ args)
       (compiler-backend-collect-call-args-collections collections args)]
-    [(IrInstrPack _ words _)
+    [(CompilerIrInstr.Pack _ words _)
       (compiler-backend-collect-value-list-collections collections words)]
-    [(IrInstrWord _ src _ _)
+    [(CompilerIrInstr.Word _ src _ _)
       (compiler-backend-collect-value-collections collections src)]
-    [(IrInstrTailCallIndirect func args _)
+    [(CompilerIrInstr.TailCallIndirect func args _)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
-    [(IrInstrAlloc _ _) collections]
-    [(IrInstrAddrOf _ _) collections]
-    [(IrInstrLaneId _ lanes elem-ty)
+    [(CompilerIrInstr.Alloc _ _) collections]
+    [(CompilerIrInstr.AddrOf _ _) collections]
+    [(CompilerIrInstr.LaneId _ lanes elem-ty)
       (compiler-backend-collect-lane-id-collections collections lanes elem-ty)]
-    [(IrInstrEntryArgc _) collections]
-    [(IrInstrEntryArgv _) collections]
-    [(IrInstrEntryEnvp _) collections]
-    [(IrInstrJump _) collections]
-    [(IrInstrSwitch index _ _ _)
+    [(CompilerIrInstr.EntryArgc _) collections]
+    [(CompilerIrInstr.EntryArgv _) collections]
+    [(CompilerIrInstr.EntryEnvp _) collections]
+    [(CompilerIrInstr.Jump _) collections]
+    [(CompilerIrInstr.Switch index _ _ _)
       (compiler-backend-collect-value-collections collections index)]))
 
 (define (compiler-backend-collect-instr-seq-collections
@@ -24027,28 +24301,28 @@
   [collections : CompilerBackendProgramCollections]
   [blocks : CompilerIrBlockList]) : CompilerBackendProgramCollections
   (match (compiler-backend-collect-blocks-shared
-    (BackendCollectCollections collections)
+    (CompilerBackendCollectState.Collections collections)
     blocks)
-    [(BackendCollectCollections out) out]
+    [(CompilerBackendCollectState.Collections out) out]
     [_ collections]))
 
 (define (compiler-backend-collect-function-collections
   [collections : CompilerBackendProgramCollections]
   [functions : CompilerIrFunctionList]) : CompilerBackendProgramCollections
   (match (compiler-backend-collect-functions-shared
-    (BackendCollectCollections collections)
+    (CompilerBackendCollectState.Collections collections)
     functions)
-    [(BackendCollectCollections out) out]
+    [(CompilerBackendCollectState.Collections out) out]
     [_ collections]))
 
 (define (compiler-backend-collect-global-collections
   [collections : CompilerBackendProgramCollections]
   [globals : CompilerIrGlobalList]) : CompilerBackendProgramCollections
   (match globals
-    [(IrGlobalNil) collections]
-    [(IrGlobalCons global rest)
+    [(CompilerIrGlobalList.Nil) collections]
+    [(CompilerIrGlobalList.Cons global rest)
       (match global
-        [(IrGlobal _ _ value)
+        [(CompilerIrGlobal.Global _ _ value)
           (compiler-backend-collect-global-collections
             (compiler-backend-collect-value-collections collections value)
             (box-get rest))])]))
@@ -24056,7 +24330,7 @@
 (define (compiler-backend-collect-program-collections
   [program : CompilerIrProgram]) : CompilerBackendProgramCollections
   (match program
-    [(IrProgram globals functions _)
+    [(CompilerIrProgram.Program globals functions _)
       (compiler-backend-collect-function-collections
         (compiler-backend-collect-global-collections
           (compiler-backend-program-collections-new)
@@ -24102,8 +24376,8 @@
   [strings : BackendStringList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match strings
-    [(BackendStringNil) buf]
-    [(BackendStringCons text rest)
+    [(BackendStringList.Nil) buf]
+    [(BackendStringList.Cons text rest)
       (compiler-backend-emit-string-entries-into
         (box-get rest)
         (compiler-backend-emit-string-entry-into text buf))]))
@@ -24118,7 +24392,7 @@
   [strings : BackendStringList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match strings
-    [(BackendStringNil) buf]
+    [(BackendStringList.Nil) buf]
     [_
       (text_buf.text-buf-append
         (compiler-backend-emit-string-entries-into
@@ -24190,8 +24464,8 @@
   [items : BackendStringList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match items
-    [(BackendStringNil) buf]
-    [(BackendStringCons bytes rest)
+    [(BackendStringList.Nil) buf]
+    [(BackendStringList.Cons bytes rest)
       (compiler-backend-emit-bytes-entries-into
         (box-get rest)
         (compiler-backend-emit-bytes-entry-into bytes buf))]))
@@ -24200,7 +24474,7 @@
   [items : BackendStringList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match items
-    [(BackendStringNil) buf]
+    [(BackendStringList.Nil) buf]
     [_
       (text_buf.text-buf-append
         (compiler-backend-emit-bytes-entries-into
@@ -24235,8 +24509,8 @@
   [floats : BackendFloatList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match floats
-    [(BackendFloatNil) buf]
-    [(BackendFloatCons ty bits rest)
+    [(BackendFloatList.Nil) buf]
+    [(BackendFloatList.Cons ty bits rest)
       (compiler-backend-emit-float-entries-into
         (box-get rest)
         (text_buf.text-buf-append
@@ -24251,7 +24525,7 @@
   [floats : BackendFloatList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match floats
-    [(BackendFloatNil) buf]
+    [(BackendFloatList.Nil) buf]
     [_
       (compiler-backend-emit-float-entries-into
         floats
@@ -24279,51 +24553,51 @@
   (match value
     ;; #2386: a register-group global stores its value inline (16 bytes), so its
     ;; startup-initialized slot reserves two words rather than one.
-    [(IrValueUnit)
+    [(CompilerIrValue.Unit)
       (if (compiler-backend-group-type? program-index ty)
-        (OkCompilerBackend "    .quad 0\n    .quad 0\n")
-        (OkCompilerBackend "    .quad 0\n"))]
-    [(IrValueI64 n)
-      (OkCompilerBackend
+        (ResultCompilerBackend.Ok "    .quad 0\n    .quad 0\n")
+        (ResultCompilerBackend.Ok "    .quad 0\n"))]
+    [(CompilerIrValue.I64 n)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat "    .quad " (string.int->string n) "\n"))]
-    [(IrValueBool b)
+    [(CompilerIrValue.Bool b)
       (if b
-        (OkCompilerBackend "    .quad 1\n")
-        (OkCompilerBackend "    .quad 0\n"))]
-    [(IrValueChar c)
-      (OkCompilerBackend
+        (ResultCompilerBackend.Ok "    .quad 1\n")
+        (ResultCompilerBackend.Ok "    .quad 0\n"))]
+    [(CompilerIrValue.Char c)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    .quad "
           (string.int->string (compiler-backend-char-code c))
           "\n"))]
-    [(IrValueF64 bits)
-      (OkCompilerBackend (compiler-backend-float-bits-directive ty bits))]
-    [(IrValueGlobal name)
-      (OkCompilerBackend
+    [(CompilerIrValue.F64 bits)
+      (ResultCompilerBackend.Ok (compiler-backend-float-bits-directive ty bits))]
+    [(CompilerIrValue.Global name)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
-    [(IrValueGlobalAddr name)
-      (OkCompilerBackend
+    [(CompilerIrValue.GlobalAddr name)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
-    [(IrValueFunction name)
-      (OkCompilerBackend
+    [(CompilerIrValue.Function name)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    .quad "
           (compiler-backend-closure-descriptor-label name)
           "\n"))]
-    [(IrValueString text)
-      (OkCompilerBackend
+    [(CompilerIrValue.String text)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    .quad "
           (compiler-backend-string-fat-label text)
           "\n"))]
-    [(IrValueBytes text)
-      (OkCompilerBackend
+    [(CompilerIrValue.Bytes text)
+      (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    .quad "
           (compiler-backend-bytes-fat-label text)
           "\n"))]
     [_
-      (ErrCompilerBackend
+      (ResultCompilerBackend.Err
         (box
           (compiler-diagnostic-at-start
             ""
@@ -24333,7 +24607,7 @@
   [ty : AstType]
   [value : CompilerIrValue]) : bool
   (match value
-    [(IrValueUnit)
+    [(CompilerIrValue.Unit)
       (match ty
         [(AstTyUnit) false]
         [_ true])]
@@ -24344,14 +24618,14 @@
   [symbol : String]
   [size : i64]) : String
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (str_cat.str-cat
         "    .comm "
         symbol
         ", "
         (string.int->string size)
         ", 8\n")]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (str_cat.str-cat
         "    .comm "
         symbol
@@ -24364,11 +24638,11 @@
   [global : CompilerIrGlobal]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (match global
-    [(IrGlobal name ty value)
+    [(CompilerIrGlobal.Global name ty value)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (if (compiler-backend-runtime-global? ty value)
-          (OkCompilerBackend
+          (ResultCompilerBackend.Ok
             (str_cat.str-cat
               ".globl "
               symbol
@@ -24381,8 +24655,8 @@
                   8))
               ""))
           (match (compiler-backend-global-value-asm ty value program-index)
-            [(OkCompilerBackend value-asm)
-              (OkCompilerBackend
+            [(ResultCompilerBackend.Ok value-asm)
+              (ResultCompilerBackend.Ok
                 (str_cat.str-cat
                   ".globl "
                   symbol
@@ -24391,7 +24665,8 @@
                   ":\n"
                   value-asm
                   ""))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])))]))
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])))]))
 
 (define (compiler-backend-emit-globals-into
   [target : CompilerBackendTarget]
@@ -24403,9 +24678,10 @@
     globals
     buf
     program-index)
-    [(OkCompilerBackendBuffer out)
-      (OkCompilerBackend (text_buf.text-buf-render out))]
-    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackendBuffer.Ok out)
+      (ResultCompilerBackend.Ok (text_buf.text-buf-render out))]
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-globals-buffer-into
   [target : CompilerBackendTarget]
@@ -24413,16 +24689,17 @@
   [buf : text_buf.TextBuf]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackendBuffer
   (match globals
-    [(IrGlobalNil) (OkCompilerBackendBuffer buf)]
-    [(IrGlobalCons global rest)
+    [(CompilerIrGlobalList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(CompilerIrGlobalList.Cons global rest)
       (match (compiler-backend-emit-global target global program-index)
-        [(OkCompilerBackend head)
+        [(ResultCompilerBackend.Ok head)
           (compiler-backend-emit-globals-buffer-into
             target
             (box-get rest)
             (text_buf.text-buf-append buf head)
             program-index)]
-        [(ErrCompilerBackend message) (ErrCompilerBackendBuffer message)])]))
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackendBuffer.Err message)])]))
 
 (define (compiler-backend-emit-globals
   [target : CompilerBackendTarget]
@@ -24473,10 +24750,10 @@
   [globals : CompilerIrGlobalList]
   [program-index : CompilerBackendProgramIndex]) : String
   (match globals
-    [(IrGlobalNil) ""]
-    [(IrGlobalCons global rest)
+    [(CompilerIrGlobalList.Nil) ""]
+    [(CompilerIrGlobalList.Cons global rest)
       (match global
-        [(IrGlobal name ty value)
+        [(CompilerIrGlobal.Global name ty value)
           (str_cat.str-cat
             (if (compiler-backend-runtime-global? ty value)
               (compiler-backend-global-init-call name ty program-index)
@@ -24487,14 +24764,14 @@
   [functions : CompilerIrFunctionList]
   [name : String]) : bool
   (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction func-name _ _ _ _)
+        [(CompilerIrFunction.Function func-name _ _ _ _)
           (if (string.string-eq func-name name)
             true
             (compiler-backend-function-list-defines? (box-get rest) name))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-function-list-defines?
         (compiler-ir-function-seq-to-list seq)
         name)]))
@@ -24512,16 +24789,16 @@
   [functions : CompilerIrFunctionList]
   [helper : String]) : bool
   (match functions
-    [(IrFunctionNil) false]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name _ _ _ _)
+        [(CompilerIrFunction.Function name _ _ _ _)
           (if (compiler-backend-runtime-prelude-helper-function? name helper)
             true
             (compiler-backend-function-list-defines-runtime-prelude-helper?
               (box-get rest)
               helper))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         (compiler-ir-function-seq-to-list seq)
         helper)]))
@@ -24530,10 +24807,10 @@
   [externs : CompilerIrExternList]
   [name : String]) : bool
   (match externs
-    [(IrExternNil) false]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) false]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _ _)
+        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
           (if (string.string-eq extern-name name)
             true
             (if (string.string-eq link-symbol name)
@@ -24552,10 +24829,10 @@
   [externs : CompilerIrExternList]
   [name : String]) : String
   (match externs
-    [(IrExternNil) name]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) name]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _ _)
+        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
           (if (string.string-eq extern-name name)
             link-symbol
             (compiler-backend-extern-list-link-symbol (box-get rest) name))])]))
@@ -24567,10 +24844,12 @@
   (if (compiler-backend-float-type? ty)
     false
     (match op
-      [(IrBinDiv) (not (compiler-backend-divmod-safe-literal? rhs ty))]
-      [(IrBinMod) (not (compiler-backend-divmod-safe-literal? rhs ty))]
-      [(IrBinSafeDiv) false]
-      [(IrBinSafeMod) false]
+      [(CompilerIrBinOp.Div)
+        (not (compiler-backend-divmod-safe-literal? rhs ty))]
+      [(CompilerIrBinOp.Mod)
+        (not (compiler-backend-divmod-safe-literal? rhs ty))]
+      [(CompilerIrBinOp.SafeDiv) false]
+      [(CompilerIrBinOp.SafeMod) false]
       [_ false])))
 
 (define (compiler-backend-binop-needs-shift-abort?
@@ -24579,8 +24858,8 @@
   (if (compiler-backend-float-type? ty)
     false
     (match op
-      [(IrBinShl) true]
-      [(IrBinShr) true]
+      [(CompilerIrBinOp.Shl) true]
+      [(CompilerIrBinOp.Shr) true]
       [_ false])))
 
 (define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
@@ -24674,17 +24953,17 @@
   [index : CompilerBackendRuntimeIndex]
   [instr : CompilerIrInstr]) : CompilerBackendRuntimeIndex
   (match instr
-    [(IrInstrCall _ call-name _ _)
+    [(CompilerIrInstr.Call _ call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ call-name _ _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ call-name _ _)
           (compiler-backend-runtime-index-add-call index call-name)])]
-    [(IrInstrTailCall call-name _ _)
+    [(CompilerIrInstr.TailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
-    [(IrInstrBoundsCheck _ _ _)
+    [(CompilerIrInstr.BoundsCheck _ _ _)
       (compiler-backend-runtime-index-add-call index "tl_oob_abort")]
-    [(IrInstrBinOp _ op _ rhs ty)
+    [(CompilerIrInstr.BinOp _ op _ rhs ty)
       (let
         [with-div : CompilerBackendRuntimeIndex
           (if (compiler-backend-binop-needs-div-abort? op rhs ty)
@@ -24699,9 +24978,9 @@
   [instr : CompilerIrInstr]
   [next : CompilerIrInstr]) : bool
   (match instr
-    [(IrInstrMov dst src _)
+    [(CompilerIrInstr.Mov dst src _)
       (match next
-        [(IrInstrBinOp _ op _ rhs bin-ty)
+        [(CompilerIrInstr.BinOp _ op _ rhs bin-ty)
           (and
             (compiler-backend-divmod-op? op)
             (compiler-backend-branch-uses-var? rhs dst)
@@ -24737,14 +25016,14 @@
   [index : CompilerBackendRuntimeIndex]
   [blocks : CompilerIrBlockList]) : CompilerBackendRuntimeIndex
   (match blocks
-    [(IrBlockNil) index]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) index]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock _ instrs)
+        [(CompilerIrBlock.Block _ instrs)
           (compiler-backend-runtime-index-blocks
             (compiler-backend-runtime-index-instr-seq index instrs)
             (box-get rest))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-runtime-index-blocks
         index
         (compiler-ir-block-seq-to-list seq))]))
@@ -24753,16 +25032,16 @@
   [index : CompilerBackendRuntimeIndex]
   [functions : CompilerIrFunctionList]) : CompilerBackendRuntimeIndex
   (match functions
-    [(IrFunctionNil) index]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) index]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name _ _ _ blocks)
+        [(CompilerIrFunction.Function name _ _ _ blocks)
           (compiler-backend-runtime-index-functions
             (compiler-backend-runtime-index-blocks
               (compiler-backend-runtime-index-add-define index name)
               blocks)
             (box-get rest))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-runtime-index-functions
         index
         (compiler-ir-function-seq-to-list seq))]))
@@ -24771,10 +25050,10 @@
   [index : CompilerBackendRuntimeIndex]
   [externs : CompilerIrExternList]) : CompilerBackendRuntimeIndex
   (match externs
-    [(IrExternNil) index]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) index]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern extern-name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ provided)
           (if provided
             (compiler-backend-runtime-index-externs index (box-get rest))
             (compiler-backend-runtime-index-externs
@@ -24884,48 +25163,53 @@
 
 (define (compiler-backend-runtime-helper-static-owner [name : String]) : CompilerBackendRuntimeHelperOwner
   (cond
-    [(string.string-eq name "tl_memcpy") (BackendRuntimeOwnerCore)]
-    [(string.string-eq name "tl_memchr") (BackendRuntimeOwnerCore)]
-    [(string.string-eq name "__chkstk") (BackendRuntimeOwnerCore)]
-    [(string.string-eq name "tl_setup_argv") (BackendRuntimeOwnerCore)]
-    [(string.string-eq name "_tl_start") (BackendRuntimeOwnerCore)]
-    [else (BackendRuntimeOwnerUnknown)]))
+    [(string.string-eq name "tl_memcpy")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.string-eq name "tl_memchr")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.string-eq name "__chkstk")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.string-eq name "tl_setup_argv")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.string-eq name "_tl_start")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [else (CompilerBackendRuntimeHelperOwner.Unknown)]))
 
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
   (cond
     [(compiler-backend-runtime-helper-core-id? name-id)
-      (BackendRuntimeOwnerCore)]
+      (CompilerBackendRuntimeHelperOwner.Core)]
     [(compiler-backend-runtime-helper-stdlib-ffi-id? name-id)
-      (BackendRuntimeOwnerStdlibFfi)]
+      (CompilerBackendRuntimeHelperOwner.StdlibFfi)]
     [(compiler-backend-runtime-helper-stdlib-type-lisp-id? name-id)
-      (BackendRuntimeOwnerStdlibTypeLisp)]
+      (CompilerBackendRuntimeHelperOwner.StdlibTypeLisp)]
     [(compiler-backend-runtime-helper-compatibility-alias-id? name-id)
-      (BackendRuntimeOwnerCompatibilityAlias)]
+      (CompilerBackendRuntimeHelperOwner.CompatibilityAlias)]
     [(compiler-backend-runtime-helper-deprecated-id? name-id)
-      (BackendRuntimeOwnerDeprecated)]
-    [else (BackendRuntimeOwnerUnknown)]))
+      (CompilerBackendRuntimeHelperOwner.Deprecated)]
+    [else (CompilerBackendRuntimeHelperOwner.Unknown)]))
 
 (define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
   (let
     [owner : CompilerBackendRuntimeHelperOwner
       (compiler-backend-runtime-helper-static-owner name)]
     (match owner
-      [(BackendRuntimeOwnerUnknown)
+      [(CompilerBackendRuntimeHelperOwner.Unknown)
         (let
           [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
           (if (>= name-id 0)
             (compiler-backend-runtime-helper-owner-id name-id)
-            (BackendRuntimeOwnerUnknown)))]
+            (CompilerBackendRuntimeHelperOwner.Unknown)))]
       [_ owner])))
 
 (define (compiler-backend-runtime-helper-known-id? [name-id : i64]) : bool
   (match (compiler-backend-runtime-helper-owner-id name-id)
-    [(BackendRuntimeOwnerUnknown) false]
+    [(CompilerBackendRuntimeHelperOwner.Unknown) false]
     [_ true]))
 
 (define (compiler-backend-runtime-helper-known? [name : String]) : bool
   (match (compiler-backend-runtime-helper-owner name)
-    [(BackendRuntimeOwnerUnknown) false]
+    [(CompilerBackendRuntimeHelperOwner.Unknown) false]
     [_ true]))
 
 (define (compiler-backend-provides-runtime-name?
@@ -25058,7 +25342,7 @@
   [plan : CompilerBackendRuntimePlan]
   [name-id : i64]) : bool
   (match plan
-    [(BackendRuntimePlan
+    [(CompilerBackendRuntimePlan.Plan
         alloc
         oob
         substring
@@ -25558,9 +25842,9 @@
         (and
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
-    (OkBackendRuntimePlanWithIndex
+    (ResultBackendRuntimePlanWithIndex.Ok
       (CompilerBackendRuntimePlanWithIndex
-        (BackendRuntimePlan
+        (CompilerBackendRuntimePlan.Plan
           needs-alloc
           needs-oob
           needs-substring
@@ -25602,9 +25886,10 @@
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]) : ResultBackendRuntimePlan
   (match (compiler-backend-runtime-plan-with-index-for functions externs)
-    [(OkBackendRuntimePlanWithIndex planned)
-      (OkBackendRuntimePlan (struct-get planned plan))]
-    [(ErrBackendRuntimePlanWithIndex message) (ErrBackendRuntimePlan message)]))
+    [(ResultBackendRuntimePlanWithIndex.Ok planned)
+      (ResultBackendRuntimePlan.Ok (struct-get planned plan))]
+    [(ResultBackendRuntimePlanWithIndex.Err message)
+      (ResultBackendRuntimePlan.Err message)]))
 
 (define (compiler-backend-runtime-plan [program : CompilerIrProgram]) : ResultBackendRuntimePlan
   (begin
@@ -25612,7 +25897,7 @@
     ;; runtime-plan id predicates are then lookup-only in scratch arenas.
     (cbi.compiler-builtin-refresh!)
     (match program
-      [(IrProgram _ functions externs)
+      [(CompilerIrProgram.Program _ functions externs)
         (compiler-backend-runtime-plan-for functions externs)])))
 
 (define (compiler-backend-runtime-plan-with-index [program : CompilerIrProgram]) : ResultBackendRuntimePlanWithIndex
@@ -25621,7 +25906,7 @@
     ;; runtime-plan id predicates are then lookup-only in scratch arenas.
     (cbi.compiler-builtin-refresh!)
     (match program
-      [(IrProgram _ functions externs)
+      [(CompilerIrProgram.Program _ functions externs)
         (compiler-backend-runtime-plan-with-index-for functions externs)])))
 
 (define (compiler-backend-emit-externs
@@ -25631,8 +25916,8 @@
     (compiler-backend-emit-externs-into
       externs
       plan
-      (compiler-backend-runtime-index IrFunctionNil externs)
-      BackendStringNil
+      (compiler-backend-runtime-index CompilerIrFunctionList.Nil externs)
+      BackendStringList.Nil
       (text_buf.text-buf-empty))))
 
 (define (compiler-backend-extern-symbol-referenced?
@@ -25668,10 +25953,10 @@
   [referenced-functions : BackendStringList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match externs
-    [(IrExternNil) buf]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) buf]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
           (if (and
             (compiler-backend-emits-extern-symbol?
               name
@@ -25719,7 +26004,7 @@
 (define (compiler-backend-runtime-arena-data-for-target
   [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       "    .section .tbss,\"awT\",@nobits
     .balign 8
     .globl tl_current_arena
@@ -25732,7 +26017,7 @@ tl_current_arena:
     .zero 8
 
 "]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       "    .section .bss
     .balign 8
 .L_tl_arena_poison_enabled:
@@ -25810,7 +26095,7 @@ tl_profile_alloc_peak_bytes:
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
   (match plan
-    [(BackendRuntimePlan
+    [(CompilerBackendRuntimePlan.Plan
         alloc
         oob
         _
@@ -26121,7 +26406,7 @@ tl_profile_alloc_peak_bytes:
     [prefix : String
       (str_cat.str-cat
         (compiler-backend-runtime-fast-alloc-functions
-          (BackendTargetLinux)
+          (CompilerBackendTarget.Linux)
           "%rdi"
           "%rcx"
           profile)
@@ -26600,7 +26885,7 @@ tl_thread_init:
 tl_arena_current:
 "
     (string.string-append
-      (compiler-backend-current-arena-load (BackendTargetLinux) "%rax")
+      (compiler-backend-current-arena-load (CompilerBackendTarget.Linux) "%rax")
       (string.string-append
         "    ret
 
@@ -26608,7 +26893,9 @@ tl_arena_current:
 tl_arena_set:
 "
         (string.string-append
-          (compiler-backend-current-arena-store (BackendTargetLinux) "%rdi")
+          (compiler-backend-current-arena-store
+            (CompilerBackendTarget.Linux)
+            "%rdi")
           (string.string-append
             "    ret
 
@@ -26757,7 +27044,9 @@ tl_arena_destroy:
 tl_arena_current:
 "
     (string.string-append
-      (compiler-backend-current-arena-load (BackendTargetWindows) "%rax")
+      (compiler-backend-current-arena-load
+        (CompilerBackendTarget.Windows)
+        "%rax")
       (string.string-append
         "    ret
 
@@ -26765,7 +27054,9 @@ tl_arena_current:
 tl_arena_set:
 "
         (string.string-append
-          (compiler-backend-current-arena-store (BackendTargetWindows) "%rcx")
+          (compiler-backend-current-arena-store
+            (CompilerBackendTarget.Windows)
+            "%rcx")
           (string.string-append
             "    ret
 
@@ -27074,7 +27365,7 @@ tl_region_reset:
         profile)]
     (str_cat.str-cat
       (compiler-backend-runtime-fast-alloc-functions
-        (BackendTargetWindows)
+        (CompilerBackendTarget.Windows)
         "%rcx"
         "%r10"
         profile)
@@ -27678,7 +27969,7 @@ tl_memchr:
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
   (match plan
-    [(BackendRuntimePlan
+    [(CompilerBackendRuntimePlan.Plan
         alloc
         oob
         substring
@@ -27861,43 +28152,43 @@ tl_memchr:
   [target : CompilerBackendTarget]
   [idx : i64]) : ResultBackendReg
   (match target
-    [(BackendTargetLinux) (compiler-backend-arg-reg idx)]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Linux) (compiler-backend-arg-reg idx)]
+    [(CompilerBackendTarget.Windows)
       (cond
-        [(= idx 0) (OkBackendReg "%rcx")]
-        [(= idx 1) (OkBackendReg "%rdx")]
-        [(= idx 2) (OkBackendReg "%r8")]
-        [(= idx 3) (OkBackendReg "%r9")]
-        [else (ErrBackendReg "backend: too many call args")])]))
+        [(= idx 0) (ResultBackendReg.Ok "%rcx")]
+        [(= idx 1) (ResultBackendReg.Ok "%rdx")]
+        [(= idx 2) (ResultBackendReg.Ok "%r8")]
+        [(= idx 3) (ResultBackendReg.Ok "%r9")]
+        [else (ResultBackendReg.Err "backend: too many call args")])]))
 
 (define (compiler-backend-target-float-arg-reg
   [target : CompilerBackendTarget]
   [idx : i64]) : ResultBackendReg
   (match target
-    [(BackendTargetLinux) (compiler-backend-float-arg-reg idx)]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Linux) (compiler-backend-float-arg-reg idx)]
+    [(CompilerBackendTarget.Windows)
       (cond
-        [(= idx 0) (OkBackendReg "%xmm0")]
-        [(= idx 1) (OkBackendReg "%xmm1")]
-        [(= idx 2) (OkBackendReg "%xmm2")]
-        [(= idx 3) (OkBackendReg "%xmm3")]
-        [else (ErrBackendReg "backend: too many call args")])]))
+        [(= idx 0) (ResultBackendReg.Ok "%xmm0")]
+        [(= idx 1) (ResultBackendReg.Ok "%xmm1")]
+        [(= idx 2) (ResultBackendReg.Ok "%xmm2")]
+        [(= idx 3) (ResultBackendReg.Ok "%xmm3")]
+        [else (ResultBackendReg.Err "backend: too many call args")])]))
 
 ;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
 ;; Windows x64.
 (define (compiler-backend-outgoing-shadow-space
   [target : CompilerBackendTarget]) : i64
   (match target
-    [(BackendTargetLinux) 0]
-    [(BackendTargetWindows) 32]))
+    [(CompilerBackendTarget.Linux) 0]
+    [(CompilerBackendTarget.Windows) 32]))
 
 ;; Program entry section and global symbol. Freestanding Linux links the
 ;; backend-owned `_tl_start`; CRT entry mode links `main` through the C runtime.
 ;; Windows links `main` through the CRT. (The Windows entry body is #647.)
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
   (match target
-    [(BackendTargetLinux) true]
-    [(BackendTargetWindows) false]))
+    [(CompilerBackendTarget.Linux) true]
+    [(CompilerBackendTarget.Windows) false]))
 
 (define (compiler-backend-target-entry-text-with-crt
   [target : CompilerBackendTarget]
@@ -27905,11 +28196,11 @@ tl_memchr:
   [crt-entry : bool]) : String
   (if emit-entry
     (match target
-      [(BackendTargetLinux)
+      [(CompilerBackendTarget.Linux)
         (if crt-entry
           ".text\n.globl main\n"
           ".text\n.globl _tl_start\n")]
-      [(BackendTargetWindows) ".text\n.globl main\n"])
+      [(CompilerBackendTarget.Windows) ".text\n.globl main\n"])
     ".text\n"))
 
 (define (compiler-backend-target-entry-text
@@ -27986,7 +28277,7 @@ tl_memchr:
   [crt-entry : bool]
   [program-index : CompilerBackendProgramIndex]) : String
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (if crt-entry
         ""
         (let
@@ -27995,7 +28286,7 @@ tl_memchr:
             true
             true
             (compiler-backend-global-initializers globals program-index))))]
-    [(BackendTargetWindows) ""]))
+    [(CompilerBackendTarget.Windows) ""]))
 
 (define (compiler-backend-entry-for-target
   [target : CompilerBackendTarget]
@@ -28011,13 +28302,13 @@ tl_memchr:
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
   (match target
-    [(BackendTargetLinux) false]
-    [(BackendTargetWindows) true]))
+    [(CompilerBackendTarget.Linux) false]
+    [(CompilerBackendTarget.Windows) true]))
 
 (define (compiler-backend-runtime-plan-empty?
   [plan : CompilerBackendRuntimePlan]) : bool
   (match plan
-    [(BackendRuntimePlan
+    [(CompilerBackendRuntimePlan.Plan
         alloc
         oob
         substring
@@ -28172,12 +28463,18 @@ tl_memchr:
     true))
 
 (define (compiler-backend-emit-program-linux [program : CompilerIrProgram]) : ResultCompilerBackend
-  (compiler-backend-emit-program-for-target program (BackendTargetLinux)))
+  (compiler-backend-emit-program-for-target
+    program
+    (CompilerBackendTarget.Linux)))
 
 (define (compiler-backend-emit-program-linux-with-spans
   [program : CompilerIrProgram]
   [spans : CompilerSourceSpans]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target program (BackendTargetLinux) spans true))
+  (compiler-backend-emit-program-target
+    program
+    (CompilerBackendTarget.Linux)
+    spans
+    true))
 
 (define (compiler-backend-emit-program-linux-with-spans-and-entry
   [program : CompilerIrProgram]
@@ -28185,7 +28482,7 @@ tl_memchr:
   [emit-entry : bool]) : ResultCompilerBackend
   (compiler-backend-emit-program-target
     program
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     spans
     emit-entry))
 
@@ -28210,7 +28507,7 @@ tl_memchr:
   (compiler-backend-emit-program-target-with-mode
     program
     target
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     spans
     emit-entry))
 
@@ -28433,7 +28730,7 @@ tl_memchr:
             emit-entry
             crt-entry
             prefix-buf)
-            [(OkCompilerBackendBuffer with-functions)
+            [(ResultCompilerBackendBuffer.Ok with-functions)
               (begin
                 (cfg
                   compile-profile
@@ -28447,7 +28744,7 @@ tl_memchr:
                   plan
                   program-index
                   with-functions)
-                  [(OkCompilerBackendBuffer with-adapters)
+                  [(ResultCompilerBackendBuffer.Ok with-adapters)
                     (begin
                       (cfg
                         compile-profile
@@ -28480,19 +28777,19 @@ tl_memchr:
                             (begin
                               (compiler-reg-call-span-census-print!)
                               (compiler-reg-move-census-print!)))
-                          (OkCompilerBackendBuffer buf))))]
-                  [(ErrCompilerBackendBuffer message)
+                          (ResultCompilerBackendBuffer.Ok buf))))]
+                  [(ResultCompilerBackendBuffer.Err message)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-backend-profile-finish "adapters"))
-                      (ErrCompilerBackendBuffer message))]))]
-            [(ErrCompilerBackendBuffer message)
+                      (ResultCompilerBackendBuffer.Err message))]))]
+            [(ResultCompilerBackendBuffer.Err message)
               (begin
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish "functions"))
-                (ErrCompilerBackendBuffer message))]))))))
+                (ResultCompilerBackendBuffer.Err message))]))))))
 
 (define (compiler-backend-emit-program-target-with-mode-buffer-and-crt
   [program : CompilerIrProgram]
@@ -28510,7 +28807,7 @@ tl_memchr:
         (compiler-reg-move-census-reset!)))
     (cfg compile-profile (compiler-backend-profile-start))
     (match (compiler-backend-runtime-plan-with-index program)
-      [(OkBackendRuntimePlanWithIndex planned)
+      [(ResultBackendRuntimePlanWithIndex.Ok planned)
         (let
           [plan : CompilerBackendRuntimePlan (struct-get planned plan)]
           [runtime-index : CompilerBackendRuntimeIndex
@@ -28527,7 +28824,7 @@ tl_memchr:
                   (compiler-backend-profile-finish "target_check"))
                 (cfg compile-profile (compiler-backend-profile-start))
                 (match program
-                  [(IrProgram globals functions externs)
+                  [(CompilerIrProgram.Program globals functions externs)
                     ;; Build the program index ONCE over the entry function list
                     ;; and share it with the globals emission: each build walks
                     ;; every function body for the register-group counts, so the
@@ -28557,7 +28854,7 @@ tl_memchr:
                             (text_buf.text-buf-empty)
                             ".data\n")
                           program-index)
-                          [(OkCompilerBackendBuffer globals-buf)
+                          [(ResultCompilerBackendBuffer.Ok globals-buf)
                             (begin
                               (cfg
                                 compile-profile
@@ -28571,7 +28868,7 @@ tl_memchr:
                                 externs
                                 plan
                                 program-index)
-                                [(OkCompilerBackendSymbolValidation _)
+                                [(ResultCompilerBackendSymbolValidation.Ok _)
                                   (compiler-backend-emit-program-buffer-after-index
                                     program
                                     target
@@ -28586,27 +28883,28 @@ tl_memchr:
                                     globals-buf
                                     emit-entry
                                     crt-entry)]
-                                [(ErrCompilerBackendSymbolValidation message)
-                                  (ErrCompilerBackendBuffer message)]))]
-                          [(ErrCompilerBackendBuffer message)
+                                [(ResultCompilerBackendSymbolValidation.Err
+                                    message)
+                                  (ResultCompilerBackendBuffer.Err message)]))]
+                          [(ResultCompilerBackendBuffer.Err message)
                             (begin
                               (cfg
                                 compile-profile
                                 (compiler-backend-profile-finish "globals"))
-                              (ErrCompilerBackendBuffer message))])))]))
+                              (ResultCompilerBackendBuffer.Err message))])))]))
               (begin
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish "target_check"))
-                (ErrCompilerBackendBuffer
+                (ResultCompilerBackendBuffer.Err
                   (box
                     (compiler-diagnostic-at-start
                       ""
                       "backend: internal target runtime rejection")))))))]
-      [(ErrBackendRuntimePlanWithIndex message)
+      [(ResultBackendRuntimePlanWithIndex.Err message)
         (begin
           (cfg compile-profile (compiler-backend-profile-finish "runtime_plan"))
-          (ErrCompilerBackendBuffer
+          (ResultCompilerBackendBuffer.Err
             (box (compiler-diagnostic-at-start "" message))))])))
 
 (defstruct CompilerBackendObjectParts
@@ -28844,7 +29142,7 @@ tl_memchr:
   [site : String]
   [value : CompilerIrValue]) : CompilerBackendObjectParts
   (match value
-    [(IrValueGlobal name)
+    [(CompilerIrValue.Global name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (compiler-backend-object-add-text
@@ -28854,7 +29152,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.RipValue)
             symbol)
           (CompilerObjectX64Instr.LoadRip symbol)))]
-    [(IrValueGlobalAddr name)
+    [(CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (compiler-backend-object-add-text
@@ -28864,7 +29162,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.RipAddress)
             symbol)
           (CompilerObjectX64Instr.LoadRipAddress symbol)))]
-    [(IrValueString text)
+    [(CompilerIrValue.String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
         (compiler-backend-object-add-text
@@ -28874,7 +29172,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.RipAddress)
             symbol)
           (CompilerObjectX64Instr.LoadRipAddress symbol)))]
-    [(IrValueBytes text)
+    [(CompilerIrValue.Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
         (compiler-backend-object-add-text
@@ -28884,7 +29182,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.RipAddress)
             symbol)
           (CompilerObjectX64Instr.LoadRipAddress symbol)))]
-    [(IrValueF64 bits)
+    [(CompilerIrValue.F64 bits)
       (let
         [symbol : String (compiler-backend-f64-label bits)]
         (compiler-backend-object-add-text
@@ -28894,7 +29192,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.RipValue)
             symbol)
           (CompilerObjectX64Instr.LoadRip symbol)))]
-    [(IrValueFunction name)
+    [(CompilerIrValue.Function name)
       (let
         [symbol : String (compiler-backend-closure-descriptor-label name)]
         (compiler-backend-object-add-text
@@ -28912,7 +29210,7 @@ tl_memchr:
   [value : CompilerIrValue]
   [ty : AstType]) : CompilerBackendObjectParts
   (match value
-    [(IrValueF64 bits)
+    [(CompilerIrValue.F64 bits)
       (let
         [symbol : String (compiler-backend-float-label ty bits)]
         (compiler-backend-object-add-text
@@ -28959,8 +29257,9 @@ tl_memchr:
   [site : String]
   [value : CompilerIrMaybeValue]) : CompilerBackendObjectParts
   (match value
-    [(IrNoValue) parts]
-    [(IrSomeValue inner) (compiler-backend-object-value-ref parts site inner)]))
+    [(CompilerIrMaybeValue.No) parts]
+    [(CompilerIrMaybeValue.Some inner)
+      (compiler-backend-object-value-ref parts site inner)]))
 
 (define (compiler-backend-object-value-list-ref
   [parts : CompilerBackendObjectParts]
@@ -28979,8 +29278,8 @@ tl_memchr:
   [site : String]
   [inputs : CompilerIrPhiInputList]) : CompilerBackendObjectParts
   (match inputs
-    [(IrPhiInputNil) parts]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) parts]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-object-phi-inputs
         (compiler-backend-object-value-ref parts site value)
         site
@@ -28992,8 +29291,8 @@ tl_memchr:
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]) : CompilerBackendObjectParts
   (match inputs
-    [(IrPhiInputNil) parts]
-    [(IrPhiInputCons value _ rest)
+    [(CompilerIrPhiInputList.Nil) parts]
+    [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-object-phi-inputs-with-type
         (compiler-backend-object-value-ref-with-type parts site value ty)
         site
@@ -29254,17 +29553,17 @@ tl_memchr:
   [value : CompilerIrValue]
   [reg : String]) : CompilerBackendObjectParts
   (match value
-    [(IrValueVar id)
+    [(CompilerIrValue.Var id)
       (compiler-backend-object-add-nonempty-bytes
         parts
         (compiler-backend-object-load-rbp-disp-bytes
           (compiler-backend-object-slot-disp id)
           reg))]
-    [(IrValueI64 n)
+    [(CompilerIrValue.I64 n)
       (compiler-backend-object-add-nonempty-bytes
         parts
         (compiler-backend-object-mov-imm32-reg-bytes n reg))]
-    [(IrValueBool b)
+    [(CompilerIrValue.Bool b)
       (compiler-backend-object-add-nonempty-bytes
         parts
         (compiler-backend-object-mov-imm32-reg-bytes
@@ -29272,37 +29571,37 @@ tl_memchr:
             1
             0)
           reg))]
-    [(IrValueChar c)
+    [(CompilerIrValue.Char c)
       (compiler-backend-object-add-nonempty-bytes
         parts
         (compiler-backend-object-mov-imm32-reg-bytes
           (compiler-backend-char-code c)
           reg))]
-    [(IrValueUnit)
+    [(CompilerIrValue.Unit)
       (compiler-backend-object-add-nonempty-bytes
         parts
         (compiler-backend-object-mov-imm32-reg-bytes 0 reg))]
-    [(IrValueGlobal _)
+    [(CompilerIrValue.Global _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(IrValueGlobalAddr _)
+    [(CompilerIrValue.GlobalAddr _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(IrValueString _)
+    [(CompilerIrValue.String _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(IrValueBytes _)
+    [(CompilerIrValue.Bytes _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(IrValueFunction _)
+    [(CompilerIrValue.Function _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
-    [(IrValueF64 _)
+    [(CompilerIrValue.F64 _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]))
@@ -29314,7 +29613,7 @@ tl_memchr:
   [ty : AstType]
   [reg : String]) : CompilerBackendObjectParts
   (match value
-    [(IrValueF64 _)
+    [(CompilerIrValue.F64 _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref-with-type parts site value ty)
         (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
@@ -29401,7 +29700,7 @@ tl_memchr:
       (compiler-backend-object-load-value-to-reg parts site base "%rax")]
     [with-offset : CompilerBackendObjectParts
       (match offset
-        [(IrValueI64 n)
+        [(CompilerIrValue.I64 n)
           (let
             [disp : i64 (* n elem-size)]
             (if (= disp 0)
@@ -29456,7 +29755,7 @@ tl_memchr:
     [(IrSwitchCaseNil) parts]
     [(IrSwitchCaseCons case rest)
       (match case
-        [(IrSwitchCase _ label)
+        [(CompilerIrSwitchCase.Case _ label)
           (let
             [entry-label : String
               (compiler-backend-object-switch-entry-label table-label index)]
@@ -29573,20 +29872,26 @@ tl_memchr:
 
 (define (compiler-backend-object-binop-bytes [op : CompilerIrBinOp]) : String
   (match op
-    [(IrBinAdd) (compiler-backend-object-bytes-from-hex "4c01c0")]
-    [(IrBinSub) (compiler-backend-object-bytes-from-hex "4c29c0")]
-    [(IrBinMul) (compiler-backend-object-bytes-from-hex "490fafc0")]
-    [(IrBinEq) (compiler-backend-object-bytes-from-hex "4c39c00f94c0480fb6c0")]
-    [(IrBinNe) (compiler-backend-object-bytes-from-hex "4c39c00f95c0480fb6c0")]
-    [(IrBinLt) (compiler-backend-object-bytes-from-hex "4c39c00f9cc0480fb6c0")]
-    [(IrBinLe) (compiler-backend-object-bytes-from-hex "4c39c00f9ec0480fb6c0")]
-    [(IrBinGt) (compiler-backend-object-bytes-from-hex "4c39c00f9fc0480fb6c0")]
-    [(IrBinGe) (compiler-backend-object-bytes-from-hex "4c39c00f9dc0480fb6c0")]
-    [(IrBinAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
-    [(IrBinOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
-    [(IrBinBitAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
-    [(IrBinBitOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
-    [(IrBinBitXor) (compiler-backend-object-bytes-from-hex "4c31c0")]
+    [(CompilerIrBinOp.Add) (compiler-backend-object-bytes-from-hex "4c01c0")]
+    [(CompilerIrBinOp.Sub) (compiler-backend-object-bytes-from-hex "4c29c0")]
+    [(CompilerIrBinOp.Mul) (compiler-backend-object-bytes-from-hex "490fafc0")]
+    [(CompilerIrBinOp.Eq)
+      (compiler-backend-object-bytes-from-hex "4c39c00f94c0480fb6c0")]
+    [(CompilerIrBinOp.Ne)
+      (compiler-backend-object-bytes-from-hex "4c39c00f95c0480fb6c0")]
+    [(CompilerIrBinOp.Lt)
+      (compiler-backend-object-bytes-from-hex "4c39c00f9cc0480fb6c0")]
+    [(CompilerIrBinOp.Le)
+      (compiler-backend-object-bytes-from-hex "4c39c00f9ec0480fb6c0")]
+    [(CompilerIrBinOp.Gt)
+      (compiler-backend-object-bytes-from-hex "4c39c00f9fc0480fb6c0")]
+    [(CompilerIrBinOp.Ge)
+      (compiler-backend-object-bytes-from-hex "4c39c00f9dc0480fb6c0")]
+    [(CompilerIrBinOp.And) (compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(CompilerIrBinOp.Or) (compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(CompilerIrBinOp.BitAnd) (compiler-backend-object-bytes-from-hex "4c21c0")]
+    [(CompilerIrBinOp.BitOr) (compiler-backend-object-bytes-from-hex "4c09c0")]
+    [(CompilerIrBinOp.BitXor) (compiler-backend-object-bytes-from-hex "4c31c0")]
     [_ ""]))
 
 (define (compiler-backend-object-binop
@@ -29622,14 +29927,14 @@ tl_memchr:
   [target : CompilerBackendTarget]
   [index : i64]) : String
   (match (compiler-backend-target-arg-reg target index)
-    [(OkBackendReg reg) reg]
-    [(ErrBackendReg _) "%rax"]))
+    [(ResultBackendReg.Ok reg) reg]
+    [(ResultBackendReg.Err _) "%rax"]))
 
 (define (compiler-backend-object-call-reg-count
   [target : CompilerBackendTarget]) : i64
   (match target
-    [(BackendTargetLinux) 6]
-    [(BackendTargetWindows) 4]))
+    [(CompilerBackendTarget.Linux) 6]
+    [(CompilerBackendTarget.Windows) 4]))
 
 (define (compiler-backend-object-call-stack-word-count
   [target : CompilerBackendTarget]
@@ -29645,8 +29950,8 @@ tl_memchr:
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]) : i64
   (match target
-    [(BackendTargetLinux) 0]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Linux) 0]
+    [(CompilerBackendTarget.Windows)
       (compiler-backend-round-up-16
         (+
           (compiler-backend-outgoing-shadow-space target)
@@ -29673,8 +29978,8 @@ tl_memchr:
     parts
     (if (>= index (compiler-backend-object-call-reg-count target))
       (match target
-        [(BackendTargetLinux) parts]
-        [(BackendTargetWindows)
+        [(CompilerBackendTarget.Linux) parts]
+        [(CompilerBackendTarget.Windows)
           (compiler-backend-object-call-arg-moves
             (compiler-backend-object-call-stack-arg
               parts
@@ -29731,7 +30036,7 @@ tl_memchr:
     [(IrParamNil) parts]
     [(IrParamCons param rest)
       (match param
-        [(IrParam _ ty var-id)
+        [(CompilerIrParam.Param _ ty var-id)
           (if (compiler-backend-float-type? ty)
             (compiler-backend-object-param-spills
               parts
@@ -29741,8 +30046,8 @@ tl_memchr:
             (if (>= int-index (compiler-backend-object-call-reg-count target))
               (compiler-backend-object-param-spills
                 (match target
-                  [(BackendTargetLinux) parts]
-                  [(BackendTargetWindows)
+                  [(CompilerBackendTarget.Linux) parts]
+                  [(CompilerBackendTarget.Windows)
                     (compiler-backend-object-store-reg-to-var
                       (compiler-backend-object-add-nonempty-bytes
                         parts
@@ -29777,16 +30082,16 @@ tl_memchr:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match instr
-    [(IrInstrMov dst src ty)
+    [(CompilerIrInstr.Mov dst src ty)
       (compiler-backend-object-move-value-to-var parts function dst src ty)]
-    [(IrInstrBinOp dst op lhs rhs ty)
+    [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (compiler-backend-object-binop parts function dst op lhs rhs ty)]
-    [(IrInstrUnOp _ op src ty)
+    [(CompilerIrInstr.UnOp _ op src ty)
       (let
         [with-src : CompilerBackendObjectParts
           (compiler-backend-object-value-ref-with-type parts function src ty)]
         (match op
-          [(IrUnNeg)
+          [(CompilerIrUnOp.Neg)
             (if (compiler-backend-f64-type? ty)
               (compiler-backend-object-add-rip-instr
                 with-src
@@ -29797,7 +30102,7 @@ tl_memchr:
                   (compiler-backend-f64-sign-bit-label)))
               with-src)]
           [_ with-src]))]
-    [(IrInstrCall dst name args _)
+    [(CompilerIrInstr.Call dst name args _)
       (let
         [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
@@ -29810,21 +30115,21 @@ tl_memchr:
             args)
           dst
           "%rax"))]
-    [(IrInstrCallIndirect _ callee args _)
+    [(CompilerIrInstr.CallIndirect _ callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
         function
         args
         0)]
-    [(IrInstrCallIndirectC _ callee args _)
+    [(CompilerIrInstr.CallIndirectC _ callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
         function
         args
         0)]
-    [(IrInstrCallCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload base name args _)
+        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base name args _)
           (let
             [call-target : String
               (compiler-backend-call-symbol-index name plan program-index)]
@@ -29834,9 +30139,13 @@ tl_memchr:
               function
               call-target
               args))])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
+    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload base callee args _)
+        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
+            base
+            callee
+            args
+            _)
           (compiler-backend-object-call-args
             (compiler-backend-object-value-ref
               (compiler-backend-object-value-ref parts function base)
@@ -29845,7 +30154,7 @@ tl_memchr:
             function
             args
             0)])]
-    [(IrInstrTailCall name args _)
+    [(CompilerIrInstr.TailCall name args _)
       (let
         [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
@@ -29863,7 +30172,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.TailCall)
             call-target)
           (CompilerObjectX64Instr.TailCall call-target)))]
-    [(IrInstrStore name value ty)
+    [(CompilerIrInstr.Store name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (compiler-backend-object-add-text
@@ -29877,7 +30186,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.RipAddress)
             symbol)
           (CompilerObjectX64Instr.StoreRip symbol)))]
-    [(IrInstrJump target)
+    [(CompilerIrInstr.Jump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
         (compiler-backend-object-add-text
@@ -29887,7 +30196,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.Branch)
             symbol)
           (CompilerObjectX64Instr.Jump symbol)))]
-    [(IrInstrBranch cond true-label false-label)
+    [(CompilerIrInstr.Branch cond true-label false-label)
       (let
         [true-symbol : String
           (compiler-backend-asm-label label-scope true-label)]
@@ -29904,25 +30213,25 @@ tl_memchr:
             (CompilerObjectRelocationKind.Branch)
             false-symbol)
           (CompilerObjectX64Instr.Branch true-symbol false-symbol)))]
-    [(IrInstrReturn value)
+    [(CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
-          [(IrNoValue)
+          [(CompilerIrMaybeValue.No)
             (if (string.string-eq function "main")
               (compiler-backend-object-add-nonempty-bytes
                 parts
                 (compiler-backend-object-zero-eax-bytes))
               parts)]
-          [(IrSomeValue inner)
+          [(CompilerIrMaybeValue.Some inner)
             (compiler-backend-object-load-value-to-reg
               parts
               function
               inner
               "%rax")])
         (compiler-backend-object-leave-ret-bytes))]
-    [(IrInstrPhi _ inputs ty)
+    [(CompilerIrInstr.Phi _ inputs ty)
       (compiler-backend-object-phi-inputs-with-type parts function inputs ty)]
-    [(IrInstrGep dst base offset elem-ty)
+    [(CompilerIrInstr.Gep dst base offset elem-ty)
       (compiler-backend-object-gep-to-var
         parts
         function
@@ -29930,33 +30239,33 @@ tl_memchr:
         base
         offset
         elem-ty)]
-    [(IrInstrLoad dst src ty)
+    [(CompilerIrInstr.Load dst src ty)
       (compiler-backend-object-load-ptr-to-var parts function dst src ty)]
-    [(IrInstrStorePtr dst src ty)
+    [(CompilerIrInstr.StorePtr dst src ty)
       (compiler-backend-object-value-ref-with-type
         (compiler-backend-object-value-ref parts function dst)
         function
         src
         ty)]
-    [(IrInstrCopyBytes dst src _)
+    [(CompilerIrInstr.CopyBytes dst src _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function dst)
         function
         src)]
-    [(IrInstrBoundsCheck index length _)
+    [(CompilerIrInstr.BoundsCheck index length _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function index)
         function
         length)]
-    [(IrInstrCast dst src from-ty _)
+    [(CompilerIrInstr.Cast dst src from-ty _)
       (compiler-backend-object-move-value-to-var parts function dst src from-ty)]
-    [(IrInstrBitcast dst src from-ty _)
+    [(CompilerIrInstr.Bitcast dst src from-ty _)
       (compiler-backend-object-move-value-to-var parts function dst src from-ty)]
-    [(IrInstrSplat _ value _ elem-ty)
+    [(CompilerIrInstr.Splat _ value _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function value elem-ty)]
-    [(IrInstrVectorBinOp payload-box)
+    [(CompilerIrInstr.VectorBinOp payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload _ _ lhs rhs _ elem-ty)
+        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ elem-ty)
           (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref-with-type
               parts
@@ -29966,11 +30275,11 @@ tl_memchr:
             function
             rhs
             elem-ty)])]
-    [(IrInstrVectorReduce _ _ src _ elem-ty)
+    [(CompilerIrInstr.VectorReduce _ _ src _ elem-ty)
       (compiler-backend-object-value-ref-with-type parts function src elem-ty)]
-    [(IrInstrVectorCompare payload-box)
+    [(CompilerIrInstr.VectorCompare payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload _ _ lhs rhs _ elem-ty)
+        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ elem-ty)
           (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref-with-type
               parts
@@ -29980,18 +30289,18 @@ tl_memchr:
             function
             rhs
             elem-ty)])]
-    [(IrInstrMaskBinOp _ _ lhs rhs _)
+    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function lhs)
         function
         rhs)]
-    [(IrInstrMaskNot _ src _)
+    [(CompilerIrInstr.MaskNot _ src _)
       (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrMaskReduce _ _ src _)
+    [(CompilerIrInstr.MaskReduce _ _ src _)
       (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrSelect payload-box)
+    [(CompilerIrInstr.Select payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload _ mask on-true on-false _ ty)
+        [(CompilerIrInstrSelectPayload.Payload _ mask on-true on-false _ ty)
           (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref-with-type
               (compiler-backend-object-value-ref parts function mask)
@@ -30001,14 +30310,14 @@ tl_memchr:
             function
             on-false
             ty)])]
-    [(IrInstrVectorLoad _ base index _ _)
+    [(CompilerIrInstr.VectorLoad _ base index _ _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function base)
         function
         index)]
-    [(IrInstrVectorStore payload-box)
+    [(CompilerIrInstr.VectorStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload base index value _ elem-ty)
+        [(CompilerIrInstrVectorStorePayload.Payload base index value _ elem-ty)
           (compiler-backend-object-value-ref-with-type
             (compiler-backend-object-value-ref
               (compiler-backend-object-value-ref parts function base)
@@ -30017,9 +30326,15 @@ tl_memchr:
             function
             value
             elem-ty)])]
-    [(IrInstrPredicatedStore payload-box)
+    [(CompilerIrInstr.PredicatedStore payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload base index value mask _ elem-ty)
+        [(CompilerIrInstrPredicatedStorePayload.Payload
+            base
+            index
+            value
+            mask
+            _
+            elem-ty)
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref-with-type
               (compiler-backend-object-value-ref
@@ -30031,9 +30346,9 @@ tl_memchr:
               elem-ty)
             function
             mask)])]
-    [(IrInstrPredicatedLoad payload-box)
+    [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload _ base index mask _ _)
+        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index mask _ _)
           (compiler-backend-object-value-ref
             (compiler-backend-object-value-ref
               (compiler-backend-object-value-ref parts function base)
@@ -30041,19 +30356,19 @@ tl_memchr:
               index)
             function
             mask)])]
-    [(IrInstrTailMask _ index length _)
+    [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function index)
         function
         length)]
-    [(IrInstrCpuId _ leaf subleaf _)
+    [(CompilerIrInstr.CpuId _ leaf subleaf _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function leaf)
         function
         subleaf)]
-    [(IrInstrXgetbv _ index)
+    [(CompilerIrInstr.Xgetbv _ index)
       (compiler-backend-object-value-ref parts function index)]
-    [(IrInstrSyscall _ args)
+    [(CompilerIrInstr.Syscall _ args)
       (compiler-backend-object-call-args parts function args 0)]
     [(IrInstrSpmdCall payload-box)
       (match (box-get payload-box)
@@ -30062,24 +30377,24 @@ tl_memchr:
             (compiler-backend-object-value-ref parts function active-mask)
             function
             args)])]
-    [(IrInstrPack _ words _)
+    [(CompilerIrInstr.Pack _ words _)
       (compiler-backend-object-value-list-ref parts function words)]
-    [(IrInstrWord _ src _ _)
+    [(CompilerIrInstr.Word _ src _ _)
       (compiler-backend-object-value-ref parts function src)]
-    [(IrInstrTailCallIndirect callee args _)
+    [(CompilerIrInstr.TailCallIndirect callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
         function
         args
         0)]
     ;; Operand-free instructions and raw address-of emit no object references.
-    [(IrInstrAlloc _ _) parts]
-    [(IrInstrAddrOf _ _) parts]
-    [(IrInstrLaneId _ _ _) parts]
-    [(IrInstrEntryArgc _) parts]
-    [(IrInstrEntryArgv _) parts]
-    [(IrInstrEntryEnvp _) parts]
-    [(IrInstrSwitch index base cases default-label)
+    [(CompilerIrInstr.Alloc _ _) parts]
+    [(CompilerIrInstr.AddrOf _ _) parts]
+    [(CompilerIrInstr.LaneId _ _ _) parts]
+    [(CompilerIrInstr.EntryArgc _) parts]
+    [(CompilerIrInstr.EntryArgv _) parts]
+    [(CompilerIrInstr.EntryEnvp _) parts]
+    [(CompilerIrInstr.Switch index base cases default-label)
       (compiler-backend-object-switch
         parts
         function
@@ -30130,10 +30445,10 @@ tl_memchr:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match blocks
-    [(IrBlockNil) parts]
-    [(IrBlockCons block rest)
+    [(CompilerIrBlockList.Nil) parts]
+    [(CompilerIrBlockList.Cons block rest)
       (match block
-        [(IrBlock label instrs)
+        [(CompilerIrBlock.Block label instrs)
           (let
             [block-label : String
               (compiler-backend-asm-label label-scope label)]
@@ -30160,7 +30475,7 @@ tl_memchr:
               (box-get rest)
               plan
               program-index))])]
-    [(IrBlockArray seq)
+    [(CompilerIrBlockList.Array seq)
       (compiler-backend-object-blocks
         parts
         target
@@ -30177,10 +30492,10 @@ tl_memchr:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match functions
-    [(IrFunctionNil) parts]
-    [(IrFunctionCons func rest)
+    [(CompilerIrFunctionList.Nil) parts]
+    [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(IrFunction name params _ vars blocks)
+        [(CompilerIrFunction.Function name params _ vars blocks)
           (let
             [symbol : String
               (compiler-backend-function-symbol-index program-index name)]
@@ -30212,7 +30527,7 @@ tl_memchr:
               (box-get rest)
               plan
               program-index))])]
-    [(IrFunctionArray seq)
+    [(CompilerIrFunctionList.Array seq)
       (compiler-backend-object-functions
         parts
         target
@@ -30226,26 +30541,26 @@ tl_memchr:
   [ty : AstType]
   [value : CompilerIrValue]) : CompilerBackendObjectParts
   (match value
-    [(IrValueI64 n)
+    [(CompilerIrValue.I64 n)
       (compiler-backend-object-add-data parts (CompilerObjectDataRecord.I64 n))]
-    [(IrValueBool b)
+    [(CompilerIrValue.Bool b)
       (compiler-backend-object-add-data
         parts
         (CompilerObjectDataRecord.I64
           (if b
             1
             0)))]
-    [(IrValueChar c)
+    [(CompilerIrValue.Char c)
       (compiler-backend-object-add-data
         parts
         (CompilerObjectDataRecord.I64 (compiler-backend-char-code c)))]
-    [(IrValueUnit)
+    [(CompilerIrValue.Unit)
       (compiler-backend-object-add-data parts (CompilerObjectDataRecord.I64 0))]
-    [(IrValueF64 bits)
+    [(CompilerIrValue.F64 bits)
       (compiler-backend-object-add-data
         parts
         (compiler-backend-float-object-data ty bits))]
-    [(IrValueString text)
+    [(CompilerIrValue.String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
         (compiler-backend-object-add-data
@@ -30255,7 +30570,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.Abs64)
             symbol)
           (CompilerObjectDataRecord.SymbolAddress symbol)))]
-    [(IrValueBytes text)
+    [(CompilerIrValue.Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
         (compiler-backend-object-add-data
@@ -30265,7 +30580,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.Abs64)
             symbol)
           (CompilerObjectDataRecord.SymbolAddress symbol)))]
-    [(IrValueGlobal name)
+    [(CompilerIrValue.Global name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (compiler-backend-object-add-data
@@ -30275,7 +30590,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.Abs64)
             symbol)
           (CompilerObjectDataRecord.SymbolAddress symbol)))]
-    [(IrValueGlobalAddr name)
+    [(CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
         (compiler-backend-object-add-data
@@ -30285,7 +30600,7 @@ tl_memchr:
             (CompilerObjectRelocationKind.Abs64)
             symbol)
           (CompilerObjectDataRecord.SymbolAddress symbol)))]
-    [(IrValueFunction name)
+    [(CompilerIrValue.Function name)
       (let
         [symbol : String (compiler-backend-closure-descriptor-label name)]
         (compiler-backend-object-add-data
@@ -30302,10 +30617,10 @@ tl_memchr:
   [target : CompilerBackendTarget]
   [globals : CompilerIrGlobalList]) : CompilerBackendObjectParts
   (match globals
-    [(IrGlobalNil) parts]
-    [(IrGlobalCons global rest)
+    [(CompilerIrGlobalList.Nil) parts]
+    [(CompilerIrGlobalList.Cons global rest)
       (match global
-        [(IrGlobal name ty value)
+        [(CompilerIrGlobal.Global name ty value)
           (let
             [symbol : String (compiler-backend-user-symbol name)]
             (compiler-backend-object-globals
@@ -30337,8 +30652,8 @@ tl_memchr:
   [parts : CompilerBackendObjectParts]
   [strings : BackendStringList]) : CompilerBackendObjectParts
   (match strings
-    [(BackendStringNil) parts]
-    [(BackendStringCons text rest)
+    [(BackendStringList.Nil) parts]
+    [(BackendStringList.Cons text rest)
       (let
         [data-symbol : String (compiler-backend-string-data-label text)]
         [fat-symbol : String (compiler-backend-string-fat-label text)]
@@ -30374,8 +30689,8 @@ tl_memchr:
   [parts : CompilerBackendObjectParts]
   [items : BackendStringList]) : CompilerBackendObjectParts
   (match items
-    [(BackendStringNil) parts]
-    [(BackendStringCons bytes rest)
+    [(BackendStringList.Nil) parts]
+    [(BackendStringList.Cons bytes rest)
       (let
         [data-symbol : String (compiler-backend-bytes-data-label bytes)]
         [fat-symbol : String (compiler-backend-bytes-fat-label bytes)]
@@ -30415,8 +30730,8 @@ tl_memchr:
   [parts : CompilerBackendObjectParts]
   [floats : BackendFloatList]) : CompilerBackendObjectParts
   (match floats
-    [(BackendFloatNil) parts]
-    [(BackendFloatCons ty bits rest)
+    [(BackendFloatList.Nil) parts]
+    [(BackendFloatList.Cons ty bits rest)
       (let
         [symbol : String (compiler-backend-float-label ty bits)]
         (compiler-backend-object-floats
@@ -30462,14 +30777,14 @@ tl_memchr:
   [names : BackendStringList]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match names
-    [(BackendStringNil) parts]
-    [(BackendStringCons name rest)
+    [(BackendStringList.Nil) parts]
+    [(BackendStringList.Cons name rest)
       (let
         [descriptor : String (compiler-backend-closure-descriptor-label name)]
         [entry : String (compiler-backend-closure-entry-label name)]
         (compiler-backend-object-closure-descriptors
           (match (compiler-backend-index-signature program-index name)
-            [(CompilerBackendSomeSignature _ _)
+            [(CompilerBackendMaybeSignature.Some _ _)
               (compiler-backend-object-add-rodata
                 (compiler-backend-object-add-rodata
                   (compiler-backend-object-add-rodata-relocation
@@ -30491,7 +30806,7 @@ tl_memchr:
                     entry)
                   (CompilerObjectDataRecord.SymbolAddress entry))
                 (CompilerObjectDataRecord.I64 0))]
-            [(CompilerBackendNoSignature) parts])
+            [(CompilerBackendMaybeSignature.No) parts])
           (box-get rest)
           program-index))]))
 
@@ -30502,10 +30817,10 @@ tl_memchr:
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendStringList]) : CompilerBackendObjectParts
   (match externs
-    [(IrExternNil) parts]
-    [(IrExternCons item rest)
+    [(CompilerIrExternList.Nil) parts]
+    [(CompilerIrExternList.Cons item rest)
       (match item
-        [(IrExtern name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
           (compiler-backend-object-externs
             (if (and
               (not
@@ -30534,7 +30849,7 @@ tl_memchr:
 
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringList
   (let
-    [symbols : BackendStringList BackendStringNil]
+    [symbols : BackendStringList BackendStringList.Nil]
     (begin
       (set! symbols (compiler-backend-string-cons "tl_memchr" symbols))
       (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
@@ -30564,8 +30879,8 @@ tl_memchr:
   [plan : CompilerBackendRuntimePlan]
   [names : BackendStringList]) : CompilerBackendObjectParts
   (match names
-    [(BackendStringNil) parts]
-    [(BackendStringCons name rest)
+    [(BackendStringList.Nil) parts]
+    [(BackendStringList.Cons name rest)
       (compiler-backend-object-runtime-symbols
         (if (compiler-backend-object-runtime-symbol-provided? plan name)
           (compiler-backend-object-symbol-local-section
@@ -31050,11 +31365,11 @@ tl_memchr:
   [crt-entry : bool]) : CompilerBackendObjectParts
   (if emit-entry
     (match target
-      [(BackendTargetLinux)
+      [(CompilerBackendTarget.Linux)
         (if crt-entry
           parts
           (compiler-backend-object-add-linux-entry parts))]
-      [(BackendTargetWindows)
+      [(CompilerBackendTarget.Windows)
         (if crt-entry
           parts
           (compiler-backend-object-add-windows-entry parts))])
@@ -31093,8 +31408,8 @@ tl_memchr:
                 empty-instrs)
               CompilerObjectSectionList.Nil))))]
     (match target
-      [(BackendTargetLinux) (compiler-object-section-list-dense base)]
-      [(BackendTargetWindows)
+      [(CompilerBackendTarget.Linux) (compiler-object-section-list-dense base)]
+      [(CompilerBackendTarget.Windows)
         (compiler-object-section-list-dense
           (compiler-object-section-cons
             (CompilerObjectSection.Section
@@ -31253,10 +31568,10 @@ tl_memchr:
   (begin
     (compiler-backend-user-symbol-cache-reset!)
     (match (compiler-backend-runtime-plan program)
-      [(OkBackendRuntimePlan plan)
+      [(ResultBackendRuntimePlan.Ok plan)
         (if (compiler-backend-target-runtime-ok? target plan)
           (match program
-            [(IrProgram globals functions externs)
+            [(CompilerIrProgram.Program globals functions externs)
               (let
                 [entry-functions : CompilerIrFunctionList
                   (compiler-backend-functions-with-implicit-main
@@ -31270,11 +31585,11 @@ tl_memchr:
                   externs
                   plan
                   program-index)
-                  [(OkCompilerBackendSymbolValidation _)
+                  [(ResultCompilerBackendSymbolValidation.Ok _)
                     (match (compiler-backend-switch-validate-functions
                       entry-functions)
-                      [(CompilerBackendSwitchValidationOk)
-                        (OkCompilerBackendObject
+                      [(CompilerBackendSwitchValidation.Ok)
+                        (ResultCompilerBackendObject.Ok
                           (compiler-backend-object-image-after-index
                             program
                             target
@@ -31286,18 +31601,18 @@ tl_memchr:
                             program-index
                             emit-entry
                             crt-entry))]
-                      [(CompilerBackendSwitchValidationErr message)
-                        (ErrCompilerBackendObject
+                      [(CompilerBackendSwitchValidation.Err message)
+                        (ResultCompilerBackendObject.Err
                           (box (compiler-diagnostic-at-start "" message)))])]
-                  [(ErrCompilerBackendSymbolValidation message)
-                    (ErrCompilerBackendObject message)]))])
-          (ErrCompilerBackendObject
+                  [(ResultCompilerBackendSymbolValidation.Err message)
+                    (ResultCompilerBackendObject.Err message)]))])
+          (ResultCompilerBackendObject.Err
             (box
               (compiler-diagnostic-at-start
                 ""
                 "backend: internal target runtime rejection"))))]
-      [(ErrBackendRuntimePlan message)
-        (ErrCompilerBackendObject
+      [(ResultBackendRuntimePlan.Err message)
+        (ResultCompilerBackendObject.Err
           (box (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode
@@ -31322,7 +31637,7 @@ tl_memchr:
   (compiler-backend-emit-program-object-image-target-with-mode
     program
     target
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     spans
     emit-entry))
 
@@ -31331,7 +31646,7 @@ tl_memchr:
   [spans : CompilerSourceSpans]) : ResultCompilerBackendObject
   (compiler-backend-emit-program-object-image-target
     program
-    (BackendTargetLinux)
+    (CompilerBackendTarget.Linux)
     spans
     true))
 
@@ -31446,11 +31761,11 @@ tl_memchr:
         [comma : i64
           (compiler-backend-peephole-find-comma-space line prefix-len)]
         (if (and (> comma prefix-len) (< (+ comma 2) n))
-          (CompilerBackendPeepholeMove
+          (CompilerBackendPeepholeMove.Move
             (string.substring line prefix-len (- comma prefix-len))
             (string.substring line (+ comma 2) (- n (+ comma 2))))
-          (CompilerBackendPeepholeNoMove)))
-      (CompilerBackendPeepholeNoMove))))
+          (CompilerBackendPeepholeMove.NoMove)))
+      (CompilerBackendPeepholeMove.NoMove))))
 
 (define (compiler-backend-peephole-movq-prefix-len) : i64
   9)
@@ -31509,11 +31824,11 @@ tl_memchr:
             operand-start
             end)]
         (if (and (> comma operand-start) (< (+ comma 2) end))
-          (CompilerBackendPeepholeMove
+          (CompilerBackendPeepholeMove.Move
             (string.substring asm operand-start (- comma operand-start))
             (string.substring asm (+ comma 2) (- end (+ comma 2))))
-          (CompilerBackendPeepholeNoMove)))
-      (CompilerBackendPeepholeNoMove))))
+          (CompilerBackendPeepholeMove.NoMove)))
+      (CompilerBackendPeepholeMove.NoMove))))
 
 (define (compiler-backend-peephole-line-movq
   [asm : String]
@@ -31594,9 +31909,9 @@ tl_memchr:
   [pending : String]
   [next : String]) : String
   (match (compiler-backend-peephole-movq pending)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (match (compiler-backend-peephole-movq next)
-        [(CompilerBackendPeepholeMove next-src next-dst)
+        [(CompilerBackendPeepholeMove.Move next-src next-dst)
           (if (compiler-backend-peephole-forward-frame-load-operands?
             src
             dst
@@ -31604,14 +31919,14 @@ tl_memchr:
             next-dst)
             (str_cat.str-cat "    movq " src ", " next-dst)
             next)]
-        [(CompilerBackendPeepholeNoMove) next])]
-    [(CompilerBackendPeepholeNoMove) next]))
+        [(CompilerBackendPeepholeMove.NoMove) next])]
+    [(CompilerBackendPeepholeMove.NoMove) next]))
 
 (define (compiler-backend-peephole-self-move? [line : String]) : bool
   (match (compiler-backend-peephole-movq line)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (compiler-backend-peephole-self-move-operands? src dst)]
-    [(CompilerBackendPeepholeNoMove) false]))
+    [(CompilerBackendPeepholeMove.NoMove) false]))
 
 ;; Pair action: 0 emits pending, 1 drops pending, 2 keeps pending and skips next,
 ;; 3 emits pending and replaces next with a register-forwarded move.
@@ -31619,11 +31934,11 @@ tl_memchr:
   [pending : String]
   [next : String]) : i64
   (match (compiler-backend-peephole-movq pending)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (if (compiler-backend-peephole-self-move-operands? src dst)
         1
         (match (compiler-backend-peephole-movq next)
-          [(CompilerBackendPeepholeMove next-src next-dst)
+          [(CompilerBackendPeepholeMove.Move next-src next-dst)
             (cond
               [(compiler-backend-peephole-overwritten-frame-store-operands?
                   src
@@ -31644,8 +31959,8 @@ tl_memchr:
                   next-dst)
                 3]
               [else 0])]
-          [(CompilerBackendPeepholeNoMove) 0]))]
-    [(CompilerBackendPeepholeNoMove) 0]))
+          [(CompilerBackendPeepholeMove.NoMove) 0]))]
+    [(CompilerBackendPeepholeMove.NoMove) 0]))
 
 (define (compiler-backend-peephole-line-self-move?
   [asm : String]
@@ -31661,9 +31976,9 @@ tl_memchr:
     end
     owned-line
     owned?)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (compiler-backend-peephole-self-move-operands? src dst)]
-    [(CompilerBackendPeepholeNoMove) false]))
+    [(CompilerBackendPeepholeMove.NoMove) false]))
 
 (define (compiler-backend-peephole-pair-action-range
   [asm : String]
@@ -31681,7 +31996,7 @@ tl_memchr:
     pending-end
     pending-line
     pending-owned?)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (if (compiler-backend-peephole-self-move-operands? src dst)
         1
         (match (compiler-backend-peephole-movq-range
@@ -31689,7 +32004,7 @@ tl_memchr:
           asm-data
           next-start
           next-end)
-          [(CompilerBackendPeepholeMove next-src next-dst)
+          [(CompilerBackendPeepholeMove.Move next-src next-dst)
             (cond
               [(compiler-backend-peephole-overwritten-frame-store-operands?
                   src
@@ -31710,8 +32025,8 @@ tl_memchr:
                   next-dst)
                 3]
               [else 0])]
-          [(CompilerBackendPeepholeNoMove) 0]))]
-    [(CompilerBackendPeepholeNoMove) 0]))
+          [(CompilerBackendPeepholeMove.NoMove) 0]))]
+    [(CompilerBackendPeepholeMove.NoMove) 0]))
 
 (define (compiler-backend-peephole-forward-frame-load-line-range
   [asm : String]
@@ -31729,13 +32044,13 @@ tl_memchr:
     pending-end
     pending-line
     pending-owned?)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (match (compiler-backend-peephole-movq-range
         asm
         asm-data
         next-start
         next-end)
-        [(CompilerBackendPeepholeMove next-src next-dst)
+        [(CompilerBackendPeepholeMove.Move next-src next-dst)
           (if (compiler-backend-peephole-forward-frame-load-operands?
             src
             dst
@@ -31743,9 +32058,9 @@ tl_memchr:
             next-dst)
             (str_cat.str-cat "    movq " src ", " next-dst)
             (string.substring asm next-start (- next-end next-start)))]
-        [(CompilerBackendPeepholeNoMove)
+        [(CompilerBackendPeepholeMove.NoMove)
           (string.substring asm next-start (- next-end next-start))])]
-    [(CompilerBackendPeepholeNoMove)
+    [(CompilerBackendPeepholeMove.NoMove)
       (string.substring asm next-start (- next-end next-start))]))
 
 (define (compiler-backend-peephole-emit-pending-line
@@ -31765,7 +32080,7 @@ tl_memchr:
     pending-end
     pending-line
     pending-owned?)
-    [(CompilerBackendPeepholeMove src dst)
+    [(CompilerBackendPeepholeMove.Move src dst)
       (let
         [next-out : text_buf.TextBuf
           (if (and
@@ -31784,7 +32099,7 @@ tl_memchr:
         [next-owner : String
           (compiler-backend-peephole-rax-slot-next-owner rax-owner src dst)]
         (CompilerBackendPeepholeEmitResult next-out next-owner))]
-    [(CompilerBackendPeepholeNoMove)
+    [(CompilerBackendPeepholeMove.NoMove)
       (CompilerBackendPeepholeEmitResult
         (compiler-backend-peephole-append-pending-line
           out
@@ -31970,10 +32285,11 @@ tl_memchr:
     spans
     emit-entry
     crt-entry)
-    [(OkCompilerBackendBuffer buf)
-      (OkCompilerBackend
+    [(ResultCompilerBackendBuffer.Ok buf)
+      (ResultCompilerBackend.Ok
         (compiler-backend-peephole-asm (text_buf.text-buf-render buf)))]
-    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-program-target-with-mode
   [program : CompilerIrProgram]
@@ -31987,14 +32303,15 @@ tl_memchr:
     mode
     spans
     emit-entry)
-    [(OkCompilerBackendBuffer buf)
-      (OkCompilerBackend
+    [(ResultCompilerBackendBuffer.Ok buf)
+      (ResultCompilerBackend.Ok
         (compiler-backend-peephole-asm (text_buf.text-buf-render buf)))]
-    [(ErrCompilerBackendBuffer message) (ErrCompilerBackend message)]))
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : SymI64Env
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable
@@ -32002,7 +32319,7 @@ tl_memchr:
             "unix")
           "target-linux")
         "os-linux")]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (compiler-cfg-enable
         (compiler-cfg-enable
           (compiler-cfg-enable (compiler-cfg-empty) "windows")
@@ -32013,18 +32330,18 @@ tl_memchr:
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]) : CompilerLowerMode
   (match mode
-    [(BackendModeAvx2)
+    [(CompilerBackendMode.Avx2)
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxAvx2)]
-        [(BackendTargetWindows) (CompilerLowerWindowsAvx2)])]
-    [(BackendModeAvx512)
+        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxAvx2)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsAvx2)])]
+    [(CompilerBackendMode.Avx512)
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxAvx512)]
-        [(BackendTargetWindows) (CompilerLowerWindowsAvx512)])]
+        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxAvx512)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsAvx512)])]
     [_
       (match target
-        [(BackendTargetLinux) (CompilerLowerLinuxScalar)]
-        [(BackendTargetWindows) (CompilerLowerWindowsScalar)])]))
+        [(CompilerBackendTarget.Linux) (CompilerLowerLinuxScalar)]
+        [(CompilerBackendTarget.Windows) (CompilerLowerWindowsScalar)])]))
 
 (define (compiler-backend-lower-source-for-target
   [src : String]
@@ -32040,14 +32357,16 @@ tl_memchr:
         (lower-compiler-program-with-path-mode
           "<source>"
           program
-          (compiler-backend-lower-mode-for-target target (BackendModeScalar)))]
+          (compiler-backend-lower-mode-for-target
+            target
+            (CompilerBackendMode.Scalar)))]
       [(ErrAstProgramDiagnostic diag) (ErrCompilerLower diag)])))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-linux-with-spans program spans)]
-    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
+    [(ErrCompilerLower diag) (ResultCompilerBackend.Err diag)]))
 
 (define (compiler-backend-emit-source-for-target
   [src : String]
@@ -32055,7 +32374,7 @@ tl_memchr:
   (match (compiler-backend-lower-source-for-target src target)
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-with-spans-for-target program spans target)]
-    [(ErrCompilerLower diag) (ErrCompilerBackend diag)]))
+    [(ErrCompilerLower diag) (ResultCompilerBackend.Err diag)]))
 
 ;; #2357: inline-by-value aggregates are the always-on default lowering, so
 ;; emitting "in inline-aggregates mode" is just the ordinary target emit. The
@@ -32071,7 +32390,7 @@ tl_memchr:
   (match (lower-compiler-source src)
     [(OkCompilerLower program spans)
       (compiler-backend-emit-program-object-image-linux program spans)]
-    [(ErrCompilerLower diag) (ErrCompilerBackendObject diag)]))
+    [(ErrCompilerLower diag) (ResultCompilerBackendObject.Err diag)]))
 
 (define (compiler-backend-emit-source-object-image-for-target
   [src : String]
@@ -32083,7 +32402,7 @@ tl_memchr:
         target
         spans
         true)]
-    [(ErrCompilerLower diag) (ErrCompilerBackendObject diag)]))
+    [(ErrCompilerLower diag) (ResultCompilerBackendObject.Err diag)]))
 
 (define (compiler-backend-string-prefix-at?
   [text : String]
@@ -32496,7 +32815,7 @@ tl_memchr:
     spans
     emit-entry
     crt-entry)
-    [(OkCompilerBackendBuffer buf)
+    [(ResultCompilerBackendBuffer.Ok buf)
       (match (compiler-backend-emit-program-object-image-target-with-mode-and-crt
         program
         target
@@ -32504,10 +32823,10 @@ tl_memchr:
         spans
         emit-entry
         crt-entry)
-        [(OkCompilerBackendObject image)
+        [(ResultCompilerBackendObject.Ok image)
           (if (compiler-backend-pic-symbols-have-extern?
             (struct-get image symbols))
-            (ErrCompilerBackendPic
+            (ResultCompilerBackendPic.Err
               (box
                 (compiler-diagnostic-at-start
                   ""
@@ -32515,20 +32834,21 @@ tl_memchr:
             (if (compiler-backend-pic-relocs-valid?
               image
               (struct-get image relocations))
-              (OkCompilerBackendPic
+              (ResultCompilerBackendPic.Ok
                 (CompilerBackendPicOutput
                   (compiler-backend-pic-asm
                     (compiler-backend-peephole-asm
                       (text_buf.text-buf-render buf))
                     image)
                   (compiler-backend-pic-fixup-table image)))
-              (ErrCompilerBackendPic
+              (ResultCompilerBackendPic.Err
                 (box
                   (compiler-diagnostic-at-start
                     ""
                     "backend: --pic could not map every absolute pointer fixup to an 8-byte data slot")))))]
-        [(ErrCompilerBackendObject diag) (ErrCompilerBackendPic diag)])]
-    [(ErrCompilerBackendBuffer diag) (ErrCompilerBackendPic diag)]))
+        [(ResultCompilerBackendObject.Err diag)
+          (ResultCompilerBackendPic.Err diag)])]
+    [(ResultCompilerBackendBuffer.Err diag) (ResultCompilerBackendPic.Err diag)]))
 
 (define (compiler-backend-emit-program-pic-target-with-mode
   [program : CompilerIrProgram]
@@ -32552,13 +32872,15 @@ tl_memchr:
       (compiler-backend-emit-program-pic-target-with-mode
         program
         target
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         spans
         true)]
-    [(ErrCompilerLower diag) (ErrCompilerBackendPic diag)]))
+    [(ErrCompilerLower diag) (ResultCompilerBackendPic.Err diag)]))
 
 (define (compiler-backend-emit-source-pic-linux [src : String]) : ResultCompilerBackendPic
-  (compiler-backend-emit-source-pic-for-target src (BackendTargetLinux)))
+  (compiler-backend-emit-source-pic-for-target
+    src
+    (CompilerBackendTarget.Linux)))
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (compiler-ir-extern-cons
@@ -32569,13 +32891,13 @@ tl_memchr:
         (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
         (compiler-ir-extern-cons
           (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
-          IrExternNil)))))
+          CompilerIrExternList.Nil)))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
-  (IrProgram
-    IrGlobalNil
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (IrFunction
+      (CompilerIrFunction.Function
         "main"
         IrParamNil
         (AstTyI64)
@@ -32584,40 +32906,45 @@ tl_memchr:
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrCall
+              (CompilerIrInstr.Call
                 0
                 "tl_alloc"
-                (IrCallArgsOne (IrValueI64 8))
+                (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
                 (AstTyI64))
               (compiler-ir-instr-cons
-                (IrInstrCall
+                (CompilerIrInstr.Call
                   1
                   "tl_substring"
                   (compiler-ir-call-args-from-list
                     (compiler-ir-value-cons
-                      (IrValueI64 0)
+                      (CompilerIrValue.I64 0)
                       (compiler-ir-value-cons
-                        (IrValueI64 0)
-                        (compiler-ir-value-cons (IrValueI64 0) IrValueNil))))
+                        (CompilerIrValue.I64 0)
+                        (compiler-ir-value-cons
+                          (CompilerIrValue.I64 0)
+                          IrValueNil))))
                   (AstTyI64))
                 (compiler-ir-instr-cons
-                  (IrInstrCall
+                  (CompilerIrInstr.Call
                     2
                     "tl_string_concat"
                     (compiler-ir-call-args-from-list
                       (compiler-ir-value-cons
-                        (IrValueI64 0)
+                        (CompilerIrValue.I64 0)
                         (compiler-ir-value-cons
-                          (IrValueI64 0)
+                          (CompilerIrValue.I64 0)
                           (compiler-ir-value-cons
-                            (IrValueI64 0)
-                            (compiler-ir-value-cons (IrValueI64 0) IrValueNil)))))
+                            (CompilerIrValue.I64 0)
+                            (compiler-ir-value-cons
+                              (CompilerIrValue.I64 0)
+                              IrValueNil)))))
                     (AstTyI64))
                   (compiler-ir-instr-cons
-                    (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                    IrInstrNil)))))
-          IrBlockNil))
-      IrFunctionNil)
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+                    CompilerIrInstrList.Nil)))))
+          CompilerIrBlockList.Nil))
+      CompilerIrFunctionList.Nil)
     (compiler-backend-runtime-helper-externs)))
 
 (define (compiler-backend-runtime-helper-source) : String
@@ -32697,7 +33024,7 @@ tl_memchr:
 
 (define (compiler-backend-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-runtime-string-helper-generators-empty?)
         (backend-and8
@@ -32760,7 +33087,7 @@ tl_memchr:
           (not (compiler-backend-string-contains? asm "_errno:\n"))
           (not (compiler-backend-string-contains? asm "tl_errno:\n"))
           (compiler-backend-no-stdlib-forwarding-labels? asm)))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-str-view-helper-source) : String
   "(unsafe
@@ -32777,7 +33104,7 @@ tl_memchr:
 (define (compiler-backend-str-view-runtime-helper-asm-ok?) : bool
   (match (compiler-backend-emit-source
     (compiler-backend-str-view-helper-source))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    call tl_str_view\n")
         (not (compiler-backend-string-contains? asm ".globl tl_str_view\n"))
@@ -32793,13 +33120,13 @@ tl_memchr:
           (not (compiler-backend-string-contains? asm ".globl tl_substring\n"))
           (not (compiler-backend-string-contains? asm "tl_substring:\n"))
           (not (compiler-backend-string-contains? asm ".extern tl_substring\n"))))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-unused-str-view-extern-program) : CompilerIrProgram
-  (IrProgram
-    IrGlobalNil
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (IrFunction
+      (CompilerIrFunction.Function
         "stdlib/runtime.tl::tl-runtime-str-view"
         IrParamNil
         (AstTyI64)
@@ -32808,11 +33135,12 @@ tl_memchr:
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
-              IrInstrNil))
-          IrBlockNil))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
-        (IrFunction
+        (CompilerIrFunction.Function
           "main"
           IrParamNil
           (AstTyI64)
@@ -32821,23 +33149,24 @@ tl_memchr:
             (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
-                (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                IrInstrNil))
-            IrBlockNil))
-        IrFunctionNil))
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+                CompilerIrInstrList.Nil))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
       (compiler-ir-extern-default "tl_str_view" (AstTyI64))
-      IrExternNil)))
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
   (match (compiler-backend-emit-program-linux
     (compiler-backend-unused-str-view-extern-program))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm ".globl tl_str_view\n")
         (compiler-backend-string-contains? asm "tl_str_view:\n")
         (not (compiler-backend-string-contains? asm ".extern tl_str_view\n")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-file-handle-open-close-runtime-ok?) : bool
   (match (compiler-backend-emit-source
@@ -32847,7 +33176,7 @@ tl_memchr:
   (let
     [handle : i64 (io.file-open-status \"input.txt\" 0)]
     (+ handle (io.file-close-status handle))))")
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (not
           (compiler-backend-string-contains? asm ".L_tl_file_open_status:\n"))
@@ -32859,7 +33188,7 @@ tl_memchr:
           "    call tl_file_close_status\n")
         (compiler-backend-string-contains? asm ".extern tl_file_open_status\n")
         (compiler-backend-string-contains? asm ".extern tl_file_close_status\n"))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-windows-driver-runtime-source) : String
   "(extern (arg-count) : i64 (:symbol \"tl_arg_count\"))
@@ -32893,8 +33222,8 @@ tl_memchr:
 (define (compiler-backend-windows-driver-runtime-ok?) : bool
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-windows-driver-runtime-source)
-    (BackendTargetWindows))
-    [(OkCompilerBackend asm)
+    (CompilerBackendTarget.Windows))
+    [(ResultCompilerBackend.Ok asm)
       (and
         (backend-and8
           (compiler-backend-string-contains? asm ".extern tl_arg_count\n")
@@ -32922,11 +33251,11 @@ tl_memchr:
         (not (compiler-backend-string-contains? asm "tl_string_to_int:\n"))
         (not (compiler-backend-string-contains? asm "    call _open\n"))
         (not (compiler-backend-string-contains? asm "syscall\n")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-alloc-runtime-arena-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains?
           asm
@@ -32952,11 +33281,11 @@ tl_memchr:
           "    movq %rax, %fs:tl_current_arena@tpoff\n")
         (not
           (compiler-backend-string-contains? asm ".L_tl_alloc_size_ready:\n")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-alloc-runtime-shape-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-runtime-helper-source))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (backend-and8
           (compiler-backend-string-contains? asm "    addq $7, %rdi\n")
@@ -32978,13 +33307,13 @@ tl_memchr:
           (compiler-backend-string-contains? asm "    movq %rax, 56(%r9)\n"))
         (compiler-backend-string-contains? asm ".L_tl_alloc_abort:\n")
         (compiler-backend-string-contains? asm "    jmp tl_oom_abort\n"))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-user-helper-name-program) : CompilerIrProgram
-  (IrProgram
-    IrGlobalNil
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (IrFunction
+      (CompilerIrFunction.Function
         "tl_alloc"
         IrParamNil
         (AstTyI64)
@@ -32993,11 +33322,12 @@ tl_memchr:
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
-              IrInstrNil))
-          IrBlockNil))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
-        (IrFunction
+        (CompilerIrFunction.Function
           "main"
           IrParamNil
           (AstTyI64)
@@ -33006,18 +33336,23 @@ tl_memchr:
             (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
-                (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
+                (CompilerIrInstr.Call
+                  0
+                  "tl_alloc"
+                  (CompilerIrCallArgs.Nil)
+                  (AstTyI64))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil)))
-            IrBlockNil))
-        IrFunctionNil))
-    IrExternNil))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil))
+    CompilerIrExternList.Nil))
 
 (define (compiler-backend-user-helper-name-ok?) : bool
   (match (compiler-backend-emit-program-linux
     (compiler-backend-user-helper-name-program))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (or
           (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
@@ -33026,13 +33361,13 @@ tl_memchr:
           (compiler-backend-string-contains? asm "    call _tl_tl_alloc")
           (compiler-backend-string-contains? asm "    call _tl_f"))
         (not (compiler-backend-string-contains? asm ".L_tl_alloc_msg")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-runtime-coexist-program) : CompilerIrProgram
-  (IrProgram
-    IrGlobalNil
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (IrFunction
+      (CompilerIrFunction.Function
         "tl_alloc"
         IrParamNil
         (AstTyI64)
@@ -33041,11 +33376,12 @@ tl_memchr:
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
-              IrInstrNil))
-          IrBlockNil))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
-        (IrFunction
+        (CompilerIrFunction.Function
           "main"
           IrParamNil
           (AstTyI64)
@@ -33054,31 +33390,38 @@ tl_memchr:
             (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
-                (IrInstrCall 0 "tl_alloc" (IrCallArgsNil) (AstTyI64))
+                (CompilerIrInstr.Call
+                  0
+                  "tl_alloc"
+                  (CompilerIrCallArgs.Nil)
+                  (AstTyI64))
                 (compiler-ir-instr-cons
-                  (IrInstrCall
+                  (CompilerIrInstr.Call
                     1
                     "tl_substring"
                     (compiler-ir-call-args-from-list
                       (compiler-ir-value-cons
-                        (IrValueI64 0)
+                        (CompilerIrValue.I64 0)
                         (compiler-ir-value-cons
-                          (IrValueI64 0)
-                          (compiler-ir-value-cons (IrValueI64 0) IrValueNil))))
+                          (CompilerIrValue.I64 0)
+                          (compiler-ir-value-cons
+                            (CompilerIrValue.I64 0)
+                            IrValueNil))))
                     (AstTyI64))
                   (compiler-ir-instr-cons
-                    (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                    IrInstrNil))))
-            IrBlockNil))
-        IrFunctionNil))
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                    CompilerIrInstrList.Nil))))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
       (compiler-ir-extern-default "tl_substring" (AstTyI64))
-      IrExternNil)))
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
   (match (compiler-backend-emit-program-linux
     (compiler-backend-runtime-coexist-program))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (or
           (compiler-backend-string-contains? asm ".globl _tl_tl_alloc")
@@ -33091,13 +33434,13 @@ tl_memchr:
           (compiler-backend-string-contains? asm "    call _tl_f"))
         (compiler-backend-string-contains? asm "    call tl_substring\n")
         (not (compiler-backend-string-contains? asm ".extern tl_substring\n")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-module-symbol-program) : CompilerIrProgram
-  (IrProgram
-    IrGlobalNil
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (IrFunction
+      (CompilerIrFunction.Function
         "lib.tl::helper"
         IrParamNil
         (AstTyI64)
@@ -33106,11 +33449,12 @@ tl_memchr:
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrReturn (IrSomeValue (IrValueI64 7)))
-              IrInstrNil))
-          IrBlockNil))
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.I64 7)))
+              CompilerIrInstrList.Nil))
+          CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
-        (IrFunction
+        (CompilerIrFunction.Function
           "main"
           IrParamNil
           (AstTyI64)
@@ -33119,25 +33463,30 @@ tl_memchr:
             (compiler-ir-block
               "entry"
               (compiler-ir-instr-cons
-                (IrInstrCall 0 "lib.tl::helper" (IrCallArgsNil) (AstTyI64))
+                (CompilerIrInstr.Call
+                  0
+                  "lib.tl::helper"
+                  (CompilerIrCallArgs.Nil)
+                  (AstTyI64))
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueVar 0)))
-                  IrInstrNil)))
-            IrBlockNil))
-        IrFunctionNil))
-    IrExternNil))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+                  CompilerIrInstrList.Nil)))
+            CompilerIrBlockList.Nil))
+        CompilerIrFunctionList.Nil))
+    CompilerIrExternList.Nil))
 
 (define (compiler-backend-module-symbol-ok?) : bool
   (match (compiler-backend-emit-program-linux
     (compiler-backend-module-symbol-program))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm ".globl _tl_lib_helper")
         (compiler-backend-string-contains? asm "    call _tl_lib_helper")
         (not (compiler-backend-string-contains? asm "_u2e"))
         (not (compiler-backend-string-contains? asm "_colon"))
         (not (compiler-backend-string-contains? asm "_slash")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-extern-metadata-source) : String
   "(extern (local-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\"))
@@ -33149,7 +33498,7 @@ tl_memchr:
   (match (compiler-backend-emit-source-for-target
     (compiler-backend-extern-metadata-source)
     target)
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm ".extern foreign_exact\n")
         (compiler-backend-string-contains? asm "    call foreign_exact\n")
@@ -33158,9 +33507,11 @@ tl_memchr:
           (compiler-backend-string-contains? asm "    call _tl_f"))
         (not (compiler-backend-string-contains? asm ".extern local-call\n"))
         (not (compiler-backend-string-contains? asm "    call local-call\n")))]
-    [(ErrCompilerBackend _) false]))
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-extern-metadata-symbol-ok?) : bool
   (and
-    (compiler-backend-extern-metadata-symbol-target-ok? (BackendTargetLinux))
-    (compiler-backend-extern-metadata-symbol-target-ok? (BackendTargetWindows))))
+    (compiler-backend-extern-metadata-symbol-target-ok?
+      (CompilerBackendTarget.Linux))
+    (compiler-backend-extern-metadata-symbol-target-ok?
+      (CompilerBackendTarget.Windows))))

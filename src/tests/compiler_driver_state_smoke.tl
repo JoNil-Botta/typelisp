@@ -951,11 +951,11 @@
           (compiler-driver-load-and-lower-escaping-with-state
             state-a
             "tests/integration/calc.tl"
-            (BackendTargetLinux)
+            (CompilerBackendTarget.Linux)
             roots
-            (BackendModeScalar)
+            (CompilerBackendMode.Scalar)
             (compiler-driver-target-cfgs
-              (BackendTargetLinux)
+              (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))]
         (match lowered
           [(ResultCompilerDriverLowered.Ok _ _ pools-a)
@@ -973,9 +973,9 @@
                     (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
                       "tests/integration/calc.tl"
                       lowered
-                      (BackendTargetLinux)
+                      (CompilerBackendTarget.Linux)
                       true
-                      (BackendModeScalar)
+                      (CompilerBackendMode.Scalar)
                       1
                       true
                       false)]
@@ -1005,11 +1005,11 @@
           (match (compiler-driver-load-and-lower-escaping-with-state
             state
             input-path
-            (BackendTargetLinux)
+            (CompilerBackendTarget.Linux)
             stdlib-roots
-            (BackendModeScalar)
+            (CompilerBackendMode.Scalar)
             (compiler-driver-target-cfgs
-              (BackendTargetLinux)
+              (CompilerBackendTarget.Linux)
               (compiler-cfg-empty)))
             [(ResultCompilerDriverLowered.Ok _ _ _) true]
             [(ResultCompilerDriverLowered.Err _) false])]
@@ -1074,10 +1074,10 @@
       (match (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
         state
         input-path
-        (BackendTargetLinux)
+        (CompilerBackendTarget.Linux)
         roots
         2
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         (compiler-cfg-empty))
         [(ResultCompilerDriver.Ok summary)
           (and

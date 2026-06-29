@@ -7641,13 +7641,11 @@
       (compiler-typecheck-module-macro-import-alias-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-import-duplicate-source))
-    ;; Two generated modules sharing the `generated.module` identity that both
-    ;; declare `answer` are a duplicate declaration. There is no special
-    ;; import-time collision pre-check anymore; collisions surface through
-    ;; ordinary resolution/usage.
+    ;; Two generated module identities sharing the `generated.module` target and
+    ;; declaring incompatible `answer` payloads are rejected during materialize.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-target-collision-source)
-      "symbols: duplicate value declaration generated.module/answer")
+      "typecheck: Module macro output for generated identity :gen-b() has incompatible payload")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-module-macro-import-distinct-collision-source)
       "typecheck: ambiguous unqualified import for value answer between modules generated.a and generated.b; use an explicit alias or qualified access")

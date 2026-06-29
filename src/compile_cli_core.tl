@@ -145,11 +145,11 @@
   (if (or
     (string.string-eq value "linux-x86_64")
     (string.string-eq value "linux_x86_64"))
-    (ResultCompileCliTarget.Ok (BackendTargetLinux))
+    (ResultCompileCliTarget.Ok (CompilerBackendTarget.Linux))
     (if (or
       (string.string-eq value "windows-x86_64")
       (string.string-eq value "windows_x86_64"))
-      (ResultCompileCliTarget.Ok (BackendTargetWindows))
+      (ResultCompileCliTarget.Ok (CompilerBackendTarget.Windows))
       (ResultCompileCliTarget.Err (compile-cli-unknown-target value)))))
 
 (define (compile-cli-invalid-opt-level [value : String]) : String
@@ -166,11 +166,11 @@
 (define (compile-cli-backend-mode [value : String]) : ResultCompileCliBackendMode
   (cond
     [(string.string-eq value "scalar")
-      (ResultCompileCliBackendMode.Ok (BackendModeScalar))]
+      (ResultCompileCliBackendMode.Ok (CompilerBackendMode.Scalar))]
     [(string.string-eq value "avx2")
-      (ResultCompileCliBackendMode.Ok (BackendModeAvx2))]
+      (ResultCompileCliBackendMode.Ok (CompilerBackendMode.Avx2))]
     [(string.string-eq value "avx512")
-      (ResultCompileCliBackendMode.Ok (BackendModeAvx512))]
+      (ResultCompileCliBackendMode.Ok (CompilerBackendMode.Avx512))]
     [else
       (ResultCompileCliBackendMode.Err
         (str_cat.str-cat
@@ -306,7 +306,7 @@
               (let
                 [value : String (io.arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
-                  [(OkCompilerOptimizeLevel parsed-level)
+                  [(ResultCompilerOptimizeLevel.Ok parsed-level)
                     (compile-cli-parse-options
                       (+ idx 2)
                       count
@@ -322,7 +322,7 @@
                       true
                       parsed-level
                       backend-mode)]
-                  [(ErrCompilerOptimizeLevel)
+                  [(ResultCompilerOptimizeLevel.Err)
                     (ResultCompileCliConfig.Err
                       (compile-cli-invalid-opt-level value))]))))]
         [(string.string-eq current "--backend-mode")
@@ -486,7 +486,7 @@
               (let
                 [value : String (io.arg (+ idx 1))]
                 (match (compiler-optimize-parse-level value)
-                  [(OkCompilerOptimizeLevel parsed-level)
+                  [(ResultCompilerOptimizeLevel.Ok parsed-level)
                     (compile-cli-batch-parse-options
                       (+ idx 2)
                       count
@@ -499,7 +499,7 @@
                       parsed-level
                       backend-mode
                       prefix-cache-stats)]
-                  [(ErrCompilerOptimizeLevel)
+                  [(ResultCompilerOptimizeLevel.Err)
                     (ResultCompileCliBatchConfig.Err
                       (compile-cli-invalid-opt-level value))]))))]
         [(string.string-eq current "--backend-mode")
@@ -557,14 +557,14 @@
           (compile-cli-default-output input-path)
           false
           false
-          (BackendTargetLinux)
+          (CompilerBackendTarget.Linux)
           (vector.string-vec-new)
           (vector.string-vec-new)
           false
           false
           false
           (compiler-optimize-default-level)
-          (BackendModeScalar))))))
+          (CompilerBackendMode.Scalar))))))
 
 (define (compile-cli-command-config [count : i64]) : ResultCompileCliConfig
   (compile-cli-config-from 2 count))
@@ -582,12 +582,12 @@
           count
           batch-path
           false
-          (BackendTargetLinux)
+          (CompilerBackendTarget.Linux)
           (vector.string-vec-new)
           (vector.string-vec-new)
           false
           (compiler-optimize-default-level)
-          (BackendModeScalar)
+          (CompilerBackendMode.Scalar)
           false)))))
 
 (define (compile-cli-command-action [count : i64]) : CompileCliAction

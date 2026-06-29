@@ -8,34 +8,43 @@
 (import "../compiler_optimize.tl")
 
 (define (bounds-check-smoke-program) : CompilerIrProgram
-  (IrProgram
-    IrGlobalNil
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
-      (IrFunction
+      (CompilerIrFunction.Function
         "main"
         (compiler-ir-param-cons
-          (IrParam "index" (AstTyI64) 0)
-          (compiler-ir-param-cons (IrParam "length" (AstTyI64) 1) IrParamNil))
+          (CompilerIrParam.Param "index" (AstTyI64) 0)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "length" (AstTyI64) 1)
+            IrParamNil))
         (AstTyI64)
         4
         (compiler-ir-block-cons
           (compiler-ir-block
             "entry"
             (compiler-ir-instr-cons
-              (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.0")
+              (CompilerIrInstr.BoundsCheck
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.Var 1)
+                "bounds_ok.0")
               (compiler-ir-instr-cons
-                (IrInstrBoundsCheck (IrValueVar 0) (IrValueVar 1) "bounds_ok.1")
+                (CompilerIrInstr.BoundsCheck
+                  (CompilerIrValue.Var 0)
+                  (CompilerIrValue.Var 1)
+                  "bounds_ok.1")
                 (compiler-ir-instr-cons
-                  (IrInstrReturn (IrSomeValue (IrValueI64 42)))
-                  (IrInstrNil)))))
-          (IrBlockNil)))
-      (IrFunctionNil))
-    IrExternNil))
+                  (CompilerIrInstr.Return
+                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
+                  (CompilerIrInstrList.Nil)))))
+          (CompilerIrBlockList.Nil)))
+      (CompilerIrFunctionList.Nil))
+    CompilerIrExternList.Nil))
 
 (define (main) : i64
   (match (compiler-backend-emit-program-linux
     (optimize-program-with-level (bounds-check-smoke-program) 2))
-    [(OkCompilerBackend asm)
+    [(ResultCompilerBackend.Ok asm)
       (let
         [symbol-count : i64 (compiler-backend-string-count asm "tl_oob_abort")]
         [defines-abort : bool
@@ -45,4 +54,4 @@
           (if defines-abort
             2
             42)))]
-    [(ErrCompilerBackend _) 2]))
+    [(ResultCompilerBackend.Err _) 2]))

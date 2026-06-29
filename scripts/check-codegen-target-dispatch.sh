@@ -15,7 +15,7 @@ fi
 
 mkdir -p "$WORKDIR"
 
-TOKEN_RE='CompilerLower(Linux|Windows)[[:alnum:]_]*|lower-mode-(linux|windows)-[[:alnum:]_?-]+|BackendTarget(Linux|Windows)|compiler-backend-target-(linux|windows)[?]|target-(linux|windows)|(linux|windows)-x86_64'
+TOKEN_RE='CompilerLower(Linux|Windows)[[:alnum:]_]*|lower-mode-(linux|windows)-[[:alnum:]_?-]+|CompilerBackendTarget[.](Linux|Windows)|BackendTarget(Linux|Windows)|compiler-backend-target-(linux|windows)[?]|target-(linux|windows)|(linux|windows)-x86_64'
 
 awk -v token_re="$TOKEN_RE" '
 function scope_name(text) {
@@ -53,6 +53,14 @@ FNR == 1 {
 
     if (line ~ /^[[:space:]]*;;/) {
         next
+    }
+
+    if (scope == "enum:CompilerBackendTarget") {
+        if (line ~ /^[[:space:]]*\(Linux\)/) {
+            printf "%s\t%s\tCompilerBackendTarget.Linux\t%d\n", FILENAME, scope, FNR
+        } else if (line ~ /^[[:space:]]*\(Windows\)/) {
+            printf "%s\t%s\tCompilerBackendTarget.Windows\t%d\n", FILENAME, scope, FNR
+        }
     }
 
     rest = line

@@ -7,7 +7,7 @@
 ;; `lexer.tl` is the *demo* program for the s-expression lexer: it carries a
 ;; `main` that lexes a sample and tallies its symbols. But the next front-end
 ;; component - the s-expression *reader* in `reader.tl` - wants to REUSE the
-;; lexer's `lex : (-> String (Array Token))` rather than re-derive it, and it
+;; lexer's `lex : (-> String (Array token.Token))` rather than re-derive it, and it
 ;; carries its own `main` (read tokens into a recursive `Sexpr` tree, fold it).
 ;;
 ;; The module loader (#44) is whole-program: it concatenates every imported
@@ -19,34 +19,32 @@
 ;;
 ;; The fix is this `main`-less module: it holds the lexer's scanners, the
 ;; recoverable `lex-result` entry, the legacy `lex` wrapper, `(import)`s the
-;; shared `main`-less `token.tl` token model, and declares NO `main`. The reader
-;; `(import "lex.tl")`s it and gets `lex` + `Token` (transitively `token.tl`)
-;; across the import boundary, and the concatenated program has exactly one
+;; shared `main`-less `token` module, and declares NO `main`. The reader
+;; imports this module for `lex` and imports `token` directly for token types,
+;; so the concatenated program has exactly one
 ;; `main` (the reader's). `lexer.tl`
 ;; stays as the lexer's standalone demo. This mirrors how `calc.tl` imports the
 ;; `main`-less `token.tl`: a `main`-less module is the unit of reuse, a
 ;; `main`-bearing file is a runnable demo.
-;; The shared token model: the `Token` enum and the `token-tag` / `token-int` /
-;; `token-sym` / `token-str` / `token-char` / `token-float` accessors and tag
+;; The shared token model: the `token.Token` enum and the `token.token-tag` / `token.token-int` /
+;; `token.token-sym` / `token.token-str` / `token.token-char` / `token.token-float` accessors and tag
 ;; constants.
-;; Resolved relative to this file, so it finds the co-located `token.tl`. This
-;; is a transitive import: the reader imports this module, which imports
-;; `token.tl`; the loader's post-order DFS loads `token.tl` first, then this
-;; module, then the reader.
+;; Imported by module name so token declarations stay behind the `token.`
+;; qualifier instead of flattening through `lex.tl`.
 (import compiler_intern as ci)
 (import stdlib.array)
 (import stdlib.io)
-(import "token.tl")
+(import token)
 (import stdlib.text_buf)
 (import stdlib.string)
 
 (defenum ResultTokens
-  (Ok (Array Token))
+  (Ok (Array token.Token))
   (Err String))
 
 (defenum ResultSpannedTokens
-  (Ok (Array SpannedToken))
-  (Err SourceError))
+  (Ok (Array token.SpannedToken))
+  (Err token.SourceError))
 
 (defenum ResultLexI64
   (Ok i64)
@@ -54,11 +52,11 @@
 
 (defenum ResultLexCheck
   (Ok i64)
-  (Err SourceError))
+  (Err token.SourceError))
 
 (defenum ResultLexIntoSpanned
   (Ok i64)
-  (Err SourceError))
+  (Err token.SourceError))
 
 (defenum ResultLexChar
   (Ok char)
@@ -104,7 +102,7 @@
 ;; characters that may appear in a symbol/operator name:
 ;;   `-` `+` `*` `/` `%` `&` `?` `!` `>` `<` `=` `:` `_`
 ;; This is what makes `+`, `<=`, `string->int`, and `array-set!` all lex as one
-;; `Token.Sym` rather than as separate operator tokens.
+;; `token.Token.Sym` rather than as separate operator tokens.
 (define (is-symbol-punct [c : char]) : bool
   (or
     (= c '-')
@@ -578,23 +576,24 @@
 (define (lex-check [src : String]) : ResultLexI64
   (match (lex-check-spanned src)
     [(ResultLexCheck.Ok end) (ResultLexI64.Ok end)]
-    [(ResultLexCheck.Err err) (ResultLexI64.Err (source-error-message err))]))
+    [(ResultLexCheck.Err err)
+      (ResultLexI64.Err (token.source-error-message err))]))
 
-;; Lex `src`, recording each emitted `Token` value into `toks` (which must be
-;; large enough to hold every token plus the `Token.End` sentinel) and returning the
+;; Lex `src`, recording each emitted `token.Token` value into `toks` (which must be
+;; large enough to hold every token plus the `token.Token.End` sentinel) and returning the
 ;; token count. Compatibility callers use this panic-on-error path through
 ;; `lex`; recoverable callers use `lex-into-spanned-result` directly.
-(define (lex-into [src : String] [toks : (Array Token)]) : i64
+(define (lex-into [src : String] [toks : (Array token.Token)]) : i64
   (lex-into-spanned src toks (array.make-array i64 (array.array-length toks))))
 
 ;; Core scanner. Fills `toks` with the token stream and, in parallel, records
 ;; each token's starting byte index into `starts[count]` (#599). The plain token
 ;; path uses this through `lex-into`; `lex-spanned-result` uses a direct scanner
 ;; that records line/column positions while tokenizing. Returns the token count
-;; (excluding the trailing `Token.End`).
+;; (excluding the trailing `token.Token.End`).
 (define (lex-into-spanned-result
   [src : String]
-  [toks : (Array Token)]
+  [toks : (Array token.Token)]
   [starts : (Array i64)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
@@ -612,25 +611,25 @@
             [(= c '(')
               (begin
                 (array.array-set! starts count i)
-                (array.array-set! toks count Token.LParen)
+                (array.array-set! toks count token.Token.LParen)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c '[')
               (begin
                 (array.array-set! starts count i)
-                (array.array-set! toks count Token.LBracket)
+                (array.array-set! toks count token.Token.LBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c ')')
               (begin
                 (array.array-set! starts count i)
-                (array.array-set! toks count Token.RParen)
+                (array.array-set! toks count token.Token.RParen)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c ']')
               (begin
                 (array.array-set! starts count i)
-                (array.array-set! toks count Token.RBracket)
+                (array.array-set! toks count token.Token.RBracket)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c '\'')
@@ -638,7 +637,7 @@
                 [(ResultMaybeLexCharLiteral.Ok value end)
                   (begin
                     (array.array-set! starts count i)
-                    (array.array-set! toks count (Token.Char value))
+                    (array.array-set! toks count (token.Token.Char value))
                     (set! count (+ count 1))
                     (set! i end))]
                 [(ResultMaybeLexCharLiteral.Err err)
@@ -649,13 +648,13 @@
                 [(ResultMaybeLexCharLiteral.No)
                   (begin
                     (array.array-set! starts count i)
-                    (array.array-set! toks count Token.Quote)
+                    (array.array-set! toks count token.Token.Quote)
                     (set! count (+ count 1))
                     (set! i (+ i 1)))])]
             [(= c '`')
               (begin
                 (array.array-set! starts count i)
-                (array.array-set! toks count Token.Backtick)
+                (array.array-set! toks count token.Token.Backtick)
                 (set! count (+ count 1))
                 (set! i (+ i 1)))]
             [(= c ',')
@@ -664,13 +663,13 @@
                 (if (< (+ i 1) n)
                   (if (= (string.string-ref src (+ i 1)) '@')
                     (begin
-                      (array.array-set! toks count Token.CommaAt)
+                      (array.array-set! toks count token.Token.CommaAt)
                       (set! i (+ i 2)))
                     (begin
-                      (array.array-set! toks count Token.Comma)
+                      (array.array-set! toks count token.Token.Comma)
                       (set! i (+ i 1))))
                   (begin
-                    (array.array-set! toks count Token.Comma)
+                    (array.array-set! toks count token.Token.Comma)
                     (set! i (+ i 1))))
                 (set! count (+ count 1)))]
             [(= c '"')
@@ -683,7 +682,8 @@
                       (array.array-set!
                         toks
                         count
-                        (Token.Str (unescape-string-literal src start end)))
+                        (token.Token.Str
+                          (unescape-string-literal src start end)))
                       (set! count (+ count 1))
                       (set! i (+ end 1)))]
                   [(ResultLexI64.Err err)
@@ -701,11 +701,11 @@
                       (array.array-set!
                         toks
                         count
-                        (Token.Float (string.substring src i (- end i))))
+                        (token.Token.Float (string.substring src i (- end i))))
                       (array.array-set!
                         toks
                         count
-                        (Token.Int
+                        (token.Token.Int
                           (number-int-value src i end n)
                           (number-int-source-text src i end n))))
                     (set! count (+ count 1))
@@ -724,12 +724,15 @@
                     (array.array-set!
                       toks
                       count
-                      (Token.Sym (ci.intern-slice src i (- end i))))
+                      (token.Token.Sym (ci.intern-slice src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end))
                   (begin
                     (array.array-set! starts count i)
-                    (array.array-set! toks count (Token.Sym (ci.intern ":")))
+                    (array.array-set!
+                      toks
+                      count
+                      (token.Token.Sym (ci.intern ":")))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
             [(is-symbol-char c)
@@ -740,7 +743,7 @@
                   (array.array-set!
                     toks
                     count
-                    (Token.Sym (ci.intern-slice src i (- end i))))
+                    (token.Token.Sym (ci.intern-slice src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
@@ -751,17 +754,17 @@
       (if ok
         (begin
           (array.array-set! starts count n)
-          (array.array-set! toks count Token.End)
+          (array.array-set! toks count token.Token.End)
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
 (define (lex-into-spanned
   [src : String]
-  [toks : (Array Token)]
+  [toks : (Array token.Token)]
   [starts : (Array i64)]) : i64
   (match (lex-into-spanned-result src toks starts)
     [(ResultLexIntoSpanned.Ok count) count]
-    [(ResultLexIntoSpanned.Err err) (io.panic (source-error-message err))]))
+    [(ResultLexIntoSpanned.Err err) (io.panic (token.source-error-message err))]))
 
 (defenum LexPosition
   (Position i64 i64))
@@ -789,7 +792,7 @@
 
 (define (lex-into-spanned-tokens-result
   [src : String]
-  [stoks : (Array SpannedToken)]) : ResultLexIntoSpanned
+  [stoks : (Array token.SpannedToken)]) : ResultLexIntoSpanned
   (let
     [i : i64 0]
     [n : i64 (string.string-length src)]
@@ -817,7 +820,7 @@
                 (array.array-set!
                   stoks
                   count
-                  (SpannedToken.Spanned Token.LParen line col))
+                  (token.SpannedToken.Spanned token.Token.LParen line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -826,7 +829,7 @@
                 (array.array-set!
                   stoks
                   count
-                  (SpannedToken.Spanned Token.LBracket line col))
+                  (token.SpannedToken.Spanned token.Token.LBracket line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -835,7 +838,7 @@
                 (array.array-set!
                   stoks
                   count
-                  (SpannedToken.Spanned Token.RParen line col))
+                  (token.SpannedToken.Spanned token.Token.RParen line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -844,7 +847,7 @@
                 (array.array-set!
                   stoks
                   count
-                  (SpannedToken.Spanned Token.RBracket line col))
+                  (token.SpannedToken.Spanned token.Token.RBracket line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -858,8 +861,8 @@
                       (array.array-set!
                         stoks
                         count
-                        (SpannedToken.Spanned
-                          (Token.Char value)
+                        (token.SpannedToken.Spanned
+                          (token.Token.Char value)
                           token-line
                           token-col))
                       (set! count (+ count 1))
@@ -875,7 +878,7 @@
                       (array.array-set!
                         stoks
                         count
-                        (SpannedToken.Spanned Token.Quote line col))
+                        (token.SpannedToken.Spanned token.Token.Quote line col))
                       (set! count (+ count 1))
                       (set! i (+ i 1))
                       (set! col (+ col 1)))]))]
@@ -884,7 +887,7 @@
                 (array.array-set!
                   stoks
                   count
-                  (SpannedToken.Spanned Token.Backtick line col))
+                  (token.SpannedToken.Spanned token.Token.Backtick line col))
                 (set! count (+ count 1))
                 (set! i (+ i 1))
                 (set! col (+ col 1)))]
@@ -896,21 +899,24 @@
                       (array.array-set!
                         stoks
                         count
-                        (SpannedToken.Spanned Token.CommaAt line col))
+                        (token.SpannedToken.Spanned
+                          token.Token.CommaAt
+                          line
+                          col))
                       (set! i (+ i 2))
                       (set! col (+ col 2)))
                     (begin
                       (array.array-set!
                         stoks
                         count
-                        (SpannedToken.Spanned Token.Comma line col))
+                        (token.SpannedToken.Spanned token.Token.Comma line col))
                       (set! i (+ i 1))
                       (set! col (+ col 1))))
                   (begin
                     (array.array-set!
                       stoks
                       count
-                      (SpannedToken.Spanned Token.Comma line col))
+                      (token.SpannedToken.Spanned token.Token.Comma line col))
                     (set! i (+ i 1))
                     (set! col (+ col 1))))
                 (set! count (+ count 1)))]
@@ -925,8 +931,9 @@
                       (array.array-set!
                         stoks
                         count
-                        (SpannedToken.Spanned
-                          (Token.Str (unescape-string-literal src start end))
+                        (token.SpannedToken.Spanned
+                          (token.Token.Str
+                            (unescape-string-literal src start end))
                           token-line
                           token-col))
                       (set! count (+ count 1))
@@ -958,15 +965,16 @@
                         (array.array-set!
                           stoks
                           count
-                          (SpannedToken.Spanned
-                            (Token.Float (string.substring src i (- end i)))
+                          (token.SpannedToken.Spanned
+                            (token.Token.Float
+                              (string.substring src i (- end i)))
                             token-line
                             token-col))
                         (array.array-set!
                           stoks
                           count
-                          (SpannedToken.Spanned
-                            (Token.Int
+                          (token.SpannedToken.Spanned
+                            (token.Token.Int
                               (number-int-value src i end n)
                               (number-int-source-text src i end n))
                             token-line
@@ -987,8 +995,8 @@
                     (array.array-set!
                       stoks
                       count
-                      (SpannedToken.Spanned
-                        (Token.Sym (ci.intern-slice src i (- end i)))
+                      (token.SpannedToken.Spanned
+                        (token.Token.Sym (ci.intern-slice src i (- end i)))
                         line
                         col))
                     (set! count (+ count 1))
@@ -998,8 +1006,8 @@
                     (array.array-set!
                       stoks
                       count
-                      (SpannedToken.Spanned
-                        (Token.Sym (ci.intern ":"))
+                      (token.SpannedToken.Spanned
+                        (token.Token.Sym (ci.intern ":"))
                         line
                         col))
                     (set! count (+ count 1))
@@ -1012,8 +1020,8 @@
                   (array.array-set!
                     stoks
                     count
-                    (SpannedToken.Spanned
-                      (Token.Sym (ci.intern-slice src i (- end i)))
+                    (token.SpannedToken.Spanned
+                      (token.Token.Sym (ci.intern-slice src i (- end i)))
                       line
                       col))
                   (set! count (+ count 1))
@@ -1029,26 +1037,26 @@
           (array.array-set!
             stoks
             count
-            (SpannedToken.Spanned Token.End line col))
+            (token.SpannedToken.Spanned token.Token.End line col))
           (ResultLexIntoSpanned.Ok count))
         (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
 
-;; `lex : (-> String (Array Token))` - the public entry point. Size the token
+;; `lex : (-> String (Array token.Token))` - the public entry point. Size the token
 ;; array by an upper bound (every char yields at most one token, plus the
-;; `Token.End` sentinel), lex into it, then return that exact array. The trailing
-;; `Token.End` marks
+;; `token.Token.End` sentinel), lex into it, then return that exact array. The trailing
+;; `token.Token.End` marks
 ;; the logical end even though the backing array may be larger.
 (define (lex-result [src : String]) : ResultTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
-    [toks : (Array Token) (array.make-array Token cap)]
+    [toks : (Array token.Token) (array.make-array token.Token cap)]
     [starts : (Array i64) (array.make-array i64 cap)]
     (match (lex-into-spanned-result src toks starts)
       [(ResultLexIntoSpanned.Ok _) (ResultTokens.Ok toks)]
       [(ResultLexIntoSpanned.Err err)
-        (ResultTokens.Err (source-error-message err))])))
+        (ResultTokens.Err (token.source-error-message err))])))
 
-(define (lex [src : String]) : (Array Token)
+(define (lex [src : String]) : (Array token.Token)
   (match (lex-result src)
     [(ResultTokens.Ok toks) toks]
     [(ResultTokens.Err message) (io.panic message)]))
@@ -1056,8 +1064,8 @@
 ;; ---- Spanned token stream (#599) --------------------------------------------
 ;; A position-bearing token stream parallel to `lex`/`lex-result`. Each token is
 ;; paired with the 1-based line/column of its starting byte; the trailing
-;; `Token.End`
-;; carries the position one past the last character. The plain `Token` path
+;; `token.Token.End`
+;; carries the position one past the last character. The plain `token.Token` path
 ;; above is untouched, so existing callers keep working.
 ;; 1-based line of byte index `idx` in `src`: 1 + the number of newlines before
 ;; `idx`.
@@ -1089,11 +1097,11 @@
           (set! k (+ k 1))))
       col)))
 
-(define (source-error-at [src : String] [idx : i64] [message : String]) : SourceError
+(define (source-error-at [src : String] [idx : i64] [message : String]) : token.SourceError
   (let
     [line : i64 (index-line src idx)]
     [col : i64 (index-col src idx)]
-    (SourceError message (SourceSpan line col line col))))
+    (token.SourceError message (token.SourceSpan line col line col))))
 
 ;; Reusable spanned-token buffer. The per-source token array is sized to the
 ;; SOURCE BYTE COUNT (a safe upper bound on the token count, since each token
@@ -1107,73 +1115,79 @@
 ;; so the fixed size needs no growth path.
 (define lex-spanned-token-buffer-cap : i64
   1310720)
-(define lex-spanned-token-buffer : (Array SpannedToken)
-  (array.make-array SpannedToken lex-spanned-token-buffer-cap))
+(define lex-spanned-token-buffer : (Array token.SpannedToken)
+  (array.make-array token.SpannedToken lex-spanned-token-buffer-cap))
 
 ;; `lex-spanned-result : (-> String ResultSpannedTokens)` - lex into a token +
 ;; start-index pair of arrays, then materialize `count + 1` spanned tokens
-;; (including the trailing `Token.End`).
+;; (including the trailing `token.Token.End`).
 (define (lex-spanned-result [src : String]) : ResultSpannedTokens
   (let
     [cap : i64 (+ (string.string-length src) 1)]
-    [stoks : (Array SpannedToken)
+    [stoks : (Array token.SpannedToken)
       (if (<= cap lex-spanned-token-buffer-cap)
         lex-spanned-token-buffer
-        (array.make-array SpannedToken cap))]
+        (array.make-array token.SpannedToken cap))]
     (match (lex-into-spanned-tokens-result src stoks)
       [(ResultLexIntoSpanned.Ok count) (ResultSpannedTokens.Ok stoks)]
       [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)])))
 
-(define (lex-spanned [src : String]) : (Array SpannedToken)
+(define (lex-spanned [src : String]) : (Array token.SpannedToken)
   (match (lex-spanned-result src)
     [(ResultSpannedTokens.Ok toks) toks]
-    [(ResultSpannedTokens.Err err) (io.panic (source-error-message err))]))
+    [(ResultSpannedTokens.Err err) (io.panic (token.source-error-message err))]))
 
 (define (lex-percent-symbol-ok?) : bool
   (match (lex-result "(% n 16)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token-tag (array.array-ref toks 1)) (tag-sym))
-        (string.string-eq (token-sym (array.array-ref toks 1)) "%"))]
+        (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
+        (string.string-eq (token.token-sym (array.array-ref toks 1)) "%"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-ampersand-symbol-ok?) : bool
   (match (lex-result "(& r String) (&mut r String)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token-tag (array.array-ref toks 1)) (tag-sym))
-        (string.string-eq (token-sym (array.array-ref toks 1)) "&")
-        (= (token-tag (array.array-ref toks 6)) (tag-sym))
-        (string.string-eq (token-sym (array.array-ref toks 6)) "&mut"))]
+        (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
+        (string.string-eq (token.token-sym (array.array-ref toks 1)) "&")
+        (= (token.token-tag (array.array-ref toks 6)) (token.tag-sym))
+        (string.string-eq (token.token-sym (array.array-ref toks 6)) "&mut"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-float-token-ok?) : bool
   (match (lex-result "(3.14)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token-tag (array.array-ref toks 1)) (tag-float))
-        (string.string-eq (token-float (array.array-ref toks 1)) "3.14"))]
+        (= (token.token-tag (array.array-ref toks 1)) (token.tag-float))
+        (string.string-eq (token.token-float (array.array-ref toks 1)) "3.14"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-negative-int-token-ok?) : bool
   (match (lex-result "(-1 - x)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token-tag (array.array-ref toks 1)) (tag-int))
-        (= (token-int (array.array-ref toks 1)) -1)
-        (= (token-tag (array.array-ref toks 2)) (tag-sym))
-        (string.string-eq (token-sym (array.array-ref toks 2)) "-"))]
+        (= (token.token-tag (array.array-ref toks 1)) (token.tag-int))
+        (= (token.token-int (array.array-ref toks 1)) -1)
+        (= (token.token-tag (array.array-ref toks 2)) (token.tag-sym))
+        (string.string-eq (token.token-sym (array.array-ref toks 2)) "-"))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-token-int-eq? [toks : (Array Token)] [idx : i64] [value : i64]) : bool
+(define (lex-token-int-eq?
+  [toks : (Array token.Token)]
+  [idx : i64]
+  [value : i64]) : bool
   (and
-    (= (token-tag (array.array-ref toks idx)) (tag-int))
-    (= (token-int (array.array-ref toks idx)) value)))
+    (= (token.token-tag (array.array-ref toks idx)) (token.tag-int))
+    (= (token.token-int (array.array-ref toks idx)) value)))
 
-(define (lex-token-sym-eq? [toks : (Array Token)] [idx : i64] [value : String]) : bool
+(define (lex-token-sym-eq?
+  [toks : (Array token.Token)]
+  [idx : i64]
+  [value : String]) : bool
   (and
-    (= (token-tag (array.array-ref toks idx)) (tag-sym))
-    (string.string-eq (token-sym (array.array-ref toks idx)) value)))
+    (= (token.token-tag (array.array-ref toks idx)) (token.tag-sym))
+    (string.string-eq (token.token-sym (array.array-ref toks idx)) value)))
 
 (define (lex-prefixed-int-token-ok?) : bool
   (match (lex-result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
@@ -1184,14 +1198,14 @@
         (lex-token-int-eq? toks 3 -42)
         (lex-token-int-eq? toks 4 42)
         (lex-token-int-eq? toks 5 -42)
-        (= (token-tag (array.array-ref toks 7)) (tag-end)))]
+        (= (token.token-tag (array.array-ref toks 7)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
 ;; positions, including a token inside a nested list and the trailing EOF.
 ;; Source `"(a\n  (b c))"` lexes to:
 ;;   0:'(' 1:1   1:'a' 1:2   2:'(' 2:3   3:'b' 2:4   4:'c' 2:6
-;;   5:')' 2:7   6:')' 2:8   7:Token.End 2:9
+;;   5:')' 2:7   6:')' 2:8   7:token.Token.End 2:9
 (define (lex-quote-text) : String
   "\"")
 
@@ -1204,43 +1218,51 @@
       (let
         [ok : bool true]
         (begin
-          (if (= (token-tag (array.array-ref toks 0)) (tag-lparen))
+          (if (= (token.token-tag (array.array-ref toks 0)) (token.tag-lparen))
             unit
             (set! ok false))
-          (if (= (token-tag (array.array-ref toks 1)) (tag-sym))
+          (if (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.string-eq (token-sym (array.array-ref toks 1)) "define")
+          (if (string.string-eq
+            (token.token-sym (array.array-ref toks 1))
+            "define")
             unit
             (set! ok false))
-          (if (= (token-tag (array.array-ref toks 2)) (tag-lbracket))
+          (if (=
+            (token.token-tag (array.array-ref toks 2))
+            (token.tag-lbracket))
             unit
             (set! ok false))
-          (if (string.string-eq (token-sym (array.array-ref toks 3)) "x")
+          (if (string.string-eq (token.token-sym (array.array-ref toks 3)) "x")
             unit
             (set! ok false))
-          (if (string.string-eq (token-sym (array.array-ref toks 4)) ":")
+          (if (string.string-eq (token.token-sym (array.array-ref toks 4)) ":")
             unit
             (set! ok false))
-          (if (string.string-eq (token-sym (array.array-ref toks 5)) "i64")
+          (if (string.string-eq
+            (token.token-sym (array.array-ref toks 5))
+            "i64")
             unit
             (set! ok false))
-          (if (= (token-tag (array.array-ref toks 6)) (tag-rbracket))
+          (if (=
+            (token.token-tag (array.array-ref toks 6))
+            (token.tag-rbracket))
             unit
             (set! ok false))
-          (if (= (token-int (array.array-ref toks 7)) -42)
+          (if (= (token.token-int (array.array-ref toks 7)) -42)
             unit
             (set! ok false))
-          (if (string.string-eq (token-str (array.array-ref toks 8)) "ok")
+          (if (string.string-eq (token.token-str (array.array-ref toks 8)) "ok")
             unit
             (set! ok false))
-          (if (= (token-char (array.array-ref toks 9)) '\n')
+          (if (= (token.token-char (array.array-ref toks 9)) '\n')
             unit
             (set! ok false))
-          (if (= (token-tag (array.array-ref toks 10)) (tag-rparen))
+          (if (= (token.token-tag (array.array-ref toks 10)) (token.tag-rparen))
             unit
             (set! ok false))
-          (if (= (token-tag (array.array-ref toks 11)) (tag-end))
+          (if (= (token.token-tag (array.array-ref toks 11)) (token.tag-end))
             unit
             (set! ok false))
           ok))]
@@ -1261,16 +1283,18 @@
         (lex-token-sym-eq? toks 15 ":unknown")
         (lex-token-sym-eq? toks 20 "pkg:math.core")
         (lex-token-sym-eq? toks 21 ":as")
-        (= (token-tag (array.array-ref toks 24)) (tag-end)))]
+        (= (token.token-tag (array.array-ref toks 24)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-spanned-token-sym-eq?
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [idx : i64]
   [value : String]) : bool
   (let
-    [tok : Token (spanned-token-tok (array.array-ref toks idx))]
-    (and (= (token-tag tok) (tag-sym)) (string.string-eq (token-sym tok) value))))
+    [tok : token.Token (token.spanned-token-tok (array.array-ref toks idx))]
+    (and
+      (= (token.token-tag tok) (token.tag-sym))
+      (string.string-eq (token.token-sym tok) value))))
 
 (define (lex-spanned-colon-annotation-tokens-ok?) : bool
   (match (lex-spanned-result "[x:i64] (:link \"m\")")
@@ -1280,7 +1304,9 @@
         (lex-spanned-token-sym-eq? toks 2 ":")
         (lex-spanned-token-sym-eq? toks 3 "i64")
         (lex-spanned-token-sym-eq? toks 6 ":link")
-        (= (token-tag (spanned-token-tok (array.array-ref toks 9))) (tag-end)))]
+        (=
+          (token.token-tag (token.spanned-token-tok (array.array-ref toks 9)))
+          (token.tag-end)))]
     [(ResultSpannedTokens.Err _) false]))
 
 (define (lex-apostrophe-char-source [body : String]) : String
@@ -1291,35 +1317,35 @@
     (match (lex-result "'form")
       [(ResultTokens.Ok toks)
         (and
-          (= (token-tag (array.array-ref toks 0)) (tag-quote))
-          (= (token-tag (array.array-ref toks 1)) (tag-sym))
-          (string.string-eq (token-sym (array.array-ref toks 1)) "form")
-          (= (token-tag (array.array-ref toks 2)) (tag-end)))]
+          (= (token.token-tag (array.array-ref toks 0)) (token.tag-quote))
+          (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
+          (string.string-eq (token.token-sym (array.array-ref toks 1)) "form")
+          (= (token.token-tag (array.array-ref toks 2)) (token.tag-end)))]
       [(ResultTokens.Err _) false])
     (match (lex-result "'ab'")
       [(ResultTokens.Ok toks)
         (and
-          (= (token-tag (array.array-ref toks 0)) (tag-quote))
-          (= (token-tag (array.array-ref toks 1)) (tag-sym))
-          (string.string-eq (token-sym (array.array-ref toks 1)) "ab")
-          (= (token-tag (array.array-ref toks 2)) (tag-quote))
-          (= (token-tag (array.array-ref toks 3)) (tag-end)))]
+          (= (token.token-tag (array.array-ref toks 0)) (token.tag-quote))
+          (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
+          (string.string-eq (token.token-sym (array.array-ref toks 1)) "ab")
+          (= (token.token-tag (array.array-ref toks 2)) (token.tag-quote))
+          (= (token.token-tag (array.array-ref toks 3)) (token.tag-end)))]
       [(ResultTokens.Err _) false])
     (match (lex-result "'a'")
       [(ResultTokens.Ok toks)
         (and
-          (= (token-tag (array.array-ref toks 0)) (tag-char))
-          (= (token-char (array.array-ref toks 0)) 'a')
-          (= (token-tag (array.array-ref toks 1)) (tag-end)))]
+          (= (token.token-tag (array.array-ref toks 0)) (token.tag-char))
+          (= (token.token-char (array.array-ref toks 0)) 'a')
+          (= (token.token-tag (array.array-ref toks 1)) (token.tag-end)))]
       [(ResultTokens.Err _) false])))
 
 (define (lex-one-apostrophe-char-ok? [body : String] [want : char]) : bool
   (match (lex-result (lex-apostrophe-char-source body))
     [(ResultTokens.Ok toks)
       (and
-        (= (token-tag (array.array-ref toks 0)) (tag-char))
-        (= (token-char (array.array-ref toks 0)) want)
-        (= (token-tag (array.array-ref toks 1)) (tag-end)))]
+        (= (token.token-tag (array.array-ref toks 0)) (token.tag-char))
+        (= (token.token-char (array.array-ref toks 0)) want)
+        (= (token.token-tag (array.array-ref toks 1)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-legacy-char-rejected? [src : String]) : bool
@@ -1356,8 +1382,13 @@
     [(ResultSpannedTokens.Ok _) false]
     [(ResultSpannedTokens.Err err)
       (and
-        (string.string-eq (source-error-message err) want-message)
-        (span-eq? (source-error-span err) want-line want-col want-line want-col))]))
+        (string.string-eq (token.source-error-message err) want-message)
+        (token.span-eq?
+          (token.source-error-span err)
+          want-line
+          want-col
+          want-line
+          want-col))]))
 
 (define (lex-error-spans-ok?) : bool
   (let
@@ -1400,11 +1431,11 @@
 
 (define (lex-string-token-ok? [src : String] [expected : String]) : bool
   (let
-    [toks : (Array Token) (lex src)]
+    [toks : (Array token.Token) (lex src)]
     (and
-      (= (token-tag (array.array-ref toks 0)) (tag-str))
-      (string.string-eq (token-str (array.array-ref toks 0)) expected)
-      (= (token-tag (array.array-ref toks 1)) (tag-end)))))
+      (= (token.token-tag (array.array-ref toks 0)) (token.tag-str))
+      (string.string-eq (token.token-str (array.array-ref toks 0)) expected)
+      (= (token.token-tag (array.array-ref toks 1)) (token.tag-end)))))
 
 (define (lex-escaped-quote-source-inner) : String
   (string.string-append
@@ -1446,45 +1477,47 @@
   (match (lex-result "`(if ,x ,@xs)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token-tag (array.array-ref toks 0)) (tag-backtick))
-        (= (token-tag (array.array-ref toks 3)) (tag-comma))
-        (= (token-tag (array.array-ref toks 5)) (tag-comma-at))
-        (= (token-tag (array.array-ref toks 7)) (tag-rparen))
-        (= (token-tag (array.array-ref toks 8)) (tag-end)))]
+        (= (token.token-tag (array.array-ref toks 0)) (token.tag-backtick))
+        (= (token.token-tag (array.array-ref toks 3)) (token.tag-comma))
+        (= (token.token-tag (array.array-ref toks 5)) (token.tag-comma-at))
+        (= (token.token-tag (array.array-ref toks 7)) (token.tag-rparen))
+        (= (token.token-tag (array.array-ref toks 8)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
-(define (lex-span-positions-ok? [s : (Array SpannedToken)]) : bool
+(define (lex-span-positions-ok? [s : (Array token.SpannedToken)]) : bool
   (let
     [ok : bool true]
     (begin
-      (if (= (spanned-token-line (array.array-ref s 0)) 1)
+      (if (= (token.spanned-token-line (array.array-ref s 0)) 1)
         unit
         (set! ok false))
-      (if (= (spanned-token-col (array.array-ref s 0)) 1)
+      (if (= (token.spanned-token-col (array.array-ref s 0)) 1)
         unit
         (set! ok false))
-      (if (= (spanned-token-col (array.array-ref s 1)) 2)
+      (if (= (token.spanned-token-col (array.array-ref s 1)) 2)
         unit
         (set! ok false))
-      (if (= (spanned-token-line (array.array-ref s 2)) 2)
+      (if (= (token.spanned-token-line (array.array-ref s 2)) 2)
         unit
         (set! ok false))
-      (if (= (spanned-token-col (array.array-ref s 2)) 3)
+      (if (= (token.spanned-token-col (array.array-ref s 2)) 3)
         unit
         (set! ok false))
-      (if (= (spanned-token-col (array.array-ref s 3)) 4)
+      (if (= (token.spanned-token-col (array.array-ref s 3)) 4)
         unit
         (set! ok false))
-      (if (= (spanned-token-col (array.array-ref s 4)) 6)
+      (if (= (token.spanned-token-col (array.array-ref s 4)) 6)
         unit
         (set! ok false))
-      (if (= (spanned-token-line (array.array-ref s 7)) 2)
+      (if (= (token.spanned-token-line (array.array-ref s 7)) 2)
         unit
         (set! ok false))
-      (if (= (spanned-token-col (array.array-ref s 7)) 9)
+      (if (= (token.spanned-token-col (array.array-ref s 7)) 9)
         unit
         (set! ok false))
-      (if (= (token-tag (spanned-token-tok (array.array-ref s 7))) (tag-end))
+      (if (=
+        (token.token-tag (token.spanned-token-tok (array.array-ref s 7)))
+        (token.tag-end))
         unit
         (set! ok false))
       ok)))

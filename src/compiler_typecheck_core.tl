@@ -15,6 +15,7 @@
 (import "read.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
+(import token)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
 
@@ -37513,11 +37514,11 @@
 (define ctfe-needs-metadata : bool
   true)
 
-(define (macro-zero-source-span) : SourceSpan
-  (SourceSpan 1 1 1 1))
+(define (macro-zero-source-span) : token.SourceSpan
+  (token.SourceSpan 1 1 1 1))
 
-(define (macro-source-span-from-ast [span : AstSourceSpan]) : SourceSpan
-  (SourceSpan
+(define (macro-source-span-from-ast [span : AstSourceSpan]) : token.SourceSpan
+  (token.SourceSpan
     (struct-get span start-line)
     (struct-get span start-col)
     (struct-get span end-line)
@@ -39428,7 +39429,7 @@
 (define (macro-expr-list-with-head-symbol
   [name : String]
   [exprs : AstExprList]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-expr-list-to-spanned-sexpr exprs span origin)
     [(ResultMacroSexpr.Ok tail)
@@ -39442,24 +39443,27 @@
 ;; while, set!, ...) that the quasiquote evaluator stores as typed AST nodes.
 (define (macro-child-to-spanned-sexpr
   [id : i64]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (macro-expr-to-spanned-sexpr-with-span (ast-node-get id) span origin))
 
-(define (macro-form1 [name : String] [a : SpannedSexpr] [span : SourceSpan]) : SpannedSexpr
+(define (macro-form1
+  [name : String]
+  [a : SpannedSexpr]
+  [span : token.SourceSpan]) : SpannedSexpr
   (spanned-sexpr-cons
     (SpannedSexpr.Sym name span)
     (spanned-sexpr-cons a (SpannedSexpr.Nil span) span)
     span))
 
-(define (macro-form0 [name : String] [span : SourceSpan]) : SpannedSexpr
+(define (macro-form0 [name : String] [span : token.SourceSpan]) : SpannedSexpr
   (spanned-sexpr-cons (SpannedSexpr.Sym name span) (SpannedSexpr.Nil span) span))
 
 (define (macro-form2
   [name : String]
   [a : SpannedSexpr]
   [b : SpannedSexpr]
-  [span : SourceSpan]) : SpannedSexpr
+  [span : token.SourceSpan]) : SpannedSexpr
   (spanned-sexpr-cons
     (SpannedSexpr.Sym name span)
     (spanned-sexpr-cons
@@ -39473,7 +39477,7 @@
   [a : SpannedSexpr]
   [b : SpannedSexpr]
   [c : SpannedSexpr]
-  [span : SourceSpan]) : SpannedSexpr
+  [span : token.SourceSpan]) : SpannedSexpr
   (spanned-sexpr-cons
     (SpannedSexpr.Sym name span)
     (spanned-sexpr-cons
@@ -39514,7 +39518,7 @@
 
 (define (macro-lifetime-list-to-spanned-sexpr
   [items : AstLifetimeList]
-  [span : SourceSpan]) : SpannedSexpr
+  [span : token.SourceSpan]) : SpannedSexpr
   (match items
     [(AstLifetimeNil) (SpannedSexpr.Nil span)]
     [(AstLifetimeCons name rest)
@@ -39533,7 +39537,7 @@
   [marker : String]
   [name : String]
   [lifetimes : AstLifetimeList]
-  [span : SourceSpan]) : SpannedSexpr
+  [span : token.SourceSpan]) : SpannedSexpr
   (spanned-sexpr-cons
     (SpannedSexpr.Sym marker span)
     (spanned-sexpr-cons
@@ -39544,7 +39548,7 @@
 
 (define (macro-type-list-to-spanned-sexpr
   [items : AstTypeList]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match items
     [(AstTypeNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
@@ -39560,7 +39564,7 @@
 (define (macro-type-unary-sexpr
   [name : String]
   [inner-id : i64]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-type-to-spanned-sexpr (ty-node-get inner-id) span origin)
     [(ResultMacroSexpr.Ok sinner)
@@ -39570,7 +39574,7 @@
 (define (macro-type-named-args-sexpr
   [name : String]
   [lifetimes : AstLifetimeList]
-  [span : SourceSpan]) : ResultMacroSexpr
+  [span : token.SourceSpan]) : ResultMacroSexpr
   (ResultMacroSexpr.Ok
     (spanned-sexpr-cons
       (SpannedSexpr.Sym name span)
@@ -39581,7 +39585,7 @@
 ;; expression nodes (array.make-array, cast, ann, typed let bindings) round-trip.
 (define (macro-type-to-spanned-sexpr
   [ty : AstType]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match ty
     [(AstTyI64) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "i64" span))]
@@ -39700,7 +39704,7 @@
 (define (macro-child-form1
   [name : String]
   [id : i64]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr id span origin)
     [(ResultMacroSexpr.Ok sexpr)
@@ -39711,7 +39715,7 @@
   [name : String]
   [left-id : i64]
   [right-id : i64]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr left-id span origin)
     [(ResultMacroSexpr.Ok sleft)
@@ -39725,7 +39729,7 @@
   [name : String]
   [expr-id : i64]
   [ty : AstType]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match (macro-child-to-spanned-sexpr expr-id span origin)
     [(ResultMacroSexpr.Ok sexpr)
@@ -39739,7 +39743,7 @@
 (define (macro-spanned-sexpr-append
   [left : SpannedSexpr]
   [right : SpannedSexpr]
-  [span : SourceSpan]) : SpannedSexpr
+  [span : token.SourceSpan]) : SpannedSexpr
   (match left
     [(SpannedSexpr.Cons head tail _)
       (spanned-sexpr-cons
@@ -39748,7 +39752,9 @@
         span)]
     [_ right]))
 
-(define (macro-literal-to-spanned-sexpr [lit : AstLiteral] [span : SourceSpan]) : SpannedSexpr
+(define (macro-literal-to-spanned-sexpr
+  [lit : AstLiteral]
+  [span : token.SourceSpan]) : SpannedSexpr
   (match lit
     [(AstLitInt n text) (SpannedSexpr.Int n text span)]
     [(AstLitFloat text) (SpannedSexpr.Float text span)]
@@ -39764,7 +39770,7 @@
 
 (define (macro-pattern-list-to-spanned-sexpr
   [patterns : AstPatternList]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match patterns
     [(AstPatternNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
@@ -39782,7 +39788,7 @@
 
 (define (macro-pattern-to-spanned-sexpr
   [pattern : AstPattern]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match pattern
     [(AstPatBinding name)
@@ -39820,7 +39826,7 @@
 
 (define (macro-match-arm-bracket
   [arm : AstMatchArm]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match arm
     [(AstMatchArm pattern body-id)
@@ -39840,7 +39846,7 @@
 
 (define (macro-match-arm-list-to-spanned-sexpr
   [arms : AstMatchArmList]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match arms
     [(AstMatchArmNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
@@ -39858,7 +39864,7 @@
 
 (define (macro-let-binding-bracket
   [binding : AstLetBinding]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match binding
     [(AstLetBinding name maybe-ty value-id)
@@ -39902,7 +39908,7 @@
 (define (macro-let-tail
   [bindings : AstLetBindingList]
   [body : SpannedSexpr]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match bindings
     [(AstLetBindingNil)
@@ -39919,7 +39925,7 @@
 
 (define (macro-expr-list-to-spanned-sexpr
   [exprs : AstExprList]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match exprs
     [(AstExprNil) (ResultMacroSexpr.Ok (SpannedSexpr.Nil span))]
@@ -39937,7 +39943,7 @@
 
 (define (macro-expr-to-spanned-sexpr-with-span
   [expr : AstExpr]
-  [span : SourceSpan]
+  [span : token.SourceSpan]
   [origin : AstExpr]) : ResultMacroSexpr
   (match expr
     [(AstExprSpanned inner-box ast-span)

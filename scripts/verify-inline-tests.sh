@@ -108,7 +108,8 @@ echo "[inline-tests] check ($discovered_file_count file(s), one batch process)"
 # #2609: `test --check --batch` scopes each entry in its own compiler arena and
 # resets per-file compiler state between entries, matching compile --batch. Keep
 # the verifier batched so CI exercises that bounded-memory path.
-if "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" \
+if "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" \
+    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
     > "$batch_check_stdout" 2> "$batch_check_stderr"; then
     batch_check_status=0
 else
@@ -156,7 +157,8 @@ while IFS= read -r source; do
     fi
 
     echo "[inline-tests] run $source ($case_tests test(s))"
-    if "$COMPILER" test "$source" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib" \
+    if "$COMPILER" test "$source" --target "$HOST_TARGET" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
         > "$run_stdout" 2> "$run_stderr"; then
         run_status=0
     else

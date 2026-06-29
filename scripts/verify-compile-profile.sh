@@ -424,8 +424,7 @@ assert_contains_in \
     "$OPT_STDOUT" \
     "$OPT_STDERR"
 assert_opt_escape_row "body"
-assert_opt_escape_row "compact"
-assert_opt_escape_row "clone"
+assert_opt_escape_row "dce_escape"
 assert_opt_escape_row "restore"
 assert_contains_in "$OPT_STDERR" "|1|main" "$OPT_STDOUT" "$OPT_STDERR"
 assert_lower_row "ast_expr_pool.macro_expand.len"

@@ -2204,10 +2204,58 @@
           (set! index (- index 1))))
       out)))
 
+(define (opt-dce-instr-seq-array-in-place!
+  [items : (Array i64)]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 (- count 1)]
+    [write : i64 (- count 1)]
+    [live-count : i64 0]
+    [src : i64 0]
+    [dst : i64 0]
+    (begin
+      (while (>= index 0)
+        (begin
+          (let
+            [instr : CompilerIrInstr (array.array-ref slots index)]
+            (if (opt-instr-dead-array? items slots count index instr)
+              ;; Deleting this instruction drops the uses it made, so a value it
+              ;; was the last reader of becomes dead for an earlier sweep step.
+              (opt-uncount-instr-uses-array items instr)
+              (begin
+                (if (not (= write index))
+                  (array.array-set! slots write instr)
+                  unit)
+                (set! write (- write 1)))))
+          (set! index (- index 1))))
+      (set! live-count (- count (+ write 1)))
+      (set! src (+ write 1))
+      (set! dst 0)
+      (while (< dst live-count)
+        (begin
+          (if (not (= dst src))
+            (array.array-set! slots dst (array.array-ref slots src))
+            unit)
+          (set! dst (+ dst 1))
+          (set! src (+ src 1))))
+      (set! (struct-get instrs len) live-count)
+      instrs)))
+
 (define (opt-dce-block-array [items : (Array i64)] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (compiler-ir-block label (opt-dce-instr-seq-array items instrs))]))
+
+(define (opt-dce-block-array-in-place
+  [items : (Array i64)]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (CompilerIrBlock.Block
+        label
+        (opt-dce-instr-seq-array-in-place! items instrs))]))
 
 (define (opt-dce-block-list-array
   [items : (Array i64)]
@@ -2220,6 +2268,128 @@
         (opt-dce-block-list-array items (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
       (opt-dce-block-list-array items (compiler-ir-block-seq-to-list seq))]))
+
+(define (opt-dce-block-seq-array-in-place!
+  [items : (Array i64)]
+  [seq : CompilerIrBlockSeq]) : unit
+  (let
+    [slots : (Array CompilerIrBlock) (struct-get seq slots)]
+    [count : i64 (struct-get seq len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array.array-set!
+            slots
+            index
+            (opt-dce-block-array-in-place items (array.array-ref slots index)))
+          (set! index (+ index 1))))
+      unit)))
+
+(define (opt-dce-block-list-array-in-place
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (match blocks
+    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Cons block rest)
+      (compiler-ir-block-cons
+        (opt-dce-block-array-in-place items block)
+        (opt-dce-block-list-array-in-place items (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (begin
+        (opt-dce-block-seq-array-in-place! items seq)
+        blocks)]))
+
+(define (opt-dce-instr-seq-array-escape
+  [items : (Array i64)]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (let
+    [src-slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [out-slots : (Array CompilerIrInstr)
+      (array.make-array CompilerIrInstr count)]
+    [index : i64 (- count 1)]
+    [write : i64 (- count 1)]
+    [live-count : i64 0]
+    [src : i64 0]
+    [dst : i64 0]
+    (begin
+      (while (>= index 0)
+        (begin
+          (let
+            [instr : CompilerIrInstr (array.array-ref src-slots index)]
+            (if (opt-instr-dead-array? items src-slots count index instr)
+              ;; Deleting this instruction drops the uses it made, so a value it
+              ;; was the last reader of becomes dead for an earlier sweep step.
+              (opt-uncount-instr-uses-array items instr)
+              (begin
+                (array.array-set!
+                  out-slots
+                  write
+                  (compiler-ir-clone-instr instr))
+                (set! write (- write 1)))))
+          (set! index (- index 1))))
+      (set! live-count (- count (+ write 1)))
+      (set! src (+ write 1))
+      (set! dst 0)
+      (while (< dst live-count)
+        (begin
+          (if (not (= dst src))
+            (array.array-set! out-slots dst (array.array-ref out-slots src))
+            unit)
+          (set! dst (+ dst 1))
+          (set! src (+ src 1))))
+      (CompilerIrInstrSeq out-slots live-count))))
+
+(define (opt-dce-block-array-escape
+  [items : (Array i64)]
+  [block : CompilerIrBlock]) : CompilerIrBlock
+  (match block
+    [(CompilerIrBlock.Block label instrs)
+      (CompilerIrBlock.Block
+        (clone label)
+        (opt-dce-instr-seq-array-escape items instrs))]))
+
+(define (opt-dce-block-list-array-escape-fill
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockList]
+  [slots : (Array CompilerIrBlock)]
+  [index : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) index]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (array.array-set! slots index (opt-dce-block-array-escape items block))
+        (opt-dce-block-list-array-escape-fill
+          items
+          (box-get rest)
+          slots
+          (+ index 1)))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [src-slots : (Array CompilerIrBlock) (struct-get seq slots)]
+        [count : i64 (struct-get seq len)]
+        [offset : i64 0]
+        (begin
+          (while (< offset count)
+            (begin
+              (array.array-set!
+                slots
+                (+ index offset)
+                (opt-dce-block-array-escape
+                  items
+                  (array.array-ref src-slots offset)))
+              (set! offset (+ offset 1))))
+          (+ index count)))]))
+
+(define (opt-dce-block-list-array-escape
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [count : i64 (compiler-ir-block-list-count blocks)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [written : i64 (opt-dce-block-list-array-escape-fill items blocks slots 0)]
+    (CompilerIrBlockList.Array (CompilerIrBlockSeq slots written))))
 
 ;; --- aggregate allocation candidate analysis (#1487) ------------------------
 ;;
@@ -21471,7 +21641,7 @@
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
 ;; promotion, CFG cleanup, DCE, and program-level reachability pruning.
-(define (optimize-function-once-level2-with-summaries
+(define (optimize-function-once-level2-pre-dce-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (match func
@@ -21508,21 +21678,29 @@
                   compile-profile
                   (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
                   unit)]
-              [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-              [used : (Array i64)
-                (opt-collect-blocks-uses-array promoted-frame cfg)]
-              [dced : CompilerIrBlockList (opt-dce-block-list-array used cfg)]
-              [_p-dce : unit
-                (cfg
-                  compile-profile
-                  (compiler-opt-profile-pass-finish "dce" name _t-dce)
-                  unit)]
               (CompilerIrFunction.Function
                 name
                 params
                 ret-ty
                 promoted-frame
-                dced))]))]))
+                cfg))]))]))
+
+(define (optimize-function-once-level2-with-summaries
+  [func : CompilerIrFunction]
+  [summaries : OptLoopBceSummaries]) : CompilerIrFunction
+  (match (optimize-function-once-level2-pre-dce-with-summaries func summaries)
+    [(CompilerIrFunction.Function name params ret-ty frame blocks)
+      (let
+        [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
+        [used : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+        [dced : CompilerIrBlockList
+          (opt-dce-block-list-array-in-place used blocks)]
+        [_p-dce : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-pass-finish "dce" name _t-dce)
+            unit)]
+        (CompilerIrFunction.Function name params ret-ty frame dced))]))
 
 (define (optimize-function-once-level2 [func : CompilerIrFunction]) : CompilerIrFunction
   (optimize-function-once-level2-with-summaries
@@ -21611,6 +21789,10 @@
 ;; in a reusable scratch arena, deep-`clone` only the final result back into the
 ;; enclosing (program) arena, then rewind the scratch so a single function's
 ;; transient generations are reclaimed before the next function is processed.
+;; Level 1 is a single cheap pass sequence, so it combines final DCE, compaction,
+;; and escape materialization into one enclosing-arena pass instead of compacting
+;; in scratch and then cloning the whole function. The scratch path remains for
+;; opt2/fixpoint.
 (define (optimize-function-list-with-level
   [funcs : CompilerIrFunctionList]
   [level : i64]) : CompilerIrFunctionList
@@ -21625,18 +21807,134 @@
   [summaries : OptLoopBceSummaries]) : CompilerIrFunctionList
   (if (= level 0)
     funcs
-    (let
-      [scratch : i64 (arena.tl_arena_make)]
-      [result : CompilerIrFunctionList
-        (optimize-function-list-escaping-with-summaries
-          funcs
-          level
+    (if (= level 1)
+      (let
+        [scratch : i64 (arena.tl_arena_make)]
+        [result : CompilerIrFunctionList
+          (optimize-function-list-level1-escaping-with-summaries
+            funcs
+            scratch
+            summaries)]
+        (begin
+          (unsafe
+            (arena.tl_arena_destroy scratch))
+          result))
+      (let
+        [scratch : i64 (arena.tl_arena_make)]
+        [result : CompilerIrFunctionList
+          (optimize-function-list-escaping-with-summaries
+            funcs
+            level
+            scratch
+            summaries)]
+        (begin
+          (unsafe
+            (arena.tl_arena_destroy scratch))
+          result)))))
+
+(define (optimize-function-level1-escaping-with-summaries
+  [func : CompilerIrFunction]
+  [scratch : i64]
+  [summaries : OptLoopBceSummaries]) : CompilerIrFunction
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [_profile-name : String
+      (cfg compile-profile (compiler-opt-profile-function-name func) "")]
+    (begin
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
+        [pre-dce : CompilerIrFunction
+          (optimize-function-once-level2-pre-dce-with-summaries func summaries)]
+        [_profile-body : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-escape-finish "body" 1 _profile-name _t-body))]
+        (match pre-dce
+          [(CompilerIrFunction.Function name params ret-ty frame blocks)
+            (let
+              [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
+              [used : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
+              [scratch-head : i64 (arena.tl_arena_current)]
+              (begin
+                (unsafe
+                  (arena.tl_arena_set enclosing))
+                (let
+                  [escaped-blocks : CompilerIrBlockList
+                    (opt-dce-block-list-array-escape used blocks)]
+                  [escaped : CompilerIrFunction
+                    (CompilerIrFunction.Function
+                      (clone name)
+                      (compiler-ir-clone-param-list params)
+                      (compiler-ir-clone-type ret-ty)
+                      frame
+                      escaped-blocks)]
+                  [_profile-dce : unit
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-escape-finish
+                        "dce_escape"
+                        1
+                        _profile-name
+                        _t-dce))]
+                  [new-enclosing : i64 (arena.tl_arena_current)]
+                  [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
+                  [_restore : unit
+                    (unsafe
+                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_region_reset mark)
+                      (arena.tl_arena_set new-enclosing))]
+                  [_profile-restore : unit
+                    (cfg
+                      compile-profile
+                      (compiler-opt-profile-escape-finish
+                        "restore"
+                        1
+                        _profile-name
+                        _t-restore))]
+                  escaped)))])))))
+
+(define (optimize-function-list-level1-escaping-with-summaries
+  [funcs : CompilerIrFunctionList]
+  [scratch : i64]
+  [summaries : OptLoopBceSummaries]) : CompilerIrFunctionList
+  (match funcs
+    [(CompilerIrFunctionList.Nil) (CompilerIrFunctionList.Nil)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (let
+        [_start : unit
+          (cfg compile-profile (compiler-opt-profile-detail-start))]
+        [optimized : CompilerIrFunction
+          (optimize-function-level1-escaping-with-summaries
+            func
+            scratch
+            summaries)]
+        [_report : unit
+          (cfg
+            compile-profile
+            (compiler-opt-scratch-region-report-function-escaping
+              optimized
+              scratch))]
+        [_finish : unit
+          (cfg
+            compile-profile
+            (compiler-opt-profile-detail-finish
+              "function"
+              (compiler-opt-profile-function-name func)))]
+        (compiler-ir-function-cons
+          optimized
+          (optimize-function-list-level1-escaping-with-summaries
+            (box-get rest)
+            scratch
+            summaries)))]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-ir-function-list-compact
+        (optimize-function-list-level1-escaping-with-summaries
+          (compiler-ir-function-seq-to-list seq)
           scratch
-          summaries)]
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy scratch))
-        result))))
+          summaries))]))
 
 (define (optimize-function-list-escaping
   [funcs : CompilerIrFunctionList]
@@ -21747,7 +22045,8 @@
             (arena.tl_arena_set enclosing))
           (let
             [_t-clone : i64 (cfg compile-profile (profile.now-ms) 0)]
-            [escaped : CompilerIrFunction (clone optimized)]
+            [escaped : CompilerIrFunction
+              (compiler-ir-clone-function optimized)]
             [_profile-clone : unit
               (cfg
                 compile-profile
@@ -32894,12 +33193,39 @@
       [(not (= (opt-count-arith-instrs level2-fixed-instrs) 2)) false]
       [else true])))
 
+(define (compiler-optimize-level1-escape-equivalent-one-ok?
+  [func : CompilerIrFunction]) : bool
+  (let
+    [summaries : OptLoopBceSummaries (opt-loop-bce-empty-summaries)]
+    [expected : CompilerIrFunction
+      (compiler-ir-function-compact-blocks
+        (optimize-function-with-level-and-summaries func 1 summaries))]
+    [scratch : i64 (arena.tl_arena_make)]
+    [escaped : CompilerIrFunction
+      (optimize-function-level1-escaping-with-summaries func scratch summaries)]
+    [ok : bool (opt-function-eq expected escaped)]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      ok)))
+
+(define (compiler-optimize-level1-escape-equivalent-ok?) : bool
+  (and
+    (compiler-optimize-level1-escape-equivalent-one-ok?
+      (opt-test-function
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
+          CompilerIrInstrList.Nil)))
+    (compiler-optimize-level1-escape-equivalent-one-ok?
+      (opt-test-function (opt-self-test-instrs)))))
+
 (define (compiler-optimize-level-self-test) : i64
-  (if (compiler-optimize-level-policy-ok?)
-    (if (compiler-optimize-level-program-ok?)
-      42
-      2)
-    1))
+  (begin
+    (unless (compiler-optimize-level-policy-ok?) (return 1))
+    (unless (compiler-optimize-level-program-ok?) (return 2))
+    (unless (compiler-optimize-level1-escape-equivalent-ok?) (return 3))
+    42))
 
 (define (opt-global-dce-main-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons

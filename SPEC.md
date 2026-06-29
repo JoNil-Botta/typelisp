@@ -2160,12 +2160,14 @@ Example:
 (define flag : bool true)
 ```
 
-### 4.2 `(define (name [param : type] ...) [: ret_type] body)` — function
+### 4.2 `(define (name [param : type] ...) [: ret_type] body...)` — function
 
 Defines a named function.
 
 - Parameters must be explicitly typed.
 - Return type defaults to `unit` when omitted.
+- The body is one or more expressions. Multiple body expressions are evaluated
+  as an implicit `begin`; the last expression provides the function result.
 - The entry point is a function named `main` with return type `i64` or `unit`. If `main` is missing, the compiler synthesizes one that returns 0.
 - Recursion is supported.
 - Varargs are **not** supported.
@@ -3481,34 +3483,43 @@ flat `(cond test expr ... fallback)` shape is rejected.
   [else 30])
 ```
 
-`(when cond body)` and `(unless cond body)` are unit-valued guard macros.
+`(when cond body...)` and `(unless cond body...)` are unit-valued guard macros.
 `when` evaluates its body only when `cond` is true; `unless` evaluates its body
-only when `cond` is false. The body must be a single unit-valued expression; use
-an explicit `begin` for multiple side effects. The whole form has type `unit`,
-which makes these forms suitable for side effects and early-return guards.
+only when `cond` is false. Each form requires at least one body expression, and
+each body expression must be unit-valued. Multiple body expressions are evaluated
+as an implicit `begin`. The whole form has type `unit`, which makes these forms
+suitable for side effects and early-return guards.
 
 ```lisp test=ignore name=when-unless-guards reason=fragment
 (when (< x 0) (return 0))
 (unless (< x 100) (print-string "large\n"))
 ```
 
-### 5.7 `(let [name [: type] init] ... body)` — local bindings
+### 5.7 `(let [name [: type] init] ... body...)` — local bindings
 
-- Declares one or more local variables.
-- Bindings are the leading bracket forms after `let`; the first non-bracket form is the body expression.
-- Variables are in scope for `body` and for subsequent bindings in the same `let` (sequential, not parallel).
+- Declares zero or more local variables.
+- Bindings are the leading bracket forms after `let`; the first non-bracket
+  form starts the body expression sequence.
+- Variables are in scope for the body and for subsequent bindings in the same
+  `let` (sequential, not parallel).
 - Type annotation is optional. If omitted, the initializer type is inferred.
-- The body is a single expression; use `begin` for a multi-expression body.
-- Empty binding lists are rejected.
+- The body is one or more expressions. Multiple body expressions are evaluated
+  as an implicit `begin`; the last expression provides the `let` result.
+- Empty binding wrappers `(let [] body...)` and `(let () body...)` are accepted
+  as no-op body sequences, but a missing body is rejected.
 
 ### 5.8 `(begin expr ... last_expr)` — sequence
 
 - Evaluates expressions in order.
 - Returns the value of `last_expr`.
+- Remains the explicit grouping form outside body positions that already accept
+  expression sequences.
 
-### 5.9 `(while cond body)` — loop
+### 5.9 `(while cond body...)` — loop
 
-- Evaluates `body` while `cond` is `true`.
+- Evaluates the body while `cond` is `true`.
+- The body is one or more expressions. Multiple body expressions are evaluated
+  as an implicit `begin`; each body expression must be unit-valued.
 - Returns `unit`.
 - No `break` or `continue`.
 
@@ -3634,10 +3645,12 @@ specified.
 - All arms must return the same type.
 - Enum values are heap-allocated on return from functions (see §3.5.1).
 
-### 5.14 `(lambda ([param : type] ...) [: ret_type] body)` — anonymous function
+### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 
 - Parses and type-checks as a function value for backend-supported return
   types.
+- The body is one or more expressions. Multiple body expressions are evaluated
+  as an implicit `begin`; the last expression provides the lambda result.
 - Non-capturing lambdas lower to deterministic synthetic top-level functions
   and evaluate to static closure descriptor values.
 - Capturing lambdas snapshot supported captures into heap-allocated closure
@@ -6760,7 +6773,7 @@ generated-payload ::= defstruct | defenum | define-var | define-func
 define-var    ::= "(" "define" ident [":" type] expr ")"
 include-str-decl ::= "(" "include-str" ident string ")"
 include-bin-decl ::= "(" "include-bin" ident string ")"
-define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr ")"
+define-func   ::= "(" "define" "(" ident param* ")" [":" type] expr+ ")"
 unsafe-decl   ::= "(" "unsafe" unsafe-decl-payload ")"
 unsafe-decl-payload ::= define-func | extern-decl
 dispatch-decl ::= "(" "defdispatch" ident dispatch-variant+ ")"
@@ -6812,10 +6825,12 @@ expr          ::= literal
                 | ident
                 | "(" "if" expr expr expr ")"
                 | "(" "cond" cond-clause+ cond-else-clause ")"
-                | "(" "when" expr expr ")"
-                | "(" "unless" expr expr ")"
-                | "(" "let" binding+ expr ")"
-                | "(" "while" expr expr ")"
+                | "(" "when" expr expr+ ")"
+                | "(" "unless" expr expr+ ")"
+                | "(" "let" binding+ expr+ ")"
+                | "(" "let" "(" binding* ")" expr+ ")"
+                | "(" "let" "[]" expr+ ")"
+                | "(" "while" expr expr+ ")"
                 | "(" "begin" expr+ ")"
                 | "(" "set!" ident expr ")"
                 | "(" "ann" expr ":" type ")"
@@ -6828,7 +6843,7 @@ expr          ::= literal
                 | "(" "spmd-broadcast" expr expr ")"
                 | "(" "spmd-shuffle" expr expr ")"
                 | "(" spmd-lane-form ")"
-                | "(" "lambda" "(" param* ")" [":" type] expr ")"
+                | "(" "lambda" "(" param* ")" [":" type] expr+ ")"
                 | "(" "return" expr ")"
                 | "(" "with-arena" ident expr+ ")"
                 | "(" "with-escape" expr expr+ ")"

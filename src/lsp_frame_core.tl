@@ -3211,15 +3211,15 @@
         "Conditional expression; both branches must have the same type.")]
     [(string.string-eq name "let")
       (lsp-hover-markdown
-        "(let [name : T value] ... body)"
-        "Introduce local bindings, then evaluate the body.")]
+        "(let [name : T value] ... body...)"
+        "Introduce local bindings, then evaluate the body expressions.")]
     [(string.string-eq name "begin")
       (lsp-hover-markdown
         "(begin expr ...)"
         "Evaluate expressions in sequence; the result is the last.")]
     [(string.string-eq name "while")
       (lsp-hover-markdown
-        "(while cond body)"
+        "(while cond body...)"
         "Loop while the condition is true.")]
     [(string.string-eq name "set!")
       (lsp-hover-markdown "(set! name value)" "Mutate an existing binding.")]
@@ -3232,7 +3232,7 @@
         "(return value)"
         "Return early from the enclosing function.")]
     [(string.string-eq name "lambda")
-      (lsp-hover-markdown "(lambda [p : T] ... body)" "Anonymous function.")]
+      (lsp-hover-markdown "(lambda [p : T] ... body...)" "Anonymous function.")]
     [(string.string-eq name "cast")
       (lsp-hover-markdown
         "(cast value : Type)"

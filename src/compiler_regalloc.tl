@@ -219,7 +219,15 @@
     String
     AstType
     String
-    CompilerRegEdgeCopyList))
+    CompilerRegEdgeCopyList
+    i64))
+
+;; Result of the eviction-aware register pick (below): a candidate register `r`
+;; together with the strictly-lower-weight var to evict (re-spill) so `r` becomes
+;; free over the loop region, or None when no such register exists.
+(defenum CompilerRegLoopSplitEvict
+  (CompilerRegLoopSplitEvictNone)
+  (CompilerRegLoopSplitEvict String i64))
 
 (defenum CompilerRegParamAssignPlan
   (CompilerRegParamAssignPlan
@@ -6629,6 +6637,79 @@
           ignore-var)
         (CompilerRegSomeString reg))]))
 
+;; Return the single assigned var (other than ignore-var) that holds `location`
+;; and overlaps the region, or -1 if zero -- or more than one -- such var exists.
+;; `acc` threads the search: -2 = none seen yet, -1 = multiple (not evictable),
+;; >=0 = the one var found so far.
+(define (compiler-reg-loop-split-region-occupant
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-intervals : CompilerRegIntervalList]
+  [ignore-var : i64]
+  [location : CompilerRegLocation]
+  [acc : i64]) : i64
+  (match assignments
+    [(CompilerRegAssignmentNil) acc]
+    [(CompilerRegAssignmentCons item rest)
+      (match item
+        [(CompilerRegAssignment assigned-var assigned-location)
+          (if (or
+            (= acc (- 0 1))
+            (= assigned-var ignore-var)
+            (not (compiler-reg-location-eq? assigned-location location)))
+            (compiler-reg-loop-split-region-occupant
+              (box-get rest) intervals region-intervals ignore-var location acc)
+            (if (compiler-reg-loop-split-var-overlaps-region?
+              intervals
+              assigned-var
+              region-intervals)
+              (compiler-reg-loop-split-region-occupant
+                (box-get rest) intervals region-intervals ignore-var location
+                (if (= acc (- 0 2)) assigned-var (- 0 1)))
+              (compiler-reg-loop-split-region-occupant
+                (box-get rest) intervals region-intervals ignore-var location
+                acc)))])]))
+
+;; Eviction-aware register pick: used when no candidate register is FREE over the
+;; region. Find a candidate register whose region occupant is a SINGLE var of
+;; STRICTLY LOWER spill weight than the loop-invariant being homed. Re-spilling
+;; that lower-weight var frees the register for the hotter invariant -- a strict
+;; total-spill-cost decrease (so it cannot oscillate; fuel bounds it anyway).
+;; Returns the register and the var to evict, or None.
+(define (compiler-reg-loop-split-first-register-evict
+  [regs : CompilerRegStringList]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [region-intervals : CompilerRegIntervalList]
+  [ignore-var : i64]
+  [weights : (Array i64)]
+  [inv-weight : i64]) : CompilerRegLoopSplitEvict
+  (match regs
+    [(CompilerRegStringNil) (CompilerRegLoopSplitEvictNone)]
+    [(CompilerRegStringCons reg rest)
+      (let
+        [occ : i64
+          (compiler-reg-loop-split-region-occupant
+            assignments
+            intervals
+            region-intervals
+            ignore-var
+            (CompilerRegRegister reg)
+            (- 0 2))]
+        (if (and
+          (>= occ 0)
+          (< occ (array.array-length weights))
+          (< (array.array-ref weights occ) inv-weight))
+          (CompilerRegLoopSplitEvict reg occ)
+          (compiler-reg-loop-split-first-register-evict
+            (box-get rest)
+            assignments
+            intervals
+            region-intervals
+            ignore-var
+            weights
+            inv-weight)))]))
+
 (define (compiler-reg-loop-split-type-ok?
   [type-info : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
@@ -7073,7 +7154,8 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : CompilerRegLoopSplitCandidate
+  [merged-roots : CompilerLiveI64Set]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (if (and
     (compiler-live-set-contains? (compiler-live-block-live-in block) var)
     (compiler-live-set-contains? (compiler-live-block-live-out block) var)
@@ -7117,24 +7199,48 @@
                             mentions
                             depth
                             copy-count))
-                          (match (compiler-reg-loop-split-first-register
-                            (compiler-reg-loop-split-candidate-regs
-                              (not
-                                (compiler-reg-loop-split-seq-has-call-or-syscall?
-                                  instrs)))
-                            assignments
-                            intervals
-                            region-intervals
-                            var)
-                            [(CompilerRegSomeString reg)
-                              (CompilerRegLoopSplitCandidate
-                                var
-                                region-label
-                                ty
-                                reg
-                                copies)]
-                            [(CompilerRegNoString)
-                              (CompilerRegLoopSplitNoCandidate)])
+                          (let
+                            [cregs : CompilerRegStringList
+                              (compiler-reg-loop-split-candidate-regs
+                                (not
+                                  (compiler-reg-loop-split-seq-has-call-or-syscall?
+                                    instrs)))]
+                            (match (compiler-reg-loop-split-first-register
+                              cregs
+                              assignments
+                              intervals
+                              region-intervals
+                              var)
+                              [(CompilerRegSomeString reg)
+                                (CompilerRegLoopSplitCandidate
+                                  var
+                                  region-label
+                                  ty
+                                  reg
+                                  copies
+                                  (- 0 1))]
+                              [(CompilerRegNoString)
+                                (match
+                                  (compiler-reg-loop-split-first-register-evict
+                                    cregs
+                                    assignments
+                                    intervals
+                                    region-intervals
+                                    var
+                                    weights
+                                    (if (< var (array.array-length weights))
+                                      (array.array-ref weights var)
+                                      0))
+                                  [(CompilerRegLoopSplitEvict ereg evar)
+                                    (CompilerRegLoopSplitCandidate
+                                      var
+                                      region-label
+                                      ty
+                                      ereg
+                                      copies
+                                      evar)]
+                                  [(CompilerRegLoopSplitEvictNone)
+                                    (CompilerRegLoopSplitNoCandidate)])]))
                           (CompilerRegLoopSplitNoCandidate)))]
                     [(CompilerRegEdgeCopyRefused _)
                       (CompilerRegLoopSplitNoCandidate)]))]
@@ -7158,7 +7264,8 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : CompilerRegLoopSplitCandidate
+  [merged-roots : CompilerLiveI64Set]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (if (>= var vars)
     (CompilerRegLoopSplitNoCandidate)
     (match (compiler-reg-loop-split-try-var
@@ -7176,7 +7283,8 @@
       intervals
       group-vars
       parents
-      merged-roots)
+      merged-roots
+      weights)
       [(CompilerRegLoopSplitNoCandidate)
         (compiler-reg-loop-split-select-var
           func
@@ -7193,9 +7301,10 @@
           intervals
           group-vars
           parents
-          merged-roots)]
-      [(CompilerRegLoopSplitCandidate stack-var label ty reg copies)
-        (CompilerRegLoopSplitCandidate stack-var label ty reg copies)])))
+          merged-roots
+          weights)]
+      [(CompilerRegLoopSplitCandidate stack-var label ty reg copies evicted)
+        (CompilerRegLoopSplitCandidate stack-var label ty reg copies evicted)])))
 
 (define (compiler-reg-loop-split-select-blocks
   [func : CompilerIrFunction]
@@ -7211,7 +7320,8 @@
   [intervals : CompilerRegIntervalIndex]
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
-  [merged-roots : CompilerLiveI64Set]) : CompilerRegLoopSplitCandidate
+  [merged-roots : CompilerLiveI64Set]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
   (match blocks
     [(IrBlockNil) (CompilerRegLoopSplitNoCandidate)]
     [(IrBlockCons ir-block rest)
@@ -7252,7 +7362,8 @@
                 intervals
                 group-vars
                 parents
-                merged-roots)
+                merged-roots
+                weights)
                 [(CompilerRegLoopSplitNoCandidate)
                   (compiler-reg-loop-split-select-blocks
                     func
@@ -7268,9 +7379,11 @@
                     intervals
                     group-vars
                     parents
-                    merged-roots)]
-                [(CompilerRegLoopSplitCandidate stack-var region ty reg copies)
-                  (CompilerRegLoopSplitCandidate stack-var region ty reg copies)])
+                    merged-roots
+                    weights)]
+                [(CompilerRegLoopSplitCandidate stack-var region ty reg copies evicted)
+                  (CompilerRegLoopSplitCandidate
+                    stack-var region ty reg copies evicted)])
               (compiler-reg-loop-split-select-blocks
                 func
                 (box-get rest)
@@ -7285,7 +7398,8 @@
                 intervals
                 group-vars
                 parents
-                merged-roots)))])]
+                merged-roots
+                weights)))])]
     [(IrBlockArray seq)
       (compiler-reg-loop-split-select-blocks
         func
@@ -7301,7 +7415,8 @@
         intervals
         group-vars
         parents
-        merged-roots)]))
+        merged-roots
+        weights)]))
 
 (define (compiler-reg-loop-split-apply-candidate
   [blocks : CompilerIrBlockList]
@@ -7310,12 +7425,30 @@
   [region-label : String]
   [ty : AstType]
   [reg : String]
-  [copies : CompilerRegEdgeCopyList]) : CompilerRegCallSaveRewrite
+  [copies : CompilerRegEdgeCopyList]
+  [evicted-var : i64]) : CompilerRegCallSaveRewrite
   (let
     [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
     [region-map : hashmap.StringI64Map
       (compiler-reg-region-label-map
         (compiler-reg-string-cons region-label CompilerRegStringNil))]
+    ;; The new region-resident var (id `vars`) takes the register. When this
+    ;; candidate evicted a lower-weight var to free that register, also override
+    ;; the evicted var to Spill -- assignment-list-merge -> assignment-insert
+    ;; overwrites its prior Register home, and a whole-var spill is always sound.
+    ;; (The offset is a placeholder; color-stack-slots re-colors all spills.)
+    [extra-assignments : CompilerRegAssignmentList
+      (if (>= evicted-var 0)
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment vars (CompilerRegRegister reg))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment
+              evicted-var
+              (CompilerRegSpill (compiler-reg-stack-slot-offset evicted-var)))
+            CompilerRegAssignmentNil))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment vars (CompilerRegRegister reg))
+          CompilerRegAssignmentNil))]
     (begin
       (array.array-set! remap stack-var vars)
       (match (compiler-reg-edge-copy-apply
@@ -7326,9 +7459,7 @@
             rewritten-blocks
             vars
             (+ vars 1)
-            (compiler-reg-assignment-cons
-              (CompilerRegAssignment vars (CompilerRegRegister reg))
-              CompilerRegAssignmentNil)
+            extra-assignments
             (compiler-reg-var-type-cons
               (CompilerRegVarType vars ty)
               CompilerRegVarTypeNil))]
@@ -7412,7 +7543,8 @@
                   intervals
                   group-vars
                   parents
-                  merged-roots)
+                  merged-roots
+                  (compiler-reg-function-spill-weights func))
                   [(CompilerRegLoopSplitNoCandidate)
                     (compiler-reg-loop-split-noop blocks vars)]
                   [(CompilerRegLoopSplitCandidate
@@ -7420,7 +7552,8 @@
                       region-label
                       ty
                       reg
-                      copies)
+                      copies
+                      evicted)
                     (let
                       [applied : CompilerRegCallSaveRewrite
                         (compiler-reg-loop-split-apply-candidate
@@ -7430,7 +7563,8 @@
                           region-label
                           ty
                           reg
-                          copies)]
+                          copies
+                          evicted)]
                       (match applied
                         [(CompilerRegCallSaveRewrite
                             new-blocks

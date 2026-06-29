@@ -88,8 +88,8 @@
 
 (define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
   (match paths
-    [(AstDeclPathNil) DocModuleList.Nil]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Nil) DocModuleList.Nil]
+    [(AstDeclPathList.Cons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         (if (sym-i64-contains seen path)

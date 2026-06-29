@@ -186,7 +186,7 @@
       (match (lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
-        AstDeclPathNil)
+        AstDeclPathList.Nil)
         [(OkCompilerLower lowered _)
           (match lowered
             [(CompilerIrProgram.Program _ functions _)

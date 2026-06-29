@@ -4304,6 +4304,24 @@
     unit
     (tc-stdlib-comptime-syntax-type-cache-refresh!)))
 
+(define (tc-stdlib-comptime-syntax-alias?
+  [canonical-name : String]
+  [type-name : String]) : bool
+  (or
+    (string.string-eq canonical-name (str_cat.str-cat "comptime." type-name))
+    (string.string-eq
+      canonical-name
+      (str_cat.str-cat (tc-stdlib-comptime-module-name) "." type-name))
+    (string.string-eq
+      canonical-name
+      (str_cat.str-cat "stdlib/comptime." type-name))
+    (string.string-eq
+      canonical-name
+      (compiler-symbol-module-key "comptime" type-name))
+    (string.string-eq
+      canonical-name
+      (compiler-symbol-module-key "stdlib/comptime" type-name))))
+
 (define (tc-stdlib-comptime-syntax-type [canonical-name : String]) : AstMaybeType
   (let
     [_ : unit (tc-stdlib-comptime-syntax-type-cache-ensure!)]
@@ -4329,6 +4347,18 @@
         (AstSomeType (tc-macro-match-arm-type))]
       [(= canonical-id tc-stdlib-comptime-match-arm-list-key-id-cache)
         (AstSomeType (tc-macro-match-arm-list-type))]
+      [(tc-stdlib-comptime-syntax-alias? canonical-name "Expr")
+        (AstSomeType (AstTyExpr))]
+      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprList")
+        (AstSomeType (AstTyExprList))]
+      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprClause")
+        (AstSomeType (tc-macro-expr-clause-type))]
+      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprClauseList")
+        (AstSomeType (tc-macro-expr-clause-list-type))]
+      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprBindingClause")
+        (AstSomeType (tc-macro-expr-binding-clause-type))]
+      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprBindingClauseList")
+        (AstSomeType (tc-macro-expr-binding-clause-list-type))]
       [else (AstNoType)])))
 
 (defenum TcStdlibTypeSpec
@@ -5183,6 +5213,17 @@
           ResultTcUnit.Ok)]
       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
 
+(define (tc-bind-comptime-helper-aliases
+  [env : TcTypeEnv]
+  [name : String]
+  [ty : AstType]) : TcTypeEnv
+  ;; Qualified `stdlib.comptime` helper calls are normalized to the legacy
+  ;; helper key in name lookup. Keep one compatibility binding instead of
+  ;; growing every macro helper environment with duplicate qualified aliases.
+  (if (tc-source-name-bound-exact? env name)
+    env
+    (tc-bind env name ty)))
+
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
     [expr : AstType (AstTyExpr)]
@@ -5194,6 +5235,8 @@
     [pattern-list : AstType (tc-macro-pattern-list-type)]
     [match-arm : AstType (tc-macro-match-arm-type)]
     [match-arm-list : AstType (tc-macro-match-arm-list-type)]
+    [type-info : AstType
+      (AstTyVar (intern (tc-stdlib-comptime-type-key "TypeInfo")))]
     [out : TcTypeEnv env]
     (begin
       ;; Legacy bridge for unqualified macro helper names. New stdlib macro
@@ -5208,7 +5251,19 @@
           (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "string-append"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
+      (set!
+        out
         (tc-bind
+          out
+          "string-concat"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
           out
           "string-concat"
           (tc-fn2 (AstTyString) (AstTyString) (AstTyString))))
@@ -5234,10 +5289,64 @@
           (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
       (set! out (tc-bind out "string->int" (tc-fn1 (AstTyString) (AstTyI64))))
       (set! out (tc-bind out "int->string" (tc-fn1 (AstTyI64) (AstTyString))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "int->string"
+          (tc-fn1 (AstTyI64) (AstTyString))))
       (set! out (tc-bind out "expr-bool" (tc-fn1 (AstTyBool) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-bool"
+          (tc-fn1 (AstTyBool) expr)))
       (set! out (tc-bind out "expr-int" (tc-fn1 (AstTyI64) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-int"
+          (tc-fn1 (AstTyI64) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-string"
+          (tc-fn1 (AstTyString) expr)))
       (set! out (tc-bind out "expr-var" (tc-fn1 (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-var"
+          (tc-fn1 (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind out "expr-struct-get" (tc-fn2 expr (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-struct-get"
+          (tc-fn2 expr (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind out "expr-struct-set" (tc-fn3 expr (AstTyString) expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-struct-set"
+          (tc-fn3 expr (AstTyString) expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-if"
+          (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "pattern-wildcard" (tc-fn0 pattern)))
       (set! out (tc-bind out "pattern-binding" (tc-fn1 (AstTyString) pattern)))
       (set!
@@ -5265,7 +5374,43 @@
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases out "expr-type" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases out "expr-splice" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "type-info"
+          (tc-fn1 expr type-info)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "module-name"
+          (tc-fn1 (AstTyString) (AstTyString))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "module-export-macro?"
+          (tc-fn2 (AstTyString) (AstTyString) (AstTyBool))))
+      (set!
+        out
         (tc-bind out "module-hook" (tc-fn2 (AstTyString) (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "module-hook"
+          (tc-fn2 (AstTyString) (AstTyString) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "comptime-error"
+          (tc-fn1 (AstTyString) (AstTyNever))))
       (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-nominal-module" (tc-fn1 expr (AstTyString))))
@@ -5304,41 +5449,140 @@
         (tc-bind out "function-param-type" (tc-fn2 expr (AstTyI64) expr)))
       (set! out (tc-bind out "function-return-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-bool?" (tc-fn1 expr (AstTyBool))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-bool?"
+          (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-bool-value" (tc-fn1 expr (AstTyBool))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-bool-value"
+          (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-if?" (tc-fn1 expr (AstTyBool))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-if?"
+          (tc-fn1 expr (AstTyBool))))
       (set! out (tc-bind out "expr-if-cond" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases out "expr-if-cond" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if-then" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases out "expr-if-then" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if-else" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases out "expr-if-else" (tc-fn1 expr expr)))
       (set!
         out
         (tc-bind out "expr-list-empty?" (tc-fn1 (AstTyExprList) (AstTyBool))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-empty?"
+          (tc-fn1 (AstTyExprList) (AstTyBool))))
+      (set!
+        out
         (tc-bind out "expr-list-length" (tc-fn1 (AstTyExprList) (AstTyI64))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-length"
+          (tc-fn1 (AstTyExprList) (AstTyI64))))
       (set! out (tc-bind out "expr-list-head" (tc-fn1 (AstTyExprList) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-head"
+          (tc-fn1 (AstTyExprList) expr)))
       (set!
         out
         (tc-bind out "expr-list-tail" (tc-fn1 (AstTyExprList) (AstTyExprList))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-tail"
+          (tc-fn1 (AstTyExprList) (AstTyExprList))))
+      (set!
+        out
         (tc-bind out "expr-list-nth" (tc-fn2 (AstTyExprList) (AstTyI64) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-nth"
+          (tc-fn2 (AstTyExprList) (AstTyI64) expr)))
       (set! out (tc-bind out "expr-clause-first" (tc-fn1 clause expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-first"
+          (tc-fn1 clause expr)))
       (set! out (tc-bind out "expr-clause-second" (tc-fn1 clause expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-second"
+          (tc-fn1 clause expr)))
       (set!
         out
         (tc-bind out "expr-clause-list-empty?" (tc-fn1 clause-list (AstTyBool))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-list-empty?"
+          (tc-fn1 clause-list (AstTyBool))))
+      (set!
+        out
         (tc-bind out "expr-clause-list-length" (tc-fn1 clause-list (AstTyI64))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-list-length"
+          (tc-fn1 clause-list (AstTyI64))))
       (set!
         out
         (tc-bind out "expr-clause-list-head" (tc-fn1 clause-list clause)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-list-head"
+          (tc-fn1 clause-list clause)))
+      (set!
+        out
         (tc-bind out "expr-clause-list-tail" (tc-fn1 clause-list clause-list)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-list-tail"
+          (tc-fn1 clause-list clause-list)))
+      (set!
+        out
         (tc-bind
+          out
+          "expr-clause-list-nth"
+          (tc-fn2 clause-list (AstTyI64) clause)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
           out
           "expr-clause-list-nth"
           (tc-fn2 clause-list (AstTyI64) clause)))
@@ -5350,7 +5594,19 @@
           (tc-fn1 clause-list (AstTyExprList))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-clause-list->expr-list"
+          (tc-fn1 clause-list (AstTyExprList))))
+      (set!
+        out
         (tc-bind
+          out
+          "expr-binding-clause-name"
+          (tc-fn1 binding-clause (AstTyString))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
           out
           "expr-binding-clause-name"
           (tc-fn1 binding-clause (AstTyString))))
@@ -5362,13 +5618,37 @@
           (tc-fn1 binding-clause (AstTyBool))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-binding-clause-has-type?"
+          (tc-fn1 binding-clause (AstTyBool))))
+      (set!
+        out
         (tc-bind out "expr-binding-clause-type" (tc-fn1 binding-clause expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-binding-clause-type"
+          (tc-fn1 binding-clause expr)))
       (set!
         out
         (tc-bind out "expr-binding-clause-init" (tc-fn1 binding-clause expr)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-binding-clause-init"
+          (tc-fn1 binding-clause expr)))
+      (set!
+        out
         (tc-bind
+          out
+          "expr-binding-clause-list-empty?"
+          (tc-fn1 binding-clause-list (AstTyBool))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
           out
           "expr-binding-clause-list-empty?"
           (tc-fn1 binding-clause-list (AstTyBool))))
@@ -5380,7 +5660,19 @@
           (tc-fn1 binding-clause-list (AstTyI64))))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-binding-clause-list-length"
+          (tc-fn1 binding-clause-list (AstTyI64))))
+      (set!
+        out
         (tc-bind
+          out
+          "expr-binding-clause-list-head"
+          (tc-fn1 binding-clause-list binding-clause)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
           out
           "expr-binding-clause-list-head"
           (tc-fn1 binding-clause-list binding-clause)))
@@ -5392,13 +5684,31 @@
           (tc-fn1 binding-clause-list binding-clause-list)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-binding-clause-list-tail"
+          (tc-fn1 binding-clause-list binding-clause-list)))
+      (set!
+        out
         (tc-bind
           out
           "expr-binding-clause-list-nth"
           (tc-fn2 binding-clause-list (AstTyI64) binding-clause)))
       (set!
         out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-binding-clause-list-nth"
+          (tc-fn2 binding-clause-list (AstTyI64) binding-clause)))
+      (set!
+        out
         (tc-bind
+          out
+          "expr-binding-clause-list->expr-list"
+          (tc-fn1 binding-clause-list (AstTyExprList))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
           out
           "expr-binding-clause-list->expr-list"
           (tc-fn1 binding-clause-list (AstTyExprList))))

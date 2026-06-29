@@ -7854,6 +7854,20 @@
       "typecheck: danger requires unsafe context")
     (compiler-typecheck-macro-ownership-tests-ok?)))
 
+(define (compiler-typecheck-body-fact-contextual-source) : String
+  "(define (take-i8 [x : i8]) : i64 (cast x : i64))
+(define (take-array [items : (Array i8 2)]) : i64
+  (cast (array-ref items 0) : i64))
+(define (take-tuple [items : (Tuple i8 i8)]) : i64
+  (cast (tuple-ref items 1) : i64))
+(define (main) : i64
+  (+ (take-i8 1)
+    (+ (take-array (array 2 3))
+      (take-tuple (tuple 4 5)))))")
+
+(define (compiler-typecheck-body-fact-tests-ok?) : bool
+  (compiler-typecheck-ok? (compiler-typecheck-body-fact-contextual-source)))
+
 (define (compiler-typecheck-self-test-basics) : unit
   (begin
     (if (intern-qualified-metadata-tests-ok?)
@@ -7895,6 +7909,9 @@
     (if (compiler-typecheck-scalar-parity-tests-ok?)
       unit
       (io.panic "typecheck: scalar bool/float/cast parity tests failed"))
+    (if (compiler-typecheck-body-fact-tests-ok?)
+      unit
+      (io.panic "typecheck: body-local type fact tests failed"))
     (if (compiler-typecheck-match-tests-ok?)
       unit
       (io.panic "typecheck: match/pattern tests failed"))

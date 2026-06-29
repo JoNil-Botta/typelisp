@@ -90,6 +90,98 @@
   (Ok i64)
   (Err String))
 
+(defenum TcBodyTypeFact
+  (Hit AstType)
+  (Miss))
+
+(define tc-body-type-facts-recording : bool
+  false)
+(define tc-body-type-facts-consuming : bool
+  false)
+(define tc-body-type-fact-ids : hashmap.I64I64Map
+  (hashmap.i64-i64-map-with-capacity 16))
+(define tc-body-type-fact-types : (Array AstType)
+  (array.make-array AstType 16))
+(define tc-body-type-fact-count : i64
+  0)
+
+(define (tc-body-type-fact-initial-capacity) : i64
+  1024)
+
+(define (tc-body-type-fact-grow-copy!
+  [dst : (Array AstType)]
+  [src : (Array AstType)]
+  [index : i64]) : unit
+  (if (>= index tc-body-type-fact-count)
+    unit
+    (begin
+      (array.array-set! dst index (array.array-ref src index))
+      (tc-body-type-fact-grow-copy! dst src (+ index 1)))))
+
+(define (tc-body-type-fact-grow!) : unit
+  (let
+    [old : (Array AstType) tc-body-type-fact-types]
+    [old-cap : i64 (array.array-length old)]
+    [new-cap : i64
+      (if (< old-cap 1)
+        (tc-body-type-fact-initial-capacity)
+        (* old-cap 2))]
+    [next : (Array AstType) (array.make-array AstType new-cap)]
+    (begin
+      (tc-body-type-fact-grow-copy! next old 0)
+      (set! tc-body-type-fact-types next))))
+
+(define (tc-body-type-facts-start-recording!) : unit
+  (begin
+    (set!
+      tc-body-type-fact-ids
+      (hashmap.i64-i64-map-with-capacity (tc-body-type-fact-initial-capacity)))
+    (set!
+      tc-body-type-fact-types
+      (array.make-array AstType (tc-body-type-fact-initial-capacity)))
+    (set! tc-body-type-fact-count 0)
+    (set! tc-body-type-facts-consuming false)
+    (set! tc-body-type-facts-recording true)))
+
+(define (tc-body-type-facts-start-consuming!) : unit
+  (begin
+    (set! tc-body-type-facts-recording false)
+    (set! tc-body-type-facts-consuming true)))
+
+(define (tc-body-type-facts-clear!) : unit
+  (begin
+    (set! tc-body-type-facts-recording false)
+    (set! tc-body-type-facts-consuming false)
+    (set! tc-body-type-fact-count 0)))
+
+(define (tc-body-type-fact-record! [expr-id : i64] [ty : AstType]) : unit
+  (if tc-body-type-facts-recording
+    (match (hashmap.i64-i64-map-get tc-body-type-fact-ids expr-id)
+      [(hashmap.I64I64MapFound _) unit]
+      [(hashmap.I64I64MapMissing)
+        (let
+          [slot : i64 tc-body-type-fact-count]
+          (begin
+            (if (>= slot (array.array-length tc-body-type-fact-types))
+              (tc-body-type-fact-grow!)
+              unit)
+            (array.array-set! tc-body-type-fact-types slot ty)
+            (set! tc-body-type-fact-count (+ slot 1))
+            (set!
+              tc-body-type-fact-ids
+              (hashmap.i64-i64-map-put tc-body-type-fact-ids expr-id slot))))])
+    unit))
+
+(define (tc-body-type-fact-lookup [expr-id : i64]) : TcBodyTypeFact
+  (if tc-body-type-facts-consuming
+    (match (hashmap.i64-i64-map-get tc-body-type-fact-ids expr-id)
+      [(hashmap.I64I64MapFound slot)
+        (if (and (>= slot 0) (< slot tc-body-type-fact-count))
+          (TcBodyTypeFact.Hit (array.array-ref tc-body-type-fact-types slot))
+          (TcBodyTypeFact.Miss))]
+      [(hashmap.I64I64MapMissing) (TcBodyTypeFact.Miss)])
+    (TcBodyTypeFact.Miss)))
+
 (defenum TcBorrowPlace
   (TcBorrowPlace String AstType))
 
@@ -1054,6 +1146,14 @@
   compile-profile
   (define compiler-tc-reinfer-profile-live : (Array i64)
     (array.make-array i64 18)))
+(cfg
+  compile-profile
+  (define compiler-tc-body-fact-profile-hits : (Array i64)
+    (array.make-array i64 18)))
+(cfg
+  compile-profile
+  (define compiler-tc-body-fact-profile-misses : (Array i64)
+    (array.make-array i64 18)))
 
 (cfg
   compile-profile
@@ -1122,6 +1222,45 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-body-fact-profile-reset-at [index : i64]) : unit
+    (if (< index compiler-tc-reinfer-profile-site-count)
+      (begin
+        (array.array-set! compiler-tc-body-fact-profile-hits index 0)
+        (array.array-set! compiler-tc-body-fact-profile-misses index 0)
+        (compiler-tc-body-fact-profile-reset-at (+ index 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-reset) : unit
+    (compiler-tc-body-fact-profile-reset-at 0)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-hit [site : String]) : unit
+    (let
+      [index : i64 (compiler-tc-reinfer-profile-site-index site)]
+      (if (< index 0)
+        unit
+        (array.array-set!
+          compiler-tc-body-fact-profile-hits
+          index
+          (+ (array.array-ref compiler-tc-body-fact-profile-hits index) 1))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-miss [site : String]) : unit
+    (let
+      [index : i64 (compiler-tc-reinfer-profile-site-index site)]
+      (if (< index 0)
+        unit
+        (array.array-set!
+          compiler-tc-body-fact-profile-misses
+          index
+          (+ (array.array-ref compiler-tc-body-fact-profile-misses index) 1))))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-reinfer-profile-record
     [site : String]
     [start-ms : i64]
@@ -1167,6 +1306,26 @@
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcType (tc-expr ctx env expr)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-expr-id
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [expr-id : i64]) : ResultTcType
+    (let
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
+      [result : ResultTcType (tc-expr-id ctx env expr-id)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -1228,6 +1387,27 @@
       [start-total : i64 (profile.alloc-total)]
       [start-live : i64 (profile.alloc-live)]
       [result : ResultTcTypeList (tc-move-call-param-types ctx env func)]
+      (begin
+        (compiler-tc-reinfer-profile-record
+          site
+          start-ms
+          start-total
+          start-live)
+        result))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-reinfer-profile-call-param-types-id
+    [site : String]
+    [ctx : TcContext]
+    [env : TcTypeEnv]
+    [func-id : i64]) : ResultTcTypeList
+    (let
+      [start-ms : i64 (profile.now-ms)]
+      [start-total : i64 (profile.alloc-total)]
+      [start-live : i64 (profile.alloc-live)]
+      [result : ResultTcTypeList
+        (tc-move-call-param-types-id-raw ctx env func-id)]
       (begin
         (compiler-tc-reinfer-profile-record
           site
@@ -1301,6 +1481,50 @@
   compile-profile
   (define (compiler-tc-reinfer-profile-emit) : unit
     (compiler-tc-reinfer-profile-emit-at 0)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-line
+    [site : String]
+    [kind : String]
+    [value : i64]) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "compile-profile|typecheck.body_fact."
+        site
+        "."
+        kind
+        (compiler-tc-profile-field value)
+        "|0|0|0\n"))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-emit-entry [index : i64]) : unit
+    (let
+      [site : String (compiler-tc-reinfer-profile-site-name index)]
+      (begin
+        (compiler-tc-body-fact-profile-line
+          site
+          "hits"
+          (array.array-ref compiler-tc-body-fact-profile-hits index))
+        (compiler-tc-body-fact-profile-line
+          site
+          "misses"
+          (array.array-ref compiler-tc-body-fact-profile-misses index))))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-emit-at [index : i64]) : unit
+    (if (< index compiler-tc-reinfer-profile-site-count)
+      (begin
+        (compiler-tc-body-fact-profile-emit-entry index)
+        (compiler-tc-body-fact-profile-emit-at (+ index 1)))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-body-fact-profile-emit) : unit
+    (compiler-tc-body-fact-profile-emit-at 0)))
 
 (cfg
   compile-profile
@@ -1636,6 +1860,7 @@
       (set! compiler-tc-env-profile-module-local-hits 0)
       (set! compiler-tc-env-profile-module-local-misses 0)
       (compiler-tc-reinfer-profile-reset)
+      (compiler-tc-body-fact-profile-reset)
       (tc-lp-reset 0))))
 
 (cfg
@@ -2057,6 +2282,7 @@
         "generated_fingerprint_cache_misses"
         compiler-tc-macro-generated-fingerprint-cache-misses)
       (compiler-tc-reinfer-profile-emit)
+      (compiler-tc-body-fact-profile-emit)
       (tc-lp-line "repr_c_field_builds" 0)
       (tc-lp-line "repr_c_field_visits" 1)
       (tc-lp-line "inline_field_builds" 2)
@@ -14776,7 +15002,82 @@
 ;; body-local type caches. The value-based forms above remain necessary for
 ;; synthetic expressions that were never pushed into the node pool.
 (define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
-  (tc-expr ctx env (ast-node-get expr-id)))
+  (let
+    [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
+    (begin
+      (match result
+        [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
+        [(ResultTcType.Err _) unit])
+      result)))
+
+(define (tc-body-type-fact-lookup-profiled [site : String] [expr-id : i64]) : TcBodyTypeFact
+  (match (tc-body-type-fact-lookup expr-id)
+    [(TcBodyTypeFact.Hit ty)
+      (begin
+        (cfg compile-profile (compiler-tc-body-fact-profile-hit site))
+        (TcBodyTypeFact.Hit ty))]
+    [(TcBodyTypeFact.Miss)
+      (begin
+        (cfg compile-profile (compiler-tc-body-fact-profile-miss site))
+        (TcBodyTypeFact.Miss))]))
+
+(define (tc-body-type-fact-expr-id
+  [site : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]) : ResultTcType
+  (match (tc-body-type-fact-lookup-profiled site expr-id)
+    [(TcBodyTypeFact.Hit ty) (ResultTcType.Ok ty)]
+    [(TcBodyTypeFact.Miss)
+      (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-expr-id site ctx env expr-id)
+        (tc-expr-id ctx env expr-id))]))
+
+(define (tc-body-type-fact-list-types [exprs : AstExprList]) : ResultTcTypeList
+  (if tc-body-type-facts-consuming
+    (match exprs
+      [(AstExprList.Nil) (ResultTcTypeList.Ok AstTypeNil)]
+      [(AstExprList.Cons expr rest)
+        (match (tc-body-type-fact-lookup expr)
+          [(TcBodyTypeFact.Hit ty)
+            (match (tc-body-type-fact-list-types (box-get rest))
+              [(ResultTcTypeList.Ok rest-types)
+                (ResultTcTypeList.Ok (ast-type-cons ty rest-types))]
+              [(ResultTcTypeList.Err message) (ResultTcTypeList.Err message)])]
+          [(TcBodyTypeFact.Miss) (ResultTcTypeList.Err "")])])
+    (ResultTcTypeList.Err "")))
+
+(define (tc-body-type-fact-expr-list-types
+  [site : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcTypeList
+  (match (tc-body-type-fact-list-types exprs)
+    [(ResultTcTypeList.Ok types)
+      (begin
+        (cfg compile-profile (compiler-tc-body-fact-profile-hit site))
+        (ResultTcTypeList.Ok types))]
+    [(ResultTcTypeList.Err _)
+      (begin
+        (cfg compile-profile (compiler-tc-body-fact-profile-miss site))
+        (cfg
+          compile-profile
+          (compiler-tc-reinfer-profile-expr-list-types site ctx env exprs)
+          (tc-expr-list-types ctx env exprs)))]))
+
+(define (tc-move-binding-type-id
+  [site : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [maybe-ty : AstMaybeType]
+  [init-id : i64]) : AstType
+  (match maybe-ty
+    [(AstSomeType t) (tc-resolve-type ctx t)]
+    [(AstNoType)
+      (match (tc-body-type-fact-expr-id site ctx env init-id)
+        [(ResultTcType.Ok t) t]
+        [(ResultTcType.Err _) (AstTyI64)])]))
 
 ;; Contextual typing is deliberately separate from non-contextual `tc-expr-id`:
 ;; the same node can produce a different result type when an expected type
@@ -17566,6 +17867,115 @@
       (ResultTcType.Err
         "typecheck: arena-destroy-safe! expects exactly one argument")]))
 
+(define (tc-call-expr-ordinary-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : AstExprList]) : ResultTcType
+  (let
+    [func : AstExpr (ast-node-get func-id)]
+    (match (ast-expr-unspan func)
+      [(AstExpr.Lambda lambda-box)
+        (match (box-get lambda-box)
+          [(AstLambda.Lambda params maybe-ret body-box)
+            (let
+              [body : AstExpr (ast-node-get body-box)]
+              (match (tc-lambda-expr-allow-ref-captures
+                ctx
+                env
+                params
+                maybe-ret
+                body)
+                [(ResultTcType.Ok fn-ty)
+                  (begin
+                    (tc-body-type-fact-record! func-id fn-ty)
+                    (match fn-ty
+                      [(AstTyFunc params ret)
+                        (tc-call-function-type
+                          ctx
+                          env
+                          func
+                          args
+                          (box-get params)
+                          (ty-node-get ret))]
+                      [_
+                        (ResultTcType.Err
+                          "typecheck: call target is not a function")]))]
+                [(ResultTcType.Err message) (ResultTcType.Err message)]))])]
+      [_
+        (match (tc-expr-id ctx env func-id)
+          [(ResultTcType.Ok fn-ty)
+            (match fn-ty
+              [(AstTyFunc params ret)
+                (tc-call-function-type
+                  ctx
+                  env
+                  func
+                  args
+                  (box-get params)
+                  (ty-node-get ret))]
+              [(AstTyRegion _ inner)
+                (match (ty-node-get inner)
+                  [(AstTyFunc params ret)
+                    (match (tc-check-call-args-with-message
+                      ctx
+                      env
+                      args
+                      (box-get params)
+                      false
+                      (AstNoType)
+                      (TcArityDetailed func args (box-get params))
+                      (tc-expr-c-abi-fnptr? ctx env func))
+                      [(ResultTcUnit.Ok)
+                        (ResultTcType.Ok
+                          (tc-tag-active-region env (ty-node-get ret)))]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(AstTyEnum enum-name)
+                    (match args
+                      [(AstExprList.Nil)
+                        (tc-nullary-variant-call-expr
+                          ctx
+                          env
+                          func
+                          (intern-str enum-name)
+                          (ty-node-get inner))]
+                      [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                  [(AstTyEnumArgs enum-name _)
+                    (match args
+                      [(AstExprList.Nil)
+                        (tc-nullary-variant-call-expr
+                          ctx
+                          env
+                          func
+                          (intern-str enum-name)
+                          (ty-node-get inner))]
+                      [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+                  [_
+                    (ResultTcType.Err
+                      "typecheck: call target is not a function")])]
+              [(AstTyEnum enum-name)
+                (match args
+                  [(AstExprList.Nil)
+                    (tc-nullary-variant-call-expr
+                      ctx
+                      env
+                      func
+                      (intern-str enum-name)
+                      fn-ty)]
+                  [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+              [(AstTyEnumArgs enum-name _)
+                (match args
+                  [(AstExprList.Nil)
+                    (tc-nullary-variant-call-expr
+                      ctx
+                      env
+                      func
+                      (intern-str enum-name)
+                      fn-ty)]
+                  [_ (ResultTcType.Err "typecheck: arity mismatch")])]
+              [_ (ResultTcType.Err "typecheck: call target is not a function")])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
+
 (define (tc-call-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -18437,6 +18847,67 @@
           [else (tc-call-expr-ordinary ctx env func args)]))]
     [_ (tc-call-expr-ordinary ctx env func args)]))
 
+(define (tc-call-or-array-length-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]
+  [args : AstExprList]) : ResultTcType
+  (let
+    [func : AstExpr (ast-node-get func-id)]
+    (match (ast-expr-unspan func)
+      [(AstExpr.Var raw-name)
+        ;; Keep builtin dispatch identical to `tc-call-or-array-length`; only
+        ;; the ordinary fallback needs the pooled function expression id.
+        (let
+          [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
+          [name-id : i64 (tc-builtin-name-id name)]
+          [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+          (cond
+            [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+              (tc-layout-query-runtime-call name args)]
+            [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
+              (tc-one-length-handle-builtin-call ctx env args (AstTyI64))]
+            [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
+              (tc-array-length-call ctx env name func args)]
+            [(and
+                (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
+                (not (tc-name-bound? env name)))
+              (tc-string-ref-call ctx env args)]
+            [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
+              (tc-string-ref-call ctx env args)]
+            [(and
+                (tc-atomic-pointer-name? name)
+                (not (tc-name-bound? env name)))
+              (tc-atomic-pointer-call ctx env name args)]
+            [(and
+                (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
+                (not (tc-name-bound? env name)))
+              (tc-tls-current-arena-call ctx env name-id args)]
+            [(and
+                (tc-borrowed-string-builtin-id? name-id)
+                (tc-default-builtin-unshadowed-id? env name-id))
+              (tc-borrowed-string-builtin-call ctx env name args)]
+            [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
+              (tc-borrowed-string-builtin-call ctx env "__tl_string_eq" args)]
+            [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
+              (tc-two-string-handle-builtin-call ctx env args (AstTyString))]
+            [(tc-string-to-int-helper-call-id? env lookup-id)
+              (tc-borrowed-string-builtin-call
+                ctx
+                env
+                "__tl_string_to_int"
+                args)]
+            [(and
+                (ctfe-reflection-query-name? name)
+                (not (tc-name-bound? env name)))
+              (tc-reflection-query-runtime-call name)]
+            [(and
+                (cbi.compiler-builtin-typecheck-clone-id? name-id)
+                (not (tc-name-bound? env name)))
+              (tc-clone-call ctx env args)]
+            [else (tc-call-expr-ordinary-id ctx env func-id args)]))]
+      [_ (tc-call-expr-ordinary-id ctx env func-id args)])))
+
 (define (tc-let-bindings
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -19173,10 +19644,11 @@
   [env : TcTypeEnv]
   [name : String]
   [maybe-ty : AstMaybeType]
-  [init : AstExpr]
+  [init-id : i64]
   [rest : AstLetBindingList]
   [body : AstExpr]) : ResultTcType
   (let
+    [init : AstExpr (ast-node-get init-id)]
     [ref-capturing-lambda : bool (tc-ref-capturing-lambda-init? env init)]
     (match maybe-ty
       [(AstSomeType want)
@@ -19198,9 +19670,13 @@
                             maybe-ret
                             lambda-body))])]
                   [_
-                    (tc-expr-with-expected-or-actual ctx env init resolved-want)])]
+                    (tc-expr-with-expected-or-actual-id
+                      ctx
+                      env
+                      init-id
+                      resolved-want)])]
               [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-            (tc-expr-with-expected-or-actual ctx env init resolved-want)))]
+            (tc-expr-with-expected-or-actual-id ctx env init-id resolved-want)))]
       [(AstNoType)
         (if ref-capturing-lambda
           (match (tc-let-binding-ref-closure-scope-ok rest body name)
@@ -19217,9 +19693,9 @@
                           params
                           maybe-ret
                           lambda-body))])]
-                [_ (tc-expr ctx env init)])]
+                [_ (tc-expr-id ctx env init-id)])]
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-          (tc-expr ctx env init))])))
+          (tc-expr-id ctx env init-id))])))
 
 (define (tc-let-bindings-for-body
   [ctx : TcContext]
@@ -19240,7 +19716,7 @@
                 env
                 (intern-str name)
                 maybe-ty
-                init
+                init-box
                 rest
                 body)
                 [(ResultTcType.Ok init-ty)
@@ -19386,10 +19862,10 @@
               [cleanup : AstExpr (ast-node-get cleanup-box)]
               (match (tc-resource-cleanup-resource-type ctx env cleanup)
                 [(ResultTcType.Ok expected-init-ty)
-                  (match (tc-expr-with-expected-or-actual
+                  (match (tc-expr-with-expected-or-actual-id
                     ctx
                     env
-                    init
+                    init-box
                     expected-init-ty)
                     [(ResultTcType.Ok init-ty)
                       (match (tc-ensure-cleanup-resource-not-transferred
@@ -30039,9 +30515,7 @@
               [(TcBinOpTypes _ _ result-ty) (ResultTcType.Ok result-ty)])]
           [(ResultTcBinOpTypes.Err message) (ResultTcType.Err message)]))]
     [(AstExpr.Call func-box args)
-      (let
-        [func : AstExpr (ast-node-get func-box)]
-        (tc-call-or-array-length ctx env func args))]
+      (tc-call-or-array-length-id ctx env func-box args)]
     [(AstExpr.BracketClause _)
       (ResultTcType.Err
         "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")]
@@ -32993,6 +33467,18 @@
                   (OkTcMove moved))]
               [(TcMaybeString.No) (OkTcMove moved)]))]))))
 
+(define (tc-move-after-bind-typed
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [init : AstExpr]
+  [init-ty : AstType]) : TcMoveResult
+  (if (tc-type-consuming-by-value-now? ctx init-ty)
+    (tc-move-after-consuming-projection ctx env locals loop-carried moved init)
+    (OkTcMove moved)))
+
 ;; Mark the source variable moved when an init/rhs is a bare move-only variable
 ;; that names a tracked local/parameter (not an enum constructor or global).
 (define (tc-move-after-bind
@@ -33021,16 +33507,83 @@
         (compiler-tc-reinfer-profile-expr "move.bind_init" ctx env init)
         (tc-expr ctx env init))
         [(ResultTcType.Ok init-ty)
-          (if (tc-type-consuming-by-value-now? ctx init-ty)
-            (tc-move-after-consuming-projection
+          (tc-move-after-bind-typed
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            init
+            init-ty)]
+        [(ResultTcType.Err _) (OkTcMove moved)])]))
+
+(define (tc-move-after-bind-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [init-id : i64]) : TcMoveResult
+  (let
+    [init : AstExpr (ast-node-get init-id)]
+    (match (tc-move-bare-var init)
+      [(TcMaybeString.Some v)
+        (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
+          (if (tc-moved-partial? moved v)
+            (tc-move-rich-use-conflict-result
+              (tc-moved-root-conflict moved v)
+              v
+              init
+              v)
+            (if (tc-moved-contains? loop-carried v)
+              (tc-move-rich-loop-carried-result v init)
+              (OkTcMove (tc-moved-add-origin moved v init))))
+          (OkTcMove moved))]
+      [(TcMaybeString.No)
+        (match (tc-body-type-fact-expr-id "move.bind_init" ctx env init-id)
+          [(ResultTcType.Ok init-ty)
+            (tc-move-after-bind-typed
               ctx
               env
               locals
               loop-carried
               moved
-              init)
-            (OkTcMove moved))]
-        [(ResultTcType.Err _) (OkTcMove moved)])]))
+              init
+              init-ty)]
+          [(ResultTcType.Err _) (OkTcMove moved)])])))
+
+(define (tc-move-after-bind-known-type-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [init-id : i64]
+  [init-ty : AstType]) : TcMoveResult
+  (let
+    [init : AstExpr (ast-node-get init-id)]
+    (match (tc-move-bare-var init)
+      [(TcMaybeString.Some v)
+        (if (and (tc-moved-contains? locals v) (tc-move-var-move-only? env v))
+          (if (tc-moved-partial? moved v)
+            (tc-move-rich-use-conflict-result
+              (tc-moved-root-conflict moved v)
+              v
+              init
+              v)
+            (if (tc-moved-contains? loop-carried v)
+              (tc-move-rich-loop-carried-result v init)
+              (OkTcMove (tc-moved-add-origin moved v init))))
+          (OkTcMove moved))]
+      [(TcMaybeString.No)
+        (tc-move-after-bind-typed
+          ctx
+          env
+          locals
+          loop-carried
+          moved
+          init
+          init-ty)])))
 
 (define (tc-move-after-moving-value
   [ctx : TcContext]
@@ -33787,31 +34340,47 @@
         [(ErrTcMove message) (ErrTcMove message)])]
     [(ErrTcMove message) (ErrTcMove message)]))
 
+(define (tc-move-call-param-types-from-type [fn-ty : AstType]) : ResultTcTypeList
+  (match (tc-type-strip-region fn-ty)
+    [(AstTyFunc params _) (ResultTcTypeList.Ok (box-get params))]
+    [(AstTyEnum _) (ResultTcTypeList.Ok AstTypeNil)]
+    [(AstTyEnumArgs _ _) (ResultTcTypeList.Ok AstTypeNil)]
+    [_ (ResultTcTypeList.Err "typecheck: call target is not a function")]))
+
 (define (tc-move-call-param-types
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]) : ResultTcTypeList
   (match (tc-expr ctx env func)
-    [(ResultTcType.Ok fn-ty)
-      (match (tc-type-strip-region fn-ty)
-        [(AstTyFunc params _) (ResultTcTypeList.Ok (box-get params))]
-        [(AstTyEnum _) (ResultTcTypeList.Ok AstTypeNil)]
-        [(AstTyEnumArgs _ _) (ResultTcTypeList.Ok AstTypeNil)]
-        [_ (ResultTcTypeList.Err "typecheck: call target is not a function")])]
+    [(ResultTcType.Ok fn-ty) (tc-move-call-param-types-from-type fn-ty)]
     [(ResultTcType.Err message) (ResultTcTypeList.Err message)]))
+
+(define (tc-move-call-param-types-id-raw
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]) : ResultTcTypeList
+  (match (tc-expr-id ctx env func-id)
+    [(ResultTcType.Ok fn-ty) (tc-move-call-param-types-from-type fn-ty)]
+    [(ResultTcType.Err message) (ResultTcTypeList.Err message)]))
+
+(define (tc-move-call-param-types-id-with-facts
+  [site : String]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]) : ResultTcTypeList
+  (match (tc-body-type-fact-lookup-profiled site func-id)
+    [(TcBodyTypeFact.Hit fn-ty) (tc-move-call-param-types-from-type fn-ty)]
+    [(TcBodyTypeFact.Miss)
+      (cfg
+        compile-profile
+        (compiler-tc-reinfer-profile-call-param-types-id site ctx env func-id)
+        (tc-move-call-param-types-id-raw ctx env func-id))]))
 
 (define (tc-move-call-param-types-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func-id : i64]) : ResultTcTypeList
-  (match (tc-expr-id ctx env func-id)
-    [(ResultTcType.Ok fn-ty)
-      (match (tc-type-strip-region fn-ty)
-        [(AstTyFunc params _) (ResultTcTypeList.Ok (box-get params))]
-        [(AstTyEnum _) (ResultTcTypeList.Ok AstTypeNil)]
-        [(AstTyEnumArgs _ _) (ResultTcTypeList.Ok AstTypeNil)]
-        [_ (ResultTcTypeList.Err "typecheck: call target is not a function")])]
-    [(ResultTcType.Err message) (ResultTcTypeList.Err message)]))
+  (tc-move-call-param-types-id-with-facts "move.call_func" ctx env func-id))
 
 (define (tc-move-check-exprs
   [ctx : TcContext]
@@ -33854,40 +34423,38 @@
                 moved
                 init-box)
                 [(OkTcMove moved1)
-                  (match (tc-move-after-bind
-                    ctx
-                    env
-                    locals
-                    loop-carried
-                    moved1
-                    init)
-                    [(OkTcMove moved2)
-                      (tc-move-check-let-bindings
+                  (let
+                    [binding-ty : AstType
+                      (tc-move-binding-type-id
+                        "move.let_init"
                         ctx
-                        (let
-                          [binding-ty : AstType
-                            (cfg
-                              compile-profile
-                              (compiler-tc-reinfer-profile-binding-type
-                                "move.let_init"
-                                ctx
-                                env
-                                maybe-ty
-                                init)
-                              (tc-move-binding-type ctx env maybe-ty init))]
+                        env
+                        maybe-ty
+                        init-box)]
+                    (match (tc-move-after-bind-known-type-id
+                      ctx
+                      env
+                      locals
+                      loop-carried
+                      moved1
+                      init-box
+                      binding-ty)
+                      [(OkTcMove moved2)
+                        (tc-move-check-let-bindings
+                          ctx
                           (tc-bind-c-abi-fnptr-if-needed-id
                             ctx
                             env
                             name
                             binding-ty
-                            init))
-                        (tc-moved-add locals (intern-str name))
-                        (tc-moved-remove-root-state
-                          loop-carried
-                          (intern-str name))
-                        (tc-moved-remove-root-state moved2 (intern-str name))
-                        rest)]
-                    [(ErrTcMove message) (ErrTcMoveBindings message)])]
+                            init)
+                          (tc-moved-add locals (intern-str name))
+                          (tc-moved-remove-root-state
+                            loop-carried
+                            (intern-str name))
+                          (tc-moved-remove-root-state moved2 (intern-str name))
+                          rest)]
+                      [(ErrTcMove message) (ErrTcMoveBindings message)]))]
                 [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
 
 (define (tc-move-check-resource-bindings
@@ -33920,22 +34487,19 @@
                 moved
                 init-box)
                 [(OkTcMove moved1)
-                  (match (tc-move-after-bind
+                  (match (tc-move-after-bind-id
                     ctx
                     env
                     locals
                     loop-carried
                     moved1
-                    init)
+                    init-box)
                     [(OkTcMove moved2)
-                      (match (cfg
-                        compile-profile
-                        (compiler-tc-reinfer-profile-expr
-                          "move.resource_init"
-                          ctx
-                          env
-                          init)
-                        (tc-expr-id ctx env init-box))
+                      (match (tc-body-type-fact-expr-id
+                        "move.resource_init"
+                        ctx
+                        env
+                        init-box)
                         [(ResultTcType.Ok init-ty)
                           (match (tc-move-check-resource-bindings
                             ctx
@@ -34141,14 +34705,11 @@
           moved
           func-box)
           [(OkTcMove moved1)
-            (match (cfg
-              compile-profile
-              (compiler-tc-reinfer-profile-call-param-types
-                "move.call_func"
-                ctx
-                env
-                func)
-              (tc-move-call-param-types-id ctx env func-box))
+            (match (tc-move-call-param-types-id-with-facts
+              "move.call_func"
+              ctx
+              env
+              func-box)
               [(ResultTcTypeList.Ok params)
                 (match (tc-call-extern-abi ctx func)
                   [(TcMaybeExternAbi.Some abi)
@@ -34281,14 +34842,7 @@
                   body)]
               [(ErrTcMove message) (ErrTcMove message)]))])]
     [(AstExpr.Tuple exprs)
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr-list-types
-          "move.tuple_list"
-          ctx
-          env
-          exprs)
-        (tc-expr-list-types ctx env exprs))
+      (match (tc-body-type-fact-expr-list-types "move.tuple_list" ctx env exprs)
         [(ResultTcTypeList.Ok types)
           (tc-move-check-exprs-with-types
             ctx
@@ -34317,14 +34871,7 @@
               [(TcMaybeString.No) (OkTcMove moved1)])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExpr.Array exprs)
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr-list-types
-          "move.array_list"
-          ctx
-          env
-          exprs)
-        (tc-expr-list-types ctx env exprs))
+      (match (tc-body-type-fact-expr-list-types "move.array_list" ctx env exprs)
         [(ResultTcTypeList.Ok types)
           (tc-move-check-exprs-with-types
             ctx
@@ -34456,9 +35003,21 @@
                 moved
                 (ast-node-get virtual-id))]
             [(ResultTcExprId.Err message) (ErrTcMove message)])
-          (match (tc-move-check-expr ctx env locals loop-carried moved rhs)
+          (match (tc-move-check-expr-id
+            ctx
+            env
+            locals
+            loop-carried
+            moved
+            rhs-box)
             [(OkTcMove moved1)
-              (match (tc-move-after-bind ctx env locals loop-carried moved1 rhs)
+              (match (tc-move-after-bind-id
+                ctx
+                env
+                locals
+                loop-carried
+                moved1
+                rhs-box)
                 [(OkTcMove moved2)
                   (OkTcMove (tc-moved-remove-root-state moved2 name-text))]
                 [(ErrTcMove message) (ErrTcMove message)])]
@@ -34482,14 +35041,11 @@
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
               [(OkTcMove moveds)
-                (match (cfg
-                  compile-profile
-                  (compiler-tc-reinfer-profile-expr
-                    "move.match_scrutinee"
-                    ctx
-                    env
-                    scrut)
-                  (tc-expr ctx env scrut))
+                (match (tc-body-type-fact-expr-id
+                  "move.match_scrutinee"
+                  ctx
+                  env
+                  scrut-box)
                   [(ResultTcType.Ok scrut-ty)
                     (tc-move-check-arms
                       ctx
@@ -34744,15 +35300,21 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved box-expr)
           [(OkTcMove moved1)
-            (match (tc-move-check-expr ctx env locals loop-carried moved1 value)
+            (match (tc-move-check-expr-id
+              ctx
+              env
+              locals
+              loop-carried
+              moved1
+              value-box)
               [(OkTcMove moved2)
-                (match (tc-move-after-bind
+                (match (tc-move-after-bind-id
                   ctx
                   env
                   locals
                   loop-carried
                   moved2
-                  value)
+                  value-box)
                   [(OkTcMove moved3) (OkTcMove moved3)]
                   [(ErrTcMove message) (ErrTcMove message)])]
               [(ErrTcMove message) (ErrTcMove message)])]
@@ -35519,6 +36081,16 @@
     (OkTcBorrowCheck borrowed)
     (tc-borrow-check-place-read-conflict locals borrowed expr expr)))
 
+(define (tc-borrow-check-after-bind-typed
+  [ctx : TcContext]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [init : AstExpr]
+  [init-ty : AstType]) : TcBorrowCheckResult
+  (if (tc-type-consuming-by-value-now? ctx init-ty)
+    (tc-borrow-check-after-consuming-place locals borrowed init)
+    (OkTcBorrowCheck borrowed)))
+
 (define (tc-borrow-check-after-bind
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -35540,10 +36112,52 @@
         (compiler-tc-reinfer-profile-expr "borrow.bind_init" ctx env init)
         (tc-expr ctx env init))
         [(ResultTcType.Ok init-ty)
-          (if (tc-type-consuming-by-value-now? ctx init-ty)
-            (tc-borrow-check-after-consuming-place locals borrowed init)
-            (OkTcBorrowCheck borrowed))]
+          (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
         [(ResultTcType.Err _) (OkTcBorrowCheck borrowed)])]))
+
+(define (tc-borrow-check-after-bind-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [init-id : i64]) : TcBorrowCheckResult
+  (let
+    [init : AstExpr (ast-node-get init-id)]
+    (match (tc-move-bare-var init)
+      [(TcMaybeString.Some name)
+        (if (and
+          (tc-moved-contains? locals name)
+          (tc-move-var-move-only? env name))
+          (match (tc-borrow-check-move-conflict borrowed name init)
+            [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
+            [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
+          (OkTcBorrowCheck borrowed))]
+      [(TcMaybeString.No)
+        (match (tc-body-type-fact-expr-id "borrow.bind_init" ctx env init-id)
+          [(ResultTcType.Ok init-ty)
+            (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
+          [(ResultTcType.Err _) (OkTcBorrowCheck borrowed)])])))
+
+(define (tc-borrow-check-after-bind-known-type-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [init-id : i64]
+  [init-ty : AstType]) : TcBorrowCheckResult
+  (let
+    [init : AstExpr (ast-node-get init-id)]
+    (match (tc-move-bare-var init)
+      [(TcMaybeString.Some name)
+        (if (and
+          (tc-moved-contains? locals name)
+          (tc-move-var-move-only? env name))
+          (match (tc-borrow-check-move-conflict borrowed name init)
+            [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
+            [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
+          (OkTcBorrowCheck borrowed))]
+      [(TcMaybeString.No)
+        (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)])))
 
 (define (tc-borrow-check-assignment
   [locals : TcMovedSet]
@@ -37172,14 +37786,11 @@
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed scrut)
               [(OkTcBorrowCheck borroweds)
-                (match (cfg
-                  compile-profile
-                  (compiler-tc-reinfer-profile-expr
-                    "borrow.match_scrutinee"
-                    ctx
-                    env
-                    scrut)
-                  (tc-expr ctx env scrut))
+                (match (tc-body-type-fact-expr-id
+                  "borrow.match_scrutinee"
+                  ctx
+                  env
+                  scrut-box)
                   [(ResultTcType.Ok scrut-ty)
                     (tc-borrow-check-arms-loop
                       ctx
@@ -37342,39 +37953,37 @@
               [init : AstExpr (ast-node-get init-box)]
               (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
                 [(OkTcBorrowCheck borrowed1)
-                  (match (tc-borrow-check-after-bind
-                    ctx
-                    env
-                    locals
-                    borrowed1
-                    init)
-                    [(OkTcBorrowCheck borrowed2)
-                      (tc-borrow-check-let-bindings
+                  (let
+                    [binding-ty : AstType
+                      (tc-move-binding-type-id
+                        "borrow.let_init"
                         ctx
-                        (let
-                          [binding-ty : AstType
-                            (cfg
-                              compile-profile
-                              (compiler-tc-reinfer-profile-binding-type
-                                "borrow.let_init"
-                                ctx
-                                env
-                                maybe-ty
-                                init)
-                              (tc-move-binding-type ctx env maybe-ty init))]
+                        env
+                        maybe-ty
+                        init-box)]
+                    (match (tc-borrow-check-after-bind-known-type-id
+                      ctx
+                      env
+                      locals
+                      borrowed1
+                      init-box
+                      binding-ty)
+                      [(OkTcBorrowCheck borrowed2)
+                        (tc-borrow-check-let-bindings
+                          ctx
                           (tc-bind-c-abi-fnptr-if-needed-id
                             ctx
                             env
                             name
                             binding-ty
-                            init))
-                        (tc-moved-add locals (intern-str name))
-                        (tc-borrow-check-remove-root-state
-                          borrowed2
-                          (intern-str name))
-                        rest)]
-                    [(ErrTcBorrowCheck message)
-                      (ErrTcBorrowCheckBindings message)])]
+                            init)
+                          (tc-moved-add locals (intern-str name))
+                          (tc-borrow-check-remove-root-state
+                            borrowed2
+                            (intern-str name))
+                          rest)]
+                      [(ErrTcBorrowCheck message)
+                        (ErrTcBorrowCheckBindings message)]))]
                 [(ErrTcBorrowCheck message) (ErrTcBorrowCheckBindings message)]))]))]))
 
 (define (tc-borrow-check-resource-bindings
@@ -37395,21 +38004,18 @@
               [init : AstExpr (ast-node-get init-box)]
               (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
                 [(OkTcBorrowCheck borrowed1)
-                  (match (tc-borrow-check-after-bind
+                  (match (tc-borrow-check-after-bind-id
                     ctx
                     env
                     locals
                     borrowed1
-                    init)
+                    init-box)
                     [(OkTcBorrowCheck borrowed2)
-                      (match (cfg
-                        compile-profile
-                        (compiler-tc-reinfer-profile-expr
-                          "borrow.resource_init"
-                          ctx
-                          env
-                          init)
-                        (tc-expr-id ctx env init-box))
+                      (match (tc-body-type-fact-expr-id
+                        "borrow.resource_init"
+                        ctx
+                        env
+                        init-box)
                         [(ResultTcType.Ok init-ty)
                           (tc-borrow-check-resource-bindings
                             ctx
@@ -37524,14 +38130,11 @@
         [func : AstExpr (ast-node-get func-box)]
         (match (tc-borrow-check-expr-id ctx env locals borrowed func-box)
           [(OkTcBorrowCheck borrowed1)
-            (match (cfg
-              compile-profile
-              (compiler-tc-reinfer-profile-call-param-types
-                "borrow.call_func"
-                ctx
-                env
-                func)
-              (tc-move-call-param-types ctx env func))
+            (match (tc-move-call-param-types-id-with-facts
+              "borrow.call_func"
+              ctx
+              env
+              func-box)
               [(ResultTcTypeList.Ok params)
                 (match (tc-call-extern-abi ctx func)
                   [(TcMaybeExternAbi.Some abi)
@@ -37646,14 +38249,11 @@
             [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
             [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
     [(AstExpr.Tuple exprs)
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr-list-types
-          "borrow.tuple_list"
-          ctx
-          env
-          exprs)
-        (tc-expr-list-types ctx env exprs))
+      (match (tc-body-type-fact-expr-list-types
+        "borrow.tuple_list"
+        ctx
+        env
+        exprs)
         [(ResultTcTypeList.Ok types)
           (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
         [(ResultTcTypeList.Err _)
@@ -37666,14 +38266,11 @@
             (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
           [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
     [(AstExpr.Array exprs)
-      (match (cfg
-        compile-profile
-        (compiler-tc-reinfer-profile-expr-list-types
-          "borrow.array_list"
-          ctx
-          env
-          exprs)
-        (tc-expr-list-types ctx env exprs))
+      (match (tc-body-type-fact-expr-list-types
+        "borrow.array_list"
+        ctx
+        env
+        exprs)
         [(ResultTcTypeList.Ok types)
           (tc-borrow-check-exprs-with-types ctx env locals borrowed exprs types)]
         [(ResultTcTypeList.Err _)
@@ -37702,14 +38299,19 @@
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-check-expr ctx env locals borrowed1 index)
               [(OkTcBorrowCheck borrowed2)
-                (match (tc-borrow-check-expr ctx env locals borrowed2 value)
+                (match (tc-borrow-check-expr-id
+                  ctx
+                  env
+                  locals
+                  borrowed2
+                  value-box)
                   [(OkTcBorrowCheck borrowed3)
-                    (match (tc-borrow-check-after-bind
+                    (match (tc-borrow-check-after-bind-id
                       ctx
                       env
                       locals
                       borrowed3
-                      value)
+                      value-box)
                       [(OkTcBorrowCheck borrowed4)
                         (match (tc-borrow-check-array-set-conflict
                           locals
@@ -37730,14 +38332,14 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed receiver)
           [(OkTcBorrowCheck borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 value)
+            (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
               [(OkTcBorrowCheck borrowed2)
-                (match (tc-borrow-check-after-bind
+                (match (tc-borrow-check-after-bind-id
                   ctx
                   env
                   locals
                   borrowed2
-                  value)
+                  value-box)
                   [(OkTcBorrowCheck borrowed3)
                     (match (tc-borrow-check-struct-set-conflict
                       locals
@@ -37756,14 +38358,14 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed array)
           [(OkTcBorrowCheck borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 value)
+            (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
               [(OkTcBorrowCheck borrowed2)
-                (match (tc-borrow-check-after-bind
+                (match (tc-borrow-check-after-bind-id
                   ctx
                   env
                   locals
                   borrowed2
-                  value)
+                  value-box)
                   [(OkTcBorrowCheck borrowed3)
                     (match (tc-borrow-check-root-mutation-conflict
                       locals
@@ -37827,9 +38429,14 @@
                 borrowed
                 (ast-node-get virtual-id))]
             [(ResultTcExprId.Err message) (ErrTcBorrowCheck message)])
-          (match (tc-borrow-check-expr ctx env locals borrowed rhs)
+          (match (tc-borrow-check-expr-id ctx env locals borrowed rhs-box)
             [(OkTcBorrowCheck borrowed1)
-              (match (tc-borrow-check-after-bind ctx env locals borrowed1 rhs)
+              (match (tc-borrow-check-after-bind-id
+                ctx
+                env
+                locals
+                borrowed1
+                rhs-box)
                 [(OkTcBorrowCheck borrowed2)
                   (match (tc-borrow-check-assignment
                     locals
@@ -37891,14 +38498,11 @@
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed scrut)
               [(OkTcBorrowCheck borroweds)
-                (match (cfg
-                  compile-profile
-                  (compiler-tc-reinfer-profile-expr
-                    "borrow.match_scrutinee"
-                    ctx
-                    env
-                    scrut)
-                  (tc-expr ctx env scrut))
+                (match (tc-body-type-fact-expr-id
+                  "borrow.match_scrutinee"
+                  ctx
+                  env
+                  scrut-box)
                   [(ResultTcType.Ok scrut-ty)
                     (tc-borrow-check-arms
                       ctx
@@ -38174,14 +38778,14 @@
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed box-expr)
           [(OkTcBorrowCheck borrowed1)
-            (match (tc-borrow-check-expr ctx env locals borrowed1 value)
+            (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
               [(OkTcBorrowCheck borrowed2)
-                (match (tc-borrow-check-after-bind
+                (match (tc-borrow-check-after-bind-id
                   ctx
                   env
                   locals
                   borrowed2
-                  value)
+                  value-box)
                   [(OkTcBorrowCheck borrowed3)
                     (match (tc-borrow-check-root-mutation-conflict
                       locals
@@ -51706,35 +52310,55 @@
       (tc-bind-return-type
         (tc-bind-params ctx global-env params)
         (tc-resolve-type ctx ret))]
-    (match (tc-expr-with-expected-or-actual-id
-      ctx
-      env
-      body-box
-      (tc-resolve-type ctx ret))
-      [(ResultTcType.Ok got)
-        (match (tc-expect
-          got
-          (tc-resolve-type ctx ret)
-          "typecheck: return type mismatch")
-          [(ResultTcUnit.Ok)
-            (match (tc-ensure-region-value-can-flow-into
-              env
-              (tc-resolve-type ctx ret)
+    (begin
+      (tc-body-type-facts-start-recording!)
+      (match (tc-expr-with-expected-or-actual-id
+        ctx
+        env
+        body-box
+        (tc-resolve-type ctx ret))
+        [(ResultTcType.Ok got)
+          (begin
+            (tc-body-type-facts-start-consuming!)
+            (match (tc-expect
               got
-              "return value")
+              (tc-resolve-type ctx ret)
+              "typecheck: return type mismatch")
               [(ResultTcUnit.Ok)
-                (match (tc-move-check-body-id ctx env params body-box)
+                (match (tc-ensure-region-value-can-flow-into
+                  env
+                  (tc-resolve-type ctx ret)
+                  got
+                  "return value")
                   [(ResultTcUnit.Ok)
-                    (tc-borrow-check-body-id ctx env params body-box)]
-                  [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
+                    (match (tc-move-check-body-id ctx env params body-box)
+                      [(ResultTcUnit.Ok)
+                        (let
+                          [result : ResultTcUnit
+                            (tc-borrow-check-body-id ctx env params body-box)]
+                          (begin
+                            (tc-body-type-facts-clear!)
+                            result))]
+                      [(ResultTcUnit.Err message)
+                        (begin
+                          (tc-body-type-facts-clear!)
+                          (ResultTcUnit.Err message))])]
+                  [(ResultTcUnit.Err message)
+                    (begin
+                      (tc-body-type-facts-clear!)
+                      (ResultTcUnit.Err
+                        (tc-rich-escape-at-expr
+                          body
+                          message
+                          "function return type rejects this escaping value")))])]
               [(ResultTcUnit.Err message)
-                (ResultTcUnit.Err
-                  (tc-rich-escape-at-expr
-                    body
-                    message
-                    "function return type rejects this escaping value"))])]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-      [(ResultTcType.Err message) (ResultTcUnit.Err message)])))
+                (begin
+                  (tc-body-type-facts-clear!)
+                  (ResultTcUnit.Err message))]))]
+        [(ResultTcType.Err message)
+          (begin
+            (tc-body-type-facts-clear!)
+            (ResultTcUnit.Err message))]))))
 
 ;; Reusable scratch arena for per-function-body typechecks. Mirrors
 ;; lower-scratch-arena: created lazily, shared by every check (the body walk

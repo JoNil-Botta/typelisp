@@ -2643,7 +2643,8 @@
 ;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Direct-call args within this arity (and all
 ;; integer-class) are register-passed and left eligible; the backend parallel
 ;; move resolves any source/dest conflict (and uses the matching target-aware
-;; threshold, so a 5..6-arg SysV conflict is never naive-marshalled).
+;; threshold, so a 5..6-arg SysV conflict is never naive-marshalled). Mirrored in the
+;; backend at compiler-backend-call-args-gp-parallel? -- keep the two in sync.
 (define (compiler-reg-arg-reg-limit-for-abi [abi : CompilerRegTargetAbi]) : i64
   (match abi
     [(CompilerRegAbiLinux) 6]
@@ -4852,8 +4853,7 @@
 
 ;; Per-register clobber model (15c). The merged caller-clobber set above is too
 ;; coarse for the greedy: it treats a div/shift exactly like a call (all
-;; caller-saved unavailable across it). But idiv clobbers only rax:rdx (+ the
-;; r10/r11 overflow guard) and a variable shift only rcx, so a value CAN cross a
+;; caller-saved unavailable across it). But idiv clobbers only rax:rdx, and a variable shift only rcx, so a value CAN cross a
 ;; div in %r9/%rcx and a shift in %r9/%rdx. These per-kind point sets let the
 ;; greedy forbid only the registers an op actually clobbers.
 ;;   kind 0 = call-like (all caller-saved)   kind 1 = idiv   kind 2 = shift
@@ -8576,7 +8576,7 @@
       ;; reg (start past the caller-saved prefix, callee-saved copy-hints only) --
       ;; the original coarse rule. A value that spans only a div/shift may still use
       ;; the caller-saved regs that op does NOT clobber: it searches the whole pool
-      ;; (start-idx 0) with `forbidden` excluding just {rax,rdx,r10,r11} (div) and/or
+      ;; (start-idx 0) with `forbidden` excluding just {rax,rdx} (div) and/or
       ;; {rcx} (shift).
       [spans-call : bool
         (compiler-reg-greedy-var-spans-clobber? interval-index call-points var)]
@@ -9386,7 +9386,7 @@
             (array.array-length (struct-get interval-index starts))))
         (array.make-array i64 0))]
     ;; Per-register clobber point sets (15c): kind 0 = call sites (all caller-saved),
-    ;; kind 1 = idiv (rax:rdx + r10/r11 guard), kind 2 = shift (rcx). Splitting the
+    ;; kind 1 = idiv (rax:rdx), kind 2 = shift (rcx). Splitting the
     ;; old merged set lets the greedy forbid only the registers each op actually
     ;; clobbers, so a div/shift-spanning value keeps the caller-saved regs the op
     ;; leaves alone instead of being forced callee-saved. On the SIMD-integer path
@@ -9405,7 +9405,7 @@
       : CompilerRegAssignState
       ;; Integer allocation via the unified per-vreg Greedy allocator (priority-queue
       ;; selectOrSplit, per-physreg LiveIntervalUnion, call-clobber as interference).
-      ;; Scalar-opt2 (true) uses all 8 integer registers + coalescing; the SIMD/AVX
+      ;; Scalar-opt2 (true) uses all 14 integer registers + coalescing; the SIMD/AVX
       ;; branch below (false) uses the 5 callee-saved (the old SIMD pool) with no
       ;; coalescing -- the same algorithm, a conservative config.
       (if allow-caller-saved-zero-call

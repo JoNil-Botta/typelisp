@@ -16752,6 +16752,8 @@
               (let
                 [srcreg : String
                   (compiler-backend-arg-move-source-reg assignments source)]
+                ;; BackendNoArgMove implies a cycle, so the break head's source is a
+                ;; register; this srcreg=="" branch is defensive (not expected here).
                 (if (string.string-eq srcreg "")
                   (match (compiler-backend-emit-arg-move assignments first)
                     [(OkCompilerBackend head)
@@ -16830,6 +16832,8 @@
             c-abi?
             program-index)))]))
 
+;; GP arg-reg threshold SysV 6 / Win64 4 -- mirrors compiler-reg-arg-reg-limit-for-abi
+;; (regalloc); keep the two in sync (the rev6 integration test guards 6-arg SysV).
 (define (compiler-backend-call-args-gp-parallel?
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
@@ -17777,7 +17781,7 @@
     [(ErrCompilerBackend message) (ErrCompilerBackend message)]))
 
 ;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled or
-;; %rax/%rsi/%rdi dst contributes 0 (reg-bit is 0 for untracked regs), which is
+;; %rax/%rsi/%rdi dst contributes 0 (reg-bit is 0 -- outside the 11-reg scavenger candidate set), which is
 ;; correct: those cannot collide with a candidate-pool scratch register.
 (define (compiler-backend-phi-copy-list-dst-home-mask
   [assignments : CompilerRegAssignmentList]

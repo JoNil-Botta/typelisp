@@ -634,6 +634,40 @@
       (string.string-contains-char (& owner-name) '/')]
     [(CompilerNoString) false]))
 
+(define (compiler-symbols-add-root-macro-id
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [display-name : String]
+  [handle : i64]) : ResultCompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (match (compiler-symbol-map-lookup-id macros name-id)
+        [(option_i64.Some existing)
+          (if (compiler-symbols-handle-from-nonroot-owner? symbols existing)
+            (if (compiler-symbol-map-contains-id? values name-id)
+              (ResultCompilerSymbols.Err
+                (compiler-symbols-duplicate-macro-value-message display-name))
+              (ResultCompilerSymbols.Ok
+                (CompilerSymbols
+                  values
+                  types
+                  (compiler-symbol-map-bind-id macros name-id handle)
+                  decls
+                  owner-names)))
+            (ResultCompilerSymbols.Err
+              (compiler-symbols-duplicate-macro-message display-name)))]
+        [(option_i64.None)
+          (if (compiler-symbol-map-contains-id? values name-id)
+            (ResultCompilerSymbols.Err
+              (compiler-symbols-duplicate-macro-value-message display-name))
+            (ResultCompilerSymbols.Ok
+              (CompilerSymbols
+                values
+                types
+                (compiler-symbol-map-bind-id macros name-id handle)
+                decls
+                owner-names)))])]))
+
 (define (compiler-symbols-add-root-value-id
   [symbols : CompilerSymbols]
   [name-id : i64]
@@ -786,7 +820,9 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id module name)]
     [display-name : String (compiler-symbol-module-key module name)]
-    (match (compiler-symbols-add-macro-id symbols key-id display-name handle)
+    (match (if (string.string-eq module "")
+      (compiler-symbols-add-root-macro-id symbols key-id display-name handle)
+      (compiler-symbols-add-macro-id symbols key-id display-name handle))
       [(ResultCompilerSymbols.Ok next)
         (ResultCompilerSymbols.Ok
           (compiler-symbols-add-macro-alias next name handle))]

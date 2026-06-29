@@ -2046,6 +2046,63 @@
       (tc-prefix-snapshot-cache-clear!)
       ok)))
 
+(define (compiler-typecheck-smoke-generated-moduleless-import-order-ok?) : bool
+  (let
+    [root-provider : String "target/tc_4004_root_provider.tl"]
+    [named-provider : String "target/tc_4004_named_provider.tl"]
+    [root-then-named : String "target/tc_4004_root_then_named.tl"]
+    [named-then-root : String "target/tc_4004_named_then_root.tl"]
+    [roots : vector.StringVec (vector.string-vec-new)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [ok : bool true]
+    (begin
+      (io.write-file
+        root-provider
+        "(import \"stdlib/option.tl\")
+(import (option i64) as option_i64)
+
+(define (root-score) : i64
+  (option_i64.value-or (option_i64.some 1) 0))")
+      (io.write-file
+        named-provider
+        "(module tc4004named)
+(import \"stdlib/option.tl\")
+(import (option i64) as option_i64)
+
+(define (named-score) : i64
+  (option_i64.value-or (option_i64.some 2) 0))")
+      (io.write-file
+        root-then-named
+        "(import \"tc_4004_root_provider.tl\")
+(import \"tc_4004_named_provider.tl\")
+
+(define (main) : i64
+  (+ (root-score) (tc4004named.named-score)))")
+      (io.write-file
+        named-then-root
+        "(import \"tc_4004_named_provider.tl\")
+(import \"tc_4004_root_provider.tl\")
+
+(define (main) : i64
+  (+ (root-score) (tc4004named.named-score)))")
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-file-check
+        root-then-named
+        roots
+        cfgs)
+        unit
+        (set! ok false))
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (if (compiler-typecheck-smoke-prefix-cache-file-check
+        named-then-root
+        roots
+        cfgs)
+        unit
+        (set! ok false))
+      ok)))
+
 (define (compiler-typecheck-smoke-specialized-import-path-ok?) : bool
   (let
     [dir : String "target/tc_specialized_import_path"]
@@ -2474,6 +2531,9 @@
     (unless
       (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?)
       (io.panic "typecheck: prefix cache flat local smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-generated-moduleless-import-order-ok?)
+      (io.panic "typecheck: generated moduleless import order smoke failed"))
     (unless
       (compiler-typecheck-smoke-specialized-import-path-ok?)
       (io.panic "typecheck: specialized import diagnostic path smoke failed"))

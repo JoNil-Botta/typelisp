@@ -1331,16 +1331,16 @@
   [alias : String]
   [module-name : String]) : bool
   (match maybe-ty
-    [(AstNoType) false]
-    [(AstSomeType ty) (lint-type-uses-import? ty alias module-name)]))
+    [(AstMaybeType.No) false]
+    [(AstMaybeType.Some ty) (lint-type-uses-import? ty alias module-name)]))
 
 (define (lint-type-list-uses-import?
   [types : AstTypeList]
   [alias : String]
   [module-name : String]) : bool
   (match types
-    [(AstTypeNil) false]
-    [(AstTypeCons head rest)
+    [(AstTypeList.Nil) false]
+    [(AstTypeList.Cons head rest)
       (let
         [head-ty : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
@@ -1359,58 +1359,62 @@
   [alias : String]
   [module-name : String]) : bool
   (match ty
-    [(AstTyI64) false]
-    [(AstTyI32) false]
-    [(AstTyI16) false]
-    [(AstTyI8) false]
-    [(AstTyU64) false]
-    [(AstTyU32) false]
-    [(AstTyU16) false]
-    [(AstTyU8) false]
-    [(AstTyF64) false]
-    [(AstTyF32) false]
-    [(AstTyBool) false]
-    [(AstTyChar) false]
-    [(AstTyString) false]
-    [(AstTyStr) false]
-    [(AstTyBytes) false]
-    [(AstTyUnit) false]
-    [(AstTyNever) false]
-    [(AstTyExpr) false]
-    [(AstTyExprList) false]
-    [(AstTyFunc args ret)
+    [(AstType.I64) false]
+    [(AstType.I32) false]
+    [(AstType.I16) false]
+    [(AstType.I8) false]
+    [(AstType.U64) false]
+    [(AstType.U32) false]
+    [(AstType.U16) false]
+    [(AstType.U8) false]
+    [(AstType.F64) false]
+    [(AstType.F32) false]
+    [(AstType.Bool) false]
+    [(AstType.Char) false]
+    [(AstType.String) false]
+    [(AstType.Str) false]
+    [(AstType.Bytes) false]
+    [(AstType.Unit) false]
+    [(AstType.Never) false]
+    [(AstType.Expr) false]
+    [(AstType.ExprList) false]
+    [(AstType.Func args ret)
       (if (lint-type-list-uses-import? (box-get args) alias module-name)
         true
         (lint-type-id-uses-import? ret alias module-name))]
-    [(AstTyTuple items)
+    [(AstType.Tuple items)
       (lint-type-list-uses-import? (box-get items) alias module-name)]
-    [(AstTyArray elem _) (lint-type-id-uses-import? elem alias module-name)]
-    [(AstTyDynArray elem) (lint-type-id-uses-import? elem alias module-name)]
-    [(AstTyBox elem) (lint-type-id-uses-import? elem alias module-name)]
-    [(AstTyRegion _ inner) (lint-type-id-uses-import? inner alias module-name)]
-    [(AstTyRef _ inner) (lint-type-id-uses-import? inner alias module-name)]
-    [(AstTyMutRef _ inner) (lint-type-id-uses-import? inner alias module-name)]
-    [(AstTyEnum name) (lint-name-id-uses-import? name alias module-name)]
-    [(AstTyEnumArgs name _) (lint-name-id-uses-import? name alias module-name)]
-    [(AstTyStruct name) (lint-name-id-uses-import? name alias module-name)]
-    [(AstTyStructArgs name _)
+    [(AstType.Array elem _) (lint-type-id-uses-import? elem alias module-name)]
+    [(AstType.DynArray elem) (lint-type-id-uses-import? elem alias module-name)]
+    [(AstType.Box elem) (lint-type-id-uses-import? elem alias module-name)]
+    [(AstType.Region _ inner)
+      (lint-type-id-uses-import? inner alias module-name)]
+    [(AstType.Ref _ inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstType.MutRef _ inner)
+      (lint-type-id-uses-import? inner alias module-name)]
+    [(AstType.Enum name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstType.EnumArgs name _)
       (lint-name-id-uses-import? name alias module-name)]
-    [(AstTyVar name) (lint-name-id-uses-import? name alias module-name)]
-    [(AstTyVarArgs name _) (lint-name-id-uses-import? name alias module-name)]
-    [(AstTyPtr inner) (lint-type-id-uses-import? inner alias module-name)]
-    [(AstTyMutPtr inner) (lint-type-id-uses-import? inner alias module-name)]))
+    [(AstType.Struct name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstType.StructArgs name _)
+      (lint-name-id-uses-import? name alias module-name)]
+    [(AstType.Var name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstType.VarArgs name _)
+      (lint-name-id-uses-import? name alias module-name)]
+    [(AstType.Ptr inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstType.MutPtr inner) (lint-type-id-uses-import? inner alias module-name)]))
 
 (define (lint-param-list-uses-import?
   [params : AstParamList]
   [alias : String]
   [module-name : String]) : bool
   (match params
-    [(AstParamNil) false]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) false]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (match param
-          [(AstParam _ ty _)
+          [(AstParam.Param _ ty _)
             (if (lint-type-uses-import? ty alias module-name)
               true
               (lint-param-list-uses-import? rest alias module-name))]))]))
@@ -1420,12 +1424,12 @@
   [alias : String]
   [module-name : String]) : bool
   (match params
-    [(AstMacroParamNil) false]
-    [(AstMacroParamCons param rest)
+    [(AstMacroParamList.Nil) false]
+    [(AstMacroParamList.Cons param rest)
       (let
         [rest : AstMacroParamList (box-get rest)]
         (match param
-          [(AstMacroParam _ ty _)
+          [(AstMacroParam.Param _ ty _)
             (if (lint-type-uses-import? ty alias module-name)
               true
               (lint-macro-param-list-uses-import? rest alias module-name))]))]))
@@ -1838,9 +1842,9 @@
   [alias : String]
   [module-name : String]) : bool
   (match abi
-    [(AstExternAbiC) false]
-    [(AstExternAbiCVarargsOpen) false]
-    [(AstExternAbiCVarargsTyped tail-ty)
+    [(AstExternAbi.C) false]
+    [(AstExternAbi.CVarargsOpen) false]
+    [(AstExternAbi.CVarargsTyped tail-ty)
       (lint-type-uses-import? tail-ty alias module-name)]))
 
 (define (lint-extern-metadata-uses-import?
@@ -1848,7 +1852,7 @@
   [alias : String]
   [module-name : String]) : bool
   (match meta
-    [(AstExternMetadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _)
       (lint-extern-abi-uses-import? abi alias module-name)]))
 
 (define (lint-field-cleanup-uses-import?
@@ -1856,22 +1860,22 @@
   [alias : String]
   [module-name : String]) : bool
   (match cleanup
-    [(AstFieldNoCleanup) false]
-    [(AstFieldCleanupFn name)
+    [(AstFieldCleanup.No) false]
+    [(AstFieldCleanup.Fn name)
       (lint-name-id-uses-import? name alias module-name)]
-    [(AstFieldOwnedCleanup) false]))
+    [(AstFieldCleanup.Owned) false]))
 
 (define (lint-field-def-list-uses-import?
   [fields : AstFieldDefList]
   [alias : String]
   [module-name : String]) : bool
   (match fields
-    [(AstFieldDefNil) false]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) false]
+    [(AstFieldDefList.Cons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
-          [(AstFieldDef _ ty cleanup)
+          [(AstFieldDef.Def _ ty cleanup)
             (if (lint-type-uses-import? ty alias module-name)
               true
               (if (lint-field-cleanup-uses-import? cleanup alias module-name)
@@ -1883,8 +1887,8 @@
   [alias : String]
   [module-name : String]) : bool
   (match cleanup
-    [(AstStructNoCleanup) false]
-    [(AstStructCleanupFn name)
+    [(AstStructCleanup.No) false]
+    [(AstStructCleanup.Fn name)
       (lint-name-id-uses-import? name alias module-name)]))
 
 (define (lint-enum-cleanup-uses-import?
@@ -1892,26 +1896,27 @@
   [alias : String]
   [module-name : String]) : bool
   (match cleanup
-    [(AstEnumNoCleanup) false]
-    [(AstEnumCleanupFn name) (lint-name-id-uses-import? name alias module-name)]))
+    [(AstEnumCleanup.No) false]
+    [(AstEnumCleanup.Fn name)
+      (lint-name-id-uses-import? name alias module-name)]))
 
 (define (lint-variant-payload-cleanup-uses-import?
   [cleanup : AstVariantPayloadCleanup]
   [alias : String]
   [module-name : String]) : bool
   (match cleanup
-    [(AstVariantPayloadNoCleanup) false]
-    [(AstVariantPayloadCleanupFn name)
+    [(AstVariantPayloadCleanup.No) false]
+    [(AstVariantPayloadCleanup.Fn name)
       (lint-name-id-uses-import? name alias module-name)]
-    [(AstVariantPayloadOwnedCleanup) false]))
+    [(AstVariantPayloadCleanup.Owned) false]))
 
 (define (lint-variant-payload-cleanup-list-uses-import?
   [items : AstVariantPayloadCleanupList]
   [alias : String]
   [module-name : String]) : bool
   (match items
-    [(AstVariantPayloadCleanupNil) false]
-    [(AstVariantPayloadCleanupCons cleanup rest)
+    [(AstVariantPayloadCleanupList.Nil) false]
+    [(AstVariantPayloadCleanupList.Cons cleanup rest)
       (let
         [rest : AstVariantPayloadCleanupList (box-get rest)]
         (if (lint-variant-payload-cleanup-uses-import?
@@ -1929,12 +1934,12 @@
   [alias : String]
   [module-name : String]) : bool
   (match variants
-    [(AstVariantDefNil) false]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) false]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ payloads cleanups)
+          [(AstVariantDef.Def _ payloads cleanups)
             (if (lint-type-list-uses-import? payloads alias module-name)
               true
               (if (lint-variant-payload-cleanup-list-uses-import?
@@ -2258,10 +2263,10 @@
   [params : AstParamList]
   [locals : LintNameList]) : LintNameList
   (match params
-    [(AstParamNil) locals]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) locals]
+    [(AstParamList.Cons param rest)
       (match param
-        [(AstParam name _ _)
+        [(AstParam.Param name _ _)
           (lint-param-list-add-locals
             (box-get rest)
             (lint-name-list-add locals (intern-str name)))])]))
@@ -2270,10 +2275,10 @@
   [params : AstMacroParamList]
   [locals : LintNameList]) : LintNameList
   (match params
-    [(AstMacroParamNil) locals]
-    [(AstMacroParamCons param rest)
+    [(AstMacroParamList.Nil) locals]
+    [(AstMacroParamList.Cons param rest)
       (match param
-        [(AstMacroParam name _ _)
+        [(AstMacroParam.Param name _ _)
           (lint-macro-param-list-add-locals
             (box-get rest)
             (lint-name-list-add locals (intern-str name)))])]))
@@ -2338,19 +2343,21 @@
   [shapes : LintCopyOnUpdateStructList]
   [ty : AstType]) : String
   (match ty
-    [(AstTyStruct name) (lint-copy-on-update-struct-known-name shapes name)]
-    [(AstTyStructArgs name _)
+    [(AstType.Struct name) (lint-copy-on-update-struct-known-name shapes name)]
+    [(AstType.StructArgs name _)
       (lint-copy-on-update-struct-known-name shapes name)]
-    [(AstTyVar name) (lint-copy-on-update-struct-known-name shapes name)]
-    [(AstTyVarArgs name _) (lint-copy-on-update-struct-known-name shapes name)]
+    [(AstType.Var name) (lint-copy-on-update-struct-known-name shapes name)]
+    [(AstType.VarArgs name _)
+      (lint-copy-on-update-struct-known-name shapes name)]
     [_ ""]))
 
 (define (lint-copy-on-update-struct-name-from-maybe-type
   [shapes : LintCopyOnUpdateStructList]
   [maybe-ty : AstMaybeType]) : String
   (match maybe-ty
-    [(AstNoType) ""]
-    [(AstSomeType ty) (lint-copy-on-update-struct-name-from-type shapes ty)]))
+    [(AstMaybeType.No) ""]
+    [(AstMaybeType.Some ty)
+      (lint-copy-on-update-struct-name-from-type shapes ty)]))
 
 (define (lint-copy-on-update-local-remove
   [locals : LintCopyOnUpdateLocalList]
@@ -2394,10 +2401,10 @@
   [shapes : LintCopyOnUpdateStructList]
   [locals : LintCopyOnUpdateLocalList]) : LintCopyOnUpdateLocalList
   (match params
-    [(AstParamNil) locals]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) locals]
+    [(AstParamList.Cons param rest)
       (match param
-        [(AstParam name ty _)
+        [(AstParam.Param name ty _)
           (lint-copy-on-update-param-locals
             (box-get rest)
             shapes
@@ -2411,10 +2418,10 @@
   [shapes : LintCopyOnUpdateStructList]
   [locals : LintCopyOnUpdateLocalList]) : LintCopyOnUpdateLocalList
   (match params
-    [(AstMacroParamNil) locals]
-    [(AstMacroParamCons param rest)
+    [(AstMacroParamList.Nil) locals]
+    [(AstMacroParamList.Cons param rest)
       (match param
-        [(AstMacroParam name ty _)
+        [(AstMacroParam.Param name ty _)
           (lint-copy-on-update-macro-param-locals
             (box-get rest)
             shapes
@@ -2890,10 +2897,10 @@
 
 (define (lint-copy-on-update-field-names [fields : AstFieldDefList]) : LintNameList
   (match fields
-    [(AstFieldDefNil) LintNameList.Nil]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) LintNameList.Nil]
+    [(AstFieldDefList.Cons field rest)
       (match field
-        [(AstFieldDef name _ _)
+        [(AstFieldDef.Def name _ _)
           (LintNameList.Cons
             (intern-str name)
             (box (lint-copy-on-update-field-names (box-get rest))))])]))
@@ -4225,11 +4232,11 @@
   [fallback : AstSourceSpan]
   [reportable : bool]) : LintUnusedVariableBindingBuild
   (match params
-    [(AstParamNil)
+    [(AstParamList.Nil)
       (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)]
-    [(AstParamCons param rest)
+    [(AstParamList.Cons param rest)
       (match param
-        [(AstParam name _ _)
+        [(AstParam.Param name _ _)
           (let
             [text : String (intern-str name)]
             [found : LintSourceNameSpan
@@ -4257,11 +4264,11 @@
   [fallback : AstSourceSpan]
   [reportable : bool]) : LintUnusedVariableBindingBuild
   (match params
-    [(AstMacroParamNil)
+    [(AstMacroParamList.Nil)
       (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)]
-    [(AstMacroParamCons param rest)
+    [(AstMacroParamList.Cons param rest)
       (match param
-        [(AstMacroParam name _ _)
+        [(AstMacroParam.Param name _ _)
           (let
             [text : String (intern-str name)]
             [found : LintSourceNameSpan
@@ -4296,8 +4303,8 @@
   [items : AstTypeList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match items
-    [(AstTypeNil) state]
-    [(AstTypeCons id rest)
+    [(AstTypeList.Nil) state]
+    [(AstTypeList.Cons id rest)
       (lint-unused-variable-type-list
         (box-get rest)
         (lint-unused-variable-type (ty-node-get id) state))]))
@@ -4306,8 +4313,8 @@
   [items : AstLifetimeList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match items
-    [(AstLifetimeNil) state]
-    [(AstLifetimeCons name rest)
+    [(AstLifetimeList.Nil) state]
+    [(AstLifetimeList.Cons name rest)
       (lint-unused-variable-lifetime-list
         (box-get rest)
         (lint-unused-variable-read-name state name))]))
@@ -4324,48 +4331,51 @@
   [ty : AstType]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match ty
-    [(AstTyFunc args ret)
+    [(AstType.Func args ret)
       (lint-unused-variable-type
         (ty-node-get ret)
         (lint-unused-variable-type-list (box-get args) state))]
-    [(AstTyTuple items) (lint-unused-variable-type-list (box-get items) state)]
-    [(AstTyArray elem _) (lint-unused-variable-type (ty-node-get elem) state)]
-    [(AstTyDynArray elem) (lint-unused-variable-type (ty-node-get elem) state)]
-    [(AstTyBox elem) (lint-unused-variable-type (ty-node-get elem) state)]
-    [(AstTyRegion name inner)
+    [(AstType.Tuple items)
+      (lint-unused-variable-type-list (box-get items) state)]
+    [(AstType.Array elem _)
+      (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstType.DynArray elem)
+      (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstType.Box elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstType.Region name inner)
       (lint-unused-variable-type-lifetime name inner state)]
-    [(AstTyRef name inner)
+    [(AstType.Ref name inner)
       (lint-unused-variable-type-lifetime name inner state)]
-    [(AstTyMutRef name inner)
+    [(AstType.MutRef name inner)
       (lint-unused-variable-type-lifetime name inner state)]
-    [(AstTyEnumArgs _ lifetimes)
+    [(AstType.EnumArgs _ lifetimes)
       (lint-unused-variable-lifetime-list (box-get lifetimes) state)]
-    [(AstTyStructArgs _ lifetimes)
+    [(AstType.StructArgs _ lifetimes)
       (lint-unused-variable-lifetime-list (box-get lifetimes) state)]
-    [(AstTyVar name) (lint-unused-variable-read-id state name)]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.Var name) (lint-unused-variable-read-id state name)]
+    [(AstType.VarArgs name lifetimes)
       (lint-unused-variable-lifetime-list
         (box-get lifetimes)
         (lint-unused-variable-read-id state name))]
-    [(AstTyPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]
-    [(AstTyMutPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstType.Ptr elem) (lint-unused-variable-type (ty-node-get elem) state)]
+    [(AstType.MutPtr elem) (lint-unused-variable-type (ty-node-get elem) state)]
     [_ state]))
 
 (define (lint-unused-variable-maybe-type
   [maybe-ty : AstMaybeType]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match maybe-ty
-    [(AstNoType) state]
-    [(AstSomeType ty) (lint-unused-variable-type ty state)]))
+    [(AstMaybeType.No) state]
+    [(AstMaybeType.Some ty) (lint-unused-variable-type ty state)]))
 
 (define (lint-unused-variable-param-types
   [params : AstParamList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match params
-    [(AstParamNil) state]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) state]
+    [(AstParamList.Cons param rest)
       (match param
-        [(AstParam _ ty _)
+        [(AstParam.Param _ ty _)
           (lint-unused-variable-param-types
             (box-get rest)
             (lint-unused-variable-type ty state))])]))
@@ -4374,10 +4384,10 @@
   [params : AstMacroParamList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match params
-    [(AstMacroParamNil) state]
-    [(AstMacroParamCons param rest)
+    [(AstMacroParamList.Nil) state]
+    [(AstMacroParamList.Cons param rest)
       (match param
-        [(AstMacroParam _ ty _)
+        [(AstMacroParam.Param _ ty _)
           (lint-unused-variable-macro-param-types
             (box-get rest)
             (lint-unused-variable-type ty state))])]))
@@ -4386,8 +4396,8 @@
   [lifetime : AstBorrowLifetime]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match lifetime
-    [(AstBorrowLifetimeInferred) state]
-    [(AstBorrowLifetimeNamed name) (lint-unused-variable-read-name state name)]))
+    [(AstBorrowLifetime.Inferred) state]
+    [(AstBorrowLifetime.Named name) (lint-unused-variable-read-name state name)]))
 
 (define (lint-unused-variable-pattern-bindings
   [pattern : AstPattern]
@@ -6552,20 +6562,20 @@
     [in-let : i64
       (ast-expr-let
         (ast-let-binding-cons
-          (ast-let-binding "y" (AstNoType) ladder3)
+          (ast-let-binding "y" (AstMaybeType.No) ladder3)
           (AstLetBindingList.Nil))
         vx)]
     [outer-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "a" (AstNoType) one)
+        (ast-let-binding "a" (AstMaybeType.No) one)
         (AstLetBindingList.Nil))]
     [inner-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "b" (AstNoType) vx)
+        (ast-let-binding "b" (AstMaybeType.No) vx)
         (AstLetBindingList.Nil))]
     [shadowing-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "a" (AstNoType) one)
+        (ast-let-binding "a" (AstMaybeType.No) one)
         (AstLetBindingList.Nil))]
     [nested-let : i64
       (ast-expr-let outer-let-bindings (ast-expr-let inner-let-bindings vx))]
@@ -6602,7 +6612,7 @@
     [spanned-and-cascade : i64
       (ast-expr-spanned and-cascade (AstSourceSpan 21 7 21 30))]
     [discarded-add : i64 (ast-expr-binary (AstBinAdd) one vx)]
-    [discarded-cast : i64 (ast-expr-cast one (AstTyI64))]
+    [discarded-cast : i64 (ast-expr-cast one (AstType.I64))]
     [discarded-call : i64
       (ast-expr-call (lint-test-var "side-effect?") AstExprList.Nil)]
     [no-effect-literal-begin : i64

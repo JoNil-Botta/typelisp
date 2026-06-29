@@ -161,8 +161,8 @@
 
 (define (repl-type-list-render-spaced [types : AstTypeList]) : String
   (match types
-    [(AstTypeNil) ""]
-    [(AstTypeCons head rest)
+    [(AstTypeList.Nil) ""]
+    [(AstTypeList.Cons head rest)
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
@@ -174,8 +174,8 @@
 
 (define (repl-lifetime-list-render-spaced [lifetimes : AstLifetimeList]) : String
   (match lifetimes
-    [(AstLifetimeNil) ""]
-    [(AstLifetimeCons head rest)
+    [(AstLifetimeList.Nil) ""]
+    [(AstLifetimeList.Cons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
         (string.string-append
@@ -184,26 +184,26 @@
 
 (define (repl-type-render [ty : AstType]) : String
   (match ty
-    [(AstTyI64) "i64"]
-    [(AstTyI32) "i32"]
-    [(AstTyI16) "i16"]
-    [(AstTyI8) "i8"]
-    [(AstTyU64) "u64"]
-    [(AstTyU32) "u32"]
-    [(AstTyU16) "u16"]
-    [(AstTyU8) "u8"]
-    [(AstTyF64) "f64"]
-    [(AstTyF32) "f32"]
-    [(AstTyBool) "bool"]
-    [(AstTyChar) "char"]
-    [(AstTyString) "String"]
-    [(AstTyStr) "str"]
-    [(AstTyBytes) "bytes"]
-    [(AstTyUnit) "unit"]
-    [(AstTyNever) "never"]
-    [(AstTyExpr) "Expr"]
-    [(AstTyExprList) "ExprList"]
-    [(AstTyFunc args ret)
+    [(AstType.I64) "i64"]
+    [(AstType.I32) "i32"]
+    [(AstType.I16) "i16"]
+    [(AstType.I8) "i8"]
+    [(AstType.U64) "u64"]
+    [(AstType.U32) "u32"]
+    [(AstType.U16) "u16"]
+    [(AstType.U8) "u8"]
+    [(AstType.F64) "f64"]
+    [(AstType.F32) "f32"]
+    [(AstType.Bool) "bool"]
+    [(AstType.Char) "char"]
+    [(AstType.String) "String"]
+    [(AstType.Str) "str"]
+    [(AstType.Bytes) "bytes"]
+    [(AstType.Unit) "unit"]
+    [(AstType.Never) "never"]
+    [(AstType.Expr) "Expr"]
+    [(AstType.ExprList) "ExprList"]
+    [(AstType.Func args ret)
       (string.string-append
         "(->"
         (string.string-append
@@ -211,13 +211,13 @@
           (string.string-append
             " "
             (string.string-append (repl-type-render (ty-node-get ret)) ")"))))]
-    [(AstTyTuple elems)
+    [(AstType.Tuple elems)
       (string.string-append
         "(Tuple"
         (string.string-append
           (repl-type-list-render-spaced (box-get elems))
           ")"))]
-    [(AstTyArray elem count)
+    [(AstType.Array elem count)
       (string.string-append
         "(Array "
         (string.string-append
@@ -225,23 +225,23 @@
           (string.string-append
             " "
             (string.string-append (string.int->string count) ")"))))]
-    [(AstTyDynArray elem)
+    [(AstType.DynArray elem)
       (string.string-append
         "(Array "
         (string.string-append (repl-type-render (ty-node-get elem)) ")"))]
-    [(AstTyBox elem)
+    [(AstType.Box elem)
       (string.string-append
         "(Box "
         (string.string-append (repl-type-render (ty-node-get elem)) ")"))]
-    [(AstTyPtr elem)
+    [(AstType.Ptr elem)
       (string.string-append
         "(Ptr "
         (string.string-append (repl-type-render (ty-node-get elem)) ")"))]
-    [(AstTyMutPtr elem)
+    [(AstType.MutPtr elem)
       (string.string-append
         "(MutPtr "
         (string.string-append (repl-type-render (ty-node-get elem)) ")"))]
-    [(AstTyRef region inner)
+    [(AstType.Ref region inner)
       (string.string-append
         "(& "
         (string.string-append
@@ -249,7 +249,7 @@
           (string.string-append
             " "
             (string.string-append (repl-type-render (ty-node-get inner)) ")"))))]
-    [(AstTyMutRef region inner)
+    [(AstType.MutRef region inner)
       (string.string-append
         "(&mut "
         (string.string-append
@@ -257,7 +257,7 @@
           (string.string-append
             " "
             (string.string-append (repl-type-render (ty-node-get inner)) ")"))))]
-    [(AstTyRegion region inner)
+    [(AstType.Region region inner)
       (string.string-append
         "(in "
         (string.string-append
@@ -265,8 +265,8 @@
           (string.string-append
             " "
             (string.string-append (repl-type-render (ty-node-get inner)) ")"))))]
-    [(AstTyEnum name) (intern-str name)]
-    [(AstTyEnumArgs name lifetimes)
+    [(AstType.Enum name) (intern-str name)]
+    [(AstType.EnumArgs name lifetimes)
       (string.string-append
         "("
         (string.string-append
@@ -274,8 +274,8 @@
           (string.string-append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
             ")")))]
-    [(AstTyStruct name) (intern-str name)]
-    [(AstTyStructArgs name lifetimes)
+    [(AstType.Struct name) (intern-str name)]
+    [(AstType.StructArgs name lifetimes)
       (string.string-append
         "("
         (string.string-append
@@ -283,9 +283,9 @@
           (string.string-append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
             ")")))]
-    [(AstTyVar name)
+    [(AstType.Var name)
       (string.string-append "'" (string.string-append (intern-str name) "'"))]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.VarArgs name lifetimes)
       (string.string-append
         "("
         (string.string-append
@@ -374,43 +374,43 @@
 
 (define (repl-display-helpers-source [ty : AstType]) : String
   (match ty
-    [(AstTyF64) (repl-f64-display-helpers-source)]
-    [(AstTyChar) (repl-char-display-helpers-source)]
+    [(AstType.F64) (repl-f64-display-helpers-source)]
+    [(AstType.Char) (repl-char-display-helpers-source)]
     [_ ""]))
 
 (define (repl-display-body [ty : AstType] [expr-source : String]) : ResultReplString
   (match ty
-    [(AstTyI64)
+    [(AstType.I64)
       (ResultReplString.Ok
         (string.string-append
           "(io.print\n"
           (string.string-append expr-source "\n)")))]
-    [(AstTyI32)
+    [(AstType.I32)
       (ResultReplString.Ok
         (string.string-append
           "(io.print\n(cast\n"
           (string.string-append expr-source "\n: i64)\n)")))]
-    [(AstTyBool)
+    [(AstType.Bool)
       (ResultReplString.Ok
         (string.string-append
           "(io.print-bool\n"
           (string.string-append expr-source "\n)")))]
-    [(AstTyF64)
+    [(AstType.F64)
       (ResultReplString.Ok
         (string.string-append
           "(__tl_repl_print_f64\n"
           (string.string-append expr-source "\n)")))]
-    [(AstTyChar)
+    [(AstType.Char)
       (ResultReplString.Ok
         (string.string-append
           "(__tl_repl_print_char\n"
           (string.string-append expr-source "\n)")))]
-    [(AstTyString)
+    [(AstType.String)
       (ResultReplString.Ok
         (string.string-append
           "(begin\n  (io.print-string\n"
           (string.string-append expr-source "\n  )\n  (io.print-newline))")))]
-    [(AstTyUnit) (ResultReplString.Ok expr-source)]
+    [(AstType.Unit) (ResultReplString.Ok expr-source)]
     [_
       (ResultReplString.Err
         (string.string-append
@@ -873,18 +873,22 @@
     [string-import : String "(import stdlib.string)\n"]
     [legacy-tl-import : String "stdlib/tl"]
     [legacy-io-import : String "stdlib/io.tl"]
-    (match (repl-scratch-source "" "1" (AstTyI64))
+    (match (repl-scratch-source "" "1" (AstType.I64))
       [(ResultReplString.Ok source)
         (and
           (string.string-contains (& source) (& io-import))
           (string.string-contains (& source) (& string-import))
           (not (string.string-contains (& source) (& legacy-tl-import)))
           (not (string.string-contains (& source) (& legacy-io-import)))
-          (repl-scratch-source-no-unqualified-print-newline? "3.5" (AstTyF64))
-          (repl-scratch-source-no-unqualified-print-newline? "'Z'" (AstTyChar))
+          (repl-scratch-source-no-unqualified-print-newline?
+            "3.5"
+            (AstType.F64))
+          (repl-scratch-source-no-unqualified-print-newline?
+            "'Z'"
+            (AstType.Char))
           (repl-scratch-source-no-unqualified-print-newline?
             "\"hi\""
-            (AstTyString)))]
+            (AstType.String)))]
       [(ResultReplString.Err _) false])))
 
 (test

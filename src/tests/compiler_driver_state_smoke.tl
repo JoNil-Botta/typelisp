@@ -38,14 +38,14 @@
   [pool : AstTypeNodePoolState]
   [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyI64) true]
+    [(AstType.I64) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-type-char?
   [pool : AstTypeNodePoolState]
   [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyChar) true]
+    [(AstType.Char) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-global-expr-int?
@@ -60,7 +60,7 @@
 
 (define (compiler-driver-state-smoke-global-type-i64? [id : i64]) : bool
   (match (ty-node-get id)
-    [(AstTyI64) true]
+    [(AstType.I64) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-cache-isolated?) : bool
@@ -196,20 +196,20 @@
       (array.array-ref (struct-get state-a type-pool) 0)]
     [type-a-id0 : i64 (ast-type-node-pool-state-mark type-a0)]
     [type-a1 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-a0 (AstTyI64))]
+      (compiler-driver-state-smoke-type-push type-a0 (AstType.I64))]
     [type-a-id1 : i64 (ast-type-node-pool-state-mark type-a1)]
     [type-a2 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-a1 (AstTyString))]
+      (compiler-driver-state-smoke-type-push type-a1 (AstType.String))]
     [type-b0 : AstTypeNodePoolState
       (array.array-ref (struct-get state-b type-pool) 0)]
     [type-b-mark : i64 (ast-type-node-pool-state-mark type-b0)]
     [type-b1 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-b0 (AstTyBool))]
+      (compiler-driver-state-smoke-type-push type-b0 (AstType.Bool))]
     [type-b-reset : AstTypeNodePoolState
       (ast-type-node-pool-state-reset-to-mark type-b1 type-b-mark)]
     [type-b-id : i64 (ast-type-node-pool-state-mark type-b-reset)]
     [type-b2 : AstTypeNodePoolState
-      (compiler-driver-state-smoke-type-push type-b-reset (AstTyChar))]
+      (compiler-driver-state-smoke-type-push type-b-reset (AstType.Char))]
     (and
       (= expr-a-id0 0)
       (= expr-a-id1 1)
@@ -235,13 +235,13 @@
       (array.array-ref (struct-get state-a type-pool) 0)]
     [type-b0 : AstTypeNodePoolState
       (array.array-ref (struct-get state-b type-pool) 0)]
-    (match (ast-type-node-pool-state-push type-a0 (AstTyI64))
+    (match (ast-type-node-pool-state-push type-a0 (AstType.I64))
       [(AstTypeNodePoolPushOk type-a1 a-id)
-        (match (ast-type-node-pool-state-push type-b0 (AstTyI64))
+        (match (ast-type-node-pool-state-push type-b0 (AstType.I64))
           [(AstTypeNodePoolPushOk type-b1 b-id)
-            (match (ast-type-node-pool-state-push type-a1 (AstTyI64))
+            (match (ast-type-node-pool-state-push type-a1 (AstType.I64))
               [(AstTypeNodePoolPushOk type-a2 a-dupe-id)
-                (match (ast-type-node-pool-state-push type-b1 (AstTyI64))
+                (match (ast-type-node-pool-state-push type-b1 (AstType.I64))
                   [(AstTypeNodePoolPushOk type-b2 b-dupe-id)
                     (and
                       (= a-id 0)
@@ -267,7 +267,7 @@
   [pools : AstNodePoolContext]
   [id : i64]) : bool
   (match (ast-node-pool-context-type-get pools id)
-    [(AstTyU8) true]
+    [(AstType.U8) true]
     [_ false]))
 
 (define (compiler-driver-state-smoke-context-bool-lit?
@@ -295,7 +295,7 @@
   (match (compiler-driver-state-smoke-context-expr-unspan
     pools
     (ast-node-pool-context-expr-get pools id))
-    [(AstExpr.PtrNull (AstTyPtr inner-id))
+    [(AstExpr.PtrNull (AstType.Ptr inner-id))
       (compiler-driver-state-smoke-context-type-u8? pools inner-id)]
     [_ false]))
 
@@ -307,7 +307,9 @@
   (match program
     [(AstProgram.Program decls-box)
       (match (box-get decls-box)
-        [(AstDeclList.Cons (AstDecl.DefFn _ _ (AstTyPtr inner-id) body-id _) _)
+        [(AstDeclList.Cons
+            (AstDecl.DefFn _ _ (AstType.Ptr inner-id) body-id _)
+            _)
           (begin
             (array.array-set! body-cell 0 body-id)
             (array.array-set! type-cell 0 inner-id)
@@ -374,15 +376,15 @@
   [pools : AstNodePoolContext]
   [name : String]) : AstProgram
   (let
-    [elem : i64 (ast-node-pool-context-type-push pools (AstTyI64))]
+    [elem : i64 (ast-node-pool-context-type-push pools (AstType.I64))]
     [field : AstFieldDef
-      (ast-field-def "items" (AstTyArray elem 2) (AstFieldNoCleanup))]
+      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
     [decl : AstDecl
       (ast-decl-def-struct
         name
-        (AstStructReprDefault)
-        (AstStructNoCleanup)
-        (ast-field-def-cons field AstFieldDefNil))]
+        (AstStructRepr.Default)
+        (AstStructCleanup.No)
+        (ast-field-def-cons field AstFieldDefList.Nil))]
     (ast-program (ast-decl-cons decl AstDeclList.Nil))))
 
 (define (compiler-driver-state-smoke-clone-generated-ctor?
@@ -567,13 +569,13 @@
       (compiler-driver-state-install-pools! state-a)
       (let
         [expr-a-id : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 7)))]
-        [type-a-id : i64 (ty-node-push (AstTyI64))]
+        [type-a-id : i64 (ty-node-push (AstType.I64))]
         (begin
           (compiler-driver-state-capture-active-pools! state-a)
           (compiler-driver-state-install-pools! state-b)
           (let
             [expr-b-id : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 11)))]
-            [type-b-id : i64 (ty-node-push (AstTyChar))]
+            [type-b-id : i64 (ty-node-push (AstType.Char))]
             (begin
               (compiler-driver-state-capture-active-pools! state-b)
               (compiler-driver-state-reset-file-state! state-b)
@@ -644,7 +646,7 @@
           (ctfe-env-extend
             env-a
             "replacement"
-            (CompilerCtfeValue.Expr quote-cond-id (AstTyBool)))]
+            (CompilerCtfeValue.Expr quote-cond-id (AstType.Bool)))]
         [quote-len-before : i64 (ast-node-pool-context-expr-len pools-a)]
         (begin
           (compiler-driver-state-install-pools! state-b)
@@ -666,7 +668,7 @@
                 [(CompilerCtfeValue.Expr node ty)
                   (begin
                     (unless
-                      (ctfe-type-eq-in-env quote-env ty (AstTyBool))
+                      (ctfe-type-eq-in-env quote-env ty (AstType.Bool))
                       (set! ok false))
                     (unless (>= node quote-len-before) (set! ok false))
                     (unless
@@ -952,10 +954,10 @@
           (compiler-driver-state-pool-context state-a)]
         [pools-b : AstNodePoolContext
           (compiler-driver-state-pool-context state-b)]
-        [ref-ty : AstType (ast-ty-ref-with-pools pools-a "r" (AstTyStr))]
-        [decoy-id : i64 (ast-node-pool-context-type-push pools-b (AstTyI64))]
+        [ref-ty : AstType (ast-ty-ref-with-pools pools-a "r" (AstType.Str))]
+        [decoy-id : i64 (ast-node-pool-context-type-push pools-b (AstType.I64))]
         (match ref-ty
-          [(AstTyRef _ inner)
+          [(AstType.Ref _ inner)
             (match (build-compiler-symbols program)
               [(ResultCompilerSymbols.Ok symbols)
                 (match (build-compiler-registries-with-symbols program symbols)
@@ -1002,8 +1004,8 @@
                 (compiler-driver-state-pool-context state-b)]
               (begin
                 (compiler-driver-state-reset-file-state! state-b)
-                (ast-node-pool-context-type-push pools-b (AstTyBool))
-                (ast-node-pool-context-type-push pools-b (AstTyChar))
+                (ast-node-pool-context-type-push pools-b (AstType.Bool))
+                (ast-node-pool-context-type-push pools-b (AstType.Char))
                 (ast-node-pool-context-install! pools-b)
                 (let
                   [active-type-len-before : i64 (ty-node-pool-len)]

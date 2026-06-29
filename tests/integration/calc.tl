@@ -42,6 +42,7 @@
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
 (import "stdlib/io.tl")
+(import stdlib.string)
 (import stdlib.vector)
 (import "token.tl")
 (import (vector.vector Token) as tokvec)
@@ -88,7 +89,7 @@
     (begin
       (while keep
         (if (< j n)
-          (if (is-digit (string-ref src j))
+          (if (is-digit (string.string-ref src j))
             (set! j (+ j 1))
             (set! keep false))
           (set! keep false)))
@@ -117,12 +118,12 @@
 (define (lex [src : String] [toks : (&mut toks tokvec.Vec)]) : i64
   (let
     [i : i64 0]
-    [n : i64 (string-length src)]
+    [n : i64 (string.string-length src)]
     [count : i64 0]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref src i)]
+          [c : char (string.string-ref src i)]
           (if (is-space c)
             (set! i (+ i 1))
             (if (is-digit c)
@@ -133,7 +134,9 @@
                 (begin
                   (while (< i end)
                     (begin
-                      (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
+                      (set!
+                        acc
+                        (+ (* acc 10) (digit-value (string.string-ref src i))))
                       (set! i (+ i 1))))
                   (tokvec.push toks (Token.Int acc))
                   (set! count (+ count 1))))

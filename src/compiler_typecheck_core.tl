@@ -594,6 +594,9 @@
 (define (tc-context-type-get [ctx : TcContext] [id : i64]) : AstType
   (ast-node-pool-context-type-get (tc-context-pools ctx) id))
 
+(define (tc-context-expr-get [ctx : TcContext] [id : i64]) : AstExpr
+  (ast-node-pool-context-expr-get (tc-context-pools ctx) id))
+
 ;; The typechecker receives an already-loaded program and so does not know the
 ;; source path; it builds diagnostics with an empty path (the CLI driver stamps
 ;; the real path before rendering). Synthetic/internal errors fall back to 1:1.

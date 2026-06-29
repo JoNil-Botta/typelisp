@@ -48614,10 +48614,12 @@
           import-path
           stdlib-roots)
           [(ResultPkgResolve.Ok resolved)
-            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-context-with-pools
+            (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
               resolved
               seen
               stdlib-roots
+              kind
+              import-path
               expected
               import-root
               cfgs

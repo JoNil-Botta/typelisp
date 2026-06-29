@@ -714,7 +714,7 @@
   (match (compiler-load-source
     "src/already_loaded.tl"
     "(define answer : i64 1)"
-    (sym-i64-bind (sym-i64-empty) "src/already_loaded.tl" 1))
+    (sym-i64-bind (sym-i64-empty) "src.already_loaded" 1))
     [(ResultCompilerLoad.Ok decls _)
       (match decls
         [(AstDeclNil) true]

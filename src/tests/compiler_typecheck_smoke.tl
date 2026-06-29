@@ -2103,6 +2103,27 @@
         (set! ok false))
       ok)))
 
+(define (compiler-typecheck-smoke-moduleless-stdlib-dotted-import-ok?) : bool
+  (let
+    [base : String "target/tc_moduleless_stdlib"]
+    [stdlib-root : String (compiler-load-join-root-path base "stdlib")]
+    [dep : String (compiler-load-join-root-path stdlib-root "some_name.tl")]
+    [entry : String (compiler-load-join-root-path base "entry.tl")]
+    [roots : vector.StringVec
+      (vector.string-vec-push (vector.string-vec-new) stdlib-root)]
+    [cfgs : SymI64Env (compiler-cfg-empty)]
+    (begin
+      (compiler-load-test-mkdir base)
+      (compiler-load-test-mkdir stdlib-root)
+      (io.write-file dep "(define value : i64 42)")
+      (io.write-file
+        entry
+        "(import stdlib.some_name)
+(define (main) : i64 some_name.value)")
+      (compiler-load-session-reset-pools!)
+      (compiler-load-session-reset-interns!)
+      (compiler-typecheck-smoke-prefix-cache-file-check entry roots cfgs))))
+
 (define (compiler-typecheck-smoke-specialized-import-path-ok?) : bool
   (let
     [dir : String "target/tc_specialized_import_path"]
@@ -2534,6 +2555,9 @@
     (unless
       (compiler-typecheck-smoke-generated-moduleless-import-order-ok?)
       (io.panic "typecheck: generated moduleless import order smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-moduleless-stdlib-dotted-import-ok?)
+      (io.panic "typecheck: moduleless stdlib dotted import smoke failed"))
     (unless
       (compiler-typecheck-smoke-specialized-import-path-ok?)
       (io.panic "typecheck: specialized import diagnostic path smoke failed"))

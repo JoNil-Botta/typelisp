@@ -8711,6 +8711,8 @@
       compiler-backend-emergency-pending-count]
     [prev-emergency-used-count : i64 compiler-backend-emergency-used-count]
     [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
+    [prev-emergency-restore-suppressed : bool
+      compiler-backend-emergency-restore-suppressed]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [use-counts : (Array i64)
@@ -8778,7 +8780,10 @@
                 prev-emergency-used-count)
               (set!
                 compiler-backend-emergency-slot-offset
-                prev-emergency-slot-offset))]
+                prev-emergency-slot-offset)
+              (set!
+                compiler-backend-emergency-restore-suppressed
+                prev-emergency-restore-suppressed))]
           (OkCompilerBackend asm))]
       [(ErrCompilerBackend message)
         (let
@@ -8820,7 +8825,10 @@
                 prev-emergency-used-count)
               (set!
                 compiler-backend-emergency-slot-offset
-                prev-emergency-slot-offset))]
+                prev-emergency-slot-offset)
+              (set!
+                compiler-backend-emergency-restore-suppressed
+                prev-emergency-restore-suppressed))]
           (ErrCompilerBackend message))])))
 
 (define (compiler-backend-runtime-helper-full-plan) : CompilerBackendRuntimePlan

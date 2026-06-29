@@ -4300,6 +4300,15 @@
 (define compiler-backend-emergency-regs : (Array String)
   (make-array String 16))
 
+;; True once a branch terminator has already emitted its emergency restore INLINE
+;; (right after the flag-setting compare/test, before the conditional jumps) -- so
+;; the per-instruction emergency-wrap must NOT append a trailing restore after the
+;; branch. A trailing restore would land after the jumps (dead code when both edges
+;; jump away, e.g. critical-edge phi blocks), leaving the scavenged register's
+;; live-out value never restored. Reset per function and consumed by emergency-wrap.
+(define compiler-backend-emergency-restore-suppressed : bool
+  false)
+
 (define (compiler-backend-emergency-capacity) : i64
   16)
 
@@ -4377,18 +4386,45 @@
       "\n"
       (compiler-backend-emergency-restore-asm (- index 1)))))
 
+;; Emit the emergency restore INLINE, right after a branch's flag-setting
+;; compare/test and before its conditional jumps. The scavenged scratch is dead
+;; after the compare (the jumps read EFLAGS, not the register), and `movq` does
+;; not touch EFLAGS, so restoring the saved value into its home here is correct and
+;; flag-safe. This places the restore on a reachable path for BOTH out-edges,
+;; instead of after the jumps where it is dead code on a no-fall-through branch.
+;; Sets `restore-suppressed` so the enclosing emergency-wrap omits its trailing
+;; restore (the save is still emitted by the wrap). Returns "" when no emergency
+;; spill is pending for this branch (the common case) or when already emitted.
+(define (compiler-backend-emergency-restore-before-jumps) : String
+  (if (and
+    compiler-backend-emergency-pending
+    (not compiler-backend-emergency-restore-suppressed))
+    (let
+      [count : i64 compiler-backend-emergency-pending-count]
+      [restore-asm : String
+        (compiler-backend-emergency-restore-asm (- count 1))]
+      (begin
+        (set! compiler-backend-emergency-restore-suppressed true)
+        restore-asm))
+    ""))
+
 (define (compiler-backend-emergency-wrap [head : String]) : String
   (if compiler-backend-emergency-pending
     (let
       [count : i64 compiler-backend-emergency-pending-count]
       [save-asm : String (compiler-backend-emergency-save-asm 0 count)]
       [restore-asm : String
-        (compiler-backend-emergency-restore-asm (- count 1))]
+        (if compiler-backend-emergency-restore-suppressed
+          ""
+          (compiler-backend-emergency-restore-asm (- count 1)))]
       (begin
         (set! compiler-backend-emergency-pending false)
         (set! compiler-backend-emergency-pending-count 0)
+        (set! compiler-backend-emergency-restore-suppressed false)
         (string-append save-asm (string-append head restore-asm))))
-    head))
+    (begin
+      (set! compiler-backend-emergency-restore-suppressed false)
+      head)))
 
 (define (compiler-backend-emergency-append
   [buf : text_buf.TextBuf]
@@ -10937,24 +10973,28 @@
   [true-label : String]
   [false-label : String]
   [fallthrough : CompilerBackendMaybeLabel]) : String
-  (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
-    (str_cat.str-cat
-      "    jne "
-      (compiler-backend-asm-label function true-label)
-      "\n"
-      "")
-    (if (compiler-backend-jump-target-is-fallthrough? true-label fallthrough)
-      (str_cat.str-cat
-        "    je "
-        (compiler-backend-asm-label function false-label)
-        "\n"
-        "")
+  ;; Flush any pending emergency restore inline (after the test, before the jumps)
+  ;; -- flag-safe and on a reachable path for both edges.
+  (string.string-append
+    (compiler-backend-emergency-restore-before-jumps)
+    (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
       (str_cat.str-cat
         "    jne "
         (compiler-backend-asm-label function true-label)
-        "\n    jmp "
-        (compiler-backend-asm-label function false-label)
-        "\n"))))
+        "\n"
+        "")
+      (if (compiler-backend-jump-target-is-fallthrough? true-label fallthrough)
+        (str_cat.str-cat
+          "    je "
+          (compiler-backend-asm-label function false-label)
+          "\n"
+          "")
+        (str_cat.str-cat
+          "    jne "
+          (compiler-backend-asm-label function true-label)
+          "\n    jmp "
+          (compiler-backend-asm-label function false-label)
+          "\n")))))
 
 (define (compiler-backend-branch-test-var-asm
   [assignments : CompilerRegAssignmentList]
@@ -11181,13 +11221,17 @@
   [fallthrough : CompilerBackendMaybeLabel]
   [true-jcc : String]
   [false-jcc : String]) : String
-  (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
-    (compiler-backend-emit-jcc-label true-jcc function true-label)
-    (if (compiler-backend-jump-target-is-fallthrough? true-label fallthrough)
-      (compiler-backend-emit-jcc-label false-jcc function false-label)
-      (string.string-append
-        (compiler-backend-emit-jcc-label true-jcc function true-label)
-        (compiler-backend-jump-label function false-label)))))
+  ;; Flush any pending emergency restore inline (after the compare, before the
+  ;; jumps) -- flag-safe and on a reachable path for both edges.
+  (string.string-append
+    (compiler-backend-emergency-restore-before-jumps)
+    (if (compiler-backend-jump-target-is-fallthrough? false-label fallthrough)
+      (compiler-backend-emit-jcc-label true-jcc function true-label)
+      (if (compiler-backend-jump-target-is-fallthrough? true-label fallthrough)
+        (compiler-backend-emit-jcc-label false-jcc function false-label)
+        (string.string-append
+          (compiler-backend-emit-jcc-label true-jcc function true-label)
+          (compiler-backend-jump-label function false-label))))))
 
 (define (compiler-backend-compare-uses-zero-test? [op : CompilerIrBinOp]) : bool
   (match op
@@ -29591,6 +29635,7 @@
                     (begin
                       (set! compiler-backend-emergency-used false)
                       (set! compiler-backend-emergency-pending false)
+                      (set! compiler-backend-emergency-restore-suppressed false)
                       (set! compiler-backend-emergency-used-count 0)
                       (set! compiler-backend-emergency-pending-count 0)
                       (set!
@@ -29743,6 +29788,7 @@
     (set! compiler-backend-identity-tail-forwarder-active false)
     (set! compiler-backend-emergency-used false)
     (set! compiler-backend-emergency-pending false)
+    (set! compiler-backend-emergency-restore-suppressed false)
     (set! compiler-backend-emergency-used-count 0)
     (set! compiler-backend-emergency-pending-count 0)
     (set! compiler-backend-emergency-reg "")))

@@ -4881,6 +4881,23 @@
     [(IrInstrBinOp _ op _ _ _) (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
+;; Clobber-POINT predicate for the register-search restriction + same-value
+;; coalescing exclusion. Identical to caller-clobber-instr? EXCEPT bounds checks
+;; are NOT clobber points: a bounds check's only register-clobbering effect is the
+;; cold `call tl_oob_abort` on the never-taken failure branch, and that abort is
+;; NORETURN -- on the success (fall-through) path NO caller-saved register is
+;; clobbered. So a value live across a bounds check is never actually clobbered;
+;; treating it as call-spanning wrongly bans it from all 9 caller-saved regs
+;; (start-idx = caller-saved-count) AND excludes its loop-carried phi from
+;; coalescing (2x slot inflation), forcing array-loop values to spill where clang
+;; keeps them in registers. caller-clobber-instr? stays true for bounds checks so
+;; remat-use-site-ok? remains conservative (the bounds-check cmp's scavenged
+;; scratch could clobber a single-instruction remat home).
+(define (compiler-reg-backend-clobber-point-instr? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(IrInstrBoundsCheck _ _ _) false]
+    [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
+
 (define (compiler-reg-backend-caller-clobber-seq? [instrs : CompilerIrInstrSeq]) : bool
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -4932,7 +4949,7 @@
     (begin
       (while (< index count)
         (begin
-          (if (compiler-reg-backend-caller-clobber-instr?
+          (if (compiler-reg-backend-clobber-point-instr?
             (array.array-ref slots index))
             (set! out (compiler-live-set-insert out p))
             unit)
@@ -5005,7 +5022,7 @@
           false))]
     [_
       (if (= kind 0)
-        (compiler-reg-backend-caller-clobber-instr? instr)
+        (compiler-reg-backend-clobber-point-instr? instr)
         false)]))
 
 (define (compiler-reg-clobber-kind-points-seq

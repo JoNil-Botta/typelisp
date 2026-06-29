@@ -16,7 +16,7 @@
 (import stdlib.string)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat)
-(import "stdlib/option.tl")
+(import stdlib.option)
 (import (option i64) as option_i64)
 
 (cfg

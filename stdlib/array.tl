@@ -8,23 +8,28 @@
 ;# Usage: `(import "stdlib/array.tl")`
 (module stdlib.array)
 
+(import stdlib.comptime)
+
 ;: Allocate a dynamic array with `count` live elements initialized under ZII.
 ;; lint-allow: unused-variable
-(defmacro (make-array [T : type] [count : Expr]) : Expr
+(defmacro (make-array [T : type] [count : comptime.Expr]) : comptime.Expr
   `(__tl_make-array ,T ,count))
 
 ;: Return the current length of a dynamic array.
-(defmacro (array-length [items : Expr]) : Expr
+(defmacro (array-length [items : comptime.Expr]) : comptime.Expr
   `(__tl_array-length ,items))
 
 ;: Read a bounds-checked dynamic or fixed array element.
-(defmacro (array-ref [items : Expr] [index : Expr]) : Expr
+(defmacro (array-ref [items : comptime.Expr] [index : comptime.Expr]) : comptime.Expr
   `(__tl_array-ref ,items ,index))
 
 ;: Write a bounds-checked dynamic or fixed array element.
-(defmacro (array-set! [items : Expr] [index : Expr] [value : Expr]) : Expr
+(defmacro (array-set!
+  [items : comptime.Expr]
+  [index : comptime.Expr]
+  [value : comptime.Expr]) : comptime.Expr
   `(__tl_array-set! ,items ,index ,value))
 
 ;: Append a value to a dynamic array, growing storage when needed.
-(defmacro (array-push! [items : Expr] [value : Expr]) : Expr
+(defmacro (array-push! [items : comptime.Expr] [value : comptime.Expr]) : comptime.Expr
   `(__tl_array-push! ,items ,value))

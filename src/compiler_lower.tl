@@ -7192,20 +7192,18 @@
   [reachable : hashmap.I64I64Map]
   [dispatch-variants : hashmap.StringI64Map]
   [decl : AstDecl]) : bool
-  (if (lower-comptime-only-module? module)
-    true
-    (match (lower-function-logical-name-from-decl
-      entry-path
-      decl-path
-      module
-      decl)
-      [(TcMaybeString.Some logical-name)
-        (lower-function-kept-by-reach-or-dispatch?
-          all-functions
-          reachable
-          dispatch-variants
-          logical-name)]
-      [(TcMaybeString.No) true])))
+  (match (lower-function-logical-name-from-decl
+    entry-path
+    decl-path
+    module
+    decl)
+    [(TcMaybeString.Some logical-name)
+      (lower-function-kept-by-reach-or-dispatch?
+        all-functions
+        reachable
+        dispatch-variants
+        logical-name)]
+    [(TcMaybeString.No) true]))
 
 (define (lower-used-types-add-type-decl-name
   [used : hashmap.I64I64Map]
@@ -7382,7 +7380,7 @@
               (if (and
                 (lower-type-decl? decl)
                 (or
-                  (lower-comptime-only-module? module)
+                  (lower-comptime-runtime-skip-module? module)
                   (lower-type-decl-used? module used decl)))
                 (lower-used-types-add-type-decl-deps used module decl)
                 used))]))]))
@@ -7410,7 +7408,7 @@
               unit))))
       current)))
 
-(define (lower-comptime-only-module? [module : String]) : bool
+(define (lower-comptime-runtime-skip-module? [module : String]) : bool
   (string.string-eq module "stdlib.comptime"))
 
 (define (lower-no-main-entry-prune-active?) : bool
@@ -7500,18 +7498,18 @@
   [dispatch-variants : hashmap.StringI64Map]
   [used-types : hashmap.I64I64Map]
   [decl : AstDecl]) : bool
-  (if (lower-comptime-only-module? module)
-    true
-    (if (lower-type-decl? decl)
-      (lower-type-decl-used? module used-types decl)
-      (lower-runtime-decl-kept-by-reach-or-dispatch?
-        entry-path
-        decl-path
-        module
-        all-functions
-        reachable
-        dispatch-variants
-        decl))))
+  (if (lower-type-decl? decl)
+    (or
+      (lower-comptime-runtime-skip-module? module)
+      (lower-type-decl-used? module used-types decl))
+    (lower-runtime-decl-kept-by-reach-or-dispatch?
+      entry-path
+      decl-path
+      module
+      all-functions
+      reachable
+      dispatch-variants
+      decl)))
 
 (define (lower-filter-reachable-in-module
   [decls : AstDeclList]
@@ -41061,13 +41059,21 @@
 ;; one ~56KB frame per decl (7,035 frames = 402MB of the measured 502MB stack
 ;; peak that forced the 1GB Windows reserves, #2599). Iterate instead; the
 ;; threaded accumulators become loop state.
-(define (lower-skip-until-next-module [decls : AstDeclList]) : AstDeclList
+(define (lower-skip-runtime-until-next-module [decls : AstDeclList]) : AstDeclList
   (match decls
     [(AstDeclNil) AstDeclNil]
     [(AstDeclCons decl rest)
-      (match decl
-        [(AstDeclModule _) decls]
-        [_ (lower-skip-until-next-module (box-get rest))])]))
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule _) decls]
+          [_
+            (let
+              [kept-rest : AstDeclList
+                (lower-skip-runtime-until-next-module rest)]
+              (if (lower-type-decl? decl)
+                (ast-decl-cons decl kept-rest)
+                kept-rest))]))]))
 
 (define (lower-decls-in-module
   [ctx : TcContext]
@@ -41344,7 +41350,7 @@
                   (let
                     [next-module-str : String (intern-str next-module)]
                     [skip-runtime : bool
-                      (lower-comptime-only-module? next-module-str)]
+                      (lower-comptime-runtime-skip-module? next-module-str)]
                     (match (lower-module-local-envs
                       ctx
                       top-env
@@ -41376,7 +41382,7 @@
                           (set!
                             cur-decls
                             (if skip-runtime
-                              (lower-skip-until-next-module rest)
+                              (lower-skip-runtime-until-next-module rest)
                               rest)))]
                       [(ErrLowerModuleLocalEnv message)
                         (begin
@@ -41387,29 +41393,33 @@
                 [(AstDeclTest _ _ _) (set! cur-decls rest)]
                 [(AstDeclDefEnum name _ variants)
                   (begin
-                    (set!
-                      cur-globals
-                      (lower-nullary-variant-globals
-                        (lower-current-decl-logical-name-cache
-                          cur-name-cache
-                          cur-module
-                          (intern-str name))
-                        variants
-                        0
-                        cur-globals))
+                    (if (lower-comptime-runtime-skip-module? cur-module)
+                      unit
+                      (set!
+                        cur-globals
+                        (lower-nullary-variant-globals
+                          (lower-current-decl-logical-name-cache
+                            cur-name-cache
+                            cur-module
+                            (intern-str name))
+                          variants
+                          0
+                          cur-globals)))
                     (set! cur-decls rest))]
                 [(AstDeclDefEnumLifetimes name _ _ variants)
                   (begin
-                    (set!
-                      cur-globals
-                      (lower-nullary-variant-globals
-                        (lower-current-decl-logical-name
-                          names
-                          cur-module
-                          (intern-str name))
-                        variants
-                        0
-                        cur-globals))
+                    (if (lower-comptime-runtime-skip-module? cur-module)
+                      unit
+                      (set!
+                        cur-globals
+                        (lower-nullary-variant-globals
+                          (lower-current-decl-logical-name
+                            names
+                            cur-module
+                            (intern-str name))
+                          variants
+                          0
+                          cur-globals)))
                     (set! cur-decls rest))]
                 [(AstDeclDefStruct name _ cleanup fields)
                   (let
@@ -44254,7 +44264,7 @@
 (define (main) : i64 (score (Wrap (A 2))))")
 
 (define (compiler-lower-result-try-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (read [flag : bool] [n : i64]) : result_i64_string.Result
   (if flag (result_i64_string.Ok n) (result_i64_string.Err \"read failed\")))
@@ -44270,7 +44280,7 @@
   (chain flag))")
 
 (define (compiler-lower-option-try-source) : String
-  "(import \"stdlib/option.tl\")
+  "(import stdlib.option)
 (import (option i64) as option_i64)
 (define (read [flag : bool] [n : i64]) : option_i64.Option
   (if flag (option_i64.Some n) option_i64.None))
@@ -44301,7 +44311,7 @@
   (make-big flag))")
 
 (define (compiler-lower-resource-with-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (open-a [ok : bool]) : result_i64_string.Result
   (if ok (result_i64_string.Ok 10) (result_i64_string.Err \"open a\")))
@@ -44317,7 +44327,7 @@
     (result_i64_string.Ok (+ (try (use-a use-ok a)) b))))")
 
 (define (compiler-lower-resource-with-nested-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (close-a [h : i64]) : unit unit)
 (define (close-b [h : i64]) : unit unit)
@@ -44327,7 +44337,7 @@
       (result_i64_string.Ok (+ a b)))))")
 
 (define (compiler-lower-cleanup-struct-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (close-fd [fd : i64]) : unit unit)
 (define (use-fd [ok : bool] [fd : i64]) : result_i64_string.Result
@@ -52507,6 +52517,106 @@
               (ast-node-push (AstExprLiteral (ast-lit-int 0))))
             AstDeclNil))))))
 
+(define (compiler-lower-stdlib-comptime-runtime-skip-keeps-types-ok?) : bool
+  (let
+    [decls : AstDeclList
+      (ast-decl-cons
+        (ast-decl-def-fn
+          "ctfe-runtime-helper"
+          AstParamNil
+          (AstTyI64)
+          (ast-node-push (AstExprLiteral (ast-lit-int 7))))
+        (ast-decl-cons
+          (ast-decl-comptime-decl
+            (ast-decl-def-struct
+              "ExprClauseList"
+              AstStructReprDefault
+              AstStructNoCleanup
+              AstFieldDefNil))
+          (ast-decl-cons
+            (ast-decl-module "main")
+            (ast-decl-cons
+              (ast-decl-def-fn
+                "main"
+                AstParamNil
+                (AstTyI64)
+                (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+              AstDeclNil))))]
+    [kept : AstDeclList (lower-skip-runtime-until-next-module decls)]
+    (and
+      (= (lower-test-decl-list-count kept) 3)
+      (lower-test-decl-list-defines? kept "ExprClauseList")
+      (lower-test-decl-list-defines? kept "main")
+      (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper")))))
+
+(define (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?) : bool
+  (let
+    [program : AstProgram
+      (ast-program
+        (ast-decl-cons
+          (ast-decl-module "stdlib.comptime")
+          (ast-decl-cons
+            (ast-decl-def-fn
+              "ctfe-runtime-helper"
+              AstParamNil
+              (AstTyI64)
+              (ast-node-push (AstExprLiteral (ast-lit-int 7))))
+            (ast-decl-cons
+              (ast-decl-comptime-decl
+                (ast-decl-def-struct
+                  "ExprClauseList"
+                  AstStructReprDefault
+                  AstStructNoCleanup
+                  AstFieldDefNil))
+              (ast-decl-cons
+                (ast-decl-module "main")
+                (ast-decl-cons
+                  (ast-decl-def-fn
+                    "main"
+                    AstParamNil
+                    (AstTyI64)
+                    (ast-node-push (AstExprLiteral (ast-lit-int 0))))
+                  AstDeclNil))))))]
+    [names : LowerNameEnv
+      (match program
+        [(AstProgram decls-box)
+          (let
+            [decls : AstDeclList (box-get decls-box)]
+            (lower-name-env-from-decls
+              decls
+              AstDeclPathNil
+              "entry.tl"
+              LowerNameNil))])]
+    [pruned : LowerPrunedProgram
+      (lower-prune-unreachable-functions
+        "entry.tl"
+        program
+        AstDeclPathNil
+        names)]
+    (match pruned
+      [(LowerPrunedProgram kept-program _)
+        (match kept-program
+          [(AstProgram kept-box)
+            (let
+              [kept : AstDeclList (box-get kept-box)]
+              (and
+                (lower-test-decl-list-defines? kept "ExprClauseList")
+                (lower-test-decl-list-defines? kept "main")
+                (not (lower-test-decl-list-defines? kept "ctfe-runtime-helper"))))])])))
+
+(define (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?) : bool
+  (match (lower-compiler-source
+    "(import stdlib.comptime)
+(define (main) : i64 0)")
+    [(OkCompilerLower program _)
+      (match program
+        [(CompilerIrProgram.Program globals _ _)
+          (not
+            (lower-test-global-list-has-name?
+              globals
+              "__enum_obj_stdlib.comptime/Pattern_PatternWildcard"))])]
+    [(ErrCompilerLower _) false]))
+
 (define (compiler-lower-unsafe-ast-dce-source) : String
   "(define (main) : i64 (unsafe (unsafe-entry)))
 (define (unsafe-helper) : i64 41)
@@ -53358,6 +53468,15 @@
         unit
         (set! ok false))
       (if (compiler-lower-stdlib-comptime-runtime-dce-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-runtime-skip-keeps-types-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-unsafe-ast-dce-ok?)

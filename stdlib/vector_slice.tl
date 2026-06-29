@@ -6,16 +6,19 @@
 ;# borrowed backing-array reference carries the source owner lifetime.
 (module stdlib.vector_slice)
 
+(import stdlib.comptime)
 (import stdlib.vector)
 
 ;: Emit a generated borrowed slice module for element type `T`.
 (defmacro (slice [T : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var (string-append "stdlib.vector_slice.generated." (type-key T)))]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.vector_slice.generated." (type-key T)))]
     [vec-module-name : String
-      (string-append "stdlib.vector.generated." (type-key T))]
-    [vec-type-name : Expr (expr-var (string-append vec-module-name ".Vec"))]
+      (comptime.string-append "stdlib.vector.generated." (type-key T))]
+    [vec-type-name : comptime.Expr
+      (comptime.expr-var (comptime.string-append vec-module-name ".Vec"))]
     `(begin
       (module ,module-name)
       (import (vector ,T) as vec)

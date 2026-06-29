@@ -18,6 +18,7 @@
 ;# ```
 (module stdlib.str_cat)
 
+(import stdlib.comptime)
 (import stdlib.string)
 (cfg test (import stdlib.test))
 (cfg test (import stdlib.hashmap))
@@ -27,16 +28,19 @@
 ;: `parts` is a dynamic array expression and `index` is the next runtime index
 ;: expression. Each step returns an expression that threads the filled array to
 ;: the next step.
-(defmacro (str-cat-pack [parts : Expr] [index : Expr] [args : String ...]) : Expr
-  (if (expr-list-empty? args)
+(defmacro (str-cat-pack
+  [parts : comptime.Expr]
+  [index : comptime.Expr]
+  [args : String ...]) : comptime.Expr
+  (if (comptime.expr-list-empty? args)
     parts
     `(str-cat-pack
       (stdlib.string.string-concat-all-pack-part
         ,parts
         ,index
-        ,(expr-list-head args))
+        ,(comptime.expr-list-head args))
       (+ ,index 1)
-      ,@(expr-list-tail args))))
+      ,@(comptime.expr-list-tail args))))
 
 ;: Concatenate any number of `String` operands into a fresh active-arena String.
 ;:
@@ -45,38 +49,40 @@
 ;: Longer arities are packed into one dynamic parts array and copied by
 ;: `string-concat-all`, so they no longer allocate chunk intermediates.
 (defmacro (str-cat [args : String ...]) : String
-  (if (expr-list-empty? args)
+  (if (comptime.expr-list-empty? args)
     `""
     (let
-      [a : Expr (expr-list-head args)]
-      [rest1 : ExprList (expr-list-tail args)]
-      (if (expr-list-empty? rest1)
+      [a : comptime.Expr (comptime.expr-list-head args)]
+      [rest1 : comptime.ExprList (comptime.expr-list-tail args)]
+      (if (comptime.expr-list-empty? rest1)
         a
         (let
-          [b : Expr (expr-list-head rest1)]
-          [rest2 : ExprList (expr-list-tail rest1)]
-          (if (expr-list-empty? rest2)
+          [b : comptime.Expr (comptime.expr-list-head rest1)]
+          [rest2 : comptime.ExprList (comptime.expr-list-tail rest1)]
+          (if (comptime.expr-list-empty? rest2)
             `(stdlib.string.string-concat3 ,a ,b "")
             (let
-              [c : Expr (expr-list-head rest2)]
-              [rest3 : ExprList (expr-list-tail rest2)]
-              (if (expr-list-empty? rest3)
+              [c : comptime.Expr (comptime.expr-list-head rest2)]
+              [rest3 : comptime.ExprList (comptime.expr-list-tail rest2)]
+              (if (comptime.expr-list-empty? rest3)
                 `(stdlib.string.string-concat3 ,a ,b ,c)
                 (let
-                  [d : Expr (expr-list-head rest3)]
-                  [rest4 : ExprList (expr-list-tail rest3)]
-                  (if (expr-list-empty? rest4)
+                  [d : comptime.Expr (comptime.expr-list-head rest3)]
+                  [rest4 : comptime.ExprList (comptime.expr-list-tail rest3)]
+                  (if (comptime.expr-list-empty? rest4)
                     `(stdlib.string.string-concat4 ,a ,b ,c ,d)
                     (let
-                      [e : Expr (expr-list-head rest4)]
-                      [rest5 : ExprList (expr-list-tail rest4)]
-                      (if (expr-list-empty? rest5)
+                      [e : comptime.Expr (comptime.expr-list-head rest4)]
+                      [rest5 : comptime.ExprList
+                        (comptime.expr-list-tail rest4)]
+                      (if (comptime.expr-list-empty? rest5)
                         `(stdlib.string.string-concat5 ,a ,b ,c ,d ,e)
                         `(stdlib.string.string-concat-all
                           (str-cat-pack
                             (stdlib.array.make-array
                               String
-                              ,(expr-int (expr-list-length args)))
+                              ,(comptime.expr-int
+                                (comptime.expr-list-length args)))
                             0
                             ,@args))))))))))))))
 

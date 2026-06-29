@@ -1288,22 +1288,49 @@
 (define (compiler-load-stdlib-private-module? [module : String]) : bool
   (string.string-eq module "stdlib.vector"))
 
+(define (compiler-load-stdlib-comptime-path?
+  [path : String]
+  [stdlib-roots : vector.StringVec]) : bool
+  (if (compiler-load-string-contains? path "comptime")
+    (let
+      [normalized : String (compiler-load-normalize-path path)]
+      [stdlib-path : String
+        (if (compiler-load-stdlib-import? normalized)
+          normalized
+          (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
+      (string.string-eq stdlib-path "stdlib/comptime.tl"))
+    false))
+
+(define (compiler-load-stdlib-comptime-module? [module : String]) : bool
+  (string.string-eq module "stdlib.comptime"))
+
 (define (compiler-load-stdlib-private-cfgs
   [path : String]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : SymI64Env
-  (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
-    cfgs
+  (let
+    [private-cfgs : SymI64Env
+      (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
+        cfgs
+        (match expected-module
+          [(AstSomeModuleName module)
+            (if (compiler-load-stdlib-private-module? module)
+              (compiler-cfg-enable-private-dynamic-buffer cfgs)
+              cfgs)]
+          [(AstNoModuleName)
+            (if (compiler-load-stdlib-private-path? path stdlib-roots)
+              (compiler-cfg-enable-private-dynamic-buffer cfgs)
+              cfgs)]))]
     (match expected-module
       [(AstSomeModuleName module)
-        (if (compiler-load-stdlib-private-module? module)
-          (compiler-cfg-enable-private-dynamic-buffer cfgs)
-          cfgs)]
+        (if (compiler-load-stdlib-comptime-module? module)
+          (compiler-cfg-enable private-cfgs "feature-plain-comptime-well-known")
+          private-cfgs)]
       [(AstNoModuleName)
-        (if (compiler-load-stdlib-private-path? path stdlib-roots)
-          (compiler-cfg-enable-private-dynamic-buffer cfgs)
-          cfgs)])))
+        (if (compiler-load-stdlib-comptime-path? path stdlib-roots)
+          (compiler-cfg-enable private-cfgs "feature-plain-comptime-well-known")
+          private-cfgs)])))
 
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]

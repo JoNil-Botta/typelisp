@@ -23,6 +23,7 @@
 
 (import stdlib.array)
 (import stdlib.byte_buf_core)
+(import stdlib.comptime)
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.string)
@@ -1155,17 +1156,17 @@
 ;: two-argument borrowed function. With no segments it expands to `""`; with one
 ;: segment it expands to that segment unchanged.
 (defmacro (fs-path-join-many [segments : String ...]) : String
-  (if (expr-list-empty? segments)
+  (if (comptime.expr-list-empty? segments)
     `""
     (let
-      [first : Expr (expr-list-head segments)]
-      [rest : ExprList (expr-list-tail segments)]
-      (if (expr-list-empty? rest)
+      [first : comptime.Expr (comptime.expr-list-head segments)]
+      [rest : comptime.ExprList (comptime.expr-list-tail segments)]
+      (if (comptime.expr-list-empty? rest)
         first
         (let
-          [second : Expr (expr-list-head rest)]
-          [tail : ExprList (expr-list-tail rest)]
-          (if (expr-list-empty? tail)
+          [second : comptime.Expr (comptime.expr-list-head rest)]
+          [tail : comptime.ExprList (comptime.expr-list-tail rest)]
+          (if (comptime.expr-list-empty? tail)
             `(fs-path-join-owned-pair ,first ,second)
             `(fs-path-join-many (fs-path-join-owned-pair ,first ,second) ,@tail)))))))
 

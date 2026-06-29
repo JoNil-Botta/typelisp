@@ -948,7 +948,7 @@
     0))")
 
 (define (compiler-typecheck-foreach-try-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 i64) as result_i64_i64)
 (define (main [out : (Array i64)] [flag : bool] [n : i64]) : result_i64_i64.Result
   (begin
@@ -2960,7 +2960,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-region-match-source))))
 
 (define (compiler-typecheck-result-try-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (read [flag : bool]) : result_i64_string.Result
   (if flag (result_i64_string.ok 41) (result_i64_string.err \"read failed\")))
@@ -2983,20 +2983,20 @@
     (SomeBool (> x 0))))")
 
 (define (compiler-typecheck-result-try-non-result-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (main) : result_i64_string.Result
   (result_i64_string.ok (try 1)))")
 
 (define (compiler-typecheck-result-try-non-result-return-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (read) : result_i64_string.Result (result_i64_string.ok 1))
 (define (main) : i64
   (try (read)))")
 
 (define (compiler-typecheck-result-try-incompatible-error-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (defenum OtherResult (OkOther i64) (ErrOther i64))
 (define (read) : OtherResult (ErrOther 7))
@@ -3005,7 +3005,7 @@
 
 (define (compiler-typecheck-option-try-carrier-mismatch-source) : String
   "(defenum TryCount (SomeCount i64) (NoneCount))
-(import \"stdlib/result.tl\")
+(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (read) : TryCount (SomeCount 1))
 (define (main) : result_i64_string.Result
@@ -3025,7 +3025,7 @@
 
 (define (compiler-typecheck-result-try-panic-source) : String
   (compiler-typecheck-with-io-source
-    "(import \"stdlib/result.tl\")
+    "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (main [flag : bool]) : result_i64_string.Result
   (if flag (io.panic \"stop\") (result_i64_string.ok 1)))"))
@@ -5358,7 +5358,7 @@
 (define (main [m : LocalMaybe]) : i64 (match m [(SomeCount v) v]))")
 
 (define (compiler-typecheck-match-bad-result-exhaustive-source) : String
-  "(import \"stdlib/result.tl\")
+  "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
 (define (main [r : result_i64_string.Result]) : i64
   (match r [(result_i64_string.Ok v) v]))")
@@ -6245,11 +6245,30 @@
       "(define (main) : i64 (comptime (let [a : i64 1] (if (< a 2) a 0))))")
     (compiler-typecheck-ok? "(define (main) : i64 (+ (comptime (* 6 7)) 0))")
     (compiler-typecheck-ok?
-      "(define (mk) : Expr (comptime (expr-if (expr-bool true) (expr-splice (expr-bool false)) (expr-bool true))))")
+      "(import stdlib.comptime)
+(define (mk) : comptime.Expr
+  (comptime
+    (comptime.expr-if
+      (comptime.expr-bool true)
+      (comptime.expr-splice (comptime.expr-bool false))
+      (comptime.expr-bool true))))")
     (compiler-typecheck-ok?
-      "(define (mk) : bool (comptime (expr-if? (expr-if (expr-bool true) (expr-bool false) (expr-bool true)))))")
+      "(import stdlib.comptime)
+(define (mk) : bool
+  (comptime
+    (comptime.expr-if?
+      (comptime.expr-if
+        (comptime.expr-bool true)
+        (comptime.expr-bool false)
+        (comptime.expr-bool true)))))")
     (compiler-typecheck-error-ok?
-      "(define (mk) : Expr (comptime (expr-if true (expr-bool true) (expr-bool false))))"
+      "(import stdlib.comptime)
+(define (mk) : comptime.Expr
+  (comptime
+    (comptime.expr-if
+      true
+      (comptime.expr-bool true)
+      (comptime.expr-bool false))))"
       "expr-if condition expects Expr")
     (compiler-typecheck-error-ok?
       "(define (f [x : i64]) : i64 (comptime x))"

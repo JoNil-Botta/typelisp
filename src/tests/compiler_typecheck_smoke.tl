@@ -2300,7 +2300,21 @@
 (import (make provider) as gen)
 (define (main) : i64 (gen.answer))")
 
+(define (compiler-typecheck-smoke-lazy-summary-macro-comptime-provider-source) : String
+  "(module tc.lazy.summary.macro.comptime_provider)
+(import stdlib.comptime)
+(defmacro (capture [value : comptime.Expr]) : comptime.Expr `(+ ,value 1))
+(define value : i64 1)")
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-comptime-source) : String
+  "(module tc.lazy.summary.macro.comptime_provider)
+(define summary-stub : i64 0)
+(module tc.lazy.summary.macro.entry)
+(import tc.lazy.summary.macro.comptime_provider as provider)
+(define (main) : i64 (provider.capture 41))")
+
 (define (compiler-typecheck-smoke-lazy-summary-macro-check
+  [provider-source : String]
   [entry-source : String]
   [expected-forces : i64]) : bool
   (let
@@ -2311,7 +2325,7 @@
       (compiler-load-surface-summaries-reset!)
       (if (compiler-typecheck-smoke-record-surface-summary?
         provider-path
-        (compiler-typecheck-smoke-lazy-summary-macro-provider-source))
+        provider-source)
         (match (parse-ast-source-diagnostic "" entry-source)
           [(OkAstProgramDiagnostic entry-program)
             (match (typecheck-compiler-program-with-paths-checked
@@ -2334,17 +2348,26 @@
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-unused-ok?) : bool
   (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-provider-source)
     (compiler-typecheck-smoke-lazy-summary-macro-unused-source)
     0))
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-call-ok?) : bool
   (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-provider-source)
     (compiler-typecheck-smoke-lazy-summary-macro-call-source)
     1))
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-hook-ok?) : bool
   (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-provider-source)
     (compiler-typecheck-smoke-lazy-summary-macro-hook-source)
+    1))
+
+(define (compiler-typecheck-smoke-lazy-summary-macro-comptime-ok?) : bool
+  (compiler-typecheck-smoke-lazy-summary-macro-check
+    (compiler-typecheck-smoke-lazy-summary-macro-comptime-provider-source)
+    (compiler-typecheck-smoke-lazy-summary-macro-comptime-source)
     1))
 
 (define (compiler-typecheck-smoke-qualified-array-source) : String
@@ -2540,6 +2563,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-summary-macro-hook-ok?)
       (io.panic "typecheck: lazy summary macro hook smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-summary-macro-comptime-ok?)
+      (io.panic "typecheck: lazy summary macro comptime param smoke failed"))
     (unless
       (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?)
       (io.panic "typecheck: prefix cache root smoke failed"))

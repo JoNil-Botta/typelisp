@@ -47,6 +47,7 @@
 (module stdlib.hashmap)
 
 (import stdlib.array)
+(import stdlib.comptime)
 (import stdlib.hash as hash_mod)
 
 ;; lint-allow: unused-import
@@ -71,11 +72,13 @@
 ;: implementation while presenting the new `&`/`&mut` collection API shape.
 (defmacro (hashmap [K : type] [V : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var
-        (string-append
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append
           "stdlib.hashmap.generated."
-          (string-append (type-key K) (string-append "." (type-key V)))))]
+          (comptime.string-append
+            (type-key K)
+            (comptime.string-append "." (type-key V)))))]
     (match (type-key K)
       ["String"
         (match (type-key V)
@@ -2432,7 +2435,9 @@
 ;: Borrow `map` mutably and return a live mutable entry for borrowed `key`.
 ;: The handle can update an existing entry in place; missing entries are
 ;: reported as absent and are not inserted by the handle API.
-(defmacro (string-i64-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
+(defmacro (string-i64-map-get-mut-entry-borrowed
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
   `(string-i64-map-mut-entry-from-info
     (string-i64-map-mut-entry-info
       (struct-get ,map slots)
@@ -3244,7 +3249,9 @@
     (struct-get info hash)))
 
 ;: Generated concrete hashmap family helper.
-(defmacro (string-string-map-get-mut-entry-borrowed [map : Expr] [key : Expr]) : Expr
+(defmacro (string-string-map-get-mut-entry-borrowed
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
   `(string-string-map-mut-entry-from-info
     (string-string-map-mut-entry-info
       (struct-get ,map slots)
@@ -3892,7 +3899,9 @@
     (struct-get info hash)))
 
 ;: Generated concrete hashmap family helper.
-(defmacro (i64-i64-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
+(defmacro (i64-i64-map-get-mut-entry
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
   `(i64-i64-map-mut-entry-from-info
     (i64-i64-map-mut-entry-info
       (struct-get ,map slots)
@@ -4539,7 +4548,9 @@
     (struct-get info hash)))
 
 ;: Generated concrete hashmap family helper.
-(defmacro (i64-string-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
+(defmacro (i64-string-map-get-mut-entry
+  [map : comptime.Expr]
+  [key : comptime.Expr]) : comptime.Expr
   `(i64-string-map-mut-entry-from-info
     (i64-string-map-mut-entry-info
       (struct-get ,map slots)
@@ -6737,8 +6748,8 @@
 (cfg
   test
   (defmacro (string-hash-payload-map-get-mut-entry-borrowed
-    [map : Expr]
-    [key : Expr]) : Expr
+    [map : comptime.Expr]
+    [key : comptime.Expr]) : comptime.Expr
     `(string-hash-payload-map-mut-entry-from-info
       (string-hash-payload-map-mut-entry-info
         (struct-get ,map slots)
@@ -7746,7 +7757,9 @@
 
 (cfg
   test
-  (defmacro (i64-hash-state-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
+  (defmacro (i64-hash-state-map-get-mut-entry
+    [map : comptime.Expr]
+    [key : comptime.Expr]) : comptime.Expr
     `(i64-hash-state-map-mut-entry-from-info
       (i64-hash-state-map-mut-entry-info
         (struct-get ,map slots)
@@ -8937,7 +8950,9 @@
 
 (cfg
   test
-  (defmacro (hash-nested-key-i64-map-get-mut-entry [map : Expr] [key : Expr]) : Expr
+  (defmacro (hash-nested-key-i64-map-get-mut-entry
+    [map : comptime.Expr]
+    [key : comptime.Expr]) : comptime.Expr
     `(hash-nested-key-i64-map-mut-entry-from-info
       (hash-nested-key-i64-map-mut-entry-info
         (struct-get ,map slots)

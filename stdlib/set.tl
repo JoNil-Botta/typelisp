@@ -4,7 +4,7 @@
 ;# alias when more than one set type is used:
 ;#
 ;# ```typelisp
-;# (import "stdlib/set.tl")
+;# (import stdlib.set)
 ;# (import (set i64) as iset)
 ;#
 ;# (define (main) : i64
@@ -22,6 +22,10 @@
 ;# insertion order, and it can change after resize/rehash. Walk by starting at
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
+(module stdlib.set)
+
+(import stdlib.comptime)
+
 ;; lint-allow: unused-import
 (import stdlib.string)
 
@@ -29,8 +33,9 @@
 (defmacro (set [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
-    [module-name : Expr
-      (expr-var (string-append "stdlib.set.generated." type-key-name))]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.set.generated." type-key-name))]
     (match type-key-name
       ["String"
         `(begin

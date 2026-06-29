@@ -4062,22 +4062,6 @@
 ;; compiler-owned provenance/type metadata. Simple public inspectors are routed
 ;; through source-shaped match bodies below so their behavior follows the
 ;; ordinary stdlib.comptime definitions (#3988).
-(define (ctfe-stdlib-comptime-helper-name?
-  [name : String]
-  [qualified : bool]
-  [base : String]) : bool
-  (or
-    (string.string-eq name base)
-    (and
-      qualified
-      (or
-        (ctfe-string-eq-after-prefix? name "comptime." base)
-        (ctfe-string-eq-after-prefix? name "comptime/" base)
-        (ctfe-string-eq-after-prefix? name "stdlib.comptime." base)
-        (ctfe-string-eq-after-prefix? name "stdlib.comptime/" base)
-        (ctfe-string-eq-after-prefix? name "stdlib/comptime." base)
-        (ctfe-string-eq-after-prefix? name "stdlib/comptime/" base)))))
-
 (define (ctfe-stdlib-string-helper-name? [name : String] [base : String]) : bool
   (and
     (ctfe-string-has-module-separator? name)
@@ -4092,6 +4076,30 @@
       (ctfe-string-eq-after-prefix? name "stdlib/string.tl/" base)
       (ctfe-string-suffix-with-prefix? name "/stdlib/string.tl." base)
       (ctfe-string-suffix-with-prefix? name "/stdlib/string.tl/" base))))
+
+(define (ctfe-comptime-helper-base-after-prefix
+  [name : String]
+  [prefix : String]) : String
+  (string.substring
+    name
+    (ctfe-private-string-length prefix)
+    (- (ctfe-private-string-length name) (ctfe-private-string-length prefix))))
+
+(define (ctfe-comptime-helper-lookup-name [name : String]) : String
+  (cond
+    [(ctfe-string-prefix? name "comptime.")
+      (ctfe-comptime-helper-base-after-prefix name "comptime.")]
+    [(ctfe-string-prefix? name "comptime/")
+      (ctfe-comptime-helper-base-after-prefix name "comptime/")]
+    [(ctfe-string-prefix? name "stdlib.comptime.")
+      (ctfe-comptime-helper-base-after-prefix name "stdlib.comptime.")]
+    [(ctfe-string-prefix? name "stdlib.comptime/")
+      (ctfe-comptime-helper-base-after-prefix name "stdlib.comptime/")]
+    [(ctfe-string-prefix? name "stdlib/comptime.")
+      (ctfe-comptime-helper-base-after-prefix name "stdlib/comptime.")]
+    [(ctfe-string-prefix? name "stdlib/comptime/")
+      (ctfe-comptime-helper-base-after-prefix name "stdlib/comptime/")]
+    [else name]))
 
 (define (ctfe-string-eq-helper-name? [name : String]) : bool
   (or
@@ -4124,23 +4132,16 @@
 
 (define (ctfe-comptime-source-helper-call-name [name : String]) : String
   (let
-    [qualified : bool (ctfe-string-has-module-separator? name)]
+    [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
     (cond
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool?")
-        "expr-bool?"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool-value")
-        "expr-bool-value"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if?") "expr-if?"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-cond")
-        "expr-if-cond"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-then")
-        "expr-if-then"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if-else")
-        "expr-if-else"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-first")
-        "expr-clause-first"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-second")
-        "expr-clause-second"]
+      [(string.string-eq lookup-name "expr-bool?") "expr-bool?"]
+      [(string.string-eq lookup-name "expr-bool-value") "expr-bool-value"]
+      [(string.string-eq lookup-name "expr-if?") "expr-if?"]
+      [(string.string-eq lookup-name "expr-if-cond") "expr-if-cond"]
+      [(string.string-eq lookup-name "expr-if-then") "expr-if-then"]
+      [(string.string-eq lookup-name "expr-if-else") "expr-if-else"]
+      [(string.string-eq lookup-name "expr-clause-first") "expr-clause-first"]
+      [(string.string-eq lookup-name "expr-clause-second") "expr-clause-second"]
       [else name])))
 
 (define (ctfe-comptime-source-helper-name? [name : String]) : bool
@@ -4156,144 +4157,74 @@
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (let
-    [qualified : bool (ctfe-string-has-module-separator? name)]
+    [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
     (cond
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-bool")
-        "expr-bool"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-int") "expr-int"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-string")
-        "expr-string"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-var") "expr-var"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-struct-get")
-        "expr-struct-get"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-struct-set")
-        "expr-struct-set"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-splice")
-        "expr-splice"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-wildcard")
-        "pattern-wildcard"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-binding")
-        "pattern-binding"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-variant")
-        "pattern-variant"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-list-empty")
-        "pattern-list-empty"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-list-cons")
-        "pattern-list-cons"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "match-arm")
-        "match-arm"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "match-arm-list-empty")
+      [(string.string-eq lookup-name "expr-bool") "expr-bool"]
+      [(string.string-eq lookup-name "expr-int") "expr-int"]
+      [(string.string-eq lookup-name "expr-string") "expr-string"]
+      [(string.string-eq lookup-name "expr-var") "expr-var"]
+      [(string.string-eq lookup-name "expr-struct-get") "expr-struct-get"]
+      [(string.string-eq lookup-name "expr-struct-set") "expr-struct-set"]
+      [(string.string-eq lookup-name "expr-splice") "expr-splice"]
+      [(string.string-eq lookup-name "expr-if") "expr-if"]
+      [(string.string-eq lookup-name "pattern-wildcard") "pattern-wildcard"]
+      [(string.string-eq lookup-name "pattern-binding") "pattern-binding"]
+      [(string.string-eq lookup-name "pattern-variant") "pattern-variant"]
+      [(string.string-eq lookup-name "pattern-list-empty") "pattern-list-empty"]
+      [(string.string-eq lookup-name "pattern-list-cons") "pattern-list-cons"]
+      [(string.string-eq lookup-name "match-arm") "match-arm"]
+      [(string.string-eq lookup-name "match-arm-list-empty")
         "match-arm-list-empty"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "match-arm-list-cons")
+      [(string.string-eq lookup-name "match-arm-list-cons")
         "match-arm-list-cons"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-match")
-        "expr-match"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
-        "expr-type"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "type-info")
-        "type-info"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "module-name")
-        "module-name"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "module-export-macro?")
+      [(string.string-eq lookup-name "expr-match") "expr-match"]
+      [(string.string-eq lookup-name "expr-type") "expr-type"]
+      [(string.string-eq lookup-name "type-info") "type-info"]
+      [(string.string-eq lookup-name "module-name") "module-name"]
+      [(string.string-eq lookup-name "module-export-macro?")
         "module-export-macro?"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "module-hook")
-        "module-hook"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-empty?")
-        "expr-list-empty?"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-length")
-        "expr-list-length"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-head")
-        "expr-list-head"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-tail")
-        "expr-list-tail"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-list-nth")
-        "expr-list-nth"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-clause-list-empty?")
+      [(string.string-eq lookup-name "module-hook") "module-hook"]
+      [(string.string-eq lookup-name "expr-list-empty?") "expr-list-empty?"]
+      [(string.string-eq lookup-name "expr-list-length") "expr-list-length"]
+      [(string.string-eq lookup-name "expr-list-head") "expr-list-head"]
+      [(string.string-eq lookup-name "expr-list-tail") "expr-list-tail"]
+      [(string.string-eq lookup-name "expr-list-nth") "expr-list-nth"]
+      [(string.string-eq lookup-name "expr-clause-list-empty?")
         "expr-clause-list-empty?"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-clause-list-length")
+      [(string.string-eq lookup-name "expr-clause-list-length")
         "expr-clause-list-length"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-clause-list-head")
+      [(string.string-eq lookup-name "expr-clause-list-head")
         "expr-clause-list-head"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-clause-list-tail")
+      [(string.string-eq lookup-name "expr-clause-list-tail")
         "expr-clause-list-tail"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-clause-list-nth")
+      [(string.string-eq lookup-name "expr-clause-list-nth")
         "expr-clause-list-nth"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-clause-list->expr-list")
+      [(string.string-eq lookup-name "expr-clause-list->expr-list")
         "expr-clause-list->expr-list"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-name")
+      [(string.string-eq lookup-name "expr-binding-clause-name")
         "expr-binding-clause-name"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-has-type?")
+      [(string.string-eq lookup-name "expr-binding-clause-has-type?")
         "expr-binding-clause-has-type?"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-type")
+      [(string.string-eq lookup-name "expr-binding-clause-type")
         "expr-binding-clause-type"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-init")
+      [(string.string-eq lookup-name "expr-binding-clause-init")
         "expr-binding-clause-init"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-list-empty?")
+      [(string.string-eq lookup-name "expr-binding-clause-list-empty?")
         "expr-binding-clause-list-empty?"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-list-length")
+      [(string.string-eq lookup-name "expr-binding-clause-list-length")
         "expr-binding-clause-list-length"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-list-head")
+      [(string.string-eq lookup-name "expr-binding-clause-list-head")
         "expr-binding-clause-list-head"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-list-tail")
+      [(string.string-eq lookup-name "expr-binding-clause-list-tail")
         "expr-binding-clause-list-tail"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-list-nth")
+      [(string.string-eq lookup-name "expr-binding-clause-list-nth")
         "expr-binding-clause-list-nth"]
-      [(ctfe-stdlib-comptime-helper-name?
-          name
-          qualified
-          "expr-binding-clause-list->expr-list")
+      [(string.string-eq lookup-name "expr-binding-clause-list->expr-list")
         "expr-binding-clause-list->expr-list"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "string-append")
-        "string-append"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "string-concat")
-        "string-concat"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "int->string")
-        "int->string"]
-      [(ctfe-stdlib-comptime-helper-name? name qualified "comptime-error")
-        "comptime-error"]
+      [(string.string-eq lookup-name "string-append") "string-append"]
+      [(string.string-eq lookup-name "string-concat") "string-concat"]
+      [(string.string-eq lookup-name "int->string") "int->string"]
+      [(string.string-eq lookup-name "comptime-error") "comptime-error"]
       [else name])))
 
 (define (ctfe-eval-comptime-error-call

@@ -31,6 +31,7 @@
 (module stdlib.sync)
 
 (import stdlib.array)
+(import stdlib.comptime)
 (import stdlib.thread)
 
 ;: Emit a generated bounded channel module for copyable scalar messages.
@@ -40,8 +41,9 @@
 ;: `SyncI64Channel` substrate.
 (defmacro (channel [T : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var (string-append "stdlib.sync.channel.generated." (type-key T)))]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.sync.channel.generated." (type-key T)))]
     (match (type-key T)
       ["i64"
         `(begin
@@ -172,9 +174,10 @@
 ;: `SyncI64Mutex` runtime handle plus its close-safe control protocol.
 (defmacro (mutex [T : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var (string-append "stdlib.sync.mutex.generated." (type-key T)))]
-    [set-name : Expr (expr-var "set!")]
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "stdlib.sync.mutex.generated." (type-key T)))]
+    [set-name : comptime.Expr (comptime.expr-var "set!")]
     (match (type-key T)
       ["i64"
         `(begin

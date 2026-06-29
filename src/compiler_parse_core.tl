@@ -111,13 +111,13 @@
   (ErrAstExternParts String))
 
 (defenum AstExternHeadItem
-  (AstExternHeadParam AstType)
-  (AstExternHeadVarargsOpen)
-  (AstExternHeadVarargsTyped AstType))
+  (Param AstType)
+  (VarargsOpen)
+  (VarargsTyped AstType))
 
 (defenum ResultAstExternHeadItem
-  (OkAstExternHeadItem AstExternHeadItem)
-  (ErrAstExternHeadItem String))
+  (Ok AstExternHeadItem)
+  (Err String))
 
 (defenum ResultAstExternHeader
   (OkAstExternHeader String AstTypeList AstExternAbi)
@@ -5266,9 +5266,10 @@
       (match param
         [(AstParam _ ty comptime?)
           (if comptime?
-            (ErrAstExternHeadItem "parse: extern parameters cannot be comptime")
-            (OkAstExternHeadItem (AstExternHeadParam ty)))])]
-    [(ErrAstParam message) (ErrAstExternHeadItem message)]))
+            (ResultAstExternHeadItem.Err
+              "parse: extern parameters cannot be comptime")
+            (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty)))])]
+    [(ErrAstParam message) (ResultAstExternHeadItem.Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
   [dispatch : SymI64Env]
@@ -5287,7 +5288,7 @@
                     (match (sp-node-get ty-node)
                       [(SpannedSexpr.Sym ty-name _)
                         (if (string.string-eq ty-name "...")
-                          (ErrAstExternHeadItem
+                          (ResultAstExternHeadItem.Err
                             "parse: extern typed varargs tail needs a type")
                           (if (parse-ast-extern-varargs-typed-name? ty-name)
                             (match (parse-ast-extern-varargs-tail-type
@@ -5295,10 +5296,10 @@
                               pools
                               ty-name)
                               [(OkAstType tail-ty)
-                                (OkAstExternHeadItem
-                                  (AstExternHeadVarargsTyped tail-ty))]
+                                (ResultAstExternHeadItem.Ok
+                                  (AstExternHeadItem.VarargsTyped tail-ty))]
                               [(ErrAstType message)
-                                (ErrAstExternHeadItem message)])
+                                (ResultAstExternHeadItem.Err message)])
                             (parse-ast-extern-head-fixed-param
                               dispatch
                               pools
@@ -5318,18 +5319,18 @@
   (match item
     [(SpannedSexpr.Sym name _)
       (if (string.string-eq name "...")
-        (OkAstExternHeadItem (AstExternHeadVarargsOpen))
+        (ResultAstExternHeadItem.Ok (AstExternHeadItem.VarargsOpen))
         (if (parse-ast-extern-varargs-typed-name? name)
-          (ErrAstExternHeadItem
+          (ResultAstExternHeadItem.Err
             "parse: typed extern varargs tail must use bracket syntax")
-          (ErrAstExternHeadItem "parse: malformed extern function head")))]
+          (ResultAstExternHeadItem.Err "parse: malformed extern function head")))]
     [(SpannedSexpr.BracketList items _)
       (parse-ast-extern-head-bracket-item
         dispatch
         pools
         item
         (sp-node-get items))]
-    [_ (ErrAstExternHeadItem "parse: malformed extern function head")]))
+    [_ (ResultAstExternHeadItem.Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-head-items
   [dispatch : SymI64Env]
@@ -5342,9 +5343,9 @@
         [item : SpannedSexpr (sp-node-get item)]
         [tail : SpannedSexpr (sp-node-get tail)]
         (match (parse-ast-extern-head-item dispatch pools item)
-          [(OkAstExternHeadItem parsed-item)
+          [(ResultAstExternHeadItem.Ok parsed-item)
             (match parsed-item
-              [(AstExternHeadParam ty)
+              [(AstExternHeadItem.Param ty)
                 (match (parse-ast-extern-head-items dispatch pools tail)
                   [(OkAstExternHeader _ parsed-tail parsed-abi)
                     (OkAstExternHeader
@@ -5352,14 +5353,14 @@
                       (ast-type-cons-with-pools pools ty parsed-tail)
                       parsed-abi)]
                   [(ErrAstExternHeader message) (ErrAstExternHeader message)])]
-              [(AstExternHeadVarargsOpen)
+              [(AstExternHeadItem.VarargsOpen)
                 (match tail
                   [(SpannedSexpr.Nil _)
                     (OkAstExternHeader "" AstTypeNil (AstExternAbiCVarargsOpen))]
                   [_
                     (ErrAstExternHeader
                       "parse: extern varargs tail must be final")])]
-              [(AstExternHeadVarargsTyped tail-ty)
+              [(AstExternHeadItem.VarargsTyped tail-ty)
                 (match tail
                   [(SpannedSexpr.Nil _)
                     (OkAstExternHeader
@@ -5369,7 +5370,7 @@
                   [_
                     (ErrAstExternHeader
                       "parse: extern varargs tail must be final")])])]
-          [(ErrAstExternHeadItem message) (ErrAstExternHeader message)]))]
+          [(ResultAstExternHeadItem.Err message) (ErrAstExternHeader message)]))]
     [_ (ErrAstExternHeader "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-header

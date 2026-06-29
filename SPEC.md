@@ -4507,6 +4507,20 @@ that first-class arena owner identity. Ordinary `arena-make` owners still do not
 prove thread-spanning lifetime; only `arena-make-atomic` owner tags can satisfy
 the task-thread transfer/share owner proof in section 6.5.
 
+**Ordinary arena phase tokens:** `stdlib/arena.tl` exposes `ArenaPhase`,
+`arena-phase`, `arena-rewind-safe!`, and `arena-destroy-safe!` as the safe
+non-lexical invalidation surface for ordinary first-class arenas. The checker
+recognizes these calls only for direct local owners initialized by `arena-make`;
+atomic owners remain separate. `arena-phase` records the runtime mark and
+advances the checker's generation for later `(in-arena owner ...)` allocations.
+`arena-rewind-safe!` consumes a direct local phase token and is accepted only
+when no live value, reference, borrow, closure capture, or container slot can
+reach an allocation from the token's generation. `arena-destroy-safe!` consumes
+the direct local ordinary owner and is accepted only when no live value can
+reach any generation owned by that arena. Both calls are rejected while executing
+inside the same owner through `in-arena`, because the active allocation target
+would be invalidated by the operation.
+
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
 Type reflection is the compile-time-only surface that lets generators inspect
@@ -5759,6 +5773,11 @@ The standard scratch workflows are:
 - **Keep results in a first-class arena:** allocate or receive an arena handle
   and wrap the build in `(in-arena arena ...)`. The saved active arena is
   restored afterward, and the returned owned value remains in the target arena.
+- **Safe ordinary arena invalidation:** for a direct local `arena-make` owner,
+  record a phase token with `arena-phase`, allocate phase-local values through
+  `(in-arena owner ...)`, then call `arena-rewind-safe!` when the checker can
+  prove every value from that phase is dead. Call `arena-destroy-safe!` only
+  when all values from the ordinary owner are dead.
 - **Manual unsafe arena:** use `arena-set!`, `arena-rewind`, or
   `arena-destroy` only inside `(unsafe ...)` when the caller can prove all
   invalidated heap handles are dead. This is for compiler/tool internals that
@@ -5974,6 +5993,44 @@ returned unchanged. Nested lexical `with-arena` escape rules still apply:
 `(in-arena scratch (with-arena inner (int->string 1)))` is rejected because the
 inner scoped region would escape.
 
+#### Ordinary arena phase tokens
+
+Use `arena-phase` and `arena-rewind-safe!` when a reusable ordinary arena needs
+safe non-lexical reclamation:
+
+```lisp test=check name=arena-phase-safe-example
+(import "stdlib/arena.tl")
+(import "stdlib/string.tl")
+
+(define (main) : i64
+  (let
+    [scratch : Arena (arena-make)]
+    [kept : String (in-arena scratch (string-append "kept" ""))]
+    [phase : ArenaPhase (arena-phase scratch)]
+    [temp : String (in-arena scratch (string-append "temp" ""))]
+    [n : i64 (string-length temp)]
+    (begin
+      (arena-rewind-safe! phase)
+      (+ n (string-length kept)))))
+```
+
+The recognized safe surface is deliberately narrow: the owner argument to
+`arena-phase` and `arena-destroy-safe!` must be a direct local binding
+initialized by `arena-make`, and the argument to `arena-rewind-safe!` must be a
+direct local `ArenaPhase` returned by `arena-phase`. Creating a phase token
+stores the current runtime mark and records a checker generation for subsequent
+`in-arena` allocations through that owner. Rewinding consumes the token and
+causes values allocated in that phase generation to be treated as moved. Using
+the token again, using a phase value after rewind, using the owner after safe
+destroy, or using any value owned by a destroyed arena is rejected.
+
+The safe phase-token proof is for ordinary single-thread arenas only. It does
+not make an ordinary arena a spanning task-thread owner, and it does not cover
+atomic arena reset/destroy. `arena-rewind-safe!` and `arena-destroy-safe!` are
+also rejected while the same owner is the active allocation target through
+`in-arena`; a program must leave the dynamic allocation extent before
+invalidating it.
+
 #### Atomic arena allocation target
 
 The source wrapper for `tl_arena_make_atomic` is:
@@ -6052,13 +6109,15 @@ first-class arena helpers:
         (arena-destroy scratch)))))
 ```
 
-`Arena` and `ArenaMark` are nominal public wrappers over the raw runtime
-handles. `arena-make`, `arena-make-atomic`, and `arena-current` safely create or
-read an `Arena`; `arena-mark` safely records an `ArenaMark` for the active arena.
-Raw `i64` values do not satisfy the public arena helper signatures, and an
-`Arena` cannot be passed where an `ArenaMark` is required.
-By themselves they do not switch the active arena, free arena chains, rewind
-allocation, or invalidate live safe handles.
+`Arena`, `ArenaMark`, and `ArenaPhase` are nominal public wrappers over the raw
+runtime handles. `arena-make`, `arena-make-atomic`, and `arena-current` safely
+create or read an `Arena`; `arena-mark` safely records an `ArenaMark` for the
+active arena; `arena-phase`, `arena-rewind-safe!`, and `arena-destroy-safe!`
+are safe only under the ordinary direct-owner checker proof above. Raw `i64`
+values do not satisfy the public arena helper signatures, and an `Arena` cannot
+be passed where an `ArenaMark` or `ArenaPhase` is required. By themselves,
+`Arena` and `ArenaMark` values do not switch the active arena, free arena
+chains, rewind allocation, or invalidate live safe handles.
 
 Linux runtime tests may opt into poison-on-reclaim mode with:
 
@@ -6203,11 +6262,13 @@ not the future safe reference/borrow model (#182), not a replacement for
   `panic`/`error`, and related recoverable wrappers. These are imported stdlib
   definitions, not implicit compiler builtins.
 - First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
-  `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
-  `arena-rewind`; invalidating helpers require `(unsafe ...)`. The safe
+  `arena-current`, `arena-mark`, `arena-phase`, `arena-rewind-safe!`,
+  `arena-destroy-safe!`, `arena-set!`, `arena-destroy`, and `arena-rewind`.
+  Raw invalidating helpers require `(unsafe ...)`; the safe phase-token helpers
+  are accepted only for checker-proven ordinary direct owners. The safe
   `in-arena` form switches to a first-class arena for one body without exposing
   `arena-set!` to safe code, and `with-scratch` performs one-shot scratch
-  clone-out without exposing arena destruction to safe code.
+  clone-out without exposing raw arena destruction to safe code.
 - `extern` declarations, including unsafe declaration metadata for externs and
   top-level functions.
 - Multi-file modules via `import`.
@@ -6235,6 +6296,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Move-only aggregate handle checking | Implemented: the selfhost checker enforces move-only aggregates with use-after-move, path-move, and move-while-borrowed diagnostics (#805/#1048/#1049/#1050) |
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
+| Ordinary arena phase tokens | Implemented: `arena-phase`, `arena-rewind-safe!`, and `arena-destroy-safe!` consume direct ordinary owner-generation tokens and reject live invalidated values |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
 | SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if`, scalar-lane varying `match`, and enum tag/payload varying `match` subset are implemented, including value-producing scalar lane selects |
 | Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if/match subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked scalar-lane `if`/`match`, vectorized enum payload gather/match lowering beyond the scalar reference path, and implementation of the specified v1 private out-of-line SPMD call ABI remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |

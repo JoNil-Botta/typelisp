@@ -97,6 +97,11 @@
 (defstruct ArenaMark
   (handle i64))
 
+;: Safe ordinary-arena phase token.
+(defstruct ArenaPhase
+  (arena Arena)
+  (mark ArenaMark))
+
 ;: Runtime hook backing `arena-make`.
 (extern (tl_arena_make) : i64)
 
@@ -143,6 +148,24 @@
 (define (arena-mark) : ArenaMark
   (ArenaMark (tl_region_mark)))
 
+;: Start a safe phase for an ordinary direct-local arena owner.
+;:
+;: The compiler recognizes this call when the argument is a direct local
+;: `arena-make` owner. It records a checker generation for later `in-arena`
+;: allocations and returns a token that can be consumed by `arena-rewind-safe!`.
+(define (arena-phase [arena : Arena]) : ArenaPhase
+  (let
+    [home : Arena (arena-current)]
+    (begin
+      (unsafe
+        (arena-set! arena))
+      (let
+        [mark : ArenaMark (arena-mark)]
+        (begin
+          (unsafe
+            (arena-set! home))
+          (ArenaPhase arena mark))))))
+
 ;: Return the raw runtime handle for low-level interop.
 (define (arena-raw-handle [arena : Arena]) : i64
   (struct-get arena handle))
@@ -185,6 +208,27 @@
   (define (arena-rewind [mark : ArenaMark]) : unit
     (unsafe
       (tl_region_reset (arena-mark-raw-handle mark)))))
+
+;: Safely rewind an ordinary direct-local arena owner to a phase mark.
+;:
+;: The compiler consumes `phase` and rejects later use of values allocated in
+;: the phase generation. Atomic arena release/destroy proofs are separate.
+(define (arena-rewind-safe! [phase : ArenaPhase]) : unit
+  (let
+    [home : Arena (arena-current)]
+    (unsafe
+      (begin
+        (arena-set! (struct-get phase arena))
+        (arena-rewind (struct-get phase mark))
+        (arena-set! home)))))
+
+;: Safely destroy an ordinary direct-local arena owner after its values are dead.
+;:
+;: The compiler consumes the owner handle and rejects later use of that owner or
+;: values tagged with any of its generations.
+(define (arena-destroy-safe! [arena : Arena]) : unit
+  (unsafe
+    (arena-destroy arena)))
 
 (test
   arena-first-class-api

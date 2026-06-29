@@ -12418,22 +12418,25 @@
                 env
                 (intern-str name)
                 (cond
-                  [(tc-macro-type-param-kind? ty) (CtfeType (AstTyVar name))]
-                  [(tc-macro-module-param-kind? ty) (CtfeString "")]
+                  [(tc-macro-type-param-kind? ty)
+                    (CompilerCtfeValue.Type (AstTyVar name))]
+                  [(tc-macro-module-param-kind? ty)
+                    (CompilerCtfeValue.String "")]
                   [(and
                       variadic
                       (tc-macro-expr-clause-type?
                         (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (CtfeExprClauseList AstExprClauseList.Nil)]
+                    (CompilerCtfeValue.ExprClauseList AstExprClauseList.Nil)]
                   [(and
                       variadic
                       (tc-macro-expr-binding-clause-type?
                         (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (CtfeExprBindingClauseList AstExprBindingClauseList.Nil)]
-                  [variadic (CtfeExprList AstExprList.Nil)]
+                    (CompilerCtfeValue.ExprBindingClauseList
+                      AstExprBindingClauseList.Nil)]
+                  [variadic (CompilerCtfeValue.ExprList AstExprList.Nil)]
                   [(tc-macro-expr-clause-type?
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                    (CtfeExprClause
+                    (CompilerCtfeValue.ExprClause
                       (ast-expr-clause
                         (ast-node-pool-context-expr-push
                           (tc-context-pools ctx)
@@ -12452,7 +12455,7 @@
                         (ast-node-pool-context-expr-push
                           (tc-context-pools ctx)
                           (AstExpr.Literal (AstLitUnit)))]
-                      (CtfeExprBindingClause
+                      (CompilerCtfeValue.ExprBindingClause
                         (ast-expr-binding-clause-id
                           name
                           false
@@ -12464,7 +12467,7 @@
                                 (string.string-append (intern-str name) "$init"))))
                           (AstSourceSpan 0 0 0 0))))]
                   [else
-                    (CtfeExpr
+                    (CompilerCtfeValue.Expr
                       (ast-node-pool-context-expr-push
                         (tc-context-pools ctx)
                         (AstExpr.Var name))
@@ -14330,54 +14333,60 @@
 
 (define (tc-ctfe-value-type [ctx : TcContext] [value : CompilerCtfeValue]) : ResultTcType
   (match value
-    [(CtfeI64 _) (ResultTcType.Ok (AstTyI64))]
-    [(CtfeF64 _) (ResultTcType.Ok (AstTyF64))]
-    [(CtfeF32 _) (ResultTcType.Ok (AstTyF32))]
-    [(CtfeBool _) (ResultTcType.Ok (AstTyBool))]
-    [(CtfeChar _) (ResultTcType.Ok (AstTyChar))]
-    [(CtfeString _) (ResultTcType.Err "String value is compile-time only")]
-    [(CtfeUnit) (ResultTcType.Ok (AstTyUnit))]
-    [(CtfeExpr _ _) (ResultTcType.Ok (AstTyExpr))]
-    [(CtfeType ty)
+    [(CompilerCtfeValue.I64 _) (ResultTcType.Ok (AstTyI64))]
+    [(CompilerCtfeValue.F64 _) (ResultTcType.Ok (AstTyF64))]
+    [(CompilerCtfeValue.F32 _) (ResultTcType.Ok (AstTyF32))]
+    [(CompilerCtfeValue.Bool _) (ResultTcType.Ok (AstTyBool))]
+    [(CompilerCtfeValue.Char _) (ResultTcType.Ok (AstTyChar))]
+    [(CompilerCtfeValue.String _)
+      (ResultTcType.Err "String value is compile-time only")]
+    [(CompilerCtfeValue.Unit) (ResultTcType.Ok (AstTyUnit))]
+    [(CompilerCtfeValue.Expr _ _) (ResultTcType.Ok (AstTyExpr))]
+    [(CompilerCtfeValue.Type ty)
       (ResultTcType.Err
         (string.string-append
           "type value "
           (string.string-append
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
-    [(CtfeExprList _) (ResultTcType.Ok (AstTyExprList))]
-    [(CtfeExprClause _) (ResultTcType.Ok (tc-macro-expr-clause-type))]
-    [(CtfeExprClauseList _) (ResultTcType.Ok (tc-macro-expr-clause-list-type))]
-    [(CtfeExprBindingClause _)
+    [(CompilerCtfeValue.ExprList _) (ResultTcType.Ok (AstTyExprList))]
+    [(CompilerCtfeValue.ExprClause _)
+      (ResultTcType.Ok (tc-macro-expr-clause-type))]
+    [(CompilerCtfeValue.ExprClauseList _)
+      (ResultTcType.Ok (tc-macro-expr-clause-list-type))]
+    [(CompilerCtfeValue.ExprBindingClause _)
       (ResultTcType.Ok (tc-macro-expr-binding-clause-type))]
-    [(CtfeExprBindingClauseList _)
+    [(CompilerCtfeValue.ExprBindingClauseList _)
       (ResultTcType.Ok (tc-macro-expr-binding-clause-list-type))]
-    [(CtfePattern _) (ResultTcType.Ok (tc-macro-pattern-type))]
-    [(CtfePatternList _) (ResultTcType.Ok (tc-macro-pattern-list-type))]
-    [(CtfeMatchArm _) (ResultTcType.Ok (tc-macro-match-arm-type))]
-    [(CtfeMatchArmList _) (ResultTcType.Ok (tc-macro-match-arm-list-type))]
-    [(CtfeTypeInfo _) (ResultTcType.Err "TypeInfo value is compile-time only")]
-    [(CtfeTypeInfoBox _)
+    [(CompilerCtfeValue.Pattern _) (ResultTcType.Ok (tc-macro-pattern-type))]
+    [(CompilerCtfeValue.PatternList _)
+      (ResultTcType.Ok (tc-macro-pattern-list-type))]
+    [(CompilerCtfeValue.MatchArm _) (ResultTcType.Ok (tc-macro-match-arm-type))]
+    [(CompilerCtfeValue.MatchArmList _)
+      (ResultTcType.Ok (tc-macro-match-arm-list-type))]
+    [(CompilerCtfeValue.TypeInfo _)
+      (ResultTcType.Err "TypeInfo value is compile-time only")]
+    [(CompilerCtfeValue.TypeInfoBox _)
       (ResultTcType.Err "TypeInfo box value is compile-time only")]
-    [(CtfeTypeInfoList _)
+    [(CompilerCtfeValue.TypeInfoList _)
       (ResultTcType.Err "TypeInfoList value is compile-time only")]
-    [(CtfeTypeField _ _)
+    [(CompilerCtfeValue.TypeField _ _)
       (ResultTcType.Err "TypeField value is compile-time only")]
-    [(CtfeTypeFieldList _)
+    [(CompilerCtfeValue.TypeFieldList _)
       (ResultTcType.Err "TypeFieldList value is compile-time only")]
-    [(CtfeTypeVariantPayload _)
+    [(CompilerCtfeValue.TypeVariantPayload _)
       (ResultTcType.Err "TypeVariantPayload value is compile-time only")]
-    [(CtfeTypeVariantPayloadList _)
+    [(CompilerCtfeValue.TypeVariantPayloadList _)
       (ResultTcType.Err "TypeVariantPayloadList value is compile-time only")]
-    [(CtfeTypeVariant _ _)
+    [(CompilerCtfeValue.TypeVariant _ _)
       (ResultTcType.Err "TypeVariant value is compile-time only")]
-    [(CtfeTypeVariantList _)
+    [(CompilerCtfeValue.TypeVariantList _)
       (ResultTcType.Err "TypeVariantList value is compile-time only")]))
 
 (define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
   (match value
-    [(CtfeF64 _) true]
-    [(CtfeF32 _) true]
+    [(CompilerCtfeValue.F64 _) true]
+    [(CompilerCtfeValue.F32 _) true]
     [_ false]))
 
 (define (tc-ctfe-value-type-with-expected
@@ -14547,9 +14556,9 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-          [(OkCtfe value _)
+          [(ResultCtfe.Ok value _)
             (tc-ctfe-value-type-with-expected ctx value expected)]
-          [(ErrCtfe diag)
+          [(ResultCtfe.Err diag)
             (ResultTcType.Err (compiler-diagnostic-message (box-get diag)))]))]
     [(AstExpr.Init maybe-ty)
       (match maybe-ty
@@ -25048,7 +25057,9 @@
         [(TcInlineFieldLayout name _ offset)
           (tc-ctfe-inline-layout-fields-into
             (box-get rest)
-            (ctfe-layout-field-list-push out (CtfeLayoutField name offset)))])]))
+            (ctfe-layout-field-list-push
+              out
+              (CtfeLayoutField.Field name offset)))])]))
 
 (define (tc-ctfe-inline-layout-field-count [fields : TcInlineFieldLayoutList]) : i64
   (match fields
@@ -25067,38 +25078,38 @@
   [layout : TcInlineAggregateLayout]) : CtfeLayoutInfo
   (match layout
     [(TcInlineAggregateLayout.Struct size align fields)
-      (CtfeLayoutInfo
+      (CtfeLayoutInfo.Info
         name
         true
         size
         align
         (tc-ctfe-inline-layout-fields fields))]
     [(TcInlineAggregateLayout.Enum size align _)
-      (CtfeLayoutInfo name false size align (ctfe-layout-field-list-empty))]))
+      (CtfeLayoutInfo.Info name false size align (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-struct-layout-info [ctx : TcContext] [struct-name : String]) : CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for ctx struct-name)
     [(ResultTcInlineAggregateLayout.Ok layout)
       (tc-ctfe-inline-aggregate-layout-info struct-name layout)]
     [(ResultTcInlineAggregateLayout.Err _)
-      (CtfeLayoutInfo struct-name false 8 8 (ctfe-layout-field-list-empty))]))
+      (CtfeLayoutInfo.Info struct-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-type-layout-info [ctx : TcContext] [type-name : String]) : CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for ctx type-name)
     [(ResultTcInlineAggregateLayout.Ok layout)
       (tc-ctfe-inline-aggregate-layout-info type-name layout)]
     [(ResultTcInlineAggregateLayout.Err _)
-      (CtfeLayoutInfo type-name false 8 8 (ctfe-layout-field-list-empty))]))
+      (CtfeLayoutInfo.Info type-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-layout-add-alias
   [layouts : CtfeLayoutInfoList]
   [info : CtfeLayoutInfo]
   [alias : String]) : CtfeLayoutInfoList
   (match info
-    [(CtfeLayoutInfo _ repr-c? size align fields)
+    [(CtfeLayoutInfo.Info _ repr-c? size align fields)
       (ctfe-layout-info-list-add-if-missing
         layouts
-        (CtfeLayoutInfo alias repr-c? size align fields))]))
+        (CtfeLayoutInfo.Info alias repr-c? size align fields))]))
 
 (define (tc-ctfe-layout-add-names
   [layouts : CtfeLayoutInfoList]
@@ -29977,8 +29988,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-          [(OkCtfe value _) (tc-ctfe-value-type ctx value)]
-          [(ErrCtfe diag)
+          [(ResultCtfe.Ok value _) (tc-ctfe-value-type ctx value)]
+          [(ResultCtfe.Err diag)
             (ResultTcType.Err (compiler-diagnostic-message (box-get diag)))]))]
     [(AstExpr.Quote _) (ResultTcType.Ok (AstTyExpr))]
     [(AstExpr.Quasiquote template-box)
@@ -30309,14 +30320,14 @@
   [value : CompilerCtfeValue]) : ResultTcUnit
   (if (tc-macro-result-module? ret)
     (match value
-      [(CtfeExpr _ _) ResultTcUnit.Ok]
+      [(CompilerCtfeValue.Expr _ _) ResultTcUnit.Ok]
       [_ (ResultTcUnit.Err "typecheck: Module macro body must return Expr")])
     (if (tc-macro-result-decls? ret)
       (match value
-        [(CtfeExpr _ _) ResultTcUnit.Ok]
+        [(CompilerCtfeValue.Expr _ _) ResultTcUnit.Ok]
         [_ (ResultTcUnit.Err "typecheck: Decls macro body must return Expr")])
       (match value
-        [(CtfeExpr _ produced)
+        [(CompilerCtfeValue.Expr _ produced)
           (if (tc-macro-produced-type-compatible? ctx ret produced)
             ResultTcUnit.Ok
             (ResultTcUnit.Err
@@ -31618,12 +31629,12 @@
                         (tc-ctfe-env ctx)
                         params)
                       (ctfe-fuel-limit))
-                      [(OkCtfe value _)
+                      [(ResultCtfe.Ok value _)
                         (begin
                           (ast-node-pool-context-install!
                             (tc-context-pools ctx))
                           (tc-check-defmacro-produced-type ctx ret value))]
-                      [(ErrCtfe diag)
+                      [(ResultCtfe.Err diag)
                         (ResultTcUnit.Err
                           (compiler-diagnostic-message (box-get diag)))])))]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -37366,7 +37377,7 @@
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;;
 ;; Pipeline: parse -> EXPAND -> typecheck. When a call head names a `defmacro`,
-;; the unevaluated operand forms are passed as `Expr` values (CtfeExpr) to the
+;; the unevaluated operand forms are passed as `Expr` values (CompilerCtfeValue.Expr) to the
 ;; transformer, which is run via CTFE; the produced `Expr` is spliced at the
 ;; call site and re-expanded to a fixpoint (depth-limited). Macro calls in
 ;; ordinary evaluated positions are expanded; quoted/quasiquoted code is left
@@ -37870,10 +37881,11 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultGenKey
   (match (compiler-ctfe-eval expr env fuel)
-    [(OkCtfe value next-fuel)
+    [(ResultCtfe.Ok value next-fuel)
       (match value
-        [(CtfeString text) (ResultGenKey.Ok (spec-string-key text) next-fuel)]
-        [(CtfeI64 n)
+        [(CompilerCtfeValue.String text)
+          (ResultGenKey.Ok (spec-string-key text) next-fuel)]
+        [(CompilerCtfeValue.I64 n)
           (ResultGenKey.Ok
             (str_cat.str-cat "i64:" (string.int->string n))
             next-fuel)]
@@ -37883,7 +37895,7 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
-    [(ErrCtfe diag) (ResultGenKey.Err diag)]))
+    [(ResultCtfe.Err diag) (ResultGenKey.Err diag)]))
 
 (define (macro-identity-key-string-exprs
   [exprs : AstExprList]
@@ -40466,7 +40478,7 @@
   [origin : AstExpr]
   [dispatch : SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _)
+    [(CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -40480,7 +40492,7 @@
   [origin : AstExpr]
   [dispatch : SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _)
+    [(CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -42962,13 +42974,13 @@
     arg
     (ctfe-env-empty-with-pools (tc-context-pools ctx))
     (ctfe-fuel-limit))
-    [(OkCtfeQuoteType ty _)
+    [(ResultCtfeQuoteType.Ok ty _)
       (match (tc-source-type-policy-ok ctx ty)
         [(ResultTcUnit.Ok)
           (ResultMacroTypeArg.Ok (macro-type-arg-resolve ctx decls ty))]
         [(ResultTcUnit.Err message)
           (ResultMacroTypeArg.Err (box (ctfe-diagnostic-at-expr arg message)))])]
-    [(ErrCtfeQuoteType diag) (ResultMacroTypeArg.Err diag)]))
+    [(ResultCtfeQuoteType.Err diag) (ResultMacroTypeArg.Err diag)]))
 
 (define (macro-type-arg-with-fallback
   [ctx : TcContext]
@@ -43354,7 +43366,10 @@
       (match (macro-expr-clause-list-from-args args)
         [(ResultMacroClauseList.Ok clauses)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeExprClauseList clauses)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.ExprClauseList clauses)))]
         [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-list-from-args args)
@@ -43363,7 +43378,7 @@
             (ctfe-env-extend
               env
               (intern-str name)
-              (CtfeExprBindingClauseList clauses)))]
+              (CompilerCtfeValue.ExprBindingClauseList clauses)))]
         [(ResultMacroBindingClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [else
       (match (macro-check-variadic-operands
@@ -43374,7 +43389,10 @@
         args)
         [(ResultMacroCheck.Ok)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeExprList args)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.ExprList args)))]
         [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
 
 (define (macro-bind-fixed-param
@@ -43393,7 +43411,10 @@
       (match (macro-type-arg-with-fallback ctx decls fallback-module arg-expr)
         [(ResultMacroTypeArg.Ok resolved-ty)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.Type resolved-ty)))]
         [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
@@ -43405,14 +43426,17 @@
             (ctfe-env-extend-typed
               env
               (intern-str name)
-              (CtfeString module)
+              (CompilerCtfeValue.String module)
               (AstTyString)))]
         [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-clause? ctx fallback-module ty)
       (match (macro-expr-clause-from-arg arg-expr)
         [(ResultMacroClause.Ok clause)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.ExprClause clause)))]
         [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-from-arg arg-expr)
@@ -43421,7 +43445,7 @@
             (ctfe-env-extend
               env
               (intern-str name)
-              (CtfeExprBindingClause clause)))]
+              (CompilerCtfeValue.ExprBindingClause clause)))]
         [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
     [else
       (let
@@ -43433,7 +43457,7 @@
               (ctfe-env-extend
                 env
                 (intern-str name)
-                (CtfeExpr
+                (CompilerCtfeValue.Expr
                   arg-id
                   (macro-captured-expr-produced-type
                     ctx
@@ -43543,16 +43567,19 @@
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (ctfe-eval-node
             body
-            (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+            (ctfe-env-extend
+              env
+              (ctfe-hygiene-enabled-name)
+              (CompilerCtfeValue.Bool true))
             (ctfe-fuel-limit))
-            [(OkCtfe value _)
+            [(ResultCtfe.Ok value _)
               (begin
                 (ast-node-pool-context-install! (tc-context-pools ctx))
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
                 (ResultMacroValueEnv.Ok value env))]
-            [(ErrCtfe diag)
+            [(ResultCtfe.Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -43637,11 +43664,12 @@
       (let
         [lookup-name : String (macro-output-source-name (intern-str name))]
         (match (ctfe-env-lookup env lookup-name)
-          [(CtfeSomeValue value)
+          [(CtfeMaybeValue.Some value)
             (match value
-              [(CtfeType ty) (ast-node-push (AstExpr.TypeLiteral ty))]
+              [(CompilerCtfeValue.Type ty)
+                (ast-node-push (AstExpr.TypeLiteral ty))]
               [_ (ast-node-push expr)])]
-          [(CtfeNoValue) (ast-node-push expr)]))]
+          [(CtfeMaybeValue.None) (ast-node-push expr)]))]
     [(AstExpr.Call func-box args)
       (ast-expr-call func-box (macro-generated-type-param-expr-list env args))]
     [_ (ast-node-push expr)]))
@@ -43919,7 +43947,7 @@
       (ctfe-env-extend
         (ctfe-env-rebase-pools env (tc-context-pools ctx))
         (ctfe-hygiene-enabled-name)
-        (CtfeBool true))]
+        (CompilerCtfeValue.Bool true))]
     (macro-rewrite-generated-import-decls-with-env
       ctx
       orig-decls
@@ -45128,7 +45156,7 @@
             call-expr)
             [(ResultMacroValue.Ok value)
               (match value
-                [(CtfeExpr expanded produced)
+                [(CompilerCtfeValue.Expr expanded produced)
                   (if (tc-macro-produced-type-compatible? ctx ret produced)
                     (macro-expand-expr
                       ctx

@@ -3,6 +3,7 @@
 (import "stdlib/test.tl")
 (import stdlib.json)
 (import stdlib.vector)
+(import (vector json.Json) as jvec)
 (import (vector json.JsonMember) as mvec)
 
 (test

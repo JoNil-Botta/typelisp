@@ -4771,6 +4771,20 @@
 (define (compiler-typecheck-op-bitwise-mismatch-source) : String
   "(define (main [n : i64]) : u64 (bit-and (cast -1 : u64) n))")
 
+(define (compiler-typecheck-op-ok-nary-bitwise-source) : String
+  "(define (main [a : i64] [b : i64] [c : i64] [d : i64]) : i64
+  (+
+    (bit-and a b c d)
+    (+
+      (bit-or a b c d)
+      (bit-xor a b c d))))")
+
+(define (compiler-typecheck-op-nary-bitwise-mismatch-source) : String
+  "(define (main [a : i64] [b : i64] [c : bool]) : i64 (bit-xor a b c))")
+
+(define (compiler-typecheck-op-nary-bitwise-too-few-source) : String
+  "(define (main [a : i64]) : i64 (bit-or a))")
+
 (define (compiler-typecheck-op-ok-call-source) : String
   "(define (add [a : i64] [b : i64]) : i64 (+ a b))
 (define (main) : i64 (add 2 3))")
@@ -4804,6 +4818,13 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-op-bitwise-mismatch-source)
       "typecheck: integer operator expects matching integer operands")
+    (compiler-typecheck-ok? (compiler-typecheck-op-ok-nary-bitwise-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-nary-bitwise-mismatch-source)
+      "typecheck: integer operator expects matching integer operands")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-op-nary-bitwise-too-few-source)
+      "parse: malformed binary expression")
     (compiler-typecheck-ok? (compiler-typecheck-op-ok-call-source))))
 
 ;; Scalar/bool/float/cast parity (#1541): remaining Rust typechecker unit

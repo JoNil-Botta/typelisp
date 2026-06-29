@@ -47876,7 +47876,7 @@
 
 (define (compiler-lower-numeric-source) : String
   "(define (bits [a : i32] [b : i32] [s : i32]) : i32
-  (bit-xor (bit-or (bit-and a b) (shl a s)) (shr b s)))
+  (bit-xor (bit-or (bit-and a b s) (shl a s)) (shr b s) a))
 (define (floaty [a : f64] [b : f64]) : bool
   (< (+ a b) 10.0))
 (define (casts [c : char] [x : i64]) : u8
@@ -47899,7 +47899,7 @@
                   functions
                   "bits"
                   CompilerIrBinOp.BitAnd)
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (>
@@ -47915,7 +47915,7 @@
                   functions
                   "bits"
                   CompilerIrBinOp.BitXor)
-                0)
+                1)
                 unit
                 (set! ok false))
               (if (>

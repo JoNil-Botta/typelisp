@@ -583,6 +583,10 @@
     [(CtfeExprClauseList _) "expr-clause-list"]
     [(CtfeExprBindingClause _) "expr-binding-clause"]
     [(CtfeExprBindingClauseList _) "expr-binding-clause-list"]
+    [(CtfePattern _) "pattern"]
+    [(CtfePatternList _) "pattern-list"]
+    [(CtfeMatchArm _) "match-arm"]
+    [(CtfeMatchArmList _) "match-arm-list"]
     [(CtfeTypeInfo ty) (string.string-append "typeinfo_" (spec-type-key ty))]
     [(CtfeTypeInfoBox ty)
       (string.string-append "typeinfo-box_" (spec-type-key ty))]
@@ -1510,6 +1514,10 @@
       (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClause")))]
     [(CtfeExprBindingClauseList _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]
+    [(CtfePattern _) (ctfe-type-eq ty (AstTyVar (intern "Pattern")))]
+    [(CtfePatternList _) (ctfe-type-eq ty (AstTyVar (intern "PatternList")))]
+    [(CtfeMatchArm _) (ctfe-type-eq ty (AstTyVar (intern "MatchArm")))]
+    [(CtfeMatchArmList _) (ctfe-type-eq ty (AstTyVar (intern "MatchArmList")))]
     [(CtfeTypeInfo _) false]
     [(CtfeTypeInfoBox _) false]
     [(CtfeTypeInfoList _) false]
@@ -1536,6 +1544,10 @@
     [(CtfeExprClauseList _) "ExprClauseList"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
     [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CtfePattern _) "Pattern"]
+    [(CtfePatternList _) "PatternList"]
+    [(CtfeMatchArm _) "MatchArm"]
+    [(CtfeMatchArmList _) "MatchArmList"]
     [(CtfeTypeInfo _) "TypeInfo"]
     [(CtfeTypeInfoBox _) "TypeInfoBox"]
     [(CtfeTypeInfoList _) "TypeInfoList"]
@@ -1853,6 +1865,30 @@
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]
+    [(CtfePattern _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time Pattern value into runtime expression")))]
+    [(CtfePatternList _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time PatternList value into runtime expression")))]
+    [(CtfeMatchArm _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time MatchArm value into runtime expression")))]
+    [(CtfeMatchArmList _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time MatchArmList value into runtime expression")))]
     [(CtfeTypeInfo _)
       (ResultSpecSubExpr.Err
         (box

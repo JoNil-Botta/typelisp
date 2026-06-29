@@ -769,8 +769,9 @@ V1 exclusions:
 - No source-level generic type constructors, generic functions, traits,
   `impl` blocks, trait objects, vtables, or runtime type-erased dispatch.
 - No runtime representation for `type`, `Expr`, `ExprList`, `ExprClause`,
-  `ExprClauseList`, `ExprBindingClause`, `ExprBindingClauseList`, declaration
-  metadata, generated keys, or other comptime-only values.
+  `ExprClauseList`, `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`,
+  `PatternList`, `MatchArm`, `MatchArmList`, declaration metadata, generated
+  keys, or other comptime-only values.
 - No generated public Rust compiler product surface; this is a selfhost
   compiler feature.
 - No generated declaration kinds beyond `defstruct`, `defenum`, and `define`.
@@ -838,6 +839,12 @@ Macro bodies can build expression literals with `expr-bool`, `expr-int`,
 `expr-string`, and `expr-var`; `expr-struct-get` builds a field access whose
 field token is computed during macro CTFE, and `expr-struct-set` builds the
 matching field assignment expression.
+`pattern-wildcard`, `pattern-binding`, `pattern-variant`,
+`pattern-list-empty`, `pattern-list-cons`, `match-arm`,
+`match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build generated
+match expressions from computed pattern names and payload bindings. Generated
+matches are still checked by the ordinary typechecker for variant resolution,
+payload arity, arm result types, and exhaustiveness after macro expansion.
 
 Macro bodies can inspect variadic expression captures with `expr-list-empty?`,
 `expr-list-length`, `expr-list-head`, `expr-list-tail`, and `expr-list-nth`.
@@ -863,12 +870,12 @@ module identity; a missing hook is diagnosed as
 by-name hook dispatch for generated code, not a macro value that can be stored
 or called indirectly.
 
-`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`, `ExprBindingClause`, and
-`ExprBindingClauseList` are compile-time-only types. They are valid in macro
-bodies and explicit `(comptime ...)` helper code, but they have no runtime
-representation. The compiler tracks the checked produced type of each `Expr`
-internally; there is no source-level `Expr<T>` and no generic macro type
-parameter.
+`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`, `ExprBindingClause`,
+`ExprBindingClauseList`, `Pattern`, `PatternList`, `MatchArm`, and
+`MatchArmList` are compile-time-only types. They are valid in macro bodies and
+explicit `(comptime ...)` helper code, but they have no runtime representation.
+The compiler tracks the checked produced type of each `Expr` internally; there
+is no source-level `Expr<T>` and no generic macro type parameter.
 
 Macro bodies build expression values with quote forms. The reader accepts both
 prefix shorthand and the equivalent list-headed forms:
@@ -1097,7 +1104,8 @@ wrapping these declarations in deprecated `comptime-decl` metadata is rejected.
 The well-known set for the first stdlib-owned surface is:
 
 - Syntax values: `Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
-  `ExprBindingClause`, and `ExprBindingClauseList`.
+  `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
+  `MatchArm`, and `MatchArmList`.
 - Reflection values: `TypeInfo` plus the associated field, variant, payload,
   parameter, and sequence types needed to represent the section 5.17 reflection
   data as ordinary TypeLisp values.
@@ -1121,8 +1129,9 @@ surface, or compiler symbol-table handles.
 
 The stdlib declarations choose the end-state collection shape rather than
 freezing the compiler's historical cons-list helpers. `ExprList`,
-`ExprClauseList`, `ExprBindingClauseList`, and reflection sequences are dense,
-length-indexed sequence wrappers over arrays (or an equivalent
+`ExprClauseList`, `ExprBindingClauseList`, `PatternList`, `MatchArmList`, and
+reflection sequences are dense, length-indexed sequence wrappers over arrays
+(or an equivalent
 compiler-verified dense representation). Their public API is
 length/index/iteration-oriented. Recursive cons cells are not part of the
 public contract, even if temporary compatibility helpers keep names such as

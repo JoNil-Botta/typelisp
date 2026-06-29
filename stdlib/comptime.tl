@@ -128,6 +128,68 @@
       (items (Array ExprBindingClause))
       (len i64))))
 
+;: Match pattern syntax value built during macro CTFE.
+(cfg
+  feature-plain-comptime-well-known
+  (defenum Pattern
+    (PatternWildcard)
+    (PatternBinding String)
+    (PatternVariant String PatternList)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known Pattern "v0")
+    (defenum Pattern
+      (PatternWildcard)
+      (PatternBinding String)
+      (PatternVariant String PatternList))))
+
+;: Dense ordered sequence of match pattern syntax values.
+(cfg
+  feature-plain-comptime-well-known
+  (defstruct PatternList
+    (items (Array Pattern))
+    (len i64)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known PatternList "v0")
+    (defstruct PatternList
+      (items (Array Pattern))
+      (len i64))))
+
+;: Generated match arm made from a pattern and result expression.
+(cfg
+  feature-plain-comptime-well-known
+  (defstruct MatchArm
+    (pattern Pattern)
+    (body Expr)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known MatchArm "v0")
+    (defstruct MatchArm
+      (pattern Pattern)
+      (body Expr))))
+
+;: Dense ordered sequence of generated match arms.
+(cfg
+  feature-plain-comptime-well-known
+  (defstruct MatchArmList
+    (items (Array MatchArm))
+    (len i64)))
+
+(cfg
+  (not feature-plain-comptime-well-known)
+  (comptime-decl
+    (:generated stdlib/comptime-well-known MatchArmList "v0")
+    (defstruct MatchArmList
+      (items (Array MatchArm))
+      (len i64))))
+
 ;: Dense ordered sequence of reflected type descriptors.
 (cfg
   feature-plain-comptime-well-known
@@ -335,6 +397,42 @@
 ;: Build an if expression during macro CTFE.
 (define (expr-if [cond : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
   (expr-if cond then-expr else-expr))
+
+;: Build a wildcard match pattern during macro CTFE.
+(define (pattern-wildcard) : Pattern
+  (pattern-wildcard))
+
+;: Build a match pattern that binds the scrutinee or payload to `name`.
+(define (pattern-binding [name : String]) : Pattern
+  (pattern-binding name))
+
+;: Build an enum variant pattern by name and payload patterns.
+(define (pattern-variant [name : String] [payloads : PatternList]) : Pattern
+  (pattern-variant name payloads))
+
+;: Build an empty pattern list.
+(define (pattern-list-empty) : PatternList
+  (pattern-list-empty))
+
+;: Prepend a pattern to a pattern list.
+(define (pattern-list-cons [head : Pattern] [tail : PatternList]) : PatternList
+  (pattern-list-cons head tail))
+
+;: Build a match arm from a generated pattern and result expression.
+(define (match-arm [pattern : Pattern] [body : Expr]) : MatchArm
+  (match-arm pattern body))
+
+;: Build an empty match arm list.
+(define (match-arm-list-empty) : MatchArmList
+  (match-arm-list-empty))
+
+;: Prepend a match arm to a match arm list.
+(define (match-arm-list-cons [head : MatchArm] [tail : MatchArmList]) : MatchArmList
+  (match-arm-list-cons head tail))
+
+;: Build a match expression from a scrutinee expression and generated arms.
+(define (expr-match [scrutinee : Expr] [arms : MatchArmList]) : Expr
+  (expr-match scrutinee arms))
 
 ;: Return the produced type of a captured expression during macro CTFE.
 (define (expr-type [value : Expr]) : Expr

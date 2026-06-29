@@ -40,14 +40,31 @@
   [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64
   (rev6-callee f e d c b a))
 
+;; Cycle + non-cycle TAIL: p/q form a 2-cycle while w/x/u are computed,
+;; register-homed tail args. Their register sources lie OUTSIDE the cycle and
+;; must survive the cycle break. The old hardcoded `movq src,%r11` break could
+;; clobber a %r11-homed tail source (a non-cycle blocked `argreg<-%r11` still
+;; pending); the scavenged temp excludes every source/dest so it cannot.
+(define (ct5-callee
+  [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
+  (+ (* a 10000) (+ (* b 1000) (+ (* c 100) (+ (* d 10) e)))))
+
+(define (ct5-caller [p : i64] [q : i64]) : i64
+  (let
+    [w : i64 (+ (* p 3) q)]
+    [x : i64 (+ (* q 3) p)]
+    [u : i64 (+ w x)]
+    (ct5-callee q p w x u)))
+
 (define (main) : i64
   (let
     [n : i64 (arg-count)]
     [r2 : i64 (swap2-caller (* n 50) (* n 8))]
     [r3 : i64 (swap3-caller (* n 1) (* n 2) (* n 3))]
     [r6 : i64 (rev6-caller (* n 1) (* n 2) (* n 3) (* n 4) (* n 5) (* n 6))]
+    [rc : i64 (ct5-caller (* n 2) (* n 1))]
     (if (and
           (= r2 (- 0 42))
-          (and (= r3 312) (= r6 654321)))
+          (and (= r3 312) (and (= r6 654321) (= rc 12762))))
       42
       1)))

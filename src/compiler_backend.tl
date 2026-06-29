@@ -16736,6 +16736,57 @@
         [(BackendArgMoveValue value)
           (compiler-backend-emit-load-value-with-plan assignments value dest)])]))
 
+;; Exclude-mask for the arg parallel-move cycle-break Temp: the pooled-register
+;; bit of every pending move's dest arg-register AND source-register. The Temp
+;; must be neither -- writing a dest would clobber a pending target, and reusing
+;; a source would clobber a value a not-yet-emitted move (including a non-cycle
+;; blocked `argreg <- %rN`) still needs to read. (rax/rsi/rdi contribute bit 0 =
+;; untracked, which is correct: they are not in the scavenge candidate pool, so
+;; they can never be picked as the Temp regardless.)
+(define (compiler-backend-arg-move-list-exclude-mask
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]) : i64
+  (match moves
+    [(BackendArgMoveNil) 0]
+    [(BackendArgMoveCons first rest)
+      (match first
+        [(BackendArgMove dest source)
+          (bit-or
+            (bit-or
+              (compiler-backend-scavenge-reg-bit dest)
+              (compiler-backend-scavenge-reg-bit
+                (compiler-backend-arg-move-source-reg assignments source)))
+            (compiler-backend-arg-move-list-exclude-mask
+              assignments
+              (box-get rest)))])]))
+
+;; Scavenge a GP register for the arg parallel-move cycle-break Temp instead of
+;; hardcoding %r11: free in the occupancy mask at the call-setup point and not a
+;; dest/source of any pending arg move (mirrors phi-temp-pick-reg). "" if none,
+;; in which case the caller falls back to %r11 (no worse than the prior code).
+(define (compiler-backend-arg-temp-pick-reg
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]) : String
+  (let
+    [point : i64
+      (*
+        2
+        (-
+          compiler-backend-emit-instr-post-base
+          compiler-backend-emit-current-count))]
+    [occupied-mask : i64
+      (compiler-backend-scavenge-occupied-mask-at-point point)]
+    [exclude-mask : i64
+      (compiler-backend-arg-move-list-exclude-mask assignments moves)]
+    [cands : (Array String) compiler-backend-scavenge-candidate-pool]
+    (compiler-backend-phi-temp-pick-reg-iter
+      occupied-mask
+      exclude-mask
+      compiler-backend-scavenge-ctx-plan-reg-mask
+      cands
+      0
+      (array-length cands))))
+
 (define (compiler-backend-emit-arg-move-list
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]) : ResultCompilerBackend
@@ -16771,19 +16822,25 @@
                           (OkCompilerBackend (string.string-append head tail))]
                         [(ErrCompilerBackend m) (ErrCompilerBackend m)])]
                     [(ErrCompilerBackend m) (ErrCompilerBackend m)])
-                  (match (compiler-backend-emit-arg-move-list
-                            assignments
-                            (compiler-backend-arg-move-list-redirect
+                  (let
+                    [temp : String
+                      (let
+                        [picked : String
+                          (compiler-backend-arg-temp-pick-reg assignments moves)]
+                        (if (string.string-eq picked "") "%r11" picked))]
+                    (match (compiler-backend-emit-arg-move-list
                               assignments
-                              moves
-                              srcreg
-                              "%r11"))
-                    [(OkCompilerBackend tail)
-                      (OkCompilerBackend
-                        (string.string-append
-                          (str_cat.str-cat "    movq " srcreg ", %r11\n")
-                          tail))]
-                    [(ErrCompilerBackend m) (ErrCompilerBackend m)])))])])]))
+                              (compiler-backend-arg-move-list-redirect
+                                assignments
+                                moves
+                                srcreg
+                                temp))
+                      [(OkCompilerBackend tail)
+                        (OkCompilerBackend
+                          (string.string-append
+                            (str_cat.str-cat "    movq " srcreg ", " temp "\n")
+                            tail))]
+                      [(ErrCompilerBackend m) (ErrCompilerBackend m)]))))])])]))
 
 (define (compiler-backend-arg-moves-build-from
   [target : CompilerBackendTarget]

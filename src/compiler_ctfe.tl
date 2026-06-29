@@ -47,6 +47,10 @@
   (CtfeExprClauseList AstExprClauseList)
   (CtfeExprBindingClause AstExprBindingClause)
   (CtfeExprBindingClauseList AstExprBindingClauseList)
+  (CtfePattern AstPattern)
+  (CtfePatternList AstPatternList)
+  (CtfeMatchArm AstMatchArm)
+  (CtfeMatchArmList AstMatchArmList)
   (CtfeTypeInfo AstType)
   (CtfeTypeInfoBox AstType)
   (CtfeTypeInfoList AstTypeList)
@@ -1169,6 +1173,10 @@
     [(CtfeExprClauseList _) "ExprClauseList"]
     [(CtfeExprBindingClause _) "ExprBindingClause"]
     [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CtfePattern _) "Pattern"]
+    [(CtfePatternList _) "PatternList"]
+    [(CtfeMatchArm _) "MatchArm"]
+    [(CtfeMatchArmList _) "MatchArmList"]
     [(CtfeTypeInfo _) "TypeInfo"]
     [(CtfeTypeInfoBox _) "Box"]
     [(CtfeTypeInfoList _) "TypeInfoList"]
@@ -1679,6 +1687,10 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CtfePattern _) (ctfe-eval-bin-comptime-metadata "Pattern" expr)]
+    [(CtfePatternList _) (ctfe-eval-bin-comptime-metadata "PatternList" expr)]
+    [(CtfeMatchArm _) (ctfe-eval-bin-comptime-metadata "MatchArm" expr)]
+    [(CtfeMatchArmList _) (ctfe-eval-bin-comptime-metadata "MatchArmList" expr)]
     [(CtfeTypeInfo a)
       (match rv
         [(CtfeTypeInfo b) (ctfe-eval-bin-type-info op a b expr env fuel)]
@@ -1750,6 +1762,10 @@
     [(CtfeF64 _) (AstTyF64)]
     [(CtfeF32 _) (AstTyF32)]
     [(CtfeChar _) (AstTyChar)]
+    [(CtfePattern _) (ctfe-stdlib-comptime-type "Pattern")]
+    [(CtfePatternList _) (ctfe-stdlib-comptime-type "PatternList")]
+    [(CtfeMatchArm _) (ctfe-stdlib-comptime-type "MatchArm")]
+    [(CtfeMatchArmList _) (ctfe-stdlib-comptime-type "MatchArmList")]
     [(CtfeTypeInfo _) (ctfe-type-info-source-type)]
     [(CtfeTypeInfoBox _) (ctfe-type-info-box-source-type)]
     [(CtfeTypeInfoList _) (ctfe-stdlib-comptime-type "TypeInfoList")]
@@ -4155,6 +4171,24 @@
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-splice")
         "expr-splice"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-if") "expr-if"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-wildcard")
+        "pattern-wildcard"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-binding")
+        "pattern-binding"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-variant")
+        "pattern-variant"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-list-empty")
+        "pattern-list-empty"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "pattern-list-cons")
+        "pattern-list-cons"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "match-arm")
+        "match-arm"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "match-arm-list-empty")
+        "match-arm-list-empty"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "match-arm-list-cons")
+        "match-arm-list-cons"]
+      [(ctfe-stdlib-comptime-helper-name? name qualified "expr-match")
+        "expr-match"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "expr-type")
         "expr-type"]
       [(ctfe-stdlib-comptime-helper-name? name qualified "type-info")
@@ -5476,6 +5510,390 @@
         (box
           (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))]))
 
+(define (ctfe-eval-pattern-wildcard-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprNil) (OkCtfe (CtfePattern AstPatWildcard) fuel)]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "pattern-wildcard expects exactly zero args")))]))
+
+(define (ctfe-eval-pattern-binding-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons name-arg rest)
+      (let
+        [name-arg : AstExpr (ctfe-ast-get env name-arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprNil)
+            (match (ctfe-eval-string-arg
+              name-arg
+              expr
+              env
+              fuel
+              "pattern-binding")
+              [(OkCtfeStringArg name next-fuel)
+                (OkCtfe (CtfePattern (ast-pat-binding name)) next-fuel)]
+              [(ErrCtfeStringArg d) (ErrCtfe d)])]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "pattern-binding expects exactly one arg")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "pattern-binding expects exactly one arg")))]))
+
+(define (ctfe-eval-pattern-variant-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons name-arg tail)
+      (let
+        [name-arg : AstExpr (ctfe-ast-get env name-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons payloads-arg rest)
+            (let
+              [payloads-arg : AstExpr (ctfe-ast-get env payloads-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprNil)
+                  (match (ctfe-eval-string-arg
+                    name-arg
+                    expr
+                    env
+                    fuel
+                    "pattern-variant")
+                    [(OkCtfeStringArg name name-fuel)
+                      (match (compiler-ctfe-eval payloads-arg env name-fuel)
+                        [(OkCtfe payloads-val payloads-fuel)
+                          (match payloads-val
+                            [(CtfePatternList payloads)
+                              (OkCtfe
+                                (CtfePattern (ast-pat-variant name payloads))
+                                payloads-fuel)]
+                            [_
+                              (ErrCtfe
+                                (box
+                                  (ctfe-diagnostic-at-expr
+                                    expr
+                                    "pattern-variant expects PatternList payloads")))])]
+                        [(ErrCtfe diag) (ErrCtfe diag)])]
+                    [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "pattern-variant expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "pattern-variant expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "pattern-variant expects exactly two args")))]))
+
+(define (ctfe-eval-pattern-list-empty-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprNil) (OkCtfe (CtfePatternList AstPatternNil) fuel)]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "pattern-list-empty expects exactly zero args")))]))
+
+(define (ctfe-eval-pattern-list-cons-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons head-arg tail)
+      (let
+        [head-arg : AstExpr (ctfe-ast-get env head-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons rest-arg done)
+            (let
+              [rest-arg : AstExpr (ctfe-ast-get env rest-arg)]
+              [done : AstExprList (box-get done)]
+              (match done
+                [(AstExprNil)
+                  (match (compiler-ctfe-eval head-arg env fuel)
+                    [(OkCtfe head-val head-fuel)
+                      (match head-val
+                        [(CtfePattern head-pattern)
+                          (match (compiler-ctfe-eval rest-arg env head-fuel)
+                            [(OkCtfe rest-val rest-fuel)
+                              (match rest-val
+                                [(CtfePatternList rest-patterns)
+                                  (OkCtfe
+                                    (CtfePatternList
+                                      (ast-pattern-cons
+                                        head-pattern
+                                        rest-patterns))
+                                    rest-fuel)]
+                                [_
+                                  (ErrCtfe
+                                    (box
+                                      (ctfe-diagnostic-at-expr
+                                        expr
+                                        "pattern-list-cons tail expects PatternList")))])]
+                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                        [_
+                          (ErrCtfe
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "pattern-list-cons head expects Pattern")))])]
+                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "pattern-list-cons expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "pattern-list-cons expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "pattern-list-cons expects exactly two args")))]))
+
+(define (ctfe-eval-match-arm-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons pattern-arg tail)
+      (let
+        [pattern-arg : AstExpr (ctfe-ast-get env pattern-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons body-arg done)
+            (let
+              [body-arg : AstExpr (ctfe-ast-get env body-arg)]
+              [done : AstExprList (box-get done)]
+              (match done
+                [(AstExprNil)
+                  (match (compiler-ctfe-eval pattern-arg env fuel)
+                    [(OkCtfe pattern-val pattern-fuel)
+                      (match pattern-val
+                        [(CtfePattern pattern)
+                          (match (compiler-ctfe-eval body-arg env pattern-fuel)
+                            [(OkCtfe body-val body-fuel)
+                              (match body-val
+                                [(CtfeExpr body-node _)
+                                  (OkCtfe
+                                    (CtfeMatchArm
+                                      (ast-match-arm pattern body-node))
+                                    body-fuel)]
+                                [_
+                                  (ErrCtfe
+                                    (box
+                                      (ctfe-diagnostic-at-expr
+                                        expr
+                                        "match-arm body expects Expr")))])]
+                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                        [_
+                          (ErrCtfe
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "match-arm pattern expects Pattern")))])]
+                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "match-arm expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "match-arm expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr expr "match-arm expects exactly two args")))]))
+
+(define (ctfe-eval-match-arm-list-empty-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprNil) (OkCtfe (CtfeMatchArmList AstMatchArmNil) fuel)]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "match-arm-list-empty expects exactly zero args")))]))
+
+(define (ctfe-eval-match-arm-list-cons-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons head-arg tail)
+      (let
+        [head-arg : AstExpr (ctfe-ast-get env head-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons rest-arg done)
+            (let
+              [rest-arg : AstExpr (ctfe-ast-get env rest-arg)]
+              [done : AstExprList (box-get done)]
+              (match done
+                [(AstExprNil)
+                  (match (compiler-ctfe-eval head-arg env fuel)
+                    [(OkCtfe head-val head-fuel)
+                      (match head-val
+                        [(CtfeMatchArm head-arm)
+                          (match (compiler-ctfe-eval rest-arg env head-fuel)
+                            [(OkCtfe rest-val rest-fuel)
+                              (match rest-val
+                                [(CtfeMatchArmList rest-arms)
+                                  (OkCtfe
+                                    (CtfeMatchArmList
+                                      (ast-match-arm-cons head-arm rest-arms))
+                                    rest-fuel)]
+                                [_
+                                  (ErrCtfe
+                                    (box
+                                      (ctfe-diagnostic-at-expr
+                                        expr
+                                        "match-arm-list-cons tail expects MatchArmList")))])]
+                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                        [_
+                          (ErrCtfe
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "match-arm-list-cons head expects MatchArm")))])]
+                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "match-arm-list-cons expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "match-arm-list-cons expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "match-arm-list-cons expects exactly two args")))]))
+
+(define (ctfe-eval-expr-match-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprCons scrutinee-arg tail)
+      (let
+        [scrutinee-arg : AstExpr (ctfe-ast-get env scrutinee-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprCons arms-arg done)
+            (let
+              [arms-arg : AstExpr (ctfe-ast-get env arms-arg)]
+              [done : AstExprList (box-get done)]
+              (match done
+                [(AstExprNil)
+                  (match (compiler-ctfe-eval scrutinee-arg env fuel)
+                    [(OkCtfe scrutinee-val scrutinee-fuel)
+                      (match scrutinee-val
+                        [(CtfeExpr scrutinee-node _)
+                          (match (compiler-ctfe-eval
+                            arms-arg
+                            env
+                            scrutinee-fuel)
+                            [(OkCtfe arms-val arms-fuel)
+                              (match arms-val
+                                [(CtfeMatchArmList arms)
+                                  (OkCtfe
+                                    (CtfeExpr
+                                      (ast-expr-match-with-pools
+                                        (ctfe-env-pools env)
+                                        scrutinee-node
+                                        arms)
+                                      (ctfe-untyped-expr-type))
+                                    arms-fuel)]
+                                [_
+                                  (ErrCtfe
+                                    (box
+                                      (ctfe-diagnostic-at-expr
+                                        expr
+                                        "expr-match arms expects MatchArmList")))])]
+                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                        [_
+                          (ErrCtfe
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "expr-match scrutinee expects Expr")))])]
+                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                [_
+                  (ErrCtfe
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "expr-match expects exactly two args")))]))]
+          [_
+            (ErrCtfe
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-match expects exactly two args")))]))]
+    [_
+      (ErrCtfe
+        (box
+          (ctfe-diagnostic-at-expr expr "expr-match expects exactly two args")))]))
+
 (define (ctfe-source-helper-var [env : CtfeEnv] [name : String]) : i64
   (ctfe-ast-push env (AstExprVar (intern name))))
 
@@ -5721,6 +6139,24 @@
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(string.string-eq call-name "expr-if")
             (ctfe-eval-expr-if-call args expr env fuel)]
+          [(string.string-eq call-name "pattern-wildcard")
+            (ctfe-eval-pattern-wildcard-call args expr fuel)]
+          [(string.string-eq call-name "pattern-binding")
+            (ctfe-eval-pattern-binding-call args expr env fuel)]
+          [(string.string-eq call-name "pattern-variant")
+            (ctfe-eval-pattern-variant-call args expr env fuel)]
+          [(string.string-eq call-name "pattern-list-empty")
+            (ctfe-eval-pattern-list-empty-call args expr fuel)]
+          [(string.string-eq call-name "pattern-list-cons")
+            (ctfe-eval-pattern-list-cons-call args expr env fuel)]
+          [(string.string-eq call-name "match-arm")
+            (ctfe-eval-match-arm-call args expr env fuel)]
+          [(string.string-eq call-name "match-arm-list-empty")
+            (ctfe-eval-match-arm-list-empty-call args expr fuel)]
+          [(string.string-eq call-name "match-arm-list-cons")
+            (ctfe-eval-match-arm-list-cons-call args expr env fuel)]
+          [(string.string-eq call-name "expr-match")
+            (ctfe-eval-expr-match-call args expr env fuel)]
           [(string.string-eq call-name "expr-type")
             (ctfe-eval-expr-type-call args expr env fuel)]
           [(string.string-eq call-name "module-name")
@@ -5833,6 +6269,40 @@
         expr
         "struct-get in compile-time evaluation requires a stdlib.comptime well-known value"))))
 
+(define (ctfe-pattern-list-length [lst : AstPatternList]) : i64
+  (match lst
+    [(AstPatternNil) 0]
+    [(AstPatternCons _ rest) (+ 1 (ctfe-pattern-list-length (box-get rest)))]))
+
+(define (ctfe-pattern-list-nth [lst : AstPatternList] [index : i64]) : AstPattern
+  (match lst
+    [(AstPatternCons head rest)
+      (if (= index 0)
+        (box-get head)
+        (ctfe-pattern-list-nth (box-get rest) (- index 1)))]
+    [_ AstPatWildcard]))
+
+(define (ctfe-match-arm-empty-default [env : CtfeEnv]) : AstMatchArm
+  (ast-match-arm
+    AstPatWildcard
+    (ctfe-ast-push env (AstExprLiteral (AstLitUnit)))))
+
+(define (ctfe-match-arm-list-length [lst : AstMatchArmList]) : i64
+  (match lst
+    [(AstMatchArmNil) 0]
+    [(AstMatchArmCons _ rest) (+ 1 (ctfe-match-arm-list-length (box-get rest)))]))
+
+(define (ctfe-match-arm-list-nth
+  [lst : AstMatchArmList]
+  [index : i64]
+  [env : CtfeEnv]) : AstMatchArm
+  (match lst
+    [(AstMatchArmCons head rest)
+      (if (= index 0)
+        head
+        (ctfe-match-arm-list-nth (box-get rest) (- index 1) env))]
+    [_ (ctfe-match-arm-empty-default env)]))
+
 (define (ctfe-eval-struct-get-value
   [value : CompilerCtfeValue]
   [field : i64]
@@ -5889,6 +6359,29 @@
           (OkCtfe (CtfeExprBindingClauseList clauses) fuel)]
         [(ctfe-comptime-field-name? field "len")
           (OkCtfe (CtfeI64 (ctfe-expr-binding-clause-list-length clauses)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfePatternList patterns)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfePatternList patterns) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-pattern-list-length patterns)) fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CtfeMatchArm arm)
+      (match arm
+        [(AstMatchArm pattern body)
+          (cond
+            [(ctfe-comptime-field-name? field "pattern")
+              (OkCtfe (CtfePattern pattern) fuel)]
+            [(ctfe-comptime-field-name? field "body")
+              (OkCtfe (CtfeExpr body (ctfe-untyped-expr-type)) fuel)]
+            [else (ctfe-comptime-field-error field expr)])])]
+    [(CtfeMatchArmList arms)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (OkCtfe (CtfeMatchArmList arms) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (OkCtfe (CtfeI64 (ctfe-match-arm-list-length arms)) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
     [(CtfeTypeInfoList items)
       (cond
@@ -5984,6 +6477,14 @@
           (CtfeExprBindingClause
             (ctfe-expr-binding-clause-list-nth clauses index))
           fuel))]
+    [(CtfePatternList patterns)
+      (if (or (< index 0) (>= index (ctfe-pattern-list-length patterns)))
+        (ctfe-comptime-array-index-error expr)
+        (OkCtfe (CtfePattern (ctfe-pattern-list-nth patterns index)) fuel))]
+    [(CtfeMatchArmList arms)
+      (if (or (< index 0) (>= index (ctfe-match-arm-list-length arms)))
+        (ctfe-comptime-array-index-error expr)
+        (OkCtfe (CtfeMatchArm (ctfe-match-arm-list-nth arms index env)) fuel))]
     [(CtfeTypeInfoList items)
       (match (ctfe-type-list-ref-with-pools
         items
@@ -10065,6 +10566,10 @@
     [(CtfeExprClauseList _) (AstLitUnit)]
     [(CtfeExprBindingClause _) (AstLitUnit)]
     [(CtfeExprBindingClauseList _) (AstLitUnit)]
+    [(CtfePattern _) (AstLitUnit)]
+    [(CtfePatternList _) (AstLitUnit)]
+    [(CtfeMatchArm _) (AstLitUnit)]
+    [(CtfeMatchArmList _) (AstLitUnit)]
     [(CtfeTypeInfo _) (AstLitUnit)]
     [(CtfeTypeInfoBox _) (AstLitUnit)]
     [(CtfeTypeInfoList _) (AstLitUnit)]

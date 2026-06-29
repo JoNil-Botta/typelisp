@@ -18596,6 +18596,30 @@
                     (lower-diagnostic-at-expr
                       origin
                       "ExprBindingClauseList value is compile-time only")))]
+              [(CtfePattern _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "Pattern value is compile-time only")))]
+              [(CtfePatternList _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "PatternList value is compile-time only")))]
+              [(CtfeMatchArm _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "MatchArm value is compile-time only")))]
+              [(CtfeMatchArmList _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "MatchArmList value is compile-time only")))]
               [(CtfeTypeInfo _)
                 (ErrLowerExpr
                   (box

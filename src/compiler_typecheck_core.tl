@@ -4176,6 +4176,18 @@
 (define (tc-macro-expr-binding-clause-list-type) : AstType
   (AstTyVar (intern "ExprBindingClauseList")))
 
+(define (tc-macro-pattern-type) : AstType
+  (AstTyVar (intern "Pattern")))
+
+(define (tc-macro-pattern-list-type) : AstType
+  (AstTyVar (intern "PatternList")))
+
+(define (tc-macro-match-arm-type) : AstType
+  (AstTyVar (intern "MatchArm")))
+
+(define (tc-macro-match-arm-list-type) : AstType
+  (AstTyVar (intern "MatchArmList")))
+
 (define (tc-macro-expr-clause-type? [ty : AstType]) : bool
   (match ty
     [(AstTyVar name) (= name (intern "ExprClause"))]
@@ -4232,6 +4244,14 @@
   -1)
 (define tc-stdlib-comptime-expr-binding-clause-list-key-id-cache : i64
   -1)
+(define tc-stdlib-comptime-pattern-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-pattern-list-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-match-arm-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-match-arm-list-key-id-cache : i64
+  -1)
 
 (define (tc-stdlib-comptime-syntax-type-cache-refresh!) : unit
   (begin
@@ -4253,6 +4273,18 @@
     (set!
       tc-stdlib-comptime-expr-binding-clause-list-key-id-cache
       (tc-name-id (tc-stdlib-comptime-type-key "ExprBindingClauseList")))
+    (set!
+      tc-stdlib-comptime-pattern-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "Pattern")))
+    (set!
+      tc-stdlib-comptime-pattern-list-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "PatternList")))
+    (set!
+      tc-stdlib-comptime-match-arm-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "MatchArm")))
+    (set!
+      tc-stdlib-comptime-match-arm-list-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "MatchArmList")))
     (set! tc-stdlib-comptime-syntax-type-cache-generation (intern-generation))))
 
 (define (tc-stdlib-comptime-syntax-type-cache-ensure!) : unit
@@ -4277,6 +4309,14 @@
         (AstSomeType (tc-macro-expr-binding-clause-type))]
       [(= canonical-id tc-stdlib-comptime-expr-binding-clause-list-key-id-cache)
         (AstSomeType (tc-macro-expr-binding-clause-list-type))]
+      [(= canonical-id tc-stdlib-comptime-pattern-key-id-cache)
+        (AstSomeType (tc-macro-pattern-type))]
+      [(= canonical-id tc-stdlib-comptime-pattern-list-key-id-cache)
+        (AstSomeType (tc-macro-pattern-list-type))]
+      [(= canonical-id tc-stdlib-comptime-match-arm-key-id-cache)
+        (AstSomeType (tc-macro-match-arm-type))]
+      [(= canonical-id tc-stdlib-comptime-match-arm-list-key-id-cache)
+        (AstSomeType (tc-macro-match-arm-list-type))]
       [else (AstNoType)])))
 
 (defenum TcStdlibTypeSpec
@@ -4361,6 +4401,10 @@
     (string.string-eq type-name "ExprClauseList")
     (string.string-eq type-name "ExprBindingClause")
     (string.string-eq type-name "ExprBindingClauseList")
+    (string.string-eq type-name "Pattern")
+    (string.string-eq type-name "PatternList")
+    (string.string-eq type-name "MatchArm")
+    (string.string-eq type-name "MatchArmList")
     (string.string-eq type-name "TypeInfo")
     (string.string-eq type-name "TypeInfoList")
     (string.string-eq type-name "TypeField")
@@ -4811,6 +4855,29 @@
     (TcStdlibTyArrayName elem-name)
     (tc-stdlib-field-spec-cons "len" (TcStdlibTyI64) (TcStdlibFieldSpecNil))))
 
+(define (tc-stdlib-pattern-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
+  (tc-stdlib-variant-spec-cons
+    "PatternWildcard"
+    (TcStdlibTypeSpecNil)
+    (tc-stdlib-variant-spec-cons
+      "PatternBinding"
+      (tc-stdlib-type-spec-list1 (TcStdlibTyString))
+      (tc-stdlib-variant-spec-cons
+        "PatternVariant"
+        (tc-stdlib-type-spec-list2
+          (TcStdlibTyString)
+          (TcStdlibTyName "PatternList"))
+        (TcStdlibVariantSpecNil)))))
+
+(define (tc-stdlib-match-arm-fields) : TcStdlibFieldSpecList
+  (tc-stdlib-field-spec-cons
+    "pattern"
+    (TcStdlibTyName "Pattern")
+    (tc-stdlib-field-spec-cons
+      "body"
+      (TcStdlibTyName "Expr")
+      (TcStdlibFieldSpecNil))))
+
 (define (tc-stdlib-type-info-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
     "TypeInfoBuiltin"
@@ -4963,6 +5030,32 @@
           result
           (tc-stdlib-comptime-surface-step
             result
+            (tc-stdlib-check-enum ctx "Pattern" (tc-stdlib-pattern-specs ctx))))
+        (set!
+          result
+          (tc-stdlib-comptime-surface-step
+            result
+            (tc-stdlib-check-struct
+              ctx
+              "PatternList"
+              (tc-stdlib-sequence-fields ctx "Pattern"))))
+        (set!
+          result
+          (tc-stdlib-comptime-surface-step
+            result
+            (tc-stdlib-check-struct ctx "MatchArm" (tc-stdlib-match-arm-fields))))
+        (set!
+          result
+          (tc-stdlib-comptime-surface-step
+            result
+            (tc-stdlib-check-struct
+              ctx
+              "MatchArmList"
+              (tc-stdlib-sequence-fields ctx "MatchArm"))))
+        (set!
+          result
+          (tc-stdlib-comptime-surface-step
+            result
             (tc-stdlib-check-struct
               ctx
               "TypeInfoList"
@@ -5087,6 +5180,10 @@
     [clause-list : AstType (tc-macro-expr-clause-list-type)]
     [binding-clause : AstType (tc-macro-expr-binding-clause-type)]
     [binding-clause-list : AstType (tc-macro-expr-binding-clause-list-type)]
+    [pattern : AstType (tc-macro-pattern-type)]
+    [pattern-list : AstType (tc-macro-pattern-list-type)]
+    [match-arm : AstType (tc-macro-match-arm-type)]
+    [match-arm-list : AstType (tc-macro-match-arm-list-type)]
     [out : TcTypeEnv env]
     (begin
       (set!
@@ -5135,6 +5232,30 @@
         (tc-bind out "expr-struct-set" (tc-fn3 expr (AstTyString) expr expr)))
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
+      (set! out (tc-bind out "pattern-wildcard" (tc-fn0 pattern)))
+      (set! out (tc-bind out "pattern-binding" (tc-fn1 (AstTyString) pattern)))
+      (set!
+        out
+        (tc-bind
+          out
+          "pattern-variant"
+          (tc-fn2 (AstTyString) pattern-list pattern)))
+      (set! out (tc-bind out "pattern-list-empty" (tc-fn0 pattern-list)))
+      (set!
+        out
+        (tc-bind
+          out
+          "pattern-list-cons"
+          (tc-fn2 pattern pattern-list pattern-list)))
+      (set! out (tc-bind out "match-arm" (tc-fn2 pattern expr match-arm)))
+      (set! out (tc-bind out "match-arm-list-empty" (tc-fn0 match-arm-list)))
+      (set!
+        out
+        (tc-bind
+          out
+          "match-arm-list-cons"
+          (tc-fn2 match-arm match-arm-list match-arm-list)))
+      (set! out (tc-bind out "expr-match" (tc-fn2 expr match-arm-list expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "type-info" (tc-fn1 expr type-info)))
       (set!
@@ -8638,6 +8759,11 @@
               (tc-macro-expr-binding-clause-type)]
             [(string.string-eq name "ExprBindingClauseList")
               (tc-macro-expr-binding-clause-list-type)]
+            [(string.string-eq name "Pattern") (tc-macro-pattern-type)]
+            [(string.string-eq name "PatternList") (tc-macro-pattern-list-type)]
+            [(string.string-eq name "MatchArm") (tc-macro-match-arm-type)]
+            [(string.string-eq name "MatchArmList")
+              (tc-macro-match-arm-list-type)]
             [else (AstTyVar (intern name))])))]))
 
 (define (tc-resolve-type [ctx : TcContext] [ty : AstType]) : AstType
@@ -8882,7 +9008,11 @@
                 (= name (intern "ExprClause"))
                 (= name (intern "ExprClauseList"))
                 (= name (intern "ExprBindingClause"))
-                (= name (intern "ExprBindingClauseList")))
+                (= name (intern "ExprBindingClauseList"))
+                (= name (intern "Pattern"))
+                (= name (intern "PatternList"))
+                (= name (intern "MatchArm"))
+                (= name (intern "MatchArmList")))
                 ResultTcUnit.Ok
                 (ResultTcUnit.Err
                   (tc-source-type-policy-message (intern-str name))))]
@@ -13845,6 +13975,10 @@
       (ResultTcType.Ok (tc-macro-expr-binding-clause-type))]
     [(CtfeExprBindingClauseList _)
       (ResultTcType.Ok (tc-macro-expr-binding-clause-list-type))]
+    [(CtfePattern _) (ResultTcType.Ok (tc-macro-pattern-type))]
+    [(CtfePatternList _) (ResultTcType.Ok (tc-macro-pattern-list-type))]
+    [(CtfeMatchArm _) (ResultTcType.Ok (tc-macro-match-arm-type))]
+    [(CtfeMatchArmList _) (ResultTcType.Ok (tc-macro-match-arm-list-type))]
     [(CtfeTypeInfo _) (ResultTcType.Err "TypeInfo value is compile-time only")]
     [(CtfeTypeInfoBox _)
       (ResultTcType.Err "TypeInfo box value is compile-time only")]
@@ -25215,6 +25349,13 @@
     [(string.string-eq field "init") (ResultTcType.Ok (AstTyExpr))]
     [else (tc-comptime-unknown-field "ExprBindingClause" field)]))
 
+(define (tc-comptime-match-arm-field-type [field : String]) : ResultTcType
+  (cond
+    [(string.string-eq field "pattern")
+      (ResultTcType.Ok (tc-macro-pattern-type))]
+    [(string.string-eq field "body") (ResultTcType.Ok (AstTyExpr))]
+    [else (tc-comptime-unknown-field "MatchArm" field)]))
+
 (define (tc-struct-get-result-type
   [ctx : TcContext]
   [receiver-ty : AstType]
@@ -25263,6 +25404,17 @@
           (tc-comptime-sequence-field-type
             "ExprBindingClauseList"
             (tc-macro-expr-binding-clause-type)
+            field)]
+        [(= name (intern "PatternList"))
+          (tc-comptime-sequence-field-type
+            "PatternList"
+            (tc-macro-pattern-type)
+            field)]
+        [(= name (intern "MatchArm")) (tc-comptime-match-arm-field-type field)]
+        [(= name (intern "MatchArmList"))
+          (tc-comptime-sequence-field-type
+            "MatchArmList"
+            (tc-macro-match-arm-type)
             field)]
         [else (ResultTcType.Err "typecheck: struct-get requires struct")])]
     [_ (ResultTcType.Err "typecheck: struct-get requires struct")]))
@@ -29709,6 +29861,10 @@
               (tc-macro-expr-binding-clause-type)]
             [(= name (intern "ExprBindingClauseList"))
               (tc-macro-expr-binding-clause-list-type)]
+            [(= name (intern "Pattern")) (tc-macro-pattern-type)]
+            [(= name (intern "PatternList")) (tc-macro-pattern-list-type)]
+            [(= name (intern "MatchArm")) (tc-macro-match-arm-type)]
+            [(= name (intern "MatchArmList")) (tc-macro-match-arm-list-type)]
             [else ty])])]
     [(AstTyVarArgs name _)
       (match (tc-stdlib-comptime-syntax-type (intern-str name))

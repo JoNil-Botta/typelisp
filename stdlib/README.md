@@ -45,9 +45,11 @@ use.
   `bytes` view surface. Import it with `(import "stdlib/byte_buf_core.tl")`.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
-  `TypeInfo`, and dense sequence wrappers), plus exported compile-time helper
-  signatures such as `expr-int`, `expr-list-head`, and
-  `expr-clause-list->expr-list`. `expr-type` returns the produced type of a
+  `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
+  `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
+  exported compile-time helper signatures such as `expr-int`,
+  `expr-list-head`, `expr-clause-list->expr-list`, `pattern-variant`,
+  `match-arm`, and `expr-match`. `expr-type` returns the produced type of a
   captured expression for macro-time reflection. The compiler verifies these
   shapes when the module is loaded and maps the syntax declarations and helper
   calls to the current compile-time-only macro representation during the CTFE

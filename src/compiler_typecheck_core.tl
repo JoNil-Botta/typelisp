@@ -15010,15 +15010,15 @@
         [(ResultTcType.Err _) unit])
       result)))
 
-(define (tc-body-type-fact-lookup-profiled [site : String] [expr-id : i64]) : TcBodyTypeFact
+(define (tc-body-type-fact-lookup-profiled [_site : String] [expr-id : i64]) : TcBodyTypeFact
   (match (tc-body-type-fact-lookup expr-id)
     [(TcBodyTypeFact.Hit ty)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-hit site))
+        (cfg compile-profile (compiler-tc-body-fact-profile-hit _site))
         (TcBodyTypeFact.Hit ty))]
     [(TcBodyTypeFact.Miss)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-miss site))
+        (cfg compile-profile (compiler-tc-body-fact-profile-miss _site))
         (TcBodyTypeFact.Miss))]))
 
 (define (tc-body-type-fact-expr-id
@@ -15049,21 +15049,21 @@
     (ResultTcTypeList.Err "")))
 
 (define (tc-body-type-fact-expr-list-types
-  [site : String]
+  [_site : String]
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : AstExprList]) : ResultTcTypeList
   (match (tc-body-type-fact-list-types exprs)
     [(ResultTcTypeList.Ok types)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-hit site))
+        (cfg compile-profile (compiler-tc-body-fact-profile-hit _site))
         (ResultTcTypeList.Ok types))]
     [(ResultTcTypeList.Err _)
       (begin
-        (cfg compile-profile (compiler-tc-body-fact-profile-miss site))
+        (cfg compile-profile (compiler-tc-body-fact-profile-miss _site))
         (cfg
           compile-profile
-          (compiler-tc-reinfer-profile-expr-list-types site ctx env exprs)
+          (compiler-tc-reinfer-profile-expr-list-types _site ctx env exprs)
           (tc-expr-list-types ctx env exprs)))]))
 
 (define (tc-move-binding-type-id
@@ -34478,7 +34478,7 @@
         (match binding
           [(AstResourceBinding.Binding name init-box _)
             (let
-              [init : AstExpr (ast-node-get init-box)]
+              [_init : AstExpr (ast-node-get init-box)]
               (match (tc-move-check-expr-id
                 ctx
                 env
@@ -34990,7 +34990,7 @@
       (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExpr.Set name rhs-box)
       (let
-        [rhs : AstExpr (ast-node-get rhs-box)]
+        [_rhs : AstExpr (ast-node-get rhs-box)]
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name-text rhs-box)
@@ -35297,7 +35297,7 @@
     [(AstExpr.BoxSet box-box value-box)
       (let
         [box-expr : AstExpr (ast-node-get box-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [_value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved box-expr)
           [(OkTcMove moved1)
             (match (tc-move-check-expr-id
@@ -38001,7 +38001,7 @@
         (match binding
           [(AstResourceBinding.Binding name init-box _)
             (let
-              [init : AstExpr (ast-node-get init-box)]
+              [_init : AstExpr (ast-node-get init-box)]
               (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
                 [(OkTcBorrowCheck borrowed1)
                   (match (tc-borrow-check-after-bind-id
@@ -38294,7 +38294,7 @@
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed array)
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-check-expr ctx env locals borrowed1 index)
@@ -38329,7 +38329,7 @@
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed receiver)
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
@@ -38355,7 +38355,7 @@
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed array)
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
@@ -38775,7 +38775,7 @@
     [(AstExpr.BoxSet box-box value-box)
       (let
         [box-expr : AstExpr (ast-node-get box-box)]
-        [value : AstExpr (ast-node-get value-box)]
+        [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed box-expr)
           [(OkTcBorrowCheck borrowed1)
             (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)

@@ -7354,6 +7354,34 @@
 (gen)
 (define (main) : i64 (+ (left) (right)))")
 
+(define (compiler-typecheck-decls-macro-runtime-unsafe-source) : String
+  "(defmacro (gen) : Decls
+  `(define (generated-read [p : (Ptr i64)]) : i64
+     (unsafe (ptr-read p))))
+(gen)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-decls-macro-runtime-unsafe-decl-source) : String
+  "(defmacro (gen) : Decls
+  `(unsafe (define (danger [x : i64]) : i64 x)))
+(gen)
+(define (main) : i64 (unsafe (danger 42)))")
+
+(define (compiler-typecheck-decls-macro-runtime-unsafe-helper-source) : String
+  "(unsafe (define (read-helper [p : (Ptr i64)]) : i64
+  (unsafe (ptr-read p))))
+(defmacro (gen) : Decls
+  `(define (generated-read [p : (Ptr i64)]) : i64
+     (unsafe (read-helper p))))
+(gen)
+(define (main) : i64 0)")
+
+(define (compiler-typecheck-decls-macro-runtime-unsafe-missing-source) : String
+  "(defmacro (gen) : Decls
+  `(define (generated-read [p : (Ptr i64)]) : i64 (ptr-read p)))
+(gen)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-decls-macro-import-followup-source) : String
   "(module generated)
 (define (answer) : i64 42)
@@ -7688,6 +7716,15 @@
       "typecheck: Decls macro can only be used at module scope")
     (compiler-typecheck-ok? (compiler-typecheck-decls-macro-single-source))
     (compiler-typecheck-ok? (compiler-typecheck-decls-macro-multiple-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-decls-macro-runtime-unsafe-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-decls-macro-runtime-unsafe-decl-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-decls-macro-runtime-unsafe-helper-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-decls-macro-runtime-unsafe-missing-source)
+      "typecheck: ptr-read requires unsafe context")
     (compiler-typecheck-ok?
       (compiler-typecheck-decls-macro-import-followup-source))
     (compiler-typecheck-error-ok?

@@ -998,14 +998,13 @@ diagnostic.
 
 #### 3.7.2.1 Comptime purity for macros and generated declarations
 
-`defmacro` bodies, declaration-emitting macro output, and deprecated
-`comptime-decl` generated declaration templates are safe
-compile-time TypeLisp. The checked comptime path is a deterministic transformer
-over compiler-owned syntax and metadata, not a way to perform host I/O or call
-target FFI during compilation.
+`defmacro` bodies and deprecated `comptime-decl` generated declaration
+templates are safe compile-time TypeLisp. The checked comptime path is a
+deterministic transformer over compiler-owned syntax and metadata, not a way to
+perform host I/O or call target FFI during compilation.
 
 The purity rule is direct and transitive through helpers reachable from the
-macro body or generated template:
+macro body or deprecated `comptime-decl` template:
 
 - `(unsafe ...)` blocks, unsafe declarations, raw-pointer operations, low-level
   FFI bridge forms, direct syscalls, process entry state, and host CPU queries
@@ -1026,6 +1025,17 @@ macro body or generated template:
   is a compile-time `String`. It returns `never`, aborts the current CTFE
   expansion/evaluation, reports `message` at the call expression, remains a pure
   deterministic CTFE helper, and is rejected if it reaches runtime lowering.
+
+Declaration-emitting macro output is different from the macro execution path:
+after a pure `: Module` or `: Decls` transformer returns syntax, the expanded
+declarations are checked as ordinary runtime declarations. Generated output may
+therefore contain explicit `(unsafe ...)` runtime blocks and `(unsafe decl)`
+wrappers, and those forms are accepted or rejected by the same unsafe-context
+rules used for hand-written declarations. The deprecated `comptime-decl`
+surface remains safe-only; generated templates under `comptime-decl` must not
+contain unsafe blocks, unsafe declarations, externs, or other forbidden
+compile-time effects. New generated runtime code that needs unsafe operations
+should use `: Decls` or `: Module` macros instead.
 
 Scalar CTFE supports finite `f64` literals and finite `f32` values produced by
 context or explicit precision casts. The ordinary float `+`, `-`, `*`, `/`,

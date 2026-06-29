@@ -432,17 +432,17 @@
 (define (clone-call-expr [pools : AstNodePoolContext] [inner : i64]) : i64
   (ast-expr-call-with-pools
     pools
-    (clone-expr-push pools (AstExprVar (intern "clone")))
-    (ast-expr-cons inner AstExprNil)))
+    (clone-expr-push pools (AstExpr.Var (intern "clone")))
+    (ast-expr-cons inner AstExprList.Nil)))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
 (define (clone-binder-name [i : i64]) : String
   (string.string-append "tlc" (string.int->string i)))
 
-;; Pattern args (AstPatBinding tlc0) (AstPatBinding tlc1) ... for `count` fields.
+;; Pattern args (AstPattern.Binding tlc0) (AstPattern.Binding tlc1) ... for `count` fields.
 (define (clone-variant-pat-args [count : i64] [i : i64]) : AstPatternList
   (if (>= i count)
-    AstPatternNil
+    AstPatternList.Nil
     (ast-pattern-cons
       (ast-pat-binding (clone-binder-name i))
       (clone-variant-pat-args count (+ i 1)))))
@@ -453,11 +453,11 @@
   [count : i64]
   [i : i64]) : AstExprList
   (if (>= i count)
-    AstExprNil
+    AstExprList.Nil
     (ast-expr-cons
       (clone-call-expr
         pools
-        (clone-expr-push pools (AstExprVar (intern (clone-binder-name i)))))
+        (clone-expr-push pools (AstExpr.Var (intern (clone-binder-name i)))))
       (clone-variant-ctor-args pools count (+ i 1)))))
 
 (define (clone-type-list-len [types : AstTypeList]) : i64
@@ -480,14 +480,14 @@
           (ast-pat-variant-id vname (clone-variant-pat-args count 0))
           (ast-expr-call-with-pools
             pools
-            (clone-expr-push pools (AstExprVar vname))
+            (clone-expr-push pools (AstExpr.Var vname))
             (clone-variant-ctor-args pools count 0))))]))
 
 (define (clone-variant-arms
   [pools : AstNodePoolContext]
   [variants : AstVariantDefList]) : AstMatchArmList
   (match variants
-    [(AstVariantDefNil) AstMatchArmNil]
+    [(AstVariantDefNil) AstMatchArmList.Nil]
     [(AstVariantDefCons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
@@ -500,7 +500,7 @@
   [pools : AstNodePoolContext]
   [fields : AstFieldDefList]) : AstExprList
   (match fields
-    [(AstFieldDefNil) AstExprNil]
+    [(AstFieldDefNil) AstExprList.Nil]
     [(AstFieldDefCons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
@@ -511,7 +511,7 @@
                 pools
                 (ast-expr-struct-get-id-with-pools
                   pools
-                  (clone-expr-push pools (AstExprVar (intern "x")))
+                  (clone-expr-push pools (AstExpr.Var (intern "x")))
                   fname))
               (clone-struct-ctor-args pools rest))]))]))
 
@@ -670,8 +670,8 @@
 (define (clone-nil-expr [pools : AstNodePoolContext] [nil-ctor : String]) : i64
   (ast-expr-call-with-pools
     pools
-    (clone-expr-push pools (AstExprVar (intern nil-ctor)))
-    AstExprNil))
+    (clone-expr-push pools (AstExpr.Var (intern nil-ctor)))
+    AstExprList.Nil))
 
 (define (clone-list-tail-next-expr
   [pools : AstNodePoolContext]
@@ -679,8 +679,8 @@
   (if boxed-tail
     (ast-expr-box-get-with-pools
       pools
-      (clone-expr-push pools (AstExprVar (intern "t"))))
-    (clone-expr-push pools (AstExprVar (intern "t")))))
+      (clone-expr-push pools (AstExpr.Var (intern "t"))))
+    (clone-expr-push pools (AstExpr.Var (intern "t")))))
 
 (define (clone-list-tail-acc-expr
   [pools : AstNodePoolContext]
@@ -688,8 +688,8 @@
   (if boxed-tail
     (ast-expr-box-with-pools
       pools
-      (clone-expr-push pools (AstExprVar (intern "acc"))))
-    (clone-expr-push pools (AstExprVar (intern "acc")))))
+      (clone-expr-push pools (AstExpr.Var (intern "acc"))))
+    (clone-expr-push pools (AstExpr.Var (intern "acc")))))
 
 ;; A two-parameter `(define (fn [x : T] [acc : T]) : T body)`.
 (define (clone-make-list-fn
@@ -722,22 +722,22 @@
       cons-ctor
       (ast-pattern-cons
         (ast-pat-binding "h")
-        (ast-pattern-cons (ast-pat-binding "t") AstPatternNil)))
+        (ast-pattern-cons (ast-pat-binding "t") AstPatternList.Nil)))
     (ast-expr-call-with-pools
       pools
-      (clone-expr-push pools (AstExprVar (intern fn-name)))
+      (clone-expr-push pools (AstExpr.Var (intern fn-name)))
       (ast-expr-cons
         (clone-list-tail-next-expr pools boxed-tail)
         (ast-expr-cons
           (ast-expr-call-with-pools
             pools
-            (clone-expr-push pools (AstExprVar (intern cons-ctor)))
+            (clone-expr-push pools (AstExpr.Var (intern cons-ctor)))
             (ast-expr-cons
               head-expr
               (ast-expr-cons
                 (clone-list-tail-acc-expr pools boxed-tail)
-                AstExprNil)))
-          AstExprNil)))))
+                AstExprList.Nil)))
+          AstExprList.Nil)))))
 
 ;; (match x [(Nil) acc] [(Cons h t) (fn t (Cons head-expr acc))])
 (define (clone-list-fold-body
@@ -749,14 +749,14 @@
   [head-expr : i64]) : i64
   (ast-expr-match-with-pools
     pools
-    (clone-expr-push pools (AstExprVar (intern "x")))
+    (clone-expr-push pools (AstExpr.Var (intern "x")))
     (ast-match-arm-cons
       (ast-match-arm
-        (ast-pat-variant nil-ctor AstPatternNil)
-        (clone-expr-push pools (AstExprVar (intern "acc"))))
+        (ast-pat-variant nil-ctor AstPatternList.Nil)
+        (clone-expr-push pools (AstExpr.Var (intern "acc"))))
       (ast-match-arm-cons
         (clone-list-step-arm pools fn-name cons-ctor boxed-tail head-expr)
-        AstMatchArmNil))))
+        AstMatchArmList.Nil))))
 
 ;; clone$L$acc: tail-recursively clone each element into a reversed accumulator.
 (define (clone-list-acc-decl
@@ -778,7 +778,7 @@
         boxed-tail
         (clone-call-expr
           pools
-          (clone-expr-push pools (AstExprVar (intern "h"))))))))
+          (clone-expr-push pools (AstExpr.Var (intern "h"))))))))
 
 ;; clone$L$rev: tail-recursively reverse (no cloning) to restore source order.
 (define (clone-list-rev-decl
@@ -798,7 +798,7 @@
         nil-ctor
         cons-ctor
         boxed-tail
-        (clone-expr-push pools (AstExprVar (intern "h")))))))
+        (clone-expr-push pools (AstExpr.Var (intern "h")))))))
 
 ;; clone$L: reverse(acc(x, Nil), Nil) - both folds run in O(1) stack frames.
 (define (clone-list-entry-decl
@@ -811,17 +811,17 @@
       pools
       (clone-expr-push
         pools
-        (AstExprVar (intern (clone-list-rev-name type-name))))
+        (AstExpr.Var (intern (clone-list-rev-name type-name))))
       (ast-expr-cons
         (ast-expr-call-with-pools
           pools
           (clone-expr-push
             pools
-            (AstExprVar (intern (clone-list-acc-name type-name))))
+            (AstExpr.Var (intern (clone-list-acc-name type-name))))
           (ast-expr-cons
-            (clone-expr-push pools (AstExprVar (intern "x")))
-            (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprNil)))
-        (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprNil)))))
+            (clone-expr-push pools (AstExpr.Var (intern "x")))
+            (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprList.Nil)))
+        (ast-expr-cons (clone-nil-expr pools nil-ctor) AstExprList.Nil)))))
 
 ;; Emit the clone helper(s) for one clone-able enum: three tail-recursive
 ;; functions for a list shape, otherwise the single naive match-reconstruct.
@@ -860,7 +860,7 @@
           name
           (ast-expr-match-with-pools
             pools
-            (clone-expr-push pools (AstExprVar (intern "x")))
+            (clone-expr-push pools (AstExpr.Var (intern "x")))
             (clone-variant-arms pools variants)))
         acc)]))
 
@@ -875,8 +875,8 @@
     [patterns : AstPatternList]
     [want : String]) : i64
     (match patterns
-      [(AstPatternNil) 0]
-      [(AstPatternCons head rest)
+      [(AstPatternList.Nil) 0]
+      [(AstPatternList.Cons head rest)
         (+
           (clone-test-pattern-name-count (box-get head) want)
           (clone-test-pattern-list-name-count (box-get rest) want))])))
@@ -885,9 +885,9 @@
   test
   (define (clone-test-pattern-name-count [pattern : AstPattern] [want : String]) : i64
     (match pattern
-      [(AstPatTuple items)
+      [(AstPattern.Tuple items)
         (clone-test-pattern-list-name-count (box-get items) want)]
-      [(AstPatVariant name items)
+      [(AstPattern.Variant name items)
         (+
           (if (clone-test-id-name? name want)
             1
@@ -902,8 +902,8 @@
     [exprs : AstExprList]
     [want : String]) : i64
     (match exprs
-      [(AstExprNil) 0]
-      [(AstExprCons head rest)
+      [(AstExprList.Nil) 0]
+      [(AstExprList.Cons head rest)
         (+
           (clone-test-expr-name-count pools head want)
           (clone-test-expr-list-name-count pools (box-get rest) want))])))
@@ -915,10 +915,10 @@
     [arms : AstMatchArmList]
     [want : String]) : i64
     (match arms
-      [(AstMatchArmNil) 0]
-      [(AstMatchArmCons arm rest)
+      [(AstMatchArmList.Nil) 0]
+      [(AstMatchArmList.Cons arm rest)
         (match arm
-          [(AstMatchArm pattern body)
+          [(AstMatchArm.Arm pattern body)
             (+
               (clone-test-pattern-name-count pattern want)
               (+
@@ -932,22 +932,22 @@
     [expr-id : i64]
     [want : String]) : i64
     (match (ast-node-pool-context-expr-get pools expr-id)
-      [(AstExprVar name)
+      [(AstExpr.Var name)
         (if (clone-test-id-name? name want)
           1
           0)]
-      [(AstExprCall callee args)
+      [(AstExpr.Call callee args)
         (+
           (clone-test-expr-name-count pools callee want)
           (clone-test-expr-list-name-count pools args want))]
-      [(AstExprMatch match-box)
+      [(AstExpr.Match match-box)
         (match (box-get match-box)
-          [(AstMatch scrutinee arms)
+          [(AstMatch.Match scrutinee arms)
             (+
               (clone-test-expr-name-count pools scrutinee want)
               (clone-test-match-arm-list-name-count pools arms want))])]
-      [(AstExprBox inner) (clone-test-expr-name-count pools inner want)]
-      [(AstExprBoxGet inner) (clone-test-expr-name-count pools inner want)]
+      [(AstExpr.Box inner) (clone-test-expr-name-count pools inner want)]
+      [(AstExpr.BoxGet inner) (clone-test-expr-name-count pools inner want)]
       [_ 0])))
 
 (cfg
@@ -1082,7 +1082,7 @@
                                 name-str
                                 (ast-expr-call-with-pools
                                   pools
-                                  (clone-expr-push pools (AstExprVar name))
+                                  (clone-expr-push pools (AstExpr.Var name))
                                   (clone-struct-ctor-args pools fields)))
                               AstDeclList.Nil)
                             out))

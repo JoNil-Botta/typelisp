@@ -3401,9 +3401,9 @@ All operators are prefix functions (or special forms):
 | `neg` | integer → integer | Unary negation |
 | `/` | integer integer → integer | Signed division |
 | `%` | integer integer → integer | Remainder |
-| `bit-and` | integer integer → integer | Bitwise AND |
-| `bit-or` | integer integer → integer | Bitwise OR |
-| `bit-xor` | integer integer → integer | Bitwise XOR |
+| `bit-and` | integer integer [integer ...] → integer | Bitwise AND |
+| `bit-or` | integer integer [integer ...] → integer | Bitwise OR |
+| `bit-xor` | integer integer [integer ...] → integer | Bitwise XOR |
 | `shl` | integer integer → integer | Left shift |
 | `shr` | integer integer → integer | Right shift (arithmetic for signed, logical for unsigned) |
 
@@ -3414,7 +3414,8 @@ All operators are prefix functions (or special forms):
 - Boolean `and` and `or` are core macros, not parser-owned binary operators.
   All arities expand through `stdlib/core_macros.tl` and short-circuit.
 - Bitwise and shift operators accept integer operands and return the left-hand
-  operand type.
+  operand type. `bit-and`, `bit-or`, and `bit-xor` accept two or more operands
+  and are left-associated. Shift operators accept exactly two operands.
 - `+`, `-`, `*`, `/` also operate on `f64` and `f32`; `%` on floating-point values is
   rejected by backend validation.
 - Integer `/` and `%` trap at runtime when the divisor is zero, or when a

@@ -1101,6 +1101,12 @@
 (define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
+(define (ast-nary-bitwise-tag? [tag : i64]) : bool
+  (or
+    (= tag (compiler-parse-tag-bin-bit-and))
+    (= tag (compiler-parse-tag-bin-bit-or))
+    (= tag (compiler-parse-tag-bin-bit-xor))))
+
 (define (ast-binop-from-tag [tag : i64]) : AstBinOp
   (cond
     [(= tag (compiler-parse-tag-bin-add)) (AstBinAdd)]
@@ -2614,6 +2620,57 @@
                     [(ErrAstExpr message) (ErrAstExpr message)])]
                 [(ErrAstExpr message) (ErrAstExpr message)])]
             [_ (ErrAstExpr "parse: malformed binary expression")])]
+        [_ (ErrAstExpr "parse: malformed binary expression")])]
+    [_ (ErrAstExpr "parse: malformed binary expression")]))
+
+(define (parse-ast-binary-left-fold-tail
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [acc : i64]
+  [tail : SpannedSexpr]) : ResultAstExpr
+  (match tail
+    [(SpannedSexpr.Nil _) (OkAstExpr acc)]
+    [(SpannedSexpr.Cons expr rest _)
+      (match (parse-ast-expr-with-pools dispatch pools (sp-node-get expr))
+        [(OkAstExpr parsed-expr)
+          (parse-ast-binary-left-fold-tail
+            dispatch
+            pools
+            op
+            (ast-expr-binary-with-pools pools op acc parsed-expr)
+            (sp-node-get rest))]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
+    [_ (ErrAstExpr "parse: malformed binary expression")]))
+
+(define (parse-ast-binary-left-fold
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [op : AstBinOp]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpannedSexpr.Cons left right-tail _)
+      (match (sp-node-get right-tail)
+        [(SpannedSexpr.Cons right tail _)
+          (match (parse-ast-expr-with-pools dispatch pools (sp-node-get left))
+            [(OkAstExpr parsed-left)
+              (match (parse-ast-expr-with-pools
+                dispatch
+                pools
+                (sp-node-get right))
+                [(OkAstExpr parsed-right)
+                  (parse-ast-binary-left-fold-tail
+                    dispatch
+                    pools
+                    op
+                    (ast-expr-binary-with-pools
+                      pools
+                      op
+                      parsed-left
+                      parsed-right)
+                    (sp-node-get tail))]
+                [(ErrAstExpr message) (ErrAstExpr message)])]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
         [_ (ErrAstExpr "parse: malformed binary expression")])]
     [_ (ErrAstExpr "parse: malformed binary expression")]))
 
@@ -4800,7 +4857,13 @@
             [(ast-unop-tag? tag)
               (parse-ast-unary dispatch pools (ast-unop-from-tag tag) rest)]
             [(ast-binop-tag? tag)
-              (parse-ast-binary dispatch pools (ast-binop-from-tag tag) rest)]
+              (if (ast-nary-bitwise-tag? tag)
+                (parse-ast-binary-left-fold
+                  dispatch
+                  pools
+                  (ast-binop-from-tag tag)
+                  rest)
+                (parse-ast-binary dispatch pools (ast-binop-from-tag tag) rest))]
             [(= tag (compiler-parse-tag-ty-ref))
               (parse-ast-borrow dispatch pools false rest)]
             [(= tag (compiler-parse-tag-ty-mut-ref))
@@ -9545,11 +9608,22 @@
       "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
     (compiler-parse-ok?
       "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
+    (compiler-parse-ok?
+      "(define (main [a : i64] [b : i64] [c : i64] [d : i64]) : i64 (begin (bit-and a b c d) (bit-or a b c d) (bit-xor a b c d)))")
     (compiler-parse-error-ok?
       "(define (main) : i64 (not))"
       "parse: malformed unary expression")
     (compiler-parse-error-ok?
       "(define (main [a : i64]) : i64 (+ a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64]) : i64 (bit-and a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (bit-or))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64] [b : i64] [c : i64]) : i64 (shl a b c))"
       "parse: malformed binary expression")))
 
 (define (compiler-parse-type-literal-tests-ok?) : bool

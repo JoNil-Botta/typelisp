@@ -109,19 +109,36 @@
   (CompilerRegNoActive)
   (CompilerRegSomeActive CompilerRegActive))
 
+;; Call-spanning split result: the shadow (split) var set + a per-var map
+;; (var-id -> caller-saved register for its non-crossing sub-ranges, "" = none).
+;; The regs map generalizes the former single hardcoded %r9 so multiple
+;; OVERLAPPING call-spanning values can each be kept in a distinct caller-saved
+;; register across a call. (Stage A: plumbing only -- still all %r9, byte-identical.)
+(defenum CompilerRegCallSplit
+  (CompilerRegCallSplit CompilerLiveI64Set (Array String)))
+
+(define (compiler-reg-call-split-shadows [s : CompilerRegCallSplit]) : CompilerLiveI64Set
+  (match s [(CompilerRegCallSplit shadows _) shadows]))
+
+(define (compiler-reg-call-split-regs [s : CompilerRegCallSplit]) : (Array String)
+  (match s [(CompilerRegCallSplit _ regs) regs]))
+
+(define (compiler-reg-call-split-empty) : CompilerRegCallSplit
+  (CompilerRegCallSplit (compiler-live-set-empty) (array.make-array String 0)))
+
 (defenum CompilerRegPlan
   (CompilerRegPlan
     CompilerRegAssignmentList
     CompilerLiveI64Set
     CompilerRegIntervalList
     CompilerRegVarTypeList
-    CompilerLiveI64Set))
+    CompilerRegCallSplit))
 
 (defenum CompilerRegAssignState
   (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentTable))
 
 (defenum CompilerRegCallSaveAssignState
-  (CompilerRegCallSaveAssignState CompilerRegAssignmentTable CompilerLiveI64Set))
+  (CompilerRegCallSaveAssignState CompilerRegAssignmentTable CompilerRegCallSplit))
 
 (defenum CompilerRegCallSaveRewrite
   (CompilerRegCallSaveRewrite
@@ -7290,10 +7307,13 @@
   [clobber-points : CompilerLiveI64Set]
   [clobber-vars : CompilerLiveI64Set]
   [require-segments : bool]
-  [shadows : CompilerLiveI64Set]) : CompilerRegCallSaveAssignState
+  [shadows : CompilerLiveI64Set]
+  [shadow-regs : (Array String)]) : CompilerRegCallSaveAssignState
   (match candidates
     [(CompilerRegIntervalNil)
-      (CompilerRegCallSaveAssignState assignments shadows)]
+      (CompilerRegCallSaveAssignState
+        assignments
+        (CompilerRegCallSplit shadows shadow-regs))]
     [(CompilerRegIntervalCons interval rest)
       (match interval
         [(CompilerRegInterval var start end)
@@ -7310,21 +7330,24 @@
             var
             start
             end)
-            (compiler-reg-assign-caller-saved-call-spanning-candidates
-              (box-get rest)
-              (compiler-reg-assignment-table-insert
-                assignments
-                var
-                (CompilerRegRegister "%r9"))
-              interval-index
-              ref-counts
-              group-vars
-              boundary-vars
-              direct-call-points
-              clobber-points
-              clobber-vars
-              require-segments
-              (compiler-live-set-insert shadows var))
+            (begin
+              (array.array-set! shadow-regs var "%r9")
+              (compiler-reg-assign-caller-saved-call-spanning-candidates
+                (box-get rest)
+                (compiler-reg-assignment-table-insert
+                  assignments
+                  var
+                  (CompilerRegRegister "%r9"))
+                interval-index
+                ref-counts
+                group-vars
+                boundary-vars
+                direct-call-points
+                clobber-points
+                clobber-vars
+                require-segments
+                (compiler-live-set-insert shadows var)
+                shadow-regs))
             (compiler-reg-assign-caller-saved-call-spanning-candidates
               (box-get rest)
               assignments
@@ -7336,7 +7359,8 @@
               clobber-points
               clobber-vars
               require-segments
-              shadows))])]))
+              shadows
+              shadow-regs))])]))
 
 (define (compiler-reg-restore-call-split-spills-from
   [assignments : CompilerRegAssignmentTable]
@@ -7380,25 +7404,32 @@
     [has-segments : bool
       (compiler-reg-interval-index-has-segment-table? interval-index)]
     (if (or single-block has-segments)
-      (match (compiler-reg-assign-caller-saved-call-spanning-candidates
-        candidates
-        assignments
-        interval-index
-        (compiler-reg-function-ref-counts func)
-        group-vars
-        (if single-block
+      (let
+        [ref-counts : (Array i64) (compiler-reg-function-ref-counts func)]
+        [shadow-regs : (Array String)
+          (array.make-array String (array.array-length ref-counts))]
+        (match (compiler-reg-assign-caller-saved-call-spanning-candidates
+          candidates
+          assignments
+          interval-index
+          ref-counts
+          group-vars
+          (if single-block
+            (compiler-live-set-empty)
+            (compiler-reg-call-split-boundary-vars func))
+          (compiler-reg-direct-call-points func)
+          (compiler-reg-backend-caller-clobber-points func)
+          (compiler-reg-backend-caller-clobber-vars func)
+          (not single-block)
           (compiler-live-set-empty)
-          (compiler-reg-call-split-boundary-vars func))
-        (compiler-reg-direct-call-points func)
-        (compiler-reg-backend-caller-clobber-points func)
-        (compiler-reg-backend-caller-clobber-vars func)
-        (not single-block)
-        (compiler-live-set-empty))
-        [(CompilerRegCallSaveAssignState reserved split-vars)
-          (CompilerRegCallSaveAssignState
-            (compiler-reg-restore-call-split-spills reserved split-vars)
-            split-vars)])
-      (CompilerRegCallSaveAssignState assignments (compiler-live-set-empty)))))
+          shadow-regs)
+          [(CompilerRegCallSaveAssignState reserved split-vars)
+            (CompilerRegCallSaveAssignState
+              (compiler-reg-restore-call-split-spills
+                reserved
+                (compiler-reg-call-split-shadows split-vars))
+              split-vars)]))
+      (CompilerRegCallSaveAssignState assignments (compiler-reg-call-split-empty)))))
 
 (cfg
   (any regalloc-census test)
@@ -7547,7 +7578,7 @@
               (compiler-reg-candidates intervals type-info ineligible false)
               assignments
               (compiler-reg-call-points func)
-              split-vars)])
+              (compiler-reg-call-split-shadows split-vars))])
         census))))
 
 (cfg
@@ -9611,13 +9642,15 @@
           group-vars)
         (CompilerRegCallSaveAssignState
           integer-assignments
-          (compiler-live-set-empty)))]
+          (compiler-reg-call-split-empty)))]
     [integer-call-assignments : CompilerRegAssignmentTable
       (match integer-with-call-save-state
         [(CompilerRegCallSaveAssignState assignments _) assignments])]
-    [call-save-shadows : CompilerLiveI64Set
+    [call-save-split : CompilerRegCallSplit
       (match integer-with-call-save-state
-        [(CompilerRegCallSaveAssignState _ shadows) shadows])]
+        [(CompilerRegCallSaveAssignState _ split) split])]
+    [call-save-shadows : CompilerLiveI64Set
+      (compiler-reg-call-split-shadows call-save-split)]
     [scalar-state
       : CompilerRegAssignState
       ;; float -> XMM allocation: the unified greedy over the XMM registers. SysV has
@@ -9698,7 +9731,7 @@
       ineligible
       intervals
       types
-      call-save-shadows)))
+      call-save-split)))
 
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
@@ -9812,7 +9845,7 @@
       (compiler-live-set-empty)
       CompilerRegIntervalNil
       (compiler-reg-var-types-list type-info)
-      (compiler-live-set-empty))))
+      (compiler-reg-call-split-empty))))
 
 ;; --- stack-slot compaction and storage coloring (#2598) ---------------------
 ;; One frame slot per raw IR variable wastes most of the frame once register
@@ -11617,7 +11650,11 @@
 
 (define (compiler-reg-plan-caller-save-shadows [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ _ _ _ shadows) shadows]))
+    [(CompilerRegPlan _ _ _ _ split) (compiler-reg-call-split-shadows split)]))
+
+(define (compiler-reg-plan-caller-save-regs [plan : CompilerRegPlan]) : (Array String)
+  (match plan
+    [(CompilerRegPlan _ _ _ _ split) (compiler-reg-call-split-regs split)]))
 
 (define (compiler-reg-assignment-list-merge
   [extra : CompilerRegAssignmentList]
@@ -11725,9 +11762,10 @@
 
 (define (compiler-reg-caller-save-segment-assignment
   [var : i64]
+  [reg : String]
   [assignments : CompilerRegAssignmentList]) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
-    (CompilerRegAssignment var (CompilerRegRegister "%r9"))
+    (CompilerRegAssignment var (CompilerRegRegister reg))
     assignments))
 
 (define (compiler-reg-caller-save-active-at
@@ -11767,6 +11805,7 @@
   [type-info : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalList]
   [splits : CompilerLiveI64Set]
+  [shadow-regs : (Array String)]
   [current : (Array i64)]
   [remap : (Array i64)]
   [extra-assignments : CompilerRegAssignmentList]
@@ -11798,6 +11837,7 @@
                 type-info
                 intervals
                 splits
+                shadow-regs
                 current
                 remap
                 extra-assignments
@@ -11809,6 +11849,7 @@
                 [next-extra-assignments : CompilerRegAssignmentList
                   (compiler-reg-caller-save-segment-assignment
                     after-var
+                    (array.array-ref shadow-regs var)
                     extra-assignments)]
                 [next-extra-types : CompilerRegVarTypeList
                   (compiler-reg-var-type-insert extra-types after-var ty)]
@@ -11823,6 +11864,7 @@
                     type-info
                     intervals
                     splits
+                    shadow-regs
                     current
                     remap
                     next-extra-assignments
@@ -11857,6 +11899,7 @@
                       out-extra-assignments
                       (compiler-reg-caller-save-segment-assignment
                         out-next-var
+                        (array.array-ref shadow-regs split-def)
                         out-extra-assignments))
                     (set!
                       out-extra-types
@@ -11874,6 +11917,7 @@
                 type-info
                 intervals
                 splits
+                shadow-regs
                 current
                 remap
                 out-extra-assignments
@@ -11890,6 +11934,7 @@
   [type-info : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalList]
   [splits : CompilerLiveI64Set]
+  [shadow-regs : (Array String)]
   [current : (Array i64)]
   [remap : (Array i64)]
   [extra-assignments : CompilerRegAssignmentList]
@@ -11902,6 +11947,7 @@
     type-info
     intervals
     splits
+    shadow-regs
     current
     remap
     extra-assignments
@@ -11935,6 +11981,7 @@
   [type-info : CompilerRegVarTypes]
   [intervals : CompilerRegIntervalList]
   [splits : CompilerLiveI64Set]
+  [shadow-regs : (Array String)]
   [current : (Array i64)]
   [remap : (Array i64)]
   [reset-each-block : bool]
@@ -11964,6 +12011,7 @@
               type-info
               intervals
               splits
+              shadow-regs
               current
               remap
               extra-assignments
@@ -11982,6 +12030,7 @@
                   type-info
                   intervals
                   splits
+                  shadow-regs
                   current
                   remap
                   reset-each-block
@@ -11999,6 +12048,7 @@
         type-info
         intervals
         splits
+        shadow-regs
         current
         remap
         reset-each-block
@@ -12013,6 +12063,7 @@
   [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
   (let
     [splits : CompilerLiveI64Set (compiler-reg-plan-caller-save-shadows plan)]
+    [shadow-regs : (Array String) (compiler-reg-plan-caller-save-regs plan)]
     [split-count : i64 (compiler-reg-caller-save-shadow-count splits vars)]
     (if (= split-count 0)
       (CompilerRegCallSaveRewrite
@@ -12034,6 +12085,7 @@
           type-info
           (compiler-reg-plan-intervals plan)
           splits
+          shadow-regs
           current
           remap
           reset-each-block
@@ -14905,7 +14957,7 @@
       (compiler-live-set-empty)
       CompilerRegIntervalNil
       (compiler-reg-var-types-list (compiler-reg-function-var-types func))
-      (compiler-live-set-empty))))
+      (compiler-reg-call-split-empty))))
 
 (cfg
   test
@@ -14921,7 +14973,7 @@
       (compiler-live-set-empty)
       CompilerRegIntervalNil
       (compiler-reg-var-types-list (compiler-reg-function-var-types func))
-      (compiler-live-set-empty))))
+      (compiler-reg-call-split-empty))))
 
 (cfg
   test
@@ -15247,8 +15299,8 @@
           (compiler-reg-location-spill-offset?
             (compiler-reg-assignment-lookup assignments 6)
             (compiler-reg-stack-slot-offset 6))
-          (not (compiler-live-set-contains? split-vars 5))
-          (not (compiler-live-set-contains? split-vars 6)))])))
+          (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 5))
+          (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 6)))])))
 
 (cfg
   test
@@ -15372,8 +15424,8 @@
             (compiler-reg-location-spill-offset?
               (compiler-reg-assignment-lookup assignments 6)
               (compiler-reg-stack-slot-offset 6))
-            (not (compiler-live-set-contains? split-vars 5))
-            (not (compiler-live-set-contains? split-vars 6)))]))))
+            (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 5))
+            (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 6)))]))))
 
 (cfg
   test
@@ -15385,8 +15437,8 @@
       (match plan
         [(CompilerRegPlan _ _ _ _ split-vars)
           (and
-            (not (compiler-live-set-contains? split-vars 5))
-            (not (compiler-live-set-contains? split-vars 6)))]))))
+            (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 5))
+            (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 6)))]))))
 
 (cfg
   test
@@ -15608,7 +15660,7 @@
             (compiler-live-set-empty)
             intervals
             (compiler-reg-var-types-list type-info)
-            (compiler-live-set-empty))]))))
+            (compiler-reg-call-split-empty))]))))
 
 (cfg
   test
@@ -15632,7 +15684,7 @@
             (compiler-live-set-empty)
             intervals
             (compiler-reg-var-types-list type-info)
-            (compiler-live-set-empty))]))))
+            (compiler-reg-call-split-empty))]))))
 
 (cfg
   test
@@ -16943,7 +16995,7 @@
       (compiler-live-set-empty)
       (compiler-reg-color-spill-sharing-intervals)
       (compiler-reg-color-spill-sharing-types 3)
-      (compiler-live-set-empty))
+      (compiler-reg-call-split-empty))
     (compiler-live-set-empty)
     IrParamNil
     IrBlockNil
@@ -16955,7 +17007,7 @@
           (compiler-live-set-empty)
           (compiler-reg-color-spill-split-intervals)
           (compiler-reg-color-spill-sharing-types 2)
-          (compiler-live-set-empty))
+          (compiler-reg-call-split-empty))
         (compiler-live-set-empty)
         IrParamNil
         IrBlockNil
@@ -16983,7 +17035,7 @@
       (compiler-live-set-empty)
       (compiler-reg-color-spill-param-intervals)
       (compiler-reg-color-spill-sharing-types 3)
-      (compiler-live-set-empty))
+      (compiler-reg-call-split-empty))
     (compiler-live-set-empty)
     (compiler-ir-param-cons (IrParam "pinned" (AstTyI64) 1) IrParamNil)
     IrBlockNil
@@ -17005,7 +17057,7 @@
           (compiler-live-set-empty)
           (compiler-reg-color-pointer-intervals)
           (compiler-reg-color-pointer-types)
-          (compiler-live-set-empty))
+          (compiler-reg-call-split-empty))
         (compiler-live-set-empty)
         params
         blocks
@@ -17033,7 +17085,7 @@
           (compiler-reg-var-type-cons
             (CompilerRegVarType group-var (AstTyStruct (intern "RegGroup")))
             CompilerRegVarTypeNil)
-          (compiler-live-set-empty))
+          (compiler-reg-call-split-empty))
         (compiler-live-set1 group-var)
         IrParamNil
         IrBlockNil

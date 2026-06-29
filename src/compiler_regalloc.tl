@@ -6750,6 +6750,314 @@
             (compiler-reg-sysv-integer-registers)))))
     (compiler-reg-sysv-integer-registers)))
 
+;; ---------------------------------------------------------------------------
+;; On-demand per-header critical-edge split (dedicated preheader insertion).
+;;
+;; A loop block that is its own region (phi-header with a self/critical entry
+;; edge -- the array_sum shape) cannot receive the once-per-loop INTO copy:
+;; edge-copy-plan-for-region refuses because the entry edge is critical
+;; (predecessor has >1 successor AND the loop block has >1 predecessor). LLVM's
+;; LoopSimplify inserts a dedicated preheader. We do the same, but ONLY for the
+;; one header the loop-split is about to home (so non-qualifying loops are
+;; untouched -- a global insert+prune perturbs every loop's per-round liveness,
+;; which is why slice-2 measured +3299). These per-header helpers (ported from
+;; the slice-2 preheader machinery) splice a single `<h>.preheader: jmp <h>`
+;; block before header h, redirect h's single out-of-loop critical-edge
+;; predecessor to it, and relabel h's phi inputs from that predecessor to the
+;; preheader (a pass-through, value-preserving).
+;; ---------------------------------------------------------------------------
+
+(define (compiler-reg-preheader-block-label [block : CompilerIrBlock]) : String
+  (match block
+    [(IrBlock label _) label]))
+
+(define (compiler-reg-preheader-succ-count [block : CompilerIrBlock]) : i64
+  (compiler-live-label-set-count (compiler-live-block-successors block)))
+
+(define (compiler-reg-preheader-succ-contains?
+  [block : CompilerIrBlock]
+  [label : String]) : bool
+  (compiler-live-label-set-contains?
+    (compiler-live-block-successors block)
+    label))
+
+;; True iff the block's terminator is a conditional branch -- the only
+;; critical-edge terminator we know how to redirect (a Jump has a single
+;; successor, so it is never a critical edge).
+(define (compiler-reg-preheader-terminator-branch? [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock _ instrs)
+      (let
+        [c : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (<= c 0)
+          false
+          (match (compiler-ir-instr-seq-ref instrs (- c 1))
+            [(IrInstrBranch _ _ _) true]
+            [_ false])))]))
+
+;; loop-ends[h] = highest block index with a back-edge to block h (-1 if none).
+;; h is a loop header iff loop-ends[h] >= h; [h..loop-ends[h]] is its natural
+;; loop. Same back-edge scan the loop-depth pass uses.
+(define (compiler-reg-preheader-loop-ends
+  [blocks : CompilerIrBlockList]
+  [count : i64]) : (Array i64)
+  (let
+    [loop-ends : (Array i64) (array.make-array i64 count)]
+    [ids : hashmap.StringI64Map
+      (compiler-reg-loop-depth-block-ids
+        blocks
+        (hashmap.string-i64-map-with-capacity
+          (compiler-reg-bits-map-capacity count))
+        0)]
+    (begin
+      (compiler-reg-fill-i64-array loop-ends (- 0 1))
+      (compiler-reg-loop-depth-record-blocks! blocks ids loop-ends 0)
+      loop-ends)))
+
+;; Scan all blocks for predecessors of header `h` (succ contains h-label) that
+;; lie OUTSIDE the natural-loop range [h..le]. Returns the single such index,
+;; -1 if none, or -2 if more than one (multi-entry -- not this slice).
+(define (compiler-reg-preheader-scan-outside-preds
+  [orig : (Array CompilerIrBlock)]
+  [h : i64]
+  [le : i64]
+  [h-label : String]
+  [n : i64]
+  [p : i64]
+  [found : i64]) : i64
+  (if (>= p n)
+    found
+    (if (= found (- 0 2))
+      (- 0 2)
+      (compiler-reg-preheader-scan-outside-preds
+        orig
+        h
+        le
+        h-label
+        n
+        (+ p 1)
+        (if (and
+          (or (< p h) (> p le))
+          (compiler-reg-preheader-succ-contains? (array.array-ref orig p) h-label))
+          (if (= found (- 0 1)) p (- 0 2))
+          found)))))
+
+;; If the header at block index `h` qualifies for a dedicated preheader, return
+;; the block index of its single out-of-loop predecessor; otherwise -1.
+(define (compiler-reg-preheader-pred-for-header
+  [orig : (Array CompilerIrBlock)]
+  [loop-ends : (Array i64)]
+  [ids : hashmap.StringI64Map]
+  [h : i64]
+  [h-label : String]) : i64
+  (if (or
+    (<= h 0)
+    (>= h (array.array-length loop-ends))
+    (< (array.array-ref loop-ends h) h)
+    (hashmap.string-i64-map-contains? ids (str_cat.str-cat h-label ".preheader")))
+    (- 0 1)
+    (let
+      [le : i64 (array.array-ref loop-ends h)]
+      [n : i64 (array.array-length orig)]
+      [pred : i64
+        (compiler-reg-preheader-scan-outside-preds
+          orig h le h-label n 0 (- 0 1))]
+      (if (< pred 0)
+        (- 0 1)
+        (if (and
+          (> (compiler-reg-preheader-succ-count (array.array-ref orig pred)) 1)
+          (compiler-reg-preheader-terminator-branch? (array.array-ref orig pred)))
+          pred
+          (- 0 1))))))
+
+;; Redirect a successor label: if `s` is a header that gets a preheader and the
+;; block doing the redirect (`pred-index`) is that header's single out-of-loop
+;; predecessor, retarget to the header's preheader label; else unchanged.
+(define (compiler-reg-preheader-subst-label
+  [ids : hashmap.StringI64Map]
+  [header-pred : (Array i64)]
+  [pred-index : i64]
+  [s : String]) : String
+  (match (hashmap.string-i64-map-get ids s)
+    [(hashmap.StringI64MapFound h-idx)
+      (if (and
+        (< h-idx (array.array-length header-pred))
+        (= (array.array-ref header-pred h-idx) pred-index))
+        (str_cat.str-cat s ".preheader")
+        s)]
+    [(hashmap.StringI64MapMissing) s]))
+
+(define (compiler-reg-preheader-list-replace-last
+  [instrs : CompilerIrInstrList]
+  [new-last : CompilerIrInstr]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) IrInstrNil]
+    [(IrInstrCons instr rest)
+      (match (box-get rest)
+        [(IrInstrNil) (compiler-ir-instr-cons new-last IrInstrNil)]
+        [_
+          (compiler-ir-instr-cons
+            instr
+            (compiler-reg-preheader-list-replace-last (box-get rest) new-last))])]))
+
+;; Redirect the conditional-branch terminator of `block` (at `index`) for any
+;; target that is a preheader-getting header whose single out-of-loop
+;; predecessor is this block.
+(define (compiler-reg-preheader-redirect-block
+  [ids : hashmap.StringI64Map]
+  [header-pred : (Array i64)]
+  [block : CompilerIrBlock]
+  [index : i64]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (let
+        [c : i64 (compiler-ir-instr-seq-count instrs)]
+        (if (<= c 0)
+          block
+          (match (compiler-ir-instr-seq-ref instrs (- c 1))
+            [(IrInstrBranch cond t f)
+              (let
+                [nt : String
+                  (compiler-reg-preheader-subst-label ids header-pred index t)]
+                [nf : String
+                  (compiler-reg-preheader-subst-label ids header-pred index f)]
+                (if (and (string.string-eq nt t) (string.string-eq nf f))
+                  block
+                  (IrBlock
+                    label
+                    (compiler-ir-instr-seq-from-list
+                      (compiler-reg-preheader-list-replace-last
+                        (compiler-ir-instr-seq-to-list instrs)
+                        (IrInstrBranch cond nt nf))))))]
+            [_ block])))]))
+
+;; Relabel a header's phi inputs that came from `pred-label` to `ph-label`
+;; (the value is unchanged -- the preheader is a pass-through).
+(define (compiler-reg-preheader-relabel-phi-inputs
+  [inputs : CompilerIrPhiInputList]
+  [pred-label : String]
+  [ph-label : String]) : CompilerIrPhiInputList
+  (match inputs
+    [(IrPhiInputNil) IrPhiInputNil]
+    [(IrPhiInputCons value label rest)
+      (compiler-ir-phi-input-cons
+        value
+        (if (string.string-eq label pred-label) ph-label label)
+        (compiler-reg-preheader-relabel-phi-inputs
+          (box-get rest) pred-label ph-label))]))
+
+(define (compiler-reg-preheader-relabel-instr-list
+  [instrs : CompilerIrInstrList]
+  [pred-label : String]
+  [ph-label : String]) : CompilerIrInstrList
+  (match instrs
+    [(IrInstrNil) IrInstrNil]
+    [(IrInstrCons instr rest)
+      (compiler-ir-instr-cons
+        (match instr
+          [(IrInstrPhi dst inputs ty)
+            (IrInstrPhi
+              dst
+              (compiler-reg-preheader-relabel-phi-inputs inputs pred-label ph-label)
+              ty)]
+          [_ instr])
+        (compiler-reg-preheader-relabel-instr-list
+          (box-get rest) pred-label ph-label))]))
+
+(define (compiler-reg-preheader-relabel-header
+  [block : CompilerIrBlock]
+  [pred-label : String]
+  [ph-label : String]) : CompilerIrBlock
+  (match block
+    [(IrBlock label instrs)
+      (IrBlock
+        label
+        (compiler-ir-instr-seq-from-list
+          (compiler-reg-preheader-relabel-instr-list
+            (compiler-ir-instr-seq-to-list instrs)
+            pred-label
+            ph-label)))]))
+
+;; Walk the block list: redirect each block's terminator, and immediately
+;; before each preheader-getting header splice an empty `jmp header` preheader
+;; (with the header's phi inputs relabeled from the predecessor to it).
+(define (compiler-reg-preheader-rewrite
+  [orig : (Array CompilerIrBlock)]
+  [ids : hashmap.StringI64Map]
+  [header-pred : (Array i64)]
+  [blocks : CompilerIrBlockList]
+  [index : i64]) : CompilerIrBlockList
+  (match blocks
+    [(IrBlockNil) IrBlockNil]
+    [(IrBlockCons block rest)
+      (let
+        [tail : CompilerIrBlockList
+          (compiler-reg-preheader-rewrite
+            orig ids header-pred (box-get rest) (+ index 1))]
+        [redirected : CompilerIrBlock
+          (compiler-reg-preheader-redirect-block ids header-pred block index)]
+        [pred : i64
+          (if (< index (array.array-length header-pred))
+            (array.array-ref header-pred index)
+            (- 0 1))]
+        (if (>= pred 0)
+          (let
+            [h-label : String (compiler-reg-preheader-block-label block)]
+            [ph-label : String (str_cat.str-cat h-label ".preheader")]
+            [pred-label : String
+              (compiler-reg-preheader-block-label (array.array-ref orig pred))]
+            (compiler-ir-block-cons
+              (compiler-ir-block
+                ph-label
+                (compiler-ir-instr-cons (IrInstrJump h-label) IrInstrNil))
+              (compiler-ir-block-cons
+                (compiler-reg-preheader-relabel-header redirected pred-label ph-label)
+                tail)))
+          (compiler-ir-block-cons redirected tail)))]
+    [(IrBlockArray seq)
+      (compiler-reg-preheader-rewrite
+        orig ids header-pred (compiler-ir-block-seq-to-list seq) index)]))
+
+;; Splice a dedicated preheader for ONE header (given by label). Builds a
+;; header-pred array with only that header set (if it qualifies via
+;; pred-for-header), then runs the per-header rewrite. Non-target loops are
+;; untouched. Returns the original blocks unchanged if the header does not
+;; qualify (no critical-edge out-of-loop predecessor, or a preheader already
+;; exists).
+(define (compiler-reg-loop-split-splice-preheader
+  [blocks : CompilerIrBlockList]
+  [header-label : String]) : CompilerIrBlockList
+  (let
+    [cons-blocks : CompilerIrBlockList (compiler-ir-block-list-force-cons blocks)]
+    [count : i64 (compiler-ir-block-list-count cons-blocks)]
+    (if (<= count 1)
+      blocks
+      (let
+        [orig : (Array CompilerIrBlock)
+          (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
+        [ids : hashmap.StringI64Map
+          (compiler-reg-loop-depth-block-ids
+            cons-blocks
+            (hashmap.string-i64-map-with-capacity
+              (compiler-reg-bits-map-capacity count))
+            0)]
+        [loop-ends : (Array i64) (compiler-reg-preheader-loop-ends cons-blocks count)]
+        [header-pred : (Array i64) (array.make-array i64 count)]
+        (begin
+          (compiler-reg-fill-i64-array header-pred (- 0 1))
+          (match (hashmap.string-i64-map-get ids header-label)
+            [(hashmap.StringI64MapFound h)
+              (let
+                [pred : i64
+                  (compiler-reg-preheader-pred-for-header
+                    orig loop-ends ids h header-label)]
+                (if (>= pred 0)
+                  (begin
+                    (array.array-set! header-pred h pred)
+                    (compiler-reg-preheader-rewrite orig ids header-pred cons-blocks 0))
+                  blocks))]
+            [(hashmap.StringI64MapMissing) blocks]))))))
+
 (define (compiler-reg-loop-split-try-var
   [func : CompilerIrFunction]
   [region-label : String]
@@ -6919,7 +7227,11 @@
             (if (and
               (< block-index (array.array-length live-blocks))
               (> depth 0)
-              (not (compiler-reg-loop-split-instr-seq-has-phi? instrs))
+              ;; phi-blocks allowed: the not-defined-in-block gate in try-var
+              ;; restricts to read-only invariants (a phi-defined var IS defined
+              ;; in the block, so it is rejected), and on-demand preheader
+              ;; insertion carries/relabels the header's phi inputs.
+              true
               (compiler-reg-loop-split-succs-has-backedge?
                 ids
                 block-index
@@ -7166,6 +7478,228 @@
                                         split-types
                                         rest-types))]))])]))])]))]))))
 
+;; ---------------------------------------------------------------------------
+;; Scan for a loop block whose region rescue is REFUSED only because of a
+;; critical entry edge, yet is otherwise homeable (all gates pass and a register
+;; is free over the region). Returns that block's label (the header to splice a
+;; preheader before) or "" if none. Mirrors select-blocks/select-var/try-var but
+;; (a) does not skip phi-blocks and (b) acts on the EdgeCopyRefused branch.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-loop-split-refused-try-var
+  [func : CompilerIrFunction]
+  [region-label : String]
+  [block : CompilerLiveBlock]
+  [instrs : CompilerIrInstrSeq]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]) : String
+  (if (and
+    (compiler-live-set-contains? (compiler-live-block-live-in block) var)
+    (compiler-live-set-contains? (compiler-live-block-live-out block) var)
+    (not (compiler-live-set-contains? (compiler-live-block-defs block) var))
+    (compiler-reg-interval-index-var-has-segments? intervals var)
+    (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegSpill _)
+            (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
+              [(CompilerRegSomeType ty)
+                (let
+                  [labels : CompilerRegStringList
+                    (compiler-reg-string-cons region-label CompilerRegStringNil)]
+                  [region-intervals : CompilerRegIntervalList
+                    (compiler-reg-loop-split-region-interval
+                      vars
+                      region-start
+                      region-end)]
+                  (match (compiler-reg-edge-copy-plan-for-region
+                    func
+                    labels
+                    var
+                    vars
+                    ty)
+                    ;; A plan (not refused) means the existing rounds already
+                    ;; handle this var -- not a preheader case.
+                    [(CompilerRegEdgeCopyPlan _) ""]
+                    ;; Refused = critical entry edge. Homeable iff a register is
+                    ;; free over the region; if so a preheader unblocks it.
+                    [(CompilerRegEdgeCopyRefused _)
+                      (match (compiler-reg-loop-split-first-register
+                        (compiler-reg-loop-split-candidate-regs
+                          (not
+                            (compiler-reg-loop-split-seq-has-call-or-syscall?
+                              instrs)))
+                        assignments
+                        intervals
+                        region-intervals
+                        var)
+                        [(CompilerRegSomeString _) region-label]
+                        [(CompilerRegNoString) ""])]))]
+              [(CompilerRegNoType) ""])]
+          [_ ""])]
+      [(CompilerRegNoLocation) ""])
+    ""))
+
+(define (compiler-reg-loop-split-refused-select-var
+  [func : CompilerIrFunction]
+  [region-label : String]
+  [block : CompilerLiveBlock]
+  [instrs : CompilerIrInstrSeq]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]) : String
+  (if (>= var vars)
+    ""
+    (let
+      [r : String
+        (compiler-reg-loop-split-refused-try-var
+          func region-label block instrs region-start region-end depth vars var
+          type-info assignments intervals group-vars parents merged-roots)]
+      (if (string.string-eq r "")
+        (compiler-reg-loop-split-refused-select-var
+          func region-label block instrs region-start region-end depth vars
+          (+ var 1) type-info assignments intervals group-vars parents merged-roots)
+        r))))
+
+(define (compiler-reg-loop-split-refused-select-blocks
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [ids : hashmap.StringI64Map]
+  [live-blocks : (Array CompilerLiveBlock)]
+  [depths : (Array i64)]
+  [point : i64]
+  [block-index : i64]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [merged-roots : CompilerLiveI64Set]) : String
+  (match blocks
+    [(IrBlockNil) ""]
+    [(IrBlockCons ir-block rest)
+      (match ir-block
+        [(IrBlock label instrs)
+          (let
+            [next-point : i64
+              (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
+            [depth : i64
+              (if (< block-index (array.array-length depths))
+                (array.array-ref depths block-index)
+                0)]
+            (if (and
+              (< block-index (array.array-length live-blocks))
+              (> depth 0)
+              (compiler-reg-loop-split-succs-has-backedge?
+                ids
+                block-index
+                (compiler-reg-live-block-succs
+                  (array.array-ref live-blocks block-index))))
+              (let
+                [r : String
+                  (compiler-reg-loop-split-refused-select-var
+                    func
+                    label
+                    (array.array-ref live-blocks block-index)
+                    instrs
+                    point
+                    next-point
+                    depth
+                    vars
+                    0
+                    type-info
+                    assignments
+                    intervals
+                    group-vars
+                    parents
+                    merged-roots)]
+                (if (string.string-eq r "")
+                  (compiler-reg-loop-split-refused-select-blocks
+                    func (box-get rest) ids live-blocks depths next-point
+                    (+ block-index 1) vars type-info assignments intervals
+                    group-vars parents merged-roots)
+                  r))
+              (compiler-reg-loop-split-refused-select-blocks
+                func (box-get rest) ids live-blocks depths next-point
+                (+ block-index 1) vars type-info assignments intervals
+                group-vars parents merged-roots)))])]
+    [(IrBlockArray seq)
+      (compiler-reg-loop-split-refused-select-blocks
+        func (compiler-ir-block-seq-to-list seq) ids live-blocks depths point
+        block-index vars type-info assignments intervals group-vars parents
+        merged-roots)]))
+
+;; Top-level: set up liveness/intervals/coalesce (as rewrite-fueled does) and
+;; return the label of a loop block that needs a preheader to be homeable, or "".
+(define (compiler-reg-loop-split-find-refused-header
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [plan : CompilerRegPlan]) : String
+  (if (not (compiler-reg-scalar-full-intervals? func))
+    ""
+    (let
+      [liveness : CompilerFunctionLiveness
+        (compiler-live-analyze-function func)]
+      [selection : CompilerRegIntervalSelection
+        (compiler-reg-live-interval-selection func liveness)]
+      [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-plan-assignments plan)]
+      [group-vars : CompilerLiveI64Set
+        (compiler-reg-function-group-vars func types)]
+      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
+      (match selection
+        [(CompilerRegIntervalSelection _ intervals)
+          (let
+            [coalesce : CompilerRegCoalesceMap
+              (compiler-reg-coalesce-map-build
+                (compiler-reg-function-moves func false)
+                intervals
+                type-info
+                group-vars
+                vars
+                (array.make-array i64 0))]
+            [parents : (Array i64) (struct-get coalesce parents)]
+            [merged-roots : CompilerLiveI64Set
+              (compiler-reg-coalesce-merged-root-set coalesce)]
+            (match liveness
+              [(CompilerFunctionLiveness ids live-blocks)
+                (compiler-reg-loop-split-refused-select-blocks
+                  func
+                  blocks
+                  ids
+                  live-blocks
+                  depths
+                  0
+                  0
+                  vars
+                  type-info
+                  assignments
+                  intervals
+                  group-vars
+                  parents
+                  merged-roots)]))]))))
+
 (define (compiler-reg-loop-split-max-rounds) : i64
   ;; 5 callee-saved + the 4 caller-saved (r8/r9/rsi/rdi) the rescue may use in
   ;; clobber-free regions; extra rounds stop early when no free candidate remains.
@@ -7212,12 +7746,48 @@
             next-assignments
             next-types)
           (if (= next-vars current-vars)
-            (CompilerRegCallSaveRewrite
-              blocks
-              in-vars
-              current-vars
-              extra-assignments
-              extra-types)
+            ;; No var homed this round. Before giving up, check whether a loop
+            ;; block is homeable EXCEPT for a critical entry edge; if so, splice
+            ;; a dedicated preheader for that one header and retry -- the next
+            ;; round homes the var into the now-non-critical edge. Only the one
+            ;; loop being homed is touched, so other loops stay byte-identical.
+            (let
+              [refused-header : String
+                (compiler-reg-loop-split-find-refused-header
+                  func
+                  blocks
+                  current-vars
+                  round-type-info
+                  round-plan)]
+              (if (string.string-eq refused-header "")
+                (CompilerRegCallSaveRewrite
+                  blocks
+                  in-vars
+                  current-vars
+                  extra-assignments
+                  extra-types)
+                (let
+                  [spliced : CompilerIrBlockList
+                    (compiler-reg-loop-split-splice-preheader blocks refused-header)]
+                  (if (> (compiler-ir-block-list-count spliced)
+                        (compiler-ir-block-list-count blocks))
+                    (match func
+                      [(IrFunction name params ret-ty _ _)
+                        (compiler-reg-loop-split-rewrite-rounds
+                          (IrFunction name params ret-ty current-vars spliced)
+                          spliced
+                          in-vars
+                          current-vars
+                          plan
+                          extra-assignments
+                          extra-types
+                          (- rounds-left 1))])
+                    (CompilerRegCallSaveRewrite
+                      blocks
+                      in-vars
+                      current-vars
+                      extra-assignments
+                      extra-types)))))
             (match func
               [(IrFunction name params ret-ty _ _)
                 (let

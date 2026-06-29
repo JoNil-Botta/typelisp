@@ -31,35 +31,35 @@
 ;; from #1137 for macro transformers; TypeInfo pseudo-values back the
 ;; stdlib-owned reflection surface.
 (defenum CompilerCtfeValue
-  (CtfeI64 i64)
-  (CtfeF64 f64)
-  (CtfeF32 f64)
-  (CtfeBool bool)
-  (CtfeChar char)
-  (CtfeString String)
-  (CtfeUnit)
-  (CtfeType AstType)
+  (I64 i64)
+  (F64 f64)
+  (F32 f64)
+  (Bool bool)
+  (Char char)
+  (String String)
+  (Unit)
+  (Type AstType)
   ;; A user-facing `Expr` code fragment plus its internally checked produced
   ;; type. The type is not part of the source-level Expr type (#1135).
-  (CtfeExpr i64 AstType)
-  (CtfeExprList AstExprList)
-  (CtfeExprClause AstExprClause)
-  (CtfeExprClauseList AstExprClauseList)
-  (CtfeExprBindingClause AstExprBindingClause)
-  (CtfeExprBindingClauseList AstExprBindingClauseList)
-  (CtfePattern AstPattern)
-  (CtfePatternList AstPatternList)
-  (CtfeMatchArm AstMatchArm)
-  (CtfeMatchArmList AstMatchArmList)
-  (CtfeTypeInfo AstType)
-  (CtfeTypeInfoBox AstType)
-  (CtfeTypeInfoList AstTypeList)
-  (CtfeTypeField String AstType)
-  (CtfeTypeFieldList CtfeReflectFieldList)
-  (CtfeTypeVariantPayload AstType)
-  (CtfeTypeVariantPayloadList AstTypeList)
-  (CtfeTypeVariant String AstTypeList)
-  (CtfeTypeVariantList CtfeReflectVariantList))
+  (Expr i64 AstType)
+  (ExprList AstExprList)
+  (ExprClause AstExprClause)
+  (ExprClauseList AstExprClauseList)
+  (ExprBindingClause AstExprBindingClause)
+  (ExprBindingClauseList AstExprBindingClauseList)
+  (Pattern AstPattern)
+  (PatternList AstPatternList)
+  (MatchArm AstMatchArm)
+  (MatchArmList AstMatchArmList)
+  (TypeInfo AstType)
+  (TypeInfoBox AstType)
+  (TypeInfoList AstTypeList)
+  (TypeField String AstType)
+  (TypeFieldList CtfeReflectFieldList)
+  (TypeVariantPayload AstType)
+  (TypeVariantPayloadList AstTypeList)
+  (TypeVariant String AstTypeList)
+  (TypeVariantList CtfeReflectVariantList))
 
 (define (ctfe-untyped-expr-type-name) : String
   "__typelisp_untyped_expr")
@@ -120,8 +120,8 @@
   (ast-ty-box (ctfe-type-info-source-type)))
 
 (defenum CtfeValueList
-  (CtfeValueNil)
-  (CtfeValueCons CompilerCtfeValue (Box CtfeValueList)))
+  (Nil)
+  (Cons CompilerCtfeValue (Box CtfeValueList)))
 
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
@@ -136,7 +136,7 @@
 ;; - AST-owned lists such as AstExprList, AstTypeList, and AstParamList remain
 ;;   frontend data structures and are tracked separately by #2565.
 (defenum CtfeLayoutField
-  (CtfeLayoutField String i64))
+  (Field String i64))
 
 (comptime-decl
   (:generated vector-family CtfeLayoutFieldList "CtfeLayoutField")
@@ -145,7 +145,7 @@
     (len i64)))
 
 (defenum CtfeLayoutInfo
-  (CtfeLayoutInfo String bool i64 i64 CtfeLayoutFieldList))
+  (Info String bool i64 i64 CtfeLayoutFieldList))
 
 (comptime-decl
   (:generated vector-family CtfeLayoutInfoList "CtfeLayoutInfo")
@@ -154,17 +154,17 @@
     (len i64)))
 
 (defenum CtfeMaybeLayoutInfo
-  (CtfeNoLayoutInfo)
-  (CtfeSomeLayoutInfo CtfeLayoutInfo))
+  (None)
+  (Some CtfeLayoutInfo))
 
 (defenum CtfeMaybeFieldName
-  (CtfeNoFieldName)
-  (CtfeSomeFieldName String))
+  (None)
+  (Some String))
 
 ;; CTFE-owned type reflection metadata. Typecheck and specialization build this
 ;; from `AstProgram` and pass it into CTFE without making CTFE import either pass.
 (defenum CtfeReflectField
-  (CtfeReflectField String AstType))
+  (Field String AstType))
 
 (comptime-decl
   (:generated vector-family CtfeReflectFieldList "CtfeReflectField")
@@ -173,7 +173,7 @@
     (len i64)))
 
 (defenum CtfeReflectVariant
-  (CtfeReflectVariant String AstTypeList))
+  (Variant String AstTypeList))
 
 (comptime-decl
   (:generated vector-family CtfeReflectVariantList "CtfeReflectVariant")
@@ -182,8 +182,8 @@
     (len i64)))
 
 (defenum CtfeReflectInfo
-  (CtfeReflectStruct String String String CtfeReflectFieldList)
-  (CtfeReflectEnum String String String CtfeReflectVariantList))
+  (Struct String String String CtfeReflectFieldList)
+  (Enum String String String CtfeReflectVariantList))
 
 (comptime-decl
   (:generated vector-family CtfeReflectInfoList "CtfeReflectInfo")
@@ -192,18 +192,18 @@
     (len i64)))
 
 (defenum CtfeMaybeReflectInfo
-  (CtfeNoReflectInfo)
-  (CtfeSomeReflectInfo CtfeReflectInfo))
+  (None)
+  (Some CtfeReflectInfo))
 
 ;; Immutable name -> value environment plus immutable type metadata tables. Newest
 ;; value binding sits at the front so lookup finds the most recent shadowing
 ;; binding first; metadata lives at the root and is shared by extensions.
 (defenum CtfeEnv
-  (CtfeEnvNil AstNodePoolContext CtfeLayoutInfoList CtfeReflectInfoList)
-  (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))
+  (Nil AstNodePoolContext CtfeLayoutInfoList CtfeReflectInfoList)
+  (Cons String CompilerCtfeValue AstType (Box CtfeEnv)))
 
 (define (ctfe-env-empty-with-pools [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnvNil
+  (CtfeEnv.Nil
     pools
     (ctfe-layout-info-list-empty)
     (ctfe-reflect-info-list-empty)))
@@ -214,7 +214,7 @@
 (define (ctfe-env-with-layouts-and-pools
   [layouts : CtfeLayoutInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnvNil pools layouts (ctfe-reflect-info-list-empty)))
+  (CtfeEnv.Nil pools layouts (ctfe-reflect-info-list-empty)))
 
 (define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
   (ctfe-env-with-layouts-and-pools
@@ -224,7 +224,7 @@
 (define (ctfe-env-with-reflections-and-pools
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnvNil pools (ctfe-layout-info-list-empty) reflections))
+  (CtfeEnv.Nil pools (ctfe-layout-info-list-empty) reflections))
 
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
   (ctfe-env-with-reflections-and-pools
@@ -235,7 +235,7 @@
   [layouts : CtfeLayoutInfoList]
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnvNil pools layouts reflections))
+  (CtfeEnv.Nil pools layouts reflections))
 
 (define (ctfe-env-with-metadata
   [layouts : CtfeLayoutInfoList]
@@ -249,14 +249,14 @@
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]) : CtfeEnv
-  (CtfeEnvCons name value (ctfe-value-default-cast-type value) (box env)))
+  (CtfeEnv.Cons name value (ctfe-value-default-cast-type value) (box env)))
 
 (define (ctfe-env-extend-typed
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]
   [ty : AstType]) : CtfeEnv
-  (CtfeEnvCons name value ty (box env)))
+  (CtfeEnv.Cons name value ty (box env)))
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList (array.make-array CtfeLayoutField capacity) 0))
@@ -359,7 +359,7 @@
 
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
   (match info
-    [(CtfeLayoutInfo name _ _ _ _) name]))
+    [(CtfeLayoutInfo.Info name _ _ _ _) name]))
 
 ;; Per-build dedup set of keys already added to the metadata list. The reflection
 ;; and layout builds each register every type under its key (and module alias);
@@ -393,11 +393,11 @@
   [name : String]
   [index : i64]) : CtfeMaybeLayoutInfo
   (if (< index 0)
-    (CtfeNoLayoutInfo)
+    (CtfeMaybeLayoutInfo.None)
     (let
       [info : CtfeLayoutInfo (ctfe-layout-info-list-ref layouts index)]
       (if (string.string-eq (ctfe-layout-info-name info) name)
-        (CtfeSomeLayoutInfo info)
+        (CtfeMaybeLayoutInfo.Some info)
         (ctfe-layout-info-lookup-from layouts name (- index 1))))))
 
 (define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
@@ -412,7 +412,7 @@
     (let
       [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
-        [(CtfeLayoutField field-name offset)
+        [(CtfeLayoutField.Field field-name offset)
           (if (string.string-eq field-name name)
             offset
             (ctfe-layout-field-offset-from fields name (+ index 1)))]))))
@@ -424,24 +424,25 @@
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
-    [(CtfeEnvNil _ layouts _) layouts]
-    [(CtfeEnvCons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
+    [(CtfeEnv.Nil _ layouts _) layouts]
+    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
-    [(CtfeEnvNil _ _ reflections) reflections]
-    [(CtfeEnvCons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
+    [(CtfeEnv.Nil _ _ reflections) reflections]
+    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
 
 (define (ctfe-env-pools [env : CtfeEnv]) : AstNodePoolContext
   (match env
-    [(CtfeEnvNil pools _ _) pools]
-    [(CtfeEnvCons _ _ _ rest) (ctfe-env-pools (box-get rest))]))
+    [(CtfeEnv.Nil pools _ _) pools]
+    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-pools (box-get rest))]))
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : AstNodePoolContext]) : CtfeEnv
   (match env
-    [(CtfeEnvNil _ layouts reflections) (CtfeEnvNil pools layouts reflections)]
-    [(CtfeEnvCons key value ty rest)
-      (CtfeEnvCons
+    [(CtfeEnv.Nil _ layouts reflections)
+      (CtfeEnv.Nil pools layouts reflections)]
+    [(CtfeEnv.Cons key value ty rest)
+      (CtfeEnv.Cons
         key
         value
         ty
@@ -467,21 +468,21 @@
 
 ;; Lookup result for an environment probe.
 (defenum CtfeMaybeValue
-  (CtfeNoValue)
-  (CtfeSomeValue CompilerCtfeValue))
+  (None)
+  (Some CompilerCtfeValue))
 
 (define (ctfe-env-lookup [env : CtfeEnv] [name : String]) : CtfeMaybeValue
   (match env
-    [(CtfeEnvNil _ _ _) (CtfeNoValue)]
-    [(CtfeEnvCons key value _ rest)
+    [(CtfeEnv.Nil _ _ _) (CtfeMaybeValue.None)]
+    [(CtfeEnv.Cons key value _ rest)
       (if (string.string-eq key name)
-        (CtfeSomeValue value)
+        (CtfeMaybeValue.Some value)
         (ctfe-env-lookup (box-get rest) name))]))
 
 (define (ctfe-env-lookup-type [env : CtfeEnv] [name : String]) : AstMaybeType
   (match env
-    [(CtfeEnvNil _ _ _) (AstNoType)]
-    [(CtfeEnvCons key _ ty rest)
+    [(CtfeEnv.Nil _ _ _) (AstNoType)]
+    [(CtfeEnv.Cons key _ ty rest)
       (if (string.string-eq key name)
         (AstSomeType ty)
         (ctfe-env-lookup-type (box-get rest) name))]))
@@ -598,11 +599,11 @@
 
 (define (ctfe-hygiene-enabled? [env : CtfeEnv]) : bool
   (match (ctfe-env-lookup env (ctfe-hygiene-enabled-name))
-    [(CtfeSomeValue value)
+    [(CtfeMaybeValue.Some value)
       (match value
-        [(CtfeBool enabled) enabled]
+        [(CompilerCtfeValue.Bool enabled) enabled]
         [_ false])]
-    [(CtfeNoValue) false]))
+    [(CtfeMaybeValue.None) false]))
 
 (define (ctfe-hygiene-template-name [name : String]) : String
   (if (ctfe-string-prefix? name (ctfe-hygiene-template-prefix))
@@ -691,8 +692,8 @@
 
 (define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
   (match info
-    [(CtfeReflectStruct key _ _ _) key]
-    [(CtfeReflectEnum key _ _ _) key]))
+    [(CtfeReflectInfo.Struct key _ _ _) key]
+    [(CtfeReflectInfo.Enum key _ _ _) key]))
 
 (define (ctfe-reflect-info-list-add-if-missing
   [infos : CtfeReflectInfoList]
@@ -706,11 +707,11 @@
   [key : String]
   [index : i64]) : CtfeMaybeReflectInfo
   (if (< index 0)
-    (CtfeNoReflectInfo)
+    (CtfeMaybeReflectInfo.None)
     (let
       [info : CtfeReflectInfo (ctfe-reflect-info-list-ref infos index)]
       (if (string.string-eq (ctfe-reflect-info-key info) key)
-        (CtfeSomeReflectInfo info)
+        (CtfeMaybeReflectInfo.Some info)
         (ctfe-reflect-info-lookup-from infos key (- index 1))))))
 
 (define (ctfe-reflect-info-lookup [infos : CtfeReflectInfoList] [key : String]) : CtfeMaybeReflectInfo
@@ -736,7 +737,7 @@
               rest
               (ctfe-reflect-field-list-push
                 out
-                (CtfeReflectField (intern-str name) ty)))]))]))
+                (CtfeReflectField.Field (intern-str name) ty)))]))]))
 
 (define (ctfe-reflect-field-list-from-fields [fields : AstFieldDefList]) : CtfeReflectFieldList
   (ctfe-reflect-field-list-from-fields-into
@@ -764,7 +765,7 @@
               rest
               (ctfe-reflect-variant-list-push
                 out
-                (CtfeReflectVariant (intern-str name) payloads)))]))]))
+                (CtfeReflectVariant.Variant (intern-str name) payloads)))]))]))
 
 (define (ctfe-reflect-variant-list-from-variants [variants : AstVariantDefList]) : CtfeReflectVariantList
   (ctfe-reflect-variant-list-from-variants-into
@@ -777,14 +778,14 @@
   [info : CtfeReflectInfo]
   [alias : String]) : CtfeReflectInfoList
   (match info
-    [(CtfeReflectStruct _ module name fields)
+    [(CtfeReflectInfo.Struct _ module name fields)
       (ctfe-reflect-info-list-add-if-missing
         infos
-        (CtfeReflectStruct alias module name fields))]
-    [(CtfeReflectEnum _ module name variants)
+        (CtfeReflectInfo.Struct alias module name fields))]
+    [(CtfeReflectInfo.Enum _ module name variants)
       (ctfe-reflect-info-list-add-if-missing
         infos
-        (CtfeReflectEnum alias module name variants))]))
+        (CtfeReflectInfo.Enum alias module name variants))]))
 
 (define (ctfe-reflect-info-add-names
   [infos : CtfeReflectInfoList]
@@ -820,7 +821,7 @@
                     module
                     (string.string-append "/" name-str)))]
               [info : CtfeReflectInfo
-                (CtfeReflectStruct
+                (CtfeReflectInfo.Struct
                   key
                   module
                   name-str
@@ -839,7 +840,7 @@
                     module
                     (string.string-append "/" name-str)))]
               [info : CtfeReflectInfo
-                (CtfeReflectStruct
+                (CtfeReflectInfo.Struct
                   key
                   module
                   name-str
@@ -858,7 +859,7 @@
                     module
                     (string.string-append "/" name-str)))]
               [info : CtfeReflectInfo
-                (CtfeReflectEnum
+                (CtfeReflectInfo.Enum
                   key
                   module
                   name-str
@@ -877,7 +878,7 @@
                     module
                     (string.string-append "/" name-str)))]
               [info : CtfeReflectInfo
-                (CtfeReflectEnum
+                (CtfeReflectInfo.Enum
                   key
                   module
                   name-str
@@ -900,7 +901,7 @@
                           module
                           (string.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
-                      (CtfeReflectStruct
+                      (CtfeReflectInfo.Struct
                         key
                         module
                         name-str
@@ -919,7 +920,7 @@
                           module
                           (string.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
-                      (CtfeReflectStruct
+                      (CtfeReflectInfo.Struct
                         key
                         module
                         name-str
@@ -938,7 +939,7 @@
                           module
                           (string.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
-                      (CtfeReflectEnum
+                      (CtfeReflectInfo.Enum
                         key
                         module
                         name-str
@@ -957,7 +958,7 @@
                           module
                           (string.string-append "/" name-str)))]
                     [info : CtfeReflectInfo
-                      (CtfeReflectEnum
+                      (CtfeReflectInfo.Enum
                         key
                         module
                         name-str
@@ -1010,56 +1011,56 @@
 ;; shared budget across all sub-evaluations, matching the spirit of the Rust
 ;; evaluator's per-step 10_000 fuel cap.
 (defenum ResultCtfe
-  (OkCtfe CompilerCtfeValue i64)
-  (ErrCtfe (Box CompilerDiagnostic)))
+  (Ok CompilerCtfeValue i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum CtfePatternMatch
-  (CtfeNoPatternMatch)
-  (CtfePatternMatched CtfeEnv))
+  (No)
+  (Matched CtfeEnv))
 
 (defenum ResultCtfeQuoteExpr
-  (OkCtfeQuoteExpr i64 AstType i64)
-  (ErrCtfeQuoteExpr (Box CompilerDiagnostic)))
+  (Ok i64 AstType i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteExprList
-  (OkCtfeQuoteExprList AstExprList i64)
-  (ErrCtfeQuoteExprList (Box CompilerDiagnostic)))
+  (Ok AstExprList i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteType
-  (OkCtfeQuoteType AstType i64)
-  (ErrCtfeQuoteType (Box CompilerDiagnostic)))
+  (Ok AstType i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteTypeList
-  (OkCtfeQuoteTypeList AstTypeList i64)
-  (ErrCtfeQuoteTypeList (Box CompilerDiagnostic)))
+  (Ok AstTypeList i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteLifetimeList
-  (OkCtfeQuoteLifetimeList AstLifetimeList)
-  (ErrCtfeQuoteLifetimeList (Box CompilerDiagnostic)))
+  (Ok AstLifetimeList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteMaybeType
-  (OkCtfeQuoteMaybeType AstMaybeType i64)
-  (ErrCtfeQuoteMaybeType (Box CompilerDiagnostic)))
+  (Ok AstMaybeType i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteLetBindings
-  (OkCtfeQuoteLetBindings AstLetBindingList i64)
-  (ErrCtfeQuoteLetBindings (Box CompilerDiagnostic)))
+  (Ok AstLetBindingList i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteResourceBindings
-  (OkCtfeQuoteResourceBindings AstResourceBindingList i64)
-  (ErrCtfeQuoteResourceBindings (Box CompilerDiagnostic)))
+  (Ok AstResourceBindingList i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuotePattern
-  (OkCtfeQuotePattern AstPattern)
-  (ErrCtfeQuotePattern (Box CompilerDiagnostic)))
+  (Ok AstPattern)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuotePatternList
-  (OkCtfeQuotePatternList AstPatternList)
-  (ErrCtfeQuotePatternList (Box CompilerDiagnostic)))
+  (Ok AstPatternList)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteArms
-  (OkCtfeQuoteArms AstMatchArmList i64)
-  (ErrCtfeQuoteArms (Box CompilerDiagnostic)))
+  (Ok AstMatchArmList i64)
+  (Err (Box CompilerDiagnostic)))
 
 (define (ctfe-fuel-limit) : i64
   10000)
@@ -1159,33 +1160,33 @@
 
 (define (ctfe-value-type-name [value : CompilerCtfeValue]) : String
   (match value
-    [(CtfeI64 _) "i64"]
-    [(CtfeF64 _) "f64"]
-    [(CtfeF32 _) "f32"]
-    [(CtfeBool _) "bool"]
-    [(CtfeChar _) "char"]
-    [(CtfeString _) "String"]
-    [(CtfeUnit) "unit"]
-    [(CtfeType _) "type"]
-    [(CtfeExpr _ _) "Expr"]
-    [(CtfeExprList _) "expr-list"]
-    [(CtfeExprClause _) "ExprClause"]
-    [(CtfeExprClauseList _) "ExprClauseList"]
-    [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
-    [(CtfePattern _) "Pattern"]
-    [(CtfePatternList _) "PatternList"]
-    [(CtfeMatchArm _) "MatchArm"]
-    [(CtfeMatchArmList _) "MatchArmList"]
-    [(CtfeTypeInfo _) "TypeInfo"]
-    [(CtfeTypeInfoBox _) "Box"]
-    [(CtfeTypeInfoList _) "TypeInfoList"]
-    [(CtfeTypeField _ _) "TypeField"]
-    [(CtfeTypeFieldList _) "TypeFieldList"]
-    [(CtfeTypeVariantPayload _) "TypeVariantPayload"]
-    [(CtfeTypeVariantPayloadList _) "TypeVariantPayloadList"]
-    [(CtfeTypeVariant _ _) "TypeVariant"]
-    [(CtfeTypeVariantList _) "TypeVariantList"]))
+    [(CompilerCtfeValue.I64 _) "i64"]
+    [(CompilerCtfeValue.F64 _) "f64"]
+    [(CompilerCtfeValue.F32 _) "f32"]
+    [(CompilerCtfeValue.Bool _) "bool"]
+    [(CompilerCtfeValue.Char _) "char"]
+    [(CompilerCtfeValue.String _) "String"]
+    [(CompilerCtfeValue.Unit) "unit"]
+    [(CompilerCtfeValue.Type _) "type"]
+    [(CompilerCtfeValue.Expr _ _) "Expr"]
+    [(CompilerCtfeValue.ExprList _) "expr-list"]
+    [(CompilerCtfeValue.ExprClause _) "ExprClause"]
+    [(CompilerCtfeValue.ExprClauseList _) "ExprClauseList"]
+    [(CompilerCtfeValue.ExprBindingClause _) "ExprBindingClause"]
+    [(CompilerCtfeValue.ExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CompilerCtfeValue.Pattern _) "Pattern"]
+    [(CompilerCtfeValue.PatternList _) "PatternList"]
+    [(CompilerCtfeValue.MatchArm _) "MatchArm"]
+    [(CompilerCtfeValue.MatchArmList _) "MatchArmList"]
+    [(CompilerCtfeValue.TypeInfo _) "TypeInfo"]
+    [(CompilerCtfeValue.TypeInfoBox _) "Box"]
+    [(CompilerCtfeValue.TypeInfoList _) "TypeInfoList"]
+    [(CompilerCtfeValue.TypeField _ _) "TypeField"]
+    [(CompilerCtfeValue.TypeFieldList _) "TypeFieldList"]
+    [(CompilerCtfeValue.TypeVariantPayload _) "TypeVariantPayload"]
+    [(CompilerCtfeValue.TypeVariantPayloadList _) "TypeVariantPayloadList"]
+    [(CompilerCtfeValue.TypeVariant _ _) "TypeVariant"]
+    [(CompilerCtfeValue.TypeVariantList _) "TypeVariantList"]))
 
 ;; Promote a char to its i64 code point so the i64 comparison primitives drive
 ;; char ordering/equality, matching Rust's code-point comparison.
@@ -1195,31 +1196,31 @@
 ;; --- literals ---------------------------------------------------------------
 (define (ctfe-eval-literal [lit : AstLiteral] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match lit
-    [(AstLitInt n _) (OkCtfe (CtfeI64 n) fuel)]
-    [(AstLitBool b) (OkCtfe (CtfeBool b) fuel)]
-    [(AstLitChar c) (OkCtfe (CtfeChar c) fuel)]
-    [(AstLitUnit) (OkCtfe (CtfeUnit) fuel)]
+    [(AstLitInt n _) (ResultCtfe.Ok (CompilerCtfeValue.I64 n) fuel)]
+    [(AstLitBool b) (ResultCtfe.Ok (CompilerCtfeValue.Bool b) fuel)]
+    [(AstLitChar c) (ResultCtfe.Ok (CompilerCtfeValue.Char c) fuel)]
+    [(AstLitUnit) (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)]
     [(AstLitFloat text)
       (match (compiler-float-parse-f64 text)
         [(CompilerFloatSomeF64 value)
           (if (compiler-float-f64-finite? value)
-            (OkCtfe (CtfeF64 value) fuel)
-            (ErrCtfe
+            (ResultCtfe.Ok (CompilerCtfeValue.F64 value) fuel)
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "comptime: non-finite f64 literal is not supported"))))]
         [(CompilerFloatNoF64)
           (if (compiler-float-decimal-syntax? text)
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "comptime: non-finite f64 literal is not supported")))
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))))])]
-    [(AstLitString text) (OkCtfe (CtfeString text) fuel)]))
+    [(AstLitString text) (ResultCtfe.Ok (CompilerCtfeValue.String text) fuel)]))
 
 ;; --- binary operators -------------------------------------------------------
 ;; i64 arithmetic/bitwise/shift and i64 comparisons.
@@ -1230,38 +1231,38 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinAdd) (OkCtfe (CtfeI64 (+ a b)) fuel)]
-    [(AstBinSub) (OkCtfe (CtfeI64 (- a b)) fuel)]
-    [(AstBinMul) (OkCtfe (CtfeI64 (* a b)) fuel)]
+    [(AstBinAdd) (ResultCtfe.Ok (CompilerCtfeValue.I64 (+ a b)) fuel)]
+    [(AstBinSub) (ResultCtfe.Ok (CompilerCtfeValue.I64 (- a b)) fuel)]
+    [(AstBinMul) (ResultCtfe.Ok (CompilerCtfeValue.I64 (* a b)) fuel)]
     [(AstBinDiv)
       (if (= b 0)
-        (ErrCtfe
+        (ResultCtfe.Err
           (box (ctfe-diagnostic-at-expr expr "division by zero in comptime")))
-        (OkCtfe (CtfeI64 (/ a b)) fuel))]
+        (ResultCtfe.Ok (CompilerCtfeValue.I64 (/ a b)) fuel))]
     [(AstBinMod)
       (if (= b 0)
-        (ErrCtfe
+        (ResultCtfe.Err
           (box (ctfe-diagnostic-at-expr expr "modulo by zero in comptime")))
-        (OkCtfe (CtfeI64 (% a b)) fuel))]
-    [(AstBinEq) (OkCtfe (CtfeBool (= a b)) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool (!= a b)) fuel)]
-    [(AstBinLt) (OkCtfe (CtfeBool (< a b)) fuel)]
-    [(AstBinLe) (OkCtfe (CtfeBool (<= a b)) fuel)]
-    [(AstBinGt) (OkCtfe (CtfeBool (> a b)) fuel)]
-    [(AstBinGe) (OkCtfe (CtfeBool (>= a b)) fuel)]
-    [(AstBinBitAnd) (OkCtfe (CtfeI64 (bit-and a b)) fuel)]
-    [(AstBinBitOr) (OkCtfe (CtfeI64 (bit-or a b)) fuel)]
-    [(AstBinBitXor) (OkCtfe (CtfeI64 (bit-xor a b)) fuel)]
-    [(AstBinShl) (OkCtfe (CtfeI64 (shl a b)) fuel)]
-    [(AstBinShr) (OkCtfe (CtfeI64 (shr a b)) fuel)]
+        (ResultCtfe.Ok (CompilerCtfeValue.I64 (% a b)) fuel))]
+    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
+    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
+    [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
+    [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
+    [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
+    [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
+    [(AstBinBitAnd) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-and a b)) fuel)]
+    [(AstBinBitOr) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-or a b)) fuel)]
+    [(AstBinBitXor) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-xor a b)) fuel)]
+    [(AstBinShl) (ResultCtfe.Ok (CompilerCtfeValue.I64 (shl a b)) fuel)]
+    [(AstBinShr) (ResultCtfe.Ok (CompilerCtfeValue.I64 (shr a b)) fuel)]
     [(AstBinAnd)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
             "'and' in comptime requires bool operands")))]
     [(AstBinOr)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1269,8 +1270,8 @@
 
 (define (ctfe-f64-result [value : f64] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (if (compiler-float-f64-finite? value)
-    (OkCtfe (CtfeF64 value) fuel)
-    (ErrCtfe
+    (ResultCtfe.Ok (CompilerCtfeValue.F64 value) fuel)
+    (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr
           expr
@@ -1280,8 +1281,8 @@
   (let
     [rounded : f64 (compiler-float-round-f32-as-f64 value)]
     (if (compiler-float-f64-finite? rounded)
-      (OkCtfe (CtfeF32 rounded) fuel)
-      (ErrCtfe
+      (ResultCtfe.Ok (CompilerCtfeValue.F32 rounded) fuel)
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1301,18 +1302,18 @@
     [(AstBinMul) (ctfe-f64-result (* a b) expr fuel)]
     [(AstBinDiv)
       (if (= b 0.0)
-        (ErrCtfe
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr expr "float division by zero in comptime")))
         (ctfe-f64-result (/ a b) expr fuel))]
-    [(AstBinEq) (OkCtfe (CtfeBool (= a b)) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool (!= a b)) fuel)]
-    [(AstBinLt) (OkCtfe (CtfeBool (< a b)) fuel)]
-    [(AstBinLe) (OkCtfe (CtfeBool (<= a b)) fuel)]
-    [(AstBinGt) (OkCtfe (CtfeBool (> a b)) fuel)]
-    [(AstBinGe) (OkCtfe (CtfeBool (>= a b)) fuel)]
+    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
+    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
+    [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
+    [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
+    [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
+    [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1330,18 +1331,18 @@
     [(AstBinMul) (ctfe-f32-result (* a b) expr fuel)]
     [(AstBinDiv)
       (if (= b 0.0)
-        (ErrCtfe
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr expr "float division by zero in comptime")))
         (ctfe-f32-result (/ a b) expr fuel))]
-    [(AstBinEq) (OkCtfe (CtfeBool (= a b)) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool (!= a b)) fuel)]
-    [(AstBinLt) (OkCtfe (CtfeBool (< a b)) fuel)]
-    [(AstBinLe) (OkCtfe (CtfeBool (<= a b)) fuel)]
-    [(AstBinGt) (OkCtfe (CtfeBool (> a b)) fuel)]
-    [(AstBinGe) (OkCtfe (CtfeBool (>= a b)) fuel)]
+    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
+    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
+    [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
+    [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
+    [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
+    [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1355,13 +1356,18 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (OkCtfe (CtfeBool (or (and a b) (and (not a) (not b)))) fuel)]
+    [(AstBinEq)
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.Bool (or (and a b) (and (not a) (not b))))
+        fuel)]
     [(AstBinNe)
-      (OkCtfe (CtfeBool (not (or (and a b) (and (not a) (not b))))) fuel)]
-    [(AstBinAnd) (OkCtfe (CtfeBool (and a b)) fuel)]
-    [(AstBinOr) (OkCtfe (CtfeBool (or a b)) fuel)]
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.Bool (not (or (and a b) (and (not a) (not b)))))
+        fuel)]
+    [(AstBinAnd) (ResultCtfe.Ok (CompilerCtfeValue.Bool (and a b)) fuel)]
+    [(AstBinOr) (ResultCtfe.Ok (CompilerCtfeValue.Bool (or a b)) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1378,14 +1384,14 @@
     [ca : i64 (ctfe-char-code a)]
     [cb : i64 (ctfe-char-code b)]
     (match op
-      [(AstBinEq) (OkCtfe (CtfeBool (= ca cb)) fuel)]
-      [(AstBinNe) (OkCtfe (CtfeBool (!= ca cb)) fuel)]
-      [(AstBinLt) (OkCtfe (CtfeBool (< ca cb)) fuel)]
-      [(AstBinLe) (OkCtfe (CtfeBool (<= ca cb)) fuel)]
-      [(AstBinGt) (OkCtfe (CtfeBool (> ca cb)) fuel)]
-      [(AstBinGe) (OkCtfe (CtfeBool (>= ca cb)) fuel)]
+      [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= ca cb)) fuel)]
+      [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= ca cb)) fuel)]
+      [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< ca cb)) fuel)]
+      [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= ca cb)) fuel)]
+      [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> ca cb)) fuel)]
+      [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= ca cb)) fuel)]
       [_
-        (ErrCtfe
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr
               expr
@@ -1399,10 +1405,12 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (OkCtfe (CtfeBool (string.string-eq a b)) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool (not (string.string-eq a b))) fuel)]
+    [(AstBinEq)
+      (ResultCtfe.Ok (CompilerCtfeValue.Bool (string.string-eq a b)) fuel)]
+    [(AstBinNe)
+      (ResultCtfe.Ok (CompilerCtfeValue.Bool (not (string.string-eq a b))) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1411,10 +1419,10 @@
 ;; unit comparisons (only `==`/`!=`).
 (define (ctfe-eval-bin-unit [op : AstBinOp] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (OkCtfe (CtfeBool true) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool false) fuel)]
+    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool true) fuel)]
+    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool false) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -1428,17 +1436,23 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (OkCtfe (CtfeBool (ctfe-type-eq-in-env env a b)) fuel)]
-    [(AstBinNe) (OkCtfe (CtfeBool (not (ctfe-type-eq-in-env env a b))) fuel)]
+    [(AstBinEq)
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.Bool (ctfe-type-eq-in-env env a b))
+        fuel)]
+    [(AstBinNe)
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.Bool (not (ctfe-type-eq-in-env env a b)))
+        fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
             "this operation is not supported on TypeInfo in compile-time evaluation")))]))
 
 (define (ctfe-eval-bin-comptime-metadata [label : String] [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -1455,95 +1469,100 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match lv
-    [(CtfeI64 a)
+    [(CompilerCtfeValue.I64 a)
       (match rv
-        [(CtfeI64 b) (ctfe-eval-bin-i64 op a b expr fuel)]
+        [(CompilerCtfeValue.I64 b) (ctfe-eval-bin-i64 op a b expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeF64 a)
+    [(CompilerCtfeValue.F64 a)
       (match rv
-        [(CtfeF64 b) (ctfe-eval-bin-f64 op a b expr fuel)]
+        [(CompilerCtfeValue.F64 b) (ctfe-eval-bin-f64 op a b expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeF32 a)
+    [(CompilerCtfeValue.F32 a)
       (match rv
-        [(CtfeF32 b) (ctfe-eval-bin-f32 op a b expr fuel)]
+        [(CompilerCtfeValue.F32 b) (ctfe-eval-bin-f32 op a b expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeBool a)
+    [(CompilerCtfeValue.Bool a)
       (match rv
-        [(CtfeBool b) (ctfe-eval-bin-bool op a b expr fuel)]
+        [(CompilerCtfeValue.Bool b) (ctfe-eval-bin-bool op a b expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeChar a)
+    [(CompilerCtfeValue.Char a)
       (match rv
-        [(CtfeChar b) (ctfe-eval-bin-char op a b expr fuel)]
+        [(CompilerCtfeValue.Char b) (ctfe-eval-bin-char op a b expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeString a)
+    [(CompilerCtfeValue.String a)
       (match rv
-        [(CtfeString b) (ctfe-eval-bin-string op a b expr fuel)]
+        [(CompilerCtfeValue.String b) (ctfe-eval-bin-string op a b expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeUnit)
+    [(CompilerCtfeValue.Unit)
       (match rv
-        [(CtfeUnit) (ctfe-eval-bin-unit op expr fuel)]
+        [(CompilerCtfeValue.Unit) (ctfe-eval-bin-unit op expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeType a)
+    [(CompilerCtfeValue.Type a)
       (match rv
-        [(CtfeType b)
+        [(CompilerCtfeValue.Type b)
           (match op
-            [(AstBinEq) (OkCtfe (CtfeBool (ctfe-type-eq-in-env env a b)) fuel)]
+            [(AstBinEq)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool (ctfe-type-eq-in-env env a b))
+                fuel)]
             [(AstBinNe)
-              (OkCtfe (CtfeBool (not (ctfe-type-eq-in-env env a b))) fuel)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool (not (ctfe-type-eq-in-env env a b)))
+                fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on type in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExpr a a-ty)
+    [(CompilerCtfeValue.Expr a a-ty)
       (match rv
-        [(CtfeExpr b b-ty)
+        [(CompilerCtfeValue.Expr b b-ty)
           (match op
             [(AstBinEq)
-              (OkCtfe
-                (CtfeBool
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
                   (and
                     (ctfe-expr-eq-in-env
                       env
@@ -1552,8 +1571,8 @@
                     (ctfe-type-eq-in-env env a-ty b-ty)))
                 fuel)]
             [(AstBinNe)
-              (OkCtfe
-                (CtfeBool
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
                   (not
                     (and
                       (ctfe-expr-eq-in-env
@@ -1563,162 +1582,186 @@
                       (ctfe-type-eq-in-env env a-ty b-ty))))
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on expr in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprList a)
+    [(CompilerCtfeValue.ExprList a)
       (match rv
-        [(CtfeExprList b)
+        [(CompilerCtfeValue.ExprList b)
           (match op
             [(AstBinEq)
-              (OkCtfe (CtfeBool (ctfe-expr-list-eq-in-env env a b)) fuel)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool (ctfe-expr-list-eq-in-env env a b))
+                fuel)]
             [(AstBinNe)
-              (OkCtfe (CtfeBool (not (ctfe-expr-list-eq-in-env env a b))) fuel)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (not (ctfe-expr-list-eq-in-env env a b)))
+                fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on expr-list in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprClause a)
+    [(CompilerCtfeValue.ExprClause a)
       (match rv
-        [(CtfeExprClause b)
+        [(CompilerCtfeValue.ExprClause b)
           (match op
             [(AstBinEq)
-              (OkCtfe (CtfeBool (ctfe-expr-clause-eq-in-env env a b)) fuel)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool (ctfe-expr-clause-eq-in-env env a b))
+                fuel)]
             [(AstBinNe)
-              (OkCtfe
-                (CtfeBool (not (ctfe-expr-clause-eq-in-env env a b)))
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (not (ctfe-expr-clause-eq-in-env env a b)))
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on expr-clause in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprClauseList a)
+    [(CompilerCtfeValue.ExprClauseList a)
       (match rv
-        [(CtfeExprClauseList b)
+        [(CompilerCtfeValue.ExprClauseList b)
           (match op
             [(AstBinEq)
-              (OkCtfe (CtfeBool (ctfe-expr-clause-list-eq-in-env env a b)) fuel)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (ctfe-expr-clause-list-eq-in-env env a b))
+                fuel)]
             [(AstBinNe)
-              (OkCtfe
-                (CtfeBool (not (ctfe-expr-clause-list-eq-in-env env a b)))
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (not (ctfe-expr-clause-list-eq-in-env env a b)))
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on expr-clause-list in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprBindingClause a)
+    [(CompilerCtfeValue.ExprBindingClause a)
       (match rv
-        [(CtfeExprBindingClause b)
+        [(CompilerCtfeValue.ExprBindingClause b)
           (match op
             [(AstBinEq)
-              (OkCtfe
-                (CtfeBool (ctfe-expr-binding-clause-eq-in-env env a b))
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (ctfe-expr-binding-clause-eq-in-env env a b))
                 fuel)]
             [(AstBinNe)
-              (OkCtfe
-                (CtfeBool (not (ctfe-expr-binding-clause-eq-in-env env a b)))
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (not (ctfe-expr-binding-clause-eq-in-env env a b)))
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on expr-binding-clause in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeExprBindingClauseList a)
+    [(CompilerCtfeValue.ExprBindingClauseList a)
       (match rv
-        [(CtfeExprBindingClauseList b)
+        [(CompilerCtfeValue.ExprBindingClauseList b)
           (match op
             [(AstBinEq)
-              (OkCtfe
-                (CtfeBool (ctfe-expr-binding-clause-list-eq-in-env env a b))
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (ctfe-expr-binding-clause-list-eq-in-env env a b))
                 fuel)]
             [(AstBinNe)
-              (OkCtfe
-                (CtfeBool
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
                   (not (ctfe-expr-binding-clause-list-eq-in-env env a b)))
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "this operation is not supported on expr-binding-clause-list in compile-time evaluation")))])]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfePattern _) (ctfe-eval-bin-comptime-metadata "Pattern" expr)]
-    [(CtfePatternList _) (ctfe-eval-bin-comptime-metadata "PatternList" expr)]
-    [(CtfeMatchArm _) (ctfe-eval-bin-comptime-metadata "MatchArm" expr)]
-    [(CtfeMatchArmList _) (ctfe-eval-bin-comptime-metadata "MatchArmList" expr)]
-    [(CtfeTypeInfo a)
+    [(CompilerCtfeValue.Pattern _)
+      (ctfe-eval-bin-comptime-metadata "Pattern" expr)]
+    [(CompilerCtfeValue.PatternList _)
+      (ctfe-eval-bin-comptime-metadata "PatternList" expr)]
+    [(CompilerCtfeValue.MatchArm _)
+      (ctfe-eval-bin-comptime-metadata "MatchArm" expr)]
+    [(CompilerCtfeValue.MatchArmList _)
+      (ctfe-eval-bin-comptime-metadata "MatchArmList" expr)]
+    [(CompilerCtfeValue.TypeInfo a)
       (match rv
-        [(CtfeTypeInfo b) (ctfe-eval-bin-type-info op a b expr env fuel)]
+        [(CompilerCtfeValue.TypeInfo b)
+          (ctfe-eval-bin-type-info op a b expr env fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeTypeInfoBox a)
+    [(CompilerCtfeValue.TypeInfoBox a)
       (match rv
-        [(CtfeTypeInfoBox b) (ctfe-eval-bin-type-info op a b expr env fuel)]
+        [(CompilerCtfeValue.TypeInfoBox b)
+          (ctfe-eval-bin-type-info op a b expr env fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CtfeTypeInfoList _) (ctfe-eval-bin-comptime-metadata "TypeInfoList" expr)]
-    [(CtfeTypeField _ _) (ctfe-eval-bin-comptime-metadata "TypeField" expr)]
-    [(CtfeTypeFieldList _)
+    [(CompilerCtfeValue.TypeInfoList _)
+      (ctfe-eval-bin-comptime-metadata "TypeInfoList" expr)]
+    [(CompilerCtfeValue.TypeField _ _)
+      (ctfe-eval-bin-comptime-metadata "TypeField" expr)]
+    [(CompilerCtfeValue.TypeFieldList _)
       (ctfe-eval-bin-comptime-metadata "TypeFieldList" expr)]
-    [(CtfeTypeVariantPayload _)
+    [(CompilerCtfeValue.TypeVariantPayload _)
       (ctfe-eval-bin-comptime-metadata "TypeVariantPayload" expr)]
-    [(CtfeTypeVariantPayloadList _)
+    [(CompilerCtfeValue.TypeVariantPayloadList _)
       (ctfe-eval-bin-comptime-metadata "TypeVariantPayloadList" expr)]
-    [(CtfeTypeVariant _ _) (ctfe-eval-bin-comptime-metadata "TypeVariant" expr)]
-    [(CtfeTypeVariantList _)
+    [(CompilerCtfeValue.TypeVariant _ _)
+      (ctfe-eval-bin-comptime-metadata "TypeVariant" expr)]
+    [(CompilerCtfeValue.TypeVariantList _)
       (ctfe-eval-bin-comptime-metadata "TypeVariantList" expr)]))
 
 ;; --- unary operators --------------------------------------------------------
@@ -1730,27 +1773,30 @@
   (match op
     [(AstUnNeg)
       (match v
-        [(CtfeI64 n) (OkCtfe (CtfeI64 (- 0 n)) fuel)]
-        [(CtfeF64 n) (ctfe-f64-result (- 0.0 n) expr fuel)]
-        [(CtfeF32 n) (ctfe-f32-result (- 0.0 n) expr fuel)]
+        [(CompilerCtfeValue.I64 n)
+          (ResultCtfe.Ok (CompilerCtfeValue.I64 (- 0 n)) fuel)]
+        [(CompilerCtfeValue.F64 n) (ctfe-f64-result (- 0.0 n) expr fuel)]
+        [(CompilerCtfeValue.F32 n) (ctfe-f32-result (- 0.0 n) expr fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "negation in comptime requires a numeric type")))])]
     [(AstUnNot)
       (match v
-        [(CtfeBool b) (OkCtfe (CtfeBool (not b)) fuel)]
+        [(CompilerCtfeValue.Bool b)
+          (ResultCtfe.Ok (CompilerCtfeValue.Bool (not b)) fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr expr "'not' in comptime requires bool")))])]
     [(AstUnBitNot)
       (match v
-        [(CtfeI64 n) (OkCtfe (CtfeI64 (bit-not n)) fuel)]
+        [(CompilerCtfeValue.I64 n)
+          (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-not n)) fuel)]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
@@ -1758,25 +1804,31 @@
 
 (define (ctfe-value-default-cast-type [value : CompilerCtfeValue]) : AstType
   (match value
-    [(CtfeI64 _) (AstTyI64)]
-    [(CtfeF64 _) (AstTyF64)]
-    [(CtfeF32 _) (AstTyF32)]
-    [(CtfeChar _) (AstTyChar)]
-    [(CtfePattern _) (ctfe-stdlib-comptime-type "Pattern")]
-    [(CtfePatternList _) (ctfe-stdlib-comptime-type "PatternList")]
-    [(CtfeMatchArm _) (ctfe-stdlib-comptime-type "MatchArm")]
-    [(CtfeMatchArmList _) (ctfe-stdlib-comptime-type "MatchArmList")]
-    [(CtfeTypeInfo _) (ctfe-type-info-source-type)]
-    [(CtfeTypeInfoBox _) (ctfe-type-info-box-source-type)]
-    [(CtfeTypeInfoList _) (ctfe-stdlib-comptime-type "TypeInfoList")]
-    [(CtfeTypeField _ _) (ctfe-stdlib-comptime-type "TypeField")]
-    [(CtfeTypeFieldList _) (ctfe-stdlib-comptime-type "TypeFieldList")]
-    [(CtfeTypeVariantPayload _)
+    [(CompilerCtfeValue.I64 _) (AstTyI64)]
+    [(CompilerCtfeValue.F64 _) (AstTyF64)]
+    [(CompilerCtfeValue.F32 _) (AstTyF32)]
+    [(CompilerCtfeValue.Char _) (AstTyChar)]
+    [(CompilerCtfeValue.Pattern _) (ctfe-stdlib-comptime-type "Pattern")]
+    [(CompilerCtfeValue.PatternList _)
+      (ctfe-stdlib-comptime-type "PatternList")]
+    [(CompilerCtfeValue.MatchArm _) (ctfe-stdlib-comptime-type "MatchArm")]
+    [(CompilerCtfeValue.MatchArmList _)
+      (ctfe-stdlib-comptime-type "MatchArmList")]
+    [(CompilerCtfeValue.TypeInfo _) (ctfe-type-info-source-type)]
+    [(CompilerCtfeValue.TypeInfoBox _) (ctfe-type-info-box-source-type)]
+    [(CompilerCtfeValue.TypeInfoList _)
+      (ctfe-stdlib-comptime-type "TypeInfoList")]
+    [(CompilerCtfeValue.TypeField _ _) (ctfe-stdlib-comptime-type "TypeField")]
+    [(CompilerCtfeValue.TypeFieldList _)
+      (ctfe-stdlib-comptime-type "TypeFieldList")]
+    [(CompilerCtfeValue.TypeVariantPayload _)
       (ctfe-stdlib-comptime-type "TypeVariantPayload")]
-    [(CtfeTypeVariantPayloadList _)
+    [(CompilerCtfeValue.TypeVariantPayloadList _)
       (ctfe-stdlib-comptime-type "TypeVariantPayloadList")]
-    [(CtfeTypeVariant _ _) (ctfe-stdlib-comptime-type "TypeVariant")]
-    [(CtfeTypeVariantList _) (ctfe-stdlib-comptime-type "TypeVariantList")]
+    [(CompilerCtfeValue.TypeVariant _ _)
+      (ctfe-stdlib-comptime-type "TypeVariant")]
+    [(CompilerCtfeValue.TypeVariantList _)
+      (ctfe-stdlib-comptime-type "TypeVariantList")]
     [_ (AstTyUnit)]))
 
 (define (ctfe-cast-source-type
@@ -1808,10 +1860,10 @@
 
 (define (ctfe-finite-cast-input [value : CompilerCtfeValue]) : CompilerFiniteCastInput
   (match value
-    [(CtfeI64 n) (CompilerFiniteCastInputI64 n)]
-    [(CtfeF64 n) (CompilerFiniteCastInputF64 n)]
-    [(CtfeF32 n) (CompilerFiniteCastInputF32 n)]
-    [(CtfeChar c) (CompilerFiniteCastInputChar c)]
+    [(CompilerCtfeValue.I64 n) (CompilerFiniteCastInputI64 n)]
+    [(CompilerCtfeValue.F64 n) (CompilerFiniteCastInputF64 n)]
+    [(CompilerCtfeValue.F32 n) (CompilerFiniteCastInputF32 n)]
+    [(CompilerCtfeValue.Char c) (CompilerFiniteCastInputChar c)]
     [_ (CompilerFiniteCastNoInput)]))
 
 (define (ctfe-finite-cast-result
@@ -1819,12 +1871,14 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match result
-    [(CompilerFiniteCastResultI64 n) (OkCtfe (CtfeI64 n) fuel)]
-    [(CompilerFiniteCastResultChar c) (OkCtfe (CtfeChar c) fuel)]
+    [(CompilerFiniteCastResultI64 n)
+      (ResultCtfe.Ok (CompilerCtfeValue.I64 n) fuel)]
+    [(CompilerFiniteCastResultChar c)
+      (ResultCtfe.Ok (CompilerCtfeValue.Char c) fuel)]
     [(CompilerFiniteCastResultF64 n) (ctfe-f64-result n expr fuel)]
     [(CompilerFiniteCastResultF32 n) (ctfe-f32-result n expr fuel)]
     [(CompilerFiniteCastNoResult)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "comptime: unsupported cast")))]))
 
 (define (ctfe-apply-cast
@@ -1836,8 +1890,8 @@
   (match ty
     [(AstTyF64)
       (match value
-        [(CtfeF64 n) (ctfe-f64-result n expr fuel)]
-        [(CtfeF32 n) (ctfe-f64-result n expr fuel)]
+        [(CompilerCtfeValue.F64 n) (ctfe-f64-result n expr fuel)]
+        [(CompilerCtfeValue.F32 n) (ctfe-f64-result n expr fuel)]
         [_
           (ctfe-finite-cast-result
             (compiler-finite-cast-fold
@@ -1848,8 +1902,8 @@
             fuel)])]
     [(AstTyF32)
       (match value
-        [(CtfeF64 n) (ctfe-f32-result n expr fuel)]
-        [(CtfeF32 n) (ctfe-f32-result n expr fuel)]
+        [(CompilerCtfeValue.F64 n) (ctfe-f32-result n expr fuel)]
+        [(CompilerCtfeValue.F32 n) (ctfe-f32-result n expr fuel)]
         [_
           (ctfe-finite-cast-result
             (compiler-finite-cast-fold
@@ -1871,43 +1925,43 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe value next-fuel)
+    [(ResultCtfe.Ok value next-fuel)
       (ctfe-apply-cast
         value
         (ctfe-cast-source-type inner value env)
         ty
         expr
         next-fuel)]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (defenum ResultCtfeStringLookup
-  (OkCtfeStringLookup String)
-  (ErrCtfeStringLookup String))
+  (Ok String)
+  (Err String))
 
 (defenum ResultCtfeTypeLookup
-  (OkCtfeTypeLookup AstType)
-  (ErrCtfeTypeLookup String))
+  (Ok AstType)
+  (Err String))
 
 (defenum ResultCtfeTypeListLookup
-  (OkCtfeTypeListLookup AstTypeList)
-  (ErrCtfeTypeListLookup String))
+  (Ok AstTypeList)
+  (Err String))
 
 (defenum ResultCtfeTypeArg
-  (OkCtfeTypeArg AstType i64)
-  (ErrCtfeTypeArg (Box CompilerDiagnostic)))
+  (Ok AstType i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeI64Arg
-  (OkCtfeI64Arg i64 i64)
-  (ErrCtfeI64Arg (Box CompilerDiagnostic)))
+  (Ok i64 i64)
+  (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeStringArg
-  (OkCtfeStringArg String i64)
-  (ErrCtfeStringArg (Box CompilerDiagnostic)))
+  (Ok String i64)
+  (Err (Box CompilerDiagnostic)))
 
 (define (ctfe-reflect-info-canonical-type [info : CtfeReflectInfo]) : AstType
   (match info
-    [(CtfeReflectStruct key _ _ _) (AstTyStruct (intern key))]
-    [(CtfeReflectEnum key _ _ _) (AstTyEnum (intern key))]))
+    [(CtfeReflectInfo.Struct key _ _ _) (AstTyStruct (intern key))]
+    [(CtfeReflectInfo.Enum key _ _ _) (AstTyEnum (intern key))]))
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : AstNodePoolContext]
@@ -2010,16 +2064,19 @@
           (ast-node-pool-context-type-get pools inner)))]
     [(AstTyStruct name)
       (match (ctfe-reflect-info-lookup infos (intern-str name))
-        [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
-        [(CtfeNoReflectInfo) ty])]
+        [(CtfeMaybeReflectInfo.Some info)
+          (ctfe-reflect-info-canonical-type info)]
+        [(CtfeMaybeReflectInfo.None) ty])]
     [(AstTyEnum name)
       (match (ctfe-reflect-info-lookup infos (intern-str name))
-        [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
-        [(CtfeNoReflectInfo) ty])]
+        [(CtfeMaybeReflectInfo.Some info)
+          (ctfe-reflect-info-canonical-type info)]
+        [(CtfeMaybeReflectInfo.None) ty])]
     [(AstTyVar name)
       (match (ctfe-reflect-info-lookup infos (intern-str name))
-        [(CtfeSomeReflectInfo info) (ctfe-reflect-info-canonical-type info)]
-        [(CtfeNoReflectInfo) ty])]
+        [(CtfeMaybeReflectInfo.Some info)
+          (ctfe-reflect-info-canonical-type info)]
+        [(CtfeMaybeReflectInfo.None) ty])]
     [_ ty]))
 
 (define (ctfe-reflect-resolve-type [infos : CtfeReflectInfoList] [ty : AstType]) : AstType
@@ -2287,18 +2344,18 @@
   [fuel : i64]
   [name : String]) : ResultCtfeTypeArg
   (match (compiler-ctfe-eval arg env fuel)
-    [(ErrCtfe d) (ErrCtfeTypeArg d)]
-    [(OkCtfe value arg-fuel)
+    [(ResultCtfe.Err d) (ResultCtfeTypeArg.Err d)]
+    [(ResultCtfe.Ok value arg-fuel)
       (match value
-        [(CtfeType ty)
-          (OkCtfeTypeArg
+        [(CompilerCtfeValue.Type ty)
+          (ResultCtfeTypeArg.Ok
             (ctfe-reflect-resolve-type-with-pools
               (ctfe-env-pools env)
               (ctfe-env-reflections env)
               ty)
             arg-fuel)]
         [_
-          (ErrCtfeTypeArg
+          (ResultCtfeTypeArg.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
@@ -2311,12 +2368,12 @@
   [fuel : i64]
   [name : String]) : ResultCtfeI64Arg
   (match (compiler-ctfe-eval arg env fuel)
-    [(ErrCtfe d) (ErrCtfeI64Arg d)]
-    [(OkCtfe value arg-fuel)
+    [(ResultCtfe.Err d) (ResultCtfeI64Arg.Err d)]
+    [(ResultCtfe.Ok value arg-fuel)
       (match value
-        [(CtfeI64 n) (OkCtfeI64Arg n arg-fuel)]
+        [(CompilerCtfeValue.I64 n) (ResultCtfeI64Arg.Ok n arg-fuel)]
         [_
-          (ErrCtfeI64Arg
+          (ResultCtfeI64Arg.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
@@ -2329,12 +2386,12 @@
   [fuel : i64]
   [name : String]) : ResultCtfeStringArg
   (match (compiler-ctfe-eval arg env fuel)
-    [(ErrCtfe d) (ErrCtfeStringArg d)]
-    [(OkCtfe value arg-fuel)
+    [(ResultCtfe.Err d) (ResultCtfeStringArg.Err d)]
+    [(ResultCtfe.Ok value arg-fuel)
       (match value
-        [(CtfeString text) (OkCtfeStringArg text arg-fuel)]
+        [(CompilerCtfeValue.String text) (ResultCtfeStringArg.Ok text arg-fuel)]
         [_
-          (ErrCtfeStringArg
+          (ResultCtfeStringArg.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
@@ -2349,9 +2406,9 @@
   (if (if (< index 0)
     true
     (>= index (struct-get fields len)))
-    (ErrCtfeStringLookup "index out of range")
+    (ResultCtfeStringLookup.Err "index out of range")
     (match (ctfe-reflect-field-list-ref fields index)
-      [(CtfeReflectField name _) (OkCtfeStringLookup name)])))
+      [(CtfeReflectField.Field name _) (ResultCtfeStringLookup.Ok name)])))
 
 (define (ctfe-reflect-field-type-at
   [fields : CtfeReflectFieldList]
@@ -2361,10 +2418,11 @@
   (if (if (< index 0)
     true
     (>= index (struct-get fields len)))
-    (ErrCtfeTypeLookup "index out of range")
+    (ResultCtfeTypeLookup.Err "index out of range")
     (match (ctfe-reflect-field-list-ref fields index)
-      [(CtfeReflectField _ ty)
-        (OkCtfeTypeLookup (ctfe-reflect-resolve-type-with-pools pools infos ty))])))
+      [(CtfeReflectField.Field _ ty)
+        (ResultCtfeTypeLookup.Ok
+          (ctfe-reflect-resolve-type-with-pools pools infos ty))])))
 
 (define (ctfe-reflect-variant-list-count [variants : CtfeReflectVariantList]) : i64
   (struct-get variants len))
@@ -2375,9 +2433,9 @@
   (if (if (< index 0)
     true
     (>= index (struct-get variants len)))
-    (ErrCtfeStringLookup "index out of range")
+    (ResultCtfeStringLookup.Err "index out of range")
     (match (ctfe-reflect-variant-list-ref variants index)
-      [(CtfeReflectVariant name _) (OkCtfeStringLookup name)])))
+      [(CtfeReflectVariant.Variant name _) (ResultCtfeStringLookup.Ok name)])))
 
 (define (ctfe-reflect-variant-payloads-at
   [variants : CtfeReflectVariantList]
@@ -2385,9 +2443,10 @@
   (if (if (< index 0)
     true
     (>= index (struct-get variants len)))
-    (ErrCtfeTypeListLookup "index out of range")
+    (ResultCtfeTypeListLookup.Err "index out of range")
     (match (ctfe-reflect-variant-list-ref variants index)
-      [(CtfeReflectVariant _ payloads) (OkCtfeTypeListLookup payloads)])))
+      [(CtfeReflectVariant.Variant _ payloads)
+        (ResultCtfeTypeListLookup.Ok payloads)])))
 
 (define (ctfe-type-list-count [types : AstTypeList]) : i64
   (match types
@@ -2403,15 +2462,15 @@
   [infos : CtfeReflectInfoList]
   [index : i64]) : ResultCtfeTypeLookup
   (if (< index 0)
-    (ErrCtfeTypeLookup "index out of range")
+    (ResultCtfeTypeLookup.Err "index out of range")
     (match types
-      [(AstTypeNil) (ErrCtfeTypeLookup "index out of range")]
+      [(AstTypeNil) (ResultCtfeTypeLookup.Err "index out of range")]
       [(AstTypeCons head rest)
         (let
           [head : AstType (ast-node-pool-context-type-get pools head)]
           [rest : AstTypeList (box-get rest)]
           (if (= index 0)
-            (OkCtfeTypeLookup
+            (ResultCtfeTypeLookup.Ok
               (ctfe-reflect-resolve-type-with-pools pools infos head))
             (ctfe-type-list-ref-with-pools rest pools infos (- index 1))))])))
 
@@ -2457,9 +2516,10 @@
   (if (ctfe-pattern-variant-name? variant "TypeInfoOpaque")
     (ctfe-match-pattern-list
       args
-      (ctfe-value-list1 (CtfeString (ctfe-type-info-key-in-env env ty)))
+      (ctfe-value-list1
+        (CompilerCtfeValue.String (ctfe-type-info-key-in-env env ty)))
       env)
-    (CtfeNoPatternMatch)))
+    (CtfePatternMatch.No)))
 
 (define (ctfe-match-type-info-nominal
   [variant : i64]
@@ -2471,31 +2531,34 @@
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     [key : String (ctfe-type-nominal-key ty)]
     (match (ctfe-reflect-info-lookup infos key)
-      [(CtfeSomeReflectInfo info)
+      [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectStruct _ _ _ fields)
+          [(CtfeReflectInfo.Struct _ _ _ fields)
             (if want-struct
               (if (ctfe-pattern-variant-name? variant "TypeInfoStruct")
                 (ctfe-match-pattern-list
                   args
                   (ctfe-value-list2
-                    (CtfeString (ctfe-type-info-key-in-env env ty))
-                    (CtfeTypeFieldList fields))
+                    (CompilerCtfeValue.String
+                      (ctfe-type-info-key-in-env env ty))
+                    (CompilerCtfeValue.TypeFieldList fields))
                   env)
-                (CtfeNoPatternMatch))
-              (CtfeNoPatternMatch))]
-          [(CtfeReflectEnum _ _ _ variants)
+                (CtfePatternMatch.No))
+              (CtfePatternMatch.No))]
+          [(CtfeReflectInfo.Enum _ _ _ variants)
             (if want-struct
-              (CtfeNoPatternMatch)
+              (CtfePatternMatch.No)
               (if (ctfe-pattern-variant-name? variant "TypeInfoEnum")
                 (ctfe-match-pattern-list
                   args
                   (ctfe-value-list2
-                    (CtfeString (ctfe-type-info-key-in-env env ty))
-                    (CtfeTypeVariantList variants))
+                    (CompilerCtfeValue.String
+                      (ctfe-type-info-key-in-env env ty))
+                    (CompilerCtfeValue.TypeVariantList variants))
                   env)
-                (CtfeNoPatternMatch)))])]
-      [(CtfeNoReflectInfo) (ctfe-match-type-info-opaque variant args ty env)])))
+                (CtfePatternMatch.No)))])]
+      [(CtfeMaybeReflectInfo.None)
+        (ctfe-match-type-info-opaque variant args ty env)])))
 
 (define (ctfe-match-type-info-variant
   [variant : i64]
@@ -2514,34 +2577,37 @@
           (ctfe-match-pattern-list
             args
             (ctfe-value-list2
-              (CtfeTypeInfoBox (ast-node-pool-context-type-get pools elem))
-              (CtfeI64 count))
+              (CompilerCtfeValue.TypeInfoBox
+                (ast-node-pool-context-type-get pools elem))
+              (CompilerCtfeValue.I64 count))
             env)
-          (CtfeNoPatternMatch))]
+          (CtfePatternMatch.No))]
       [(AstTyDynArray elem)
         (if (ctfe-pattern-variant-name? variant "TypeInfoDynArray")
           (ctfe-match-pattern-list
             args
             (ctfe-value-list1
-              (CtfeTypeInfoBox (ast-node-pool-context-type-get pools elem)))
+              (CompilerCtfeValue.TypeInfoBox
+                (ast-node-pool-context-type-get pools elem)))
             env)
-          (CtfeNoPatternMatch))]
+          (CtfePatternMatch.No))]
       [(AstTyFunc params ret)
         (if (ctfe-pattern-variant-name? variant "TypeInfoFunction")
           (ctfe-match-pattern-list
             args
             (ctfe-value-list2
-              (CtfeTypeInfoList (box-get params))
-              (CtfeTypeInfoBox (ast-node-pool-context-type-get pools ret)))
+              (CompilerCtfeValue.TypeInfoList (box-get params))
+              (CompilerCtfeValue.TypeInfoBox
+                (ast-node-pool-context-type-get pools ret)))
             env)
-          (CtfeNoPatternMatch))]
+          (CtfePatternMatch.No))]
       [(AstTyTuple elems)
         (if (ctfe-pattern-variant-name? variant "TypeInfoTuple")
           (ctfe-match-pattern-list
             args
-            (ctfe-value-list1 (CtfeTypeInfoList (box-get elems)))
+            (ctfe-value-list1 (CompilerCtfeValue.TypeInfoList (box-get elems)))
             env)
-          (CtfeNoPatternMatch))]
+          (CtfePatternMatch.No))]
       [(AstTyStruct _)
         (ctfe-match-type-info-nominal variant args resolved env true)]
       [(AstTyStructArgs _ _)
@@ -2555,9 +2621,9 @@
           (if (ctfe-pattern-variant-name? variant "TypeInfoBuiltin")
             (ctfe-match-pattern-list
               args
-              (ctfe-value-list1 (CtfeString kind))
+              (ctfe-value-list1 (CompilerCtfeValue.String kind))
               env)
-            (CtfeNoPatternMatch))
+            (CtfePatternMatch.No))
           (ctfe-match-type-info-opaque variant args resolved env))])))
 
 ;; --- core evaluator ---------------------------------------------------------
@@ -2566,7 +2632,7 @@
 ;; exhausted the evaluation fails deterministically.
 (define (compiler-ctfe-eval [expr : AstExpr] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (if (<= fuel 0)
-    (ErrCtfe
+    (ResultCtfe.Err
       (box
         (ctfe-diagnostic-at-expr expr "compile-time evaluation limit exceeded")))
     (ctfe-eval-node expr env (- fuel 1))))
@@ -2590,15 +2656,15 @@
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-eval-cast inner ty expr env fuel))]
     [(AstExpr.TypeLiteral ty)
-      (OkCtfe
-        (CtfeType
+      (ResultCtfe.Ok
+        (CompilerCtfeValue.Type
           (ctfe-reflect-resolve-type-with-pools
             (ctfe-env-pools env)
             (ctfe-env-reflections env)
             ty))
         fuel)]
     [(AstExpr.Init _)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -2664,19 +2730,19 @@
         [template : AstExpr (ctfe-ast-get env template-box)]
         (ctfe-eval-quote template env fuel true))]
     [(AstExpr.Unquote _)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
             "unquote is only valid inside quasiquote")))]
     [(AstExpr.UnquoteSplicing _)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
             "unquote-splicing is only valid inside quasiquote")))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -2740,29 +2806,29 @@
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ size _ _) size])]
-        [(CtfeNoLayoutInfo) 8])]
+            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+        [(CtfeMaybeLayoutInfo.None) 8])]
     [(AstTyStructArgs name _)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ size _ _) size])]
-        [(CtfeNoLayoutInfo) 8])]
+            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+        [(CtfeMaybeLayoutInfo.None) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ size _ _) size])]
-        [(CtfeNoLayoutInfo) -1])]
+            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+        [(CtfeMaybeLayoutInfo.None) -1])]
     [(AstTyVarArgs name _)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ size _ _) size])]
-        [(CtfeNoLayoutInfo) -1])]))
+            [(CtfeLayoutInfo.Info _ _ size _ _) size])]
+        [(CtfeMaybeLayoutInfo.None) -1])]))
 
 (define (ctfe-type-size [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
   (ctfe-type-size-with-pools (ast-node-pool-context-capture-active) layouts ty))
@@ -2812,29 +2878,29 @@
     [(AstTyEnumArgs _ _) 8]
     [(AstTyStruct name)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ _ align _) align])]
-        [(CtfeNoLayoutInfo) 8])]
+            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
+        [(CtfeMaybeLayoutInfo.None) 8])]
     [(AstTyStructArgs name _)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ _ align _) align])]
-        [(CtfeNoLayoutInfo) 8])]
+            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
+        [(CtfeMaybeLayoutInfo.None) 8])]
     [(AstTyString) 8]
     [(AstTyVar name)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ _ align _) align])]
-        [(CtfeNoLayoutInfo) -1])]
+            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
+        [(CtfeMaybeLayoutInfo.None) -1])]
     [(AstTyVarArgs name _)
       (match (ctfe-layout-info-lookup layouts (intern-str name))
-        [(CtfeSomeLayoutInfo info)
+        [(CtfeMaybeLayoutInfo.Some info)
           (match info
-            [(CtfeLayoutInfo _ _ _ align _) align])]
-        [(CtfeNoLayoutInfo) -1])]))
+            [(CtfeLayoutInfo.Info _ _ _ align _) align])]
+        [(CtfeMaybeLayoutInfo.None) -1])]))
 
 (define (ctfe-type-align [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
   (ctfe-type-align-with-pools (ast-node-pool-context-capture-active) layouts ty))
@@ -2873,10 +2939,10 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(ErrCtfe d) (ErrCtfe d)]
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Err d) (ResultCtfe.Err d)]
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeType ty)
+                  [(CompilerCtfeValue.Type ty)
                     (let
                       [answer : i64
                         (ctfe-layout-query-value-with-pools
@@ -2885,22 +2951,22 @@
                           (ctfe-env-layouts env)
                           ty)]
                       (if (< answer 0)
-                        (ErrCtfe
+                        (ResultCtfe.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
                               (string.string-append
                                 name
                                 " expects a known type argument"))))
-                        (OkCtfe (CtfeI64 answer) arg-fuel)))]
+                        (ResultCtfe.Ok (CompilerCtfeValue.I64 answer) arg-fuel)))]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           (string.string-append name " expects a type argument"))))])])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
@@ -2908,7 +2974,7 @@
                     name
                     " expects exactly one type argument"))))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -2920,8 +2986,8 @@
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (ctfe-offset-field-name inner env))]
-    [(AstExpr.Var name) (CtfeSomeFieldName (intern-str name))]
-    [_ (CtfeNoFieldName)]))
+    [(AstExpr.Var name) (CtfeMaybeFieldName.Some (intern-str name))]
+    [_ (CtfeMaybeFieldName.None)]))
 
 (define (ctfe-layout-info-for-type-with-pools
   [pools : AstNodePoolContext]
@@ -2939,7 +3005,7 @@
         pools
         layouts
         (ast-node-pool-context-type-get pools inner))]
-    [_ (CtfeNoLayoutInfo)]))
+    [_ (CtfeMaybeLayoutInfo.None)]))
 
 (define (ctfe-layout-info-for-type
   [layouts : CtfeLayoutInfoList]
@@ -2958,18 +3024,18 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match info
-    [(CtfeLayoutInfo _ repr-c? _ _ fields)
+    [(CtfeLayoutInfo.Info _ repr-c? _ _ fields)
       (if repr-c?
         (let
           [offset : i64 (ctfe-layout-field-offset fields field-name)]
           (if (< offset 0)
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   (string.string-append "offset-of unknown field " field-name))))
-            (OkCtfe (CtfeI64 offset) fuel)))
-        (ErrCtfe
+            (ResultCtfe.Ok (CompilerCtfeValue.I64 offset) fuel)))
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr
               expr
@@ -2985,10 +3051,10 @@
     (ctfe-env-pools env)
     (ctfe-env-layouts env)
     ty)
-    [(CtfeSomeLayoutInfo info)
+    [(CtfeMaybeLayoutInfo.Some info)
       (ctfe-eval-offset-from-layout field-name info expr fuel)]
-    [(CtfeNoLayoutInfo)
-      (ErrCtfe
+    [(CtfeMaybeLayoutInfo.None)
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type")))]))
 
@@ -2999,16 +3065,16 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match value
-    [(CtfeType ty)
+    [(CompilerCtfeValue.Type ty)
       (match (ctfe-offset-field-name field-arg env)
-        [(CtfeSomeFieldName field-name)
+        [(CtfeMaybeFieldName.Some field-name)
           (ctfe-eval-offset-from-type ty field-name expr env fuel)]
-        [(CtfeNoFieldName)
-          (ErrCtfe
+        [(CtfeMaybeFieldName.None)
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr expr "offset-of expects a field name")))])]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "offset-of expects a type argument")))]))
 
 (define (ctfe-eval-offset-query
@@ -3029,23 +3095,23 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (compiler-ctfe-eval type-arg env fuel)
-                    [(ErrCtfe d) (ErrCtfe d)]
-                    [(OkCtfe value arg-fuel)
+                    [(ResultCtfe.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfe.Ok value arg-fuel)
                       (ctfe-eval-offset-value value field-arg expr env arg-fuel)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "offset-of expects exactly one type argument and one field name")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "offset-of expects exactly one type argument and one field name")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -3105,30 +3171,30 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-eval-type-arg type-arg expr env fuel name)
-              [(ErrCtfeTypeArg d) (ErrCtfe d)]
-              [(OkCtfeTypeArg ty arg-fuel)
+              [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+              [(ResultCtfeTypeArg.Ok ty arg-fuel)
                 (let
                   [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
                   (cond
                     [(string.string-eq name "type-info")
-                      (OkCtfe
-                        (CtfeTypeInfo
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.TypeInfo
                           (ctfe-reflect-resolve-type-with-pools
                             (ctfe-env-pools env)
                             infos
                             ty))
                         arg-fuel)]
                     [(string.string-eq name "type-kind")
-                      (OkCtfe
-                        (CtfeString
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.String
                           (ctfe-type-kind-with-reflections-and-pools
                             (ctfe-env-pools env)
                             infos
                             ty))
                         arg-fuel)]
                     [(string.string-eq name "type-key")
-                      (OkCtfe
-                        (CtfeString
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.String
                           (ctfe-type-key-with-reflections-and-pools
                             (ctfe-env-pools env)
                             infos
@@ -3138,14 +3204,18 @@
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
-                        [(CtfeSomeReflectInfo info)
+                        [(CtfeMaybeReflectInfo.Some info)
                           (match info
-                            [(CtfeReflectStruct _ module _ _)
-                              (OkCtfe (CtfeString module) arg-fuel)]
-                            [(CtfeReflectEnum _ module _ _)
-                              (OkCtfe (CtfeString module) arg-fuel)])]
-                        [(CtfeNoReflectInfo)
-                          (ErrCtfe
+                            [(CtfeReflectInfo.Struct _ module _ _)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.String module)
+                                arg-fuel)]
+                            [(CtfeReflectInfo.Enum _ module _ _)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.String module)
+                                arg-fuel)])]
+                        [(CtfeMaybeReflectInfo.None)
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3154,14 +3224,18 @@
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
-                        [(CtfeSomeReflectInfo info)
+                        [(CtfeMaybeReflectInfo.Some info)
                           (match info
-                            [(CtfeReflectStruct _ _ nominal-name _)
-                              (OkCtfe (CtfeString nominal-name) arg-fuel)]
-                            [(CtfeReflectEnum _ _ nominal-name _)
-                              (OkCtfe (CtfeString nominal-name) arg-fuel)])]
-                        [(CtfeNoReflectInfo)
-                          (ErrCtfe
+                            [(CtfeReflectInfo.Struct _ _ nominal-name _)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.String nominal-name)
+                                arg-fuel)]
+                            [(CtfeReflectInfo.Enum _ _ nominal-name _)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.String nominal-name)
+                                arg-fuel)])]
+                        [(CtfeMaybeReflectInfo.None)
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3170,20 +3244,21 @@
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
-                        [(CtfeSomeReflectInfo info)
+                        [(CtfeMaybeReflectInfo.Some info)
                           (match info
-                            [(CtfeReflectStruct _ _ _ fields)
-                              (OkCtfe
-                                (CtfeI64 (ctfe-reflect-field-list-count fields))
+                            [(CtfeReflectInfo.Struct _ _ _ fields)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.I64
+                                  (ctfe-reflect-field-list-count fields))
                                 arg-fuel)]
                             [_
-                              (ErrCtfe
+                              (ResultCtfe.Err
                                 (box
                                   (ctfe-diagnostic-at-expr
                                     expr
                                     "struct-field-count requires struct type")))])]
-                        [(CtfeNoReflectInfo)
-                          (ErrCtfe
+                        [(CtfeMaybeReflectInfo.None)
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3192,21 +3267,21 @@
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
-                        [(CtfeSomeReflectInfo info)
+                        [(CtfeMaybeReflectInfo.Some info)
                           (match info
-                            [(CtfeReflectEnum _ _ _ variants)
-                              (OkCtfe
-                                (CtfeI64
+                            [(CtfeReflectInfo.Enum _ _ _ variants)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.I64
                                   (ctfe-reflect-variant-list-count variants))
                                 arg-fuel)]
                             [_
-                              (ErrCtfe
+                              (ResultCtfe.Err
                                 (box
                                   (ctfe-diagnostic-at-expr
                                     expr
                                     "enum-variant-count requires enum type")))])]
-                        [(CtfeNoReflectInfo)
-                          (ErrCtfe
+                        [(CtfeMaybeReflectInfo.None)
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3214,30 +3289,39 @@
                     [(string.string-eq name "array-element-type")
                       (match ty
                         [(AstTyArray elem _)
-                          (OkCtfe (CtfeType (ctfe-ty-get env elem)) arg-fuel)]
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                            arg-fuel)]
                         [(AstTyDynArray elem)
-                          (OkCtfe (CtfeType (ctfe-ty-get env elem)) arg-fuel)]
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                            arg-fuel)]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "array-element-type requires array type")))])]
                     [(string.string-eq name "array-length")
                       (match ty
-                        [(AstTyArray _ count) (OkCtfe (CtfeI64 count) arg-fuel)]
+                        [(AstTyArray _ count)
+                          (ResultCtfe.Ok (CompilerCtfeValue.I64 count) arg-fuel)]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "array-length requires fixed array type")))])]
                     [(string.string-eq name "array-dynamic?")
                       (match ty
-                        [(AstTyArray _ _) (OkCtfe (CtfeBool false) arg-fuel)]
-                        [(AstTyDynArray _) (OkCtfe (CtfeBool true) arg-fuel)]
+                        [(AstTyArray _ _)
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Bool false)
+                            arg-fuel)]
+                        [(AstTyDynArray _)
+                          (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel)]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3248,11 +3332,12 @@
                         infos
                         ty)
                         [(AstTyTuple elems)
-                          (OkCtfe
-                            (CtfeI64 (ctfe-type-list-count (box-get elems)))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.I64
+                              (ctfe-type-list-count (box-get elems)))
                             arg-fuel)]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3260,11 +3345,12 @@
                     [(string.string-eq name "function-param-count")
                       (match ty
                         [(AstTyFunc params _)
-                          (OkCtfe
-                            (CtfeI64 (ctfe-type-list-count (box-get params)))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.I64
+                              (ctfe-type-list-count (box-get params)))
                             arg-fuel)]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -3272,16 +3358,18 @@
                     [(string.string-eq name "function-return-type")
                       (match ty
                         [(AstTyFunc _ ret)
-                          (OkCtfe (CtfeType (ctfe-ty-get env ret)) arg-fuel)]
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Type (ctfe-ty-get env ret))
+                            arg-fuel)]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "function-return-type requires function type")))])]
                     [else (ctfe-unsupported-form expr)]))])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
@@ -3289,7 +3377,7 @@
                     name
                     " expects exactly one type argument"))))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -3306,7 +3394,7 @@
     [_ ""]))
 
 (define (ctfe-struct-field-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -3315,7 +3403,7 @@
           " expects exactly one type argument and one index")))))
 
 (define (ctfe-struct-field-kind-error [name : String] [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -3331,17 +3419,19 @@
   [fuel : i64]) : ResultCtfe
   (if (string.string-eq name "struct-field-name")
     (match (ctfe-reflect-field-name-at fields index)
-      [(OkCtfeStringLookup field-name) (OkCtfe (CtfeString field-name) fuel)]
-      [(ErrCtfeStringLookup message)
-        (ErrCtfe
+      [(ResultCtfeStringLookup.Ok field-name)
+        (ResultCtfe.Ok (CompilerCtfeValue.String field-name) fuel)]
+      [(ResultCtfeStringLookup.Err message)
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr
               expr
               (string.string-append name (string.string-append " " message)))))])
     (match (ctfe-reflect-field-type-at fields pools infos index)
-      [(OkCtfeTypeLookup field-ty) (OkCtfe (CtfeType field-ty) fuel)]
-      [(ErrCtfeTypeLookup message)
-        (ErrCtfe
+      [(ResultCtfeTypeLookup.Ok field-ty)
+        (ResultCtfe.Ok (CompilerCtfeValue.Type field-ty) fuel)]
+      [(ResultCtfeTypeLookup.Err message)
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr
               expr
@@ -3357,9 +3447,9 @@
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key ty))
-      [(CtfeSomeReflectInfo info)
+      [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectStruct _ _ _ fields)
+          [(CtfeReflectInfo.Struct _ _ _ fields)
             (ctfe-eval-struct-field-from-fields
               name
               fields
@@ -3369,7 +3459,7 @@
               expr
               fuel)]
           [_ (ctfe-struct-field-kind-error name expr)])]
-      [(CtfeNoReflectInfo) (ctfe-struct-field-kind-error name expr)])))
+      [(CtfeMaybeReflectInfo.None) (ctfe-struct-field-kind-error name expr)])))
 
 (define (ctfe-eval-struct-field-reflection
   [name : String]
@@ -3390,16 +3480,16 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (ctfe-eval-type-arg type-arg expr env fuel name)
-                    [(ErrCtfeTypeArg d) (ErrCtfe d)]
-                    [(OkCtfeTypeArg ty type-fuel)
+                    [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeTypeArg.Ok ty type-fuel)
                       (match (ctfe-eval-i64-arg
                         index-arg
                         expr
                         env
                         type-fuel
                         name)
-                        [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                        [(OkCtfeI64Arg index index-fuel)
+                        [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                        [(ResultCtfeI64Arg.Ok index index-fuel)
                           (ctfe-eval-struct-field-from-type
                             name
                             ty
@@ -3412,7 +3502,7 @@
     [_ (ctfe-struct-field-arity-error name expr)]))
 
 (define (ctfe-enum-variant-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -3421,7 +3511,7 @@
           " expects exactly one type argument and one index")))))
 
 (define (ctfe-enum-variant-kind-error [name : String] [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -3435,19 +3525,21 @@
   [fuel : i64]) : ResultCtfe
   (if (string.string-eq name "enum-variant-name")
     (match (ctfe-reflect-variant-name-at variants index)
-      [(OkCtfeStringLookup variant-name)
-        (OkCtfe (CtfeString variant-name) fuel)]
-      [(ErrCtfeStringLookup message)
-        (ErrCtfe
+      [(ResultCtfeStringLookup.Ok variant-name)
+        (ResultCtfe.Ok (CompilerCtfeValue.String variant-name) fuel)]
+      [(ResultCtfeStringLookup.Err message)
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr
               expr
               (string.string-append name (string.string-append " " message)))))])
     (match (ctfe-reflect-variant-payloads-at variants index)
-      [(OkCtfeTypeListLookup payloads)
-        (OkCtfe (CtfeI64 (ctfe-type-list-count payloads)) fuel)]
-      [(ErrCtfeTypeListLookup message)
-        (ErrCtfe
+      [(ResultCtfeTypeListLookup.Ok payloads)
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.I64 (ctfe-type-list-count payloads))
+          fuel)]
+      [(ResultCtfeTypeListLookup.Err message)
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr
               expr
@@ -3463,12 +3555,12 @@
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key ty))
-      [(CtfeSomeReflectInfo info)
+      [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectEnum _ _ _ variants)
+          [(CtfeReflectInfo.Enum _ _ _ variants)
             (ctfe-eval-enum-variant-from-variants name variants index expr fuel)]
           [_ (ctfe-enum-variant-kind-error name expr)])]
-      [(CtfeNoReflectInfo) (ctfe-enum-variant-kind-error name expr)])))
+      [(CtfeMaybeReflectInfo.None) (ctfe-enum-variant-kind-error name expr)])))
 
 (define (ctfe-eval-enum-variant-reflection
   [name : String]
@@ -3489,16 +3581,16 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (ctfe-eval-type-arg type-arg expr env fuel name)
-                    [(ErrCtfeTypeArg d) (ErrCtfe d)]
-                    [(OkCtfeTypeArg ty type-fuel)
+                    [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeTypeArg.Ok ty type-fuel)
                       (match (ctfe-eval-i64-arg
                         index-arg
                         expr
                         env
                         type-fuel
                         name)
-                        [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                        [(OkCtfeI64Arg index index-fuel)
+                        [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                        [(ResultCtfeI64Arg.Ok index index-fuel)
                           (ctfe-eval-enum-variant-from-type
                             name
                             ty
@@ -3511,14 +3603,14 @@
     [_ (ctfe-enum-variant-arity-error name expr)]))
 
 (define (ctfe-enum-payload-type-arity-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
         "enum-variant-payload-type expects exactly one type argument, one variant index, and one payload index"))))
 
 (define (ctfe-enum-payload-type-kind-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -3533,17 +3625,18 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match (ctfe-reflect-variant-payloads-at variants variant-index)
-    [(OkCtfeTypeListLookup payloads)
+    [(ResultCtfeTypeListLookup.Ok payloads)
       (match (ctfe-type-list-ref-with-pools payloads pools infos payload-index)
-        [(OkCtfeTypeLookup payload-ty) (OkCtfe (CtfeType payload-ty) fuel)]
-        [(ErrCtfeTypeLookup message)
-          (ErrCtfe
+        [(ResultCtfeTypeLookup.Ok payload-ty)
+          (ResultCtfe.Ok (CompilerCtfeValue.Type payload-ty) fuel)]
+        [(ResultCtfeTypeLookup.Err message)
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 (string.string-append "enum-variant-payload-type " message))))])]
-    [(ErrCtfeTypeListLookup message)
-      (ErrCtfe
+    [(ResultCtfeTypeListLookup.Err message)
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -3559,9 +3652,9 @@
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     (match (ctfe-reflect-info-lookup infos (ctfe-type-nominal-key ty))
-      [(CtfeSomeReflectInfo info)
+      [(CtfeMaybeReflectInfo.Some info)
         (match info
-          [(CtfeReflectEnum _ _ _ variants)
+          [(CtfeReflectInfo.Enum _ _ _ variants)
             (ctfe-eval-enum-payload-type-from-variants
               variants
               (ctfe-env-pools env)
@@ -3571,7 +3664,7 @@
               expr
               fuel)]
           [_ (ctfe-enum-payload-type-kind-error expr)])]
-      [(CtfeNoReflectInfo) (ctfe-enum-payload-type-kind-error expr)])))
+      [(CtfeMaybeReflectInfo.None) (ctfe-enum-payload-type-kind-error expr)])))
 
 (define (ctfe-eval-enum-payload-type-reflection
   [args : AstExprList]
@@ -3601,24 +3694,26 @@
                           env
                           fuel
                           "enum-variant-payload-type")
-                          [(ErrCtfeTypeArg d) (ErrCtfe d)]
-                          [(OkCtfeTypeArg ty type-fuel)
+                          [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+                          [(ResultCtfeTypeArg.Ok ty type-fuel)
                             (match (ctfe-eval-i64-arg
                               variant-arg
                               expr
                               env
                               type-fuel
                               "enum-variant-payload-type")
-                              [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                              [(OkCtfeI64Arg variant-index variant-fuel)
+                              [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                              [(ResultCtfeI64Arg.Ok variant-index variant-fuel)
                                 (match (ctfe-eval-i64-arg
                                   payload-arg
                                   expr
                                   env
                                   variant-fuel
                                   "enum-variant-payload-type")
-                                  [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                                  [(OkCtfeI64Arg payload-index payload-fuel)
+                                  [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                                  [(ResultCtfeI64Arg.Ok
+                                      payload-index
+                                      payload-fuel)
                                     (ctfe-eval-enum-payload-type-from-type
                                       ty
                                       variant-index
@@ -3654,16 +3749,16 @@
                     env
                     fuel
                     "function-param-type")
-                    [(ErrCtfeTypeArg d) (ErrCtfe d)]
-                    [(OkCtfeTypeArg ty type-fuel)
+                    [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeTypeArg.Ok ty type-fuel)
                       (match (ctfe-eval-i64-arg
                         index-arg
                         expr
                         env
                         type-fuel
                         "function-param-type")
-                        [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                        [(OkCtfeI64Arg index index-fuel)
+                        [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                        [(ResultCtfeI64Arg.Ok index index-fuel)
                           (match ty
                             [(AstTyFunc params _)
                               (match (ctfe-type-list-ref-with-pools
@@ -3671,10 +3766,12 @@
                                 (ctfe-env-pools env)
                                 (ctfe-env-reflections env)
                                 index)
-                                [(OkCtfeTypeLookup param-ty)
-                                  (OkCtfe (CtfeType param-ty) index-fuel)]
-                                [(ErrCtfeTypeLookup message)
-                                  (ErrCtfe
+                                [(ResultCtfeTypeLookup.Ok param-ty)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.Type param-ty)
+                                    index-fuel)]
+                                [(ResultCtfeTypeLookup.Err message)
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
@@ -3682,39 +3779,39 @@
                                           "function-param-type "
                                           message))))])]
                             [_
-                              (ErrCtfe
+                              (ResultCtfe.Err
                                 (box
                                   (ctfe-diagnostic-at-expr
                                     expr
                                     "function-param-type requires function type")))])])])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "function-param-type expects exactly one type argument and one index")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "function-param-type expects exactly one type argument and one index")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
             "function-param-type expects exactly one type argument and one index")))]))
 
 (define (ctfe-tuple-element-type-arity-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
         "tuple-element-type expects exactly one type argument and one index"))))
 
 (define (ctfe-tuple-element-type-kind-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr expr "tuple-element-type requires tuple type"))))
 
@@ -3734,9 +3831,10 @@
         (ctfe-env-pools env)
         (ctfe-env-reflections env)
         index)
-        [(OkCtfeTypeLookup element-ty) (OkCtfe (CtfeType element-ty) fuel)]
-        [(ErrCtfeTypeLookup message)
-          (ErrCtfe
+        [(ResultCtfeTypeLookup.Ok element-ty)
+          (ResultCtfe.Ok (CompilerCtfeValue.Type element-ty) fuel)]
+        [(ResultCtfeTypeLookup.Err message)
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
@@ -3766,16 +3864,16 @@
                     env
                     fuel
                     "tuple-element-type")
-                    [(ErrCtfeTypeArg d) (ErrCtfe d)]
-                    [(OkCtfeTypeArg ty type-fuel)
+                    [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeTypeArg.Ok ty type-fuel)
                       (match (ctfe-eval-i64-arg
                         index-arg
                         expr
                         env
                         type-fuel
                         "tuple-element-type")
-                        [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                        [(OkCtfeI64Arg index index-fuel)
+                        [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                        [(ResultCtfeI64Arg.Ok index index-fuel)
                           (ctfe-eval-tuple-element-type-from-type
                             ty
                             index
@@ -3843,29 +3941,31 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (ctfe-eval-string-arg left expr env fuel name)
-                    [(ErrCtfeStringArg d) (ErrCtfe d)]
-                    [(OkCtfeStringArg l left-fuel)
+                    [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeStringArg.Ok l left-fuel)
                       (match (ctfe-eval-string-arg
                         right
                         expr
                         env
                         left-fuel
                         name)
-                        [(ErrCtfeStringArg d) (ErrCtfe d)]
-                        [(OkCtfeStringArg r right-fuel)
-                          (OkCtfe (CtfeBool (string.string-eq l r)) right-fuel)])])]
+                        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+                        [(ResultCtfeStringArg.Ok r right-fuel)
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Bool (string.string-eq l r))
+                            right-fuel)])])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "string-eq expects two strings")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr expr "string-eq expects two strings")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "string-eq expects two strings")))]))
 
 (define (ctfe-eval-string-append-call
@@ -3887,33 +3987,34 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (ctfe-eval-string-arg left expr env fuel name)
-                    [(ErrCtfeStringArg d) (ErrCtfe d)]
-                    [(OkCtfeStringArg l left-fuel)
+                    [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeStringArg.Ok l left-fuel)
                       (match (ctfe-eval-string-arg
                         right
                         expr
                         env
                         left-fuel
                         name)
-                        [(ErrCtfeStringArg d) (ErrCtfe d)]
-                        [(OkCtfeStringArg r right-fuel)
-                          (OkCtfe
-                            (CtfeString (string.string-append l r))
+                        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+                        [(ResultCtfeStringArg.Ok r right-fuel)
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.String
+                              (string.string-append l r))
                             right-fuel)])])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "string-append expects two strings")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "string-append expects two strings")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "string-append expects two strings")))]))
 
 (define (ctfe-eval-string-length-call
@@ -3930,17 +4031,19 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-eval-string-arg arg expr env fuel name)
-              [(ErrCtfeStringArg d) (ErrCtfe d)]
-              [(OkCtfeStringArg text arg-fuel)
-                (OkCtfe (CtfeI64 (string.string-length text)) arg-fuel)])]
+              [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+              [(ResultCtfeStringArg.Ok text arg-fuel)
+                (ResultCtfe.Ok
+                  (CompilerCtfeValue.I64 (string.string-length text))
+                  arg-fuel)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "string-length expects one string")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "string-length expects one string")))]))
 
 (define (ctfe-eval-string-ref-call
@@ -3962,8 +4065,8 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (ctfe-eval-string-arg text expr env fuel name)
-                    [(ErrCtfeStringArg d) (ErrCtfe d)]
-                    [(OkCtfeStringArg s text-fuel)
+                    [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+                    [(ResultCtfeStringArg.Ok s text-fuel)
                       (ctfe-eval-string-ref-index
                         s
                         index
@@ -3972,19 +4075,19 @@
                         text-fuel
                         name)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "string-ref expects a string and index")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "string-ref expects a string and index")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "string-ref expects a string and index")))]))
 
@@ -3996,13 +4099,15 @@
   [fuel : i64]
   [name : String]) : ResultCtfe
   (match (ctfe-eval-i64-arg index-expr origin env fuel name)
-    [(ErrCtfeI64Arg d) (ErrCtfe d)]
-    [(OkCtfeI64Arg index index-fuel)
+    [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+    [(ResultCtfeI64Arg.Ok index index-fuel)
       (if (or (< index 0) (>= index (string.string-length text)))
-        (ErrCtfe
+        (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
-        (OkCtfe (CtfeChar (string.string-ref text index)) index-fuel))]))
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.Char (string.string-ref text index))
+          index-fuel))]))
 
 (define (ctfe-eval-string-to-int-call
   [name : String]
@@ -4018,15 +4123,17 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-eval-string-arg arg expr env fuel name)
-              [(ErrCtfeStringArg d) (ErrCtfe d)]
-              [(OkCtfeStringArg text arg-fuel)
-                (OkCtfe (CtfeI64 (string.string->int text)) arg-fuel)])]
+              [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+              [(ResultCtfeStringArg.Ok text arg-fuel)
+                (ResultCtfe.Ok
+                  (CompilerCtfeValue.I64 (string.string->int text))
+                  arg-fuel)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr expr "string->int expects one string")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "string->int expects one string")))]))
 
 (define (ctfe-eval-int-to-string-call
@@ -4042,17 +4149,19 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-eval-i64-arg arg expr env fuel "string.int->string")
-              [(ErrCtfeI64Arg d) (ErrCtfe d)]
-              [(OkCtfeI64Arg n arg-fuel)
-                (OkCtfe (CtfeString (string.int->string n)) arg-fuel)])]
+              [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+              [(ResultCtfeI64Arg.Ok n arg-fuel)
+                (ResultCtfe.Ok
+                  (CompilerCtfeValue.String (string.int->string n))
+                  arg-fuel)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "string.int->string expects one i64")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "string.int->string expects one i64")))]))
 
@@ -4245,17 +4354,17 @@
               env
               fuel
               "comptime-error")
-              [(OkCtfeStringArg message _next-fuel)
-                (ErrCtfe (box (ctfe-diagnostic-at-expr expr message)))]
-              [(ErrCtfeStringArg d) (ErrCtfe d)])]
+              [(ResultCtfeStringArg.Ok message _next-fuel)
+                (ResultCtfe.Err (box (ctfe-diagnostic-at-expr expr message)))]
+              [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "comptime-error expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -4274,27 +4383,27 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeBool b)
-                    (OkCtfe
-                      (CtfeExpr
+                  [(CompilerCtfeValue.Bool b)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Expr
                         (ctfe-ast-push env (AstExpr.Literal (AstLitBool b)))
                         (AstTyBool))
                       arg-fuel)]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr expr "expr-bool expects bool")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-bool expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "expr-bool expects exactly one arg")))]))
 
 (define (ctfe-eval-expr-splice-call
@@ -4310,24 +4419,25 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeExpr node ty) (OkCtfe (CtfeExpr node ty) arg-fuel)]
+                  [(CompilerCtfeValue.Expr node ty)
+                    (ResultCtfe.Ok (CompilerCtfeValue.Expr node ty) arg-fuel)]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           "expr-splice expects Expr")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-splice expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "expr-splice expects exactly one arg")))]))
 
@@ -4347,27 +4457,27 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeI64 n)
-                    (OkCtfe
-                      (CtfeExpr
+                  [(CompilerCtfeValue.I64 n)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Expr
                         (ctfe-ast-push env (AstExpr.Literal (ast-lit-int n)))
                         (AstTyI64))
                       arg-fuel)]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr expr "expr-int expects i64")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-int expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "expr-int expects exactly one arg")))]))
 
 ;; `(expr-string text)` builds a String literal Expr from a comptime string.
@@ -4384,31 +4494,31 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeString text)
-                    (OkCtfe
-                      (CtfeExpr
+                  [(CompilerCtfeValue.String text)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Expr
                         (ctfe-ast-push
                           env
                           (AstExpr.Literal (AstLitString text)))
                         (AstTyString))
                       arg-fuel)]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           "expr-string expects String")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-string expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "expr-string expects exactly one arg")))]))
 
@@ -4426,27 +4536,27 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeString name)
-                    (OkCtfe
-                      (CtfeExpr
+                  [(CompilerCtfeValue.String name)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Expr
                         (ctfe-ast-push env (AstExpr.Var (intern name)))
                         (ctfe-untyped-expr-type))
                       arg-fuel)]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr expr "expr-var expects String")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-var expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "expr-var expects exactly one arg")))]))
 
 (define (ctfe-eval-module-name-call
@@ -4462,17 +4572,17 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-eval-string-arg arg expr env fuel "module-name")
-              [(OkCtfeStringArg module next-fuel)
-                (OkCtfe (CtfeString module) next-fuel)]
-              [(ErrCtfeStringArg d) (ErrCtfe d)])]
+              [(ResultCtfeStringArg.Ok module next-fuel)
+                (ResultCtfe.Ok (CompilerCtfeValue.String module) next-fuel)]
+              [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "module-name expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "module-name expects exactly one arg")))]))
 
@@ -4499,36 +4609,36 @@
                     env
                     fuel
                     "module-export-macro?")
-                    [(OkCtfeStringArg module module-fuel)
+                    [(ResultCtfeStringArg.Ok module module-fuel)
                       (match (ctfe-eval-string-arg
                         name-arg
                         expr
                         env
                         module-fuel
                         "module-export-macro?")
-                        [(OkCtfeStringArg name name-fuel)
-                          (OkCtfe
-                            (CtfeBool
+                        [(ResultCtfeStringArg.Ok name name-fuel)
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Bool
                               (or
                                 (string.string-eq module "")
                                 (ctfe-module-macro-export? module name)))
                             name-fuel)]
-                        [(ErrCtfeStringArg d) (ErrCtfe d)])]
-                    [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
+                    [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "module-export-macro? expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "module-export-macro? expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -4557,19 +4667,19 @@
                     env
                     fuel
                     "module-hook")
-                    [(OkCtfeStringArg module module-fuel)
+                    [(ResultCtfeStringArg.Ok module module-fuel)
                       (match (ctfe-eval-string-arg
                         name-arg
                         expr
                         env
                         module-fuel
                         "module-hook")
-                        [(OkCtfeStringArg name name-fuel)
+                        [(ResultCtfeStringArg.Ok name name-fuel)
                           (if (or
                             (string.string-eq module "")
                             (ctfe-module-macro-export? module name))
-                            (OkCtfe
-                              (CtfeExpr
+                            (ResultCtfe.Ok
+                              (CompilerCtfeValue.Expr
                                 (ctfe-ast-push
                                   env
                                   (AstExpr.Var
@@ -4579,7 +4689,7 @@
                                         name))))
                                 (ctfe-untyped-expr-type))
                               name-fuel)
-                            (ErrCtfe
+                            (ResultCtfe.Err
                               (box
                                 (ctfe-diagnostic-at-expr
                                   expr
@@ -4590,22 +4700,22 @@
                                       (string.string-append
                                         " does not export hook "
                                         name)))))))]
-                        [(ErrCtfeStringArg d) (ErrCtfe d)])]
-                    [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
+                    [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "module-hook expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "module-hook expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "module-hook expects exactly two args")))]))
 
@@ -4629,15 +4739,15 @@
               (match rest
                 [(AstExprList.Nil)
                   (match (compiler-ctfe-eval target-arg env fuel)
-                    [(OkCtfe target-val target-fuel)
+                    [(ResultCtfe.Ok target-val target-fuel)
                       (match target-val
-                        [(CtfeExpr target-node _)
+                        [(CompilerCtfeValue.Expr target-node _)
                           (match (compiler-ctfe-eval field-arg env target-fuel)
-                            [(OkCtfe field-val field-fuel)
+                            [(ResultCtfe.Ok field-val field-fuel)
                               (match field-val
-                                [(CtfeString field)
-                                  (OkCtfe
-                                    (CtfeExpr
+                                [(CompilerCtfeValue.String field)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.Expr
                                       (ast-expr-struct-get-with-pools
                                         (ctfe-env-pools env)
                                         target-node
@@ -4645,33 +4755,33 @@
                                       (ctfe-untyped-expr-type))
                                     field-fuel)]
                                 [_
-                                  (ErrCtfe
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "expr-struct-get field expects String")))])]
-                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "expr-struct-get target expects Expr")))])]
-                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "expr-struct-get expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-struct-get expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -4703,25 +4813,27 @@
                     (match rest
                       [(AstExprList.Nil)
                         (match (compiler-ctfe-eval target-arg env fuel)
-                          [(OkCtfe target-val target-fuel)
+                          [(ResultCtfe.Ok target-val target-fuel)
                             (match target-val
-                              [(CtfeExpr target-node _)
+                              [(CompilerCtfeValue.Expr target-node _)
                                 (match (compiler-ctfe-eval
                                   field-arg
                                   env
                                   target-fuel)
-                                  [(OkCtfe field-val field-fuel)
+                                  [(ResultCtfe.Ok field-val field-fuel)
                                     (match field-val
-                                      [(CtfeString field)
+                                      [(CompilerCtfeValue.String field)
                                         (match (compiler-ctfe-eval
                                           value-arg
                                           env
                                           field-fuel)
-                                          [(OkCtfe value-val value-fuel)
+                                          [(ResultCtfe.Ok value-val value-fuel)
                                             (match value-val
-                                              [(CtfeExpr value-node _)
-                                                (OkCtfe
-                                                  (CtfeExpr
+                                              [(CompilerCtfeValue.Expr
+                                                  value-node
+                                                  _)
+                                                (ResultCtfe.Ok
+                                                  (CompilerCtfeValue.Expr
                                                     (ast-expr-struct-set-with-pools
                                                       (ctfe-env-pools env)
                                                       target-node
@@ -4730,46 +4842,47 @@
                                                     (AstTyUnit))
                                                   value-fuel)]
                                               [_
-                                                (ErrCtfe
+                                                (ResultCtfe.Err
                                                   (box
                                                     (ctfe-diagnostic-at-expr
                                                       expr
                                                       "expr-struct-set value expects Expr")))])]
-                                          [(ErrCtfe diag) (ErrCtfe diag)])]
+                                          [(ResultCtfe.Err diag)
+                                            (ResultCtfe.Err diag)])]
                                       [_
-                                        (ErrCtfe
+                                        (ResultCtfe.Err
                                           (box
                                             (ctfe-diagnostic-at-expr
                                               expr
                                               "expr-struct-set field expects String")))])]
-                                  [(ErrCtfe diag) (ErrCtfe diag)])]
+                                  [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                               [_
-                                (ErrCtfe
+                                (ResultCtfe.Err
                                   (box
                                     (ctfe-diagnostic-at-expr
                                       expr
                                       "expr-struct-set target expects Expr")))])]
-                          [(ErrCtfe diag) (ErrCtfe diag)])]
+                          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                       [_
-                        (ErrCtfe
+                        (ResultCtfe.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
                               "expr-struct-set expects exactly three args")))]))]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "expr-struct-set expects exactly three args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-struct-set expects exactly three args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -4788,40 +4901,40 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeExpr _ ty)
+                  [(CompilerCtfeValue.Expr _ ty)
                     (let
                       [actual-ty : AstType
                         (ctfe-captured-expr-type-inner-with-pools
                           (ctfe-env-pools env)
                           ty)]
                       (if (ctfe-untyped-expr-type? actual-ty)
-                        (ErrCtfe
+                        (ResultCtfe.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
                               "expr-type requires a typechecked Expr")))
-                        (OkCtfe
-                          (CtfeType
+                        (ResultCtfe.Ok
+                          (CompilerCtfeValue.Type
                             (ctfe-reflect-resolve-type-with-pools
                               (ctfe-env-pools env)
                               (ctfe-env-reflections env)
                               actual-ty))
                           arg-fuel)))]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr expr "expr-type expects Expr")))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-type expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg")))]))
 
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
@@ -4867,37 +4980,37 @@
   (match rest
     [(AstExprList.Nil)
       (match (compiler-ctfe-eval list-arg env fuel)
-        [(OkCtfe value list-fuel)
+        [(ResultCtfe.Ok value list-fuel)
           (match value
-            [(CtfeExprList nodes)
+            [(CompilerCtfeValue.ExprList nodes)
               (match (ctfe-eval-i64-arg
                 index-arg
                 expr
                 env
                 list-fuel
                 "expr-list-nth")
-                [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                [(OkCtfeI64Arg index index-fuel)
+                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                [(ResultCtfeI64Arg.Ok index index-fuel)
                   (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           "expr-list-nth index out of range")))
-                    (OkCtfe
-                      (CtfeExpr
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Expr
                         (ctfe-expr-list-nth nodes index)
                         (ctfe-untyped-expr-type))
                       index-fuel))])]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "expr-list-nth expects ExprList")))])]
-        [(ErrCtfe diag) (ErrCtfe diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -4925,7 +5038,7 @@
                 env
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
@@ -4933,20 +5046,22 @@
           (match rest
             [(AstExprList.Nil)
               (match (compiler-ctfe-eval arg env fuel)
-                [(OkCtfe value arg-fuel)
+                [(ResultCtfe.Ok value arg-fuel)
                   (match value
-                    [(CtfeExprList nodes)
+                    [(CompilerCtfeValue.ExprList nodes)
                       (cond
                         [(string.string-eq name "expr-list-empty?")
-                          (OkCtfe
-                            (CtfeBool (ctfe-expr-list-empty? nodes))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Bool
+                              (ctfe-expr-list-empty? nodes))
                             arg-fuel)]
                         [(string.string-eq name "expr-list-length")
-                          (OkCtfe
-                            (CtfeI64 (ctfe-expr-list-length nodes))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.I64
+                              (ctfe-expr-list-length nodes))
                             arg-fuel)]
                         [(ctfe-expr-list-empty? nodes)
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -4954,31 +5069,32 @@
                                   name
                                   " expects non-empty ExprList"))))]
                         [(string.string-eq name "expr-list-head")
-                          (OkCtfe
-                            (CtfeExpr
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Expr
                               (ctfe-expr-list-head nodes)
                               (ctfe-untyped-expr-type))
                             arg-fuel)]
                         [(string.string-eq name "expr-list-tail")
-                          (OkCtfe
-                            (CtfeExprList (ctfe-expr-list-tail nodes))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprList
+                              (ctfe-expr-list-tail nodes))
                             arg-fuel)]
                         [else (ctfe-unsupported-form expr)])]
                     [_
-                      (ErrCtfe
+                      (ResultCtfe.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             expr
                             (string.string-append name " expects ExprList"))))])]
-                [(ErrCtfe diag) (ErrCtfe diag)])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     (string.string-append name " expects exactly one arg"))))])))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -4994,37 +5110,38 @@
   (match rest
     [(AstExprList.Nil)
       (match (compiler-ctfe-eval list-arg env fuel)
-        [(OkCtfe value list-fuel)
+        [(ResultCtfe.Ok value list-fuel)
           (match value
-            [(CtfeExprClauseList clauses)
+            [(CompilerCtfeValue.ExprClauseList clauses)
               (match (ctfe-eval-i64-arg
                 index-arg
                 expr
                 env
                 list-fuel
                 "expr-clause-list-nth")
-                [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                [(OkCtfeI64Arg index index-fuel)
+                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                [(ResultCtfeI64Arg.Ok index index-fuel)
                   (if (or
                     (< index 0)
                     (>= index (ctfe-expr-clause-list-length clauses)))
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           "expr-clause-list-nth index out of range")))
-                    (OkCtfe
-                      (CtfeExprClause (ctfe-expr-clause-list-nth clauses index))
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.ExprClause
+                        (ctfe-expr-clause-list-nth clauses index))
                       index-fuel))])]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "expr-clause-list-nth expects ExprClauseList")))])]
-        [(ErrCtfe diag) (ErrCtfe diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5052,7 +5169,7 @@
                 env
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
@@ -5060,27 +5177,29 @@
           (match rest
             [(AstExprList.Nil)
               (match (compiler-ctfe-eval arg env fuel)
-                [(OkCtfe value arg-fuel)
+                [(ResultCtfe.Ok value arg-fuel)
                   (match value
-                    [(CtfeExprClauseList clauses)
+                    [(CompilerCtfeValue.ExprClauseList clauses)
                       (cond
                         [(string.string-eq name "expr-clause-list-empty?")
-                          (OkCtfe
-                            (CtfeBool (ctfe-expr-clause-list-empty? clauses))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Bool
+                              (ctfe-expr-clause-list-empty? clauses))
                             arg-fuel)]
                         [(string.string-eq name "expr-clause-list-length")
-                          (OkCtfe
-                            (CtfeI64 (ctfe-expr-clause-list-length clauses))
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.I64
+                              (ctfe-expr-clause-list-length clauses))
                             arg-fuel)]
                         [(string.string-eq name "expr-clause-list->expr-list")
-                          (OkCtfe
-                            (CtfeExprList
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprList
                               (ctfe-expr-clause-list->expr-list-in-env
                                 env
                                 clauses))
                             arg-fuel)]
                         [(ctfe-expr-clause-list-empty? clauses)
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -5088,33 +5207,33 @@
                                   name
                                   " expects non-empty ExprClauseList"))))]
                         [(string.string-eq name "expr-clause-list-head")
-                          (OkCtfe
-                            (CtfeExprClause
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprClause
                               (ctfe-expr-clause-list-head clauses))
                             arg-fuel)]
                         [(string.string-eq name "expr-clause-list-tail")
-                          (OkCtfe
-                            (CtfeExprClauseList
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprClauseList
                               (ctfe-expr-clause-list-tail clauses))
                             arg-fuel)]
                         [else (ctfe-unsupported-form expr)])]
                     [_
-                      (ErrCtfe
+                      (ResultCtfe.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             expr
                             (string.string-append
                               name
                               " expects ExprClauseList"))))])]
-                [(ErrCtfe diag) (ErrCtfe diag)])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     (string.string-append name " expects exactly one arg"))))])))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5134,54 +5253,56 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CtfeExprBindingClause clause)
+                  [(CompilerCtfeValue.ExprBindingClause clause)
                     (cond
                       [(string.string-eq name "expr-binding-clause-name")
-                        (OkCtfe
-                          (CtfeString (ctfe-expr-binding-clause-name clause))
+                        (ResultCtfe.Ok
+                          (CompilerCtfeValue.String
+                            (ctfe-expr-binding-clause-name clause))
                           arg-fuel)]
                       [(string.string-eq name "expr-binding-clause-has-type?")
-                        (OkCtfe
-                          (CtfeBool (ctfe-expr-binding-clause-has-type? clause))
+                        (ResultCtfe.Ok
+                          (CompilerCtfeValue.Bool
+                            (ctfe-expr-binding-clause-has-type? clause))
                           arg-fuel)]
                       [(string.string-eq name "expr-binding-clause-type")
                         (if (ctfe-expr-binding-clause-has-type? clause)
-                          (OkCtfe
-                            (CtfeExpr
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Expr
                               (ctfe-expr-binding-clause-type clause)
                               (ctfe-untyped-expr-type))
                             arg-fuel)
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "expr-binding-clause-type expects typed ExprBindingClause"))))]
                       [(string.string-eq name "expr-binding-clause-init")
-                        (OkCtfe
-                          (CtfeExpr
+                        (ResultCtfe.Ok
+                          (CompilerCtfeValue.Expr
                             (ctfe-expr-binding-clause-init clause)
                             (ctfe-untyped-expr-type))
                           arg-fuel)]
                       [else (ctfe-unsupported-form expr)])]
                   [_
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           (string.string-append
                             name
                             " expects ExprBindingClause"))))])]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   (string.string-append name " expects exactly one arg"))))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5197,38 +5318,38 @@
   (match rest
     [(AstExprList.Nil)
       (match (compiler-ctfe-eval list-arg env fuel)
-        [(OkCtfe value list-fuel)
+        [(ResultCtfe.Ok value list-fuel)
           (match value
-            [(CtfeExprBindingClauseList clauses)
+            [(CompilerCtfeValue.ExprBindingClauseList clauses)
               (match (ctfe-eval-i64-arg
                 index-arg
                 expr
                 env
                 list-fuel
                 "expr-binding-clause-list-nth")
-                [(ErrCtfeI64Arg d) (ErrCtfe d)]
-                [(OkCtfeI64Arg index index-fuel)
+                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
+                [(ResultCtfeI64Arg.Ok index index-fuel)
                   (if (or
                     (< index 0)
                     (>= index (ctfe-expr-binding-clause-list-length clauses)))
-                    (ErrCtfe
+                    (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
                           "expr-binding-clause-list-nth index out of range")))
-                    (OkCtfe
-                      (CtfeExprBindingClause
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.ExprBindingClause
                         (ctfe-expr-binding-clause-list-nth clauses index))
                       index-fuel))])]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "expr-binding-clause-list-nth expects ExprBindingClauseList")))])]
-        [(ErrCtfe diag) (ErrCtfe diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5256,7 +5377,7 @@
                 env
                 fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
@@ -5264,35 +5385,35 @@
           (match rest
             [(AstExprList.Nil)
               (match (compiler-ctfe-eval arg env fuel)
-                [(OkCtfe value arg-fuel)
+                [(ResultCtfe.Ok value arg-fuel)
                   (match value
-                    [(CtfeExprBindingClauseList clauses)
+                    [(CompilerCtfeValue.ExprBindingClauseList clauses)
                       (cond
                         [(string.string-eq
                             name
                             "expr-binding-clause-list-empty?")
-                          (OkCtfe
-                            (CtfeBool
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.Bool
                               (ctfe-expr-binding-clause-list-empty? clauses))
                             arg-fuel)]
                         [(string.string-eq
                             name
                             "expr-binding-clause-list-length")
-                          (OkCtfe
-                            (CtfeI64
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.I64
                               (ctfe-expr-binding-clause-list-length clauses))
                             arg-fuel)]
                         [(string.string-eq
                             name
                             "expr-binding-clause-list->expr-list")
-                          (OkCtfe
-                            (CtfeExprList
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprList
                               (ctfe-expr-binding-clause-list->expr-list-in-env
                                 env
                                 clauses))
                             arg-fuel)]
                         [(ctfe-expr-binding-clause-list-empty? clauses)
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
@@ -5300,33 +5421,33 @@
                                   name
                                   " expects non-empty ExprBindingClauseList"))))]
                         [(string.string-eq name "expr-binding-clause-list-head")
-                          (OkCtfe
-                            (CtfeExprBindingClause
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprBindingClause
                               (ctfe-expr-binding-clause-list-head clauses))
                             arg-fuel)]
                         [(string.string-eq name "expr-binding-clause-list-tail")
-                          (OkCtfe
-                            (CtfeExprBindingClauseList
+                          (ResultCtfe.Ok
+                            (CompilerCtfeValue.ExprBindingClauseList
                               (ctfe-expr-binding-clause-list-tail clauses))
                             arg-fuel)]
                         [else (ctfe-unsupported-form expr)])]
                     [_
-                      (ErrCtfe
+                      (ResultCtfe.Err
                         (box
                           (ctfe-diagnostic-at-expr
                             expr
                             (string.string-append
                               name
                               " expects ExprBindingClauseList"))))])]
-                [(ErrCtfe diag) (ErrCtfe diag)])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     (string.string-append name " expects exactly one arg"))))])))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5355,9 +5476,9 @@
                     (match rest
                       [(AstExprList.Nil)
                         (match (compiler-ctfe-eval cond-arg env fuel)
-                          [(OkCtfe cond-val cond-fuel)
+                          [(ResultCtfe.Ok cond-val cond-fuel)
                             (match cond-val
-                              [(CtfeExpr cond-node cond-ty)
+                              [(CompilerCtfeValue.Expr cond-node cond-ty)
                                 (if (ctfe-type-eq-in-env
                                   env
                                   cond-ty
@@ -5366,22 +5487,26 @@
                                     then-arg
                                     env
                                     cond-fuel)
-                                    [(OkCtfe then-val then-fuel)
+                                    [(ResultCtfe.Ok then-val then-fuel)
                                       (match then-val
-                                        [(CtfeExpr then-node then-ty)
+                                        [(CompilerCtfeValue.Expr
+                                            then-node
+                                            then-ty)
                                           (match (compiler-ctfe-eval
                                             else-arg
                                             env
                                             then-fuel)
-                                            [(OkCtfe else-val else-fuel)
+                                            [(ResultCtfe.Ok else-val else-fuel)
                                               (match else-val
-                                                [(CtfeExpr else-node else-ty)
+                                                [(CompilerCtfeValue.Expr
+                                                    else-node
+                                                    else-ty)
                                                   (if (ctfe-type-eq-in-env
                                                     env
                                                     then-ty
                                                     else-ty)
-                                                    (OkCtfe
-                                                      (CtfeExpr
+                                                    (ResultCtfe.Ok
+                                                      (CompilerCtfeValue.Expr
                                                         (ast-expr-if-with-pools
                                                           (ctfe-env-pools env)
                                                           cond-node
@@ -5389,57 +5514,59 @@
                                                           else-node)
                                                         then-ty)
                                                       else-fuel)
-                                                    (ErrCtfe
+                                                    (ResultCtfe.Err
                                                       (box
                                                         (ctfe-diagnostic-at-expr
                                                           expr
                                                           "expr-if branch types must match"))))]
                                                 [_
-                                                  (ErrCtfe
+                                                  (ResultCtfe.Err
                                                     (box
                                                       (ctfe-diagnostic-at-expr
                                                         expr
                                                         "expr-if else branch expects Expr")))])]
-                                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                                            [(ResultCtfe.Err diag)
+                                              (ResultCtfe.Err diag)])]
                                         [_
-                                          (ErrCtfe
+                                          (ResultCtfe.Err
                                             (box
                                               (ctfe-diagnostic-at-expr
                                                 expr
                                                 "expr-if then branch expects Expr")))])]
-                                    [(ErrCtfe diag) (ErrCtfe diag)])
-                                  (ErrCtfe
+                                    [(ResultCtfe.Err diag)
+                                      (ResultCtfe.Err diag)])
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "expr-if condition must produce bool"))))]
                               [_
-                                (ErrCtfe
+                                (ResultCtfe.Err
                                   (box
                                     (ctfe-diagnostic-at-expr
                                       expr
                                       "expr-if condition expects Expr")))])]
-                          [(ErrCtfe diag) (ErrCtfe diag)])]
+                          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                       [_
-                        (ErrCtfe
+                        (ResultCtfe.Err
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
                               "expr-if expects exactly three args")))]))]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "expr-if expects exactly three args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-if expects exactly three args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))]))
 
@@ -5448,9 +5575,10 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match args
-    [(AstExprList.Nil) (OkCtfe (CtfePattern AstPattern.Wildcard) fuel)]
+    [(AstExprList.Nil)
+      (ResultCtfe.Ok (CompilerCtfeValue.Pattern AstPattern.Wildcard) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5474,17 +5602,19 @@
               env
               fuel
               "pattern-binding")
-              [(OkCtfeStringArg name next-fuel)
-                (OkCtfe (CtfePattern (ast-pat-binding name)) next-fuel)]
-              [(ErrCtfeStringArg d) (ErrCtfe d)])]
+              [(ResultCtfeStringArg.Ok name next-fuel)
+                (ResultCtfe.Ok
+                  (CompilerCtfeValue.Pattern (ast-pat-binding name))
+                  next-fuel)]
+              [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "pattern-binding expects exactly one arg")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5513,36 +5643,37 @@
                     env
                     fuel
                     "pattern-variant")
-                    [(OkCtfeStringArg name name-fuel)
+                    [(ResultCtfeStringArg.Ok name name-fuel)
                       (match (compiler-ctfe-eval payloads-arg env name-fuel)
-                        [(OkCtfe payloads-val payloads-fuel)
+                        [(ResultCtfe.Ok payloads-val payloads-fuel)
                           (match payloads-val
-                            [(CtfePatternList payloads)
-                              (OkCtfe
-                                (CtfePattern (ast-pat-variant name payloads))
+                            [(CompilerCtfeValue.PatternList payloads)
+                              (ResultCtfe.Ok
+                                (CompilerCtfeValue.Pattern
+                                  (ast-pat-variant name payloads))
                                 payloads-fuel)]
                             [_
-                              (ErrCtfe
+                              (ResultCtfe.Err
                                 (box
                                   (ctfe-diagnostic-at-expr
                                     expr
                                     "pattern-variant expects PatternList payloads")))])]
-                        [(ErrCtfe diag) (ErrCtfe diag)])]
-                    [(ErrCtfeStringArg d) (ErrCtfe d)])]
+                        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+                    [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "pattern-variant expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "pattern-variant expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5553,9 +5684,10 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match args
-    [(AstExprList.Nil) (OkCtfe (CtfePatternList AstPatternList.Nil) fuel)]
+    [(AstExprList.Nil)
+      (ResultCtfe.Ok (CompilerCtfeValue.PatternList AstPatternList.Nil) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5579,47 +5711,47 @@
               (match done
                 [(AstExprList.Nil)
                   (match (compiler-ctfe-eval head-arg env fuel)
-                    [(OkCtfe head-val head-fuel)
+                    [(ResultCtfe.Ok head-val head-fuel)
                       (match head-val
-                        [(CtfePattern head-pattern)
+                        [(CompilerCtfeValue.Pattern head-pattern)
                           (match (compiler-ctfe-eval rest-arg env head-fuel)
-                            [(OkCtfe rest-val rest-fuel)
+                            [(ResultCtfe.Ok rest-val rest-fuel)
                               (match rest-val
-                                [(CtfePatternList rest-patterns)
-                                  (OkCtfe
-                                    (CtfePatternList
+                                [(CompilerCtfeValue.PatternList rest-patterns)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.PatternList
                                       (ast-pattern-cons
                                         head-pattern
                                         rest-patterns))
                                     rest-fuel)]
                                 [_
-                                  (ErrCtfe
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "pattern-list-cons tail expects PatternList")))])]
-                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "pattern-list-cons head expects Pattern")))])]
-                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "pattern-list-cons expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "pattern-list-cons expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5643,45 +5775,45 @@
               (match done
                 [(AstExprList.Nil)
                   (match (compiler-ctfe-eval pattern-arg env fuel)
-                    [(OkCtfe pattern-val pattern-fuel)
+                    [(ResultCtfe.Ok pattern-val pattern-fuel)
                       (match pattern-val
-                        [(CtfePattern pattern)
+                        [(CompilerCtfeValue.Pattern pattern)
                           (match (compiler-ctfe-eval body-arg env pattern-fuel)
-                            [(OkCtfe body-val body-fuel)
+                            [(ResultCtfe.Ok body-val body-fuel)
                               (match body-val
-                                [(CtfeExpr body-node _)
-                                  (OkCtfe
-                                    (CtfeMatchArm
+                                [(CompilerCtfeValue.Expr body-node _)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.MatchArm
                                       (ast-match-arm pattern body-node))
                                     body-fuel)]
                                 [_
-                                  (ErrCtfe
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "match-arm body expects Expr")))])]
-                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "match-arm pattern expects Pattern")))])]
-                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "match-arm expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "match-arm expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "match-arm expects exactly two args")))]))
 
@@ -5690,9 +5822,10 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match args
-    [(AstExprList.Nil) (OkCtfe (CtfeMatchArmList AstMatchArmList.Nil) fuel)]
+    [(AstExprList.Nil)
+      (ResultCtfe.Ok (CompilerCtfeValue.MatchArmList AstMatchArmList.Nil) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5716,45 +5849,45 @@
               (match done
                 [(AstExprList.Nil)
                   (match (compiler-ctfe-eval head-arg env fuel)
-                    [(OkCtfe head-val head-fuel)
+                    [(ResultCtfe.Ok head-val head-fuel)
                       (match head-val
-                        [(CtfeMatchArm head-arm)
+                        [(CompilerCtfeValue.MatchArm head-arm)
                           (match (compiler-ctfe-eval rest-arg env head-fuel)
-                            [(OkCtfe rest-val rest-fuel)
+                            [(ResultCtfe.Ok rest-val rest-fuel)
                               (match rest-val
-                                [(CtfeMatchArmList rest-arms)
-                                  (OkCtfe
-                                    (CtfeMatchArmList
+                                [(CompilerCtfeValue.MatchArmList rest-arms)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.MatchArmList
                                       (ast-match-arm-cons head-arm rest-arms))
                                     rest-fuel)]
                                 [_
-                                  (ErrCtfe
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "match-arm-list-cons tail expects MatchArmList")))])]
-                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "match-arm-list-cons head expects MatchArm")))])]
-                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "match-arm-list-cons expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "match-arm-list-cons expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -5778,18 +5911,18 @@
               (match done
                 [(AstExprList.Nil)
                   (match (compiler-ctfe-eval scrutinee-arg env fuel)
-                    [(OkCtfe scrutinee-val scrutinee-fuel)
+                    [(ResultCtfe.Ok scrutinee-val scrutinee-fuel)
                       (match scrutinee-val
-                        [(CtfeExpr scrutinee-node _)
+                        [(CompilerCtfeValue.Expr scrutinee-node _)
                           (match (compiler-ctfe-eval
                             arms-arg
                             env
                             scrutinee-fuel)
-                            [(OkCtfe arms-val arms-fuel)
+                            [(ResultCtfe.Ok arms-val arms-fuel)
                               (match arms-val
-                                [(CtfeMatchArmList arms)
-                                  (OkCtfe
-                                    (CtfeExpr
+                                [(CompilerCtfeValue.MatchArmList arms)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.Expr
                                       (ast-expr-match-with-pools
                                         (ctfe-env-pools env)
                                         scrutinee-node
@@ -5797,33 +5930,33 @@
                                       (ctfe-untyped-expr-type))
                                     arms-fuel)]
                                 [_
-                                  (ErrCtfe
+                                  (ResultCtfe.Err
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
                                         "expr-match arms expects MatchArmList")))])]
-                            [(ErrCtfe diag) (ErrCtfe diag)])]
+                            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                         [_
-                          (ErrCtfe
+                          (ResultCtfe.Err
                             (box
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "expr-match scrutinee expects Expr")))])]
-                    [(ErrCtfe diag) (ErrCtfe diag)])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
                 [_
-                  (ErrCtfe
+                  (ResultCtfe.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         expr
                         "expr-match expects exactly two args")))]))]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   "expr-match expects exactly two args")))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr expr "expr-match expects exactly two args")))]))
 
@@ -5978,7 +6111,7 @@
         (match rest
           [(AstExprList.Nil)
             (match (compiler-ctfe-eval arg env fuel)
-              [(OkCtfe value arg-fuel)
+              [(ResultCtfe.Ok value arg-fuel)
                 (let
                   [body-env : CtfeEnv
                     (ctfe-env-extend
@@ -5990,15 +6123,15 @@
                     (ctfe-ast-get body-env body)
                     body-env
                     arg-fuel))]
-              [(ErrCtfe diag) (ErrCtfe diag)])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
-            (ErrCtfe
+            (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
                   (string.string-append name " expects exactly one arg"))))]))]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -6137,7 +6270,7 @@
 
 ;; Shared "unsupported compile-time form" diagnostic for ordinary calls.
 (define (ctfe-unsupported-form [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -6153,9 +6286,9 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (ctfe-env-lookup env name)
-    [(CtfeSomeValue value) (OkCtfe value fuel)]
-    [(CtfeNoValue)
-      (ErrCtfe
+    [(CtfeMaybeValue.Some value) (ResultCtfe.Ok value fuel)]
+    [(CtfeMaybeValue.None)
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -6168,9 +6301,10 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match value
-    [(CtfeTypeInfoBox ty) (OkCtfe (CtfeTypeInfo ty) fuel)]
+    [(CompilerCtfeValue.TypeInfoBox ty)
+      (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)]
     [_
-      (ErrCtfe
+      (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
@@ -6182,14 +6316,15 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe value next-fuel) (ctfe-eval-box-get-value value expr next-fuel)]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+    [(ResultCtfe.Ok value next-fuel)
+      (ctfe-eval-box-get-value value expr next-fuel)]
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-comptime-field-name? [field : i64] [want : String]) : bool
   (string.string-eq (intern-str field) want))
 
 (define (ctfe-comptime-field-error [field : i64] [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -6198,7 +6333,7 @@
           (string.string-append (intern-str field) "'"))))))
 
 (define (ctfe-comptime-struct-get-type-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -6246,124 +6381,158 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match value
-    [(CtfeExprList nodes)
+    [(CompilerCtfeValue.ExprList nodes)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeExprList nodes) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.ExprList nodes) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-expr-list-length nodes)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeExprClause clause)
+    [(CompilerCtfeValue.ExprClause clause)
       (cond
         [(ctfe-comptime-field-name? field "first")
-          (OkCtfe
-            (CtfeExpr (ctfe-expr-clause-first clause) (ctfe-untyped-expr-type))
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.Expr
+              (ctfe-expr-clause-first clause)
+              (ctfe-untyped-expr-type))
             fuel)]
         [(ctfe-comptime-field-name? field "second")
-          (OkCtfe
-            (CtfeExpr (ctfe-expr-clause-second clause) (ctfe-untyped-expr-type))
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.Expr
+              (ctfe-expr-clause-second clause)
+              (ctfe-untyped-expr-type))
             fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeExprClauseList clauses)
+    [(CompilerCtfeValue.ExprClauseList clauses)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeExprClauseList clauses) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.ExprClauseList clauses) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-expr-clause-list-length clauses)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeExprBindingClause clause)
+    [(CompilerCtfeValue.ExprBindingClause clause)
       (cond
         [(ctfe-comptime-field-name? field "name")
-          (OkCtfe (CtfeString (ctfe-expr-binding-clause-name clause)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.String (ctfe-expr-binding-clause-name clause))
+            fuel)]
         [(ctfe-comptime-field-name? field "has-type")
-          (OkCtfe (CtfeBool (ctfe-expr-binding-clause-has-type? clause)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.Bool (ctfe-expr-binding-clause-has-type? clause))
+            fuel)]
         [(ctfe-comptime-field-name? field "ty")
-          (OkCtfe
-            (CtfeExpr
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.Expr
               (ctfe-expr-binding-clause-type clause)
               (ctfe-untyped-expr-type))
             fuel)]
         [(ctfe-comptime-field-name? field "init")
-          (OkCtfe
-            (CtfeExpr
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.Expr
               (ctfe-expr-binding-clause-init clause)
               (ctfe-untyped-expr-type))
             fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeExprBindingClauseList clauses)
+    [(CompilerCtfeValue.ExprBindingClauseList clauses)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeExprBindingClauseList clauses) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.ExprBindingClauseList clauses) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-expr-binding-clause-list-length clauses)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64
+              (ctfe-expr-binding-clause-list-length clauses))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfePatternList patterns)
+    [(CompilerCtfeValue.PatternList patterns)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfePatternList patterns) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.PatternList patterns) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-pattern-list-length patterns)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-pattern-list-length patterns))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeMatchArm arm)
+    [(CompilerCtfeValue.MatchArm arm)
       (match arm
         [(AstMatchArm.Arm pattern body)
           (cond
             [(ctfe-comptime-field-name? field "pattern")
-              (OkCtfe (CtfePattern pattern) fuel)]
+              (ResultCtfe.Ok (CompilerCtfeValue.Pattern pattern) fuel)]
             [(ctfe-comptime-field-name? field "body")
-              (OkCtfe (CtfeExpr body (ctfe-untyped-expr-type)) fuel)]
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Expr body (ctfe-untyped-expr-type))
+                fuel)]
             [else (ctfe-comptime-field-error field expr)])])]
-    [(CtfeMatchArmList arms)
+    [(CompilerCtfeValue.MatchArmList arms)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeMatchArmList arms) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.MatchArmList arms) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-match-arm-list-length arms)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-match-arm-list-length arms))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeTypeInfoList items)
+    [(CompilerCtfeValue.TypeInfoList items)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeTypeInfoList items) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeInfoList items) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-type-list-count items)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-type-list-count items))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeTypeField name ty)
+    [(CompilerCtfeValue.TypeField name ty)
       (cond
         [(ctfe-comptime-field-name? field "name")
-          (OkCtfe (CtfeString name) fuel)]
-        [(ctfe-comptime-field-name? field "ty") (OkCtfe (CtfeTypeInfo ty) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.String name) fuel)]
+        [(ctfe-comptime-field-name? field "ty")
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeTypeFieldList fields)
+    [(CompilerCtfeValue.TypeFieldList fields)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeTypeFieldList fields) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeFieldList fields) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-reflect-field-list-count fields)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-reflect-field-list-count fields))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeTypeVariantPayload ty)
+    [(CompilerCtfeValue.TypeVariantPayload ty)
       (if (ctfe-comptime-field-name? field "ty")
-        (OkCtfe (CtfeTypeInfo ty) fuel)
+        (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)
         (ctfe-comptime-field-error field expr))]
-    [(CtfeTypeVariantPayloadList payloads)
+    [(CompilerCtfeValue.TypeVariantPayloadList payloads)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeTypeVariantPayloadList payloads) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.TypeVariantPayloadList payloads)
+            fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-type-list-count payloads)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-type-list-count payloads))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeTypeVariant name payloads)
+    [(CompilerCtfeValue.TypeVariant name payloads)
       (cond
         [(ctfe-comptime-field-name? field "name")
-          (OkCtfe (CtfeString name) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.String name) fuel)]
         [(ctfe-comptime-field-name? field "payloads")
-          (OkCtfe (CtfeTypeVariantPayloadList payloads) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.TypeVariantPayloadList payloads)
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
-    [(CtfeTypeVariantList variants)
+    [(CompilerCtfeValue.TypeVariantList variants)
       (cond
         [(ctfe-comptime-field-name? field "items")
-          (OkCtfe (CtfeTypeVariantList variants) fuel)]
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeVariantList variants) fuel)]
         [(ctfe-comptime-field-name? field "len")
-          (OkCtfe (CtfeI64 (ctfe-reflect-variant-list-count variants)) fuel)]
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-reflect-variant-list-count variants))
+            fuel)]
         [else (ctfe-comptime-field-error field expr)])]
     [_ (ctfe-comptime-struct-get-type-error expr)]))
 
@@ -6374,15 +6543,16 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe value next-fuel)
+    [(ResultCtfe.Ok value next-fuel)
       (ctfe-eval-struct-get-value value field expr next-fuel)]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-comptime-array-index-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe (box (ctfe-diagnostic-at-expr expr "array-ref index out of range"))))
+  (ResultCtfe.Err
+    (box (ctfe-diagnostic-at-expr expr "array-ref index out of range"))))
 
 (define (ctfe-comptime-array-type-error [expr : AstExpr]) : ResultCtfe
-  (ErrCtfe
+  (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
@@ -6395,68 +6565,79 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match array
-    [(CtfeExprList nodes)
+    [(CompilerCtfeValue.ExprList nodes)
       (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
         (ctfe-comptime-array-index-error expr)
-        (OkCtfe
-          (CtfeExpr (ctfe-expr-list-nth nodes index) (ctfe-untyped-expr-type))
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.Expr
+            (ctfe-expr-list-nth nodes index)
+            (ctfe-untyped-expr-type))
           fuel))]
-    [(CtfeExprClauseList clauses)
+    [(CompilerCtfeValue.ExprClauseList clauses)
       (if (or (< index 0) (>= index (ctfe-expr-clause-list-length clauses)))
         (ctfe-comptime-array-index-error expr)
-        (OkCtfe (CtfeExprClause (ctfe-expr-clause-list-nth clauses index)) fuel))]
-    [(CtfeExprBindingClauseList clauses)
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.ExprClause
+            (ctfe-expr-clause-list-nth clauses index))
+          fuel))]
+    [(CompilerCtfeValue.ExprBindingClauseList clauses)
       (if (or
         (< index 0)
         (>= index (ctfe-expr-binding-clause-list-length clauses)))
         (ctfe-comptime-array-index-error expr)
-        (OkCtfe
-          (CtfeExprBindingClause
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.ExprBindingClause
             (ctfe-expr-binding-clause-list-nth clauses index))
           fuel))]
-    [(CtfePatternList patterns)
+    [(CompilerCtfeValue.PatternList patterns)
       (if (or (< index 0) (>= index (ctfe-pattern-list-length patterns)))
         (ctfe-comptime-array-index-error expr)
-        (OkCtfe (CtfePattern (ctfe-pattern-list-nth patterns index)) fuel))]
-    [(CtfeMatchArmList arms)
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.Pattern (ctfe-pattern-list-nth patterns index))
+          fuel))]
+    [(CompilerCtfeValue.MatchArmList arms)
       (if (or (< index 0) (>= index (ctfe-match-arm-list-length arms)))
         (ctfe-comptime-array-index-error expr)
-        (OkCtfe (CtfeMatchArm (ctfe-match-arm-list-nth arms index env)) fuel))]
-    [(CtfeTypeInfoList items)
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.MatchArm (ctfe-match-arm-list-nth arms index env))
+          fuel))]
+    [(CompilerCtfeValue.TypeInfoList items)
       (match (ctfe-type-list-ref-with-pools
         items
         (ctfe-env-pools env)
         (ctfe-env-reflections env)
         index)
-        [(OkCtfeTypeLookup ty) (OkCtfe (CtfeTypeInfo ty) fuel)]
-        [(ErrCtfeTypeLookup _) (ctfe-comptime-array-index-error expr)])]
-    [(CtfeTypeFieldList fields)
+        [(ResultCtfeTypeLookup.Ok ty)
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)]
+        [(ResultCtfeTypeLookup.Err _) (ctfe-comptime-array-index-error expr)])]
+    [(CompilerCtfeValue.TypeFieldList fields)
       (if (or (< index 0) (>= index (ctfe-reflect-field-list-count fields)))
         (ctfe-comptime-array-index-error expr)
         (match (ctfe-reflect-field-list-ref fields index)
-          [(CtfeReflectField name ty)
-            (OkCtfe
-              (CtfeTypeField
+          [(CtfeReflectField.Field name ty)
+            (ResultCtfe.Ok
+              (CompilerCtfeValue.TypeField
                 name
                 (ctfe-reflect-resolve-type-with-pools
                   (ctfe-env-pools env)
                   (ctfe-env-reflections env)
                   ty))
               fuel)]))]
-    [(CtfeTypeVariantPayloadList payloads)
+    [(CompilerCtfeValue.TypeVariantPayloadList payloads)
       (match (ctfe-type-list-ref-with-pools
         payloads
         (ctfe-env-pools env)
         (ctfe-env-reflections env)
         index)
-        [(OkCtfeTypeLookup ty) (OkCtfe (CtfeTypeVariantPayload ty) fuel)]
-        [(ErrCtfeTypeLookup _) (ctfe-comptime-array-index-error expr)])]
-    [(CtfeTypeVariantList variants)
+        [(ResultCtfeTypeLookup.Ok ty)
+          (ResultCtfe.Ok (CompilerCtfeValue.TypeVariantPayload ty) fuel)]
+        [(ResultCtfeTypeLookup.Err _) (ctfe-comptime-array-index-error expr)])]
+    [(CompilerCtfeValue.TypeVariantList variants)
       (if (or (< index 0) (>= index (ctfe-reflect-variant-list-count variants)))
         (ctfe-comptime-array-index-error expr)
         (match (ctfe-reflect-variant-list-ref variants index)
-          [(CtfeReflectVariant name payloads)
-            (OkCtfe (CtfeTypeVariant name payloads) fuel)]))]
+          [(CtfeReflectVariant.Variant name payloads)
+            (ResultCtfe.Ok (CompilerCtfeValue.TypeVariant name payloads) fuel)]))]
     [_ (ctfe-comptime-array-type-error expr)]))
 
 (define (ctfe-eval-array-ref
@@ -6466,20 +6647,20 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval array env fuel)
-    [(OkCtfe array-value array-fuel)
+    [(ResultCtfe.Ok array-value array-fuel)
       (match (compiler-ctfe-eval index env array-fuel)
-        [(OkCtfe index-value index-fuel)
+        [(ResultCtfe.Ok index-value index-fuel)
           (match index-value
-            [(CtfeI64 index)
+            [(CompilerCtfeValue.I64 index)
               (ctfe-eval-array-ref-value array-value index expr env index-fuel)]
             [_
-              (ErrCtfe
+              (ResultCtfe.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     expr
                     "array-ref index must be i64 in compile-time evaluation")))])]
-        [(ErrCtfe diag) (ErrCtfe diag)])]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-eval-binary
   [op : AstBinOp]
@@ -6489,11 +6670,12 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval left env fuel)
-    [(OkCtfe lv left-fuel)
+    [(ResultCtfe.Ok lv left-fuel)
       (match (compiler-ctfe-eval right env left-fuel)
-        [(OkCtfe rv right-fuel) (ctfe-apply-binop op lv rv expr env right-fuel)]
-        [(ErrCtfe diag) (ErrCtfe diag)])]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+        [(ResultCtfe.Ok rv right-fuel)
+          (ctfe-apply-binop op lv rv expr env right-fuel)]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-eval-unary
   [op : AstUnOp]
@@ -6502,8 +6684,8 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe v inner-fuel) (ctfe-apply-unop op v expr inner-fuel)]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+    [(ResultCtfe.Ok v inner-fuel) (ctfe-apply-unop op v expr inner-fuel)]
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-eval-if
   [cond : AstExpr]
@@ -6512,19 +6694,19 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval cond env fuel)
-    [(OkCtfe cond-value cond-fuel)
+    [(ResultCtfe.Ok cond-value cond-fuel)
       (match cond-value
-        [(CtfeBool b)
+        [(CompilerCtfeValue.Bool b)
           (if b
             (compiler-ctfe-eval then-branch env cond-fuel)
             (compiler-ctfe-eval else-branch env cond-fuel))]
         [_
-          (ErrCtfe
+          (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr
                 cond
                 "comptime 'if' condition must be bool")))])]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 ;; Evaluate `let` bindings sequentially, threading both fuel and the extended
 ;; environment. The original `env` is preserved for siblings because each
@@ -6544,7 +6726,7 @@
             (let
               [value-expr : AstExpr (ctfe-ast-get env value-expr-box)]
               (match (compiler-ctfe-eval value-expr env fuel)
-                [(OkCtfe value value-fuel)
+                [(ResultCtfe.Ok value value-fuel)
                   (ctfe-eval-let
                     rest
                     body
@@ -6557,32 +6739,32 @@
                         (ctfe-cast-source-type value-expr value env)
                         env))
                     value-fuel)]
-                [(ErrCtfe diag) (ErrCtfe diag)]))]))]))
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))]))]))
 
 ;; Evaluate a `begin` to the value of its last expression; an empty body is
 ;; unit.
 (define (ctfe-eval-begin [exprs : AstExprList] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (match exprs
-    [(AstExprList.Nil) (OkCtfe (CtfeUnit) fuel)]
+    [(AstExprList.Nil) (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)]
     [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ctfe-ast-get env head)]
         [rest : AstExprList (box-get rest)]
         (match (compiler-ctfe-eval head env fuel)
-          [(OkCtfe value head-fuel)
+          [(ResultCtfe.Ok value head-fuel)
             (match rest
-              [(AstExprList.Nil) (OkCtfe value head-fuel)]
+              [(AstExprList.Nil) (ResultCtfe.Ok value head-fuel)]
               [_ (ctfe-eval-begin rest env head-fuel)])]
-          [(ErrCtfe diag) (ErrCtfe diag)]))]))
+          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))]))
 
 ;; Evaluate a small CTFE-owned `match` subset. Runtime enum/struct values still
 ;; have no CTFE representation; this covers scalar values and the public
-;; stdlib.comptime syntax pseudo-values backed by CtfeExpr/CtfeExprList.
+;; stdlib.comptime syntax pseudo-values backed by CompilerCtfeValue.Expr/CompilerCtfeValue.ExprList.
 (define (ctfe-value-list-cons [head : CompilerCtfeValue] [tail : CtfeValueList]) : CtfeValueList
-  (CtfeValueCons head (box tail)))
+  (CtfeValueList.Cons head (box tail)))
 
 (define (ctfe-value-list1 [a : CompilerCtfeValue]) : CtfeValueList
-  (ctfe-value-list-cons a CtfeValueNil))
+  (ctfe-value-list-cons a CtfeValueList.Nil))
 
 (define (ctfe-value-list2 [a : CompilerCtfeValue] [b : CompilerCtfeValue]) : CtfeValueList
   (ctfe-value-list-cons a (ctfe-value-list1 b)))
@@ -6617,31 +6799,31 @@
   (match lit
     [(AstLitInt n _)
       (match value
-        [(CtfeI64 actual) (= actual n)]
+        [(CompilerCtfeValue.I64 actual) (= actual n)]
         [_ false])]
     [(AstLitBool b)
       (match value
-        [(CtfeBool actual) (= actual b)]
+        [(CompilerCtfeValue.Bool actual) (= actual b)]
         [_ false])]
     [(AstLitChar c)
       (match value
-        [(CtfeChar actual) (= actual c)]
+        [(CompilerCtfeValue.Char actual) (= actual c)]
         [_ false])]
     [(AstLitUnit)
       (match value
-        [(CtfeUnit) true]
+        [(CompilerCtfeValue.Unit) true]
         [_ false])]
     [(AstLitFloat text)
       (match (compiler-float-parse-f64 text)
         [(CompilerFloatSomeF64 want)
           (match value
-            [(CtfeF64 actual) (= actual want)]
-            [(CtfeF32 actual) (= actual want)]
+            [(CompilerCtfeValue.F64 actual) (= actual want)]
+            [(CompilerCtfeValue.F32 actual) (= actual want)]
             [_ false])]
         [(CompilerFloatNoF64) false])]
     [(AstLitString text)
       (match value
-        [(CtfeString actual) (string.string-eq actual text)]
+        [(CompilerCtfeValue.String actual) (string.string-eq actual text)]
         [_ false])]))
 
 (define (ctfe-match-pattern-list
@@ -6651,26 +6833,26 @@
   (match patterns
     [(AstPatternList.Nil)
       (match values
-        [(CtfeValueNil) (CtfePatternMatched env)]
-        [_ (CtfeNoPatternMatch)])]
+        [(CtfeValueList.Nil) (CtfePatternMatch.Matched env)]
+        [_ (CtfePatternMatch.No)])]
     [(AstPatternList.Cons pattern rest-patterns)
       (let
         [pattern : AstPattern (box-get pattern)]
         [rest-patterns : AstPatternList (box-get rest-patterns)]
         (match values
-          [(CtfeValueCons value rest-values)
+          [(CtfeValueList.Cons value rest-values)
             (match (ctfe-match-pattern
               pattern
               value
               (ctfe-value-default-cast-type value)
               env)
-              [(CtfePatternMatched next-env)
+              [(CtfePatternMatch.Matched next-env)
                 (ctfe-match-pattern-list
                   rest-patterns
                   (box-get rest-values)
                   next-env)]
-              [(CtfeNoPatternMatch) (CtfeNoPatternMatch)])]
-          [(CtfeValueNil) (CtfeNoPatternMatch)]))]))
+              [(CtfePatternMatch.No) (CtfePatternMatch.No)])]
+          [(CtfeValueList.Nil) (CtfePatternMatch.No)]))]))
 
 (define (ctfe-match-expr-variant
   [variant : i64]
@@ -6683,75 +6865,85 @@
       (match lit
         [(AstLitBool b)
           (if (ctfe-pattern-variant-name? variant "ExprBool")
-            (ctfe-match-pattern-list args (ctfe-value-list1 (CtfeBool b)) env)
-            (CtfeNoPatternMatch))]
+            (ctfe-match-pattern-list
+              args
+              (ctfe-value-list1 (CompilerCtfeValue.Bool b))
+              env)
+            (CtfePatternMatch.No))]
         [(AstLitInt n _)
           (if (ctfe-pattern-variant-name? variant "ExprInt")
-            (ctfe-match-pattern-list args (ctfe-value-list1 (CtfeI64 n)) env)
-            (CtfeNoPatternMatch))]
-        [_ (CtfeNoPatternMatch)])]
+            (ctfe-match-pattern-list
+              args
+              (ctfe-value-list1 (CompilerCtfeValue.I64 n))
+              env)
+            (CtfePatternMatch.No))]
+        [_ (CtfePatternMatch.No)])]
     [(AstExpr.Var name)
       (if (ctfe-pattern-variant-name? variant "ExprVar")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeString (intern-str name)))
+          (ctfe-value-list1 (CompilerCtfeValue.String (intern-str name)))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.If cond then-branch else-branch)
       (if (ctfe-pattern-variant-name? variant "ExprIf")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list3
-            (CtfeExpr cond (AstTyBool))
-            (CtfeExpr then-branch ty)
-            (CtfeExpr else-branch ty))
+            (CompilerCtfeValue.Expr cond (AstTyBool))
+            (CompilerCtfeValue.Expr then-branch ty)
+            (CompilerCtfeValue.Expr else-branch ty))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.Call callee args-list)
       (if (ctfe-pattern-variant-name? variant "ExprCall")
         (ctfe-match-pattern-list
           args
           (ctfe-value-list2
-            (CtfeExpr callee (ctfe-untyped-expr-type))
-            (CtfeExprList args-list))
+            (CompilerCtfeValue.Expr callee (ctfe-untyped-expr-type))
+            (CompilerCtfeValue.ExprList args-list))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.Begin exprs)
       (if (ctfe-pattern-variant-name? variant "ExprBegin")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExprList exprs))
+          (ctfe-value-list1 (CompilerCtfeValue.ExprList exprs))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.Quote inner)
       (if (ctfe-pattern-variant-name? variant "ExprQuote")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
+          (ctfe-value-list1
+            (CompilerCtfeValue.Expr inner (ctfe-untyped-expr-type)))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.Quasiquote inner)
       (if (ctfe-pattern-variant-name? variant "ExprQuasiquote")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
+          (ctfe-value-list1
+            (CompilerCtfeValue.Expr inner (ctfe-untyped-expr-type)))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.Unquote inner)
       (if (ctfe-pattern-variant-name? variant "ExprUnquote")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
+          (ctfe-value-list1
+            (CompilerCtfeValue.Expr inner (ctfe-untyped-expr-type)))
           env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.No))]
     [(AstExpr.UnquoteSplicing inner)
       (if (ctfe-pattern-variant-name? variant "ExprUnquoteSplicing")
         (ctfe-match-pattern-list
           args
-          (ctfe-value-list1 (CtfeExpr inner (ctfe-untyped-expr-type)))
+          (ctfe-value-list1
+            (CompilerCtfeValue.Expr inner (ctfe-untyped-expr-type)))
           env)
-        (CtfeNoPatternMatch))]
-    [_ (CtfeNoPatternMatch)]))
+        (CtfePatternMatch.No))]
+    [_ (CtfePatternMatch.No)]))
 
 (define (ctfe-match-pattern
   [pattern : AstPattern]
@@ -6759,12 +6951,12 @@
   [value-ty : AstType]
   [env : CtfeEnv]) : CtfePatternMatch
   (match pattern
-    [(AstPattern.Wildcard) (CtfePatternMatched env)]
+    [(AstPattern.Wildcard) (CtfePatternMatch.Matched env)]
     [(AstPattern.Binding name)
-      (CtfePatternMatched
+      (CtfePatternMatch.Matched
         (ctfe-env-extend-typed env (intern-str name) value value-ty))]
     [(AstPattern.Var name maybe-ty)
-      (CtfePatternMatched
+      (CtfePatternMatch.Matched
         (ctfe-env-extend-typed
           env
           (intern-str name)
@@ -6772,37 +6964,38 @@
           (ctfe-binding-type maybe-ty value-ty env)))]
     [(AstPattern.Literal lit)
       (if (ctfe-literal-matches-value? lit value)
-        (CtfePatternMatched env)
-        (CtfeNoPatternMatch))]
+        (CtfePatternMatch.Matched env)
+        (CtfePatternMatch.No))]
     [(AstPattern.Variant variant args-box)
       (let
         [args : AstPatternList (box-get args-box)]
         (match value
-          [(CtfeExpr node ty)
+          [(CompilerCtfeValue.Expr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
-          [(CtfeTypeInfo ty) (ctfe-match-type-info-variant variant args ty env)]
-          [(CtfeTypeInfoBox ty)
+          [(CompilerCtfeValue.TypeInfo ty)
+            (ctfe-match-type-info-variant variant args ty env)]
+          [(CompilerCtfeValue.TypeInfoBox ty)
             (if (ctfe-pattern-variant-name? variant "box")
               (ctfe-match-pattern-list
                 args
-                (ctfe-value-list1 (CtfeTypeInfo ty))
+                (ctfe-value-list1 (CompilerCtfeValue.TypeInfo ty))
                 env)
-              (CtfeNoPatternMatch))]
-          [(CtfeExprClause clause)
+              (CtfePatternMatch.No))]
+          [(CompilerCtfeValue.ExprClause clause)
             (if (ctfe-pattern-variant-name? variant "ExprClause")
               (ctfe-match-pattern-list
                 args
                 (ctfe-value-list2
-                  (CtfeExpr
+                  (CompilerCtfeValue.Expr
                     (ctfe-expr-clause-first clause)
                     (ctfe-untyped-expr-type))
-                  (CtfeExpr
+                  (CompilerCtfeValue.Expr
                     (ctfe-expr-clause-second clause)
                     (ctfe-untyped-expr-type)))
                 env)
-              (CtfeNoPatternMatch))]
-          [_ (CtfeNoPatternMatch)]))]
-    [(AstPattern.Tuple _) (CtfeNoPatternMatch)]))
+              (CtfePatternMatch.No))]
+          [_ (CtfePatternMatch.No)]))]
+    [(AstPattern.Tuple _) (CtfePatternMatch.No)]))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -6813,7 +7006,7 @@
   [fuel : i64]) : ResultCtfe
   (match arms
     [(AstMatchArmList.Nil)
-      (ErrCtfe
+      (ResultCtfe.Err
         (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm")))]
     [(AstMatchArmList.Cons arm rest)
       (let
@@ -6821,9 +7014,9 @@
         (match arm
           [(AstMatchArm.Arm pattern body-box)
             (match (ctfe-match-pattern pattern value value-ty env)
-              [(CtfePatternMatched arm-env)
+              [(CtfePatternMatch.Matched arm-env)
                 (compiler-ctfe-eval (ctfe-ast-get env body-box) arm-env fuel)]
-              [(CtfeNoPatternMatch)
+              [(CtfePatternMatch.No)
                 (ctfe-eval-match-arms value value-ty rest origin env fuel)])]))]))
 
 (define (ctfe-eval-match
@@ -6833,7 +7026,7 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval scrutinee env fuel)
-    [(OkCtfe value scrutinee-fuel)
+    [(ResultCtfe.Ok value scrutinee-fuel)
       (ctfe-eval-match-arms
         value
         (ctfe-cast-source-type scrutinee value env)
@@ -6841,7 +7034,7 @@
         origin
         env
         scrutinee-fuel)]
-    [(ErrCtfe diag) (ErrCtfe diag)]))
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 ;; --- quote / quasiquote -----------------------------------------------------
 (define (ctfe-quote-literal-type [lit : AstLiteral]) : AstType
@@ -6875,15 +7068,19 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteExpr
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe value next-fuel)
+    [(ResultCtfe.Ok value next-fuel)
       (match value
-        [(CtfeExpr node ty) (OkCtfeQuoteExpr node ty next-fuel)]
-        [(CtfeType ty)
-          (OkCtfeQuoteExpr (ctfe-type-to-expr ty env) (AstTyExpr) next-fuel)]
+        [(CompilerCtfeValue.Expr node ty)
+          (ResultCtfeQuoteExpr.Ok node ty next-fuel)]
+        [(CompilerCtfeValue.Type ty)
+          (ResultCtfeQuoteExpr.Ok
+            (ctfe-type-to-expr ty env)
+            (AstTyExpr)
+            next-fuel)]
         [_
-          (ErrCtfeQuoteExpr
+          (ResultCtfeQuoteExpr.Err
             (box (ctfe-diagnostic-at-expr origin "unquote expects Expr")))])]
-    [(ErrCtfe diag) (ErrCtfeQuoteExpr diag)]))
+    [(ResultCtfe.Err diag) (ResultCtfeQuoteExpr.Err diag)]))
 
 (define (ctfe-eval-unquote-splice
   [inner : AstExpr]
@@ -6891,16 +7088,17 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteExprList
   (match (compiler-ctfe-eval inner env fuel)
-    [(OkCtfe value next-fuel)
+    [(ResultCtfe.Ok value next-fuel)
       (match value
-        [(CtfeExprList exprs) (OkCtfeQuoteExprList exprs next-fuel)]
+        [(CompilerCtfeValue.ExprList exprs)
+          (ResultCtfeQuoteExprList.Ok exprs next-fuel)]
         [_
-          (ErrCtfeQuoteExprList
+          (ResultCtfeQuoteExprList.Err
             (box
               (ctfe-diagnostic-at-expr
                 origin
                 "unquote-splicing expects ExprList")))])]
-    [(ErrCtfe diag) (ErrCtfeQuoteExprList diag)]))
+    [(ResultCtfe.Err diag) (ResultCtfeQuoteExprList.Err diag)]))
 
 (define (ctfe-type-name-to-type [name : String]) : AstType
   (cond
@@ -7114,7 +7312,7 @@
         env)]))
 
 (define (ctfe-type-expr-error [origin : AstExpr]) : ResultCtfeQuoteType
-  (ErrCtfeQuoteType
+  (ResultCtfeQuoteType.Err
     (box
       (ctfe-diagnostic-at-expr origin "type unquote expects a type expression"))))
 
@@ -7124,20 +7322,21 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteTypeList
   (match exprs
-    [(AstExprList.Nil) (OkCtfeQuoteTypeList AstTypeNil fuel)]
+    [(AstExprList.Nil) (ResultCtfeQuoteTypeList.Ok AstTypeNil fuel)]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ctfe-ast-get env head)]
         [rest : AstExprList (box-get rest)]
         (match (ctfe-expr-to-type head-expr origin env fuel)
-          [(OkCtfeQuoteType head-ty head-fuel)
+          [(ResultCtfeQuoteType.Ok head-ty head-fuel)
             (match (ctfe-expr-list-to-type-list rest origin env head-fuel)
-              [(OkCtfeQuoteTypeList tail tail-fuel)
-                (OkCtfeQuoteTypeList
+              [(ResultCtfeQuoteTypeList.Ok tail tail-fuel)
+                (ResultCtfeQuoteTypeList.Ok
                   (ast-type-cons-with-pools (ctfe-env-pools env) head-ty tail)
                   tail-fuel)]
-              [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteTypeList diag)])]
-          [(ErrCtfeQuoteType diag) (ErrCtfeQuoteTypeList diag)]))]))
+              [(ResultCtfeQuoteTypeList.Err diag)
+                (ResultCtfeQuoteTypeList.Err diag)])]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteTypeList.Err diag)]))]))
 
 (define (ctfe-expr-unary-type
   [name : String]
@@ -7153,8 +7352,8 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-expr-to-type elem-expr origin env fuel)
-              [(OkCtfeQuoteType elem-ty next-fuel)
-                (OkCtfeQuoteType
+              [(ResultCtfeQuoteType.Ok elem-ty next-fuel)
+                (ResultCtfeQuoteType.Ok
                   (cond
                     [(string.string-eq name "Array")
                       (ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)]
@@ -7166,7 +7365,7 @@
                       (ast-ty-mut-ptr-with-pools (ctfe-env-pools env) elem-ty)]
                     [else elem-ty])
                   next-fuel)]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
           [_ (ctfe-type-expr-error origin)]))]
     [_ (ctfe-type-expr-error origin)]))
 
@@ -7181,10 +7380,10 @@
         [elem-expr : AstExpr (ctfe-ast-get env elem)]
         [tail : AstExprList (box-get tail)]
         (match (ctfe-expr-to-type elem-expr origin env fuel)
-          [(OkCtfeQuoteType elem-ty elem-fuel)
+          [(ResultCtfeQuoteType.Ok elem-ty elem-fuel)
             (match tail
               [(AstExprList.Nil)
-                (OkCtfeQuoteType
+                (ResultCtfeQuoteType.Ok
                   (ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)
                   elem-fuel)]
               [(AstExprList.Cons len-node end)
@@ -7195,7 +7394,7 @@
                     [(AstExprList.Nil)
                       (match (ctfe-expr-unspan env len-expr)
                         [(AstExpr.Literal (AstLitInt count _))
-                          (OkCtfeQuoteType
+                          (ResultCtfeQuoteType.Ok
                             (ast-ty-array-with-pools
                               (ctfe-env-pools env)
                               elem-ty
@@ -7204,7 +7403,7 @@
                         [_ (ctfe-type-expr-error origin)])]
                     [_ (ctfe-type-expr-error origin)]))]
               [_ (ctfe-type-expr-error origin)])]
-          [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)]))]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)]))]
     [_ (ctfe-type-expr-error origin)]))
 
 (define (ctfe-expr-func-type
@@ -7220,22 +7419,22 @@
         (match rest
           [(AstExprList.Nil)
             (match (ctfe-expr-to-type head-expr origin env fuel)
-              [(OkCtfeQuoteType ret-ty next-fuel)
-                (OkCtfeQuoteType
+              [(ResultCtfeQuoteType.Ok ret-ty next-fuel)
+                (ResultCtfeQuoteType.Ok
                   (ast-ty-func-with-pools
                     (ctfe-env-pools env)
                     AstTypeNil
                     ret-ty)
                   next-fuel)]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
           [_
             (match (ctfe-expr-to-type head-expr origin env fuel)
-              [(OkCtfeQuoteType arg-ty arg-fuel)
+              [(ResultCtfeQuoteType.Ok arg-ty arg-fuel)
                 (match (ctfe-expr-func-type rest origin env arg-fuel)
-                  [(OkCtfeQuoteType tail-fn next-fuel)
+                  [(ResultCtfeQuoteType.Ok tail-fn next-fuel)
                     (match tail-fn
                       [(AstTyFunc tail-args ret)
-                        (OkCtfeQuoteType
+                        (ResultCtfeQuoteType.Ok
                           (ast-ty-func-with-pools
                             (ctfe-env-pools env)
                             (ast-type-cons-with-pools
@@ -7245,8 +7444,9 @@
                             (ctfe-ty-get env ret))
                           next-fuel)]
                       [_ (ctfe-type-expr-error origin)])]
-                  [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]))]
+                  [(ResultCtfeQuoteType.Err diag)
+                    (ResultCtfeQuoteType.Err diag)])]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]))]
     [_ (ctfe-type-expr-error origin)]))
 
 (define (ctfe-expr-reference-type
@@ -7270,8 +7470,8 @@
                   (match (ctfe-expr-unspan env region-expr)
                     [(AstExpr.Var region)
                       (match (ctfe-expr-to-type inner-expr origin env fuel)
-                        [(OkCtfeQuoteType inner-ty next-fuel)
-                          (OkCtfeQuoteType
+                        [(ResultCtfeQuoteType.Ok inner-ty next-fuel)
+                          (ResultCtfeQuoteType.Ok
                             (if mutable
                               (ast-ty-mut-ref-with-pools
                                 (ctfe-env-pools env)
@@ -7282,7 +7482,8 @@
                                 (intern-str region)
                                 inner-ty))
                             next-fuel)]
-                        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+                        [(ResultCtfeQuoteType.Err diag)
+                          (ResultCtfeQuoteType.Err diag)])]
                     [_ (ctfe-type-expr-error origin)])]
                 [_ (ctfe-type-expr-error origin)]))]
           [_ (ctfe-type-expr-error origin)]))]
@@ -7308,14 +7509,15 @@
                   (match (ctfe-expr-unspan env region-expr)
                     [(AstExpr.Var region)
                       (match (ctfe-expr-to-type inner-expr origin env fuel)
-                        [(OkCtfeQuoteType inner-ty next-fuel)
-                          (OkCtfeQuoteType
+                        [(ResultCtfeQuoteType.Ok inner-ty next-fuel)
+                          (ResultCtfeQuoteType.Ok
                             (ast-ty-region-with-pools
                               (ctfe-env-pools env)
                               (intern-str region)
                               inner-ty)
                             next-fuel)]
-                        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+                        [(ResultCtfeQuoteType.Err diag)
+                          (ResultCtfeQuoteType.Err diag)])]
                     [_ (ctfe-type-expr-error origin)])]
                 [_ (ctfe-type-expr-error origin)]))]
           [_ (ctfe-type-expr-error origin)]))]
@@ -7326,7 +7528,7 @@
   [env : CtfeEnv]
   [origin : AstExpr]) : ResultCtfeQuoteLifetimeList
   (match exprs
-    [(AstExprList.Nil) (OkCtfeQuoteLifetimeList AstLifetimeNil)]
+    [(AstExprList.Nil) (ResultCtfeQuoteLifetimeList.Ok AstLifetimeNil)]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ctfe-ast-get env head)]
@@ -7334,12 +7536,13 @@
         (match (ctfe-expr-unspan env head-expr)
           [(AstExpr.Var name)
             (match (ctfe-expr-list-to-lifetime-list rest env origin)
-              [(OkCtfeQuoteLifetimeList tail)
-                (OkCtfeQuoteLifetimeList
+              [(ResultCtfeQuoteLifetimeList.Ok tail)
+                (ResultCtfeQuoteLifetimeList.Ok
                   (ast-lifetime-cons (intern-str name) tail))]
-              [(ErrCtfeQuoteLifetimeList diag) (ErrCtfeQuoteLifetimeList diag)])]
+              [(ResultCtfeQuoteLifetimeList.Err diag)
+                (ResultCtfeQuoteLifetimeList.Err diag)])]
           [_
-            (ErrCtfeQuoteLifetimeList
+            (ResultCtfeQuoteLifetimeList.Err
               (box
                 (ctfe-diagnostic-at-expr
                   origin
@@ -7359,8 +7562,8 @@
         (match (ctfe-expr-unspan env name-expr)
           [(AstExpr.Literal (AstLitString name))
             (match (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin)
-              [(OkCtfeQuoteLifetimeList lifetimes)
-                (OkCtfeQuoteType
+              [(ResultCtfeQuoteLifetimeList.Ok lifetimes)
+                (ResultCtfeQuoteType.Ok
                   (if is-struct
                     (match lifetimes
                       [(AstLifetimeNil) (AstTyStruct (intern name))]
@@ -7369,7 +7572,8 @@
                       [(AstLifetimeNil) (AstTyEnum (intern name))]
                       [_ (ast-ty-enum-args (intern name) lifetimes)]))
                   fuel)]
-              [(ErrCtfeQuoteLifetimeList diag) (ErrCtfeQuoteType diag)])]
+              [(ResultCtfeQuoteLifetimeList.Err diag)
+                (ResultCtfeQuoteType.Err diag)])]
           [_ (ctfe-type-expr-error origin)]))]
     [_ (ctfe-type-expr-error origin)]))
 
@@ -7379,9 +7583,9 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfeQuoteType
   (match (ctfe-expr-unspan env expr)
-    [(AstExpr.TypeLiteral ty) (OkCtfeQuoteType ty fuel)]
+    [(AstExpr.TypeLiteral ty) (ResultCtfeQuoteType.Ok ty fuel)]
     [(AstExpr.Var name)
-      (OkCtfeQuoteType (ctfe-type-name-to-type (intern-str name)) fuel)]
+      (ResultCtfeQuoteType.Ok (ctfe-type-name-to-type (intern-str name)) fuel)]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ctfe-ast-get env func-box)]
@@ -7415,9 +7619,10 @@
                   (ctfe-expr-region-type args origin env fuel)]
                 [(string.string-eq head "Tuple")
                   (match (ctfe-expr-list-to-type-list args origin env fuel)
-                    [(OkCtfeQuoteTypeList elems next-fuel)
-                      (OkCtfeQuoteType (ast-ty-tuple elems) next-fuel)]
-                    [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteType diag)])]
+                    [(ResultCtfeQuoteTypeList.Ok elems next-fuel)
+                      (ResultCtfeQuoteType.Ok (ast-ty-tuple elems) next-fuel)]
+                    [(ResultCtfeQuoteTypeList.Err diag)
+                      (ResultCtfeQuoteType.Err diag)])]
                 [else (ctfe-type-expr-error origin)]))]
           [_ (ctfe-type-expr-error origin)]))]
     [_ (ctfe-type-expr-error origin)]))
@@ -7432,27 +7637,27 @@
       (match (box-get rest)
         [(AstLifetimeNil)
           (match (ctfe-env-lookup env name)
-            [(CtfeSomeValue value)
+            [(CtfeMaybeValue.Some value)
               (match value
-                [(CtfeType ty) (OkCtfeQuoteType ty fuel)]
-                [(CtfeExpr node _)
+                [(CompilerCtfeValue.Type ty) (ResultCtfeQuoteType.Ok ty fuel)]
+                [(CompilerCtfeValue.Expr node _)
                   (let
                     [node-expr : AstExpr (ctfe-ast-get env node)]
                     (ctfe-expr-to-type node-expr origin env fuel))]
                 [_
-                  (ErrCtfeQuoteType
+                  (ResultCtfeQuoteType.Err
                     (box
                       (ctfe-diagnostic-at-expr
                         origin
                         "type unquote expects a type value")))])]
-            [(CtfeNoValue)
-              (ErrCtfeQuoteType
+            [(CtfeMaybeValue.None)
+              (ResultCtfeQuoteType.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     origin
                     "type unquote references an unbound type parameter")))])]
         [_
-          (ErrCtfeQuoteType
+          (ResultCtfeQuoteType.Err
             (box
               (ctfe-diagnostic-at-expr
                 origin
@@ -7461,11 +7666,11 @@
 
 (define (ctfe-quote-type-var [name : i64] [env : CtfeEnv] [fuel : i64]) : ResultCtfeQuoteType
   (match (ctfe-env-lookup env (intern-str name))
-    [(CtfeSomeValue value)
+    [(CtfeMaybeValue.Some value)
       (match value
-        [(CtfeType ty) (OkCtfeQuoteType ty fuel)]
-        [_ (OkCtfeQuoteType (AstTyVar name) fuel)])]
-    [(CtfeNoValue) (OkCtfeQuoteType (AstTyVar name) fuel)]))
+        [(CompilerCtfeValue.Type ty) (ResultCtfeQuoteType.Ok ty fuel)]
+        [_ (ResultCtfeQuoteType.Ok (AstTyVar name) fuel)])]
+    [(CtfeMaybeValue.None) (ResultCtfeQuoteType.Ok (AstTyVar name) fuel)]))
 
 (define (ctfe-quote-type-list
   [types : AstTypeList]
@@ -7473,23 +7678,24 @@
   [origin : AstExpr]
   [fuel : i64]) : ResultCtfeQuoteTypeList
   (match types
-    [(AstTypeNil) (OkCtfeQuoteTypeList AstTypeNil fuel)]
+    [(AstTypeNil) (ResultCtfeQuoteTypeList.Ok AstTypeNil fuel)]
     [(AstTypeCons head rest)
       (let
         [head : AstType (ctfe-ty-get env head)]
         [rest : AstTypeList (box-get rest)]
         (match (ctfe-quote-type head env origin fuel)
-          [(OkCtfeQuoteType quoted-head head-fuel)
+          [(ResultCtfeQuoteType.Ok quoted-head head-fuel)
             (match (ctfe-quote-type-list rest env origin head-fuel)
-              [(OkCtfeQuoteTypeList quoted-rest rest-fuel)
-                (OkCtfeQuoteTypeList
+              [(ResultCtfeQuoteTypeList.Ok quoted-rest rest-fuel)
+                (ResultCtfeQuoteTypeList.Ok
                   (ast-type-cons-with-pools
                     (ctfe-env-pools env)
                     quoted-head
                     quoted-rest)
                   rest-fuel)]
-              [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteTypeList diag)])]
-          [(ErrCtfeQuoteType diag) (ErrCtfeQuoteTypeList diag)]))]))
+              [(ResultCtfeQuoteTypeList.Err diag)
+                (ResultCtfeQuoteTypeList.Err diag)])]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteTypeList.Err diag)]))]))
 
 (define (ctfe-quote-type
   [ty : AstType]
@@ -7499,84 +7705,84 @@
   (match ty
     [(AstTyFunc args ret)
       (match (ctfe-quote-type-list (box-get args) env origin fuel)
-        [(OkCtfeQuoteTypeList quoted-args args-fuel)
+        [(ResultCtfeQuoteTypeList.Ok quoted-args args-fuel)
           (match (ctfe-quote-type (ctfe-ty-get env ret) env origin args-fuel)
-            [(OkCtfeQuoteType quoted-ret ret-fuel)
-              (OkCtfeQuoteType
+            [(ResultCtfeQuoteType.Ok quoted-ret ret-fuel)
+              (ResultCtfeQuoteType.Ok
                 (ast-ty-func-with-pools
                   (ctfe-env-pools env)
                   quoted-args
                   quoted-ret)
                 ret-fuel)]
-            [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
-        [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteType diag)])]
+            [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
+        [(ResultCtfeQuoteTypeList.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyTuple elems)
       (match (ctfe-quote-type-list (box-get elems) env origin fuel)
-        [(OkCtfeQuoteTypeList quoted next-fuel)
-          (OkCtfeQuoteType (ast-ty-tuple quoted) next-fuel)]
-        [(ErrCtfeQuoteTypeList diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteTypeList.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok (ast-ty-tuple quoted) next-fuel)]
+        [(ResultCtfeQuoteTypeList.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyArray elem count)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-array-with-pools (ctfe-env-pools env) quoted count)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyDynArray elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-dyn-array-with-pools (ctfe-env-pools env) quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyBox elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-box-with-pools (ctfe-env-pools env) quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyPtr elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-ptr-with-pools (ctfe-env-pools env) quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyMutPtr elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-mut-ptr-with-pools (ctfe-env-pools env) quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyRef region inner)
       (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-ref-with-pools (ctfe-env-pools env) region quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyMutRef region inner)
       (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-mut-ref-with-pools (ctfe-env-pools env) region quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyRegion region inner)
       (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteType
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteType.Ok
             (ast-ty-region-with-pools (ctfe-env-pools env) region quoted)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteType diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteType.Err diag)])]
     [(AstTyVarArgs name lifetimes)
       (if (= name (intern "unquote"))
         (ctfe-quote-type-unquote (box-get lifetimes) env origin fuel)
-        (OkCtfeQuoteType ty fuel))]
+        (ResultCtfeQuoteType.Ok ty fuel))]
     [(AstTyVar name) (ctfe-quote-type-var name env fuel)]
-    [_ (OkCtfeQuoteType ty fuel)]))
+    [_ (ResultCtfeQuoteType.Ok ty fuel)]))
 
 (define (ctfe-quote-maybe-type
   [maybe-ty : AstMaybeType]
@@ -7584,12 +7790,12 @@
   [origin : AstExpr]
   [fuel : i64]) : ResultCtfeQuoteMaybeType
   (match maybe-ty
-    [(AstNoType) (OkCtfeQuoteMaybeType AstNoType fuel)]
+    [(AstNoType) (ResultCtfeQuoteMaybeType.Ok AstNoType fuel)]
     [(AstSomeType ty)
       (match (ctfe-quote-type ty env origin fuel)
-        [(OkCtfeQuoteType quoted next-fuel)
-          (OkCtfeQuoteMaybeType (AstSomeType quoted) next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteMaybeType diag)])]))
+        [(ResultCtfeQuoteType.Ok quoted next-fuel)
+          (ResultCtfeQuoteMaybeType.Ok (AstSomeType quoted) next-fuel)]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteMaybeType.Err diag)])]))
 
 (define (ctfe-quote-expr-list
   [exprs : AstExprList]
@@ -7597,7 +7803,7 @@
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteExprList
   (match exprs
-    [(AstExprList.Nil) (OkCtfeQuoteExprList AstExprList.Nil fuel)]
+    [(AstExprList.Nil) (ResultCtfeQuoteExprList.Ok AstExprList.Nil fuel)]
     [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ctfe-ast-get env head)]
@@ -7608,37 +7814,43 @@
               [inner : AstExpr (ctfe-ast-get env inner-box)]
               (if quasiquote
                 (match (ctfe-eval-unquote-splice inner head env fuel)
-                  [(OkCtfeQuoteExprList splice splice-fuel)
+                  [(ResultCtfeQuoteExprList.Ok splice splice-fuel)
                     (match (ctfe-quote-expr-list
                       rest
                       env
                       splice-fuel
                       quasiquote)
-                      [(OkCtfeQuoteExprList quoted-rest rest-fuel)
-                        (OkCtfeQuoteExprList
+                      [(ResultCtfeQuoteExprList.Ok quoted-rest rest-fuel)
+                        (ResultCtfeQuoteExprList.Ok
                           (ctfe-expr-list-append splice quoted-rest)
                           rest-fuel)]
-                      [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
-                  [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])
+                      [(ResultCtfeQuoteExprList.Err diag)
+                        (ResultCtfeQuoteExprList.Err diag)])]
+                  [(ResultCtfeQuoteExprList.Err diag)
+                    (ResultCtfeQuoteExprList.Err diag)])
                 (match (ctfe-quote-expr head env fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-head _ head-fuel)
+                  [(ResultCtfeQuoteExpr.Ok quoted-head _ head-fuel)
                     (match (ctfe-quote-expr-list rest env head-fuel quasiquote)
-                      [(OkCtfeQuoteExprList quoted-rest rest-fuel)
-                        (OkCtfeQuoteExprList
+                      [(ResultCtfeQuoteExprList.Ok quoted-rest rest-fuel)
+                        (ResultCtfeQuoteExprList.Ok
                           (ast-expr-cons quoted-head quoted-rest)
                           rest-fuel)]
-                      [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExprList diag)])))]
+                      [(ResultCtfeQuoteExprList.Err diag)
+                        (ResultCtfeQuoteExprList.Err diag)])]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExprList.Err diag)])))]
           [_
             (match (ctfe-quote-expr head env fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-head _ head-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-head _ head-fuel)
                 (match (ctfe-quote-expr-list rest env head-fuel quasiquote)
-                  [(OkCtfeQuoteExprList quoted-rest rest-fuel)
-                    (OkCtfeQuoteExprList
+                  [(ResultCtfeQuoteExprList.Ok quoted-rest rest-fuel)
+                    (ResultCtfeQuoteExprList.Ok
                       (ast-expr-cons quoted-head quoted-rest)
                       rest-fuel)]
-                  [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExprList diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExprList diag)])]))]))
+                  [(ResultCtfeQuoteExprList.Err diag)
+                    (ResultCtfeQuoteExprList.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag)
+                (ResultCtfeQuoteExprList.Err diag)])]))]))
 
 (define (ctfe-quote-param-list [params : AstParamList] [env : CtfeEnv]) : AstParamList
   (match params
@@ -7687,7 +7899,7 @@
   [quasiquote : bool]) : ResultCtfeQuoteLetBindings
   (match bindings
     [(AstLetBindingList.Nil)
-      (OkCtfeQuoteLetBindings AstLetBindingList.Nil fuel)]
+      (ResultCtfeQuoteLetBindings.Ok AstLetBindingList.Nil fuel)]
     [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -7696,16 +7908,16 @@
             (let
               [init : AstExpr (ctfe-ast-get env init-box)]
               (match (ctfe-quote-maybe-type maybe-ty env init fuel)
-                [(OkCtfeQuoteMaybeType quoted-ty type-fuel)
+                [(ResultCtfeQuoteMaybeType.Ok quoted-ty type-fuel)
                   (match (ctfe-quote-expr init env type-fuel quasiquote)
-                    [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+                    [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
                       (match (ctfe-quote-let-binding-list
                         rest
                         env
                         init-fuel
                         quasiquote)
-                        [(OkCtfeQuoteLetBindings quoted-rest rest-fuel)
-                          (OkCtfeQuoteLetBindings
+                        [(ResultCtfeQuoteLetBindings.Ok quoted-rest rest-fuel)
+                          (ResultCtfeQuoteLetBindings.Ok
                             (ast-let-binding-cons
                               (ast-let-binding-id
                                 (ctfe-quote-name-id env name)
@@ -7713,10 +7925,12 @@
                                 quoted-init)
                               quoted-rest)
                             rest-fuel)]
-                        [(ErrCtfeQuoteLetBindings diag)
-                          (ErrCtfeQuoteLetBindings diag)])]
-                    [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteLetBindings diag)])]
-                [(ErrCtfeQuoteMaybeType diag) (ErrCtfeQuoteLetBindings diag)]))]))]))
+                        [(ResultCtfeQuoteLetBindings.Err diag)
+                          (ResultCtfeQuoteLetBindings.Err diag)])]
+                    [(ResultCtfeQuoteExpr.Err diag)
+                      (ResultCtfeQuoteLetBindings.Err diag)])]
+                [(ResultCtfeQuoteMaybeType.Err diag)
+                  (ResultCtfeQuoteLetBindings.Err diag)]))]))]))
 
 (define (ctfe-quote-resource-binding-list
   [bindings : AstResourceBindingList]
@@ -7725,7 +7939,7 @@
   [quasiquote : bool]) : ResultCtfeQuoteResourceBindings
   (match bindings
     [(AstResourceBindingList.Nil)
-      (OkCtfeQuoteResourceBindings AstResourceBindingList.Nil fuel)]
+      (ResultCtfeQuoteResourceBindings.Ok AstResourceBindingList.Nil fuel)]
     [(AstResourceBindingList.Cons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
@@ -7735,16 +7949,18 @@
               [init : AstExpr (ctfe-ast-get env init-box)]
               [cleanup : AstExpr (ctfe-ast-get env cleanup-box)]
               (match (ctfe-quote-expr init env fuel quasiquote)
-                [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+                [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
                   (match (ctfe-quote-expr cleanup env init-fuel quasiquote)
-                    [(OkCtfeQuoteExpr quoted-cleanup _ cleanup-fuel)
+                    [(ResultCtfeQuoteExpr.Ok quoted-cleanup _ cleanup-fuel)
                       (match (ctfe-quote-resource-binding-list
                         rest
                         env
                         cleanup-fuel
                         quasiquote)
-                        [(OkCtfeQuoteResourceBindings quoted-rest rest-fuel)
-                          (OkCtfeQuoteResourceBindings
+                        [(ResultCtfeQuoteResourceBindings.Ok
+                            quoted-rest
+                            rest-fuel)
+                          (ResultCtfeQuoteResourceBindings.Ok
                             (ast-resource-binding-cons
                               (ast-resource-binding-id
                                 (ctfe-quote-name-id env name)
@@ -7752,11 +7968,12 @@
                                 quoted-cleanup)
                               quoted-rest)
                             rest-fuel)]
-                        [(ErrCtfeQuoteResourceBindings diag)
-                          (ErrCtfeQuoteResourceBindings diag)])]
-                    [(ErrCtfeQuoteExpr diag)
-                      (ErrCtfeQuoteResourceBindings diag)])]
-                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteResourceBindings diag)]))]))]))
+                        [(ResultCtfeQuoteResourceBindings.Err diag)
+                          (ResultCtfeQuoteResourceBindings.Err diag)])]
+                    [(ResultCtfeQuoteExpr.Err diag)
+                      (ResultCtfeQuoteResourceBindings.Err diag)])]
+                [(ResultCtfeQuoteExpr.Err diag)
+                  (ResultCtfeQuoteResourceBindings.Err diag)]))]))]))
 
 (define (ctfe-quote-arm-list
   [arms : AstMatchArmList]
@@ -7764,7 +7981,7 @@
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteArms
   (match arms
-    [(AstMatchArmList.Nil) (OkCtfeQuoteArms AstMatchArmList.Nil fuel)]
+    [(AstMatchArmList.Nil) (ResultCtfeQuoteArms.Ok AstMatchArmList.Nil fuel)]
     [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -7773,18 +7990,19 @@
             (let
               [body : AstExpr (ctfe-ast-get env body-box)]
               (match (ctfe-quote-expr body env fuel quasiquote)
-                [(OkCtfeQuoteExpr quoted-body _ body-fuel)
+                [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
                   (match (ctfe-quote-arm-list rest env body-fuel quasiquote)
-                    [(OkCtfeQuoteArms quoted-rest rest-fuel)
-                      (OkCtfeQuoteArms
+                    [(ResultCtfeQuoteArms.Ok quoted-rest rest-fuel)
+                      (ResultCtfeQuoteArms.Ok
                         (ast-match-arm-cons
                           (ast-match-arm
                             (ctfe-quote-pattern pattern env)
                             quoted-body)
                           quoted-rest)
                         rest-fuel)]
-                    [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteArms diag)])]
-                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteArms diag)]))]))]))
+                    [(ResultCtfeQuoteArms.Err diag)
+                      (ResultCtfeQuoteArms.Err diag)])]
+                [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteArms.Err diag)]))]))]))
 
 (define (ctfe-quote-expr
   [expr : AstExpr]
@@ -7796,19 +8014,19 @@
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr node ty next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok node ty next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-spanned-with-pools (ctfe-env-pools env) node span)
               ty
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Literal lit)
-      (OkCtfeQuoteExpr
+      (ResultCtfeQuoteExpr.Ok
         (ctfe-ast-push env expr)
         (ctfe-quote-literal-type lit)
         fuel)]
     [(AstExpr.Var name)
-      (OkCtfeQuoteExpr
+      (ResultCtfeQuoteExpr.Ok
         (ctfe-ast-push
           env
           (AstExpr.Var (intern (ctfe-quote-name env (intern-str name)))))
@@ -7819,10 +8037,10 @@
         [left : AstExpr (ctfe-ast-get env left-box)]
         [right : AstExpr (ctfe-ast-get env right-box)]
         (match (ctfe-quote-expr left env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-left _ left-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-left _ left-fuel)
             (match (ctfe-quote-expr right env left-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-right _ right-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-right _ right-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-binary-with-pools
                     (ctfe-env-pools env)
                     op
@@ -7830,56 +8048,57 @@
                     quoted-right)
                   (AstTyExpr)
                   right-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Unary op inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-unary-with-pools (ctfe-env-pools env) op quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ctfe-ast-get env func-box)]
         (match (ctfe-quote-expr func env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-func _ func-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-func _ func-fuel)
             (match (ctfe-quote-expr-list args env func-fuel quasiquote)
-              [(OkCtfeQuoteExprList quoted-args args-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExprList.Ok quoted-args args-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-call-with-pools
                     (ctfe-env-pools env)
                     quoted-func
                     quoted-args)
                   (AstTyExpr)
                   args-fuel)]
-              [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExprList.Err diag)
+                (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.BracketClause items)
       (match (ctfe-quote-expr-list items env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted-items next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted-items next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ast-expr-bracket-clause-with-pools
               (ctfe-env-pools env)
               quoted-items)
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ctfe-ast-get env cond-box)]
         [then-branch : AstExpr (ctfe-ast-get env then-branch-box)]
         [else-branch : AstExpr (ctfe-ast-get env else-branch-box)]
         (match (ctfe-quote-expr cond env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-cond cond-ty cond-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-cond cond-ty cond-fuel)
             (match (ctfe-quote-expr then-branch env cond-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-then then-ty then-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-then then-ty then-fuel)
                 (match (ctfe-quote-expr else-branch env then-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-else else-ty else-fuel)
-                    (OkCtfeQuoteExpr
+                  [(ResultCtfeQuoteExpr.Ok quoted-else else-ty else-fuel)
+                    (ResultCtfeQuoteExpr.Ok
                       (ast-expr-if-with-pools
                         (ctfe-env-pools env)
                         quoted-cond
@@ -7887,35 +8106,38 @@
                         quoted-else)
                       (ctfe-quote-if-type cond-ty then-ty else-ty)
                       else-fuel)]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (ctfe-ast-get env body-box)]
             (match (ctfe-quote-let-binding-list bindings env fuel quasiquote)
-              [(OkCtfeQuoteLetBindings quoted-bindings bindings-fuel)
+              [(ResultCtfeQuoteLetBindings.Ok quoted-bindings bindings-fuel)
                 (match (ctfe-quote-expr body env bindings-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-body body-ty body-fuel)
-                    (OkCtfeQuoteExpr
+                  [(ResultCtfeQuoteExpr.Ok quoted-body body-ty body-fuel)
+                    (ResultCtfeQuoteExpr.Ok
                       (ast-expr-let-with-pools
                         (ctfe-env-pools env)
                         quoted-bindings
                         quoted-body)
                       body-ty
                       body-fuel)]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteLetBindings diag) (ErrCtfeQuoteExpr diag)]))])]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteLetBindings.Err diag)
+                (ResultCtfeQuoteExpr.Err diag)]))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params maybe-ret body-box)
           (let
             [body : AstExpr (ctfe-ast-get env body-box)]
             (match (ctfe-quote-expr body env fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-body _ next-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-body _ next-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-lambda-with-pools
                     (ctfe-env-pools env)
                     (ctfe-quote-param-list params env)
@@ -7923,115 +8145,115 @@
                     quoted-body)
                   (AstTyExpr)
                   next-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(AstExpr.Tuple exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push env (AstExpr.Tuple quoted))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.Array exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push env (AstExpr.Array quoted))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.Begin exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push env (AstExpr.Begin quoted))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.Unsafe exprs)
       (match (ctfe-quote-expr-list exprs env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push env (AstExpr.Unsafe quoted))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.While cond-box body-box)
       (let
         [cond : AstExpr (ctfe-ast-get env cond-box)]
         [body : AstExpr (ctfe-ast-get env body-box)]
         (match (ctfe-quote-expr cond env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-cond _ cond-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-cond _ cond-fuel)
             (match (ctfe-quote-expr body env cond-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-body _ body-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-while-with-pools
                     (ctfe-env-pools env)
                     quoted-cond
                     quoted-body)
                   (AstTyExpr)
                   body-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Set name rhs-box)
       (let
         [rhs : AstExpr (ctfe-ast-get env rhs-box)]
         (match (ctfe-quote-expr rhs env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-rhs _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted-rhs _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-set-id-with-pools
                 (ctfe-env-pools env)
                 (ctfe-quote-name-id env name)
                 quoted-rhs)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Ann inner-box ty)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ expr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted _ expr-fuel)
             (match (ctfe-quote-type ty env expr expr-fuel)
-              [(OkCtfeQuoteType quoted-ty next-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-ann-with-pools
                     (ctfe-env-pools env)
                     quoted
                     quoted-ty)
                   quoted-ty
                   next-fuel)]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Cast inner-box ty)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ expr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted _ expr-fuel)
             (match (ctfe-quote-type ty env expr expr-fuel)
-              [(OkCtfeQuoteType quoted-ty next-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-cast-with-pools
                     (ctfe-env-pools env)
                     quoted
                     quoted-ty)
                   quoted-ty
                   next-fuel)]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.TypeLiteral ty)
       (match (ctfe-quote-type ty env expr fuel)
-        [(OkCtfeQuoteType quoted-ty next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push env (AstExpr.TypeLiteral quoted-ty))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.Borrow mutable lifetime place-box)
       (let
         [place : AstExpr (ctfe-ast-get env place-box)]
         (match (ctfe-quote-expr place env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-place _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted-place _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-borrow-with-pools
                 (ctfe-env-pools env)
                 mutable
@@ -8039,25 +8261,26 @@
                 quoted-place)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
             [scrut : AstExpr (ctfe-ast-get env scrut-box)]
             (match (ctfe-quote-expr scrut env fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-scrut _ scrut-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-scrut _ scrut-fuel)
                 (match (ctfe-quote-arm-list arms env scrut-fuel quasiquote)
-                  [(OkCtfeQuoteArms quoted-arms arms-fuel)
-                    (OkCtfeQuoteExpr
+                  [(ResultCtfeQuoteArms.Ok quoted-arms arms-fuel)
+                    (ResultCtfeQuoteExpr.Ok
                       (ast-expr-match-with-pools
                         (ctfe-env-pools env)
                         quoted-scrut
                         quoted-arms)
                       (AstTyExpr)
                       arms-fuel)]
-                  [(ErrCtfeQuoteArms diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
+                  [(ResultCtfeQuoteArms.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -8066,12 +8289,12 @@
             [end : AstExpr (ctfe-ast-get env end-box)]
             [body : AstExpr (ctfe-ast-get env body-box)]
             (match (ctfe-quote-expr start env fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-start _ start-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-start _ start-fuel)
                 (match (ctfe-quote-expr end env start-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-end _ end-fuel)
+                  [(ResultCtfeQuoteExpr.Ok quoted-end _ end-fuel)
                     (match (ctfe-quote-expr body env end-fuel quasiquote)
-                      [(OkCtfeQuoteExpr quoted-body _ body-fuel)
-                        (OkCtfeQuoteExpr
+                      [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
+                        (ResultCtfeQuoteExpr.Ok
                           (ast-expr-foreach-id-with-pools
                             (ctfe-env-pools env)
                             (ctfe-quote-name-id env index)
@@ -8081,9 +8304,11 @@
                             quoted-body)
                           (AstTyExpr)
                           body-fuel)]
-                      [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
+                      [(ResultCtfeQuoteExpr.Err diag)
+                        (ResultCtfeQuoteExpr.Err diag)])]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce
@@ -8100,14 +8325,14 @@
             [init : AstExpr (ctfe-ast-get env init-box)]
             [value : AstExpr (ctfe-ast-get env value-box)]
             (match (ctfe-quote-expr start env fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-start _ start-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-start _ start-fuel)
                 (match (ctfe-quote-expr end env start-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-end _ end-fuel)
+                  [(ResultCtfeQuoteExpr.Ok quoted-end _ end-fuel)
                     (match (ctfe-quote-expr init env end-fuel quasiquote)
-                      [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+                      [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
                         (match (ctfe-quote-expr value env init-fuel quasiquote)
-                          [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                            (OkCtfeQuoteExpr
+                          [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
+                            (ResultCtfeQuoteExpr.Ok
                               (ast-expr-spmd-reduce-id-with-pools
                                 (ctfe-env-pools env)
                                 op
@@ -8119,10 +8344,13 @@
                                 quoted-value)
                               (AstTyExpr)
                               value-fuel)]
-                          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                      [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
+                          [(ResultCtfeQuoteExpr.Err diag)
+                            (ResultCtfeQuoteExpr.Err diag)])]
+                      [(ResultCtfeQuoteExpr.Err diag)
+                        (ResultCtfeQuoteExpr.Err diag)])]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -8143,20 +8371,20 @@
             [value : AstExpr (ctfe-ast-get env value-box)]
             [body : AstExpr (ctfe-ast-get env body-box)]
             (match (ctfe-quote-expr start env fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-start _ start-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-start _ start-fuel)
                 (match (ctfe-quote-expr end env start-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-end _ end-fuel)
+                  [(ResultCtfeQuoteExpr.Ok quoted-end _ end-fuel)
                     (match (ctfe-quote-expr init env end-fuel quasiquote)
-                      [(OkCtfeQuoteExpr quoted-init _ init-fuel)
+                      [(ResultCtfeQuoteExpr.Ok quoted-init _ init-fuel)
                         (match (ctfe-quote-expr value env init-fuel quasiquote)
-                          [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                          [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
                             (match (ctfe-quote-expr
                               body
                               env
                               value-fuel
                               quasiquote)
-                              [(OkCtfeQuoteExpr quoted-body _ body-fuel)
-                                (OkCtfeQuoteExpr
+                              [(ResultCtfeQuoteExpr.Ok quoted-body _ body-fuel)
+                                (ResultCtfeQuoteExpr.Ok
                                   (ast-expr-spmd-scan-id-with-pools
                                     (ctfe-env-pools env)
                                     op
@@ -8171,49 +8399,53 @@
                                     quoted-body)
                                   (AstTyExpr)
                                   body-fuel)]
-                              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                      [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))])]
+                              [(ResultCtfeQuoteExpr.Err diag)
+                                (ResultCtfeQuoteExpr.Err diag)])]
+                          [(ResultCtfeQuoteExpr.Err diag)
+                            (ResultCtfeQuoteExpr.Err diag)])]
+                      [(ResultCtfeQuoteExpr.Err diag)
+                        (ResultCtfeQuoteExpr.Err diag)])]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ctfe-ast-get env value-box)]
         [lane : AstExpr (ctfe-ast-get env lane-box)]
         (match (ctfe-quote-expr value env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
             (match (ctfe-quote-expr lane env value-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-lane _ lane-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-lane _ lane-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-spmd-broadcast-with-pools
                     (ctfe-env-pools env)
                     quoted-value
                     quoted-lane)
                   (AstTyExpr)
                   lane-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (ctfe-quote-expr value env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
             (match (ctfe-quote-expr lane env value-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-lane _ lane-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-lane _ lane-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-spmd-shuffle quoted-value quoted-lane)
                   (AstTyExpr)
                   lane-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.SpmdProgramIndex)
-      (OkCtfeQuoteExpr
+      (ResultCtfeQuoteExpr.Ok
         (ast-expr-spmd-program-index-with-pools (ctfe-env-pools env))
         (AstTyExpr)
         fuel)]
     [(AstExpr.SpmdProgramCount)
-      (OkCtfeQuoteExpr
+      (ResultCtfeQuoteExpr.Ok
         (ast-expr-spmd-program-count-with-pools (ctfe-env-pools env))
         (AstTyExpr)
         fuel)]
@@ -8221,15 +8453,15 @@
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-struct-get-id-with-pools
                 (ctfe-env-pools env)
                 quoted
                 field)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.StructSet inner-box field value-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
@@ -8241,14 +8473,14 @@
                 (let
                   [target : AstExpr (ctfe-ast-get env target-box)]
                   (match (ctfe-eval-unquote-expr target inner env fuel)
-                    [(OkCtfeQuoteExpr quoted-target _ target-fuel)
+                    [(ResultCtfeQuoteExpr.Ok quoted-target _ target-fuel)
                       (match (ctfe-quote-expr value env target-fuel quasiquote)
-                        [(OkCtfeQuoteExpr quoted-value _ value-fuel)
+                        [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
                           (match (ctfe-expr-unspan
                             env
                             (ctfe-ast-get env quoted-target))
                             [(AstExpr.Var name)
-                              (OkCtfeQuoteExpr
+                              (ResultCtfeQuoteExpr.Ok
                                 (ast-expr-set-id-with-pools
                                   (ctfe-env-pools env)
                                   name
@@ -8256,7 +8488,7 @@
                                 (AstTyExpr)
                                 value-fuel)]
                             [(AstExpr.StructGet receiver-box target-field)
-                              (OkCtfeQuoteExpr
+                              (ResultCtfeQuoteExpr.Ok
                                 (ast-expr-struct-set-id-with-pools
                                   (ctfe-env-pools env)
                                   receiver-box
@@ -8265,7 +8497,7 @@
                                 (AstTyExpr)
                                 value-fuel)]
                             [(AstExpr.BoxGet receiver-box)
-                              (OkCtfeQuoteExpr
+                              (ResultCtfeQuoteExpr.Ok
                                 (ast-expr-box-set-with-pools
                                   (ctfe-env-pools env)
                                   receiver-box
@@ -8273,29 +8505,31 @@
                                 (AstTyExpr)
                                 value-fuel)]
                             [_
-                              (ErrCtfeQuoteExpr
+                              (ResultCtfeQuoteExpr.Err
                                 (box
                                   (ctfe-diagnostic-at-expr
                                     inner
                                     "quasiquote set! target must evaluate to a name, struct field place, or box place")))])]
-                        [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-                    [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))
-                (ErrCtfeQuoteExpr
+                        [(ResultCtfeQuoteExpr.Err diag)
+                          (ResultCtfeQuoteExpr.Err diag)])]
+                    [(ResultCtfeQuoteExpr.Err diag)
+                      (ResultCtfeQuoteExpr.Err diag)]))
+                (ResultCtfeQuoteExpr.Err
                   (box
                     (ctfe-diagnostic-at-expr
                       inner
                       "unquote set! target is only valid inside quasiquote"))))]
             [_
-              (ErrCtfeQuoteExpr
+              (ResultCtfeQuoteExpr.Err
                 (box
                   (ctfe-diagnostic-at-expr
                     inner
                     "internal unquote set! target must be an unquote form")))])
           (match (ctfe-quote-expr inner env fuel quasiquote)
-            [(OkCtfeQuoteExpr quoted-inner _ inner-fuel)
+            [(ResultCtfeQuoteExpr.Ok quoted-inner _ inner-fuel)
               (match (ctfe-quote-expr value env inner-fuel quasiquote)
-                [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                  (OkCtfeQuoteExpr
+                [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
+                  (ResultCtfeQuoteExpr.Ok
                     (ast-expr-struct-set-id-with-pools
                       (ctfe-env-pools env)
                       quoted-inner
@@ -8303,63 +8537,63 @@
                       quoted-value)
                     (AstTyExpr)
                     value-fuel)]
-                [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])))]
+                [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+            [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])))]
     [(AstExpr.TupleRef tuple-expr-box index)
       (let
         [tuple-expr : AstExpr (ctfe-ast-get env tuple-expr-box)]
         (match (ctfe-quote-expr tuple-expr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-tuple-ref-with-pools (ctfe-env-pools env) quoted index)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.MakeArray ty len-box)
       (let
         [len : AstExpr (ctfe-ast-get env len-box)]
         (match (ctfe-quote-type ty env expr fuel)
-          [(OkCtfeQuoteType quoted-ty type-fuel)
+          [(ResultCtfeQuoteType.Ok quoted-ty type-fuel)
             (match (ctfe-quote-expr len env type-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-len _ next-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-len _ next-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-make-array-with-pools
                     (ctfe-env-pools env)
                     quoted-ty
                     quoted-len)
                   (AstTyExpr)
                   next-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ctfe-ast-get env array-box)]
         [index : AstExpr (ctfe-ast-get env index-box)]
         (match (ctfe-quote-expr array env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-array _ array-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-array _ array-fuel)
             (match (ctfe-quote-expr index env array-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-index _ index-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-index _ index-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-array-ref-with-pools
                     (ctfe-env-pools env)
                     quoted-array
                     quoted-index)
                   (AstTyExpr)
                   index-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ctfe-ast-get env array-box)]
         [index : AstExpr (ctfe-ast-get env index-box)]
         [value : AstExpr (ctfe-ast-get env value-box)]
         (match (ctfe-quote-expr array env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-array _ array-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-array _ array-fuel)
             (match (ctfe-quote-expr index env array-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-index _ index-fuel)
+              [(ResultCtfeQuoteExpr.Ok quoted-index _ index-fuel)
                 (match (ctfe-quote-expr value env index-fuel quasiquote)
-                  [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                    (OkCtfeQuoteExpr
+                  [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
+                    (ResultCtfeQuoteExpr.Ok
                       (ast-expr-array-set-with-pools
                         (ctfe-env-pools env)
                         quoted-array
@@ -8367,101 +8601,104 @@
                         quoted-value)
                       (AstTyExpr)
                       value-fuel)]
-                  [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ctfe-ast-get env array-box)]
         [value : AstExpr (ctfe-ast-get env value-box)]
         (match (ctfe-quote-expr array env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-array _ array-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-array _ array-fuel)
             (match (ctfe-quote-expr value env array-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-array-push-with-pools
                     (ctfe-env-pools env)
                     quoted-array
                     quoted-value)
                   (AstTyExpr)
                   value-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.StringRef text-box index-box)
       (let
         [text : AstExpr (ctfe-ast-get env text-box)]
         [index : AstExpr (ctfe-ast-get env index-box)]
         (match (ctfe-quote-expr text env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-text _ text-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-text _ text-fuel)
             (match (ctfe-quote-expr index env text-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-index _ index-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-index _ index-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-string-ref-with-pools
                     (ctfe-env-pools env)
                     quoted-text
                     quoted-index)
                   (AstTyExpr)
                   index-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.WithRegion name body)
       (match (ctfe-quote-expr-list body env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted-body next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted-body next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push
               env
               (AstExpr.WithRegion (ctfe-quote-name env name) quoted-body))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.WithEscape scratch-box body)
       (let
         [scratch : AstExpr (ctfe-ast-get env scratch-box)]
         (match (ctfe-quote-expr scratch env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-scratch _ scratch-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-scratch _ scratch-fuel)
             (match (ctfe-quote-expr-list body env scratch-fuel quasiquote)
-              [(OkCtfeQuoteExprList quoted-body body-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExprList.Ok quoted-body body-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-with-escape-with-pools
                     (ctfe-env-pools env)
                     quoted-scratch
                     quoted-body)
                   (AstTyExpr)
                   body-fuel)]
-              [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExprList.Err diag)
+                (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.WithScratch body)
       (match (ctfe-quote-expr-list body env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted-body body-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted-body body-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ast-expr-with-scratch-with-pools (ctfe-env-pools env) quoted-body)
             (AstTyExpr)
             body-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.InArena arena-box body)
       (let
         [arena : AstExpr (ctfe-ast-get env arena-box)]
         (match (ctfe-quote-expr arena env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-arena _ arena-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-arena _ arena-fuel)
             (match (ctfe-quote-expr-list body env arena-fuel quasiquote)
-              [(OkCtfeQuoteExprList quoted-body body-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExprList.Ok quoted-body body-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-in-arena-with-pools
                     (ctfe-env-pools env)
                     quoted-arena
                     quoted-body)
                   (AstTyExpr)
                   body-fuel)]
-              [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExprList.Err diag)
+                (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (match (ctfe-quote-resource-binding-list bindings env fuel quasiquote)
-            [(OkCtfeQuoteResourceBindings quoted-bindings bindings-fuel)
+            [(ResultCtfeQuoteResourceBindings.Ok quoted-bindings bindings-fuel)
               (match (ctfe-quote-expr-list body env bindings-fuel quasiquote)
-                [(OkCtfeQuoteExprList quoted-body body-fuel)
-                  (OkCtfeQuoteExpr
+                [(ResultCtfeQuoteExprList.Ok quoted-body body-fuel)
+                  (ResultCtfeQuoteExpr.Ok
                     (ctfe-ast-push
                       env
                       (AstExpr.WithResource
@@ -8471,113 +8708,115 @@
                             quoted-body))))
                     (AstTyExpr)
                     body-fuel)]
-                [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
-            [(ErrCtfeQuoteResourceBindings diag) (ErrCtfeQuoteExpr diag)])])]
+                [(ResultCtfeQuoteExprList.Err diag)
+                  (ResultCtfeQuoteExpr.Err diag)])]
+            [(ResultCtfeQuoteResourceBindings.Err diag)
+              (ResultCtfeQuoteExpr.Err diag)])])]
     [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-box-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.BoxGet inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-box-get-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.BoxTake inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-box-take-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.BoxSet inner-box value-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         [value : AstExpr (ctfe-ast-get env value-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-inner _ inner-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-inner _ inner-fuel)
             (match (ctfe-quote-expr value env inner-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-box-set-with-pools
                     (ctfe-env-pools env)
                     quoted-inner
                     quoted-value)
                   (AstTyExpr)
                   value-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted ty next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted ty next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-comptime-with-pools (ctfe-env-pools env) quoted)
               ty
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Return inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-return-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-try-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Init maybe-ty)
       (match (ctfe-quote-maybe-type maybe-ty env expr fuel)
-        [(OkCtfeQuoteMaybeType quoted-ty next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteMaybeType.Ok quoted-ty next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ast-expr-init-maybe-with-pools (ctfe-env-pools env) quoted-ty)
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteMaybeType diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteMaybeType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.PtrNull ty)
       (match (ctfe-quote-type ty env expr fuel)
-        [(OkCtfeQuoteType quoted-ty next-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ctfe-ast-push env (AstExpr.PtrNull quoted-ty))
             (AstTyExpr)
             next-fuel)]
-        [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.PtrNullCheck ptr-box)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-ptr-null-check-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.PtrAddrOf name)
-      (OkCtfeQuoteExpr
+      (ResultCtfeQuoteExpr.Ok
         (ast-expr-ptr-addr-of-id-with-pools
           (ctfe-env-pools env)
           (ctfe-quote-name-id env name))
@@ -8587,127 +8826,127 @@
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-ptr-read-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         [value : AstExpr (ctfe-ast-get env value-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-ptr _ ptr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-ptr _ ptr-fuel)
             (match (ctfe-quote-expr value env ptr-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-value _ value-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-value _ value-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-ptr-write-with-pools
                     (ctfe-env-pools env)
                     quoted-ptr
                     quoted-value)
                   (AstTyExpr)
                   value-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         [offset : AstExpr (ctfe-ast-get env offset-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-ptr _ ptr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-ptr _ ptr-fuel)
             (match (ctfe-quote-expr offset env ptr-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-offset _ offset-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-offset _ offset-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-ptr-offset-with-pools
                     (ctfe-env-pools env)
                     quoted-ptr
                     quoted-offset)
                   (AstTyExpr)
                   offset-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.PtrCast ptr-box ty)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ expr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted _ expr-fuel)
             (match (ctfe-quote-type ty env expr expr-fuel)
-              [(OkCtfeQuoteType quoted-ty next-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-ptr-cast-with-pools
                     (ctfe-env-pools env)
                     quoted
                     quoted-ty)
                   (AstTyExpr)
                   next-fuel)]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-ptr-to-int-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.IntToPtr value-box ty)
       (let
         [value : AstExpr (ctfe-ast-get env value-box)]
         (match (ctfe-quote-expr value env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ expr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted _ expr-fuel)
             (match (ctfe-quote-type ty env expr expr-fuel)
-              [(OkCtfeQuoteType quoted-ty next-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteType.Ok quoted-ty next-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-int-to-ptr-with-pools
                     (ctfe-env-pools env)
                     quoted
                     quoted-ty)
                   (AstTyExpr)
                   next-fuel)]
-              [(ErrCtfeQuoteType diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteType.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-string-data-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
         [len : AstExpr (ctfe-ast-get env len-box)]
         (match (ctfe-quote-expr ptr env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-ptr _ ptr-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-ptr _ ptr-fuel)
             (match (ctfe-quote-expr len env ptr-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-len _ len-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-len _ len-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-string-from-bytes-with-pools
                     (ctfe-env-pools env)
                     quoted-ptr
                     quoted-len)
                   (AstTyExpr)
                   len-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.ArrayData inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted _ next-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-array-data-with-pools (ctfe-env-pools env) quoted)
               (AstTyExpr)
               next-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.BinaryData bytes)
-      (OkCtfeQuoteExpr
+      (ResultCtfeQuoteExpr.Ok
         (ctfe-ast-push env (AstExpr.BinaryData bytes))
         (AstTyExpr)
         fuel)]
@@ -8716,118 +8955,118 @@
         [leaf : AstExpr (ctfe-ast-get env leaf-box)]
         [subleaf : AstExpr (ctfe-ast-get env subleaf-box)]
         (match (ctfe-quote-expr leaf env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-leaf _ leaf-fuel)
             (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-subleaf _ subleaf-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-cpuid-eax-with-pools
                     (ctfe-env-pools env)
                     quoted-leaf
                     quoted-subleaf)
                   (AstTyExpr)
                   subleaf-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ctfe-ast-get env leaf-box)]
         [subleaf : AstExpr (ctfe-ast-get env subleaf-box)]
         (match (ctfe-quote-expr leaf env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-leaf _ leaf-fuel)
             (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-subleaf _ subleaf-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-cpuid-ebx-with-pools
                     (ctfe-env-pools env)
                     quoted-leaf
                     quoted-subleaf)
                   (AstTyExpr)
                   subleaf-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ctfe-ast-get env leaf-box)]
         [subleaf : AstExpr (ctfe-ast-get env subleaf-box)]
         (match (ctfe-quote-expr leaf env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-leaf _ leaf-fuel)
             (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-subleaf _ subleaf-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-cpuid-ecx-with-pools
                     (ctfe-env-pools env)
                     quoted-leaf
                     quoted-subleaf)
                   (AstTyExpr)
                   subleaf-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ctfe-ast-get env leaf-box)]
         [subleaf : AstExpr (ctfe-ast-get env subleaf-box)]
         (match (ctfe-quote-expr leaf env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-leaf _ leaf-fuel)
+          [(ResultCtfeQuoteExpr.Ok quoted-leaf _ leaf-fuel)
             (match (ctfe-quote-expr subleaf env leaf-fuel quasiquote)
-              [(OkCtfeQuoteExpr quoted-subleaf _ subleaf-fuel)
-                (OkCtfeQuoteExpr
+              [(ResultCtfeQuoteExpr.Ok quoted-subleaf _ subleaf-fuel)
+                (ResultCtfeQuoteExpr.Ok
                   (ast-expr-cpuid-edx-with-pools
                     (ctfe-env-pools env)
                     quoted-leaf
                     quoted-subleaf)
                   (AstTyExpr)
                   subleaf-fuel)]
-              [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Xgetbv index-box)
       (let
         [index : AstExpr (ctfe-ast-get env index-box)]
         (match (ctfe-quote-expr index env fuel quasiquote)
-          [(OkCtfeQuoteExpr quoted-index _ index-fuel)
-            (OkCtfeQuoteExpr
+          [(ResultCtfeQuoteExpr.Ok quoted-index _ index-fuel)
+            (ResultCtfeQuoteExpr.Ok
               (ast-expr-xgetbv-with-pools (ctfe-env-pools env) quoted-index)
               (AstTyExpr)
               index-fuel)]
-          [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)]))]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Syscall args)
       (match (ctfe-quote-expr-list args env fuel quasiquote)
-        [(OkCtfeQuoteExprList quoted-args args-fuel)
-          (OkCtfeQuoteExpr
+        [(ResultCtfeQuoteExprList.Ok quoted-args args-fuel)
+          (ResultCtfeQuoteExpr.Ok
             (ast-expr-syscall-with-pools (ctfe-env-pools env) quoted-args)
             (AstTyExpr)
             args-fuel)]
-        [(ErrCtfeQuoteExprList diag) (ErrCtfeQuoteExpr diag)])]
+        [(ResultCtfeQuoteExprList.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
     [(AstExpr.Unquote inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (if quasiquote
           (ctfe-eval-unquote-expr inner expr env fuel)
           (match (ctfe-quote-expr inner env fuel quasiquote)
-            [(OkCtfeQuoteExpr quoted _ next-fuel)
-              (OkCtfeQuoteExpr
+            [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+              (ResultCtfeQuoteExpr.Ok
                 (ast-expr-unquote-with-pools (ctfe-env-pools env) quoted)
                 (AstTyExpr)
                 next-fuel)]
-            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])))]
+            [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])))]
     [(AstExpr.UnquoteSplicing inner-box)
       (let
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (if quasiquote
-          (ErrCtfeQuoteExpr
+          (ResultCtfeQuoteExpr.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
                 "unquote-splicing is only valid in a quasiquote list")))
           (match (ctfe-quote-expr inner env fuel quasiquote)
-            [(OkCtfeQuoteExpr quoted _ next-fuel)
-              (OkCtfeQuoteExpr
+            [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+              (ResultCtfeQuoteExpr.Ok
                 (ast-expr-unquote-splicing-with-pools
                   (ctfe-env-pools env)
                   quoted)
                 (AstTyExpr)
                 next-fuel)]
-            [(ErrCtfeQuoteExpr diag) (ErrCtfeQuoteExpr diag)])))]
-    [_ (OkCtfeQuoteExpr (ctfe-ast-push env expr) (AstTyExpr) fuel)]))
+            [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])))]
+    [_ (ResultCtfeQuoteExpr.Ok (ctfe-ast-push env expr) (AstTyExpr) fuel)]))
 
 (define (ctfe-eval-quote
   [template : AstExpr]
@@ -8835,8 +9074,9 @@
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfe
   (match (ctfe-quote-expr template env fuel quasiquote)
-    [(OkCtfeQuoteExpr node ty next-fuel) (OkCtfe (CtfeExpr node ty) next-fuel)]
-    [(ErrCtfeQuoteExpr diag) (ErrCtfe diag)]))
+    [(ResultCtfeQuoteExpr.Ok node ty next-fuel)
+      (ResultCtfe.Ok (CompilerCtfeValue.Expr node ty) next-fuel)]
+    [(ResultCtfeQuoteExpr.Err diag) (ResultCtfe.Err diag)]))
 
 ;; --- expr constructors and inspectors (#1137) --------------------------------
 ;; Macro transformers need to build and pattern-match AST nodes at comptime.
@@ -10505,35 +10745,35 @@
 ;; value lowering.
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
-    [(CtfeI64 n) (ast-lit-int n)]
-    [(CtfeF64 n) (AstLitFloat (compiler-float-format-f64 n))]
-    [(CtfeF32 n)
+    [(CompilerCtfeValue.I64 n) (ast-lit-int n)]
+    [(CompilerCtfeValue.F64 n) (AstLitFloat (compiler-float-format-f64 n))]
+    [(CompilerCtfeValue.F32 n)
       (AstLitFloat
         (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
-    [(CtfeBool b) (AstLitBool b)]
-    [(CtfeChar c) (AstLitChar c)]
-    [(CtfeString text) (AstLitString text)]
-    [(CtfeUnit) (AstLitUnit)]
-    [(CtfeType _) (AstLitUnit)]
-    [(CtfeExpr _ _) (AstLitUnit)]
-    [(CtfeExprList _) (AstLitUnit)]
-    [(CtfeExprClause _) (AstLitUnit)]
-    [(CtfeExprClauseList _) (AstLitUnit)]
-    [(CtfeExprBindingClause _) (AstLitUnit)]
-    [(CtfeExprBindingClauseList _) (AstLitUnit)]
-    [(CtfePattern _) (AstLitUnit)]
-    [(CtfePatternList _) (AstLitUnit)]
-    [(CtfeMatchArm _) (AstLitUnit)]
-    [(CtfeMatchArmList _) (AstLitUnit)]
-    [(CtfeTypeInfo _) (AstLitUnit)]
-    [(CtfeTypeInfoBox _) (AstLitUnit)]
-    [(CtfeTypeInfoList _) (AstLitUnit)]
-    [(CtfeTypeField _ _) (AstLitUnit)]
-    [(CtfeTypeFieldList _) (AstLitUnit)]
-    [(CtfeTypeVariantPayload _) (AstLitUnit)]
-    [(CtfeTypeVariantPayloadList _) (AstLitUnit)]
-    [(CtfeTypeVariant _ _) (AstLitUnit)]
-    [(CtfeTypeVariantList _) (AstLitUnit)]))
+    [(CompilerCtfeValue.Bool b) (AstLitBool b)]
+    [(CompilerCtfeValue.Char c) (AstLitChar c)]
+    [(CompilerCtfeValue.String text) (AstLitString text)]
+    [(CompilerCtfeValue.Unit) (AstLitUnit)]
+    [(CompilerCtfeValue.Type _) (AstLitUnit)]
+    [(CompilerCtfeValue.Expr _ _) (AstLitUnit)]
+    [(CompilerCtfeValue.ExprList _) (AstLitUnit)]
+    [(CompilerCtfeValue.ExprClause _) (AstLitUnit)]
+    [(CompilerCtfeValue.ExprClauseList _) (AstLitUnit)]
+    [(CompilerCtfeValue.ExprBindingClause _) (AstLitUnit)]
+    [(CompilerCtfeValue.ExprBindingClauseList _) (AstLitUnit)]
+    [(CompilerCtfeValue.Pattern _) (AstLitUnit)]
+    [(CompilerCtfeValue.PatternList _) (AstLitUnit)]
+    [(CompilerCtfeValue.MatchArm _) (AstLitUnit)]
+    [(CompilerCtfeValue.MatchArmList _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeInfo _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeInfoBox _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeInfoList _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeField _ _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeFieldList _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeVariantPayload _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeVariantPayloadList _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeVariant _ _) (AstLitUnit)]
+    [(CompilerCtfeValue.TypeVariantList _) (AstLitUnit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]
@@ -10541,7 +10781,7 @@
   (match ty
     [(AstTyF32)
       (match value
-        [(CtfeF64 n)
+        [(CompilerCtfeValue.F64 n)
           (AstLitFloat
             (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
         [_ (ctfe-value-to-literal value)])]
@@ -10784,14 +11024,14 @@
       (AstExpr.TypeLiteral want)
       (ctfe-env-empty)
       (ctfe-fuel-limit))
-      [(OkCtfe value _)
+      [(ResultCtfe.Ok value _)
         (match value
-          [(CtfeType actual)
+          [(CompilerCtfeValue.Type actual)
             (and
               (ctfe-type-eq actual want)
               (string.string-eq (ctfe-value-type-name value) "type"))]
           [_ false])]
-      [(ErrCtfe _) false])))
+      [(ResultCtfe.Err _) false])))
 
 (define (compiler-ctfe-type-comparison-ok?) : bool
   (match (compiler-ctfe-eval
@@ -10801,9 +11041,9 @@
       (ast-node-push (AstExpr.TypeLiteral (AstTyI64))))
     (ctfe-env-empty)
     (ctfe-fuel-limit))
-    [(OkCtfe same _)
+    [(ResultCtfe.Ok same _)
       (match same
-        [(CtfeBool same-ok)
+        [(CompilerCtfeValue.Bool same-ok)
           (match (compiler-ctfe-eval
             (AstExpr.Binary
               (AstBinEq)
@@ -10811,13 +11051,14 @@
               (ast-node-push (AstExpr.TypeLiteral (AstTyI32))))
             (ctfe-env-empty)
             (ctfe-fuel-limit))
-            [(OkCtfe different _)
+            [(ResultCtfe.Ok different _)
               (match different
-                [(CtfeBool different-ok) (and same-ok (not different-ok))]
+                [(CompilerCtfeValue.Bool different-ok)
+                  (and same-ok (not different-ok))]
                 [_ false])]
-            [(ErrCtfe _) false])]
+            [(ResultCtfe.Err _) false])]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-raw-pointer-type-comparison-ok?) : bool
   (match (compiler-ctfe-eval
@@ -10827,9 +11068,9 @@
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-ptr (AstTyI64)))))
     (ctfe-env-empty)
     (ctfe-fuel-limit))
-    [(OkCtfe same _)
+    [(ResultCtfe.Ok same _)
       (match same
-        [(CtfeBool same-ok)
+        [(CompilerCtfeValue.Bool same-ok)
           (match (compiler-ctfe-eval
             (AstExpr.Binary
               (AstBinEq)
@@ -10837,13 +11078,14 @@
               (ast-node-push (AstExpr.TypeLiteral (ast-ty-mut-ptr (AstTyI64)))))
             (ctfe-env-empty)
             (ctfe-fuel-limit))
-            [(OkCtfe different _)
+            [(ResultCtfe.Ok different _)
               (match different
-                [(CtfeBool different-ok) (and same-ok (not different-ok))]
+                [(CompilerCtfeValue.Bool different-ok)
+                  (and same-ok (not different-ok))]
                 [_ false])]
-            [(ErrCtfe _) false])]
+            [(ResultCtfe.Err _) false])]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-call1 [name : String] [arg : i64]) : i64
   (ast-expr-call
@@ -10889,69 +11131,69 @@
 
 (define (compiler-ctfe-eval-i64-ok? [expr : i64] [env : CtfeEnv] [want : i64]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeI64 actual) (= actual want)]
+        [(CompilerCtfeValue.I64 actual) (= actual want)]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-eval-f64-ok? [expr : i64] [env : CtfeEnv] [want : f64]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeF64 actual) (= actual want)]
+        [(CompilerCtfeValue.F64 actual) (= actual want)]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-eval-f32-ok? [expr : i64] [env : CtfeEnv] [want : f64]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeF32 actual) (= actual want)]
+        [(CompilerCtfeValue.F32 actual) (= actual want)]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-eval-bool-ok? [expr : i64] [env : CtfeEnv] [want : bool]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeBool actual)
+        [(CompilerCtfeValue.Bool actual)
           (if want
             actual
             (not actual))]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-eval-string-ok?
   [expr : i64]
   [env : CtfeEnv]
   [want : String]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeString actual) (string.string-eq actual want)]
+        [(CompilerCtfeValue.String actual) (string.string-eq actual want)]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-eval-type-ok?
   [expr : i64]
   [env : CtfeEnv]
   [want : AstType]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeType actual) (ctfe-type-eq actual want)]
+        [(CompilerCtfeValue.Type actual) (ctfe-type-eq actual want)]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-eval-error-ok?
   [expr : i64]
   [env : CtfeEnv]
   [want : String]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
-    [(ErrCtfe diag)
+    [(ResultCtfe.Err diag)
       (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCtfe _ _) false]))
+    [(ResultCtfe.Ok _ _) false]))
 
 (define (compiler-ctfe-f64-ok?) : bool
   (let
@@ -11117,20 +11359,20 @@
       (ctfe-layout-field-list-push
         (ctfe-layout-field-list-push
           (ctfe-layout-field-list-with-capacity 2)
-          (CtfeLayoutField "tag" 0))
-        (CtfeLayoutField "count" 8))]
+          (CtfeLayoutField.Field "tag" 0))
+        (CtfeLayoutField.Field "count" 8))]
     [box-fields : CtfeLayoutFieldList
       (ctfe-layout-field-list-push
         (ctfe-layout-field-list-with-capacity 1)
-        (CtfeLayoutField "x" 0))]
+        (CtfeLayoutField.Field "x" 0))]
     [layouts : CtfeLayoutInfoList
       (ctfe-layout-info-list-push
         (ctfe-layout-info-list-push
           (ctfe-layout-info-list-push
             (ctfe-layout-info-list-with-capacity 3)
-            (CtfeLayoutInfo "Packet" true 16 8 packet-fields))
-          (CtfeLayoutInfo "Box" true 8 8 box-fields))
-        (CtfeLayoutInfo "Choice" false 24 8 (ctfe-layout-field-list-empty)))]
+            (CtfeLayoutInfo.Info "Packet" true 16 8 packet-fields))
+          (CtfeLayoutInfo.Info "Box" true 8 8 box-fields))
+        (CtfeLayoutInfo.Info "Choice" false 24 8 (ctfe-layout-field-list-empty)))]
     [env : CtfeEnv (ctfe-env-with-layouts layouts)]
     [ok : bool true]
     (begin
@@ -11208,20 +11450,22 @@
       (ctfe-reflect-field-list-push
         (ctfe-reflect-field-list-push
           (ctfe-reflect-field-list-with-capacity 2)
-          (CtfeReflectField "x" (AstTyI64)))
-        (CtfeReflectField "flag" (AstTyBool)))]
+          (CtfeReflectField.Field "x" (AstTyI64)))
+        (CtfeReflectField.Field "flag" (AstTyBool)))]
     [maybe-variants : CtfeReflectVariantList
       (ctfe-reflect-variant-list-push
         (ctfe-reflect-variant-list-push
           (ctfe-reflect-variant-list-with-capacity 2)
-          (CtfeReflectVariant "None" AstTypeNil))
-        (CtfeReflectVariant "Some" (ast-type-cons (AstTyString) AstTypeNil)))]
+          (CtfeReflectVariant.Variant "None" AstTypeNil))
+        (CtfeReflectVariant.Variant
+          "Some"
+          (ast-type-cons (AstTyString) AstTypeNil)))]
     [infos : CtfeReflectInfoList
       (ctfe-reflect-info-list-push
         (ctfe-reflect-info-list-push
           (ctfe-reflect-info-list-with-capacity 2)
-          (CtfeReflectStruct "Point" "" "Point" point-fields))
-        (CtfeReflectEnum "Maybe" "" "Maybe" maybe-variants))]
+          (CtfeReflectInfo.Struct "Point" "" "Point" point-fields))
+        (CtfeReflectInfo.Enum "Maybe" "" "Maybe" maybe-variants))]
     (ctfe-env-with-reflections infos)))
 
 (define (compiler-ctfe-reflection-query-ok?) : bool
@@ -11465,19 +11709,19 @@
   [name : String]
   [want : String]) : bool
   (match (ctfe-env-lookup env name)
-    [(CtfeSomeValue value)
+    [(CtfeMaybeValue.Some value)
       (match value
-        [(CtfeString actual) (string.string-eq actual want)]
+        [(CompilerCtfeValue.String actual) (string.string-eq actual want)]
         [_ false])]
-    [(CtfeNoValue) false]))
+    [(CtfeMaybeValue.None) false]))
 
 (define (compiler-ctfe-env-i64-eq? [env : CtfeEnv] [name : String] [want : i64]) : bool
   (match (ctfe-env-lookup env name)
-    [(CtfeSomeValue value)
+    [(CtfeMaybeValue.Some value)
       (match value
-        [(CtfeI64 actual) (= actual want)]
+        [(CompilerCtfeValue.I64 actual) (= actual want)]
         [_ false])]
-    [(CtfeNoValue) false]))
+    [(CtfeMaybeValue.None) false]))
 
 (define (compiler-ctfe-type-info-builtin-kind?
   [env : CtfeEnv]
@@ -11488,21 +11732,21 @@
     (ast-pattern-cons (ast-pat-binding "kind") AstPatternList.Nil)
     ty
     env)
-    [(CtfePatternMatched matched)
+    [(CtfePatternMatch.Matched matched)
       (compiler-ctfe-env-string-eq? matched "kind" want)]
-    [(CtfeNoPatternMatch) false]))
+    [(CtfePatternMatch.No) false]))
 
 (define (compiler-ctfe-env-type-info-box-builtin-kind?
   [env : CtfeEnv]
   [name : String]
   [want : String]) : bool
   (match (ctfe-env-lookup env name)
-    [(CtfeSomeValue value)
+    [(CtfeMaybeValue.Some value)
       (match value
-        [(CtfeTypeInfoBox ty)
+        [(CompilerCtfeValue.TypeInfoBox ty)
           (compiler-ctfe-type-info-builtin-kind? env ty want)]
         [_ false])]
-    [(CtfeNoValue) false]))
+    [(CtfeMaybeValue.None) false]))
 
 (define (compiler-ctfe-type-info-list-ref-builtin-kind?
   [env : CtfeEnv]
@@ -11515,13 +11759,14 @@
     (AstExpr.Literal (AstLitUnit))
     env
     (ctfe-fuel-limit))
-    [(OkCtfe value _)
+    [(ResultCtfe.Ok value _)
       (match value
-        [(CtfeTypeInfo ty) (compiler-ctfe-type-info-builtin-kind? env ty want)]
-        [(CtfeTypeVariantPayload ty)
+        [(CompilerCtfeValue.TypeInfo ty)
+          (compiler-ctfe-type-info-builtin-kind? env ty want)]
+        [(CompilerCtfeValue.TypeVariantPayload ty)
           (compiler-ctfe-type-info-builtin-kind? env ty want)]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-env-type-info-list-ref-builtin-kind?
   [env : CtfeEnv]
@@ -11529,9 +11774,9 @@
   [index : i64]
   [want : String]) : bool
   (match (ctfe-env-lookup env name)
-    [(CtfeSomeValue value)
+    [(CtfeMaybeValue.Some value)
       (compiler-ctfe-type-info-list-ref-builtin-kind? env value index want)]
-    [(CtfeNoValue) false]))
+    [(CtfeMaybeValue.None) false]))
 
 (define (compiler-ctfe-type-info-field-list-ok?
   [env : CtfeEnv]
@@ -11542,14 +11787,14 @@
     (AstExpr.Literal (AstLitUnit))
     env
     (ctfe-fuel-limit))
-    [(OkCtfe field-value _)
+    [(ResultCtfe.Ok field-value _)
       (match field-value
-        [(CtfeTypeField name ty)
+        [(CompilerCtfeValue.TypeField name ty)
           (and
             (string.string-eq name "id")
             (compiler-ctfe-type-info-builtin-kind? env ty "i64"))]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-type-info-variant-list-ok?
   [env : CtfeEnv]
@@ -11560,22 +11805,23 @@
     (AstExpr.Literal (AstLitUnit))
     env
     (ctfe-fuel-limit))
-    [(OkCtfe variant-value _)
+    [(ResultCtfe.Ok variant-value _)
       (match variant-value
-        [(CtfeTypeVariant name payloads)
+        [(CompilerCtfeValue.TypeVariant name payloads)
           (and
             (string.string-eq name "Failed")
             (compiler-ctfe-type-info-list-ref-builtin-kind?
               env
-              (CtfeTypeVariantPayloadList payloads)
+              (CompilerCtfeValue.TypeVariantPayloadList payloads)
               0
               "string"))]
         [_ false])]
-    [(ErrCtfe _) false]))
+    [(ResultCtfe.Err _) false]))
 
 (define (compiler-ctfe-type-info-source-match-ok? [env : CtfeEnv]) : bool
   (let
-    [match-env : CtfeEnv (ctfe-env-extend env "info" (CtfeTypeInfo (AstTyI64)))]
+    [match-env : CtfeEnv
+      (ctfe-env-extend env "info" (CompilerCtfeValue.TypeInfo (AstTyI64)))]
     [scrutinee : i64 (ctfe-ast-push match-env (AstExpr.Var (intern "info")))]
     [true-lit : i64
       (ctfe-ast-push match-env (AstExpr.Literal (AstLitBool true)))]
@@ -11599,11 +11845,11 @@
       (ctfe-ast-get match-env match-expr)
       match-env
       (ctfe-fuel-limit))
-      [(OkCtfe value _)
+      [(ResultCtfe.Ok value _)
         (match value
-          [(CtfeBool actual) actual]
+          [(CompilerCtfeValue.Bool actual) actual]
           [_ false])]
-      [(ErrCtfe _) false])))
+      [(ResultCtfe.Err _) false])))
 
 (define (compiler-ctfe-type-info-reflection-ok?) : bool
   (let
@@ -11638,21 +11884,21 @@
         (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" i64-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (if (compiler-ctfe-type-info-builtin-kind? env ty "i64")
                 unit
                 (set! ok false))]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" array-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoArray")
                 (ast-pattern-cons
@@ -11660,7 +11906,7 @@
                   (ast-pattern-cons (ast-pat-binding "len") AstPatternList.Nil))
                 ty
                 env)
-                [(CtfePatternMatched matched)
+                [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-i64-eq? matched "len" 4)
                     (compiler-ctfe-env-type-info-box-builtin-kind?
@@ -11669,46 +11915,46 @@
                       "i64"))
                     unit
                     (set! ok false))]
-                [(CtfeNoPatternMatch) (set! ok false)])]
+                [(CtfePatternMatch.No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
         (ctfe-ast-get
           env
           (compiler-ctfe-call1-in-env env "type-info" dyn-array-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoDynArray")
                 (ast-pattern-cons (ast-pat-binding "elem") AstPatternList.Nil)
                 ty
                 env)
-                [(CtfePatternMatched matched)
+                [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
                     "elem"
                     "bool")
                     unit
                     (set! ok false))]
-                [(CtfeNoPatternMatch) (set! ok false)])]
+                [(CtfePatternMatch.No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" tuple-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoTuple")
                 (ast-pattern-cons (ast-pat-binding "items") AstPatternList.Nil)
                 ty
                 env)
-                [(CtfePatternMatched matched)
+                [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                     matched
                     "items"
@@ -11716,16 +11962,16 @@
                     "bool")
                     unit
                     (set! ok false))]
-                [(CtfeNoPatternMatch) (set! ok false)])]
+                [(CtfePatternMatch.No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" fn-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoFunction")
                 (ast-pattern-cons
@@ -11733,7 +11979,7 @@
                   (ast-pattern-cons (ast-pat-binding "ret") AstPatternList.Nil))
                 ty
                 env)
-                [(CtfePatternMatched matched)
+                [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                       matched
@@ -11746,18 +11992,18 @@
                       "string"))
                     unit
                     (set! ok false))]
-                [(CtfeNoPatternMatch) (set! ok false)])]
+                [(CtfePatternMatch.No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
         (ctfe-ast-get
           env
           (compiler-ctfe-call1-in-env env "type-info" record-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoStruct")
                 (ast-pattern-cons
@@ -11767,32 +12013,32 @@
                     AstPatternList.Nil))
                 ty
                 env)
-                [(CtfePatternMatched matched)
+                [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-string-eq?
                       matched
                       "key"
                       (ctfe-type-info-key-in-env env ty))
                     (match (ctfe-env-lookup matched "fields")
-                      [(CtfeSomeValue fields-value)
+                      [(CtfeMaybeValue.Some fields-value)
                         (compiler-ctfe-type-info-field-list-ok?
                           matched
                           fields-value)]
-                      [(CtfeNoValue) false]))
+                      [(CtfeMaybeValue.None) false]))
                     unit
                     (set! ok false))]
-                [(CtfeNoPatternMatch) (set! ok false)])]
+                [(CtfePatternMatch.No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
         (ctfe-ast-get
           env
           (compiler-ctfe-call1-in-env env "type-info" status-ty))
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeTypeInfo ty)
+            [(CompilerCtfeValue.TypeInfo ty)
               (match (ctfe-match-type-info-variant
                 (intern "TypeInfoEnum")
                 (ast-pattern-cons
@@ -11802,23 +12048,23 @@
                     AstPatternList.Nil))
                 ty
                 env)
-                [(CtfePatternMatched matched)
+                [(CtfePatternMatch.Matched matched)
                   (if (and
                     (compiler-ctfe-env-string-eq?
                       matched
                       "key"
                       (ctfe-type-info-key-in-env env ty))
                     (match (ctfe-env-lookup matched "variants")
-                      [(CtfeSomeValue variants-value)
+                      [(CtfeMaybeValue.Some variants-value)
                         (compiler-ctfe-type-info-variant-list-ok?
                           matched
                           variants-value)]
-                      [(CtfeNoValue) false]))
+                      [(CtfeMaybeValue.None) false]))
                     unit
                     (set! ok false))]
-                [(CtfeNoPatternMatch) (set! ok false)])]
+                [(CtfePatternMatch.No) (set! ok false)])]
             [_ (set! ok false)])]
-        [(ErrCtfe _) (set! ok false)])
+        [(ResultCtfe.Err _) (set! ok false)])
       (unless (compiler-ctfe-type-info-source-match-ok? env) (set! ok false))
       ok)))
 
@@ -11947,50 +12193,50 @@
         (ctfe-ast-get env if-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node expected))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env name-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyString))
                 (ctfe-test-expr-eq-in-env env node expected-name))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env field-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-field))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env field-set-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyUnit))
                 (ctfe-test-expr-eq-in-env env node expected-field-set))]
             [_ false])]
-        [(ErrCtfe _) false]))))
+        [(ResultCtfe.Err _) false]))))
 
 (define (compiler-ctfe-checked-expr-inspectors-ok?) : bool
   (let
@@ -12018,7 +12264,8 @@
     [fallback-cond-expr : i64
       (compiler-ctfe-call1-in-env env "expr-if-cond" true-expr)]
     [clause : AstExprClause (AstExprClause true-lit false-lit)]
-    [clause-env : CtfeEnv (ctfe-env-extend env "arm" (CtfeExprClause clause))]
+    [clause-env : CtfeEnv
+      (ctfe-env-extend env "arm" (CompilerCtfeValue.ExprClause clause))]
     [clause-var : i64 (ctfe-ast-push clause-env (AstExpr.Var (intern "arm")))]
     [clause-first : i64
       (compiler-ctfe-call1-in-env clause-env "expr-clause-first" clause-var)]
@@ -12035,76 +12282,77 @@
         (ctfe-ast-get env cond-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env then-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node false-lit))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env else-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env fallback-cond-expr)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node checked-ty)
+            [(CompilerCtfeValue.Expr node checked-ty)
               (and
                 (ctfe-type-eq checked-ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get clause-env clause-first)
         clause-env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node _)
+            [(CompilerCtfeValue.Expr node _)
               (ctfe-test-expr-eq-in-env clause-env node true-lit)]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get clause-env clause-second)
         clause-env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node _)
+            [(CompilerCtfeValue.Expr node _)
               (ctfe-test-expr-eq-in-env clause-env node false-lit)]
             [_ false])]
-        [(ErrCtfe _) false]))))
+        [(ResultCtfe.Err _) false]))))
 
 (define (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) : bool
   (let
     [base-env : CtfeEnv (ctfe-env-empty)]
     [int-node : i64 (ctfe-ast-push base-env (AstExpr.Literal (ast-lit-int 1)))]
-    [int-expr-value : CompilerCtfeValue (CtfeExpr int-node (AstTyI64))]
+    [int-expr-value : CompilerCtfeValue
+      (CompilerCtfeValue.Expr int-node (AstTyI64))]
     [env : CtfeEnv (ctfe-env-extend base-env "n" int-expr-value)]
     [spliced-int : i64
       (compiler-ctfe-call1-in-env
@@ -12135,9 +12383,12 @@
       (ast-expr-cons true-lit (ast-expr-cons false-lit AstExprList.Nil))]
     [env : CtfeEnv
       (ctfe-env-extend
-        (ctfe-env-extend base-env "cond" (CtfeExpr flag-var (AstTyBool)))
+        (ctfe-env-extend
+          base-env
+          "cond"
+          (CompilerCtfeValue.Expr flag-var (AstTyBool)))
         "xs"
-        (CtfeExprList spliced))]
+        (CompilerCtfeValue.ExprList spliced))]
     [quoted-bool : i64
       (ast-expr-quote-with-pools (ctfe-env-pools env) true-lit)]
     [cond-var : i64 (ctfe-ast-push env (AstExpr.Var (intern "cond")))]
@@ -12167,7 +12418,10 @@
         (intern "field"))]
     [set-target-var : i64 (ctfe-ast-push env (AstExpr.Var (intern "target")))]
     [set-env : CtfeEnv
-      (ctfe-env-extend env "target" (CtfeExpr field-place (AstTyExpr)))]
+      (ctfe-env-extend
+        env
+        "target"
+        (CompilerCtfeValue.Expr field-place (AstTyExpr)))]
     [qq-set : i64
       (ast-expr-quasiquote-with-pools
         (ctfe-env-pools set-env)
@@ -12190,50 +12444,51 @@
         (ctfe-ast-get env quoted-bool)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node ty)
+            [(CompilerCtfeValue.Expr node ty)
               (and
                 (ctfe-type-eq ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node true-lit))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval (ctfe-ast-get env qq-if) env (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node ty)
+            [(CompilerCtfeValue.Expr node ty)
               (and
                 (ctfe-type-eq ty (AstTyBool))
                 (ctfe-test-expr-eq-in-env env node expected-if))]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get env qq-splice)
         env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node _)
+            [(CompilerCtfeValue.Expr node _)
               (ctfe-test-expr-eq-in-env env node expected-begin)]
             [_ false])]
-        [(ErrCtfe _) false])
+        [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval
         (ctfe-ast-get set-env qq-set)
         set-env
         (ctfe-fuel-limit))
-        [(OkCtfe value _)
+        [(ResultCtfe.Ok value _)
           (match value
-            [(CtfeExpr node _)
+            [(CompilerCtfeValue.Expr node _)
               (ctfe-test-expr-eq-in-env set-env node expected-set)]
             [_ false])]
-        [(ErrCtfe _) false]))))
+        [(ResultCtfe.Err _) false]))))
 
 (define (compiler-ctfe-expr-pattern-match-int-ok?) : bool
   (let
     [base-env : CtfeEnv (ctfe-env-empty)]
     [subject-node : i64
       (ctfe-ast-push base-env (AstExpr.Literal (ast-lit-int 7)))]
-    [subject : CompilerCtfeValue (CtfeExpr subject-node (AstTyI64))]
+    [subject : CompilerCtfeValue
+      (CompilerCtfeValue.Expr subject-node (AstTyI64))]
     [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
     [scrutinee : i64 (ctfe-ast-push env (AstExpr.Var (intern "subject")))]
     [int-pattern : AstPattern
@@ -12265,7 +12520,7 @@
       (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool false)))]
     [if-node : i64
       (ast-expr-if-with-pools (ctfe-env-pools base-env) flag true-lit false-lit)]
-    [subject : CompilerCtfeValue (CtfeExpr if-node (AstTyBool))]
+    [subject : CompilerCtfeValue (CompilerCtfeValue.Expr if-node (AstTyBool))]
     [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
     [scrutinee : i64 (ctfe-ast-push env (AstExpr.Var (intern "subject")))]
     [if-pattern : AstPattern
@@ -12298,14 +12553,14 @@
       (ctfe-ast-get env match-expr)
       env
       (ctfe-fuel-limit))
-      [(OkCtfe value _)
+      [(ResultCtfe.Ok value _)
         (match value
-          [(CtfeExpr node ty)
+          [(CompilerCtfeValue.Expr node ty)
             (and
               (ctfe-type-eq ty (AstTyBool))
               (ctfe-test-expr-eq-in-env env node expected))]
           [_ false])]
-      [(ErrCtfe _) false])))
+      [(ResultCtfe.Err _) false])))
 
 (define (compiler-ctfe-expr-pattern-match-clause-ok?) : bool
   (let
@@ -12315,7 +12570,7 @@
     [false-lit : i64
       (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool false)))]
     [clause : AstExprClause (AstExprClause true-lit false-lit)]
-    [subject : CompilerCtfeValue (CtfeExprClause clause)]
+    [subject : CompilerCtfeValue (CompilerCtfeValue.ExprClause clause)]
     [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
     [scrutinee : i64 (ctfe-ast-push env (AstExpr.Var (intern "subject")))]
     [clause-pattern : AstPattern
@@ -12337,11 +12592,12 @@
       (ctfe-ast-get env match-expr)
       env
       (ctfe-fuel-limit))
-      [(OkCtfe value _)
+      [(ResultCtfe.Ok value _)
         (match value
-          [(CtfeExpr node _) (ctfe-test-expr-eq-in-env env node false-lit)]
+          [(CompilerCtfeValue.Expr node _)
+            (ctfe-test-expr-eq-in-env env node false-lit)]
           [_ false])]
-      [(ErrCtfe _) false])))
+      [(ResultCtfe.Err _) false])))
 
 (define (compiler-ctfe-expr-pattern-match-ok?) : bool
   (and

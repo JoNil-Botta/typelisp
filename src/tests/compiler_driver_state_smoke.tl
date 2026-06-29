@@ -643,7 +643,7 @@
           (ctfe-env-extend
             env-a
             "replacement"
-            (CtfeExpr quote-cond-id (AstTyBool)))]
+            (CompilerCtfeValue.Expr quote-cond-id (AstTyBool)))]
         [quote-len-before : i64 (ast-node-pool-context-expr-len pools-a)]
         (begin
           (compiler-driver-state-install-pools! state-b)
@@ -651,18 +651,18 @@
             (ast-node-pool-context-expr-get pools-a if-id)
             env-a
             (ctfe-fuel-limit))
-            [(OkCtfe value _)
+            [(ResultCtfe.Ok value _)
               (match value
-                [(CtfeI64 n) (unless (= n 7) (set! ok false))]
+                [(CompilerCtfeValue.I64 n) (unless (= n 7) (set! ok false))]
                 [_ (set! ok false)])]
-            [(ErrCtfe _) (set! ok false)])
+            [(ResultCtfe.Err _) (set! ok false)])
           (match (compiler-ctfe-eval
             (ast-node-pool-context-expr-get pools-a quasiquote-id)
             quote-env
             (ctfe-fuel-limit))
-            [(OkCtfe value _)
+            [(ResultCtfe.Ok value _)
               (match value
-                [(CtfeExpr node ty)
+                [(CompilerCtfeValue.Expr node ty)
                   (begin
                     (unless
                       (ctfe-type-eq-in-env quote-env ty (AstTyBool))
@@ -678,7 +678,7 @@
                         node)
                       (set! ok false)))]
                 [_ (set! ok false)])]
-            [(ErrCtfe _) (set! ok false)])
+            [(ResultCtfe.Err _) (set! ok false)])
           ok)))))
 
 (define (compiler-driver-state-smoke-typecheck-macro-source [n : i64]) : String

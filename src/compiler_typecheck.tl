@@ -2114,7 +2114,7 @@
 
 (define (compiler-typecheck-inline-boxed-ctfe-metadata-source) : String
   "(defenum CompilerCtfeValue
-  (CtfeUnit))
+  (Unit))
 (defstruct CtfeLayoutField
   (name String)
   (offset i64))
@@ -2148,14 +2148,14 @@
   (slots (Array CtfeReflectVariant))
   (len i64))
 (defenum CtfeReflectInfo
-  (CtfeReflectStruct String String String CtfeReflectFieldList)
-  (CtfeReflectEnum String String String CtfeReflectVariantList))
+  (Struct String String String CtfeReflectFieldList)
+  (Enum String String String CtfeReflectVariantList))
 (defstruct CtfeReflectInfoList
   (slots (Array CtfeReflectInfo))
   (len i64))
 (defenum CtfeEnv
-  (CtfeEnvNil CtfeLayoutInfoList CtfeReflectInfoList)
-  (CtfeEnvCons String CompilerCtfeValue AstType (Box CtfeEnv)))")
+  (Nil CtfeLayoutInfoList CtfeReflectInfoList)
+  (Cons String CompilerCtfeValue AstType (Box CtfeEnv)))")
 
 (define (compiler-typecheck-inline-ctfe-metadata-layout-ok?) : bool
   (let

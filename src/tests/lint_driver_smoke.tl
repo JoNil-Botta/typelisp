@@ -255,6 +255,61 @@
   ;; lint-allow: unused-unsafe
   (unsafe (+ 1 2)))")
 
+(define (lint-driver-smoke-copy-on-update-struct-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p (Point (struct-get p x) y))
+    (struct-get p y)))")
+
+(define (lint-driver-smoke-dot-copy-on-update-struct-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    (set! p (Point p.x y))
+    p.y))")
+
+(define (lint-driver-smoke-suppressed-copy-on-update-struct-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [y : i64]) : i64
+  (begin
+    ;; lint-allow: copy-on-update-struct
+    (set! p (Point (struct-get p x) y))
+    (struct-get p y)))")
+
+(define (lint-driver-smoke-multiple-field-copy-on-update-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [x : i64] [y : i64]) : i64
+  (begin
+    (set! p (Point (+ (struct-get p x) x) y))
+    (struct-get p y)))")
+
+(define (lint-driver-smoke-other-value-copy-on-update-source) : String
+  "(defstruct Point
+  (x i64)
+  (y i64))
+(define (main [p : Point] [q : Point] [y : i64]) : i64
+  (begin
+    (set! p (Point (struct-get q x) y))
+    (struct-get p y)))")
+
+(define (lint-driver-smoke-enum-copy-on-update-source) : String
+  "(defenum State
+  (A i64 i64)
+  (B i64 i64))
+(define (main [s : State] [x : i64]) : i64
+  (begin
+    (set! s (B x 2))
+    x))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -625,6 +680,65 @@
       [(not (= (lint-findings-count suppressed) 0)) 68]
       [else 42])))
 
+(define (lint-driver-smoke-copy-on-update-struct-self-test) : i64
+  (let
+    [rule : String (lint-rule-copy-on-update-struct-id)]
+    [reported : LintFindings
+      (selfhost-lint-source-with-roots-and-options
+        "lint_driver_copy_on_update_struct.tl"
+        (lint-driver-smoke-copy-on-update-struct-source)
+        (vector.string-vec-new)
+        false)]
+    (cond
+      [(not (= (selfhost-lint-findings-rule-count reported rule) 1)) 81]
+      [(not (lint-driver-smoke-finding-rule-line-ok? reported 0 rule 6)) 82]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (lint-driver-smoke-suppressed-copy-on-update-struct-source)
+              rule)
+            0))
+        83]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (lint-driver-smoke-multiple-field-copy-on-update-source)
+              rule)
+            0))
+        84]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (lint-driver-smoke-other-value-copy-on-update-source)
+              rule)
+            0))
+        85]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (lint-driver-smoke-enum-copy-on-update-source)
+              rule)
+            0))
+        86]
+      [(not
+          (string.string-eq
+            (lint-rule-message rule)
+            (lint-rule-copy-on-update-struct-message)))
+        87]
+      [(not
+          (string.string-eq
+            (lint-rule-suggestion rule)
+            (lint-rule-copy-on-update-struct-suggestion)))
+        88]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (lint-driver-smoke-dot-copy-on-update-struct-source)
+              rule)
+            1))
+        89]
+      [else 42])))
+
 (define (lint-driver-smoke-redundant-import-alias-self-test) : i64
   (let
     [rule : String (lint-rule-redundant-import-alias-id)]
@@ -760,7 +874,14 @@
                                               [unused-variable-result : i64
                                                 (lint-driver-smoke-unused-variable-self-test)]
                                               (if (= unused-variable-result 42)
-                                                (lint-driver-smoke-unused-unsafe-self-test)
+                                                (let
+                                                  [unused-unsafe-result : i64
+                                                    (lint-driver-smoke-unused-unsafe-self-test)]
+                                                  (if (=
+                                                    unused-unsafe-result
+                                                    42)
+                                                    (lint-driver-smoke-copy-on-update-struct-self-test)
+                                                    unused-unsafe-result))
                                                 unused-variable-result))
                                             divergence-result))
                                         unreachable-result))

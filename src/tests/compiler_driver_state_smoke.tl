@@ -3,6 +3,7 @@
 (import stdlib.io)
 (import stdlib.vector)
 (import "../compiler_driver_core.tl")
+(import "../compiler_lower.tl")
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
@@ -937,6 +938,42 @@
                   (compiler-driver-state-reset-file-state! state-a)
                   ok)))))))))
 
+(define (compiler-driver-state-smoke-lower-type-reads-use-context?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [program : AstProgram (ast-program AstDeclNil)]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-reset-file-state! state-b)
+      (let
+        [pools-a : AstNodePoolContext
+          (compiler-driver-state-pool-context state-a)]
+        [pools-b : AstNodePoolContext
+          (compiler-driver-state-pool-context state-b)]
+        [ref-ty : AstType (ast-ty-ref-with-pools pools-a "r" (AstTyStr))]
+        [decoy-id : i64 (ast-node-pool-context-type-push pools-b (AstTyI64))]
+        (match ref-ty
+          [(AstTyRef _ inner)
+            (match (build-compiler-symbols program)
+              [(ResultCompilerSymbols.Ok symbols)
+                (match (build-compiler-registries-with-symbols program symbols)
+                  [(ResultCompilerRegistries.Ok registries)
+                    (let
+                      [ctx : TcContext
+                        (TcContext program symbols registries "" pools-a)]
+                      [_ : unit (ast-node-pool-context-install! pools-b)]
+                      [active-len : i64 (ty-node-pool-len)]
+                      (and
+                        (= inner decoy-id)
+                        (= active-len (ast-node-pool-context-type-len pools-b))
+                        (lower-str-ref-type? ctx ref-ty)
+                        (not (lower-bytes-ref-type? ctx ref-ty))
+                        (= active-len (ty-node-pool-len))))]
+                  [(ResultCompilerRegistries.Err _) false])]
+              [(ResultCompilerSymbols.Err _) false])]
+          [_ false])))))
+
 (define (compiler-driver-state-smoke-lowered-result-pools-survive-reset?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
@@ -1109,6 +1146,9 @@
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
+    (unless
+      (compiler-driver-state-smoke-lower-type-reads-use-context?)
+      (return 18))
     (unless
       (compiler-driver-state-smoke-lowered-result-pools-survive-reset?)
       (return 11))

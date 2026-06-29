@@ -9884,7 +9884,8 @@
 (define (lower-str-ref-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
         [(AstTyStr) true]
         [_ false])]
     [_ false]))
@@ -9892,11 +9893,13 @@
 (define (lower-bytes-ref-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
         [(AstTyBytes) true]
         [_ false])]
     [(AstTyMutRef _ inner)
-      (match (tc-type-strip-region (tc-resolve-type ctx (ty-node-get inner)))
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
         [(AstTyBytes) true]
         [_ false])]
     [_ false]))
@@ -9921,9 +9924,11 @@
   [ctx : TcContext]
   [env : SymI64Env]
   [expr : AstExpr]) : LowerMaybeStringConcatCall
-  (match (ast-expr-unspan expr)
+  (match (ast-expr-unspan-with-pools (tc-context-pools ctx) expr)
     [(AstExprCall callee-box args)
-      (match (ast-expr-unspan (ast-node-get callee-box))
+      (match (ast-expr-unspan-with-pools
+        (tc-context-pools ctx)
+        (tc-context-expr-get ctx callee-box))
         [(AstExprVar name)
           (if (and
             (lower-string-concat-builtin-name? (intern-str name))
@@ -9931,12 +9936,12 @@
             (match args
               [(AstExprCons left tail)
                 (let
-                  [left : AstExpr (ast-node-get left)]
+                  [left : AstExpr (tc-context-expr-get ctx left)]
                   [tail : AstExprList (box-get tail)]
                   (match tail
                     [(AstExprCons right rest)
                       (let
-                        [right : AstExpr (ast-node-get right)]
+                        [right : AstExpr (tc-context-expr-get ctx right)]
                         [rest : AstExprList (box-get rest)]
                         (match rest
                           [(AstExprNil) (LowerSomeStringConcatCall left right)]
@@ -9991,7 +9996,7 @@
     [(AstExprNil) (OkLowerStringValues state acc count)]
     [(AstExprCons expr rest)
       (let
-        [expr : AstExpr (ast-node-get expr)]
+        [expr : AstExpr (tc-context-expr-get ctx expr)]
         [rest : AstExprList (box-get rest)]
         (match (lower-expr ctx state env type-env expr)
           [(OkLowerExpr lowered)
@@ -10072,9 +10077,9 @@
         (box-get elems)
         LowerStringNil)]
     [(AstTyArray elem-ty _)
-      (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
+      (not (tc-type-contains-reference? (tc-context-type-get ctx elem-ty)))]
     [(AstTyDynArray elem-ty)
-      (not (tc-type-contains-reference? (ty-node-get elem-ty)))]
+      (not (tc-type-contains-reference? (tc-context-type-get ctx elem-ty)))]
     [(AstTyStruct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -10296,7 +10301,7 @@
         [(AstTyRegion _ inner)
           (lower-supported-reference-type-with-stack?
             ctx
-            (ty-node-get inner)
+            (tc-context-type-get ctx inner)
             stack)]
         [_ false]))))
 
@@ -37624,7 +37629,7 @@
                 [(AstTyFunc param-types callee-ret)
                   (lower-tail-call-compatible-return?
                     ctx
-                    (ty-node-get callee-ret)
+                    (tc-context-type-get ctx callee-ret)
                     ret-ty)]
                 [_ false])]
             [(ResultTcType.Err _) false])
@@ -37676,7 +37681,10 @@
     false
     (match (tc-type-strip-region (tc-resolve-type ctx func-ty))
       [(AstTyFunc _ callee-ret)
-        (lower-tail-call-compatible-return? ctx (ty-node-get callee-ret) ret-ty)]
+        (lower-tail-call-compatible-return?
+          ctx
+          (tc-context-type-get ctx callee-ret)
+          ret-ty)]
       [_ false])))
 
 (define (lower-tail-call-indirect-expr
@@ -39675,15 +39683,21 @@
       (lower-type-list-contains-inline-aggregate? ctx (box-get elems))]
     [(AstTyArray _ _) true]
     [(AstTyRegion _ inner)
-      (lower-type-contains-inline-aggregate? ctx (ty-node-get inner))]
+      (lower-type-contains-inline-aggregate?
+        ctx
+        (tc-context-type-get ctx inner))]
     ;; #1867: a reference can point INTO the current frame (memory-aggregate
     ;; locals live in frame slots now), so a ref arg whose referent is or
     ;; contains an inline aggregate makes a tail call unsafe -- the callee
     ;; would read through a pointer into the reused/abandoned frame.
     [(AstTyRef _ referent)
-      (lower-type-contains-inline-aggregate? ctx (ty-node-get referent))]
+      (lower-type-contains-inline-aggregate?
+        ctx
+        (tc-context-type-get ctx referent))]
     [(AstTyMutRef _ referent)
-      (lower-type-contains-inline-aggregate? ctx (ty-node-get referent))]
+      (lower-type-contains-inline-aggregate?
+        ctx
+        (tc-context-type-get ctx referent))]
     [_ false]))
 
 (define (lower-type-list-contains-inline-aggregate?
@@ -39693,7 +39707,7 @@
     [(AstTypeNil) false]
     [(AstTypeCons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (or
           (lower-type-contains-inline-aggregate? ctx ty)
@@ -39730,7 +39744,9 @@
 (define (lower-supported-function-return-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-resolve-type ctx ty)
     [(AstTyRegion _ inner)
-      (lower-supported-function-return-type? ctx (ty-node-get inner))]
+      (lower-supported-function-return-type?
+        ctx
+        (tc-context-type-get ctx inner))]
     [_ true]))
 
 (define (lower-logical-name-has-suffix?

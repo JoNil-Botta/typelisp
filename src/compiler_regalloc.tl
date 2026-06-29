@@ -2700,6 +2700,115 @@
           0
           (array.array-length values)))]))
 
+;; A call arg is passed in a SINGLE general-purpose arg register on both ABIs iff it
+;; is neither a float nor a register-group value. Handle values (string/box/array/
+;; enum/single-word-struct pointers) count as GP, exactly like a raw pointer -- the
+;; backend marshals them with one movq. This is the regalloc mirror of the backend's
+;; compiler-backend-types-all-gp-int? (the parallel-move precondition); keep the two
+;; in sync. Unlike compiler-reg-call-arg-int-class? (which excludes handles, reusing
+;; the param-pin rule) this admits handle args so a mixed scalar+handle call is still
+;; recognized as a clean GP-register call.
+(define (compiler-reg-call-arg-gp-class?
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]) : bool
+  (match value
+    [(IrValueVar id)
+      (match (compiler-reg-var-type-lookup types id)
+        [(CompilerRegSomeType ty)
+          (and
+            (not (compiler-reg-float-type? ty))
+            (not (compiler-reg-type-register-group? ty)))]
+        [(CompilerRegNoType) false])]
+    [(IrValueF64 _) false]
+    [(IrValueUnit) false]
+    [_ true]))
+
+(define (compiler-reg-call-args-array-gp-class?
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (compiler-reg-call-arg-gp-class? (array.array-ref values index) types)
+      (compiler-reg-call-args-array-gp-class? values types (+ index 1) count))))
+
+;; A call whose args are ALL single-GP-register passed (and within the per-ABI
+;; arg-register arity) is marshalled by the backend with the sound parallel move
+;; (compiler-backend-emit-arg-move-list), exactly like a fully-scalar "simple" call.
+;; Its scalar arg vars may therefore stay register-homed even when some args are
+;; handles. Mirrors compiler-backend-call-args-gp-parallel? (count<=limit, all GP).
+(define (compiler-reg-call-gp-parallel?
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [limit : i64]) : bool
+  (match args
+    [(IrCallArgsNil) false]
+    [(IrCallArgsOne v) (compiler-reg-call-arg-gp-class? v types)]
+    [(IrCallArgsTwo a b)
+      (and
+        (compiler-reg-call-arg-gp-class? a types)
+        (compiler-reg-call-arg-gp-class? b types))]
+    [(IrCallArgsArray values)
+      (if (> (array.array-length values) limit)
+        false
+        (compiler-reg-call-args-array-gp-class?
+          values
+          types
+          0
+          (array.array-length values)))]))
+
+;; Collect the arg vars of a call that are NOT scalar-int-class -- i.e. the handle
+;; (aggregate) args. In a gp-parallel call these stay memory-sourced (ineligible)
+;; while the scalar arg vars are left eligible; the backend marshals a memory-sourced
+;; handle arg with a plain load inside the parallel move, so its handling is unchanged.
+(define (compiler-reg-call-non-int-class-arg-into
+  [set : CompilerLiveI64Set]
+  [value : CompilerIrValue]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (if (compiler-reg-call-arg-int-class? value types)
+    set
+    (compiler-live-value-vars-into set value)))
+
+(define (compiler-reg-call-non-int-class-args-array
+  [values : (Array CompilerIrValue)]
+  [types : CompilerRegVarTypeList]
+  [index : i64]
+  [count : i64]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (if (>= index count)
+    set
+    (compiler-reg-call-non-int-class-args-array
+      values
+      types
+      (+ index 1)
+      count
+      (compiler-reg-call-non-int-class-arg-into
+        set
+        (array.array-ref values index)
+        types))))
+
+(define (compiler-reg-call-non-int-class-arg-vars
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  (match args
+    [(IrCallArgsNil) (compiler-live-set-empty)]
+    [(IrCallArgsOne v)
+      (compiler-reg-call-non-int-class-arg-into (compiler-live-set-empty) v types)]
+    [(IrCallArgsTwo a b)
+      (compiler-reg-call-non-int-class-arg-into
+        (compiler-reg-call-non-int-class-arg-into (compiler-live-set-empty) a types)
+        b
+        types)]
+    [(IrCallArgsArray values)
+      (compiler-reg-call-non-int-class-args-array
+        values
+        types
+        0
+        (array.array-length values)
+        (compiler-live-set-empty))]))
+
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [instrs : CompilerIrInstrSeq]
   [set : CompilerLiveI64Set]
@@ -2719,9 +2828,22 @@
               [(IrInstrCall _ _ args _)
                 (if (compiler-reg-call-simple? args types limit)
                   out
-                  (compiler-live-set-union
-                    out
-                    (compiler-live-call-args-vars args)))]
+                  (if (compiler-reg-call-gp-parallel? args types limit)
+                    ;; Mixed GP call (e.g. f(scalar, handle, scalar)): the backend
+                    ;; passes every arg in one GP register and resolves any source/dest
+                    ;; conflict with the parallel move, exactly as for a fully-scalar
+                    ;; simple call. Disqualify ONLY the non-scalar (handle) arg vars
+                    ;; (kept memory-sourced); the scalar arg vars stay eligible for
+                    ;; register homing instead of being needlessly spilled and reloaded.
+                    (compiler-live-set-union
+                      out
+                      (compiler-reg-call-non-int-class-arg-vars args types))
+                    ;; Float / register-group / over-arity call: the backend marshals it
+                    ;; with the naive ascending path, which is correct only when every
+                    ;; arg var is memory-sourced, so keep them all ineligible.
+                    (compiler-live-set-union
+                      out
+                      (compiler-live-call-args-vars args))))]
               [(IrInstrCallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallCAbiStoreResultPayload base _ args _)

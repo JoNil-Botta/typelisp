@@ -20202,7 +20202,15 @@
               param-types
               c-abi?
               program-index)]
-          (match (compiler-backend-emit-call-args-with-assignments
+          ;; Route the non-tail direct call through the parallel-move wrapper (not
+          ;; the raw naive emitter): a register-homed arg's source register can be
+          ;; another arg's destination arg register (e.g. once mixed scalar+handle
+          ;; calls leave their scalar args register-eligible), so the naive ascending
+          ;; marshalling could clobber a source before it is read. The wrapper resolves
+          ;; only real GP source/dest conflicts via a sound parallel move and otherwise
+          ;; delegates to the byte-identical naive path (so conflict-free calls -- the
+          ;; overwhelming common case -- are unchanged). Mirrors the tail-call path.
+          (match (compiler-backend-emit-call-args
             target
             arg-assignments
             args

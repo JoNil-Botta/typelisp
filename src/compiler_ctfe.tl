@@ -4171,11 +4171,17 @@
       (ctfe-comptime-helper-base-after-prefix name "stdlib/comptime/")]
     [else name]))
 
+(define (ctfe-comptime-error-helper-name? [name : String]) : bool
+  (and
+    (ctfe-string-has-module-separator? name)
+    (string.eq (ctfe-comptime-helper-lookup-name name) "error")))
+
 (define (ctfe-string-eq-helper-name? [name : String]) : bool
   (or
     (string.eq name "__tl_string_eq")
     (string.eq name "string-eq")
     (string.eq name "string=?")
+    (ctfe-stdlib-string-helper-name? name "eq")
     (ctfe-stdlib-string-helper-name? name "string-eq")
     (ctfe-stdlib-string-helper-name? name "string=?")))
 
@@ -4198,6 +4204,7 @@
   (or
     (string.eq name "__tl_string_to_int")
     (string.eq name "string->int")
+    (ctfe-stdlib-string-helper-name? name ">int")
     (ctfe-stdlib-string-helper-name? name "string->int")))
 
 (define (ctfe-comptime-source-helper-call-name [name : String]) : String
@@ -4286,8 +4293,13 @@
       [(string.eq lookup-name "expr-binding-clause-list->expr-list")
         "expr-binding-clause-list->expr-list"]
       [(string.eq lookup-name "string-append") "string-append"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "append") "string-append"]
       [(string.eq lookup-name "string-concat") "string-concat"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "concat") "string-concat"]
       [(string.eq lookup-name "int->string") "int->string"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "int->string")
+        "int->string"]
+      [(ctfe-comptime-error-helper-name? name) "comptime-error"]
       [(string.eq lookup-name "comptime-error") "comptime-error"]
       [else name])))
 
@@ -11136,6 +11148,35 @@
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCtfe.Ok _ _) false]))
 
+(define (compiler-ctfe-string-helper-rename-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [a : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitString "a")))]
+    [a2 : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitString "a")))]
+    [b : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitString "b")))]
+    [seven : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitString "7")))]
+    [forty-two : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 42)))]
+    [eq-call : i64 (compiler-ctfe-call2-in-env env "string.eq" a a2)]
+    [append-call : i64 (compiler-ctfe-call2-in-env env "string.append" a b)]
+    [concat-call : i64 (compiler-ctfe-call2-in-env env "string.concat" a b)]
+    [to-int-call : i64 (compiler-ctfe-call1-in-env env "string.>int" seven)]
+    [to-string-call : i64
+      (compiler-ctfe-call1-in-env env "string.int->string" forty-two)]
+    (and
+      (compiler-ctfe-eval-bool-ok? eq-call env true)
+      (compiler-ctfe-eval-string-ok? append-call env "ab")
+      (compiler-ctfe-eval-string-ok? concat-call env "ab")
+      (compiler-ctfe-eval-i64-ok? to-int-call env 7)
+      (compiler-ctfe-eval-string-ok? to-string-call env "42"))))
+
+(define (compiler-ctfe-comptime-error-helper-rename-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [message : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLitString "expected error")))]
+    [error-call : i64 (compiler-ctfe-call1-in-env env "comptime.error" message)]
+    (compiler-ctfe-eval-error-ok? error-call env "expected error")))
+
 (define (compiler-ctfe-f64-ok?) : bool
   (let
     [one-five : i64 (ast-node-push (AstExpr.Literal (AstLitFloat "1.5")))]
@@ -12551,6 +12592,8 @@
     (unless (compiler-ctfe-type-literal-ok?) (return 1))
     (unless (compiler-ctfe-type-comparison-ok?) (return 1))
     (unless (compiler-ctfe-raw-pointer-type-comparison-ok?) (return 1))
+    (unless (compiler-ctfe-string-helper-rename-ok?) (return 1))
+    (unless (compiler-ctfe-comptime-error-helper-rename-ok?) (return 1))
     (unless (compiler-ctfe-f64-ok?) (return 1))
     (unless (compiler-ctfe-layout-query-ok?) (return 1))
     (unless (compiler-ctfe-reflection-query-ok?) (return 1))

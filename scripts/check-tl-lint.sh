@@ -106,9 +106,13 @@ if [ ! -s "$FILES" ]; then
 fi
 
 count=$(wc -l < "$FILES" | tr -d ' ')
-echo "Linting TypeLisp sources for $count file(s)."
+LINT_BATCH_SIZE=${TYPELISP_LINT_BATCH_SIZE:-32}
+echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE."
 
-if ! xargs "$COMPILER" lint --check < "$FILES" > "$STDOUT" 2> "$STDERR"; then
+# Keep lint processes bounded. The lint command checks each explicit source
+# independently, so chunking preserves coverage while releasing compiler heap
+# state between batches on memory-constrained CI hosts.
+if ! xargs -n "$LINT_BATCH_SIZE" "$COMPILER" lint --check < "$FILES" > "$STDOUT" 2> "$STDERR"; then
     if [ ! -s "$STDERR" ] && grep -q '^lint: [1-9][0-9]* finding(s)$' "$STDOUT"; then
         awk '
             /^--- / { next }

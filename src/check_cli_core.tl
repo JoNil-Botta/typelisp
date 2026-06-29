@@ -6,6 +6,7 @@
 (import stdlib.io)
 (import stdlib.vector)
 (import "compiler_check_core.tl")
+(import "compiler_driver_core.tl")
 (import "doc_test.tl")
 (import "package_source_core.tl")
 (import "test_cli_core.tl")
@@ -191,6 +192,7 @@
           (selfhost-check-package-entry-path manifest-dir manifest)]
         [emit-entry : bool
           (selfhost-check-package-kind-entry? (struct-get manifest kind))]
+        [_reset-file-state : unit (compiler-driver-reset-file-state!)]
         (match (compiler-check-package-entry-file-with-roots
           entry-path
           stdlib-roots
@@ -199,6 +201,12 @@
           emit-entry)
           [(ResultCompilerCheckWithPaths.Ok _ paths)
             (let
+              ;; Match standalone package inline-test runs: entry checking can
+              ;; leave enough compiler state live to exhaust long package checks.
+              [_reset-after-entry : unit
+                (begin
+                  (compiler-driver-reset-file-state!)
+                  (intern-persistent-arena-reset!))]
               [inline-test-status : i64
                 (tltest-inline-typecheck-package-sources-with-cfg
                   (struct-get source-set sources)

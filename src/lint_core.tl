@@ -173,6 +173,15 @@
 (define (lint-rule-unused-assignment-suggestion) : String
   "remove the assignment or read the value before overwriting it")
 
+(define (lint-rule-copy-on-update-struct-id) : String
+  "copy-on-update-struct")
+
+(define (lint-rule-copy-on-update-struct-message) : String
+  "copy-on-update struct mutation: prefer in-place field assignment")
+
+(define (lint-rule-copy-on-update-struct-suggestion) : String
+  "replace same-struct reassignment with (set! (struct-get value field) new-value)")
+
 (define (lint-rule-unused-variable-id) : String
   "unused-variable")
 
@@ -304,6 +313,12 @@
     (lint-rule-unused-assignment-message)
     (lint-rule-unused-assignment-suggestion)))
 
+(define (lint-rule-copy-on-update-struct) : LintRule
+  (LintRule
+    (lint-rule-copy-on-update-struct-id)
+    (lint-rule-copy-on-update-struct-message)
+    (lint-rule-copy-on-update-struct-suggestion)))
+
 (define (lint-rule-unused-variable) : LintRule
   (LintRule
     (lint-rule-unused-variable-id)
@@ -355,10 +370,12 @@
                                 (lint-rule-cons
                                   (lint-rule-unused-assignment)
                                   (lint-rule-cons
-                                    (lint-rule-unused-variable)
+                                    (lint-rule-copy-on-update-struct)
                                     (lint-rule-cons
-                                      (lint-rule-unused-unsafe)
-                                      LintRuleList.Nil)))))))))))))))))))
+                                      (lint-rule-unused-variable)
+                                      (lint-rule-cons
+                                        (lint-rule-unused-unsafe)
+                                        LintRuleList.Nil))))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -660,6 +677,22 @@
       (string.append name " is overwritten before it is read"))
     (lint-rule-unused-assignment-id)
     0
+    span))
+
+(define (lint-copy-on-update-struct-finding
+  [name : String]
+  [field : String]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string.string-append
+      "copy-on-update struct mutation: "
+      (string.string-append
+        name
+        (string.string-append
+          " rebuilds the same struct to change field "
+          (string.string-append field "; use in-place field assignment"))))
+    (lint-rule-copy-on-update-struct-id)
+    1
     span))
 
 (define (lint-unused-variable-finding [name : String] [span : AstSourceSpan]) : LintFinding
@@ -2233,6 +2266,726 @@
           (lint-macro-param-list-add-locals
             (box-get rest)
             (lint-name-list-add locals (intern-str name)))])]))
+
+(define (lint-name-list-count [items : LintNameList]) : i64
+  (match items
+    [(LintNameList.Nil) 0]
+    [(LintNameList.Cons _ rest) (+ 1 (lint-name-list-count (box-get rest)))]))
+
+(defstruct LintCopyOnUpdateStructShape
+  (name String)
+  (fields LintNameList)
+  (field-count i64))
+
+(defenum LintCopyOnUpdateStructList
+  (Nil)
+  (Cons LintCopyOnUpdateStructShape (Box LintCopyOnUpdateStructList)))
+
+(defenum LintCopyOnUpdateMaybeStruct
+  (NoStruct)
+  (SomeStruct LintCopyOnUpdateStructShape))
+
+(defstruct LintCopyOnUpdateLocal
+  (name String)
+  (type-name String))
+
+(defenum LintCopyOnUpdateLocalList
+  (Nil)
+  (Cons LintCopyOnUpdateLocal (Box LintCopyOnUpdateLocalList)))
+
+(defstruct LintCopyOnUpdateArgCheck
+  (valid bool)
+  (copied i64)
+  (changed i64)
+  (changed-field String))
+
+(defstruct LintCopyOnUpdateState
+  (shapes LintCopyOnUpdateStructList)
+  (locals LintCopyOnUpdateLocalList)
+  (findings LintFindings))
+
+(define (lint-copy-on-update-struct-find
+  [shapes : LintCopyOnUpdateStructList]
+  [name : String]) : LintCopyOnUpdateMaybeStruct
+  (match shapes
+    [(LintCopyOnUpdateStructList.Nil) LintCopyOnUpdateMaybeStruct.NoStruct]
+    [(LintCopyOnUpdateStructList.Cons shape rest)
+      (if (string.string-eq (struct-get shape name) name)
+        (LintCopyOnUpdateMaybeStruct.SomeStruct shape)
+        (lint-copy-on-update-struct-find (box-get rest) name))]))
+
+(define (lint-copy-on-update-struct-known-name
+  [shapes : LintCopyOnUpdateStructList]
+  [name-id : i64]) : String
+  (let
+    [name : String (intern-str name-id)]
+    (match (lint-copy-on-update-struct-find shapes name)
+      [(LintCopyOnUpdateMaybeStruct.NoStruct) ""]
+      [(LintCopyOnUpdateMaybeStruct.SomeStruct _) name])))
+
+(define (lint-copy-on-update-struct-name-from-type
+  [shapes : LintCopyOnUpdateStructList]
+  [ty : AstType]) : String
+  (match ty
+    [(AstTyStruct name) (lint-copy-on-update-struct-known-name shapes name)]
+    [(AstTyStructArgs name _)
+      (lint-copy-on-update-struct-known-name shapes name)]
+    [(AstTyVar name) (lint-copy-on-update-struct-known-name shapes name)]
+    [(AstTyVarArgs name _) (lint-copy-on-update-struct-known-name shapes name)]
+    [_ ""]))
+
+(define (lint-copy-on-update-struct-name-from-maybe-type
+  [shapes : LintCopyOnUpdateStructList]
+  [maybe-ty : AstMaybeType]) : String
+  (match maybe-ty
+    [(AstNoType) ""]
+    [(AstSomeType ty) (lint-copy-on-update-struct-name-from-type shapes ty)]))
+
+(define (lint-copy-on-update-local-remove
+  [locals : LintCopyOnUpdateLocalList]
+  [name : String]) : LintCopyOnUpdateLocalList
+  (match locals
+    [(LintCopyOnUpdateLocalList.Nil) LintCopyOnUpdateLocalList.Nil]
+    [(LintCopyOnUpdateLocalList.Cons local rest)
+      (let
+        [rest-locals : LintCopyOnUpdateLocalList (box-get rest)]
+        (if (string.string-eq (struct-get local name) name)
+          (lint-copy-on-update-local-remove rest-locals name)
+          (LintCopyOnUpdateLocalList.Cons
+            local
+            (box (lint-copy-on-update-local-remove rest-locals name)))))]))
+
+(define (lint-copy-on-update-local-add
+  [locals : LintCopyOnUpdateLocalList]
+  [name : String]
+  [type-name : String]) : LintCopyOnUpdateLocalList
+  (let
+    [without : LintCopyOnUpdateLocalList
+      (lint-copy-on-update-local-remove locals name)]
+    (if (string.string-eq type-name "")
+      without
+      (LintCopyOnUpdateLocalList.Cons
+        (LintCopyOnUpdateLocal name type-name)
+        (box without)))))
+
+(define (lint-copy-on-update-local-type
+  [locals : LintCopyOnUpdateLocalList]
+  [name : String]) : String
+  (match locals
+    [(LintCopyOnUpdateLocalList.Nil) ""]
+    [(LintCopyOnUpdateLocalList.Cons local rest)
+      (if (string.string-eq (struct-get local name) name)
+        (struct-get local type-name)
+        (lint-copy-on-update-local-type (box-get rest) name))]))
+
+(define (lint-copy-on-update-param-locals
+  [params : AstParamList]
+  [shapes : LintCopyOnUpdateStructList]
+  [locals : LintCopyOnUpdateLocalList]) : LintCopyOnUpdateLocalList
+  (match params
+    [(AstParamNil) locals]
+    [(AstParamCons param rest)
+      (match param
+        [(AstParam name ty _)
+          (lint-copy-on-update-param-locals
+            (box-get rest)
+            shapes
+            (lint-copy-on-update-local-add
+              locals
+              (intern-str name)
+              (lint-copy-on-update-struct-name-from-type shapes ty)))])]))
+
+(define (lint-copy-on-update-macro-param-locals
+  [params : AstMacroParamList]
+  [shapes : LintCopyOnUpdateStructList]
+  [locals : LintCopyOnUpdateLocalList]) : LintCopyOnUpdateLocalList
+  (match params
+    [(AstMacroParamNil) locals]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam name ty _)
+          (lint-copy-on-update-macro-param-locals
+            (box-get rest)
+            shapes
+            (lint-copy-on-update-local-add
+              locals
+              (intern-str name)
+              (lint-copy-on-update-struct-name-from-type shapes ty)))])]))
+
+(define (lint-copy-on-update-expr-var-name [expr : AstExpr]) : String
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-copy-on-update-expr-var-name (ast-node-get inner))]
+    [(AstExpr.Var name) (intern-str name)]
+    [_ ""]))
+
+(define (lint-copy-on-update-copied-field?
+  [target-name : String]
+  [field-name : String]
+  [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-copy-on-update-copied-field?
+        target-name
+        field-name
+        (ast-node-get inner))]
+    [(AstExpr.StructGet receiver field)
+      (and
+        (string.string-eq
+          (lint-copy-on-update-expr-var-name (ast-node-get receiver))
+          target-name)
+        (string.string-eq (intern-str field) field-name))]
+    [(AstExpr.Var name)
+      (string.string-eq
+        (intern-str name)
+        (string.string-append target-name (string.string-append "." field-name)))]
+    [_ false]))
+
+(define (lint-copy-on-update-arg-check-invalid) : LintCopyOnUpdateArgCheck
+  (LintCopyOnUpdateArgCheck false 0 0 ""))
+
+(define (lint-copy-on-update-check-args
+  [fields : LintNameList]
+  [args : AstExprList]
+  [target-name : String]) : LintCopyOnUpdateArgCheck
+  (match fields
+    [(LintNameList.Nil)
+      (match args
+        [(AstExprList.Nil) (LintCopyOnUpdateArgCheck true 0 0 "")]
+        [_ (lint-copy-on-update-arg-check-invalid)])]
+    [(LintNameList.Cons field rest-fields)
+      (match args
+        [(AstExprList.Nil) (lint-copy-on-update-arg-check-invalid)]
+        [(AstExprList.Cons arg rest-args)
+          (let
+            [tail : LintCopyOnUpdateArgCheck
+              (lint-copy-on-update-check-args
+                (box-get rest-fields)
+                (box-get rest-args)
+                target-name)]
+            (if (not (struct-get tail valid))
+              tail
+              (if (lint-copy-on-update-copied-field?
+                target-name
+                field
+                (ast-node-get arg))
+                (LintCopyOnUpdateArgCheck
+                  true
+                  (+ (struct-get tail copied) 1)
+                  (struct-get tail changed)
+                  (struct-get tail changed-field))
+                (LintCopyOnUpdateArgCheck
+                  true
+                  (struct-get tail copied)
+                  (+ (struct-get tail changed) 1)
+                  (if (= (struct-get tail changed) 0)
+                    field
+                    (struct-get tail changed-field))))))])]))
+
+(define (lint-copy-on-update-state-with
+  [state : LintCopyOnUpdateState]
+  [locals : LintCopyOnUpdateLocalList]
+  [findings : LintFindings]) : LintCopyOnUpdateState
+  (LintCopyOnUpdateState (struct-get state shapes) locals findings))
+
+(define (lint-copy-on-update-add-finding
+  [state : LintCopyOnUpdateState]
+  [name : String]
+  [field : String]
+  [span : AstSourceSpan]) : LintCopyOnUpdateState
+  (lint-copy-on-update-state-with
+    state
+    (struct-get state locals)
+    (lint-findings-add
+      (lint-copy-on-update-struct-finding name field span)
+      (struct-get state findings))))
+
+(define (lint-copy-on-update-add-set-if-needed
+  [target : i64]
+  [value : AstExpr]
+  [span : AstSourceSpan]
+  [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
+  (let
+    [target-name : String (intern-str target)]
+    [type-name : String
+      (lint-copy-on-update-local-type (struct-get state locals) target-name)]
+    (if (or
+      (string.string-eq type-name "")
+      (lint-underscore-prefixed? target-name))
+      state
+      (match value
+        [(AstExpr.Spanned inner _)
+          (lint-copy-on-update-add-set-if-needed
+            target
+            (ast-node-get inner)
+            span
+            state)]
+        [(AstExpr.Ann inner _)
+          (lint-copy-on-update-add-set-if-needed
+            target
+            (ast-node-get inner)
+            span
+            state)]
+        [(AstExpr.Cast inner _)
+          (lint-copy-on-update-add-set-if-needed
+            target
+            (ast-node-get inner)
+            span
+            state)]
+        [(AstExpr.Call callee args)
+          (let
+            [callee-name : String
+              (lint-copy-on-update-expr-var-name (ast-node-get callee))]
+            (if (not (string.string-eq callee-name type-name))
+              state
+              (match (lint-copy-on-update-struct-find
+                (struct-get state shapes)
+                type-name)
+                [(LintCopyOnUpdateMaybeStruct.NoStruct) state]
+                [(LintCopyOnUpdateMaybeStruct.SomeStruct shape)
+                  (let
+                    [checked : LintCopyOnUpdateArgCheck
+                      (lint-copy-on-update-check-args
+                        (struct-get shape fields)
+                        args
+                        target-name)]
+                    (if (and
+                      (struct-get checked valid)
+                      (= (struct-get checked changed) 1)
+                      (>= (struct-get checked copied) 1))
+                      (lint-copy-on-update-add-finding
+                        state
+                        target-name
+                        (struct-get checked changed-field)
+                        span)
+                      state))])))]
+        [_ state]))))
+
+(define (lint-copy-on-update-init-type-name
+  [state : LintCopyOnUpdateState]
+  [expr : AstExpr]) : String
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-copy-on-update-init-type-name state (ast-node-get inner))]
+    [(AstExpr.Ann inner ty)
+      (let
+        [annotated : String
+          (lint-copy-on-update-struct-name-from-type
+            (struct-get state shapes)
+            ty)]
+        (if (string.string-eq annotated "")
+          (lint-copy-on-update-init-type-name state (ast-node-get inner))
+          annotated))]
+    [(AstExpr.Cast inner ty)
+      (let
+        [casted : String
+          (lint-copy-on-update-struct-name-from-type
+            (struct-get state shapes)
+            ty)]
+        (if (string.string-eq casted "")
+          (lint-copy-on-update-init-type-name state (ast-node-get inner))
+          casted))]
+    [(AstExpr.Call callee _)
+      (let
+        [callee-name : String
+          (lint-copy-on-update-expr-var-name (ast-node-get callee))]
+        (match (lint-copy-on-update-struct-find
+          (struct-get state shapes)
+          callee-name)
+          [(LintCopyOnUpdateMaybeStruct.NoStruct) ""]
+          [(LintCopyOnUpdateMaybeStruct.SomeStruct _) callee-name]))]
+    [(AstExpr.Var name)
+      (lint-copy-on-update-local-type
+        (struct-get state locals)
+        (intern-str name))]
+    [_ ""]))
+
+(define (lint-copy-on-update-local-type-from-binding
+  [state : LintCopyOnUpdateState]
+  [maybe-ty : AstMaybeType]
+  [init : i64]) : String
+  (let
+    [annotated : String
+      (lint-copy-on-update-struct-name-from-maybe-type
+        (struct-get state shapes)
+        maybe-ty)]
+    (if (string.string-eq annotated "")
+      (lint-copy-on-update-init-type-name state (ast-node-get init))
+      annotated)))
+
+(define (lint-copy-on-update-expr-list
+  [exprs : AstExprList]
+  [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
+  (match exprs
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
+      (lint-copy-on-update-expr-list
+        (box-get rest)
+        (lint-copy-on-update-expr (ast-node-get head) state (lint-no-span)))]))
+
+(define (lint-copy-on-update-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
+  (match bindings
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
+      (match binding
+        [(AstLetBinding.Binding name maybe-ty init)
+          (let
+            [after-init : LintCopyOnUpdateState
+              (lint-copy-on-update-expr
+                (ast-node-get init)
+                state
+                (lint-no-effect-span (ast-node-get init)))]
+            [type-name : String
+              (lint-copy-on-update-local-type-from-binding
+                after-init
+                maybe-ty
+                init)]
+            [with-local : LintCopyOnUpdateState
+              (lint-copy-on-update-state-with
+                after-init
+                (lint-copy-on-update-local-add
+                  (struct-get after-init locals)
+                  (intern-str name)
+                  type-name)
+                (struct-get after-init findings))]
+            (lint-copy-on-update-let-bindings (box-get rest) with-local))])]))
+
+(define (lint-copy-on-update-let
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [state : LintCopyOnUpdateState]
+  [span : AstSourceSpan]) : LintCopyOnUpdateState
+  (let
+    [outer-locals : LintCopyOnUpdateLocalList (struct-get state locals)]
+    [with-bindings : LintCopyOnUpdateState
+      (lint-copy-on-update-let-bindings bindings state)]
+    [with-body : LintCopyOnUpdateState
+      (lint-copy-on-update-expr body with-bindings span)]
+    (lint-copy-on-update-state-with
+      with-body
+      outer-locals
+      (struct-get with-body findings))))
+
+(define (lint-copy-on-update-match-arms
+  [arms : AstMatchArmList]
+  [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
+  (match arms
+    [(AstMatchArmList.Nil) state]
+    [(AstMatchArmList.Cons arm rest)
+      (match arm
+        [(AstMatchArm.Arm _ body)
+          (lint-copy-on-update-match-arms
+            (box-get rest)
+            (lint-copy-on-update-expr (ast-node-get body) state (lint-no-span)))])]))
+
+(define (lint-copy-on-update-resource-bindings
+  [bindings : AstResourceBindingList]
+  [state : LintCopyOnUpdateState]) : LintCopyOnUpdateState
+  (match bindings
+    [(AstResourceBindingList.Nil) state]
+    [(AstResourceBindingList.Cons binding rest)
+      (match binding
+        [(AstResourceBinding.Binding _ init cleanup)
+          (lint-copy-on-update-resource-bindings
+            (box-get rest)
+            (lint-copy-on-update-expr
+              (ast-node-get cleanup)
+              (lint-copy-on-update-expr
+                (ast-node-get init)
+                state
+                (lint-no-effect-span (ast-node-get init)))
+              (lint-no-effect-span (ast-node-get cleanup))))])]))
+
+(define (lint-copy-on-update-expr
+  [expr : AstExpr]
+  [state : LintCopyOnUpdateState]
+  [span : AstSourceSpan]) : LintCopyOnUpdateState
+  (match expr
+    [(AstExpr.Spanned inner inner-span)
+      (lint-copy-on-update-expr (ast-node-get inner) state inner-span)]
+    [(AstExpr.Binary _ left right)
+      (lint-copy-on-update-expr
+        (ast-node-get right)
+        (lint-copy-on-update-expr (ast-node-get left) state span)
+        span)]
+    [(AstExpr.Unary _ inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.Call callee args)
+      (lint-copy-on-update-expr-list
+        args
+        (lint-copy-on-update-expr (ast-node-get callee) state span))]
+    [(AstExpr.If cond then-branch else-branch)
+      (lint-copy-on-update-expr
+        (ast-node-get else-branch)
+        (lint-copy-on-update-expr
+          (ast-node-get then-branch)
+          (lint-copy-on-update-expr (ast-node-get cond) state span)
+          span)
+        span)]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body)
+          (lint-copy-on-update-let bindings (ast-node-get body) state span)])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params _ body)
+          (let
+            [outer-locals : LintCopyOnUpdateLocalList (struct-get state locals)]
+            [with-params : LintCopyOnUpdateState
+              (lint-copy-on-update-state-with
+                state
+                (lint-copy-on-update-param-locals
+                  params
+                  (struct-get state shapes)
+                  outer-locals)
+                (struct-get state findings))]
+            [with-body : LintCopyOnUpdateState
+              (lint-copy-on-update-expr (ast-node-get body) with-params span)]
+            (lint-copy-on-update-state-with
+              with-body
+              outer-locals
+              (struct-get with-body findings)))])]
+    [(AstExpr.Tuple exprs) (lint-copy-on-update-expr-list exprs state)]
+    [(AstExpr.TupleRef tuple _)
+      (lint-copy-on-update-expr (ast-node-get tuple) state span)]
+    [(AstExpr.Array exprs) (lint-copy-on-update-expr-list exprs state)]
+    [(AstExpr.MakeArray _ len)
+      (lint-copy-on-update-expr (ast-node-get len) state span)]
+    [(AstExpr.ArrayRef array index)
+      (lint-copy-on-update-expr
+        (ast-node-get index)
+        (lint-copy-on-update-expr (ast-node-get array) state span)
+        span)]
+    [(AstExpr.ArraySet array index value)
+      (lint-copy-on-update-expr
+        (ast-node-get value)
+        (lint-copy-on-update-expr
+          (ast-node-get index)
+          (lint-copy-on-update-expr (ast-node-get array) state span)
+          span)
+        span)]
+    [(AstExpr.ArrayPush array value)
+      (lint-copy-on-update-expr
+        (ast-node-get value)
+        (lint-copy-on-update-expr (ast-node-get array) state span)
+        span)]
+    [(AstExpr.StringRef text index)
+      (lint-copy-on-update-expr
+        (ast-node-get index)
+        (lint-copy-on-update-expr (ast-node-get text) state span)
+        span)]
+    [(AstExpr.While cond body)
+      (lint-copy-on-update-expr
+        (ast-node-get body)
+        (lint-copy-on-update-expr (ast-node-get cond) state span)
+        span)]
+    [(AstExpr.Begin exprs) (lint-copy-on-update-expr-list exprs state)]
+    [(AstExpr.Unsafe exprs) (lint-copy-on-update-expr-list exprs state)]
+    [(AstExpr.Set target value)
+      (lint-copy-on-update-add-set-if-needed
+        target
+        (ast-node-get value)
+        span
+        (lint-copy-on-update-expr (ast-node-get value) state span))]
+    [(AstExpr.Ann inner _)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.Cast inner _)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.Borrow _ _ place)
+      (lint-copy-on-update-expr (ast-node-get place) state span)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (lint-copy-on-update-match-arms
+            arms
+            (lint-copy-on-update-expr (ast-node-get scrutinee) state span))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach name ty start end body)
+          (let
+            [after-range : LintCopyOnUpdateState
+              (lint-copy-on-update-expr
+                (ast-node-get end)
+                (lint-copy-on-update-expr (ast-node-get start) state span)
+                span)]
+            [outer-locals : LintCopyOnUpdateLocalList
+              (struct-get after-range locals)]
+            [with-local : LintCopyOnUpdateState
+              (lint-copy-on-update-state-with
+                after-range
+                (lint-copy-on-update-local-add
+                  outer-locals
+                  (intern-str name)
+                  (lint-copy-on-update-struct-name-from-type
+                    (struct-get state shapes)
+                    ty))
+                (struct-get after-range findings))]
+            [with-body : LintCopyOnUpdateState
+              (lint-copy-on-update-expr (ast-node-get body) with-local span)]
+            (lint-copy-on-update-state-with
+              with-body
+              outer-locals
+              (struct-get with-body findings)))])]
+    [(AstExpr.StructGet receiver _)
+      (lint-copy-on-update-expr (ast-node-get receiver) state span)]
+    [(AstExpr.StructSet receiver _ value)
+      (lint-copy-on-update-expr
+        (ast-node-get value)
+        (lint-copy-on-update-expr (ast-node-get receiver) state span)
+        span)]
+    [(AstExpr.WithRegion _ body) (lint-copy-on-update-expr-list body state)]
+    [(AstExpr.WithEscape scratch body)
+      (lint-copy-on-update-expr-list
+        body
+        (lint-copy-on-update-expr (ast-node-get scratch) state span))]
+    [(AstExpr.WithScratch body) (lint-copy-on-update-expr-list body state)]
+    [(AstExpr.InArena arena body)
+      (lint-copy-on-update-expr-list
+        body
+        (lint-copy-on-update-expr (ast-node-get arena) state span))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (lint-copy-on-update-expr-list
+            body
+            (lint-copy-on-update-resource-bindings bindings state))])]
+    [(AstExpr.Box inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.BoxGet inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.BoxTake inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.BoxSet inner value)
+      (lint-copy-on-update-expr
+        (ast-node-get value)
+        (lint-copy-on-update-expr (ast-node-get inner) state span)
+        span)]
+    [(AstExpr.Comptime inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.Quote _) state]
+    [(AstExpr.Quasiquote _) state]
+    [(AstExpr.Unquote inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.UnquoteSplicing inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.BracketClause items) (lint-copy-on-update-expr-list items state)]
+    [(AstExpr.Try inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [(AstExpr.Return inner)
+      (lint-copy-on-update-expr (ast-node-get inner) state span)]
+    [_ state]))
+
+(define (lint-copy-on-update-field-names [fields : AstFieldDefList]) : LintNameList
+  (match fields
+    [(AstFieldDefNil) LintNameList.Nil]
+    [(AstFieldDefCons field rest)
+      (match field
+        [(AstFieldDef name _ _)
+          (LintNameList.Cons
+            (intern-str name)
+            (box (lint-copy-on-update-field-names (box-get rest))))])]))
+
+(define (lint-copy-on-update-add-struct
+  [name : i64]
+  [fields : AstFieldDefList]
+  [shapes : LintCopyOnUpdateStructList]) : LintCopyOnUpdateStructList
+  (let
+    [names : LintNameList (lint-copy-on-update-field-names fields)]
+    (LintCopyOnUpdateStructList.Cons
+      (LintCopyOnUpdateStructShape
+        (intern-str name)
+        names
+        (lint-name-list-count names))
+      (box shapes))))
+
+(define (lint-copy-on-update-collect-structs-in-decl
+  [decl : AstDecl]
+  [shapes : LintCopyOnUpdateStructList]) : LintCopyOnUpdateStructList
+  (match decl
+    [(AstDecl.DefStruct name _ _ fields)
+      (lint-copy-on-update-add-struct name fields shapes)]
+    [(AstDecl.DefStructLifetimes name _ _ _ fields)
+      (lint-copy-on-update-add-struct name fields shapes)]
+    [(AstDecl.Unsafe inner)
+      (lint-copy-on-update-collect-structs-in-decl (box-get inner) shapes)]
+    [(AstDecl.ComptimeDecl _ inner)
+      (lint-copy-on-update-collect-structs-in-decl (box-get inner) shapes)]
+    [_ shapes]))
+
+(define (lint-copy-on-update-collect-structs
+  [decls : AstDeclList]
+  [shapes : LintCopyOnUpdateStructList]) : LintCopyOnUpdateStructList
+  (match decls
+    [(AstDeclList.Nil) shapes]
+    [(AstDeclList.Cons decl rest)
+      (lint-copy-on-update-collect-structs
+        (box-get rest)
+        (lint-copy-on-update-collect-structs-in-decl decl shapes))]))
+
+(define (lint-copy-on-update-structs-in-decl
+  [decl : AstDecl]
+  [shapes : LintCopyOnUpdateStructList]
+  [acc : LintFindings]) : LintFindings
+  (match decl
+    [(AstDecl.Def _ _ body)
+      (struct-get
+        (lint-copy-on-update-expr
+          (ast-node-get body)
+          (LintCopyOnUpdateState shapes LintCopyOnUpdateLocalList.Nil acc)
+          (lint-no-span))
+        findings)]
+    [(AstDecl.DefFn _ params _ body _)
+      (struct-get
+        (lint-copy-on-update-expr
+          (ast-node-get body)
+          (LintCopyOnUpdateState
+            shapes
+            (lint-copy-on-update-param-locals
+              params
+              shapes
+              LintCopyOnUpdateLocalList.Nil)
+            acc)
+          (lint-no-span))
+        findings)]
+    [(AstDecl.DefMacro _ params _ body)
+      (struct-get
+        (lint-copy-on-update-expr
+          (ast-node-get body)
+          (LintCopyOnUpdateState
+            shapes
+            (lint-copy-on-update-macro-param-locals
+              params
+              shapes
+              LintCopyOnUpdateLocalList.Nil)
+            acc)
+          (lint-no-span))
+        findings)]
+    [(AstDecl.Test _ body _)
+      (struct-get
+        (lint-copy-on-update-expr
+          (ast-node-get body)
+          (LintCopyOnUpdateState shapes LintCopyOnUpdateLocalList.Nil acc)
+          (lint-no-span))
+        findings)]
+    [(AstDecl.Unsafe inner)
+      (lint-copy-on-update-structs-in-decl (box-get inner) shapes acc)]
+    [(AstDecl.ComptimeDecl _ inner)
+      (lint-copy-on-update-structs-in-decl (box-get inner) shapes acc)]
+    [_ acc]))
+
+(define (lint-copy-on-update-structs-in-decl-list
+  [decls : AstDeclList]
+  [shapes : LintCopyOnUpdateStructList]
+  [acc : LintFindings]) : LintFindings
+  (match decls
+    [(AstDeclList.Nil) acc]
+    [(AstDeclList.Cons decl rest)
+      (lint-copy-on-update-structs-in-decl-list
+        (box-get rest)
+        shapes
+        (lint-copy-on-update-structs-in-decl decl shapes acc))]))
 
 (define (lint-pending-assignment-find
   [items : LintPendingAssignmentList]
@@ -5683,16 +6436,22 @@
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (lint-unused-variables-in-decl-list
-          source
-          decls
-          (lint-unused-imports-in-decl-list
-            source
+        [copy-on-update-shapes : LintCopyOnUpdateStructList
+          (lint-copy-on-update-collect-structs
             decls
+            LintCopyOnUpdateStructList.Nil)]
+        [walked : LintFindings
+          (lint-walk-decl-list decls threshold (lint-findings-empty))]
+        [unused-assignments : LintFindings
+          (lint-unused-assignments-in-decl-list decls walked)]
+        [copy-on-update : LintFindings
+          (lint-copy-on-update-structs-in-decl-list
             decls
-            (lint-unused-assignments-in-decl-list
-              decls
-              (lint-walk-decl-list decls threshold (lint-findings-empty))))))]))
+            copy-on-update-shapes
+            unused-assignments)]
+        [unused-imports : LintFindings
+          (lint-unused-imports-in-decl-list source decls decls copy-on-update)]
+        (lint-unused-variables-in-decl-list source decls unused-imports))]))
 
 ;: Run all lint rules over `program`, returning the collected findings.
 (define (lint-program [program : AstProgram] [threshold : i64]) : LintFindings
@@ -5706,18 +6465,24 @@
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
+        [copy-on-update-shapes : LintCopyOnUpdateStructList
+          (lint-copy-on-update-collect-structs
+            decls
+            LintCopyOnUpdateStructList.Nil)]
+        [walked : LintFindings
+          (lint-walk-decl-list decls threshold (lint-findings-empty))]
+        [unused-assignments : LintFindings
+          (lint-unused-assignments-in-decl-list decls walked)]
+        [copy-on-update : LintFindings
+          (lint-copy-on-update-structs-in-decl-list
+            decls
+            copy-on-update-shapes
+            unused-assignments)]
+        [unused-imports : LintFindings
+          (lint-unused-imports-in-decl-list source decls decls copy-on-update)]
         (lint-deprecated-string-concat-scan
           source
-          (lint-unused-variables-in-decl-list
-            source
-            decls
-            (lint-unused-imports-in-decl-list
-              source
-              decls
-              decls
-              (lint-unused-assignments-in-decl-list
-                decls
-                (lint-walk-decl-list decls threshold (lint-findings-empty)))))))]))
+          (lint-unused-variables-in-decl-list source decls unused-imports)))]))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning

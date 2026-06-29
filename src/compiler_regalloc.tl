@@ -6799,7 +6799,12 @@
                         [copy-count : i64
                           (compiler-reg-edge-copy-list-count copies)]
                         (if (and
-                          (compiler-reg-loop-split-copies-bidirectional? copies)
+                          ;; Accept read-only loop invariants (into-region copy only,
+                          ;; no write-back -- sound because the `not (defs block var)`
+                          ;; gate above guarantees var is unwritten in the region) in
+                          ;; addition to bidirectional loop-carried vars. Still gated
+                          ;; by hot-benefit so only profitable hot vars are homed.
+                          (compiler-reg-loop-split-direction-present? copies true)
                           (compiler-reg-loop-split-hot-benefit?
                             mentions
                             depth

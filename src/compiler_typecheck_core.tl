@@ -8425,6 +8425,9 @@
     (string.string-eq name "module-name")
     (string.string-eq name "module-export-macro?")
     (string.string-eq name "module-hook")
+    (string.string-eq name "string-append")
+    (string.string-eq name "string-concat")
+    (string.string-eq name "int->string")
     (ctfe-comptime-source-helper-name? name)
     (ctfe-expr-list-inspector-name? name)
     (ctfe-expr-clause-list-inspector-name? name)
@@ -37843,9 +37846,12 @@
         fuel)]
     [(ResultMacroSexpr.Err diag) (ResultGenKey.Err diag)]))
 
-(define (macro-identity-syntax-param-type? [ctx : TcContext] [ty : AstType]) : bool
+(define (macro-identity-syntax-param-type?
+  [ctx : TcContext]
+  [fallback-module : String]
+  [ty : AstType]) : bool
   (let
-    [resolved : AstType (tc-resolve-type ctx (tc-macro-signature-type ty))]
+    [resolved : AstType (macro-resolve-signature-type ctx fallback-module ty)]
     (or
       (tc-type-eq resolved (AstTyExpr))
       (tc-type-eq resolved (AstTyExprList))
@@ -37856,12 +37862,13 @@
 
 (define (macro-identity-key-param-expr
   [ctx : TcContext]
+  [fallback-module : String]
   [ty : AstType]
   [expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]
   [call-expr : AstExpr]) : ResultGenKey
-  (if (macro-identity-syntax-param-type? ctx ty)
+  (if (macro-identity-syntax-param-type? ctx fallback-module ty)
     (match (macro-identity-key-string-expr expr env fuel)
       [(ResultGenKey.Ok key next-fuel) (ResultGenKey.Ok key next-fuel)]
       [(ResultGenKey.Err _)
@@ -37870,6 +37877,7 @@
 
 (define (macro-identity-key-param-exprs
   [ctx : TcContext]
+  [fallback-module : String]
   [ty : AstType]
   [exprs : AstExprList]
   [env : CtfeEnv]
@@ -37882,6 +37890,7 @@
         [head-expr : AstExpr (ast-node-get head)]
         (match (macro-identity-key-param-expr
           ctx
+          fallback-module
           ty
           head-expr
           env
@@ -37890,6 +37899,7 @@
           [(ResultGenKey.Ok head-key head-fuel)
             (match (macro-identity-key-param-exprs
               ctx
+              fallback-module
               ty
               (box-get rest)
               env
@@ -37940,9 +37950,10 @@
                       (ctfe-diagnostic-at-expr
                         call-expr
                         "typecheck: Module macro operand cannot be variadic")))]
-                [(macro-identity-syntax-param-type? ctx ty)
+                [(macro-identity-syntax-param-type? ctx fallback-module ty)
                   (macro-identity-key-param-exprs
                     ctx
+                    fallback-module
                     ty
                     args
                     env
@@ -37988,6 +37999,7 @@
                             (ResultGenKey.Err diag)])
                         (macro-identity-key-param-expr
                           ctx
+                          fallback-module
                           ty
                           head-expr
                           env
@@ -43056,6 +43068,30 @@
           [(ResultMacroBindingClause.Err diag)
             (ResultMacroBindingClauseList.Err diag)]))]))
 
+(define (macro-signature-resolution-context
+  [ctx : TcContext]
+  [fallback-module : String]) : TcContext
+  (if (> (string.string-length fallback-module) 0)
+    (tc-context-with-module ctx fallback-module)
+    ctx))
+
+(define (macro-normalize-signature-syntax-type [ty : AstType]) : AstType
+  (match ty
+    [(AstTyVar name)
+      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+        [(AstSomeType syntax-ty) syntax-ty]
+        [(AstNoType) ty])]
+    [_ ty]))
+
+(define (macro-resolve-signature-type
+  [ctx : TcContext]
+  [fallback-module : String]
+  [ty : AstType]) : AstType
+  (macro-normalize-signature-syntax-type
+    (tc-resolve-type
+      (macro-signature-resolution-context ctx fallback-module)
+      (tc-macro-signature-type ty))))
+
 (define (macro-check-ordinary-operand
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -43089,6 +43125,7 @@
 (define (macro-check-operand
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [fallback-module : String]
   [expected : AstType]
   [arg : AstExpr]) : ResultMacroCheck
   (if (tc-macro-type-param-kind? expected)
@@ -43101,7 +43138,7 @@
       [(ResultMacroTypeArg.Err diag) (ResultMacroCheck.Err diag)])
     (let
       [resolved-expected : AstType
-        (tc-resolve-type ctx (tc-macro-signature-type expected))]
+        (macro-resolve-signature-type ctx fallback-module expected)]
       (cond
         [(tc-macro-expr-clause-type? resolved-expected)
           (match (macro-expr-clause-from-arg arg)
@@ -43122,6 +43159,7 @@
 (define (macro-check-variadic-operands
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [fallback-module : String]
   [expected : AstType]
   [args : AstExprList]) : ResultMacroCheck
   (match args
@@ -43130,18 +43168,29 @@
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
-        (match (macro-check-operand ctx env expected head)
+        (match (macro-check-operand ctx env fallback-module expected head)
           [(ResultMacroCheck.Ok)
-            (macro-check-variadic-operands ctx env expected rest)]
+            (macro-check-variadic-operands
+              ctx
+              env
+              fallback-module
+              expected
+              rest)]
           [(ResultMacroCheck.Err diag) (ResultMacroCheck.Err diag)]))]))
 
-(define (macro-param-expr-clause? [ctx : TcContext] [ty : AstType]) : bool
+(define (macro-param-expr-clause?
+  [ctx : TcContext]
+  [fallback-module : String]
+  [ty : AstType]) : bool
   (tc-macro-expr-clause-type?
-    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+    (macro-resolve-signature-type ctx fallback-module ty)))
 
-(define (macro-param-expr-binding-clause? [ctx : TcContext] [ty : AstType]) : bool
+(define (macro-param-expr-binding-clause?
+  [ctx : TcContext]
+  [fallback-module : String]
+  [ty : AstType]) : bool
   (tc-macro-expr-binding-clause-type?
-    (tc-resolve-type ctx (tc-macro-signature-type ty))))
+    (macro-resolve-signature-type ctx fallback-module ty)))
 
 (define (macro-captured-expr-produced-type
   [ctx : TcContext]
@@ -43163,6 +43212,7 @@
 (define (macro-bind-variadic-param
   [ctx : TcContext]
   [type-env : TcTypeEnv]
+  [fallback-module : String]
   [name : i64]
   [ty : AstType]
   [args : AstExprList]
@@ -43180,13 +43230,13 @@
           (ctfe-diagnostic-at-expr
             (AstExprVar name)
             "typecheck: Module macro operand cannot be variadic")))]
-    [(macro-param-expr-clause? ctx ty)
+    [(macro-param-expr-clause? ctx fallback-module ty)
       (match (macro-expr-clause-list-from-args args)
         [(ResultMacroClauseList.Ok clauses)
           (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeExprClauseList clauses)))]
         [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-binding-clause? ctx ty)
+    [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-list-from-args args)
         [(ResultMacroBindingClauseList.Ok clauses)
           (ResultMacroEnv.Ok
@@ -43196,7 +43246,12 @@
               (CtfeExprBindingClauseList clauses)))]
         [(ResultMacroBindingClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [else
-      (match (macro-check-variadic-operands ctx type-env ty args)
+      (match (macro-check-variadic-operands
+        ctx
+        type-env
+        fallback-module
+        ty
+        args)
         [(ResultMacroCheck.Ok)
           (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeExprList args)))]
@@ -43233,13 +43288,13 @@
               (CtfeString module)
               (AstTyString)))]
         [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-clause? ctx ty)
+    [(macro-param-expr-clause? ctx fallback-module ty)
       (match (macro-expr-clause-from-arg arg-expr)
         [(ResultMacroClause.Ok clause)
           (ResultMacroEnv.Ok
             (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
         [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
-    [(macro-param-expr-binding-clause? ctx ty)
+    [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-from-arg arg-expr)
         [(ResultMacroBindingClause.Ok clause)
           (ResultMacroEnv.Ok
@@ -43251,8 +43306,8 @@
     [else
       (let
         [resolved-expected : AstType
-          (tc-resolve-type ctx (tc-macro-signature-type ty))]
-        (match (macro-check-operand ctx type-env ty arg-expr)
+          (macro-resolve-signature-type ctx fallback-module ty)]
+        (match (macro-check-operand ctx type-env fallback-module ty arg-expr)
           [(ResultMacroCheck.Ok)
             (ResultMacroEnv.Ok
               (ctfe-env-extend
@@ -43296,7 +43351,14 @@
         (match param
           [(AstMacroParam pname pty variadic)
             (if variadic
-              (macro-bind-variadic-param ctx type-env pname pty args env)
+              (macro-bind-variadic-param
+                ctx
+                type-env
+                fallback-module
+                pname
+                pty
+                args
+                env)
               (match args
                 [(AstExprNil)
                   (ResultMacroEnv.Err
@@ -43407,6 +43469,7 @@
   [ctx : TcContext]
   [type-env : TcTypeEnv]
   [decls : AstDeclList]
+  [fallback-module : String]
   [macro-name : String]
   [params : AstMacroParamList]
   [body : AstExpr]
@@ -43422,7 +43485,7 @@
       (macro-eval-transformer-expanded
         ctx
         decls
-        (tc-context-module ctx)
+        fallback-module
         type-env
         macro-name
         params
@@ -44824,7 +44887,7 @@
             (match (macro-bind-params
               ctx
               decls
-              (tc-context-module ctx)
+              definition-module
               type-env
               params
               expanded-args
@@ -44851,7 +44914,7 @@
                 (match (macro-bind-params
                   ctx
                   decls
-                  (tc-context-module ctx)
+                  definition-module
                   type-env
                   params
                   expanded-args
@@ -44935,6 +44998,7 @@
             ctx
             type-env
             decls
+            definition-module
             macro-name
             params
             body
@@ -46317,7 +46381,7 @@
                                 (match (macro-eval-transformer-expanded-with-env
                                   call-ctx
                                   orig-decls
-                                  call-module
+                                  definition-module
                                   global-env
                                   macro-name
                                   params
@@ -46438,7 +46502,7 @@
                           (match (macro-module-identity
                             call-ctx
                             orig-decls
-                            call-module
+                            definition-module
                             macro-name
                             definition-module
                             params
@@ -46449,7 +46513,7 @@
                               (match (macro-eval-transformer-expanded-with-env
                                 call-ctx
                                 orig-decls
-                                call-module
+                                definition-module
                                 global-env
                                 macro-name
                                 params

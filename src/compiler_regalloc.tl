@@ -2434,7 +2434,12 @@
           (let
             [assignments : CompilerRegAssignmentTable
               (compiler-reg-assignment-table-make vars)]
-            (if (compiler-reg-backend-caller-clobber? func)
+            ;; Gate on clobber-POINT (bounds-checks excluded), not the merged
+            ;; caller-clobber: a bounds check clobbers no caller-saved reg on the
+            ;; success path, so it must not strip every param's ABI register home.
+            ;; Real calls + div/mod + shift + Pack stay in the gate (sound: they
+            ;; overwrite fixed SysV arg registers).
+            (if (compiler-reg-backend-clobber-point? func)
               (let
                 [fallback-ineligible : CompilerLiveI64Set
                   (compiler-reg-ineligible-params params base-ineligible)]
@@ -4898,7 +4903,21 @@
     [(IrInstrBoundsCheck _ _ _) false]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
-(define (compiler-reg-backend-caller-clobber-seq? [instrs : CompilerIrInstrSeq]) : bool
+;; Param-pin gate predicate: like a caller-clobber scan EXCEPT bounds checks do not
+;; count (it scans with clobber-point-instr?, which is caller-clobber-instr?
+;; minus IrInstrBoundsCheck). A bounds check's only register-clobbering effect is
+;; the cold `call tl_oob_abort` on the never-taken failure branch, and that abort
+;; is NORETURN -- on the success (fall-through) path NO caller-saved register is
+;; clobbered, so it can never evict an incoming ABI param from its register home.
+;; Real calls (clobber every caller-saved reg), idiv/mod (hardwire %rdx:%rax) and
+;; variable shift (hardwire %rcx) DO overwrite fixed SysV arg registers, so they
+;; stay in the gate -- the legacy zero-call pin set spills params to memory when
+;; any of those is present, which is conservative and SOUND. Removing only
+;; bounds-checks lets a leaf whose sole "clobber" is an array bounds check keep
+;; its scalar params pinned to %rdi/%rsi/... (matching clang) instead of homing
+;; every param on the stack and reloading it per use. Same reasoning as the
+;; bounds-check clobber-point narrowing above.
+(define (compiler-reg-backend-clobber-point-seq? [instrs : CompilerIrInstrSeq]) : bool
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
@@ -4909,29 +4928,29 @@
         (begin
           (set!
             found
-            (compiler-reg-backend-caller-clobber-instr?
+            (compiler-reg-backend-clobber-point-instr?
               (array.array-ref slots index)))
           (set! index (+ index 1))))
       found)))
 
-(define (compiler-reg-backend-caller-clobber-blocks?
+(define (compiler-reg-backend-clobber-point-blocks?
   [blocks : CompilerIrBlockList]) : bool
   (match blocks
     [(IrBlockNil) false]
     [(IrBlockCons block rest)
       (match block
         [(IrBlock _ instrs)
-          (if (compiler-reg-backend-caller-clobber-seq? instrs)
+          (if (compiler-reg-backend-clobber-point-seq? instrs)
             true
-            (compiler-reg-backend-caller-clobber-blocks? (box-get rest)))])]
+            (compiler-reg-backend-clobber-point-blocks? (box-get rest)))])]
     [(IrBlockArray seq)
-      (compiler-reg-backend-caller-clobber-blocks?
+      (compiler-reg-backend-clobber-point-blocks?
         (compiler-ir-block-seq-to-list seq))]))
 
-(define (compiler-reg-backend-caller-clobber? [func : CompilerIrFunction]) : bool
+(define (compiler-reg-backend-clobber-point? [func : CompilerIrFunction]) : bool
   (match func
     [(IrFunction _ _ _ _ blocks)
-      (compiler-reg-backend-caller-clobber-blocks? blocks)]))
+      (compiler-reg-backend-clobber-point-blocks? blocks)]))
 
 ;; Backend caller-clobber points include ordinary calls plus non-call IR that
 ;; emits caller-clobbering machine instructions or helper calls. The zero-call

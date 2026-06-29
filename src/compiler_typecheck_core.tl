@@ -38931,6 +38931,9 @@
     (spanned-sexpr-cons a (SpannedSexpr.Nil span) span)
     span))
 
+(define (macro-form0 [name : String] [span : SourceSpan]) : SpannedSexpr
+  (spanned-sexpr-cons (SpannedSexpr.Sym name span) (SpannedSexpr.Nil span) span))
+
 (define (macro-form2
   [name : String]
   [a : SpannedSexpr]
@@ -39172,6 +39175,45 @@
           (ResultMacroSexpr.Ok
             (macro-form2 "in" (SpannedSexpr.Sym region span) sinner span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
+
+(define (macro-child-form1
+  [name : String]
+  [id : i64]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match (macro-child-to-spanned-sexpr id span origin)
+    [(ResultMacroSexpr.Ok sexpr)
+      (ResultMacroSexpr.Ok (macro-form1 name sexpr span))]
+    [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
+
+(define (macro-child-form2
+  [name : String]
+  [left-id : i64]
+  [right-id : i64]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match (macro-child-to-spanned-sexpr left-id span origin)
+    [(ResultMacroSexpr.Ok sleft)
+      (match (macro-child-to-spanned-sexpr right-id span origin)
+        [(ResultMacroSexpr.Ok sright)
+          (ResultMacroSexpr.Ok (macro-form2 name sleft sright span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
+
+(define (macro-child-type-form3
+  [name : String]
+  [expr-id : i64]
+  [ty : AstType]
+  [span : SourceSpan]
+  [origin : AstExpr]) : ResultMacroSexpr
+  (match (macro-child-to-spanned-sexpr expr-id span origin)
+    [(ResultMacroSexpr.Ok sexpr)
+      (match (macro-type-to-spanned-sexpr ty span origin)
+        [(ResultMacroSexpr.Ok sty)
+          (ResultMacroSexpr.Ok
+            (macro-form3 name sexpr (SpannedSexpr.Sym ":" span) sty span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)]))
 
 (define (macro-spanned-sexpr-append
   [left : SpannedSexpr]
@@ -39691,6 +39733,53 @@
         [(ResultMacroSexpr.Ok sty)
           (ResultMacroSexpr.Ok (macro-form1 "type" sty span))]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(AstExprPtrNull ty)
+      (match (macro-type-to-spanned-sexpr ty span origin)
+        [(ResultMacroSexpr.Ok sty)
+          (ResultMacroSexpr.Ok
+            (macro-form2 "ptr-null" (SpannedSexpr.Sym ":" span) sty span))]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(AstExprPtrNullCheck ptr-id)
+      (macro-child-form1 "ptr-null?" ptr-id span origin)]
+    [(AstExprPtrAddrOf name)
+      (ResultMacroSexpr.Ok
+        (macro-form1
+          "ptr-addr-of"
+          (SpannedSexpr.Sym (macro-output-syntax-name (intern-str name)) span)
+          span))]
+    [(AstExprPtrRead ptr-id) (macro-child-form1 "ptr-read" ptr-id span origin)]
+    [(AstExprPtrWrite ptr-id value-id)
+      (macro-child-form2 "ptr-write!" ptr-id value-id span origin)]
+    [(AstExprPtrOffset ptr-id offset-id)
+      (macro-child-form2 "ptr-offset" ptr-id offset-id span origin)]
+    [(AstExprPtrCast ptr-id ty)
+      (macro-child-type-form3 "ptr-cast" ptr-id ty span origin)]
+    [(AstExprPtrToInt ptr-id) (macro-child-form1 "ptr->int" ptr-id span origin)]
+    [(AstExprIntToPtr value-id ty)
+      (macro-child-type-form3 "int->ptr" value-id ty span origin)]
+    [(AstExprStringData value-id)
+      (macro-child-form1 "string-data" value-id span origin)]
+    [(AstExprStringFromBytes ptr-id len-id)
+      (macro-child-form2 "string-from-bytes" ptr-id len-id span origin)]
+    [(AstExprArrayData value-id)
+      (macro-child-form1 "array-data" value-id span origin)]
+    [(AstExprProgramArgc)
+      (ResultMacroSexpr.Ok (macro-form0 "program-argc" span))]
+    [(AstExprProgramArgv)
+      (ResultMacroSexpr.Ok (macro-form0 "program-argv" span))]
+    [(AstExprProgramEnvp)
+      (ResultMacroSexpr.Ok (macro-form0 "program-envp" span))]
+    [(AstExprCpuIdEax leaf-id subleaf-id)
+      (macro-child-form2 "cpuid-eax" leaf-id subleaf-id span origin)]
+    [(AstExprCpuIdEbx leaf-id subleaf-id)
+      (macro-child-form2 "cpuid-ebx" leaf-id subleaf-id span origin)]
+    [(AstExprCpuIdEcx leaf-id subleaf-id)
+      (macro-child-form2 "cpuid-ecx" leaf-id subleaf-id span origin)]
+    [(AstExprCpuIdEdx leaf-id subleaf-id)
+      (macro-child-form2 "cpuid-edx" leaf-id subleaf-id span origin)]
+    [(AstExprXgetbv index-id) (macro-child-form1 "xgetbv" index-id span origin)]
+    [(AstExprSyscall args)
+      (macro-expr-list-with-head-symbol "syscall" args span origin)]
     [_
       (ResultMacroSexpr.Err
         (box
@@ -49374,13 +49463,21 @@
           repr
           cleanup
           fields)]
-      [(AstDeclComptimeDecl _ template-box)
+      [(AstDeclComptimeDecl meta template-box)
         (let
           [template : AstDecl (box-get template-box)]
-          (match (tc-check-comptime-decl-purity ctx top-env template)
-            [(ResultTcUnit.Ok)
+          (match meta
+            [(AstSomeGeneratedDeclMeta _ _ _ _)
               (tc-check-decl-with-global-env ctx top-env global-env template)]
-            [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+            [(AstNoGeneratedDeclMeta)
+              (match (tc-check-comptime-decl-purity ctx top-env template)
+                [(ResultTcUnit.Ok)
+                  (tc-check-decl-with-global-env
+                    ctx
+                    top-env
+                    global-env
+                    template)]
+                [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
       [(AstDeclUnsafe inner-box)
         (let
           [inner : AstDecl (box-get inner-box)]

@@ -2676,8 +2676,8 @@
 
 (define (build-package-direct-object-owned-path-count [paths : AstDeclPathList]) : i64
   (match paths
-    [(AstDeclPathNil) 0]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Nil) 0]
+    [(AstDeclPathList.Cons path rest)
       (let
         [tail : AstDeclPathList (box-get rest)]
         (+
@@ -2715,14 +2715,19 @@
     (let
       [budget : i64 (build-package-direct-object-owned-path-budget)]
       [within : AstDeclPathList
-        (build-package-direct-object-test-paths budget "pkg.tl" AstDeclPathNil)]
+        (build-package-direct-object-test-paths
+          budget
+          "pkg.tl"
+          AstDeclPathList.Nil)]
       [over : AstDeclPathList
         (build-package-direct-object-test-paths
           (+ budget 1)
           "pkg.tl"
-          AstDeclPathNil)]
+          AstDeclPathList.Nil)]
       [mixed : AstDeclPathList
-        (ast-decl-path-cons "" (ast-decl-path-cons "pkg.tl" AstDeclPathNil))]
+        (ast-decl-path-cons
+          ""
+          (ast-decl-path-cons "pkg.tl" AstDeclPathList.Nil))]
       (and
         (= (build-package-direct-object-owned-path-count mixed) 1)
         (build-package-direct-object-within-budget? within)
@@ -3244,8 +3249,8 @@
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
-    [(AstDeclPathNil) AstDeclPathNil]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Nil) AstDeclPathList.Nil]
+    [(AstDeclPathList.Cons path rest)
       (let
         [tail : AstDeclPathList
           (build-package-doctest-paths owner (box-get rest))]

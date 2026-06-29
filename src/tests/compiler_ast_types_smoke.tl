@@ -235,15 +235,15 @@
   [source-lit : i64]
   [source-span : i64]) : bool
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (match (box-get decls-box)
-        [(AstDeclCons first rest-box)
+        [(AstDeclList.Cons first rest-box)
           (match first
-            [(AstDeclDef _ maybe-ty first-body)
+            [(AstDecl.Def _ maybe-ty first-body)
               (match (box-get rest-box)
-                [(AstDeclCons second tail-box)
+                [(AstDeclList.Cons second tail-box)
                   (match second
-                    [(AstDeclTest _ second-body _)
+                    [(AstDecl.Test _ second-body _)
                       (and
                         (= first-body second-body)
                         (not (= first-body source-body))
@@ -273,7 +273,7 @@
                               [_ false])]
                           [_ false])
                         (match (box-get tail-box)
-                          [(AstDeclNil) true]
+                          [(AstDeclList.Nil) true]
                           [_ false]))]
                     [_ false])]
                 [_ false])]
@@ -320,7 +320,7 @@
           (ast-decl-def "value" (AstSomeType array-ty) source-body)
           (ast-decl-cons
             (ast-decl-test "same" source-body (AstSourceSpan 5 6 7 8))
-            AstDeclNil)))]
+            AstDeclList.Nil)))]
     [dest-decoy-expr : i64
       (ast-node-pool-context-expr-push
         dest-pools
@@ -346,11 +346,11 @@
                 source-span))]
           [installed-ok : bool
             (match out-program
-              [(AstProgram decls-box)
+              [(AstProgram.Program decls-box)
                 (match (box-get decls-box)
-                  [(AstDeclCons first _)
+                  [(AstDeclList.Cons first _)
                     (match first
-                      [(AstDeclDef _ maybe-ty body)
+                      [(AstDecl.Def _ maybe-ty body)
                         (match maybe-ty
                           [(AstSomeType ty)
                             (match ty

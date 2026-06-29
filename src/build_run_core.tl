@@ -454,18 +454,18 @@
   [decls : AstDeclList]
   [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
   (match decls
-    [(AstDeclNil) inputs]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) inputs]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclExtern _ _ metadata _)
+          [(AstDecl.Extern _ _ metadata _)
             (source-tool-link-inputs-from-decls
               rest
               (source-tool-link-inputs-add-ast-list
                 inputs
                 (ast-extern-metadata-link-inputs metadata)))]
-          [(AstDeclUnsafe inner-box)
+          [(AstDecl.Unsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (source-tool-link-inputs-from-decls

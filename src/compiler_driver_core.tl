@@ -1309,7 +1309,7 @@
         source
         prelude-seen
         stdlib-roots
-        AstNoModuleName
+        AstMaybeModuleName.No
         cfgs
         pools)
         [(ResultCompilerLoadWithPaths.Ok

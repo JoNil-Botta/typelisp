@@ -361,16 +361,16 @@
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (match decls
-    [(AstDeclNil) (SpecTemplateList.Nil)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (SpecTemplateList.Nil)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe inner-box)
+          [(AstDecl.Unsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn name params ret body-box _)
+                [(AstDecl.DefFn name params ret body-box _)
                   (let
                     [body : AstExpr (ast-node-get body-box)]
                     (if (spec-param-list-has-comptime? params)
@@ -379,7 +379,7 @@
                         (spec-collect-templates rest))
                       (spec-collect-templates rest)))]
                 [_ (spec-collect-templates rest)]))]
-          [(AstDeclDefFn name params ret body-box _)
+          [(AstDecl.DefFn name params ret body-box _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (if (spec-param-list-has-comptime? params)
@@ -396,16 +396,16 @@
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (match decls
-    [(AstDeclNil) (ast-decl-cons decl AstDeclNil)]
-    [(AstDeclCons head rest)
+    [(AstDeclList.Nil) (ast-decl-cons decl AstDeclList.Nil)]
+    [(AstDeclList.Cons head rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (ast-decl-cons head (spec-decl-list-append-one rest decl)))]))
 
 (define (spec-decl-list-append [front : AstDeclList] [back : AstDeclList]) : AstDeclList
   (match front
-    [(AstDeclNil) back]
-    [(AstDeclCons head rest)
+    [(AstDeclList.Nil) back]
+    [(AstDeclList.Cons head rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (ast-decl-cons head (spec-decl-list-append rest back)))]))
@@ -414,14 +414,14 @@
   [front : AstDeclPathList]
   [back : AstDeclPathList]) : AstDeclPathList
   (match front
-    [(AstDeclPathNil) back]
-    [(AstDeclPathCons head rest)
+    [(AstDeclPathList.Nil) back]
+    [(AstDeclPathList.Cons head rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         (ast-decl-path-cons head (spec-decl-path-list-append rest back)))]))
 
 (define (gen-single-decl-list [decl : AstDecl]) : AstDeclList
-  (ast-decl-cons decl AstDeclNil))
+  (ast-decl-cons decl AstDeclList.Nil))
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
@@ -676,19 +676,19 @@
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
-    [(AstDeclDef name _ _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefFn name _ _ _ _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclExtern name _ _ _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefDispatch name _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefEnum name _ _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _)
+    [(AstDecl.Def name _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.DefFn name _ _ _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.Extern name _ _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.DefDispatch name _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.DefEnum name _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
       (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefStruct name _ _ _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStruct name _ _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
       (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclDefMacro name _ _ _) (SpecMaybeString.Some (intern-str name))]
-    [(AstDeclUnsafe inner-box) (gen-decl-visible-name (box-get inner-box))]
-    [(AstDeclComptimeDecl _ inner-box)
+    [(AstDecl.DefMacro name _ _ _) (SpecMaybeString.Some (intern-str name))]
+    [(AstDecl.Unsafe inner-box) (gen-decl-visible-name (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ inner-box)
       (gen-decl-visible-name (box-get inner-box))]
     [_ (SpecMaybeString.None)]))
 
@@ -918,54 +918,54 @@
 
 (define (gen-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
   (match a
-    [(AstImportPath)
+    [(AstImportKind.Path)
       (match b
-        [(AstImportPath) true]
+        [(AstImportKind.Path) true]
         [_ false])]
-    [(AstImportModule)
+    [(AstImportKind.Module)
       (match b
-        [(AstImportModule) true]
+        [(AstImportKind.Module) true]
         [_ false])]
-    [(AstImportMacro _ _)
+    [(AstImportKind.Macro _ _)
       (match b
-        [(AstImportMacro _ _) true]
+        [(AstImportKind.Macro _ _) true]
         [_ false])]
-    [(AstImportMacroDecls _ _)
+    [(AstImportKind.MacroDecls _ _)
       (match b
-        [(AstImportMacroDecls _ _) true]
+        [(AstImportKind.MacroDecls _ _) true]
         [_ false])]))
 
 (define (gen-maybe-module-name-eq?
   [a : AstMaybeModuleName]
   [b : AstMaybeModuleName]) : bool
   (match a
-    [(AstNoModuleName)
+    [(AstMaybeModuleName.No)
       (match b
-        [(AstNoModuleName) true]
+        [(AstMaybeModuleName.No) true]
         [_ false])]
-    [(AstSomeModuleName a-name)
+    [(AstMaybeModuleName.Some a-name)
       (match b
-        [(AstSomeModuleName b-name) (string.string-eq a-name b-name)]
+        [(AstMaybeModuleName.Some b-name) (string.string-eq a-name b-name)]
         [_ false])]))
 
 (define (gen-maybe-import-alias-eq?
   [a : AstMaybeImportAlias]
   [b : AstMaybeImportAlias]) : bool
   (match a
-    [(AstNoImportAlias)
+    [(AstMaybeImportAlias.No)
       (match b
-        [(AstNoImportAlias) true]
+        [(AstMaybeImportAlias.No) true]
         [_ false])]
-    [(AstSomeImportAlias a-name)
+    [(AstMaybeImportAlias.Some a-name)
       (match b
-        [(AstSomeImportAlias b-name) (string.string-eq a-name b-name)]
+        [(AstMaybeImportAlias.Some b-name) (string.string-eq a-name b-name)]
         [_ false])]))
 
 (define (gen-import-spec-eq? [a : AstImportSpec] [b : AstImportSpec]) : bool
   (match a
-    [(AstImportSpec a-kind a-path a-module a-alias _)
+    [(AstImportSpec.Spec a-kind a-path a-module a-alias _)
       (match b
-        [(AstImportSpec b-kind b-path b-module b-alias _)
+        [(AstImportSpec.Spec b-kind b-path b-module b-alias _)
           (and
             (gen-import-kind-eq? a-kind b-kind)
             (string.string-eq a-path b-path)
@@ -974,11 +974,11 @@
 
 (define (gen-decl-eq? [a : AstDecl] [b : AstDecl]) : bool
   (match a
-    [(AstDeclDef a-name a-ty a-value-box)
+    [(AstDecl.Def a-name a-ty a-value-box)
       (let
         [a-value : AstExpr (ast-node-get a-value-box)]
         (match b
-          [(AstDeclDef b-name b-ty b-value-box)
+          [(AstDecl.Def b-name b-ty b-value-box)
             (let
               [b-value : AstExpr (ast-node-get b-value-box)]
               (and
@@ -986,11 +986,11 @@
                 (gen-maybe-type-eq? a-ty b-ty)
                 (gen-expr-eq? a-value b-value)))]
           [_ false]))]
-    [(AstDeclDefFn a-name a-params a-ret a-body-box a-export)
+    [(AstDecl.DefFn a-name a-params a-ret a-body-box a-export)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
         (match b
-          [(AstDeclDefFn b-name b-params b-ret b-body-box b-export)
+          [(AstDecl.DefFn b-name b-params b-ret b-body-box b-export)
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
@@ -1000,35 +1000,35 @@
                 (gen-expr-eq? a-body b-body)
                 (gen-fn-export-eq? a-export b-export)))]
           [_ false]))]
-    [(AstDeclDefEnum a-name a-cleanup a-variants)
+    [(AstDecl.DefEnum a-name a-cleanup a-variants)
       (match b
-        [(AstDeclDefEnum b-name b-cleanup b-variants)
+        [(AstDecl.DefEnum b-name b-cleanup b-variants)
           (and
             (= a-name b-name)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
-    [(AstDeclDefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
+    [(AstDecl.DefEnumLifetimes a-name a-lifetimes a-cleanup a-variants)
       (match b
-        [(AstDeclDefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
+        [(AstDecl.DefEnumLifetimes b-name b-lifetimes b-cleanup b-variants)
           (and
             (= a-name b-name)
             (ctfe-lifetime-list-eq a-lifetimes b-lifetimes)
             (gen-enum-cleanup-eq? a-cleanup b-cleanup)
             (gen-variant-list-eq? a-variants b-variants))]
         [_ false])]
-    [(AstDeclDefStruct a-name a-repr a-cleanup a-fields)
+    [(AstDecl.DefStruct a-name a-repr a-cleanup a-fields)
       (match b
-        [(AstDeclDefStruct b-name b-repr b-cleanup b-fields)
+        [(AstDecl.DefStruct b-name b-repr b-cleanup b-fields)
           (and
             (= a-name b-name)
             (gen-struct-repr-eq? a-repr b-repr)
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
-    [(AstDeclDefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
+    [(AstDecl.DefStructLifetimes a-name a-lifetimes a-repr a-cleanup a-fields)
       (match b
-        [(AstDeclDefStructLifetimes
+        [(AstDecl.DefStructLifetimes
             b-name
             b-lifetimes
             b-repr
@@ -1041,11 +1041,11 @@
             (gen-struct-cleanup-eq? a-cleanup b-cleanup)
             (gen-field-list-eq? a-fields b-fields))]
         [_ false])]
-    [(AstDeclDefMacro a-name a-params a-ret a-body-box)
+    [(AstDecl.DefMacro a-name a-params a-ret a-body-box)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
         (match b
-          [(AstDeclDefMacro b-name b-params b-ret b-body-box)
+          [(AstDecl.DefMacro b-name b-params b-ret b-body-box)
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and
@@ -1054,49 +1054,49 @@
                 (ctfe-type-eq a-ret b-ret)
                 (gen-expr-eq? a-body b-body)))]
           [_ false]))]
-    [(AstDeclImport a-spec)
+    [(AstDecl.Import a-spec)
       (match b
-        [(AstDeclImport b-spec) (gen-import-spec-eq? a-spec b-spec)]
+        [(AstDecl.Import b-spec) (gen-import-spec-eq? a-spec b-spec)]
         [_ false])]
-    [(AstDeclIncludeStr a-name a-path)
+    [(AstDecl.IncludeStr a-name a-path)
       (match b
-        [(AstDeclIncludeStr b-name b-path)
+        [(AstDecl.IncludeStr b-name b-path)
           (and
             (string.string-eq a-name b-name)
             (string.string-eq a-path b-path))]
         [_ false])]
-    [(AstDeclIncludeBin a-name a-path)
+    [(AstDecl.IncludeBin a-name a-path)
       (match b
-        [(AstDeclIncludeBin b-name b-path)
+        [(AstDecl.IncludeBin b-name b-path)
           (and
             (string.string-eq a-name b-name)
             (string.string-eq a-path b-path))]
         [_ false])]
-    [(AstDeclTest a-name a-body-box _)
+    [(AstDecl.Test a-name a-body-box _)
       (let
         [a-body : AstExpr (ast-node-get a-body-box)]
         (match b
-          [(AstDeclTest b-name b-body-box _)
+          [(AstDecl.Test b-name b-body-box _)
             (let
               [b-body : AstExpr (ast-node-get b-body-box)]
               (and (= a-name b-name) (gen-expr-eq? a-body b-body)))]
           [_ false]))]
-    [(AstDeclModule a-name)
+    [(AstDecl.Module a-name)
       (match b
-        [(AstDeclModule b-name) (= a-name b-name)]
+        [(AstDecl.Module b-name) (= a-name b-name)]
         [_ false])]
-    [(AstDeclComptimeDecl _ a-inner-box)
+    [(AstDecl.ComptimeDecl _ a-inner-box)
       (let
         [a-inner : AstDecl (box-get a-inner-box)]
         (match b
-          [(AstDeclComptimeDecl _ b-inner-box)
+          [(AstDecl.ComptimeDecl _ b-inner-box)
             (gen-decl-eq? a-inner (box-get b-inner-box))]
           [_ (gen-decl-eq? a-inner b)]))]
-    [(AstDeclUnsafe a-inner-box)
+    [(AstDecl.Unsafe a-inner-box)
       (let
         [a-inner : AstDecl (box-get a-inner-box)]
         (match b
-          [(AstDeclUnsafe b-inner-box)
+          [(AstDecl.Unsafe b-inner-box)
             (gen-decl-eq? a-inner (box-get b-inner-box))]
           [_ (gen-decl-eq? a-inner b)]))]
     [_ false]))
@@ -1239,13 +1239,13 @@
         (ResultGenDecl.Ok
           (gen-single-decl-list
             (ast-decl-comptime-decl-with-meta
-              (AstSomeGeneratedDeclMeta generator item args key)
+              (AstGeneratedDeclMeta.Some generator item args key)
               template))
           (gen-registry-insert registry key template)
           module)]
       [(GenMaybeEntry.Some existing)
         (if (gen-decl-eq? existing template)
-          (ResultGenDecl.Ok AstDeclNil registry module)
+          (ResultGenDecl.Ok AstDeclList.Nil registry module)
           (ResultGenDecl.Err (box (gen-incompatible-diag item key))))])))
 
 (define (gen-metadata-arg-key
@@ -1262,15 +1262,15 @@
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDecl
   (match decl
-    [(AstDeclModule name)
+    [(AstDecl.Module name)
       (ResultGenDecl.Ok (gen-single-decl-list decl) registry (intern-str name))]
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match meta
-          [(AstNoGeneratedDeclMeta)
+          [(AstGeneratedDeclMeta.No)
             (ResultGenDecl.Ok (gen-single-decl-list decl) registry module)]
-          [(AstSomeGeneratedDeclMeta generator item args meta-key)
+          [(AstGeneratedDeclMeta.Some generator item args meta-key)
             (if (not (gen-metadata-key-normalizable? meta-key))
               (ResultGenDecl.Ok (gen-single-decl-list decl) registry module)
               (match (gen-decl-visible-name template)
@@ -1303,8 +1303,8 @@
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDecls
   (match decls
-    [(AstDeclNil) (ResultGenDecls.Ok AstDeclNil registry module)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (ResultGenDecls.Ok AstDeclList.Nil registry module)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match (gen-rewrite-decl decl module registry env)
@@ -1320,24 +1320,24 @@
 
 (define (gen-path-list-head-or [paths : AstDeclPathList] [fallback : String]) : String
   (match paths
-    [(AstDeclPathCons path _) path]
-    [(AstDeclPathNil) fallback]))
+    [(AstDeclPathList.Cons path _) path]
+    [(AstDeclPathList.Nil) fallback]))
 
 (define (gen-path-list-tail [paths : AstDeclPathList]) : AstDeclPathList
   (match paths
-    [(AstDeclPathCons _ rest-box)
+    [(AstDeclPathList.Cons _ rest-box)
       (let
         [rest : AstDeclPathList (box-get rest-box)]
         rest)]
-    [(AstDeclPathNil) AstDeclPathNil]))
+    [(AstDeclPathList.Nil) AstDeclPathList.Nil]))
 
 (define (gen-path-list-for-decls
   [decls : AstDeclList]
   [path : String]
   [rest-paths : AstDeclPathList]) : AstDeclPathList
   (match decls
-    [(AstDeclNil) rest-paths]
-    [(AstDeclCons _ rest-box)
+    [(AstDeclList.Nil) rest-paths]
+    [(AstDeclList.Cons _ rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (ast-decl-path-cons path (gen-path-list-for-decls rest path rest-paths)))]))
@@ -1350,9 +1350,13 @@
   [registry : GenRegistry]
   [env : CtfeEnv]) : ResultGenDeclsWithPaths
   (match decls
-    [(AstDeclNil)
-      (ResultGenDeclsWithPaths.Ok AstDeclNil AstDeclPathNil registry module)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil)
+      (ResultGenDeclsWithPaths.Ok
+        AstDeclList.Nil
+        AstDeclPathList.Nil
+        registry
+        module)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String (gen-path-list-head-or paths fallback-path)]
@@ -1385,7 +1389,7 @@
 
 (define (gen-normalize-program-active [program : AstProgram]) : ResultGenProgram
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         [env : CtfeEnv
@@ -1400,7 +1404,7 @@
   [paths : AstDeclPathList]
   [fallback-path : String]) : ResultGenProgramWithPaths
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         [env : CtfeEnv
@@ -1476,19 +1480,19 @@
 
 (define (gen-decl-needs-normalize? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclUnsafe inner-box) (gen-decl-needs-normalize? (box-get inner-box))]
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.Unsafe inner-box) (gen-decl-needs-normalize? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl meta template-box)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _ key)
+        [(AstGeneratedDeclMeta.Some _ _ _ key)
           (gen-metadata-key-normalizable? key)]
-        [(AstNoGeneratedDeclMeta)
+        [(AstGeneratedDeclMeta.No)
           (gen-decl-needs-normalize? (box-get template-box))])]
     [_ false]))
 
 (define (gen-decls-needed? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (if (gen-decl-needs-normalize? decl)
         true
         (gen-decls-needed? (box-get rest)))]))
@@ -4616,7 +4620,7 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecl
   (match decl
-    [(AstDeclDef name ty value-box)
+    [(AstDecl.Def name ty value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match (spec-rewrite-expr value templates state)
@@ -4625,7 +4629,7 @@
               (SpecMaybeDecl.Some (ast-decl-def-id name ty rewritten))
               state2)]
           [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)]))]
-    [(AstDeclDefFn name params ret body-box export)
+    [(AstDecl.DefFn name params ret body-box export)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (if (spec-param-list-has-comptime? params)
@@ -4640,7 +4644,7 @@
                   (ast-decl-def-fn-export-id name params ret rewritten export))
                 state2)]
             [(ResultSpecExpr.Err diag) (ResultSpecDecl.Err diag)])))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (match (spec-rewrite-decl inner templates state)
@@ -4653,7 +4657,7 @@
               [(SpecMaybeDecl.None)
                 (ResultSpecDecl.Ok SpecMaybeDecl.None state2)])]
           [(ResultSpecDecl.Err diag) (ResultSpecDecl.Err diag)]))]
-    [(AstDeclDefMacro name params ret body-box)
+    [(AstDecl.DefMacro name params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (spec-rewrite-expr body templates state)
@@ -4670,8 +4674,8 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDecls
   (match decls
-    [(AstDeclNil) (ResultSpecDecls.Ok AstDeclNil state)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (ResultSpecDecls.Ok AstDeclList.Nil state)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match (spec-rewrite-decl decl templates state)
@@ -4695,8 +4699,9 @@
   [templates : SpecTemplateEnv]
   [state : SpecState]) : ResultSpecDeclsWithPaths
   (match decls
-    [(AstDeclNil) (ResultSpecDeclsWithPaths.Ok AstDeclNil AstDeclPathNil state)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil)
+      (ResultSpecDeclsWithPaths.Ok AstDeclList.Nil AstDeclPathList.Nil state)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String (gen-path-list-head-or paths fallback-path)]
@@ -4730,14 +4735,14 @@
 
 (define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList
   (if (string.string-eq fallback-path "")
-    AstDeclPathNil
-    (gen-path-list-for-decls decls fallback-path AstDeclPathNil)))
+    AstDeclPathList.Nil
+    (gen-path-list-for-decls decls fallback-path AstDeclPathList.Nil)))
 
 (define (compiler-specialize-program-active [program : AstProgram]) : ResultSpecProgram
   (match (gen-normalize-program-active program)
     [(ResultGenProgram.Ok normalized)
       (match normalized
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             [templates : SpecTemplateList (spec-collect-templates decls)]
@@ -4748,7 +4753,7 @@
                   decls
                   (spec-template-env-from-list templates)
                   (SpecState.State
-                    AstDeclNil
+                    AstDeclList.Nil
                     (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
@@ -4769,7 +4774,7 @@
   (match (gen-normalize-program-with-paths-active program paths fallback-path)
     [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
       (match normalized
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             [templates : SpecTemplateList (spec-collect-templates decls)]
@@ -4783,7 +4788,7 @@
                   fallback-path
                   (spec-template-env-from-list templates)
                   (SpecState.State
-                    AstDeclNil
+                    AstDeclList.Nil
                     (hashmap.string-string-map-with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
@@ -4863,7 +4868,7 @@
 
 (define (compiler-specialize-needed? [program : AstProgram]) : bool
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (if (gen-decls-needed? decls)
@@ -4876,38 +4881,38 @@
   [decls : AstDeclList]
   [name : String]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe inner-box)
+          [(AstDecl.Unsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _ _)
+                [(AstDecl.DefFn fn-name _ _ _ _)
                   (if (string.string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
-                [(AstDeclComptimeDecl _ template-box)
+                [(AstDecl.ComptimeDecl _ template-box)
                   (let
                     [template : AstDecl (box-get template-box)]
                     (match template
-                      [(AstDeclDefFn fn-name _ _ _ _)
+                      [(AstDecl.DefFn fn-name _ _ _ _)
                         (if (string.string-eq (intern-str fn-name) name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
-          [(AstDeclDefFn fn-name _ _ _ _)
+          [(AstDecl.DefFn fn-name _ _ _ _)
             (if (string.string-eq (intern-str fn-name) name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefFn fn-name _ _ _ _)
+                [(AstDecl.DefFn fn-name _ _ _ _)
                   (if (string.string-eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
@@ -4944,7 +4949,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 (and
@@ -4977,7 +4982,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 [original : bool
@@ -4996,7 +5001,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 (compiler-specialize-decl-list-defines?
@@ -5059,29 +5064,29 @@
         "__tl_specialized_name_string_3_97_32_98_none"))))
 
 ;: Count function declarations named `name` in `decls` (specialized decls are
-;: emitted as ordinary `AstDeclDefFn`s, so reuse means a count of exactly 1).
+;: emitted as ordinary `AstDecl.DefFn`s, so reuse means a count of exactly 1).
 (define (compiler-specialize-decl-list-count-defs
   [decls : AstDeclList]
   [name : String]) : i64
   (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) 0]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclUnsafe inner-box)
+          [(AstDecl.Unsafe inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _ _)
+                [(AstDecl.DefFn fn-name _ _ _ _)
                   (if (string.string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
-                [(AstDeclComptimeDecl _ template-box)
+                [(AstDecl.ComptimeDecl _ template-box)
                   (let
                     [template : AstDecl (box-get template-box)]
                     (match template
-                      [(AstDeclDefFn fn-name _ _ _ _)
+                      [(AstDecl.DefFn fn-name _ _ _ _)
                         (if (string.string-eq (intern-str fn-name) name)
                           (+
                             1
@@ -5089,15 +5094,15 @@
                           (compiler-specialize-decl-list-count-defs rest name))]
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
-          [(AstDeclDefFn fn-name _ _ _ _)
+          [(AstDecl.DefFn fn-name _ _ _ _)
             (if (string.string-eq (intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
-          [(AstDeclComptimeDecl _ inner-box)
+          [(AstDecl.ComptimeDecl _ inner-box)
             (let
               [inner : AstDecl (box-get inner-box)]
               (match inner
-                [(AstDeclDefFn fn-name _ _ _ _)
+                [(AstDecl.DefFn fn-name _ _ _ _)
                   (if (string.string-eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
@@ -5108,8 +5113,8 @@
   [decls : AstDeclList]
   [name : String]) : i64
   (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) 0]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [tail-count : i64
@@ -5139,7 +5144,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 (and
@@ -5302,7 +5307,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 (compiler-specialize-decl-list-defines?
@@ -5375,7 +5380,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (compiler-specialize-decl-list-count-visible
                 (box-get decls-box)
                 name)])]
@@ -5390,7 +5395,7 @@
         (match (compiler-specialize-program program)
           [(ResultSpecProgram.Ok normalized)
             (match normalized
-              [(AstProgram decls-box)
+              [(AstProgram.Program decls-box)
                 (let
                   [decls : AstDeclList (box-get decls-box)]
                   (=
@@ -5407,7 +5412,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 (=
@@ -5464,7 +5469,7 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
                 (=
@@ -5495,27 +5500,27 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
-            [(AstProgram decls-box)
+            [(AstProgram.Program decls-box)
               (match (box-get decls-box)
-                [(AstDeclCons decl _)
+                [(AstDeclList.Cons decl _)
                   (match decl
-                    [(AstDeclComptimeDecl meta template-box)
+                    [(AstDecl.ComptimeDecl meta template-box)
                       (and
                         (match meta
-                          [(AstSomeGeneratedDeclMeta generator item _ key)
+                          [(AstGeneratedDeclMeta.Some generator item _ key)
                             (and
                               (string.string-eq generator "sample-family")
                               (string.string-eq item "Box_String")
                               (string.string-eq
                                 key
                                 (compiler-generated-decl-expected-string-key)))]
-                          [(AstNoGeneratedDeclMeta) false])
+                          [(AstGeneratedDeclMeta.No) false])
                         (match (box-get template-box)
-                          [(AstDeclDefStruct name _ _ _)
+                          [(AstDecl.DefStruct name _ _ _)
                             (string.string-eq (intern-str name) "Box_String")]
                           [_ false]))]
                     [_ false])]
-                [(AstDeclNil) false])])]
+                [(AstDeclList.Nil) false])])]
         [(ResultSpecProgram.Err _) false])]
     [(ErrAstProgram _) false]))
 

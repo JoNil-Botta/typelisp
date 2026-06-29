@@ -1809,7 +1809,7 @@
   [entry-path : String]) : AstDeclPathList
   (ast-decl-path-cons
     (compiler-load-join-root-path root "tc_prefix_shared.tl")
-    (ast-decl-path-cons entry-path AstDeclPathNil)))
+    (ast-decl-path-cons entry-path AstDeclPathList.Nil)))
 
 (define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : vector.StringVec
   (vector.string-vec-push (vector.string-vec-new) root))
@@ -2330,7 +2330,7 @@
           [(OkAstProgramDiagnostic entry-program)
             (match (typecheck-compiler-program-with-paths-checked
               entry-program
-              AstDeclPathNil)
+              AstDeclPathList.Nil)
               [(ResultCompilerTypecheckChecked.Ok _ _ _)
                 (set!
                   ok
@@ -2430,7 +2430,7 @@
         [(OkAstProgramDiagnostic program)
           (match (typecheck-compiler-program-with-paths-checked
             program
-            AstDeclPathNil)
+            AstDeclPathList.Nil)
             [(ResultCompilerTypecheckChecked.Ok _ ctx env)
               (let
                 [entry-ctx : TcContext

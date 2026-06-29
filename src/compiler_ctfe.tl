@@ -803,14 +803,14 @@
   [module : String]
   [infos : CtfeReflectInfoList]) : CtfeReflectInfoList
   (match decls
-    [(AstDeclNil) infos]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) infos]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (ctfe-reflections-from-decls rest (intern-str next-module) infos)]
-          [(AstDeclDefStruct name _ _ fields)
+          [(AstDecl.DefStruct name _ _ fields)
             (let
               [name-str : String (intern-str name)]
               [key : String
@@ -829,7 +829,7 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDeclDefStructLifetimes name _ _ _ fields)
+          [(AstDecl.DefStructLifetimes name _ _ _ fields)
             (let
               [name-str : String (intern-str name)]
               [key : String
@@ -848,7 +848,7 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDeclDefEnum name _ variants)
+          [(AstDecl.DefEnum name _ variants)
             (let
               [name-str : String (intern-str name)]
               [key : String
@@ -867,7 +867,7 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDeclDefEnumLifetimes name _ _ variants)
+          [(AstDecl.DefEnumLifetimes name _ _ variants)
             (let
               [name-str : String (intern-str name)]
               [key : String
@@ -886,11 +886,11 @@
                 rest
                 module
                 (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefStruct name _ _ fields)
+                [(AstDecl.DefStruct name _ _ fields)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String
@@ -909,7 +909,7 @@
                       rest
                       module
                       (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDeclDefStructLifetimes name _ _ _ fields)
+                [(AstDecl.DefStructLifetimes name _ _ _ fields)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String
@@ -928,7 +928,7 @@
                       rest
                       module
                       (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDeclDefEnum name _ variants)
+                [(AstDecl.DefEnum name _ variants)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String
@@ -947,7 +947,7 @@
                       rest
                       module
                       (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDeclDefEnumLifetimes name _ _ variants)
+                [(AstDecl.DefEnumLifetimes name _ _ variants)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String
@@ -971,30 +971,30 @@
 
 (define (ctfe-metadata-decl-capacity [decls : AstDeclList]) : i64
   (match decls
-    [(AstDeclNil) 1]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) 1]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [rest-capacity : i64 (ctfe-metadata-decl-capacity rest)]
         (match decl
-          [(AstDeclDefStruct _ _ _ _) (+ rest-capacity 2)]
-          [(AstDeclDefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
-          [(AstDeclDefEnum _ _ _) (+ rest-capacity 2)]
-          [(AstDeclDefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
+          [(AstDecl.DefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
+          [(AstDecl.DefEnum _ _ _) (+ rest-capacity 2)]
+          [(AstDecl.DefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefStruct _ _ _ _) (+ rest-capacity 2)]
-                [(AstDeclDefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
-                [(AstDeclDefEnum _ _ _) (+ rest-capacity 2)]
-                [(AstDeclDefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
+                [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
+                [(AstDecl.DefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
+                [(AstDecl.DefEnum _ _ _) (+ rest-capacity 2)]
+                [(AstDecl.DefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
                 [_ rest-capacity]))]
           [_ rest-capacity]))]))
 
 (define (ctfe-reflections-from-program [program : AstProgram]) : CtfeReflectInfoList
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (begin
@@ -11383,18 +11383,18 @@
               (ast-type-cons (AstTyString) AstTypeNil)
               AstVariantPayloadCleanupNil)
             (box AstVariantDefNil))))]
-    (AstProgram
+    (AstProgram.Program
       (box
-        (AstDeclCons
-          (AstDeclDefStruct
+        (AstDeclList.Cons
+          (AstDecl.DefStruct
             (intern "Record")
             (AstStructReprDefault)
             (AstStructNoCleanup)
             fields)
           (box
-            (AstDeclCons
-              (AstDeclDefEnum (intern "Status") (AstEnumNoCleanup) variants)
-              (box AstDeclNil))))))))
+            (AstDeclList.Cons
+              (AstDecl.DefEnum (intern "Status") (AstEnumNoCleanup) variants)
+              (box AstDeclList.Nil))))))))
 
 (define (compiler-ctfe-reflection-from-program-ok?) : bool
   (let

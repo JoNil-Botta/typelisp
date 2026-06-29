@@ -13,6 +13,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import "compiler_ast_types.tl")
+(import token)
 (import "lex.tl")
 
 ;: A single lint finding: stable rule id, human-readable message, rule-specific
@@ -854,9 +855,9 @@
     (string.string-eq name "spmd-scan")
     (string.string-eq name "spmd-shuffle")))
 
-(define (lint-token-name [tok : Token]) : String
-  (if (= (token-tag tok) (tag-sym))
-    (token-sym tok)
+(define (lint-token-name [tok : token.Token]) : String
+  (if (= (token.token-tag tok) (token.tag-sym))
+    (token.token-sym tok)
     ""))
 
 (define (lint-deprecated-string-concat-depth [in-loop : bool] [in-chain : bool]) : i64
@@ -1145,13 +1146,13 @@
     span))
 
 (define (lint-deprecated-string-concat-token-span
-  [tok : SpannedToken]
+  [tok : token.SpannedToken]
   [name : String]) : AstSourceSpan
   (AstSourceSpan
-    (spanned-token-line tok)
-    (spanned-token-col tok)
-    (spanned-token-line tok)
-    (+ (spanned-token-col tok) (string.string-length name))))
+    (token.spanned-token-line tok)
+    (token.spanned-token-col tok)
+    (token.spanned-token-line tok)
+    (+ (token.spanned-token-col tok) (string.string-length name))))
 
 (define (lint-deprecated-string-concat-scan
   [source : String]
@@ -1173,15 +1174,17 @@
           (while (not done)
             (begin
               (let
-                [spanned : SpannedToken (array-ref toks i)]
-                [tok : Token (spanned-token-tok spanned)]
-                [tag : i64 (token-tag tok)]
+                [spanned : token.SpannedToken (array-ref toks i)]
+                [tok : token.Token (token.spanned-token-tok spanned)]
+                [tag : i64 (token.token-tag tok)]
                 (cond
-                  [(= tag (tag-end)) (set! done true)]
-                  [(= tag (tag-lparen))
+                  [(= tag (token.tag-end)) (set! done true)]
+                  [(= tag (token.tag-lparen))
                     (let
-                      [head-spanned : SpannedToken (array-ref toks (+ i 1))]
-                      [head : Token (spanned-token-tok head-spanned)]
+                      [head-spanned : token.SpannedToken
+                        (array-ref toks (+ i 1))]
+                      [head : token.Token
+                        (token.spanned-token-tok head-spanned)]
                       [name : String (lint-token-name head)]
                       [is-loop : bool
                         (lint-deprecated-string-concat-loop-form? name)]
@@ -1209,7 +1212,7 @@
                         (if is-concat
                           (set! concat-depth (+ concat-depth 1))
                           unit)))]
-                  [(= tag (tag-rparen))
+                  [(= tag (token.tag-rparen))
                     (if (> depth 0)
                       (begin
                         (if (array-ref loop-stack depth)

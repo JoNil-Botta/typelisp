@@ -73,7 +73,7 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   and fail-closed double close. Pure invalid-capacity checks now live inline in
   `stdlib/sync.tl`.
 - `process_api.tl` remains a runnable fixture for command-validation paths that
-  intentionally call `process-output` / `process-start` and therefore preserve
+  intentionally call `output` / `start` and therefore preserve
   the staged `requires-stage0-symbol:tl_process_start,tl_process_wait`
   coverage. Pure command construction, argv/env vector builders, validation
   helpers, duplicate-name order, list conversion, and result/error predicates

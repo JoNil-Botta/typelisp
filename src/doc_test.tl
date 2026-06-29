@@ -1275,15 +1275,15 @@
     [expected-exit : i64 (doc-test-expectation-run-exit expectation)]
     [expected-stdout : String (doc-test-expectation-run-stdout expectation)]
     [expected-stderr : String (doc-test-expectation-run-stderr expectation)]
-    [actual-exit : i64 (process.process-output-status output)]
+    [actual-exit : i64 (process.output-status output)]
     [actual-stdout : String
       (doc-test-normalize-output-for-target
         target
-        (process.process-output-stdout output))]
+        (process.output-stdout output))]
     [actual-stderr : String
       (doc-test-normalize-output-for-target
         target
-        (process.process-output-stderr output))]
+        (process.output-stderr output))]
     (string.string-append
       "doctest example "
       (string.string-append
@@ -1316,17 +1316,17 @@
   [output : process.ProcessOutput]) : bool
   (if (=
     (doc-test-expectation-run-exit expectation)
-    (process.process-output-status output))
+    (process.output-status output))
     (if (string.string-eq
       (doc-test-expectation-run-stdout expectation)
       (doc-test-normalize-output-for-target
         target
-        (process.process-output-stdout output)))
+        (process.output-stdout output)))
       (string.string-eq
         (doc-test-expectation-run-stderr expectation)
         (doc-test-normalize-output-for-target
           target
-          (process.process-output-stderr output)))
+          (process.output-stderr output)))
       false)
     false))
 
@@ -1342,7 +1342,7 @@
       (string.string-append
         " '"
         (string.string-append
-          (process.process-command-executable command)
+          (process.command-executable command)
           (string.string-append
             "' failed for target "
             (string.string-append
@@ -1350,22 +1350,22 @@
               (string.string-append
                 " with status "
                 (string.string-append
-                  (string.int->string (process.process-output-status output))
+                  (string.int->string (process.output-status output))
                   (string.string-append
                     "\nstdout:\n"
                     (string.string-append
-                      (process.process-output-stdout output)
+                      (process.output-stdout output)
                       (string.string-append
                         "\nstderr:\n"
-                        (process.process-output-stderr output)))))))))))))
+                        (process.output-stderr output)))))))))))))
 
 (define (doc-test-run-command-captured
   [role : String]
   [target : CompilerBackendTarget]
   [command : process.ProcessCommand]) : SourceToolCommandStatus
-  (match (process.process-output command)
+  (match (process.output command)
     [(process.OkProcessOutput output)
-      (if (process.process-success? output)
+      (if (process.success? output)
         SourceToolCommandStatus.Ok
         (SourceToolCommandStatus.Err
           (doc-test-command-output-message role target command output)))]
@@ -1378,14 +1378,12 @@
             (string.string-append
               " '"
               (string.string-append
-                (process.process-command-executable command)
+                (process.command-executable command)
                 (string.string-append
                   "' for target "
                   (string.string-append
                     (source-tool-target-name target)
-                    (string.string-append
-                      ": "
-                      (process.process-error-message error)))))))))]))
+                    (string.string-append ": " (process.error-message error)))))))))]))
 
 (define (doc-test-assemble-and-link-captured
   [target : CompilerBackendTarget]
@@ -1457,10 +1455,7 @@
   [asm-path : String]
   [obj-path : String]
   [bin-path : String]) : DocTestMaybeFailure
-  (match (source-tool-run-executable
-    bin-path
-    target
-    (process.process-args-empty))
+  (match (source-tool-run-executable bin-path target (process.args-empty))
     [(process.OkProcessOutput output)
       (begin
         (source-tool-clean-temp temp-dir asm-path obj-path bin-path true)
@@ -1478,9 +1473,7 @@
           path
           source-line
           index
-          (doc-test-runnable-exec-message
-            index
-            (process.process-error-message error))))]))
+          (doc-test-runnable-exec-message index (process.error-message error))))]))
 
 (define (doc-test-link-and-run-runnable
   [path : String]

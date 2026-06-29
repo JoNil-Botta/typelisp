@@ -15,6 +15,7 @@
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
 (import stdlib.string)
+(import token)
 
 (define (lsp-str2 [a : String] [b : String]) : String
   (string.string-concat3 a b ""))
@@ -900,7 +901,7 @@
           (compiler-diagnostic-with-code
             (compiler-diagnostic-from-span
               "primary.tl"
-              (SourceSpan 2 3 2 9)
+              (token.SourceSpan 2 3 2 9)
               "wide primary")
             "E7777")
           (CompilerDiagnosticSpan "" 4 5 4 8)
@@ -2554,10 +2555,10 @@
   (match (lex-spanned-result text)
     [(ResultSpannedTokens.Err err)
       (let
-        [span : SourceSpan (source-error-span err)]
-        [line : i64 (span-start-line span)]
-        [col : i64 (span-start-col span)]
-        [msg : String (source-error-message err)]
+        [span : token.SourceSpan (token.source-error-span err)]
+        [line : i64 (token.span-start-line span)]
+        [col : i64 (token.span-start-col span)]
+        [msg : String (token.source-error-message err)]
         (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
     [(ResultSpannedTokens.Ok toks)
       (let
@@ -2569,14 +2570,14 @@
           (array-set! cur 0 0)
           (while (and
             (not done)
-            (not (= (peek-spanned-tag toks cur) (tag-end))))
+            (not (= (peek-spanned-tag toks cur) (token.tag-end))))
             (match (read-form-spanned-result toks cur)
               [(ResultSpannedSexpr.Err err)
                 (let
-                  [span : SourceSpan (source-error-span err)]
-                  [line : i64 (span-start-line span)]
-                  [col : i64 (span-start-col span)]
-                  [msg : String (source-error-message err)]
+                  [span : token.SourceSpan (token.source-error-span err)]
+                  [line : i64 (token.span-start-line span)]
+                  [col : i64 (token.span-start-col span)]
+                  [msg : String (token.source-error-message err)]
                   (begin
                     (set!
                       result
@@ -2588,13 +2589,13 @@
                     (set! done true)))]
               [(ResultSpannedSexpr.Ok sexpr)
                 (match (parse-ast-decl-maybe dispatch sexpr)
-                  [(ErrAstMaybeDecl msg)
+                  [(ResultAstMaybeDecl.Err msg)
                     (match (parse-ast-expr dispatch sexpr)
-                      [(ErrAstExpr _)
+                      [(ResultAstExpr.Err _)
                         (let
-                          [span : SourceSpan (spanned-sexpr-span sexpr)]
-                          [line : i64 (span-start-line span)]
-                          [col : i64 (span-start-col span)]
+                          [span : token.SourceSpan (spanned-sexpr-span sexpr)]
+                          [line : i64 (token.span-start-line span)]
+                          [col : i64 (token.span-start-col span)]
                           (begin
                             (set!
                               result
@@ -2604,14 +2605,14 @@
                                 msg
                                 (lsp-line-at text line)))
                             (set! done true)))]
-                      [(OkAstExpr _) unit])]
-                  [(OkAstNoDecl)
+                      [(ResultAstExpr.Ok _) unit])]
+                  [(ResultAstMaybeDecl.NoDecl)
                     (match (parse-ast-expr dispatch sexpr)
-                      [(ErrAstExpr msg)
+                      [(ResultAstExpr.Err msg)
                         (let
-                          [span : SourceSpan (spanned-sexpr-span sexpr)]
-                          [line : i64 (span-start-line span)]
-                          [col : i64 (span-start-col span)]
+                          [span : token.SourceSpan (spanned-sexpr-span sexpr)]
+                          [line : i64 (token.span-start-line span)]
+                          [col : i64 (token.span-start-col span)]
                           (begin
                             (set!
                               result
@@ -2621,9 +2622,9 @@
                                 msg
                                 (lsp-line-at text line)))
                             (set! done true)))]
-                      [(OkAstExpr _) unit])]
-                  [(OkAstSomeDecl _) unit]
-                  [(OkAstDecls _) unit])]))
+                      [(ResultAstExpr.Ok _) unit])]
+                  [(ResultAstMaybeDecl.SomeDecl _) unit]
+                  [(ResultAstMaybeDecl.Decls _) unit])]))
           result))]))
 
 ;; Find the byte offset where the body of a define/defmacro begins,

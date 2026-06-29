@@ -2348,8 +2348,8 @@
 
 (define (build-compiler-symbols-from-source [src : String]) : ResultCompilerSymbols
   (match (parse-ast-source src)
-    [(OkAstProgram program) (build-compiler-symbols program)]
-    [(ErrAstProgram message) (ResultCompilerSymbols.Err message)]))
+    [(ResultAstProgram.Ok program) (build-compiler-symbols program)]
+    [(ResultAstProgram.Err message) (ResultCompilerSymbols.Err message)]))
 
 (define (compiler-registries-lookup-variant
   [registries : CompilerRegistries]
@@ -3078,15 +3078,16 @@
 
 (define (build-compiler-registries-from-source [src : String]) : ResultCompilerRegistries
   (match (parse-ast-source src)
-    [(OkAstProgram program) (build-compiler-registries program)]
-    [(ErrAstProgram message) (ResultCompilerRegistries.Err message)]))
+    [(ResultAstProgram.Ok program) (build-compiler-registries program)]
+    [(ResultAstProgram.Err message) (ResultCompilerRegistries.Err message)]))
 
 (define (compiler-decl-list-at-index
   [decls : AstDeclList]
   [target : i64]
   [index : i64]) : ResultAstDecl
   (match decls
-    [(AstDeclList.Nil) (ErrAstDecl "symbols: declaration index not found")]
+    [(AstDeclList.Nil)
+      (ResultAstDecl.Err "symbols: declaration index not found")]
     [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
@@ -3104,12 +3105,12 @@
                 [(AstDecl.ComptimeDecl _ template-box)
                   (let
                     [template : AstDecl (box-get template-box)]
-                    (OkAstDecl template))]
+                    (ResultAstDecl.Ok template))]
                 [(AstDecl.Unsafe inner-box)
                   (let
                     [inner : AstDecl (box-get inner-box)]
-                    (OkAstDecl inner))]
-                [_ (OkAstDecl decl)])
+                    (ResultAstDecl.Ok inner))]
+                [_ (ResultAstDecl.Ok decl)])
               (compiler-decl-list-at-index rest target (+ index 1)))]))]))
 
 (define (compiler-program-decl-at-index [program : AstProgram] [target : i64]) : ResultAstDecl
@@ -3125,22 +3126,23 @@
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
     (if (or (< target 0) (>= target (array.array-length decls)))
-      (ErrAstDecl "symbols: declaration index not found")
-      (OkAstDecl (array.array-ref decls target)))))
+      (ResultAstDecl.Err "symbols: declaration index not found")
+      (ResultAstDecl.Ok (array.array-ref decls target)))))
 
 (define (compiler-variant-types-at-index
   [variants : AstVariantDefList]
   [target : i64]
   [index : i64]) : ResultAstTypeList
   (match variants
-    [(AstVariantDefNil) (ErrAstTypeList "symbols: variant index not found")]
+    [(AstVariantDefNil)
+      (ResultAstTypeList.Err "symbols: variant index not found")]
     [(AstVariantDefCons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
           [(AstVariantDef _ fields _)
             (if (= target index)
-              (OkAstTypeList fields)
+              (ResultAstTypeList.Ok fields)
               (compiler-variant-types-at-index rest target (+ index 1)))]))]))
 
 (define (compiler-field-type-at-index
@@ -3148,14 +3150,14 @@
   [target : i64]
   [index : i64]) : ResultAstType
   (match fields
-    [(AstFieldDefNil) (ErrAstType "symbols: field index not found")]
+    [(AstFieldDefNil) (ResultAstType.Err "symbols: field index not found")]
     [(AstFieldDefCons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
           [(AstFieldDef _ ty _)
             (if (= target index)
-              (OkAstType ty)
+              (ResultAstType.Ok ty)
               (compiler-field-type-at-index rest target (+ index 1)))]))]))
 
 (define (compiler-registries-variant-fields
@@ -3164,7 +3166,7 @@
   (match (compiler-program-decl-at-index
     program
     (compiler-registry-handle-owner-index handle))
-    [(OkAstDecl decl)
+    [(ResultAstDecl.Ok decl)
       (match decl
         [(AstDecl.DefEnum _ _ variants)
           (compiler-variant-types-at-index
@@ -3176,8 +3178,8 @@
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [_ (ErrAstTypeList "symbols: variant owner is not enum")])]
-    [(ErrAstDecl message) (ErrAstTypeList message)]))
+        [_ (ResultAstTypeList.Err "symbols: variant owner is not enum")])]
+    [(ResultAstDecl.Err message) (ResultAstTypeList.Err message)]))
 
 (define (compiler-registries-variant-fields-indexed
   [symbols : CompilerSymbols]
@@ -3185,7 +3187,7 @@
   (match (compiler-symbols-decl-at-index
     symbols
     (compiler-registry-handle-owner-index handle))
-    [(OkAstDecl decl)
+    [(ResultAstDecl.Ok decl)
       (match decl
         [(AstDecl.DefEnum _ _ variants)
           (compiler-variant-types-at-index
@@ -3197,8 +3199,8 @@
             variants
             (compiler-registry-handle-child-index handle)
             0)]
-        [_ (ErrAstTypeList "symbols: variant owner is not enum")])]
-    [(ErrAstDecl message) (ErrAstTypeList message)]))
+        [_ (ResultAstTypeList.Err "symbols: variant owner is not enum")])]
+    [(ResultAstDecl.Err message) (ResultAstTypeList.Err message)]))
 
 (define (compiler-registries-struct-field-type
   [program : AstProgram]
@@ -3206,7 +3208,7 @@
   (match (compiler-program-decl-at-index
     program
     (compiler-registry-handle-owner-index handle))
-    [(OkAstDecl decl)
+    [(ResultAstDecl.Ok decl)
       (match decl
         [(AstDecl.DefStruct _ _ _ fields)
           (compiler-field-type-at-index
@@ -3218,8 +3220,8 @@
             fields
             (compiler-registry-handle-child-index handle)
             0)]
-        [_ (ErrAstType "symbols: field owner is not struct")])]
-    [(ErrAstDecl message) (ErrAstType message)]))
+        [_ (ResultAstType.Err "symbols: field owner is not struct")])]
+    [(ResultAstDecl.Err message) (ResultAstType.Err message)]))
 
 (define (compiler-registries-struct-field-type-indexed
   [symbols : CompilerSymbols]
@@ -3227,7 +3229,7 @@
   (match (compiler-symbols-decl-at-index
     symbols
     (compiler-registry-handle-owner-index handle))
-    [(OkAstDecl decl)
+    [(ResultAstDecl.Ok decl)
       (match decl
         [(AstDecl.DefStruct _ _ _ fields)
           (compiler-field-type-at-index
@@ -3239,8 +3241,8 @@
             fields
             (compiler-registry-handle-child-index handle)
             0)]
-        [_ (ErrAstType "symbols: field owner is not struct")])]
-    [(ErrAstDecl message) (ErrAstType message)]))
+        [_ (ResultAstType.Err "symbols: field owner is not struct")])]
+    [(ResultAstDecl.Err message) (ResultAstType.Err message)]))
 
 (define (compiler-symbol-lookup-score
   [found : option_i64.Option]
@@ -3284,17 +3286,17 @@
   [found : ResultAstType]
   [want-tag : i64]) : i64
   (match found
-    [(OkAstType ty)
+    [(ResultAstType.Ok ty)
       (if (= (ast-type-tag ty) want-tag)
         1
         0)]
-    [(ErrAstType _) 0]))
+    [(ResultAstType.Err _) 0]))
 
 (define (compiler-type-list-single-tag-score
   [found : ResultAstTypeList]
   [want-tag : i64]) : i64
   (match found
-    [(OkAstTypeList types)
+    [(ResultAstTypeList.Ok types)
       (match types
         [(AstTypeCons ty rest)
           (let
@@ -3307,7 +3309,7 @@
                   0)]
               [_ 0]))]
         [_ 0])]
-    [(ErrAstTypeList _) 0]))
+    [(ResultAstTypeList.Err _) 0]))
 
 (define (compiler-symbols-smoke-source) : String
   "(import stdlib.test)
@@ -3628,7 +3630,7 @@
 
 (define (compiler-symbols-comptime-decl-ok?) : bool
   (match (parse-ast-source (compiler-symbols-comptime-decl-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -3649,7 +3651,7 @@
                 (= (compiler-registries-smoke-score program registries) 8))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-module-scope-source) : String
   "(module left)
@@ -3663,7 +3665,7 @@
 
 (define (compiler-symbols-module-scope-ok?) : bool
   (match (parse-ast-source (compiler-symbols-module-scope-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -3729,11 +3731,11 @@
                   1))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-structural-id-api-ok?) : bool
   (match (parse-ast-source (compiler-symbols-module-scope-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -3787,7 +3789,7 @@
                   1))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-direct-qualified-add-ok?) : bool
   (let
@@ -3834,7 +3836,7 @@
 
 (define (compiler-symbols-import-alias-ok?) : bool
   (match (parse-ast-source (compiler-symbols-import-alias-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -3888,7 +3890,7 @@
                   1))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-comptime-root-helper-alias-source) : String
   "(module stdlib.comptime)
@@ -3903,7 +3905,7 @@
 
 (define (compiler-symbols-comptime-root-helper-alias-ok?) : bool
   (match (parse-ast-source (compiler-symbols-comptime-root-helper-alias-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (and
@@ -3977,11 +3979,11 @@
                 0)
               1))]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-self-test) : i64
   (match (parse-ast-source (compiler-symbols-smoke-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -4048,4 +4050,4 @@
                     (io.panic "symbols: smoke score mismatch"))))]
             [(ResultCompilerRegistries.Err message) (io.panic message)])]
         [(ResultCompilerSymbols.Err message) (io.panic message)])]
-    [(ErrAstProgram message) (io.panic message)]))
+    [(ResultAstProgram.Err message) (io.panic message)]))

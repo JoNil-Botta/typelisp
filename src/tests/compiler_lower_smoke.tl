@@ -182,7 +182,7 @@
 
 (define (compiler-lower-smoke-module-entry-main-check) : unit
   (match (parse-ast-source (compiler-lower-module-entry-main-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
@@ -224,7 +224,7 @@
                         (panic "lower: module entry main helper call missing"))))))])]
         [(ErrCompilerLower diag)
           (panic (compiler-diagnostic-message (box-get diag)))])]
-    [(ErrAstProgram _) (panic "lower: module entry main parse failed")]))
+    [(ResultAstProgram.Err _) (panic "lower: module entry main parse failed")]))
 
 (define (compiler-lower-smoke-self-test) : unit
   (begin

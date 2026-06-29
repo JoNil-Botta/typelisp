@@ -1496,8 +1496,8 @@
 
 (define (build-process-output-detail [output : process.ProcessOutput]) : String
   (let
-    [stderr : String (process.process-output-stderr output)]
-    [stdout : String (process.process-output-stdout output)]
+    [stderr : String (process.output-stderr output)]
+    [stdout : String (process.output-stdout output)]
     (if (> (string.string-length stderr) 0)
       (str_cat.str-cat ": " stderr)
       (if (> (string.string-length stdout) 0)
@@ -1507,19 +1507,19 @@
 (define (build-run-captured
   [context : String]
   [command : process.ProcessCommand]) : ResultBuildString
-  (match (process.process-output command)
+  (match (process.output command)
     [(process.OkProcessOutput output)
-      (if (process.process-success? output)
-        (ResultBuildString.Ok (process.process-output-stdout output))
+      (if (process.success? output)
+        (ResultBuildString.Ok (process.output-stdout output))
         (ResultBuildString.Err
           (str_cat.str-cat
             context
             " failed with status "
-            (string.int->string (process.process-output-status output))
+            (string.int->string (process.output-status output))
             (build-process-output-detail output))))]
     [(process.ErrProcessOutput error)
       (ResultBuildString.Err
-        (str_cat.str-cat context ": " (process.process-error-message error)))]))
+        (str_cat.str-cat context ": " (process.error-message error)))]))
 
 (define (build-git-clone-command [remote : String] [root : String]) : process.ProcessCommand
   (source-tool-git-clone-command remote root))
@@ -2810,15 +2810,15 @@
   [target : CompilerBackendTarget]) : process.ProcessStringList
   (let
     [index : i64 (- (build-package-graph-node-vec-len nodes) 1)]
-    [libs : process.ProcessStringList (process.process-args-empty)]
+    [libs : process.ProcessStringList (process.args-empty)]
     (begin
       (while (>= index 0)
         (begin
           (set!
             libs
-            (process.process-args-append
+            (process.args-append
               libs
-              (process.process-args-single
+              (process.args-single
                 (build-package-graph-node-artifact-path
                   (build-package-graph-node-vec-at nodes index)
                   profile
@@ -2832,15 +2832,15 @@
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
-    [paths : process.ProcessStringList (process.process-args-empty)]
+    [paths : process.ProcessStringList (process.args-empty)]
     (begin
       (while (< index count)
         (begin
           (set!
             paths
-            (process.process-args-append
+            (process.args-append
               paths
-              (process.process-args-single
+              (process.args-single
                 (build-package-graph-node-tlci-path
                   (build-package-graph-node-vec-at nodes index)
                   profile))))
@@ -2873,14 +2873,14 @@
 (define (build-package-graph-test-link-arg-target
   [node : BuildPackageGraphNode]
   [target : CompilerBackendTarget]) : process.ProcessStringList
-  (process.process-args-single
+  (process.args-single
     (build-package-graph-node-artifact-path node (BuildProfile.Release) target)))
 
 (define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
   (build-package-graph-test-link-arg-target node (CompilerBackendTarget.Linux)))
 
 (define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
-  (process.process-args-single
+  (process.args-single
     (build-package-graph-node-tlci-path node (BuildProfile.Release))))
 
 (define (build-package-graph-vector-smoke-ok?) : bool
@@ -2912,20 +2912,20 @@
     [tlcis : process.ProcessStringList
       (build-package-graph-tlci-paths nodes (BuildProfile.Release))]
     [expected : process.ProcessStringList
-      (process.process-args-append
-        (process.process-args-append
+      (process.args-append
+        (process.args-append
           (build-package-graph-test-link-arg third)
           (build-package-graph-test-link-arg second))
         (build-package-graph-test-link-arg first))]
     [expected-tlcis : process.ProcessStringList
-      (process.process-args-append
-        (process.process-args-append
+      (process.args-append
+        (process.args-append
           (build-package-graph-test-tlci-arg first)
           (build-package-graph-test-tlci-arg second))
         (build-package-graph-test-tlci-arg third))]
     [expected-windows : process.ProcessStringList
-      (process.process-args-append
-        (process.process-args-append
+      (process.args-append
+        (process.args-append
           (build-package-graph-test-link-arg-target
             third
             (CompilerBackendTarget.Windows))
@@ -3553,11 +3553,9 @@
         remote
         (box (CompilerPkgDepCons local (box CompilerPkgDepNil))))]
     [actual : process.ProcessStringList
-      (build-package-worker-append-resolved-deps
-        (process.process-args-empty)
-        deps)]
+      (build-package-worker-append-resolved-deps (process.args-empty) deps)]
     [expected0 : process.ProcessStringList
-      (source-tool-args-append (process.process-args-empty) "--resolved-dep")]
+      (source-tool-args-append (process.args-empty) "--resolved-dep")]
     [expected1 : process.ProcessStringList
       (source-tool-args-append expected0 "remote")]
     [expected2 : process.ProcessStringList
@@ -3588,7 +3586,7 @@
   [stdlib-roots : vector.StringVec]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
-      (build-package-worker-command-prefix (process.process-args-empty))]
+      (build-package-worker-command-prefix (process.args-empty))]
     [args1 : process.ProcessStringList
       (source-tool-args-append args0 worker-flag)]
     [args2 : process.ProcessStringList
@@ -3646,7 +3644,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : vector.StringVec]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (io.arg 0)
     (build-package-worker-args
       manifest-path
@@ -3666,7 +3664,7 @@
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : CompilerPkgDepList]
   [stdlib-roots : vector.StringVec]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (io.arg 0)
     (build-package-worker-args-with-flag
       "--package-doctest-worker"
@@ -3688,7 +3686,7 @@
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : CompilerPkgDepList]
   [stdlib-roots : vector.StringVec]) : i64
-  (match (process.process-output
+  (match (process.output
     (build-package-doctest-worker-command
       manifest-path
       target
@@ -3701,22 +3699,21 @@
     [(process.OkProcessOutput output)
       (begin
         (source-tool-forward-output output)
-        (process.process-output-status output))]
+        (process.output-status output))]
     [(process.ErrProcessOutput error)
       (begin
         (io.print-error
           (str_cat.str-cat
             "build: failed to run package doctest worker: "
-            (process.process-error-message error)))
+            (process.error-message error)))
         1)]))
 
 (define (build-package-worker-spawn-supported?) : bool
-  (match (process.process-output
-    (process.process-command
+  (match (process.output
+    (process.command
       (io.arg 0)
-      (source-tool-args-append (process.process-args-empty) "--version")))
-    [(process.OkProcessOutput output)
-      (= (process.process-output-status output) 0)]
+      (source-tool-args-append (process.args-empty) "--version")))
+    [(process.OkProcessOutput output) (= (process.output-status output) 0)]
     [(process.ErrProcessOutput _) false]))
 
 (define (build-package-run-doctest-worker-or-inline
@@ -3733,7 +3730,7 @@
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [emit-entry : bool]) : i64
-  (match (process.process-output
+  (match (process.output
     (build-package-doctest-worker-command
       manifest-path
       target
@@ -3746,11 +3743,11 @@
     [(process.OkProcessOutput output)
       (begin
         (source-tool-forward-output output)
-        (process.process-output-status output))]
+        (process.output-status output))]
     [(process.ErrProcessOutput error)
       (if (or
-        (process.process-error-spawn-failed? error)
-        (process.process-error-unsupported? error))
+        (process.error-spawn-failed? error)
+        (process.error-unsupported? error))
         (begin
           (compiler-driver-reset-file-state!)
           (build-package-closure-doctest-status
@@ -3765,7 +3762,7 @@
           (io.print-error
             (str_cat.str-cat
               "build: failed to run package doctest worker: "
-              (process.process-error-message error)))
+              (process.error-message error)))
           1))]))
 
 (define (build-package-worker-run-from [idx : i64] [count : i64]) : i64
@@ -3821,7 +3818,7 @@
                       (struct-get config mode)
                       (struct-get config lock-policy)
                       (struct-get config stdlib-roots)
-                      (process.process-args-empty))
+                      (process.args-empty))
                     (begin
                       (io.print-error
                         "build: package worker can only build staticlib packages")
@@ -4015,7 +4012,7 @@
         mode
         lock-policy
         stdlib-roots)]
-    (match (process.process-start command)
+    (match (process.start command)
       [(process.OkProcessChild child)
         (ResultBuildPackageGraphWorker.Ok
           (BuildPackageGraphWorker node artifacts child))]
@@ -4025,7 +4022,7 @@
             "build: failed to start package dependency `"
             name
             "`: "
-            (process.process-error-message error)))])))
+            (process.error-message error)))])))
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]
@@ -4132,13 +4129,13 @@
           [manifest : CompilerPkgManifest (struct-get node manifest)]
           [name : String (struct-get manifest name)]
           [result : process.ResultProcessOutput
-            (process.process-wait (struct-get worker child))]
+            (process.wait (struct-get worker child))]
           (begin
             (match result
               [(process.OkProcessOutput output)
                 (begin
                   (source-tool-forward-output output)
-                  (if (process.process-success? output)
+                  (if (process.success? output)
                     (let
                       [runtime-path : String (struct-get artifacts runtime)]
                       [runtime-state : BuildPackageArtifactState
@@ -4178,7 +4175,7 @@
                                 manifest-path
                                 1))))))
                     (let
-                      [status : i64 (process.process-output-status output)]
+                      [status : i64 (process.output-status output)]
                       (begin
                         (io.print-error
                           (str_cat.str-cat
@@ -4198,7 +4195,7 @@
                       "build: failed to wait for package dependency `"
                       name
                       "`: "
-                      (process.process-error-message error)))
+                      (process.error-message error)))
                   (set!
                     next-failed-status
                     (build-package-failure-status next-failed-status 1)))])
@@ -4310,7 +4307,7 @@
               mode
               lock-policy
               stdlib-roots
-              (process.process-args-empty))]
+              (process.args-empty))]
           (if (= node-status 0)
             (set! index (+ index 1))
             (begin

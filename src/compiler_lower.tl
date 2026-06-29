@@ -3170,9 +3170,9 @@
                 (match (compiler-symbols-decl-at-index
                   (tc-context-symbols ctx)
                   (compiler-symbol-handle-index handle))
-                  [(OkAstDecl decl)
+                  [(ResultAstDecl.Ok decl)
                     (lower-spmd-inline-helper-from-decl name decl)]
-                  [(ErrAstDecl message)
+                  [(ResultAstDecl.Err message)
                     (ErrLowerSpmdInlineHelper (box (lower-diagnostic message)))])
                 (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))
               (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))))))]
@@ -8554,9 +8554,9 @@
 
 (define (lower-enum-storage-size [ctx : TcContext] [enum-name : String]) : i64
   (match (tc-context-enum-variants ctx enum-name)
-    [(OkAstVariantDefList variants)
+    [(ResultAstVariantDefList.Ok variants)
       (lower-enum-variants-storage-size ctx variants 8)]
-    [(ErrAstVariantDefList _) 8]))
+    [(ResultAstVariantDefList.Err _) 8]))
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
@@ -8574,18 +8574,19 @@
             (match (compiler-symbols-decl-at-index
               symbols
               (compiler-symbol-handle-index handle))
-              [(OkAstDecl decl)
+              [(ResultAstDecl.Ok decl)
                 (match decl
-                  [(AstDecl.DefStruct _ _ _ fields) (OkAstFieldDefList fields)]
+                  [(AstDecl.DefStruct _ _ _ fields)
+                    (ResultAstFieldDefList.Ok fields)]
                   [(AstDecl.DefStructLifetimes _ _ _ _ fields)
-                    (OkAstFieldDefList fields)]
+                    (ResultAstFieldDefList.Ok fields)]
                   [_
-                    (ErrAstFieldDefList
+                    (ResultAstFieldDefList.Err
                       "lower: struct symbol owner is not a struct")])]
-              [(ErrAstDecl message) (ErrAstFieldDefList message)])
-            (ErrAstFieldDefList
+              [(ResultAstDecl.Err message) (ResultAstFieldDefList.Err message)])
+            (ResultAstFieldDefList.Err
               (string.string-append "lower: unknown struct " struct-name)))
-          (ErrAstFieldDefList
+          (ResultAstFieldDefList.Err
             (string.string-append "lower: unknown struct " struct-name))))]))
 
 (define (lower-struct-repr-c? [ctx : TcContext] [struct-name : String]) : bool
@@ -10230,8 +10231,8 @@
       [(ResultTcLifetimeSubst.Err _) false]
       [(ResultTcLifetimeSubst.Ok subst)
         (match (tc-context-enum-variants ctx name)
-          [(ErrAstVariantDefList _) false]
-          [(OkAstVariantDefList variants)
+          [(ResultAstVariantDefList.Err _) false]
+          [(ResultAstVariantDefList.Ok variants)
             (lower-supported-reference-variant-list-with-stack?
               ctx
               subst
@@ -11769,10 +11770,10 @@
                                   (match (compiler-registries-variant-fields-indexed
                                     symbols
                                     handle)
-                                    [(ErrAstTypeList message)
+                                    [(ResultAstTypeList.Err message)
                                       (ErrLowerEnv
                                         (box (lower-diagnostic message)))]
-                                    [(OkAstTypeList nested-fields)
+                                    [(ResultAstTypeList.Ok nested-fields)
                                       (match (lower-load-inline-value-at-offset
                                         ctx
                                         state
@@ -12072,9 +12073,9 @@
                               (match (compiler-registries-variant-fields-indexed
                                 symbols
                                 handle)
-                                [(ErrAstTypeList message)
+                                [(ResultAstTypeList.Err message)
                                   (ErrLowerEnv (box (lower-diagnostic message)))]
-                                [(OkAstTypeList nested-fields)
+                                [(ResultAstTypeList.Ok nested-fields)
                                   (match (lower-load-at-offset
                                     state
                                     base
@@ -12351,9 +12352,9 @@
         [(ResultTcReprCLayout.Err message)
           (ErrLowerFieldInfo (box (lower-diagnostic message)))])
       (match (lower-struct-fields field-ctx struct-name)
-        [(OkAstFieldDefList fields)
+        [(ResultAstFieldDefList.Ok fields)
           (lower-field-info-from-list field-ctx fields field-name 0)]
-        [(ErrAstFieldDefList message)
+        [(ResultAstFieldDefList.Err message)
           (ErrLowerFieldInfo (box (lower-diagnostic message)))]))))
 
 (define (lower-struct-field-info-for-mode
@@ -12435,14 +12436,14 @@
         (match (compiler-symbols-decl-at-index
           symbols
           (compiler-symbol-handle-index handle))
-          [(OkAstDecl decl)
+          [(ResultAstDecl.Ok decl)
             (match decl
               [(AstDecl.Extern _ kind _ _)
                 (match kind
                   [(AstExternFunction) true]
                   [(AstExternValue) false])]
               [_ false])]
-          [(ErrAstDecl _) false])
+          [(ResultAstDecl.Err _) false])
         false)
       false)))
 
@@ -12455,14 +12456,14 @@
         (match (compiler-symbols-decl-at-index
           symbols
           (compiler-symbol-handle-index handle))
-          [(OkAstDecl decl)
+          [(ResultAstDecl.Ok decl)
             (match decl
               [(AstDecl.Extern _ kind _ _)
                 (match kind
                   [(AstExternFunction) false]
                   [(AstExternValue) true])]
               [_ false])]
-          [(ErrAstDecl _) false])
+          [(ResultAstDecl.Err _) false])
         false)
       false)))
 
@@ -12547,7 +12548,7 @@
     (match (compiler-symbols-decl-at-index
       symbols
       (compiler-symbol-handle-index handle))
-      [(OkAstDecl decl)
+      [(ResultAstDecl.Ok decl)
         (match decl
           [(AstDecl.Extern _ kind metadata _)
             (match kind
@@ -12559,7 +12560,7 @@
                     ""))]
               [(AstExternValue) ""])]
           [_ ""])]
-      [(ErrAstDecl _) ""])
+      [(ResultAstDecl.Err _) ""])
     ""))
 
 (define (lower-atomic-extern-symbol-lookup
@@ -13194,7 +13195,7 @@
         (lower-diagnostic
           "lower: repr-c aggregate lambda captures need repr-c snapshot lowering")))
     (match (lower-struct-fields ctx struct-name)
-      [(OkAstFieldDefList fields)
+      [(ResultAstFieldDefList.Ok fields)
         (let
           [field-types : AstTypeList (tc-field-type-list ctx fields)]
           (match (lower-reserve-heap-storage
@@ -13214,7 +13215,7 @@
                 [(OkLowerState done-state)
                   (OkLowerExpr (LowerExpr done-state dst result-ty))]
                 [(ErrLowerState message) (ErrLowerExpr message)])]))]
-      [(ErrAstFieldDefList message)
+      [(ResultAstFieldDefList.Err message)
         (ErrLowerExpr (box (lower-diagnostic message)))])))
 
 (define (lower-capture-snapshot-enum-variants
@@ -13302,7 +13303,7 @@
   (match ctx
     [(TcContext program _ _ _ _)
       (match (tc-program-enum-variants program enum-name)
-        [(OkAstVariantDefList variants)
+        [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
             state
             (lower-enum-storage-size ctx enum-name)
@@ -13326,7 +13327,7 @@
                         [(OkLowerState final-state)
                           (OkLowerExpr (LowerExpr final-state dst result-ty))]
                         [(ErrLowerState message) (ErrLowerExpr message)])])])])]
-        [(ErrAstVariantDefList message)
+        [(ResultAstVariantDefList.Err message)
           (ErrLowerExpr (box (lower-diagnostic message)))])]))
 
 (define (lower-capture-plan-scan
@@ -16082,7 +16083,7 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
-        [(OkAstTypeList fields)
+        [(ResultAstTypeList.Ok fields)
           (let
             [field-ctx : TcContext
               (tc-context-with-module
@@ -16152,7 +16153,7 @@
                                     (LowerExpr done-state base enum-ty))]
                                 [(ErrLowerState message) (ErrLowerExpr message)]))]))]))]
               [(ErrLowerArgs message) (ErrLowerExpr message)]))]
-        [(ErrAstTypeList message)
+        [(ResultAstTypeList.Err message)
           (ErrLowerExpr (box (lower-diagnostic message)))])]))
 
 (define (lower-construct-enum-with-handle
@@ -16212,7 +16213,7 @@
   (match ctx
     [(TcContext _ symbols _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
-        [(OkAstTypeList fields)
+        [(ResultAstTypeList.Ok fields)
           (let
             [field-ctx : TcContext
               (tc-context-with-module
@@ -16244,7 +16245,7 @@
                       (lower-diagnostic
                         "lower: enum destination construction requires inline aggregates"))))]
               [(ErrLowerArgs message) (ErrLowerState message)]))]
-        [(ErrAstTypeList message)
+        [(ResultAstTypeList.Err message)
           (ErrLowerState (box (lower-diagnostic message)))])]))
 
 (define (lower-construct-enum-with-handle-into
@@ -16348,7 +16349,7 @@
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
   (match (lower-struct-fields ctx struct-name)
-    [(OkAstFieldDefList fields)
+    [(ResultAstFieldDefList.Ok fields)
       (let
         [struct-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx result-ty))]
@@ -16402,7 +16403,7 @@
                           (OkLowerExpr (LowerExpr done-state base struct-ty))]
                         [(ErrLowerState message) (ErrLowerExpr message)])]))))]
           [(ErrLowerArgs message) (ErrLowerExpr message)]))]
-    [(ErrAstFieldDefList message)
+    [(ResultAstFieldDefList.Err message)
       (ErrLowerExpr (box (lower-diagnostic message)))]))
 
 (define (lower-construct-struct-into
@@ -16415,7 +16416,7 @@
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerState
   (match (lower-struct-fields ctx struct-name)
-    [(OkAstFieldDefList fields)
+    [(ResultAstFieldDefList.Ok fields)
       (let
         [struct-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx result-ty))]
@@ -16440,7 +16441,7 @@
                   (lower-diagnostic
                     "lower: struct destination construction requires inline aggregates"))))]
           [(ErrLowerArgs message) (ErrLowerState message)]))]
-    [(ErrAstFieldDefList message)
+    [(ResultAstFieldDefList.Err message)
       (ErrLowerState (box (lower-diagnostic message)))]))
 
 (define (lower-init-expr-list-from-types [types : AstTypeList]) : AstExprList
@@ -16483,7 +16484,7 @@
         (box
           (lower-diagnostic "lower: init supports only default-layout structs")))
       (match (lower-struct-fields field-ctx struct-name)
-        [(OkAstFieldDefList fields)
+        [(ResultAstFieldDefList.Ok fields)
           (let
             [field-types : AstTypeList
               (tc-resolve-type-list
@@ -16501,7 +16502,7 @@
               struct-name
               (lower-init-expr-list-from-types field-types)
               struct-ty))]
-        [(ErrAstFieldDefList message)
+        [(ResultAstFieldDefList.Err message)
           (ErrLowerExpr (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum
@@ -16581,7 +16582,7 @@
         (box
           (lower-diagnostic "lower: init supports only default-layout structs")))
       (match (lower-struct-fields field-ctx struct-name)
-        [(OkAstFieldDefList fields)
+        [(ResultAstFieldDefList.Ok fields)
           (let
             [field-types : AstTypeList
               (tc-resolve-type-list
@@ -16600,7 +16601,7 @@
               struct-name
               (lower-init-expr-list-from-types field-types)
               struct-ty))]
-        [(ErrAstFieldDefList message)
+        [(ResultAstFieldDefList.Err message)
           (ErrLowerState (box (lower-diagnostic message)))]))))
 
 (define (lower-init-enum-into
@@ -16854,7 +16855,7 @@
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? handle)
         (match (compiler-registries-variant-fields-indexed symbols handle)
-          [(OkAstTypeList fields)
+          [(ResultAstTypeList.Ok fields)
             (match fields
               [(AstTypeNil)
                 (lower-construct-enum-with-handle
@@ -16867,7 +16868,7 @@
                   AstExprNil
                   expr-ty)]
               [_ (lower-function-value-or-var ctx state env name expr-ty)])]
-          [(ErrAstTypeList _)
+          [(ResultAstTypeList.Err _)
             (lower-function-value-or-var ctx state env name expr-ty)])
         (lower-function-value-or-var ctx state env name expr-ty)))
     (lower-function-value-or-var ctx state env name expr-ty)))
@@ -23082,7 +23083,7 @@
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? handle)
         (match (compiler-registries-variant-fields-indexed symbols handle)
-          [(OkAstTypeList fields)
+          [(ResultAstTypeList.Ok fields)
             (match fields
               [(AstTypeNil)
                 (lower-direct-store-result
@@ -23097,7 +23098,7 @@
                     AstExprNil
                     result-ty))]
               [_ (LowerNoDirectStore)])]
-          [(ErrAstTypeList message)
+          [(ResultAstTypeList.Err message)
             (LowerDirectStoreErr (box (lower-diagnostic message)))])
         (LowerNoDirectStore)))))
 
@@ -36771,7 +36772,7 @@
   [struct-name : String]
   [args : AstPatternList]) : ResultLowerEnv
   (match (lower-struct-fields ctx struct-name)
-    [(OkAstFieldDefList fields)
+    [(ResultAstFieldDefList.Ok fields)
       (match (tc-struct-pattern-field-types-for-scrut
         ctx
         struct-name
@@ -36790,7 +36791,7 @@
             field-types)]
         [(ResultTcTypeList.Err message)
           (ErrLowerEnv (box (lower-diagnostic message)))])]
-    [(ErrAstFieldDefList message)
+    [(ResultAstFieldDefList.Err message)
       (ErrLowerEnv (box (lower-diagnostic message)))]))
 
 (define (lower-bind-match-catch-all-pattern
@@ -37117,7 +37118,7 @@
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(OkAstTypeList fields)
+            [(ResultAstTypeList.Ok fields)
               (let
                 [resolved-fields : AstTypeList
                   (lower-variant-payload-fields-for-handle
@@ -37187,7 +37188,7 @@
                                       phi-inputs))))])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
                     [(ErrLowerEnv message) (ErrLowerExpr message)])))]
-            [(ErrAstTypeList message)
+            [(ResultAstTypeList.Err message)
               (ErrLowerExpr (box (lower-diagnostic message)))])
           (ErrLowerExpr
             (box
@@ -37305,7 +37306,7 @@
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(OkAstTypeList fields)
+            [(ResultAstTypeList.Ok fields)
               (let
                 [resolved-fields : AstTypeList
                   (lower-variant-payload-fields-for-handle
@@ -37361,7 +37362,7 @@
                                   borrow-lifetime
                                   phi-inputs
                                   scrut-reg-group?))])]))]))]
-            [(ErrAstTypeList message)
+            [(ResultAstTypeList.Err message)
               (ErrLowerExpr (box (lower-diagnostic message)))])
           (ErrLowerExpr
             (box
@@ -39196,7 +39197,7 @@
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(OkAstTypeList fields)
+            [(ResultAstTypeList.Ok fields)
               (let
                 [resolved-fields : AstTypeList
                   (lower-variant-payload-fields-for-handle
@@ -39238,7 +39239,7 @@
                         ret-ty
                         sret-var)]
                     [(ErrLowerEnv message) (ErrLowerState message)])))]
-            [(ErrAstTypeList message)
+            [(ResultAstTypeList.Err message)
               (ErrLowerState (box (lower-diagnostic message)))])
           (ErrLowerState
             (box
@@ -39338,7 +39339,7 @@
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
-            [(OkAstTypeList fields)
+            [(ResultAstTypeList.Ok fields)
               (let
                 [resolved-fields : AstTypeList
                   (lower-variant-payload-fields-for-handle
@@ -39393,7 +39394,7 @@
                                   sret-var
                                   borrow-lifetime
                                   scrut-reg-group?))])]))]))]
-            [(ErrAstTypeList message)
+            [(ResultAstTypeList.Err message)
               (ErrLowerState (box (lower-diagnostic message)))])
           (ErrLowerState
             (box
@@ -40176,9 +40177,9 @@
   (match field
     [(AstFieldDef field-name ty cleanup)
       (match cleanup
-        [(AstFieldNoCleanup) (OkAstExprList acc)]
+        [(AstFieldNoCleanup) (ResultAstExprList.Ok acc)]
         [(AstFieldCleanupFn cleanup-name)
-          (OkAstExprList
+          (ResultAstExprList.Ok
             (ast-expr-cons
               (lower-struct-cleanup-call-expr
                 (intern-str cleanup-name)
@@ -40188,14 +40189,14 @@
         [(AstFieldOwnedCleanup)
           (match (lower-struct-cleanup-name-for-type ctx ty)
             [(ResultTcString.Ok cleanup-name)
-              (OkAstExprList
+              (ResultAstExprList.Ok
                 (ast-expr-cons
                   (lower-struct-cleanup-call-expr
                     cleanup-name
                     value-name
                     (intern-str field-name))
                   acc))]
-            [(ResultTcString.Err message) (ErrAstExprList message)])])]))
+            [(ResultTcString.Err message) (ResultAstExprList.Err message)])])]))
 
 (define (lower-struct-cleanup-body-fields
   [ctx : TcContext]
@@ -40203,14 +40204,14 @@
   [fields : AstFieldDefList]
   [acc : AstExprList]) : ResultAstExprList
   (match fields
-    [(AstFieldDefNil) (OkAstExprList acc)]
+    [(AstFieldDefNil) (ResultAstExprList.Ok acc)]
     [(AstFieldDefCons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match (lower-struct-cleanup-field-exprs ctx value-name field acc)
-          [(OkAstExprList next)
+          [(ResultAstExprList.Ok next)
             (lower-struct-cleanup-body-fields ctx value-name rest next)]
-          [(ErrAstExprList message) (ErrAstExprList message)]))]))
+          [(ResultAstExprList.Err message) (ResultAstExprList.Err message)]))]))
 
 (define (lower-struct-cleanup-function
   [ctx : TcContext]
@@ -40225,7 +40226,7 @@
   (let
     [value-name : String (lower-struct-cleanup-param-name)]
     (match (lower-struct-cleanup-body-fields ctx value-name fields AstExprNil)
-      [(OkAstExprList exprs)
+      [(ResultAstExprList.Ok exprs)
         (let
           [params : AstParamList
             (ast-param-cons (ast-param value-name struct-ty false) AstParamNil)]
@@ -40244,7 +40245,7 @@
             spans
             names
             mode))]
-      [(ErrAstExprList message)
+      [(ResultAstExprList.Err message)
         (ErrLowerFunction (box (lower-diagnostic message)))])))
 
 (define (lower-struct-cleanup-decl
@@ -40835,7 +40836,7 @@
           (match (compiler-program-decl-at-index
             (tc-context-program ctx)
             (compiler-symbol-handle-index handle))
-            [(OkAstDecl decl)
+            [(ResultAstDecl.Ok decl)
               (lower-dispatch-lower-variant-decl
                 ctx
                 top-env
@@ -40846,7 +40847,7 @@
                 spans
                 names
                 mode)]
-            [(ErrAstDecl message)
+            [(ResultAstDecl.Err message)
               (ErrLowerFunction (box (lower-diagnostic message)))])
           (ErrLowerFunction
             (box
@@ -42337,7 +42338,7 @@
     (intern-reset!)
     (cbi.compiler-builtin-reset!)
     (match (parse-ast-source src)
-      [(OkAstProgram program)
+      [(ResultAstProgram.Ok program)
         (if (lower-source-program-needs-loader? program)
           (let
             [stdlib-roots : vector.StringVec (vector.string-vec-new)]
@@ -42356,7 +42357,7 @@
                     cfgs))]
               [(ResultCompilerLoadWithPaths.Err diag) (ErrCompilerLower diag)]))
           (lower-compiler-program-with-path-mode path program mode))]
-      [(ErrAstProgram message)
+      [(ResultAstProgram.Err message)
         (ErrCompilerLower
           (box (lower-diagnostic-with-path (lower-diagnostic message) path)))])))
 
@@ -43051,7 +43052,7 @@
 
 (define (compiler-lower-stdlib-string-wrapper-prune-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdlib-string-wrapper-prune-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "stdlib/tl"
         program
@@ -43078,7 +43079,7 @@
                     functions
                     "string.tl::stdlib.string/string-length")))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-string-runtime-source) : String
   "(define (io.print-string [text : String]) : unit
@@ -43475,7 +43476,7 @@
 
 (define (compiler-lower-clone-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-clone-source))
-    [(OkAstProgram ast)
+    [(ResultAstProgram.Ok ast)
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
@@ -43567,11 +43568,11 @@
                     (set! ok false))
                   ok))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
   (match (parse-ast-source (compiler-lower-clone-dynarray-bulk-source))
-    [(OkAstProgram ast)
+    [(ResultAstProgram.Ok ast)
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
@@ -43637,11 +43638,11 @@
                     (set! ok false))
                   ok))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-clone-reachable-helpers-ok?) : bool
   (match (parse-ast-source (compiler-lower-clone-reachable-source))
-    [(OkAstProgram ast)
+    [(ResultAstProgram.Ok ast)
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
@@ -43667,7 +43668,7 @@
                     "<source>::clone$UsedClone")
                   1))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-inline-struct-source) : String
   "(defstruct Packet (tag i64) (small u8) (count i64))
@@ -47181,7 +47182,7 @@
 
 (define (compiler-lower-generated-paths-preserved-ok?) : bool
   (match (parse-ast-source (compiler-lower-generated-path-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -47199,7 +47200,7 @@
                     "lib.tl::after")
                   1))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-symbol-source) : String
   "(define answer : i64 40)
@@ -47215,7 +47216,7 @@
 
 (define (compiler-lower-module-symbols-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-symbol-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -47233,7 +47234,7 @@
                 (> (lower-test-function-binop-count functions "lib.tl::inc") 0)
                 (>= (lower-test-function-binop-count functions "main") 0))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-package-owned-symbol-source) : String
   "(define (runtime-helper) : i64 1)
@@ -47249,7 +47250,7 @@
 
 (define (compiler-lower-package-owned-symbols-ok?) : bool
   (match (parse-ast-source (compiler-lower-package-owned-symbol-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         ""
         program
@@ -47269,7 +47270,7 @@
                     "app/src/main.tl::app-helper")
                   1))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-entry-main-source) : String
   "(module stdlib.arena)
@@ -47278,7 +47279,7 @@
 
 (define (compiler-lower-module-entry-main-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-entry-main-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "stdlib/arena.tl"
         program
@@ -47295,7 +47296,7 @@
                     "arena.tl::stdlib.arena/helper")
                   1))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-qualified-source) : String
   "(module left)
@@ -47591,7 +47592,7 @@
 
 (define (compiler-lower-module-specialize-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-specialize-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -47605,7 +47606,7 @@
                   "__tl_specialized_alloc_type_i64_none")
                 0)])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-extern-link-metadata-source) : String
   "(extern (ffi-add [arg0 : i64]) : i64 (:abi c) (:symbol \"ffi_add\") (:link-lib \"ffi\") (:link-search \"native\") (:link-arg \"-Wl,--as-needed\"))
@@ -49263,7 +49264,7 @@
 
 (define (compiler-lower-stdlib-hash-string-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdlib-hash-string-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -49296,7 +49297,7 @@
                     (set! ok false))
                   ok))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-reference-values-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-reference-return-source))
@@ -50147,7 +50148,7 @@
 
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-with-escape-owning-source))
-    [(OkAstProgram ast)
+    [(ResultAstProgram.Ok ast)
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
@@ -50160,7 +50161,7 @@
                   (compiler-lower-with-escape-owning-source))
                 (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-with-escape-shape-ok?) : bool
   (let
@@ -50277,7 +50278,7 @@
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
   (match (parse-ast-source (compiler-lower-with-scratch-owning-source))
-    [(OkAstProgram ast)
+    [(ResultAstProgram.Ok ast)
       (match (lower-compiler-program-with-decl-paths
         "<source>"
         ast
@@ -50290,7 +50291,7 @@
                   (compiler-lower-with-scratch-owning-source))
                 (> (lower-test-functions-call-count functions "tl_alloc") 0))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-with-scratch-shape-ok?) : bool
   (let
@@ -50319,7 +50320,7 @@
 
 (define (compiler-lower-runtime-substring-scratch-reachable-ok?) : bool
   (match (parse-ast-source (compiler-lower-runtime-substring-scratch-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -50338,11 +50339,11 @@
                     "tl_substring")
                   0))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-runtime-substring-call-reachable-ok?) : bool
   (match (parse-ast-source (compiler-lower-runtime-substring-call-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -50361,12 +50362,12 @@
                     "tl_substring")
                   0))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?) : bool
   (match (parse-ast-source
     (compiler-lower-runtime-substring-capturing-lambda-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program-with-decl-paths
         "app.tl"
         program
@@ -50385,7 +50386,7 @@
                     "tl_substring")
                   0))])]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-in-arena-source) : String
   (compiler-lower-with-arena-source
@@ -51800,27 +51801,27 @@
 
 (define (compiler-lower-string-length-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-length-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
         [(OkCompilerLower _ _) true]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-string-runtime-ok?) : bool
   (match (parse-ast-source (compiler-lower-string-runtime-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
         [(OkCompilerLower _ _) true]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-stdio-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdio-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (lower-compiler-program program)
         [(OkCompilerLower _ _) true]
         [(ErrCompilerLower _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-stdio-builtin-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-stdio-builtin-source))
@@ -53120,7 +53121,7 @@
 
 (define (compiler-lower-unsafe-ast-dce-ok?) : bool
   (match (parse-ast-source (compiler-lower-unsafe-ast-dce-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match program
         [(AstProgram.Program decls-box)
           (let
@@ -53142,7 +53143,7 @@
                 (match kept-program
                   [(AstProgram.Program kept-box)
                     (compiler-lower-unsafe-ast-dce-kept-ok? (box-get kept-box))])]))])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-boxed-helper-lists-ok?) : bool
   (let

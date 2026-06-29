@@ -1821,7 +1821,7 @@
   [stdlib-roots : vector.StringVec]
   [cfgs : SymI64Env]) : bool
   (match (parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (match (typecheck-compiler-program-with-paths-cache
         program
         paths
@@ -1832,7 +1832,7 @@
           cfgs))
         [(ResultCompilerTypecheck.Ok _) true]
         [(ResultCompilerTypecheck.Err _) false])]
-    [(ErrAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?) : bool
   (let
@@ -2254,7 +2254,7 @@
   [path : String]
   [source : String]) : bool
   (match (parse-ast-source-diagnostic path source)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (match (compiler-load-surface-summary-build
         path
         (compiler-load-dirname path)
@@ -2265,7 +2265,7 @@
             (compiler-load-record-surface-summary! summary)
             true)]
         [(ResultCompilerLoadSurfaceSummary.Err _) false])]
-    [(ErrAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-typecheck-smoke-lazy-summary-macro-provider-source) : String
   "(module tc.lazy.summary.macro.provider)
@@ -2327,7 +2327,7 @@
         provider-path
         provider-source)
         (match (parse-ast-source-diagnostic "" entry-source)
-          [(OkAstProgramDiagnostic entry-program)
+          [(ResultAstProgramDiagnostic.Ok entry-program)
             (match (typecheck-compiler-program-with-paths-checked
               entry-program
               AstDeclPathList.Nil)
@@ -2340,7 +2340,7 @@
                       (= (tc-lazy-import-summary-macro-force-count) 0)
                       (> (tc-lazy-import-summary-macro-force-count) 0))))]
               [(ResultCompilerTypecheckChecked.Err _) (set! ok false)])]
-          [(ErrAstProgramDiagnostic _) (set! ok false)])
+          [(ResultAstProgramDiagnostic.Err _) (set! ok false)])
         (set! ok false))
       (compiler-typecheck-reset-file-state!)
       (compiler-load-surface-summaries-reset!)
@@ -2427,7 +2427,7 @@
       (match (parse-ast-source-diagnostic
         ""
         (compiler-typecheck-smoke-lazy-import-explicit-alias-source))
-        [(OkAstProgramDiagnostic program)
+        [(ResultAstProgramDiagnostic.Ok program)
           (match (typecheck-compiler-program-with-paths-checked
             program
             AstDeclPathList.Nil)
@@ -2484,7 +2484,7 @@
                           [(ResultTcType.Err _) false]))]
                     [(ResultTcEnv.Err _) false])))]
             [(ResultCompilerTypecheckChecked.Err _) false])]
-        [(ErrAstProgramDiagnostic _) false])]
+        [(ResultAstProgramDiagnostic.Err _) false])]
     (begin
       (compiler-typecheck-reset-file-state!)
       ok)))

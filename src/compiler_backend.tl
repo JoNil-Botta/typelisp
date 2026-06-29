@@ -38317,6 +38317,36 @@ tl_memchr:
     [(string.string-eq reg "%r15") (struct-get owners r15)]
     [else ""]))
 
+;; The first tracked GP register whose mirrored slot equals `slot`, other than
+;; `exclude`, or "" if none. Drives cross-register reload reuse: a redundant
+;; `movq SLOT, exclude` becomes `movq <found>, exclude` (reg-reg, cheaper) when
+;; another register already holds SLOT's value. The per-destination owner-clear
+;; invariant guarantees `found` still holds SLOT (not written since it loaded it,
+;; and SLOT not written since -- a slot write clears every mirror). An empty
+;; `slot` matches nothing (a reg with unknown owner must never be "reused").
+(define (compiler-backend-peephole-owners-find-reg-for-slot
+  [owners : CompilerBackendPeepholeOwners]
+  [slot : String]
+  [exclude : String]) : String
+  (if (string.string-eq slot "")
+    ""
+    (cond
+      [(and (not (string.string-eq exclude "%rax")) (string.string-eq (struct-get owners rax) slot)) "%rax"]
+      [(and (not (string.string-eq exclude "%rcx")) (string.string-eq (struct-get owners rcx) slot)) "%rcx"]
+      [(and (not (string.string-eq exclude "%rdx")) (string.string-eq (struct-get owners rdx) slot)) "%rdx"]
+      [(and (not (string.string-eq exclude "%rbx")) (string.string-eq (struct-get owners rbx) slot)) "%rbx"]
+      [(and (not (string.string-eq exclude "%rsi")) (string.string-eq (struct-get owners rsi) slot)) "%rsi"]
+      [(and (not (string.string-eq exclude "%rdi")) (string.string-eq (struct-get owners rdi) slot)) "%rdi"]
+      [(and (not (string.string-eq exclude "%r8")) (string.string-eq (struct-get owners r8) slot)) "%r8"]
+      [(and (not (string.string-eq exclude "%r9")) (string.string-eq (struct-get owners r9) slot)) "%r9"]
+      [(and (not (string.string-eq exclude "%r10")) (string.string-eq (struct-get owners r10) slot)) "%r10"]
+      [(and (not (string.string-eq exclude "%r11")) (string.string-eq (struct-get owners r11) slot)) "%r11"]
+      [(and (not (string.string-eq exclude "%r12")) (string.string-eq (struct-get owners r12) slot)) "%r12"]
+      [(and (not (string.string-eq exclude "%r13")) (string.string-eq (struct-get owners r13) slot)) "%r13"]
+      [(and (not (string.string-eq exclude "%r14")) (string.string-eq (struct-get owners r14) slot)) "%r14"]
+      [(and (not (string.string-eq exclude "%r15")) (string.string-eq (struct-get owners r15) slot)) "%r15"]
+      [else ""])))
+
 ;; Owner map with `reg`'s slot set to `slot` ("" clears it). No-op when `reg`
 ;; is not a tracked register (e.g. an immediate or untracked register source).
 (define (compiler-backend-peephole-owners-set-reg
@@ -38646,21 +38676,42 @@ tl_memchr:
     pending-owned?)
     [(CompilerBackendPeepholeMove src dst)
       (let
-        [next-out : text_buf.TextBuf
-          (if (and
-            (compiler-backend-peephole-stack-slot-operand? src)
+        [is-slot : bool (compiler-backend-peephole-stack-slot-operand? src)]
+        ;; same-register elision: dst already mirrors this slot -> drop the reload.
+        [dst-owns : bool
+          (and
+            is-slot
             (string.string-eq
               (compiler-backend-peephole-owners-get owners dst)
-              src))
-            out
-            (compiler-backend-peephole-append-pending-line
-              out
-              asm
-              pending-start
-              pending-end
-              pending-line
-              pending-owned?
-              pending-newline))]
+              src))]
+        ;; cross-register reuse: another GP reg already holds this slot -> rewrite
+        ;; the memory reload `movq SLOT, dst` as the cheaper `movq <ry>, dst`.
+        [ry : String
+          (if (and is-slot (not dst-owns) (compiler-backend-peephole-owner-reg? dst))
+            (compiler-backend-peephole-owners-find-reg-for-slot owners src dst)
+            "")]
+        [next-out : text_buf.TextBuf
+          (cond
+            [dst-owns out]
+            [(not (string.string-eq ry ""))
+              (let
+                [b1 : text_buf.TextBuf (text_buf.text-buf-append out "    movq ")]
+                [b2 : text_buf.TextBuf (text_buf.text-buf-append b1 ry)]
+                [b3 : text_buf.TextBuf (text_buf.text-buf-append b2 ", ")]
+                [b4 : text_buf.TextBuf (text_buf.text-buf-append b3 dst)]
+                (if pending-newline (text_buf.text-buf-append b4 "\n") b4))]
+            [else
+              (compiler-backend-peephole-append-pending-line
+                out
+                asm
+                pending-start
+                pending-end
+                pending-line
+                pending-owned?
+                pending-newline)])]
+        ;; The owner transfer is keyed on the ORIGINAL move (SLOT -> dst): dst now
+        ;; mirrors SLOT regardless of whether the line was emitted as the reload or
+        ;; the reg-reg rewrite (both leave dst holding SLOT's value).
         [next-owners : CompilerBackendPeepholeOwners
           (compiler-backend-peephole-movq-owners-transfer owners src dst)]
         (CompilerBackendPeepholeEmitResult next-out next-owners))]

@@ -78,11 +78,11 @@
       paths
       stdlib-roots
       cache-scope)
-      [(OkCompilerTypecheck summary)
+      [(ResultCompilerTypecheck.Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheck.Ok summary))]
-      [(ErrCompilerTypecheck diag)
+      [(ResultCompilerTypecheck.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))
           (ResultCompilerCheck.Err
@@ -556,8 +556,8 @@
   [ctx : TcContext]
   [name : String]) : bool
   (match (tc-inline-aggregate-layout-finite-ok ctx name)
-    [(OkTcUnit) true]
-    [(ErrTcUnit _) false]))
+    [(ResultTcUnit.Ok) true]
+    [(ResultTcUnit.Err _) false]))
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler-load-source-with-paths

@@ -718,14 +718,14 @@
             (vector.string-vec-new)
             (tc-prefix-default-cache-scope)
             pools)
-            [(OkCompilerTypecheck _)
+            [(ResultCompilerTypecheck.Ok _)
               (begin
                 (array.array-set!
                   after-cell
                   0
                   (ast-node-pool-context-expr-len pools))
                 true)]
-            [(ErrCompilerTypecheck _) false]))
+            [(ResultCompilerTypecheck.Err _) false]))
         false)]
     [(ErrAstProgramDiagnostic _) false]))
 

@@ -38482,6 +38482,151 @@ tl_memchr:
         [(compiler-backend-peephole-cmp-or-test? data i end) false]
         [else true]))))
 
+;; True iff the byte range [s,e) of `data` equals the literal `lit` exactly.
+(define (compiler-backend-peephole-range-eq?
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]
+  [lit : String]) : bool
+  (let
+    [ln : i64 (string.string-length lit)]
+    (if (not (= (- e s) ln))
+      false
+      (let
+        [ld : (Ptr u8) (unsafe (string-data lit))]
+        [k : i64 0]
+        [ok : bool true]
+        (begin
+          (while (and ok (< k ln))
+            (begin
+              (if (=
+                (compiler-backend-peephole-byte-at data (+ s k))
+                (compiler-backend-peephole-byte-at ld k))
+                unit
+                (set! ok false))
+              (set! k (+ k 1))))
+          ok)))))
+
+;; The tracked GP register name for the token [ts,te), or "" if it is not one of
+;; the 14 allocator-owned registers.
+(define (compiler-backend-peephole-token-to-reg
+  [data : (Ptr u8)]
+  [ts : i64]
+  [te : i64]) : String
+  (cond
+    [(compiler-backend-peephole-range-eq? data ts te "%rax") "%rax"]
+    [(compiler-backend-peephole-range-eq? data ts te "%rcx") "%rcx"]
+    [(compiler-backend-peephole-range-eq? data ts te "%rdx") "%rdx"]
+    [(compiler-backend-peephole-range-eq? data ts te "%rbx") "%rbx"]
+    [(compiler-backend-peephole-range-eq? data ts te "%rsi") "%rsi"]
+    [(compiler-backend-peephole-range-eq? data ts te "%rdi") "%rdi"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r8") "%r8"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r9") "%r9"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r10") "%r10"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r11") "%r11"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r12") "%r12"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r13") "%r13"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r14") "%r14"]
+    [(compiler-backend-peephole-range-eq? data ts te "%r15") "%r15"]
+    [else ""]))
+
+;; The single tracked GP register that is the LAST operand of the line [start,end),
+;; or "" if the last operand is not a simple tracked register (memory, immediate,
+;; xmm, or an untracked reg). Used to invalidate exactly the register a single-dest
+;; instruction writes. A memory last operand ends in ')' so the backward reg-token
+;; scan yields an empty token -> "".
+(define (compiler-backend-peephole-last-operand-reg
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : String
+  (let
+    [te : i64 end]
+    (begin
+      (while (and
+        (> te start)
+        (= (compiler-backend-peephole-byte-at data (- te 1)) 32))
+        (set! te (- te 1)))
+      (let
+        [ts : i64 te]
+        (begin
+          (while (and
+            (> ts start)
+            (let
+              [b : i64 (compiler-backend-peephole-byte-at data (- ts 1))]
+              (or
+                (= b 37)
+                (and (>= b 97) (<= b 122))
+                (and (>= b 48) (<= b 57)))))
+            (set! ts (- ts 1)))
+          (if (and
+            (< ts te)
+            (= (compiler-backend-peephole-byte-at data ts) 37)
+            (or
+              (= ts start)
+              (let
+                [pb : i64 (compiler-backend-peephole-byte-at data (- ts 1))]
+                (or (= pb 32) (= pb 44) (= pb 9)))))
+            (compiler-backend-peephole-token-to-reg data ts te)
+            ""))))))
+
+;; True iff the mnemonic token [i,i+mlen) is a q-suffix instruction whose ONLY
+;; written GP register is its last operand (so invalidating just that register is
+;; sound). Excludes multi-writers (imul/mul/div/cqo/call/xchg) and byte-dest setcc.
+(define (compiler-backend-peephole-mnemonic-single-dest?
+  [data : (Ptr u8)]
+  [i : i64]
+  [mlen : i64]) : bool
+  (let
+    [e : i64 (+ i mlen)]
+    (or
+      (compiler-backend-peephole-range-eq? data i e "addq")
+      (compiler-backend-peephole-range-eq? data i e "subq")
+      (compiler-backend-peephole-range-eq? data i e "andq")
+      (compiler-backend-peephole-range-eq? data i e "orq")
+      (compiler-backend-peephole-range-eq? data i e "xorq")
+      (compiler-backend-peephole-range-eq? data i e "leaq")
+      (compiler-backend-peephole-range-eq? data i e "shlq")
+      (compiler-backend-peephole-range-eq? data i e "shrq")
+      (compiler-backend-peephole-range-eq? data i e "sarq")
+      (compiler-backend-peephole-range-eq? data i e "salq")
+      (compiler-backend-peephole-range-eq? data i e "negq")
+      (compiler-backend-peephole-range-eq? data i e "notq")
+      (compiler-backend-peephole-range-eq? data i e "incq")
+      (compiler-backend-peephole-range-eq? data i e "decq")
+      (compiler-backend-peephole-range-eq? data i e "movzbq")
+      (compiler-backend-peephole-range-eq? data i e "movzwq")
+      (compiler-backend-peephole-range-eq? data i e "movsbq")
+      (compiler-backend-peephole-range-eq? data i e "movswq")
+      (compiler-backend-peephole-range-eq? data i e "movslq"))))
+
+;; Per-destination owner invalidation for a non-movq line. If the line is a
+;; whitelisted single-GP-dest q-op whose last operand is a tracked register, clear
+;; only that register's owner (everything else's reg<->slot mirror survives).
+;; Otherwise fall back to the conservative whole-map clear (line-clears-owners?).
+(define (compiler-backend-peephole-line-clobber-owners
+  [owners : CompilerBackendPeepholeOwners]
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : CompilerBackendPeepholeOwners
+  (if (not (compiler-backend-peephole-line-clears-owners? data start end))
+    owners
+    (let
+      [i : i64 start]
+      (begin
+        (while (and
+          (< i end)
+          (= (compiler-backend-peephole-byte-at data i) 32))
+          (set! i (+ i 1)))
+        (let
+          [mlen : i64 (compiler-backend-peephole-token-len data i end)]
+          (if (compiler-backend-peephole-mnemonic-single-dest? data i mlen)
+            (let
+              [dreg : String (compiler-backend-peephole-last-operand-reg data start end)]
+              (if (string.string-eq dreg "")
+                (compiler-backend-peephole-owners-empty)
+                (compiler-backend-peephole-owners-set-reg owners dreg "")))
+            (compiler-backend-peephole-owners-empty)))))))
+
 (define (compiler-backend-peephole-emit-pending-line
   [out : text_buf.TextBuf]
   [asm : String]
@@ -38521,20 +38666,18 @@ tl_memchr:
         (CompilerBackendPeepholeEmitResult next-out next-owners))]
     [(CompilerBackendPeepholeNoMove)
       (let
-        [clears? : bool
+        [next-owners : CompilerBackendPeepholeOwners
           (if pending-owned?
-            (compiler-backend-peephole-line-clears-owners?
+            (compiler-backend-peephole-line-clobber-owners
+              owners
               (unsafe (string-data pending-line))
               0
               (string.string-length pending-line))
-            (compiler-backend-peephole-line-clears-owners?
+            (compiler-backend-peephole-line-clobber-owners
+              owners
               asm-data
               pending-start
               pending-end))]
-        [next-owners : CompilerBackendPeepholeOwners
-          (if clears?
-            (compiler-backend-peephole-owners-empty)
-            owners)]
         (CompilerBackendPeepholeEmitResult
           (compiler-backend-peephole-append-pending-line
             out

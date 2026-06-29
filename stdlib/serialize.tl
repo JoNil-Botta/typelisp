@@ -1,6 +1,6 @@
 ;# Format-generic struct serialization macros.
 ;#
-;# `serialize` emits a generated module for a concrete type and a format
+;# `serialize` emits a generated module for a concrete struct type and a format
 ;# strategy module:
 ;#
 ;# ```lisp test=ignore name=serialize-strategy-sketch reason="sketch uses an application-provided format module"
@@ -10,16 +10,46 @@
 ;# ```
 ;#
 ;# The generated module exposes `Value`, `Result`, `Ok`, `Err`, `encode`,
-;# `decode`, `is-ok?`, `value-or`, and `error-or`. The strategy module must
-;# export a concrete `Value` type and these hook macros for the struct/sequence
-;# subset:
-;# `encode-bool`, `decode-bool`, `encode-int`, `decode-int`, `encode-float`,
-;# `decode-float`, `encode-string`, `decode-string`, `object-empty`,
-;# `object-field`, `object-finish`, `expect-object`, `field-value`, and
-;# `sequence-empty`, `sequence-element`, `sequence-finish`, `sequence-length`,
-;# `sequence-element-value`, and `extra-decls`. `extra-decls` may emit
-;# format-specific helper aliases in the generated module, or `(begin)` when the
-;# generic `encode` / `decode` API is enough.
+;# `decode`, `is-ok?`, `value-or`, and `error-or`. `Value` aliases the concrete
+;# strategy `Value` type, while `Result` wraps decoded values as `Ok T` or
+;# `Err String`. Strategy hooks are ordinary exported macros looked up with
+;# `comptime.module-hook`; a missing hook is reported as
+;# `typecheck: strategy module <module> does not export hook <name>`.
+;#
+;# A strategy module must export:
+;#
+;# - A concrete `Value` type.
+;# - Scalar hooks:
+;#   `encode-bool(value: bool) -> Value`,
+;#   `decode-bool(value: Expr, err-ctor: Expr) -> Expr`,
+;#   `encode-int(T: type, value: Expr) -> Value`,
+;#   `decode-int(T: type, value: Expr, err-ctor: Expr) -> Expr`,
+;#   `encode-float(T: type, value: Expr) -> Value`,
+;#   `decode-float(T: type, value: Expr, err-ctor: Expr) -> Expr`,
+;#   `encode-string(value: String) -> Value`, and
+;#   `decode-string(value: Expr, err-ctor: Expr) -> Expr`.
+;# - Object hooks for every derived struct:
+;#   `object-empty() -> FieldList`,
+;#   `object-field(name: Expr, value: Expr, rest: Expr) -> FieldList`,
+;#   `object-finish(fields: Expr) -> Value`,
+;#   `expect-object(value: Expr, type-name: Expr, err-ctor: Expr) -> unit`, and
+;#   `field-value(object: Expr, name: Expr, err-ctor: Expr) -> Expr`.
+;# - Sequence hooks when any serialized field is a fixed or dynamic array:
+;#   `sequence-empty() -> ValueList`,
+;#   `sequence-element(index: Expr, value: Expr, rest: Expr) -> ValueList`,
+;#   `sequence-finish(items: Expr) -> Value`,
+;#   `sequence-length(value: Expr, err-ctor: Expr) -> i64`, and
+;#   `sequence-element-value(value: Expr, index: Expr, err-ctor: Expr) -> Expr`.
+;# - `extra-decls(T: type) -> Decls`, which may emit format-specific helper
+;#   aliases such as `to-json` / `from-json`, or `(begin)` when the generic
+;#   `encode` / `decode` API is enough.
+;#
+;# Decode hooks receive the generated module's `Err` constructor as `err-ctor`.
+;# On malformed input they should expand to an expression that returns
+;# `(err-ctor message)` from the generated `decode` function; on success they
+;# should produce a value expression of the requested field type. Sequence decode
+;# hooks report the source length and individual encoded elements; the generated
+;# module allocates and fills the fixed or dynamic output array.
 (module stdlib.serialize)
 
 (import stdlib.comptime)

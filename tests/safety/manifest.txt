@@ -173,6 +173,10 @@ struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match
 struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
 foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
 runtime_type_literal_reject|check-fail|tests/safety/runtime_type_literal_reject.tl|-|type value i64 is compile-time only
+serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish
+serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
+serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
+serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
 import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch
 sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope

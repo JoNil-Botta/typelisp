@@ -179,10 +179,11 @@ use.
 - `json.tl`: JSON value parser and serializer for tool protocols and data
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON
-  number conversion helpers. It is also the first `serialize.tl` strategy:
-  instantiate with `(import (serialize.serialize json Person) as person_json)`
-  to get `to-json` / `from-json` aliases alongside generic `encode` / `decode`.
-  Import it with `(import "stdlib/json.tl")`.
+  number conversion helpers. It is also a `serialize.tl` strategy for structs
+  with scalar, nested struct, fixed-array, and dynamic-array fields: instantiate
+  with `(import (serialize.serialize json Person) as person_json)` to get
+  `to-json` / `from-json` aliases alongside generic `encode` / `decode`. Import
+  it with `(import "stdlib/json.tl")`.
 - `math.tl`: pure scalar math helpers with no runtime imports or platform
   externs: absolute value for `i64`, `f64`, and `f32`, plus min, max, clamp,
   and sign predicates for `i64` and `f64`.
@@ -208,9 +209,12 @@ use.
   with `(import (serialize.serialize fmt Person) as person_ser)`. The generated
   module exposes `encode` / `decode` over the strategy's `Value` type, a local
   `Result` enum, and any format-specific declarations emitted by the strategy's
-  `extra-decls` hook. The first implementation covers scalar fields and nested
-  structs through strategy hook macros; enum and sequence support remain
-  follow-up slices under #3837.
+  `extra-decls` hook. Current derives cover structs with scalar `bool`, integer,
+  float, and `String` fields, nested structs, fixed arrays, and dynamic arrays;
+  strategy hooks own object and sequence representation, decode diagnostics, and
+  helper aliases. The checked toy format exercises the hook contract, and
+  `json.tl` provides the JSON integration strategy. Enum serialization remains a
+  separate follow-up.
 - `process.tl`: process command/output/error data model and the public
   `output`/`start`/`wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and
@@ -492,7 +496,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `arena-*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` wrappers around raw runtime handles. `arena-make` creates an independent ordinary arena, `arena-make-atomic` creates an independent atomic arena, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
-| `(serialize format T)` generated modules in `serialize.tl` | The generic derive macro itself allocates no runtime storage; it emits calls to the selected format module's hook macros. Generated `encode` allocation behavior is therefore format-owned, while generated `decode` initializes one output aggregate and mutates its fields in place before returning `Result.Ok` or `Result.Err`. Nested struct derives reuse generated serializer modules and do not copy collection storage beyond whatever the strategy hooks explicitly allocate. |
+| `(serialize format T)` generated modules in `serialize.tl` | The generic derive macro itself allocates no runtime storage; it emits calls to the selected format module's hook macros. Generated `encode` allocation behavior is therefore format-owned, while generated `decode` initializes one output aggregate and mutates its fields in place before returning `Result.Ok` or `Result.Err`. Fixed-array fields initialize inline output storage; dynamic-array fields allocate the decoded output array at the decoded length. Nested struct derives reuse generated serializer modules and do not copy collection storage beyond decoded array storage and whatever the strategy hooks explicitly allocate. |
 | `string-eq`, `string=?`, `string->int` | Equality and integer parsing helpers inspect borrowed string bytes without allocating. Owned `String` places auto-borrow at call sites, and stdlib code that already has `(& r str)` values calls the same public helpers directly. `string->int` keeps the legacy runtime parser rules, including `""`/`"-"` as zero and byte-minus-`'0'` arithmetic for non-digits. |
 | `process-*` helpers in `process.tl` / `process_borrowed.tl` | Owned `process.tl` helpers construct process command/output/error aggregates in the active arena. Command builders keep owned `String` parameters because `ProcessCommand`, argv, env, cwd, and stdin fields store owned strings; validators use borrowed text inspection where they do not store inputs. Ordered argv append helpers allocate list nodes. `StringVec` argv helpers accumulate through vector backing storage and convert once to `ProcessStringList`, allocating list nodes while preserving vector order. `ProcessEnvVec` stores env overrides in parallel `StringVec` buffers with an equal-length invariant; append/growth allocate through the underlying vectors, validation checks invalid names and shape, and conversion to `ProcessEnvList` allocates list nodes while preserving vector order and duplicate names. `process_borrowed.tl` exposes lifetime-parameterized `ProcessBorrowedCommand` storage for borrowed executable, argv, cwd, env, and stdin text. Borrowed `output`, `run`, and `start` validate borrowed storage and copy once to owned `ProcessCommand` before the runtime boundary. Borrowed argv and env lists are lifetime-homogeneous; use the owned conversion boundary to join independently scoped text. On Linux and Windows, owned and borrowed process-output/run/start paths execute through `process_runtime.tl`, preserving inherited environment entries, replacing entries named by env overrides, honoring cwd, and feeding string stdin where supported. Unsupported targets return structured errors. |
 | `thread-*` helpers in `thread.tl` | Thread spawning allocates a small active-arena context, join/result cells, and on Linux a raw worker stack before the OS thread starts. Each worker initializes a fresh per-thread default arena before calling user code. `thread-spawn-string`, `thread-spawn-array-i64`, and `thread-spawn-box-i64` also allocate a fresh atomic arena and one result cell so the joined aggregate storage can safely outlive the worker. Semaphore handles are OS resources and do not allocate TypeLisp heap storage beyond result aggregates. The raw `i64` context/result surface still does not transfer ownership; callers that pass addresses through it remain responsible for synchronization in unsafe code. |

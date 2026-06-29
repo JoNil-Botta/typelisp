@@ -27114,7 +27114,7 @@
 ;;
 ;; Soundness: substituting a global's initializer is valid only when the global is
 ;; immutable. A global is mutated by either (1) a direct `CompilerIrInstr.Store name`
-;; (the lowering of `(set! global ...)`, see compiler_lower.tl AstExprSet), or
+;; (the lowering of `(set! global ...)`, see compiler_lower.tl AstExpr.Set), or
 ;; (2) a write through a pointer derived from its address, which only exists if
 ;; `(& global)` was taken -- lowered to `CompilerIrValue.GlobalAddr name`. Disqualifying a
 ;; global on EITHER signal leaves only provably-never-written globals, whose value

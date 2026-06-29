@@ -1775,7 +1775,7 @@
     (AstSomeType (AstTyString))
     (ast-node-pool-context-expr-push
       pools
-      (AstExprLiteral (AstLitString contents)))))
+      (AstExpr.Literal (AstLitString contents)))))
 
 (define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
   (let
@@ -1793,7 +1793,7 @@
   (ast-decl-def
     name
     (AstSomeType (ast-ty-dyn-array-with-pools pools (AstTyU8)))
-    (ast-node-pool-context-expr-push pools (AstExprBinaryData contents))))
+    (ast-node-pool-context-expr-push pools (AstExpr.BinaryData contents))))
 
 (define (compiler-load-include-str-read-error
   [importer-path : String]
@@ -6070,7 +6070,7 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match value
-          [(AstExprLiteral (AstLitString text))
+          [(AstExpr.Literal (AstLitString text))
             (and
               (string.string-eq (intern-str got) name)
               (string.string-eq text want))]
@@ -6096,7 +6096,7 @@
         [value : AstExpr (ast-node-get value-box)]
         [elem : AstType (ty-node-get elem-id)]
         (match value
-          [(AstExprBinaryData text)
+          [(AstExpr.BinaryData text)
             (and
               (string.string-eq (intern-str got) name)
               (match elem
@@ -7398,13 +7398,13 @@
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
     [meta : AstGeneratedDeclMeta
-      (AstGeneratedDeclMeta.Some "gen" "generated-fn" AstExprNil "")]
+      (AstGeneratedDeclMeta.Some "gen" "generated-fn" AstExprList.Nil "")]
     [inner : AstDecl
       (ast-decl-def-fn
         "generated-fn"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
+        (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
       "demo"
@@ -7425,7 +7425,7 @@
                       (string.string-eq generator "gen")
                       (string.string-eq item "generated-fn")
                       (match arg-keys
-                        [(AstExprNil) true]
+                        [(AstExprList.Nil) true]
                         [_ false]))]
                   [_ false])
                 (match template
@@ -9735,19 +9735,19 @@
         "runtime-helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (ast-lit-int 1))))]
+        (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "helper"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (ast-lit-int 2))))]
+        (ast-node-push (AstExpr.Literal (ast-lit-int 2))))]
     [main-decl : AstDecl
       (ast-decl-def-fn
         "main"
         AstParamNil
         (AstTyI64)
-        (ast-node-push (AstExprLiteral (ast-lit-int 0))))]
+        (ast-node-push (AstExpr.Literal (ast-lit-int 0))))]
     [decls : AstDeclList
       (ast-decl-cons
         runtime-decl

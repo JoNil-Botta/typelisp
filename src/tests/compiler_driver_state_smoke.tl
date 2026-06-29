@@ -827,28 +827,27 @@
         [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
-            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (compiler-driver-builtin-typecheck-string-length-id?
+              string-length-id)
             (set! ok false))
           (compiler-driver-state-capture-active-builtins! state-a)
           (let
             [state-a-generation : i64
-              (compiler-builtin-ids-state-generation
-                (array.array-ref (struct-get state-a builtin-ids) 0))]
+              (compiler-driver-state-builtin-generation state-a)]
             (begin
               (compiler-driver-state-install-builtins! state-b)
               (let
                 [array-length-id : i64 (intern "array-length")]
                 (begin
                   (unless
-                    (compiler-builtin-typecheck-array-length-id?
+                    (compiler-driver-builtin-typecheck-array-length-id?
                       array-length-id)
                     (set! ok false))
                   (compiler-driver-state-capture-active-builtins! state-b)
                   (compiler-driver-state-reset-file-state! state-b)
                   (unless
                     (=
-                      (compiler-builtin-ids-state-generation
-                        (array.array-ref (struct-get state-a builtin-ids) 0))
+                      (compiler-driver-state-builtin-generation state-a)
                       state-a-generation)
                     (set! ok false))
                   (compiler-driver-state-install-builtins! state-a)
@@ -857,17 +856,10 @@
                       (intern "__tl_string_length")]
                     (begin
                       (unless
-                        (compiler-builtin-typecheck-string-length-id?
+                        (compiler-driver-builtin-typecheck-string-length-id?
                           string-length-id-after-reset)
                         (set! ok false))
                       ok)))))))))))
-
-(define (compiler-driver-state-smoke-builtin-ids-data-addr
-  [state : CompilerBuiltinIdsState]) : i64
-  (cast
-    (unsafe
-      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
-    : i64))
 
 (define (compiler-driver-state-smoke-builtins-scratch-capture-stable?) : bool
   (let
@@ -876,25 +868,23 @@
     (begin
       (compiler-driver-state-install-builtins! state)
       (let
-        [before : i64
-          (compiler-driver-state-smoke-builtin-ids-data-addr
-            (array.array-ref (struct-get state builtin-ids) 0))]
+        [before : i64 (compiler-driver-state-builtin-ids-data-addr state)]
         [string-length-id : i64 (intern "__tl_string_length")]
         (begin
           (unless
-            (compiler-builtin-typecheck-string-length-id? string-length-id)
+            (compiler-driver-builtin-typecheck-string-length-id?
+              string-length-id)
             (set! ok false))
           (with-scratch (compiler-driver-state-capture-active-builtins! state))
           (let
-            [after : i64
-              (compiler-driver-state-smoke-builtin-ids-data-addr
-                (array.array-ref (struct-get state builtin-ids) 0))]
+            [after : i64 (compiler-driver-state-builtin-ids-data-addr state)]
             (begin
               (unless (= before after) (set! ok false))
-              (compiler-builtin-reset!)
+              (compiler-driver-builtin-reset!)
               (compiler-driver-state-install-builtins! state)
               (unless
-                (compiler-builtin-typecheck-string-length-id? string-length-id)
+                (compiler-driver-builtin-typecheck-string-length-id?
+                  string-length-id)
                 (set! ok false))
               ok)))))))
 

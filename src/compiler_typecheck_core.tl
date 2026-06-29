@@ -5,7 +5,7 @@
 (import stdlib.hashmap)
 (import "compiler_symbols.tl")
 (import "compiler_load.tl")
-(import "compiler_builtin_ids.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
 (import "compiler_ctfe.tl")
@@ -2437,7 +2437,7 @@
 
 (define (tc-builtin-name-id [name : String]) : i64
   (begin
-    (compiler-builtin-refresh!)
+    (cbi.compiler-builtin-refresh!)
     (tc-name-id name)))
 
 ;; --- top-env build membership side table (#3792) ----------------------------
@@ -14111,7 +14111,7 @@
         (ErrTcType "typecheck: bit-not expects integer"))]))
 
 (define (tc-region-arg-builtin-name? [name : String]) : bool
-  (compiler-builtin-typecheck-region-arg-id? (tc-builtin-name-id name)))
+  (cbi.compiler-builtin-typecheck-region-arg-id? (tc-builtin-name-id name)))
 
 (define (tc-default-builtin-unshadowed-scan-id?
   [env : TcTypeEnv]
@@ -14154,7 +14154,7 @@
   (tc-name-local-bound-before-module-scan-id? env (tc-name-id name)))
 
 (define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (if (compiler-builtin-typecheck-region-arg-id? name-id)
+  (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
     (tc-default-builtin-unshadowed-scan-id? env name-id)
     false))
 
@@ -16599,10 +16599,10 @@
             (tc-layout-query-runtime-call name args)]
           [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
             (tc-one-length-handle-builtin-call ctx env args (AstTyI64))]
-          [(compiler-builtin-typecheck-length-call-id? name-id)
+          [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
             (tc-array-length-call ctx env name func args)]
           [(and
-              (compiler-builtin-typecheck-string-ref-call-id? name-id)
+              (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
           [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
@@ -16622,7 +16622,7 @@
               (not (tc-name-bound? env name)))
             (tc-reflection-query-runtime-call name)]
           [(and
-              (compiler-builtin-typecheck-clone-id? name-id)
+              (cbi.compiler-builtin-typecheck-clone-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-clone-call ctx env args)]
           [else (tc-call-expr-ordinary ctx env func args)]))]
@@ -16922,7 +16922,7 @@
   (tc-stdlib-string-helper-visible-or-wrapper-id?
     ctx
     env
-    (compiler-builtin-typecheck-public-string-length-id? source-id)
+    (cbi.compiler-builtin-typecheck-public-string-length-id? source-id)
     lookup-id
     "string-length"))
 
@@ -16944,20 +16944,20 @@
   [lookup-id : i64]) : bool
   (or
     (and
-      (compiler-builtin-typecheck-string-ref-call-id? lookup-id)
+      (cbi.compiler-builtin-typecheck-string-ref-call-id? lookup-id)
       (not (tc-name-bound-id? env lookup-id)))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
       (and
-        (compiler-builtin-typecheck-public-string-ref-id? source-id)
-        (not (compiler-builtin-typecheck-public-char-at-id? source-id)))
+        (cbi.compiler-builtin-typecheck-public-string-ref-id? source-id)
+        (not (cbi.compiler-builtin-typecheck-public-char-at-id? source-id)))
       lookup-id
       "string-ref")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
-      (compiler-builtin-typecheck-public-char-at-id? source-id)
+      (cbi.compiler-builtin-typecheck-public-char-at-id? source-id)
       lookup-id
       "char-at")))
 
@@ -16979,21 +16979,22 @@
   [lookup-id : i64]) : bool
   (or
     (and
-      (compiler-builtin-typecheck-string-eq-id? lookup-id)
+      (cbi.compiler-builtin-typecheck-string-eq-id? lookup-id)
       (tc-default-builtin-unshadowed-id? env lookup-id))
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
       (and
-        (compiler-builtin-typecheck-public-string-eq-id? source-id)
+        (cbi.compiler-builtin-typecheck-public-string-eq-id? source-id)
         (not
-          (compiler-builtin-typecheck-public-string-eq-question-id? source-id)))
+          (cbi.compiler-builtin-typecheck-public-string-eq-question-id?
+            source-id)))
       lookup-id
       "string-eq")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
-      (compiler-builtin-typecheck-public-string-eq-question-id? source-id)
+      (cbi.compiler-builtin-typecheck-public-string-eq-question-id? source-id)
       lookup-id
       "string=?")))
 
@@ -17025,11 +17026,11 @@
 
 (define (tc-string-to-int-helper-call-id? [env : TcTypeEnv] [lookup-id : i64]) : bool
   (and
-    (compiler-builtin-typecheck-string-to-int-id? lookup-id)
+    (cbi.compiler-builtin-typecheck-string-to-int-id? lookup-id)
     (tc-default-builtin-unshadowed-id? env lookup-id)))
 
 (define (tc-borrowed-string-builtin-id? [name-id : i64]) : bool
-  (compiler-builtin-typecheck-borrowed-string-id? name-id))
+  (cbi.compiler-builtin-typecheck-borrowed-string-id? name-id))
 
 (define (tc-borrowed-string-builtin-call
   [ctx : TcContext]
@@ -17038,9 +17039,9 @@
   [args : AstExprList]) : ResultTcType
   (let
     [name-id : i64 (tc-builtin-name-id name)]
-    (if (compiler-builtin-typecheck-string-eq-id? name-id)
+    (if (cbi.compiler-builtin-typecheck-string-eq-id? name-id)
       (tc-two-string-handle-builtin-call ctx env args (AstTyBool))
-      (if (compiler-builtin-typecheck-string-to-int-id? name-id)
+      (if (cbi.compiler-builtin-typecheck-string-to-int-id? name-id)
         (tc-one-string-handle-builtin-call ctx env args (AstTyI64))
         (ErrTcType "typecheck: unknown borrowed string builtin")))))
 
@@ -17097,7 +17098,7 @@
           (tc-length-handle-type? arg-ty))
         (return (OkTcType (AstTyI64))))
       (unless
-        (compiler-builtin-typecheck-string-length-id? name-id)
+        (cbi.compiler-builtin-typecheck-string-length-id? name-id)
         (return (tc-call-expr-ordinary ctx env func args)))
       (unless
         (or public-helper (tc-default-builtin-unshadowed? env name))
@@ -17113,7 +17114,8 @@
   [func : AstExpr]
   [args : AstExprList]
   [arg-ty : AstType]) : ResultTcType
-  (if (compiler-builtin-typecheck-array-length-id? (tc-builtin-name-id name))
+  (if (cbi.compiler-builtin-typecheck-array-length-id?
+    (tc-builtin-name-id name))
     (ErrTcType "typecheck: array-length requires dynamic array")
     (tc-length-string-call ctx env name func args arg-ty)))
 
@@ -17123,7 +17125,8 @@
   [name : String]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (if (compiler-builtin-typecheck-string-length-id? (tc-builtin-name-id name))
+  (if (cbi.compiler-builtin-typecheck-string-length-id?
+    (tc-builtin-name-id name))
     (if (tc-default-builtin-unshadowed? env name)
       (ErrTcType "typecheck: argument type mismatch")
       (tc-call-expr-ordinary ctx env func args))
@@ -17170,12 +17173,12 @@
                       arg-ty)])]
               [(ErrTcType message) (ErrTcType message)])]
           [_
-            (if (compiler-builtin-typecheck-array-length-id?
+            (if (cbi.compiler-builtin-typecheck-array-length-id?
               (tc-builtin-name-id name))
               (ErrTcType "typecheck: arity mismatch")
               (tc-call-expr-ordinary ctx env func args))]))]
     [_
-      (if (compiler-builtin-typecheck-array-length-id?
+      (if (cbi.compiler-builtin-typecheck-array-length-id?
         (tc-builtin-name-id name))
         (ErrTcType "typecheck: arity mismatch")
         (tc-call-expr-ordinary ctx env func args))]))
@@ -17364,7 +17367,7 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [args : AstExprList]) : ResultTcType
-  (if (compiler-builtin-typecheck-tls-current-arena-read-id? name-id)
+  (if (cbi.compiler-builtin-typecheck-tls-current-arena-read-id? name-id)
     (tc-tls-current-arena-read-call args)
     (tc-tls-current-arena-set-call ctx env args)))
 
@@ -17390,10 +17393,10 @@
             (tc-layout-query-runtime-call name args)]
           [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
             (tc-one-length-handle-builtin-call ctx env args (AstTyI64))]
-          [(compiler-builtin-typecheck-length-call-id? name-id)
+          [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
             (tc-array-length-call ctx env name func args)]
           [(and
-              (compiler-builtin-typecheck-string-ref-call-id? name-id)
+              (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-string-ref-call ctx env args)]
           [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
@@ -17401,7 +17404,7 @@
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
           [(and
-              (compiler-builtin-typecheck-tls-current-arena-id? name-id)
+              (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-tls-current-arena-call ctx env name-id args)]
           [(and
@@ -17419,7 +17422,7 @@
               (not (tc-name-bound? env name)))
             (tc-reflection-query-runtime-call name)]
           [(and
-              (compiler-builtin-typecheck-clone-id? name-id)
+              (cbi.compiler-builtin-typecheck-clone-id? name-id)
               (not (tc-name-bound? env name)))
             (tc-clone-call ctx env args)]
           [else (tc-call-expr-ordinary ctx env func args)]))]

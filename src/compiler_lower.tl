@@ -9,7 +9,7 @@
 (import stdlib.array)
 (import stdlib.vector)
 (import "compiler_typecheck.tl")
-(import "compiler_builtin_ids.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_ir_types.tl")
 (import "compiler_clone.tl")
@@ -687,7 +687,7 @@
     [_ : TcContext ctx]
     [_ty : AstType ty]
     (or
-      (compiler-builtin-backend-tl-str-view-id? name)
+      (cbi.compiler-builtin-backend-tl-str-view-id? name)
       (string.string-eq (intern-str name) "tl_str_view")
       (lower-bytes-view-from-parts-name? (intern-str name)))))
 
@@ -4152,7 +4152,7 @@
     [name : String (tc-hygiene-global-call-name (intern-str name-id))]
     [lookup-id : i64 (intern name)]
     (or
-      (compiler-builtin-lower-clone-id? lookup-id)
+      (cbi.compiler-builtin-lower-clone-id? lookup-id)
       (string.string-eq name "substring")
       (string.string-eq name "string-slice"))))
 
@@ -4470,7 +4470,7 @@
               false
               (tc-name-bound? env lookup-name))]
           (if (and
-            (compiler-builtin-lower-clone-id? lookup-id)
+            (cbi.compiler-builtin-lower-clone-id? lookup-id)
             (not bound)
             (not (lower-top-level-value-defined? ctx lookup-name)))
             (match args
@@ -14638,26 +14638,26 @@
 ;; First-class arena primitives (#1633). arena-mark/arena-rewind reuse the
 ;; existing region runtime (they snapshot/rewind the current arena's bump).
 (define (lower-arena-builtin-id? [name-id : i64]) : bool
-  (compiler-builtin-lower-arena-id? name-id))
+  (cbi.compiler-builtin-lower-arena-id? name-id))
 
 (define (lower-arena-builtin? [name : String]) : bool
   (lower-arena-builtin-id? (intern name)))
 
 (define (lower-arena-builtin-nullary-id? [name-id : i64]) : bool
-  (compiler-builtin-lower-arena-nullary-id? name-id))
+  (cbi.compiler-builtin-lower-arena-nullary-id? name-id))
 
 (define (lower-arena-builtin-nullary? [name : String]) : bool
   (lower-arena-builtin-nullary-id? (intern name)))
 
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
   (cond
-    [(compiler-builtin-lower-arena-make-id? name-id) "tl_arena_make"]
-    [(compiler-builtin-lower-arena-make-atomic-id? name-id)
+    [(cbi.compiler-builtin-lower-arena-make-id? name-id) "tl_arena_make"]
+    [(cbi.compiler-builtin-lower-arena-make-atomic-id? name-id)
       "tl_arena_make_atomic"]
-    [(compiler-builtin-lower-arena-current-id? name-id) "tl_arena_current"]
-    [(compiler-builtin-lower-arena-mark-id? name-id) "tl_region_mark"]
-    [(compiler-builtin-lower-arena-set-id? name-id) "tl_arena_set"]
-    [(compiler-builtin-lower-arena-destroy-id? name-id) "tl_arena_destroy"]
+    [(cbi.compiler-builtin-lower-arena-current-id? name-id) "tl_arena_current"]
+    [(cbi.compiler-builtin-lower-arena-mark-id? name-id) "tl_region_mark"]
+    [(cbi.compiler-builtin-lower-arena-set-id? name-id) "tl_arena_set"]
+    [(cbi.compiler-builtin-lower-arena-destroy-id? name-id) "tl_arena_destroy"]
     [else "tl_region_reset"]))
 
 (define (lower-arena-builtin-symbol [name : String]) : String
@@ -14775,7 +14775,7 @@
   [name-id : i64]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (if (compiler-builtin-lower-tls-current-arena-read-id? name-id)
+  (if (cbi.compiler-builtin-lower-tls-current-arena-read-id? name-id)
     (lower-tls-current-arena-read-call state args result-ty)
     (lower-tls-current-arena-set-call ctx state env type-env args result-ty)))
 
@@ -15714,7 +15714,7 @@
       out)))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
-  (compiler-builtin-lower-bootstrap-runtime-id? name-id))
+  (cbi.compiler-builtin-lower-bootstrap-runtime-id? name-id))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
   (lower-bootstrap-runtime-builtin-id? (intern name)))
@@ -16952,11 +16952,11 @@
           [(ErrTcType message)
             (if (lower-builtin-call-available? ctx env name-text)
               (cond
-                [(compiler-builtin-lower-array-length-id? name)
+                [(cbi.compiler-builtin-lower-array-length-id? name)
                   (OkTcType (AstTyI64))]
-                [(compiler-builtin-lower-string-ref-call-id? name)
+                [(cbi.compiler-builtin-lower-string-ref-call-id? name)
                   (OkTcType (AstTyChar))]
-                [(compiler-builtin-lower-clone-id? name)
+                [(cbi.compiler-builtin-lower-clone-id? name)
                   (match args
                     [(AstExprCons arg tail)
                       (let
@@ -22754,7 +22754,7 @@
   [type-env : TcTypeEnv]
   [name-id : i64]) : bool
   (and
-    (compiler-builtin-typecheck-string-eq-id? name-id)
+    (cbi.compiler-builtin-typecheck-string-eq-id? name-id)
     (tc-default-builtin-unshadowed-id? type-env name-id)))
 
 ;; Lower an unshadowed `(__tl_string_ref s i)` intrinsic call to the
@@ -23418,7 +23418,8 @@
                             origin)]
                         [(and
                             builtin-available
-                            (compiler-builtin-lower-string-ref-call-id? name-id))
+                            (cbi.compiler-builtin-lower-string-ref-call-id?
+                              name-id))
                           (lower-string-ref-call
                             ctx
                             state
@@ -23430,7 +23431,7 @@
                             origin)]
                         [(and
                             builtin-available
-                            (compiler-builtin-lower-length-call-id? name-id))
+                            (cbi.compiler-builtin-lower-length-call-id? name-id))
                           (lower-array-length
                             ctx
                             state
@@ -23454,7 +23455,7 @@
                             origin)]
                         [(and
                             builtin-available
-                            (compiler-builtin-lower-cpuid-id? name-id))
+                            (cbi.compiler-builtin-lower-cpuid-id? name-id))
                           (lower-cpuid-call
                             ctx
                             state
@@ -23465,11 +23466,11 @@
                             origin)]
                         [(and
                             builtin-available
-                            (compiler-builtin-lower-xgetbv-id? name-id))
+                            (cbi.compiler-builtin-lower-xgetbv-id? name-id))
                           (lower-xgetbv-call ctx state env type-env args origin)]
                         [(and
                             builtin-available
-                            (compiler-builtin-lower-clone-id? name-id))
+                            (cbi.compiler-builtin-lower-clone-id? name-id))
                           (match args
                             [(AstExprCons arg tail)
                               (let
@@ -23506,7 +23507,7 @@
                             result-ty)]
                         [(and
                             builtin-available
-                            (compiler-builtin-lower-tls-current-arena-id?
+                            (cbi.compiler-builtin-lower-tls-current-arena-id?
                               name-id))
                           (lower-tls-current-arena-call
                             ctx
@@ -23673,7 +23674,7 @@
     [(OkTcArrayReceiver _) (lower-array-length-load ctx state env type-env arr)]
     [(ErrTcArrayReceiver _)
       (if (and
-        (compiler-builtin-typecheck-string-length-id? (intern name))
+        (cbi.compiler-builtin-typecheck-string-length-id? (intern name))
         (lower-length-handle-type? ctx arr-ty))
         (lower-array-length-load ctx state env type-env arr)
         (lower-direct-call ctx state env type-env name args result-ty origin))]))
@@ -42260,7 +42261,7 @@
     ;; later compile never probes a dangling key. The multi-file driver compiles
     ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
     (intern-reset!)
-    (compiler-builtin-reset!)
+    (cbi.compiler-builtin-reset!)
     (match (parse-ast-source src)
       [(OkAstProgram program)
         (if (lower-source-program-needs-loader? program)

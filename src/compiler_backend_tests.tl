@@ -3,7 +3,7 @@
 (import stdlib.array)
 (import stdlib.hashmap)
 (import "compiler_backend.tl")
-(import "compiler_builtin_ids.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_float.tl")
 (import compiler_intern as ci)
 (import "compiler_object_coff.tl")
@@ -8541,7 +8541,7 @@
 
 (define (compiler-backend-runtime-helper-owner-id-ok?) : bool
   (begin
-    (compiler-builtin-refresh!)
+    (cbi.compiler-builtin-refresh!)
     (let
       [core-id : i64 (compiler-backend-runtime-name-id "tl_alloc")]
       [profile-id : i64
@@ -8559,8 +8559,8 @@
           (compiler-backend-runtime-helper-compatibility-alias-id? compat-id))
         (compiler-backend-runtime-helper-stdlib-type-lisp-id? atomic-id)
         (not (compiler-backend-runtime-helper-known-id? retired-id))
-        (compiler-builtin-backend-runtime-concat-id? stdlib-id)
-        (compiler-builtin-backend-runtime-profile-id? profile-id)))))
+        (cbi.compiler-builtin-backend-runtime-concat-id? stdlib-id)
+        (cbi.compiler-builtin-backend-runtime-profile-id? profile-id)))))
 
 (define (compiler-backend-intern-missing? [name : String]) : bool
   (match (ci.intern-lookup name)
@@ -8572,7 +8572,7 @@
     [plan : CompilerBackendRuntimePlan
       (compiler-backend-runtime-helper-full-plan)]
     (begin
-      (compiler-builtin-refresh!)
+      (cbi.compiler-builtin-refresh!)
       (let
         [generation : i64 (ci.intern-generation)]
         [unknown : String "tl_issue_2464_unknown_runtime_probe"]

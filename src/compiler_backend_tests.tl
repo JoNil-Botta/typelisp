@@ -72,7 +72,6 @@
   [assignments : CompilerRegAssignmentList]) : unit
   (begin
     (set! compiler-backend-emit-instr-post-base 0)
-    (compiler-backend-scavenge-reset-callee!)
     (if (< slot-vars 1)
       (compiler-backend-set-scavenge-ctx!
         (make-array i64 1)
@@ -8552,7 +8551,6 @@
       (begin
         (compiler-reg-fill-i64-array starts -1)
         (compiler-reg-fill-i64-array ends -1)
-        (compiler-backend-scavenge-reset-callee!)
         (compiler-backend-set-scavenge-ctx!
           starts
           ends
@@ -8648,8 +8646,7 @@
                 prev-continue-pending)
               (set!
                 compiler-backend-identity-tail-forwarder-active
-                prev-identity-tail)
-              (compiler-backend-scavenge-reset-callee!))]
+                prev-identity-tail))]
           hit)]
       [(ErrCompilerBackend _)
         (let
@@ -8679,8 +8676,7 @@
                 prev-continue-pending)
               (set!
                 compiler-backend-identity-tail-forwarder-active
-                prev-identity-tail)
-              (compiler-backend-scavenge-reset-callee!))]
+                prev-identity-tail))]
           false)])))
 
 (define (compiler-backend-emit-test-instrs
@@ -8715,11 +8711,6 @@
       compiler-backend-emergency-pending-count]
     [prev-emergency-used-count : i64 compiler-backend-emergency-used-count]
     [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
-    [prev-callee0 : bool (array-ref compiler-backend-scavenge-used-callee 0)]
-    [prev-callee1 : bool (array-ref compiler-backend-scavenge-used-callee 1)]
-    [prev-callee2 : bool (array-ref compiler-backend-scavenge-used-callee 2)]
-    [prev-callee3 : bool (array-ref compiler-backend-scavenge-used-callee 3)]
-    [prev-callee4 : bool (array-ref compiler-backend-scavenge-used-callee 4)]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons (compiler-ir-block "entry" instrs) IrBlockNil)]
     [use-counts : (Array i64)
@@ -8787,12 +8778,7 @@
                 prev-emergency-used-count)
               (set!
                 compiler-backend-emergency-slot-offset
-                prev-emergency-slot-offset)
-              (array-set! compiler-backend-scavenge-used-callee 0 prev-callee0)
-              (array-set! compiler-backend-scavenge-used-callee 1 prev-callee1)
-              (array-set! compiler-backend-scavenge-used-callee 2 prev-callee2)
-              (array-set! compiler-backend-scavenge-used-callee 3 prev-callee3)
-              (array-set! compiler-backend-scavenge-used-callee 4 prev-callee4))]
+                prev-emergency-slot-offset))]
           (OkCompilerBackend asm))]
       [(ErrCompilerBackend message)
         (let
@@ -8834,12 +8820,7 @@
                 prev-emergency-used-count)
               (set!
                 compiler-backend-emergency-slot-offset
-                prev-emergency-slot-offset)
-              (array-set! compiler-backend-scavenge-used-callee 0 prev-callee0)
-              (array-set! compiler-backend-scavenge-used-callee 1 prev-callee1)
-              (array-set! compiler-backend-scavenge-used-callee 2 prev-callee2)
-              (array-set! compiler-backend-scavenge-used-callee 3 prev-callee3)
-              (array-set! compiler-backend-scavenge-used-callee 4 prev-callee4))]
+                prev-emergency-slot-offset))]
           (ErrCompilerBackend message))])))
 
 (define (compiler-backend-runtime-helper-full-plan) : CompilerBackendRuntimePlan

@@ -4271,39 +4271,12 @@
 (define compiler-backend-scavenge-callee-list : CompilerRegStringList
   (compiler-reg-sysv-integer-registers))
 
-(define compiler-backend-scavenge-used-callee : (Array bool)
-  (make-array bool
-    (compiler-reg-string-list-count compiler-backend-scavenge-callee-list)))
-
 (define (compiler-backend-scavenge-callee-idx [reg : String]) : i64
   (compiler-reg-string-list-index-of
     compiler-backend-scavenge-callee-list
     reg
     0))
 
-(define (compiler-backend-scavenge-mark-callee-used! [reg : String]) : unit
-  (let
-    [idx : i64 (compiler-backend-scavenge-callee-idx reg)]
-    (if (>= idx 0)
-      (array-set! compiler-backend-scavenge-used-callee idx true)
-      unit)))
-
-(define (compiler-backend-scavenge-callee-used? [reg : String]) : bool
-  (let
-    [idx : i64 (compiler-backend-scavenge-callee-idx reg)]
-    (if (>= idx 0)
-      (array-ref compiler-backend-scavenge-used-callee idx)
-      false)))
-
-(define (compiler-backend-scavenge-reset-callee!) : unit
-  (let
-    [i : i64 0]
-    [n : i64
-      (compiler-reg-string-list-count compiler-backend-scavenge-callee-list)]
-    (while (< i n)
-      (begin
-        (array-set! compiler-backend-scavenge-used-callee i false)
-        (set! i (+ i 1))))))
 
 ;; Emergency spill: when the scavenge finds NO free candidate (all pool registers
 ;; occupied -- genuine register pressure, not param pressure), it must not silently
@@ -4427,14 +4400,16 @@
   [head : String]) : String
   (text_buf.text-buf-render (compiler-backend-emergency-append buf head)))
 
-;; A callee-saved reg must be saved by the prologue iff the allocator homes a
-;; value there OR the scavenge used it on demand.
+;; A callee-saved reg must be saved by the prologue iff the allocator plan homes a
+;; value there. Scavenge picks of callee-saved registers are restricted to the
+;; plan-saved set (scavenge-candidate-ok?'s plan-mask clause) or emergency-wrapped
+;; locally, so no dynamic callee-save tracking is needed -- and it would be unsound:
+;; the prologue SAVE is emitted post-body (final set) while every RESTORE is emitted
+;; inline during the body, so an early return would restore a partial set.
 (define (compiler-backend-callee-needs-save?
   [assignments : CompilerRegAssignmentList]
   [reg : String]) : bool
-  (or
-    (compiler-backend-plan-uses-reg? assignments reg)
-    (compiler-backend-scavenge-callee-used? reg)))
+  (compiler-backend-plan-uses-reg? assignments reg))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : CompilerRegAssignmentList]
@@ -28283,7 +28258,6 @@
   [intervals : CompilerRegIntervalList]) : unit
   (begin
     (set! compiler-backend-emit-instr-post-base 0)
-    (compiler-backend-scavenge-reset-callee!)
     (if (< slot-vars 1)
       (compiler-backend-set-scavenge-ctx!
         (make-array i64 1)
@@ -29640,7 +29614,6 @@
       (make-array i64 1)
       CompilerRegAssignmentNil
       0)
-    (compiler-backend-scavenge-reset-callee!)
     (compiler-backend-addr-of-forwarding-disable!)
     (compiler-backend-fuse-need-disable!)
     (set! compiler-backend-current-phi-targets BackendStringNil)

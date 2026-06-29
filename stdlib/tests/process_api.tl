@@ -2,6 +2,7 @@
 (import stdlib.io)
 (import stdlib.test)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -183,6 +184,60 @@
   [message : String]) : unit
   (assert-process-some-string value expected message))
 
+(define (process-api-string-vec0) : svec.Vec
+  (svec.new))
+
+(define (process-api-string-vec1 [a : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      items)))
+
+(define (process-api-string-vec2 [a : String] [b : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.with-capacity 2)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      items)))
+
+(define (process-api-string-vec3 [a : String] [b : String] [c : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.with-capacity 3)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      items)))
+
+(define (process-api-env-vec1 [name : String] [value : String]) : process.ProcessEnvVec
+  (let
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append (&mut env) name value)
+      env)))
+
+(define (process-api-env-vec2
+  [name-a : String]
+  [value-a : String]
+  [name-b : String]
+  [value-b : String]) : process.ProcessEnvVec
+  (let
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append (&mut env) name-a value-a)
+      (process.env-vec-append (&mut env) name-b value-b)
+      env)))
+
+(define (process-api-bad-shape-env-vec) : process.ProcessEnvVec
+  (let
+    [names : svec.Vec (svec.new)]
+    [values : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut names) "ONLY_NAME")
+      (process.ProcessEnvVec names values))))
+
 (define (assert-process-invalid-command
   [result : process.ResultProcessOutput]
   [message : String]) : unit
@@ -240,79 +295,59 @@
         "world"
         "again"
         "process args append")
-      (assert-process-string-empty
-        (process.args-from-string-vec (vector.string-vec-new))
-        "process argv vec empty")
-      (assert-process-string-list1
-        (process.args-from-string-vec
-          (vector.string-vec-push (vector.string-vec-new) "solo"))
-        "solo"
-        "process argv vec single")
-      (assert-process-string-list3
-        (process.args-from-string-vec
-          (vector.string-vec-push
-            (vector.string-vec-push
-              (vector.string-vec-push
-                (vector.string-vec-with-capacity 3)
-                "hello")
-              "world")
-            "!"))
-        "hello"
-        "world"
-        "!"
-        "process argv vec multi")
-      (assert-process-string-empty
-        (process.command-argv
-          (process.command-from-argv-vec "echo" (vector.string-vec-new)))
-        "process command argv vec empty")
-      (assert-process-string-list1
-        (process.command-argv
-          (process.command-from-argv-vec
-            "echo"
-            (vector.string-vec-push (vector.string-vec-new) "solo")))
-        "solo"
-        "process command argv vec single")
-      (assert-process-string-list3
-        (process.command-argv
-          (process.command-from-argv-vec
-            "echo"
-            (vector.string-vec-push
-              (vector.string-vec-push
-                (vector.string-vec-push
-                  (vector.string-vec-with-capacity 3)
-                  "hello")
-                "world")
-              "!")))
-        "hello"
-        "world"
-        "!"
-        "process command argv vec multi")
-      (assert-process-string-list3
-        (process.command-argv
-          (process.command-with-argv-vec
-            command
-            (vector.string-vec-push
-              (vector.string-vec-push
-                (vector.string-vec-push
-                  (vector.string-vec-with-capacity 3)
-                  "vec")
-                "replace")
-              "argv")))
-        "vec"
-        "replace"
-        "argv"
-        "process command argv vec replace")
-      (assert-process-string-list3
-        (process.command-argv
-          (process.command-with-args-vec
-            (process.command "echo" (process.args-single "base"))
-            (vector.string-vec-push
-              (vector.string-vec-push (vector.string-vec-with-capacity 2) "vec")
-              "tail")))
-        "base"
-        "vec"
-        "tail"
-        "process command argv vec append")
+      (let
+        [empty-argv : svec.Vec (process-api-string-vec0)]
+        [solo-argv : svec.Vec (process-api-string-vec1 "solo")]
+        [multi-argv : svec.Vec (process-api-string-vec3 "hello" "world" "!")]
+        [replace-argv : svec.Vec
+          (process-api-string-vec3 "vec" "replace" "argv")]
+        [tail-argv : svec.Vec (process-api-string-vec2 "vec" "tail")]
+        (begin
+          (assert-process-string-empty
+            (process.args-from-string-vec (& empty-argv))
+            "process argv vec empty")
+          (assert-process-string-list1
+            (process.args-from-string-vec (& solo-argv))
+            "solo"
+            "process argv vec single")
+          (assert-process-string-list3
+            (process.args-from-string-vec (& multi-argv))
+            "hello"
+            "world"
+            "!"
+            "process argv vec multi")
+          (assert-process-string-empty
+            (process.command-argv
+              (process.command-from-argv-vec "echo" (& empty-argv)))
+            "process command argv vec empty")
+          (assert-process-string-list1
+            (process.command-argv
+              (process.command-from-argv-vec "echo" (& solo-argv)))
+            "solo"
+            "process command argv vec single")
+          (assert-process-string-list3
+            (process.command-argv
+              (process.command-from-argv-vec "echo" (& multi-argv)))
+            "hello"
+            "world"
+            "!"
+            "process command argv vec multi")
+          (assert-process-string-list3
+            (process.command-argv
+              (process.command-with-argv-vec command (& replace-argv)))
+            "vec"
+            "replace"
+            "argv"
+            "process command argv vec replace")
+          (assert-process-string-list3
+            (process.command-argv
+              (process.command-with-args-vec
+                (process.command "echo" (process.args-single "base"))
+                (& tail-argv)))
+            "base"
+            "vec"
+            "tail"
+            "process command argv vec append")))
       (assert-process-some-string
         (process.command-cwd command)
         "target"
@@ -341,80 +376,68 @@
       (let
         [env-vec-empty : process.ProcessEnvVec (process.env-vec-new)]
         [env-vec : process.ProcessEnvVec
-          (process.env-vec-append
-            (process.env-vec-append (process.env-vec-new) "TL_FIRST" "one")
-            "TL_SECOND"
-            "two")]
+          (process-api-env-vec2 "TL_FIRST" "one" "TL_SECOND" "two")]
         [env-dup : process.ProcessEnvVec
-          (process.env-vec-append
-            (process.env-vec-append (process.env-vec-new) "TL_DUP" "first")
-            "TL_DUP"
-            "second")]
-        [bad-shape : process.ProcessEnvVec
-          (process.ProcessEnvVec
-            (vector.string-vec-push (vector.string-vec-new) "ONLY_NAME")
-            (vector.string-vec-new))]
+          (process-api-env-vec2 "TL_DUP" "first" "TL_DUP" "second")]
+        [bad-empty : process.ProcessEnvVec (process-api-env-vec1 "" "bad")]
+        [bad-name : process.ProcessEnvVec
+          (process-api-env-vec1 "BAD=NAME" "bad")]
+        [bad-shape : process.ProcessEnvVec (process-api-bad-shape-env-vec)]
         (begin
           (test.assert-i64-eq
-            (process.env-vec-count env-vec-empty)
+            (process.env-vec-count (& env-vec-empty))
             0
             "process env vec empty count")
           (test.assert-true
-            (process.env-vec-valid? env-vec-empty)
+            (process.env-vec-valid? (& env-vec-empty))
             "process env vec empty valid")
           (test.assert-i64-eq
-            (process.env-vec-count env-vec)
+            (process.env-vec-count (& env-vec))
             2
             "process env vec count")
           (test.assert-true
-            (process.env-vec-valid? env-vec)
+            (process.env-vec-valid? (& env-vec))
             "process env vec valid")
           (assert-process-env-list2
-            (process.env-vec-to-list env-vec)
+            (process.env-vec-to-list (& env-vec))
             "TL_FIRST"
             "one"
             "TL_SECOND"
             "two"
             "process env vec order")
           (assert-process-env-list2
-            (process.command-env (process.command-with-env-vec command env-vec))
+            (process.command-env
+              (process.command-with-env-vec command (& env-vec)))
             "TL_FIRST"
             "one"
             "TL_SECOND"
             "two"
             "process command env vec order")
           (assert-process-env-list2
-            (process.env-vec-to-list env-dup)
+            (process.env-vec-to-list (& env-dup))
             "TL_DUP"
             "first"
             "TL_DUP"
             "second"
             "process env vec duplicate order")
           (assert-process-env-validation
-            (process.env-vec-validation-error
-              (process.env-vec-append (process.env-vec-new) "" "bad"))
+            (process.env-vec-validation-error (& bad-empty))
             "process: environment variable name is empty"
             "process env vec empty name")
           (assert-process-env-validation
-            (process.env-vec-validation-error
-              (process.env-vec-append (process.env-vec-new) "BAD=NAME" "bad"))
+            (process.env-vec-validation-error (& bad-name))
             "process: environment variable name contains '='"
             "process env vec bad name")
           (assert-process-env-validation
-            (process.env-vec-validation-error bad-shape)
+            (process.env-vec-validation-error (& bad-shape))
             "process: environment vector name/value counts differ"
             "process env vec shape")
           (assert-process-invalid-command
             (process.output
-              (process.command-with-env-vec
-                command
-                (process.env-vec-append (process.env-vec-new) "" "bad")))
+              (process.command-with-env-vec command (& bad-empty)))
             "process: environment variable name is empty")
           (assert-process-child-invalid-command
-            (process.start
-              (process.command-with-env-vec
-                command
-                (process.env-vec-append (process.env-vec-new) "BAD=NAME" "bad")))
+            (process.start (process.command-with-env-vec command (& bad-name)))
             "process: environment variable name contains '='")))
       (assert-process-no-string
         (process.command-cwd (process.command "echo" (process.args-empty)))

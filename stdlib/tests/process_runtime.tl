@@ -4,6 +4,7 @@
 (import stdlib.string)
 (import stdlib.test)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define (assert-owned-string-eq
   [actual : String]
@@ -104,23 +105,27 @@
     "process-override"))
 
 (define (process-runtime-env-vec-command) : process.ProcessCommand
-  (process.command-with-env-vec
-    (process.command
-      "/usr/bin/printenv"
-      (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
-    (process.env-vec-append
-      (process.env-vec-new)
-      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-      "process-env-vec-value")))
+  (let
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append
+        (&mut env)
+        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+        "process-env-vec-value")
+      (process.command-with-env-vec
+        (process.command
+          "/usr/bin/printenv"
+          (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
+        (& env)))))
 
 (define (process-runtime-argv-vec-command) : process.ProcessCommand
-  (process.command-from-argv-vec
-    "/usr/bin/printf"
-    (vector.string-vec-push
-      (vector.string-vec-push
-        (vector.string-vec-push (vector.string-vec-with-capacity 3) "%s:%s")
-        "argv")
-      "vec")))
+  (let
+    [argv : svec.Vec (svec.with-capacity 3)]
+    (begin
+      (svec.push (&mut argv) "%s:%s")
+      (svec.push (&mut argv) "argv")
+      (svec.push (&mut argv) "vec")
+      (process.command-from-argv-vec "/usr/bin/printf" (& argv)))))
 
 (define (process-runtime-stdin-command) : process.ProcessCommand
   (process.command-with-stdin
@@ -164,25 +169,30 @@
     "process-env-value"))
 
 (define (process-runtime-windows-env-vec-command) : process.ProcessCommand
-  (process.command-with-env-vec
-    (process.command
-      "C:\\Windows\\System32\\cmd.exe"
-      (process.args-cons
-        "/C"
-        (process.args-cons
-          "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
-          (process.args-empty))))
-    (process.env-vec-append
-      (process.env-vec-new)
-      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-      "process-env-vec-value")))
+  (let
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append
+        (&mut env)
+        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+        "process-env-vec-value")
+      (process.command-with-env-vec
+        (process.command
+          "C:\\Windows\\System32\\cmd.exe"
+          (process.args-cons
+            "/C"
+            (process.args-cons
+              "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
+              (process.args-empty))))
+        (& env)))))
 
 (define (process-runtime-windows-argv-vec-command) : process.ProcessCommand
-  (process.command-from-argv-vec
-    "C:\\Windows\\System32\\cmd.exe"
-    (vector.string-vec-push
-      (vector.string-vec-push (vector.string-vec-with-capacity 2) "/C")
-      "echo argv-vec=ok")))
+  (let
+    [argv : svec.Vec (svec.with-capacity 2)]
+    (begin
+      (svec.push (&mut argv) "/C")
+      (svec.push (&mut argv) "echo argv-vec=ok")
+      (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv)))))
 
 (define (process-runtime-windows-missing-command) : process.ProcessCommand
   (process.command

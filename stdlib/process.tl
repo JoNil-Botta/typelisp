@@ -18,6 +18,7 @@
 
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 ;: Immutable list of process argument strings in argv order.
 (defenum ProcessStringList
@@ -35,12 +36,13 @@
   (ProcessEnvCons String String (Box ProcessEnvList)))
 
 ;: Vector-backed process environment overrides. `names` and `values` are
-;: parallel `StringVec` buffers with the invariant that their live lengths are
-;: equal. Runtime execution still consumes `ProcessEnvList`; converting this
-;: representation preserves vector order and keeps duplicate names.
+;: parallel generated string-vector buffers with the invariant that their live
+;: lengths are equal. Runtime execution still consumes `ProcessEnvList`;
+;: converting this representation preserves vector order and keeps duplicate
+;: names.
 (defstruct ProcessEnvVec
-  (names vector.StringVec)
-  (values vector.StringVec))
+  (names svec.Vec)
+  (values svec.Vec))
 
 ;: Destructured view of one argument-list step for imported modules that cannot
 ;: pattern-match process variants directly.
@@ -191,10 +193,10 @@
     [(ProcessStringCons value rest)
       (ProcessStringCons value (box (args-append (box-get rest) right)))]))
 
-;: Convert a `StringVec` argv buffer to the list representation consumed by
-;: `ProcessCommand`, preserving vector order.
+;: Convert a generated string-vector argv buffer to the list representation
+;: consumed by `ProcessCommand`, preserving vector order.
 (define (args-from-string-vec-from
-  [args : vector.StringVec]
+  [args : (& args svec.Vec)]
   [index : i64]
   [out : ProcessStringList]) : ProcessStringList
   (if (< index 0)
@@ -202,15 +204,12 @@
     (args-from-string-vec-from
       args
       (- index 1)
-      (args-cons (vector.string-vec-get args index "") out))))
+      (args-cons (svec.get args index "") out))))
 
-;: Convert a `StringVec` argv buffer to the list representation consumed by
-;: `ProcessCommand`, preserving vector order.
-(define (args-from-string-vec [args : vector.StringVec]) : ProcessStringList
-  (args-from-string-vec-from
-    args
-    (- (vector.string-vec-len args) 1)
-    (ProcessStringNil)))
+;: Convert a generated string-vector argv buffer to the list representation
+;: consumed by `ProcessCommand`, preserving vector order.
+(define (args-from-string-vec [args : (& args svec.Vec)]) : ProcessStringList
+  (args-from-string-vec-from args (- (svec.len args) 1) (ProcessStringNil)))
 
 ;: Return an empty environment override list.
 (define (env-empty) : ProcessEnvList
@@ -242,12 +241,12 @@
       found)))
 
 ;: Return the name buffer from a vector-backed env override set.
-(define (env-vec-names [env : ProcessEnvVec]) : vector.StringVec
-  (struct-get env names))
+(define (env-vec-names [env : (& env ProcessEnvVec)]) : (& env svec.Vec)
+  (& (struct-get env names)))
 
 ;: Return the value buffer from a vector-backed env override set.
-(define (env-vec-values [env : ProcessEnvVec]) : vector.StringVec
-  (struct-get env values))
+(define (env-vec-values [env : (& env ProcessEnvVec)]) : (& env svec.Vec)
+  (& (struct-get env values)))
 
 ;: Create an empty vector-backed env override set with at least `capacity`
 ;: backing slots in each parallel buffer.
@@ -257,9 +256,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ProcessEnvVec
-      (vector.string-vec-with-capacity cap)
-      (vector.string-vec-with-capacity cap))))
+    (ProcessEnvVec (svec.with-capacity cap) (svec.with-capacity cap))))
 
 ;: Create an empty vector-backed env override set.
 (define (env-vec-new) : ProcessEnvVec
@@ -268,20 +265,23 @@
 ;: Return the number of vector-backed env overrides. Helper-created values keep
 ;: this equal to the live length of both buffers; manually constructed values
 ;: should be checked with `env-vec-validation-error`.
-(define (env-vec-count [env : ProcessEnvVec]) : i64
-  (vector.string-vec-len (env-vec-names env)))
+(define (env-vec-count [env : (& env ProcessEnvVec)]) : i64
+  (svec.len (env-vec-names env)))
 
 ;: Append one owned environment override at the end of the vector-backed set.
 ;: Duplicate names are preserved in append order.
-(define (env-vec-append [env : ProcessEnvVec] [name : String] [value : String]) : ProcessEnvVec
-  (ProcessEnvVec
-    (vector.string-vec-push (env-vec-names env) name)
-    (vector.string-vec-push (env-vec-values env) value)))
+(define (env-vec-append
+  [env : (&mut env ProcessEnvVec)]
+  [name : String]
+  [value : String]) : unit
+  (begin
+    (svec.push (&mut (struct-get env names)) name)
+    (svec.push (&mut (struct-get env values)) value)))
 
 ;: Convert vector-backed env overrides to a list, preserving vector order at
 ;: the existing runtime boundary.
 (define (env-vec-to-list-from
-  [env : ProcessEnvVec]
+  [env : (& env ProcessEnvVec)]
   [index : i64]
   [out : ProcessEnvList]) : ProcessEnvList
   (if (< index 0)
@@ -290,21 +290,23 @@
       env
       (- index 1)
       (ProcessEnvCons
-        (vector.string-vec-get (env-vec-names env) index "")
-        (vector.string-vec-get (env-vec-values env) index "")
+        (svec.get (env-vec-names env) index "")
+        (svec.get (env-vec-values env) index "")
         (box out)))))
 
 ;: Convert vector-backed env overrides to the list representation consumed by
 ;: `ProcessCommand` and the process runtime.
-(define (env-vec-to-list [env : ProcessEnvVec]) : ProcessEnvList
+(define (env-vec-to-list [env : (& env ProcessEnvVec)]) : ProcessEnvList
   (env-vec-to-list-from env (- (env-vec-count env) 1) (ProcessEnvNil)))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
-(define (env-vec-validation-error-from [env : ProcessEnvVec] [index : i64]) : ProcessMaybeString
+(define (env-vec-validation-error-from
+  [env : (& env ProcessEnvVec)]
+  [index : i64]) : ProcessMaybeString
   (if (>= index (env-vec-count env))
     (ProcessNoString)
     (let
-      [name : String (vector.string-vec-get (env-vec-names env) index "")]
+      [name : String (svec.get (env-vec-names env) index "")]
       (if (string.string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
         (if (string-contains-char? (& name) '=')
@@ -315,17 +317,14 @@
 ;: The inherited environment is filtered by names that appear in the override
 ;: set, then override entries are emitted in vector order. Duplicate override
 ;: names are preserved in vector order.
-(define (env-vec-validation-error [env : ProcessEnvVec]) : ProcessMaybeString
-  (if (not
-    (=
-      (vector.string-vec-len (env-vec-names env))
-      (vector.string-vec-len (env-vec-values env))))
+(define (env-vec-validation-error [env : (& env ProcessEnvVec)]) : ProcessMaybeString
+  (if (not (= (svec.len (env-vec-names env)) (svec.len (env-vec-values env))))
     (ProcessSomeString "process: environment vector name/value counts differ")
     (env-vec-validation-error-from env 0)))
 
 ;: Return true when vector-backed env overrides satisfy the public invariant and
 ;: all override names are valid.
-(define (env-vec-valid? [env : ProcessEnvVec]) : bool
+(define (env-vec-valid? [env : (& env ProcessEnvVec)]) : bool
   (match (env-vec-validation-error env)
     [(ProcessNoString) true]
     [(ProcessSomeString _) false]))
@@ -358,7 +357,7 @@
 
 ;: Construct a process command from an executable and a vector-backed argv
 ;: buffer. The command keeps the existing list-backed ABI after one conversion.
-(define (command-from-argv-vec [executable : String] [argv : vector.StringVec]) : ProcessCommand
+(define (command-from-argv-vec [executable : String] [argv : (& argv svec.Vec)]) : ProcessCommand
   (command executable (args-from-string-vec argv)))
 
 ;: Return a copy of `command` with `arg` appended after existing argv entries.
@@ -385,7 +384,7 @@
 ;: vector-backed argv buffer converted once at the compatibility boundary.
 (define (command-with-argv-vec
   [command : ProcessCommand]
-  [argv : vector.StringVec]) : ProcessCommand
+  [argv : (& argv svec.Vec)]) : ProcessCommand
   (ProcessCommand
     (command-executable command)
     (args-from-string-vec argv)
@@ -397,7 +396,7 @@
 ;: argv entries through one list conversion and one list append.
 (define (command-with-args-vec
   [command : ProcessCommand]
-  [args : vector.StringVec]) : ProcessCommand
+  [args : (& args svec.Vec)]) : ProcessCommand
   (command-with-args command (args-from-string-vec args)))
 
 ;: Construct a process command with every owned-storage field supplied
@@ -444,7 +443,9 @@
 
 ;: Return a copy of `command` with env overrides replaced by vector-backed
 ;: storage converted to the existing list-backed runtime boundary.
-(define (command-with-env-vec [command : ProcessCommand] [env : ProcessEnvVec]) : ProcessCommand
+(define (command-with-env-vec
+  [command : ProcessCommand]
+  [env : (& env ProcessEnvVec)]) : ProcessCommand
   (command-with-env-list command (env-vec-to-list env)))
 
 ;: Return a copy of `command` with stdin set to `stdin`.
@@ -950,6 +951,67 @@
     [(ProcessSomeString actual) (test-assert-string-eq actual expected)]
     [(ProcessNoString) (test-fail)]))
 
+;: Inline test helper for generated string-vector argv buffers.
+(define (test-string-vec0) : svec.Vec
+  (svec.new))
+
+;: Inline test helper for generated string-vector argv buffers.
+(define (test-string-vec1 [a : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) a)
+      items)))
+
+;: Inline test helper for generated string-vector argv buffers.
+(define (test-string-vec2 [a : String] [b : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.with-capacity 2)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      items)))
+
+;: Inline test helper for generated string-vector argv buffers.
+(define (test-string-vec3 [a : String] [b : String] [c : String]) : svec.Vec
+  (let
+    [items : svec.Vec (svec.with-capacity 3)]
+    (begin
+      (svec.push (&mut items) a)
+      (svec.push (&mut items) b)
+      (svec.push (&mut items) c)
+      items)))
+
+;: Inline test helper for vector-backed environment overrides.
+(define (test-env-vec1 [name : String] [value : String]) : ProcessEnvVec
+  (let
+    [env : ProcessEnvVec (env-vec-new)]
+    (begin
+      (env-vec-append (&mut env) name value)
+      env)))
+
+;: Inline test helper for vector-backed environment overrides.
+(define (test-env-vec2
+  [name-a : String]
+  [value-a : String]
+  [name-b : String]
+  [value-b : String]) : ProcessEnvVec
+  (let
+    [env : ProcessEnvVec (env-vec-new)]
+    (begin
+      (env-vec-append (&mut env) name-a value-a)
+      (env-vec-append (&mut env) name-b value-b)
+      env)))
+
+;: Inline test helper for malformed vector-backed environment overrides.
+(define (test-env-vec-bad-shape) : ProcessEnvVec
+  (let
+    [names : svec.Vec (svec.new)]
+    [values : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut names) "ONLY_NAME")
+      (ProcessEnvVec names values))))
+
 ;: Inline test body for command and argv helpers.
 (define (test-command-api) : unit
   (let
@@ -974,69 +1036,43 @@
         "hello"
         "world"
         "again")
-      (test-assert-string-empty (args-from-string-vec (vector.string-vec-new)))
-      (test-assert-string-list1
-        (args-from-string-vec
-          (vector.string-vec-push (vector.string-vec-new) "solo"))
-        "solo")
-      (test-assert-string-list3
-        (args-from-string-vec
-          (vector.string-vec-push
-            (vector.string-vec-push
-              (vector.string-vec-push
-                (vector.string-vec-with-capacity 3)
-                "hello")
-              "world")
-            "!"))
-        "hello"
-        "world"
-        "!")
-      (test-assert-string-empty
-        (command-argv (command-from-argv-vec "echo" (vector.string-vec-new))))
-      (test-assert-string-list1
-        (command-argv
-          (command-from-argv-vec
-            "echo"
-            (vector.string-vec-push (vector.string-vec-new) "solo")))
-        "solo")
-      (test-assert-string-list3
-        (command-argv
-          (command-from-argv-vec
-            "echo"
-            (vector.string-vec-push
-              (vector.string-vec-push
-                (vector.string-vec-push
-                  (vector.string-vec-with-capacity 3)
-                  "hello")
-                "world")
-              "!")))
-        "hello"
-        "world"
-        "!")
-      (test-assert-string-list3
-        (command-argv
-          (command-with-argv-vec
-            cmd
-            (vector.string-vec-push
-              (vector.string-vec-push
-                (vector.string-vec-push
-                  (vector.string-vec-with-capacity 3)
-                  "vec")
-                "replace")
-              "argv")))
-        "vec"
-        "replace"
-        "argv")
-      (test-assert-string-list3
-        (command-argv
-          (command-with-args-vec
-            (command "echo" (args-single "base"))
-            (vector.string-vec-push
-              (vector.string-vec-push (vector.string-vec-with-capacity 2) "vec")
-              "tail")))
-        "base"
-        "vec"
-        "tail")
+      (let
+        [empty-argv : svec.Vec (test-string-vec0)]
+        [solo-argv : svec.Vec (test-string-vec1 "solo")]
+        [multi-argv : svec.Vec (test-string-vec3 "hello" "world" "!")]
+        [replace-argv : svec.Vec (test-string-vec3 "vec" "replace" "argv")]
+        [tail-argv : svec.Vec (test-string-vec2 "vec" "tail")]
+        (begin
+          (test-assert-string-empty (args-from-string-vec (& empty-argv)))
+          (test-assert-string-list1 (args-from-string-vec (& solo-argv)) "solo")
+          (test-assert-string-list3
+            (args-from-string-vec (& multi-argv))
+            "hello"
+            "world"
+            "!")
+          (test-assert-string-empty
+            (command-argv (command-from-argv-vec "echo" (& empty-argv))))
+          (test-assert-string-list1
+            (command-argv (command-from-argv-vec "echo" (& solo-argv)))
+            "solo")
+          (test-assert-string-list3
+            (command-argv (command-from-argv-vec "echo" (& multi-argv)))
+            "hello"
+            "world"
+            "!")
+          (test-assert-string-list3
+            (command-argv (command-with-argv-vec cmd (& replace-argv)))
+            "vec"
+            "replace"
+            "argv")
+          (test-assert-string-list3
+            (command-argv
+              (command-with-args-vec
+                (command "echo" (args-single "base"))
+                (& tail-argv)))
+            "base"
+            "vec"
+            "tail")))
       (test-assert-some-string (command-cwd cmd) "target")
       (test-assert-some-string (command-stdin cmd) "stdin")
       (test-assert-env-head (command-env cmd) "TL_TEST" "1")
@@ -1052,52 +1088,42 @@
 (define (test-env-vec-api [cmd : ProcessCommand]) : unit
   (let
     [env-vec-empty : ProcessEnvVec (env-vec-new)]
-    [env-vec : ProcessEnvVec
-      (env-vec-append
-        (env-vec-append (env-vec-new) "TL_FIRST" "one")
-        "TL_SECOND"
-        "two")]
-    [env-dup : ProcessEnvVec
-      (env-vec-append
-        (env-vec-append (env-vec-new) "TL_DUP" "first")
-        "TL_DUP"
-        "second")]
-    [bad-shape : ProcessEnvVec
-      (ProcessEnvVec
-        (vector.string-vec-push (vector.string-vec-new) "ONLY_NAME")
-        (vector.string-vec-new))]
+    [env-vec : ProcessEnvVec (test-env-vec2 "TL_FIRST" "one" "TL_SECOND" "two")]
+    [env-dup : ProcessEnvVec (test-env-vec2 "TL_DUP" "first" "TL_DUP" "second")]
+    [bad-empty : ProcessEnvVec (test-env-vec1 "" "bad")]
+    [bad-name : ProcessEnvVec (test-env-vec1 "BAD=NAME" "bad")]
+    [bad-shape : ProcessEnvVec (test-env-vec-bad-shape)]
     (begin
-      (test-assert-i64-eq (env-vec-count env-vec-empty) 0)
-      (test-assert (env-vec-valid? env-vec-empty))
-      (test-assert-i64-eq (env-vec-count env-vec) 2)
-      (test-assert (env-vec-valid? env-vec))
+      (test-assert-i64-eq (env-vec-count (& env-vec-empty)) 0)
+      (test-assert (env-vec-valid? (& env-vec-empty)))
+      (test-assert-i64-eq (env-vec-count (& env-vec)) 2)
+      (test-assert (env-vec-valid? (& env-vec)))
       (test-assert-env-list2
-        (env-vec-to-list env-vec)
+        (env-vec-to-list (& env-vec))
         "TL_FIRST"
         "one"
         "TL_SECOND"
         "two")
       (test-assert-env-list2
-        (command-env (command-with-env-vec cmd env-vec))
+        (command-env (command-with-env-vec cmd (& env-vec)))
         "TL_FIRST"
         "one"
         "TL_SECOND"
         "two")
       (test-assert-env-list2
-        (env-vec-to-list env-dup)
+        (env-vec-to-list (& env-dup))
         "TL_DUP"
         "first"
         "TL_DUP"
         "second")
       (test-assert-validation
-        (env-vec-validation-error (env-vec-append (env-vec-new) "" "bad"))
+        (env-vec-validation-error (& bad-empty))
         "process: environment variable name is empty")
       (test-assert-validation
-        (env-vec-validation-error
-          (env-vec-append (env-vec-new) "BAD=NAME" "bad"))
+        (env-vec-validation-error (& bad-name))
         "process: environment variable name contains '='")
       (test-assert-validation
-        (env-vec-validation-error bad-shape)
+        (env-vec-validation-error (& bad-shape))
         "process: environment vector name/value counts differ"))))
 
 ;: Inline test body for validation and result helpers.

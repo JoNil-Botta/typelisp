@@ -4304,28 +4304,9 @@
     unit
     (tc-stdlib-comptime-syntax-type-cache-refresh!)))
 
-(define (tc-stdlib-comptime-syntax-alias?
-  [canonical-name : String]
-  [type-name : String]) : bool
-  (or
-    (string.string-eq canonical-name (str_cat.str-cat "comptime." type-name))
-    (string.string-eq
-      canonical-name
-      (str_cat.str-cat (tc-stdlib-comptime-module-name) "." type-name))
-    (string.string-eq
-      canonical-name
-      (str_cat.str-cat "stdlib/comptime." type-name))
-    (string.string-eq
-      canonical-name
-      (compiler-symbol-module-key "comptime" type-name))
-    (string.string-eq
-      canonical-name
-      (compiler-symbol-module-key "stdlib/comptime" type-name))))
-
-(define (tc-stdlib-comptime-syntax-type [canonical-name : String]) : AstMaybeType
+(define (tc-stdlib-comptime-syntax-type-id [canonical-id : i64]) : AstMaybeType
   (let
     [_ : unit (tc-stdlib-comptime-syntax-type-cache-ensure!)]
-    [canonical-id : i64 (tc-name-id canonical-name)]
     (cond
       [(= canonical-id tc-stdlib-comptime-expr-key-id-cache)
         (AstSomeType (AstTyExpr))]
@@ -4347,19 +4328,65 @@
         (AstSomeType (tc-macro-match-arm-type))]
       [(= canonical-id tc-stdlib-comptime-match-arm-list-key-id-cache)
         (AstSomeType (tc-macro-match-arm-list-type))]
-      [(tc-stdlib-comptime-syntax-alias? canonical-name "Expr")
-        (AstSomeType (AstTyExpr))]
-      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprList")
-        (AstSomeType (AstTyExprList))]
-      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprClause")
-        (AstSomeType (tc-macro-expr-clause-type))]
-      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprClauseList")
-        (AstSomeType (tc-macro-expr-clause-list-type))]
-      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprBindingClause")
-        (AstSomeType (tc-macro-expr-binding-clause-type))]
-      [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprBindingClauseList")
-        (AstSomeType (tc-macro-expr-binding-clause-list-type))]
       [else (AstNoType)])))
+
+(define (tc-stdlib-comptime-syntax-type-candidate? [canonical-name : String]) : bool
+  (let
+    [prefix : String "stdlib.comptime/"]
+    (string.is-string-prefix-at (& canonical-name) (& prefix) 0)))
+
+(define (tc-stdlib-comptime-syntax-type [canonical-name : String]) : AstMaybeType
+  (if (tc-stdlib-comptime-syntax-type-candidate? canonical-name)
+    (tc-stdlib-comptime-syntax-type-id (tc-name-id canonical-name))
+    (AstNoType)))
+
+(define (tc-stdlib-comptime-syntax-alias?
+  [canonical-name : String]
+  [type-name : String]) : bool
+  (or
+    (string.string-eq canonical-name type-name)
+    (string.string-eq canonical-name (str_cat.str-cat "comptime." type-name))
+    (string.string-eq
+      canonical-name
+      (str_cat.str-cat (tc-stdlib-comptime-module-name) "." type-name))
+    (string.string-eq
+      canonical-name
+      (str_cat.str-cat "stdlib/comptime." type-name))
+    (string.string-eq
+      canonical-name
+      (compiler-symbol-module-key "comptime" type-name))
+    (string.string-eq
+      canonical-name
+      (compiler-symbol-module-key "stdlib/comptime" type-name))))
+
+(define (tc-stdlib-comptime-syntax-alias-type [canonical-name : String]) : AstMaybeType
+  (cond
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "Expr")
+      (AstSomeType (AstTyExpr))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprList")
+      (AstSomeType (AstTyExprList))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprClause")
+      (AstSomeType (tc-macro-expr-clause-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprClauseList")
+      (AstSomeType (tc-macro-expr-clause-list-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprBindingClause")
+      (AstSomeType (tc-macro-expr-binding-clause-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "ExprBindingClauseList")
+      (AstSomeType (tc-macro-expr-binding-clause-list-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "Pattern")
+      (AstSomeType (tc-macro-pattern-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "PatternList")
+      (AstSomeType (tc-macro-pattern-list-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "MatchArm")
+      (AstSomeType (tc-macro-match-arm-type))]
+    [(tc-stdlib-comptime-syntax-alias? canonical-name "MatchArmList")
+      (AstSomeType (tc-macro-match-arm-list-type))]
+    [else (AstNoType)]))
+
+(define (tc-macro-signature-stdlib-comptime-type-id [name : i64]) : AstMaybeType
+  (match (tc-stdlib-comptime-syntax-type-id name)
+    [(AstSomeType ty) (AstSomeType ty)]
+    [(AstNoType) (tc-stdlib-comptime-syntax-alias-type (intern-str name))]))
 
 (defenum TcStdlibTypeSpec
   (TcStdlibTyI64)
@@ -5411,6 +5438,9 @@
           out
           "comptime-error"
           (tc-fn1 (AstTyString) (AstTyNever))))
+      (set!
+        out
+        (tc-bind out "comptime-error" (tc-fn1 (AstTyString) (AstTyNever))))
       (set! out (tc-bind out "type-kind" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstTyString))))
       (set! out (tc-bind out "type-nominal-module" (tc-fn1 expr (AstTyString))))
@@ -8420,6 +8450,15 @@
     (string.string-eq name "expr-struct-set")
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
+    (string.string-eq name "pattern-wildcard")
+    (string.string-eq name "pattern-binding")
+    (string.string-eq name "pattern-variant")
+    (string.string-eq name "pattern-list-empty")
+    (string.string-eq name "pattern-list-cons")
+    (string.string-eq name "match-arm")
+    (string.string-eq name "match-arm-list-empty")
+    (string.string-eq name "match-arm-list-cons")
+    (string.string-eq name "expr-match")
     (string.string-eq name "expr-type")
     (string.string-eq name "type-info")
     (string.string-eq name "module-name")
@@ -30157,7 +30196,7 @@
 (define (tc-macro-signature-type [ty : AstType]) : AstType
   (match ty
     [(AstTyVar name)
-      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+      (match (tc-macro-signature-stdlib-comptime-type-id name)
         [(AstSomeType syntax-ty) syntax-ty]
         [(AstNoType)
           (cond
@@ -30176,23 +30215,23 @@
             [(= name (intern "MatchArmList")) (tc-macro-match-arm-list-type)]
             [else ty])])]
     [(AstTyVarArgs name _)
-      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+      (match (tc-macro-signature-stdlib-comptime-type-id name)
         [(AstSomeType syntax-ty) syntax-ty]
         [(AstNoType) ty])]
     [(AstTyEnum name)
-      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+      (match (tc-macro-signature-stdlib-comptime-type-id name)
         [(AstSomeType syntax-ty) syntax-ty]
         [(AstNoType) ty])]
     [(AstTyEnumArgs name _)
-      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+      (match (tc-macro-signature-stdlib-comptime-type-id name)
         [(AstSomeType syntax-ty) syntax-ty]
         [(AstNoType) ty])]
     [(AstTyStruct name)
-      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+      (match (tc-macro-signature-stdlib-comptime-type-id name)
         [(AstSomeType syntax-ty) syntax-ty]
         [(AstNoType) ty])]
     [(AstTyStructArgs name _)
-      (match (tc-stdlib-comptime-syntax-type (intern-str name))
+      (match (tc-macro-signature-stdlib-comptime-type-id name)
         [(AstSomeType syntax-ty) syntax-ty]
         [(AstNoType) ty])]
     [_ ty]))

@@ -2669,6 +2669,73 @@
     [(CompilerBackendMode.Scalar) true]
     [_ false]))
 
+(define (build-package-direct-object-owned-path-budget) : i64
+  ;; Large package direct-object emission duplicates enough object/ELF state to
+  ;; exceed CI memory; keep it for small no-assembler package smokes.
+  512)
+
+(define (build-package-direct-object-owned-path-count [paths : AstDeclPathList]) : i64
+  (match paths
+    [(AstDeclPathNil) 0]
+    [(AstDeclPathCons path rest)
+      (let
+        [tail : AstDeclPathList (box-get rest)]
+        (+
+          (if (> (string.string-length path) 0)
+            1
+            0)
+          (build-package-direct-object-owned-path-count tail)))]))
+
+(define (build-package-direct-object-within-budget? [paths : AstDeclPathList]) : bool
+  (<=
+    (build-package-direct-object-owned-path-count paths)
+    (build-package-direct-object-owned-path-budget)))
+
+(define (build-package-direct-object-size-ok? [paths : AstDeclPathList]) : bool
+  (or
+    (source-tool-linux-direct-object-enabled?)
+    (build-package-direct-object-within-budget? paths)))
+
+(cfg
+  test
+  (define (build-package-direct-object-test-paths
+    [count : i64]
+    [path : String]
+    [out : AstDeclPathList]) : AstDeclPathList
+    (if (<= count 0)
+      out
+      (build-package-direct-object-test-paths
+        (- count 1)
+        path
+        (ast-decl-path-cons path out)))))
+
+(cfg
+  test
+  (define (build-package-direct-object-size-smoke-ok?) : bool
+    (let
+      [budget : i64 (build-package-direct-object-owned-path-budget)]
+      [within : AstDeclPathList
+        (build-package-direct-object-test-paths budget "pkg.tl" AstDeclPathNil)]
+      [over : AstDeclPathList
+        (build-package-direct-object-test-paths
+          (+ budget 1)
+          "pkg.tl"
+          AstDeclPathNil)]
+      [mixed : AstDeclPathList
+        (ast-decl-path-cons "" (ast-decl-path-cons "pkg.tl" AstDeclPathNil))]
+      (and
+        (= (build-package-direct-object-owned-path-count mixed) 1)
+        (build-package-direct-object-within-budget? within)
+        (not (build-package-direct-object-within-budget? over))))))
+
+(cfg
+  test
+  (test
+    build-package-direct-object-size-smoke
+    (unless
+      (build-package-direct-object-size-smoke-ok?)
+      (io.panic "build package direct object size smoke failed"))))
+
 (define (build-package-try-render-linux-direct-object
   [kind : CompilerPkgKind]
   [target : CompilerBackendTarget]
@@ -2680,7 +2747,8 @@
   [paths : AstDeclPathList]) : ResultSourceToolString
   (if (and
     (compiler-backend-target-linux? target)
-    (build-package-direct-object-mode? mode))
+    (build-package-direct-object-mode? mode)
+    (build-package-direct-object-size-ok? paths))
     (match (compiler-driver-emit-package-loaded-object-image
       ""
       target

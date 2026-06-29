@@ -1999,9 +1999,9 @@
   [last-path : String]
   [count : i64]) : DocTestRunReport
   (match paths
-    [(AstDeclPathNil)
+    [(AstDeclPathList.Nil)
       (DocTestRunReport.Report count (doc-test-run-failure-list-empty))]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Cons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         [normalized : String (compiler-load-normalize-path path)]
@@ -2872,7 +2872,7 @@ typecheck: return type mismatch"))]
                 example-a
                 (ast-decl-path-cons
                   example-b
-                  (ast-decl-path-cons example-c AstDeclPathNil)))))]
+                  (ast-decl-path-cons example-c AstDeclPathList.Nil)))))]
         [report : DocTestRunReport
           (doc-test-typecheck-package-paths-with-roots
             paths

@@ -257,7 +257,7 @@
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
-  (typecheck-compiler-program-with-paths program AstDeclPathNil))
+  (typecheck-compiler-program-with-paths program AstDeclPathList.Nil))
 
 (define (typecheck-compiler-source-language-cfgs) : SymI64Env
   (compiler-cfg-enable
@@ -316,26 +316,26 @@
   [kind : AstImportKind]
   [path : String]) : bool
   (match kind
-    [(AstImportPath) (compiler-load-stdlib-import? path)]
-    [(AstImportModule)
+    [(AstImportKind.Path) (compiler-load-stdlib-import? path)]
+    [(AstImportKind.Module)
       (compiler-load-stdlib-import? (compiler-load-dotted-module-path path))]
     [_ false]))
 
 (define (typecheck-compiler-source-decl-has-stdlib-import? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport (AstImportSpec kind path _ _ _))
+    [(AstDecl.Import (AstImportSpec.Spec kind path _ _ _))
       (typecheck-compiler-source-stdlib-import-kind? kind path)]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (typecheck-compiler-source-decl-has-stdlib-import? (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (typecheck-compiler-source-decl-has-stdlib-import? (box-get template-box))]
     [_ false]))
 
 (define (typecheck-compiler-source-decls-have-stdlib-import?
   [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (typecheck-compiler-source-decl-has-stdlib-import? decl)
         (typecheck-compiler-source-decls-have-stdlib-import? (box-get rest)))]))
@@ -343,7 +343,7 @@
 (define (typecheck-compiler-source-program-has-stdlib-import?
   [program : AstProgram]) : bool
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (typecheck-compiler-source-decls-have-stdlib-import? (box-get decls-box))]))
 
 (define (typecheck-compiler-repl-expr [decls : AstDeclList] [expr : AstExpr]) : ResultTcType
@@ -634,7 +634,7 @@
 (define (compiler-typecheck-prefix-cache-paths [entry-path : String]) : AstDeclPathList
   (ast-decl-path-cons
     "stdlib/tc_prefix_shared.tl"
-    (ast-decl-path-cons entry-path AstDeclPathNil)))
+    (ast-decl-path-cons entry-path AstDeclPathList.Nil)))
 
 (define (compiler-typecheck-prefix-cache-source-a) : String
   "(define (shared-helper [x : i64]) : i64 (+ x 1))
@@ -1255,7 +1255,7 @@
 (define (compiler-typecheck-generated-fallback-diagnostic-ok?) : bool
   (let
     [meta : AstGeneratedDeclMeta
-      (AstSomeGeneratedDeclMeta
+      (AstGeneratedDeclMeta.Some
         "policy-family"
         "GeneratedStruct"
         AstExprNil
@@ -3260,7 +3260,7 @@
         (ast-field-def-cons
           (ast-field-def "fd" (AstTyI64) (AstFieldNoCleanup))
           AstFieldDefNil))
-      AstDeclNil)))
+      AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
   (ast-program
@@ -3272,7 +3272,7 @@
         (ast-field-def-cons
           (ast-field-def "fd" (AstTyI64) (ast-field-cleanup-fn "close-fd"))
           AstFieldDefNil))
-      AstDeclNil)))
+      AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-struct-tests-ok?) : bool
   (let
@@ -3378,7 +3378,7 @@
               (ast-variant-payload-cleanup-fn "close-fd")
               AstVariantPayloadCleanupNil))
           AstVariantDefNil))
-      AstDeclNil)))
+      AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-enum-tests-ok?) : bool
   (let
@@ -9553,7 +9553,7 @@
     "src/main.tl"
     (ast-decl-path-cons
       "src/assets.tl"
-      (ast-decl-path-cons "src/main.tl" AstDeclPathNil))))
+      (ast-decl-path-cons "src/main.tl" AstDeclPathList.Nil))))
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-dup-extern-source))

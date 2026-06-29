@@ -1873,19 +1873,19 @@
   compile-profile
   (define (compiler-tc-decl-profile-record [decl : AstDecl]) : unit
     (match decl
-      [(AstDeclDef _ _ _)
+      [(AstDecl.Def _ _ _)
         (begin
           (compiler-tc-decl-profile-count-def)
           (compiler-tc-decl-profile-add-def-expr))]
-      [(AstDeclDefFn name _ _ _ _)
+      [(AstDecl.DefFn name _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-fn)
           (compiler-tc-decl-profile-add-fn-expr-named (intern-str name)))]
-      [(AstDeclDefMacro _ _ _ _)
+      [(AstDecl.DefMacro _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-macro)
           (compiler-tc-decl-profile-add-macro))]
-      [(AstDeclExtern _ _ _ _)
+      [(AstDecl.Extern _ _ _ _)
         (begin
           (compiler-tc-decl-profile-count-extern)
           (compiler-tc-decl-profile-add-extern))]
@@ -2083,7 +2083,7 @@
   [meta : AstGeneratedDeclMeta]
   [diag : CompilerDiagnostic]) : CompilerDiagnostic
   (match meta
-    [(AstSomeGeneratedDeclMeta generator item _ key)
+    [(AstGeneratedDeclMeta.Some generator item _ key)
       (let
         [with-context : CompilerDiagnostic
           (compiler-diagnostic-with-note
@@ -2098,7 +2098,7 @@
             with-context
             (string.string-append "generated identity: " key))
           with-context))]
-    [(AstNoGeneratedDeclMeta) diag]))
+    [(AstGeneratedDeclMeta.No) diag]))
 
 (define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
   (if (tc-rich-error? message)
@@ -2106,26 +2106,26 @@
     (if (tc-located-error? message)
       (tc-located-error-diag message)
       (match decl
-        [(AstDeclDef _ _ expr-box)
+        [(AstDecl.Def _ _ expr-box)
           (let
             [expr : AstExpr (ast-node-get expr-box)]
             (tc-expr-diag expr message))]
-        [(AstDeclDefFn _ _ _ body-box _)
+        [(AstDecl.DefFn _ _ _ body-box _)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (tc-expr-diag body message))]
-        [(AstDeclDefMacro _ _ _ body-box)
+        [(AstDecl.DefMacro _ _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (tc-expr-diag body message))]
-        [(AstDeclTest _ _ span)
+        [(AstDecl.Test _ _ span)
           (tc-canonical-diagnostic
             (compiler-diagnostic-from-ast-span "" span message))]
-        [(AstDeclUnsafe inner-box)
+        [(AstDecl.Unsafe inner-box)
           (let
             [inner : AstDecl (box-get inner-box)]
             (tc-decl-diag inner message))]
-        [(AstDeclComptimeDecl meta template-box)
+        [(AstDecl.ComptimeDecl meta template-box)
           (let
             [template : AstDecl (box-get template-box)]
             (tc-generated-decl-diag meta (tc-decl-diag template message)))]
@@ -3255,12 +3255,12 @@
 
 (define (tc-struct-cleanup-decl-type [module : String] [decl : AstDecl]) : ResultTcType
   (match decl
-    [(AstDeclDefStruct name _ _ _)
+    [(AstDecl.DefStruct name _ _ _)
       (ResultTcType.Ok
         (tc-struct-cleanup-function-type
           (AstTyStruct
             (intern (compiler-symbol-module-key module (intern-str name))))))]
-    [(AstDeclDefStructLifetimes name lifetimes _ _ _)
+    [(AstDecl.DefStructLifetimes name lifetimes _ _ _)
       (ResultTcType.Ok
         (tc-struct-cleanup-function-type
           (ast-ty-struct-args
@@ -3272,12 +3272,12 @@
 
 (define (tc-enum-cleanup-decl-type [module : String] [decl : AstDecl]) : ResultTcType
   (match decl
-    [(AstDeclDefEnum name _ _)
+    [(AstDecl.DefEnum name _ _)
       (ResultTcType.Ok
         (tc-enum-cleanup-function-type
           (AstTyEnum
             (intern (compiler-symbol-module-key module (intern-str name))))))]
-    [(AstDeclDefEnumLifetimes name lifetimes _ _)
+    [(AstDecl.DefEnumLifetimes name lifetimes _ _)
       (ResultTcType.Ok
         (tc-enum-cleanup-function-type
           (ast-ty-enum-args
@@ -4488,22 +4488,22 @@
 
 (define (tc-stdlib-comptime-raw-type-name [decl : AstDecl]) : TcMaybeString
   (match decl
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (tc-stdlib-comptime-raw-type-name (box-get template-box))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (tc-stdlib-comptime-raw-type-name (box-get inner-box))]
-    [(AstDeclDefEnum name _ _) (TcMaybeString.Some (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _)
+    [(AstDecl.DefEnum name _ _) (TcMaybeString.Some (intern-str name))]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
       (TcMaybeString.Some (intern-str name))]
-    [(AstDeclDefStruct name _ _ _) (TcMaybeString.Some (intern-str name))]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStruct name _ _ _) (TcMaybeString.Some (intern-str name))]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
       (TcMaybeString.Some (intern-str name))]
     [_ (TcMaybeString.No)]))
 
 (define (tc-stdlib-comptime-raw-comptime-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl _ _) true]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.ComptimeDecl _ _) true]
+    [(AstDecl.Unsafe inner-box)
       (tc-stdlib-comptime-raw-comptime-decl? (box-get inner-box))]
     [_ false]))
 
@@ -4527,12 +4527,12 @@
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
   (match decls
-    [(AstDeclNil) ResultTcUnit.Ok]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) ResultTcUnit.Ok]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule module-id)
+          [(AstDecl.Module module-id)
             (tc-stdlib-check-comptime-declaration-surface-list
               rest
               (intern-str module-id))]
@@ -4546,7 +4546,7 @@
 
 (define (tc-stdlib-check-comptime-declaration-surface [ctx : TcContext]) : ResultTcUnit
   (match (tc-context-program ctx)
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (tc-stdlib-check-comptime-declaration-surface-list (box-get decls-box) "")]))
 
 (define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : AstType]) : AstType
@@ -4824,7 +4824,7 @@
         (compiler-symbol-handle-index handle))
         [(ResultAstDecl.Ok decl)
           (match decl
-            [(AstDeclDefStruct _ _ _ fields)
+            [(AstDecl.DefStruct _ _ _ fields)
               (tc-stdlib-check-field-specs
                 (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
                 type-name
@@ -4853,7 +4853,7 @@
         (compiler-symbol-handle-index handle))
         [(ResultAstDecl.Ok decl)
           (match decl
-            [(AstDeclDefEnum _ _ variants)
+            [(AstDecl.DefEnum _ _ variants)
               (tc-stdlib-check-variant-specs
                 (tc-context-with-module ctx (tc-stdlib-comptime-module-name))
                 type-name
@@ -7629,26 +7629,26 @@
     (begin
       (while (not done)
         (match cursor
-          [(AstDeclNil) (set! done true)]
-          [(AstDeclCons decl rest-box)
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest-box)
             (let
               [rest : AstDeclList (box-get rest-box)]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! current-module next-module)
                     (set! cursor rest))]
-                [(AstDeclImport (AstImportSpec _ _ expected _ _))
+                [(AstDecl.Import (AstImportSpec.Spec _ _ expected _ _))
                   (begin
                     (if (= current-module current-module-id)
                       (match expected
-                        [(AstSomeModuleName target)
+                        [(AstMaybeModuleName.Some target)
                           (if (= (intern target) target-id)
                             (begin
                               (set! found true)
                               (set! done true))
                             unit)]
-                        [(AstNoModuleName) unit])
+                        [(AstMaybeModuleName.No) unit])
                       unit)
                     (if done
                       unit
@@ -7660,7 +7660,7 @@
   (match ctx
     [(TcContext program _ _ current-module _)
       (match program
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (begin
             (tc-imported-module-identity-cache-ensure!)
             (let
@@ -7836,7 +7836,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDefFn name params ret _ _)
+    [(AstDecl.DefFn name params ret _ _)
       (and
         (string.string-eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstTyI64))
@@ -7859,7 +7859,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDefFn name params ret _ _)
+    [(AstDecl.DefFn name params ret _ _)
       (and
         (string.string-eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstTyChar))
@@ -7892,7 +7892,7 @@
   [base : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDefFn name params ret _ _)
+    [(AstDecl.DefFn name params ret _ _)
       (and
         (string.string-eq (intern-str name) base)
         (tc-type-eq (tc-resolve-type ctx ret) (AstTyString))
@@ -7964,18 +7964,23 @@
   [target-module-id : i64]
   [current-module-id : i64]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-decl-list-module-imports-stdlib-string?
               rest
               target-module-id
               next-module)]
-          [(AstDeclImport
-              (AstImportSpec _ _ (AstSomeModuleName import-module) _ _))
+          [(AstDecl.Import
+              (AstImportSpec.Spec
+                _
+                _
+                (AstMaybeModuleName.Some import-module)
+                _
+                _))
             (if (and
               (= current-module-id target-module-id)
               (tc-stdlib-string-module-name? import-module))
@@ -7994,7 +7999,7 @@
   (match ctx
     [(TcContext program _ _ module _)
       (match program
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (tc-decl-list-module-imports-stdlib-string?
             (box-get decls-box)
             (intern module)
@@ -8316,7 +8321,7 @@
             [base-start : i64 (+ first-dot 1)]
             [base : String (string.substring name base-start (- n base-start))]
             (match (tc-context-program ctx)
-              [(AstProgram decls-box)
+              [(AstProgram.Program decls-box)
                 (match (tc-source-dotted-alias-target
                   (box-get decls-box)
                   current-module-id
@@ -8355,7 +8360,7 @@
         (match ctx
           [(TcContext program _ _ current-module _)
             (match program
-              [(AstProgram decls-box)
+              [(AstProgram.Program decls-box)
                 (let
                   [target : String
                     (macro-resolve-qualified-module
@@ -8631,7 +8636,7 @@
   (match ctx
     [(TcContext program _ _ current-module _)
       (match program
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             (macro-resolve-qualified-module decls current-module qualifier))])]))
@@ -8940,65 +8945,66 @@
   [index : i64]
   [module : String]) : ResultTcString
   (match decls
-    [(AstDeclNil) (ResultTcString.Err "typecheck: nominal owner not found")]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil)
+      (ResultTcString.Err "typecheck: nominal owner not found")]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclImport _)
+          [(AstDecl.Import _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclIncludeStr _ _)
+          [(AstDecl.IncludeStr _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclIncludeBin _ _)
+          [(AstDecl.IncludeBin _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-nominal-owner-name-list
               rest
               target
               index
               (intern-str next-module))]
-          [(AstDeclTest _ _ _)
+          [(AstDecl.Test _ _ _)
             (tc-nominal-owner-name-list rest target index module)]
-          [(AstDeclDefEnum name _ _)
+          [(AstDecl.DefEnum name _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclDefEnumLifetimes name _ _ _)
+          [(AstDecl.DefEnumLifetimes name _ _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclDefStruct name _ _ _)
+          [(AstDecl.DefStruct name _ _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclDefStructLifetimes name _ _ _ _)
+          [(AstDecl.DefStructLifetimes name _ _ _ _)
             (if (= target index)
               (ResultTcString.Ok
                 (compiler-symbol-module-key module (intern-str name)))
               (tc-nominal-owner-name-list rest target (+ index 1) module))]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum name _ _)
+                [(AstDecl.DefEnum name _ _)
                   (if (= target index)
                     (ResultTcString.Ok
                       (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDeclDefEnumLifetimes name _ _ _)
+                [(AstDecl.DefEnumLifetimes name _ _ _)
                   (if (= target index)
                     (ResultTcString.Ok
                       (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDeclDefStruct name _ _ _)
+                [(AstDecl.DefStruct name _ _ _)
                   (if (= target index)
                     (ResultTcString.Ok
                       (compiler-symbol-module-key module (intern-str name)))
                     (tc-nominal-owner-name-list rest target (+ index 1) module))]
-                [(AstDeclDefStructLifetimes name _ _ _ _)
+                [(AstDecl.DefStructLifetimes name _ _ _ _)
                   (if (= target index)
                     (ResultTcString.Ok
                       (compiler-symbol-module-key module (intern-str name)))
@@ -9011,7 +9017,7 @@
   [handle : i64]
   [index : i64]) : ResultTcString
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (match (tc-nominal-owner-name-list decls index 0 "")
@@ -9045,7 +9051,7 @@
     [(CompilerSomeString name) (ResultTcString.Ok name)]
     [(CompilerNoString)
       (match (tc-context-program ctx)
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (tc-nominal-owner-name-list (box-get decls-box) index 0 "")])]))
 
 (define (tc-context-with-owner-name-module
@@ -9232,11 +9238,11 @@
 
 (define (tc-nominal-lifetimes-from-decl [decl : AstDecl]) : ResultTcLifetimeList
   (match decl
-    [(AstDeclDefEnum _ _ _) (ResultTcLifetimeList.Ok AstLifetimeNil)]
-    [(AstDeclDefEnumLifetimes _ lifetimes _ _)
+    [(AstDecl.DefEnum _ _ _) (ResultTcLifetimeList.Ok AstLifetimeNil)]
+    [(AstDecl.DefEnumLifetimes _ lifetimes _ _)
       (ResultTcLifetimeList.Ok lifetimes)]
-    [(AstDeclDefStruct _ _ _ _) (ResultTcLifetimeList.Ok AstLifetimeNil)]
-    [(AstDeclDefStructLifetimes _ lifetimes _ _ _)
+    [(AstDecl.DefStruct _ _ _ _) (ResultTcLifetimeList.Ok AstLifetimeNil)]
+    [(AstDecl.DefStructLifetimes _ lifetimes _ _ _)
       (ResultTcLifetimeList.Ok lifetimes)]
     [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
 
@@ -10461,7 +10467,7 @@
 
 (define (tc-source-decl-policy-ok [ctx : TcContext] [decl : AstDecl]) : ResultTcUnit
   (match decl
-    [(AstDeclDef _ maybe-ty expr-box)
+    [(AstDecl.Def _ maybe-ty expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (match (tc-source-maybe-type-policy-ok ctx maybe-ty)
@@ -10474,7 +10480,7 @@
                   (tc-source-expr-spmd-broadcast-scope-ok expr false)]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDeclDefFn _ params ret body-box _)
+    [(AstDecl.DefFn _ params ret body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-source-param-list-policy-ok ctx params)
@@ -10490,7 +10496,7 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDeclDefMacro _ params ret body-box)
+    [(AstDecl.DefMacro _ params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-source-macro-param-list-policy-ok ctx params)
@@ -10503,13 +10509,13 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDeclExtern _ _ _ ty) (tc-source-type-policy-ok ctx ty)]
-    [(AstDeclDefEnum name _ variants)
+    [(AstDecl.Extern _ _ _ ty) (tc-source-type-policy-ok ctx ty)]
+    [(AstDecl.DefEnum name _ variants)
       (match (tc-source-variant-list-policy-ok ctx variants)
         [(ResultTcUnit.Ok)
           (tc-source-default-aggregate-layout-finite-ok ctx (intern-str name))]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(AstDeclDefEnumLifetimes name lifetimes _ variants)
+    [(AstDecl.DefEnumLifetimes name lifetimes _ variants)
       (if (tc-lifetime-list-duplicates? lifetimes)
         (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
         (match (tc-source-variant-list-lifetimes-policy-ok
@@ -10519,7 +10525,7 @@
           [(ResultTcUnit.Ok)
             (tc-source-default-aggregate-layout-finite-ok ctx (intern-str name))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDeclDefStruct name repr cleanup fields)
+    [(AstDecl.DefStruct name repr cleanup fields)
       (match (tc-source-field-list-policy-ok ctx fields)
         [(ResultTcUnit.Ok)
           (if (and (ast-struct-repr-c? repr) (ast-struct-cleanup? cleanup))
@@ -10533,7 +10539,7 @@
               (intern-str name)
               repr))]
         [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+    [(AstDecl.DefStructLifetimes name lifetimes repr cleanup fields)
       (if (tc-lifetime-list-duplicates? lifetimes)
         (ResultTcUnit.Err "typecheck: duplicate lifetime parameter")
         (match (tc-source-field-list-lifetimes-policy-ok ctx lifetimes fields)
@@ -10549,24 +10555,24 @@
                 (intern-str name)
                 repr))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
-    [(AstDeclDefDispatch _ _) ResultTcUnit.Ok]
-    [(AstDeclIncludeStr _ _)
+    [(AstDecl.DefDispatch _ _) ResultTcUnit.Ok]
+    [(AstDecl.IncludeStr _ _)
       (ResultTcUnit.Err
         "typecheck: include-str must be expanded by compiler loader")]
-    [(AstDeclIncludeBin _ _)
+    [(AstDecl.IncludeBin _ _)
       (ResultTcUnit.Err
         "typecheck: include-bin must be expanded by compiler loader")]
-    [(AstDeclImport _) ResultTcUnit.Ok]
-    [(AstDeclModule _) ResultTcUnit.Ok]
-    [(AstDeclTest _ body-box _)
+    [(AstDecl.Import _) ResultTcUnit.Ok]
+    [(AstDecl.Module _) ResultTcUnit.Ok]
+    [(AstDecl.Test _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tc-source-expr-policy-ok ctx body))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-source-decl-policy-ok ctx inner))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-source-decl-policy-ok ctx template))]))
@@ -10579,12 +10585,12 @@
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
   (match decls
-    [(AstDeclNil) ResultTcUnit.Ok]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) ResultTcUnit.Ok]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-source-decl-list-policy-ok-in-module
               ctx
               rest
@@ -10603,7 +10609,7 @@
   (begin
     (tc-nominal-owner-cache-reset!)
     (match program
-      [(AstProgram decls-box)
+      [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
           (tc-source-decl-list-policy-ok ctx decls))])))
@@ -12447,29 +12453,29 @@
 
 (define (tc-dispatch-isa-eq? [a : AstDispatchIsa] [b : AstDispatchIsa]) : bool
   (match a
-    [(AstDispatchScalar)
+    [(AstDispatchIsa.Scalar)
       (match b
-        [(AstDispatchScalar) true]
+        [(AstDispatchIsa.Scalar) true]
         [_ false])]
-    [(AstDispatchAvx2)
+    [(AstDispatchIsa.Avx2)
       (match b
-        [(AstDispatchAvx2) true]
+        [(AstDispatchIsa.Avx2) true]
         [_ false])]
-    [(AstDispatchAvx512)
+    [(AstDispatchIsa.Avx512)
       (match b
-        [(AstDispatchAvx512) true]
+        [(AstDispatchIsa.Avx512) true]
         [_ false])]))
 
 (define (tc-dispatch-variant-list-contains-isa?
   [variants : AstDispatchVariantList]
   [isa : AstDispatchIsa]) : bool
   (match variants
-    [(AstDispatchVariantNil) false]
-    [(AstDispatchVariantCons variant rest)
+    [(AstDispatchVariantList.Nil) false]
+    [(AstDispatchVariantList.Cons variant rest)
       (let
         [rest : AstDispatchVariantList (box-get rest)]
         (match variant
-          [(AstDispatchVariant found-isa _)
+          [(AstDispatchVariant.Variant found-isa _)
             (if (tc-dispatch-isa-eq? found-isa isa)
               true
               (tc-dispatch-variant-list-contains-isa? rest isa))]))]))
@@ -12477,12 +12483,12 @@
 (define (tc-dispatch-variant-list-duplicate-isa?
   [variants : AstDispatchVariantList]) : bool
   (match variants
-    [(AstDispatchVariantNil) false]
-    [(AstDispatchVariantCons variant rest)
+    [(AstDispatchVariantList.Nil) false]
+    [(AstDispatchVariantList.Cons variant rest)
       (let
         [rest : AstDispatchVariantList (box-get rest)]
         (match variant
-          [(AstDispatchVariant isa _)
+          [(AstDispatchVariant.Variant isa _)
             (or
               (tc-dispatch-variant-list-contains-isa? rest isa)
               (tc-dispatch-variant-list-duplicate-isa? rest))]))]))
@@ -12490,15 +12496,15 @@
 (define (tc-dispatch-variant-list-scalar-count
   [variants : AstDispatchVariantList]) : i64
   (match variants
-    [(AstDispatchVariantNil) 0]
-    [(AstDispatchVariantCons variant rest)
+    [(AstDispatchVariantList.Nil) 0]
+    [(AstDispatchVariantList.Cons variant rest)
       (let
         [rest : AstDispatchVariantList (box-get rest)]
         (match variant
-          [(AstDispatchVariant isa _)
+          [(AstDispatchVariant.Variant isa _)
             (+
               (match isa
-                [(AstDispatchScalar) 1]
+                [(AstDispatchIsa.Scalar) 1]
                 [_ 0])
               (tc-dispatch-variant-list-scalar-count rest))]))]))
 
@@ -12564,16 +12570,16 @@
   [variants : AstDispatchVariantList]
   [expected : AstMaybeType]) : ResultTcType
   (match variants
-    [(AstDispatchVariantNil)
+    [(AstDispatchVariantList.Nil)
       (match expected
         [(AstSomeType ty) (ResultTcType.Ok ty)]
         [(AstNoType)
           (ResultTcType.Err "typecheck: defdispatch has no variants")])]
-    [(AstDispatchVariantCons variant rest)
+    [(AstDispatchVariantList.Cons variant rest)
       (let
         [rest : AstDispatchVariantList (box-get rest)]
         (match variant
-          [(AstDispatchVariant _ variant-name)
+          [(AstDispatchVariant.Variant _ variant-name)
             (match (tc-dispatch-variant-type ctx dispatch-name variant-name)
               [(ResultTcType.Ok ty)
                 (match expected
@@ -12607,7 +12613,7 @@
 
 (define (tc-top-decl-type [ctx : TcContext] [decl : AstDecl]) : ResultTcType
   (match decl
-    [(AstDeclDef _ maybe-ty expr-box)
+    [(AstDecl.Def _ maybe-ty expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (match maybe-ty
@@ -12619,13 +12625,13 @@
               [_
                 (ResultTcType.Err
                   "typecheck: top-level value requires annotation")])]))]
-    [(AstDeclDefFn _ params ret _ _)
+    [(AstDecl.DefFn _ params ret _ _)
       (ResultTcType.Ok
         (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
-    [(AstDeclExtern _ _ _ ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
-    [(AstDeclDefDispatch name variants)
+    [(AstDecl.Extern _ _ _ ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
+    [(AstDecl.DefDispatch name variants)
       (tc-dispatch-decl-type ctx (intern-str name) variants)]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-top-decl-type ctx inner))]
@@ -12644,7 +12650,7 @@
   [env : TcTypeEnv]
   [decl : AstDecl]) : ResultTcType
   (match decl
-    [(AstDeclDef _ maybe-ty expr-box)
+    [(AstDecl.Def _ maybe-ty expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (match maybe-ty
@@ -12759,18 +12765,18 @@
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
-    [(AstDeclModule _) (ResultTcEnv.Ok env)]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Module _) (ResultTcEnv.Ok env)]
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _ _)
+          [(AstDecl.DefFn name _ _ _ _)
             (match (tc-top-decl-type (tc-context-with-module ctx module) inner)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok
                   (tc-bind-module-name-unsafe-id env module name ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-          [(AstDeclExtern name kind _ _)
+          [(AstDecl.Extern name kind _ _)
             (let
               [extern-ctx : TcContext (tc-context-with-module ctx module)]
               (match (tc-top-decl-type extern-ctx inner)
@@ -12785,7 +12791,7 @@
                       (tc-bind-module-name-unsafe-id env module name ty)))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
-    [(AstDeclDef name _ _)
+    [(AstDecl.Def name _ _)
       (match (tc-top-decl-type-with-env
         (tc-context-with-module ctx module)
         env
@@ -12793,18 +12799,18 @@
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok (tc-bind-module-name-id env module name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefFn name _ _ _ _)
+    [(AstDecl.DefFn name _ _ _ _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok (tc-bind-module-name-id env module name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefDispatch name _)
+    [(AstDecl.DefDispatch name _)
       (match (tc-top-decl-type (tc-context-with-module ctx module) decl)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok (tc-bind-module-name-id env module name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefMacro _ _ _ _) (ResultTcEnv.Ok env)]
-    [(AstDeclExtern name kind _ _)
+    [(AstDecl.DefMacro _ _ _ _) (ResultTcEnv.Ok env)]
+    [(AstDecl.Extern name kind _ _)
       (let
         [extern-ctx : TcContext (tc-context-with-module ctx module)]
         (match (tc-top-decl-type extern-ctx decl)
@@ -12814,7 +12820,7 @@
                 (tc-bind-module-name-id-c-abi-fnptr env module name ty)
                 (tc-bind-module-name-id env module name ty)))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDeclDefEnum name cleanup variants)
+    [(AstDecl.DefEnum name cleanup variants)
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
@@ -12834,7 +12840,7 @@
                 cleanup
                 enum-ty))]
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
@@ -12854,7 +12860,7 @@
                 cleanup
                 enum-ty))]
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDeclDefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct name _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
@@ -12869,7 +12875,7 @@
             module
             cleanup
             struct-ty)))]
-    [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+    [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
@@ -12885,14 +12891,14 @@
             module
             cleanup
             struct-ty)))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-build-top-env-bind-decl-in-module ctx env module template))]
-    [(AstDeclImport _) (ResultTcEnv.Ok env)]
-    [(AstDeclIncludeStr _ _) (ResultTcEnv.Ok env)]
-    [(AstDeclIncludeBin _ _) (ResultTcEnv.Ok env)]
-    [(AstDeclTest _ _ _) (ResultTcEnv.Ok env)]))
+    [(AstDecl.Import _) (ResultTcEnv.Ok env)]
+    [(AstDecl.IncludeStr _ _) (ResultTcEnv.Ok env)]
+    [(AstDecl.IncludeBin _ _) (ResultTcEnv.Ok env)]
+    [(AstDecl.Test _ _ _) (ResultTcEnv.Ok env)]))
 
 (define (tc-build-top-env-list-in-module
   [ctx : TcContext]
@@ -12908,12 +12914,12 @@
     (begin
       (while ok
         (match cursor
-          [(AstDeclNil) (set! ok false)]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) (set! ok false)]
+          [(AstDeclList.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! current-module (intern-str next-module))
                     (set! cursor rest))]
@@ -13001,15 +13007,15 @@
     (begin
       (while (not done)
         (match cursor
-          [(AstDeclNil) (set! done true)]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
             (begin
               (set! result (ast-decl-cons decl result))
               (set! cursor (box-get rest)))]))
       result)))
 
 (define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (tc-import-alias-ast-decl-list-reverse-into items AstDeclNil))
+  (tc-import-alias-ast-decl-list-reverse-into items AstDeclList.Nil))
 
 (define (tc-import-alias-summary-index-reverse-slots!
   [decls : (Array AstDeclList)]
@@ -13039,19 +13045,19 @@
     (begin
       (while ok
         (match cur
-          [(AstDeclNil) (set! ok false)]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) (set! ok false)]
+          [(AstDeclList.Cons decl rest)
             (let
               [next : AstDeclList (box-get rest)]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! cur-module-id next-module)
                     (set! cur next))]
                 [_
                   (let
                     [slot : i64 0]
-                    [existing : AstDeclList AstDeclNil]
+                    [existing : AstDeclList AstDeclList.Nil]
                     (begin
                       (match (hashmap.i64-i64-map-get modules cur-module-id)
                         [(hashmap.I64I64MapFound found-slot)
@@ -13067,7 +13073,7 @@
                                 modules
                                 cur-module-id
                                 slot))
-                            (array.array-set! decls slot AstDeclNil)
+                            (array.array-set! decls slot AstDeclList.Nil)
                             (set! slot-count (+ slot-count 1)))])
                       (array.array-set!
                         decls
@@ -13127,11 +13133,11 @@
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _ _)
+          [(AstDecl.DefFn name _ _ _ _)
             (match (tc-import-alias-source-value-type env module name)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok
@@ -13145,7 +13151,7 @@
                     name
                     ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-          [(AstDeclExtern name kind _ _)
+          [(AstDecl.Extern name kind _ _)
             (let
               [extern-ctx : TcContext (tc-context-with-module ctx module)]
               (match (tc-import-alias-source-value-type env module name)
@@ -13172,7 +13178,7 @@
                         ty)))]
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
           [_ (ResultTcEnv.Ok env)]))]
-    [(AstDeclDef name _ _)
+    [(AstDecl.Def name _ _)
       (match (tc-import-alias-source-value-type env module name)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -13186,7 +13192,7 @@
               name
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefFn name _ _ _ _)
+    [(AstDecl.DefFn name _ _ _ _)
       (match (tc-import-alias-source-value-type env module name)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -13200,7 +13206,7 @@
               name
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefDispatch name _)
+    [(AstDecl.DefDispatch name _)
       (match (tc-import-alias-source-value-type env module name)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -13214,7 +13220,7 @@
               name
               ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclExtern name kind _ _)
+    [(AstDecl.Extern name kind _ _)
       (let
         [extern-ctx : TcContext (tc-context-with-module ctx module)]
         (match (tc-import-alias-source-value-type env module name)
@@ -13240,7 +13246,7 @@
                   name
                   ty)))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDeclDefEnum name cleanup variants)
+    [(AstDecl.DefEnum name cleanup variants)
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
@@ -13264,7 +13270,7 @@
             import-unqualified
             cleanup
             enum-ty)))]
-    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
       (let
         [name-str : String (intern-str name)]
         [scoped-name : String (compiler-symbol-module-key module name-str)]
@@ -13288,7 +13294,7 @@
             import-unqualified
             cleanup
             enum-ty)))]
-    [(AstDeclDefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct name _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
@@ -13314,7 +13320,7 @@
                 cleanup
                 struct-ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+    [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
@@ -13342,7 +13348,7 @@
                 cleanup
                 struct-ty))]
           [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-bind-import-alias-decl-in-module
@@ -13374,19 +13380,19 @@
     (begin
       (while ok
         (match cur
-          [(AstDeclNil) (set! ok false)]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) (set! ok false)]
+          [(AstDeclList.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! cur-module-id next-module)
                     (set! cur rest))]
-                [(AstDeclImport _) (set! cur rest)]
-                [(AstDeclIncludeStr _ _) (set! cur rest)]
-                [(AstDeclIncludeBin _ _) (set! cur rest)]
-                [(AstDeclTest _ _ _) (set! cur rest)]
+                [(AstDecl.Import _) (set! cur rest)]
+                [(AstDecl.IncludeStr _ _) (set! cur rest)]
+                [(AstDecl.IncludeBin _ _) (set! cur rest)]
+                [(AstDecl.Test _ _ _) (set! cur rest)]
                 [_
                   (if (= cur-module-id target-module-id)
                     (match (tc-bind-import-alias-decl-in-module
@@ -13496,21 +13502,21 @@
     (begin
       (while ok
         (match cur
-          [(AstDeclNil) (set! ok false)]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) (set! ok false)]
+          [(AstDeclList.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! cur-module-id next-module)
                     (set! cur rest))]
-                [(AstDeclImport
-                    (AstImportSpec
+                [(AstDecl.Import
+                    (AstImportSpec.Spec
                       _
                       _
-                      (AstSomeModuleName target-module)
-                      (AstSomeImportAlias alias)
+                      (AstMaybeModuleName.Some target-module)
+                      (AstMaybeImportAlias.Some alias)
                       _))
                   (let
                     [importer-module : String (intern-str cur-module-id)]
@@ -13564,7 +13570,7 @@
     (tc-unqualified-import-ambiguity-reset!)
     (tc-lazy-import-stubs-reset!)
     (match program
-      [(AstProgram decls-box)
+      [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
           [base-env : TcTypeEnv (tc-default-env)]
@@ -13628,16 +13634,16 @@
   [module : String]
   [decl : AstDecl]) : ResultTcEnv
   (match decl
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (match inner
-          [(AstDeclDefFn name _ _ _ _)
+          [(AstDecl.DefFn name _ _ _ _)
             (match (tc-top-decl-type ctx inner)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok (tc-bind-unsafe-id env name ty))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-          [(AstDeclExtern name kind _ _)
+          [(AstDecl.Extern name kind _ _)
             (match (tc-top-decl-type ctx inner)
               [(ResultTcType.Ok ty)
                 (ResultTcEnv.Ok
@@ -13646,19 +13652,19 @@
                     (tc-bind-unsafe-id env name ty)))]
               [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
           [_ (ResultTcEnv.Ok env)]))]
-    [(AstDeclDef name _ _)
+    [(AstDecl.Def name _ _)
       (match (tc-top-decl-type-with-env ctx env decl)
         [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefFn name _ _ _ _)
+    [(AstDecl.DefFn name _ _ _ _)
       (match (tc-top-decl-type ctx decl)
         [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefDispatch name _)
+    [(AstDecl.DefDispatch name _)
       (match (tc-top-decl-type ctx decl)
         [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env name ty))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclExtern name kind _ _)
+    [(AstDecl.Extern name kind _ _)
       (match (tc-top-decl-type ctx decl)
         [(ResultTcType.Ok ty)
           (ResultTcEnv.Ok
@@ -13666,7 +13672,7 @@
               (tc-bind-c-abi-fnptr-id env name ty)
               (tc-bind-id env name ty)))]
         [(ResultTcType.Err message) (ResultTcEnv.Err message)])]
-    [(AstDeclDefEnum name cleanup variants)
+    [(AstDecl.DefEnum name cleanup variants)
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
@@ -13682,7 +13688,7 @@
               variants)
             cleanup
             enum-ty)))]
-    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
       (let
         [name-str : String (intern-str name)]
         [enum-ty : AstType
@@ -13700,7 +13706,7 @@
               variants)
             cleanup
             enum-ty)))]
-    [(AstDeclDefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct name _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
@@ -13712,7 +13718,7 @@
             (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
-    [(AstDeclDefStructLifetimes name lifetimes _ cleanup fields)
+    [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
       (let
         [name-str : String (intern-str name)]
         [struct-ty : AstType
@@ -13726,16 +13732,16 @@
             (tc-bind-id env name constructor-ty)
             cleanup
             struct-ty)))]
-    [(AstDeclImport
-        (AstImportSpec
+    [(AstDecl.Import
+        (AstImportSpec.Spec
           _
           _
-          (AstSomeModuleName target-module)
-          (AstSomeImportAlias alias)
+          (AstMaybeModuleName.Some target-module)
+          (AstMaybeImportAlias.Some alias)
           _))
       (if (string.string-eq alias "")
         (match (tc-context-program ctx)
-          [(AstProgram decls-box)
+          [(AstProgram.Program decls-box)
             (tc-bind-import-alias-module
               ctx
               (box-get decls-box)
@@ -13745,7 +13751,7 @@
               module
               true)])
         (ResultTcEnv.Ok env))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-module-local-env-add-decl ctx env module template))]
@@ -13758,12 +13764,12 @@
   [target-module : String]
   [module : String]) : ResultTcEnv
   (match decls
-    [(AstDeclNil) (ResultTcEnv.Ok env)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (ResultTcEnv.Ok env)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-module-local-env-list
               ctx
               rest
@@ -13790,7 +13796,7 @@
   (if (string.string-eq module "")
     (ResultTcEnv.Ok top-env)
     (match (tc-context-program ctx)
-      [(AstProgram decls-box)
+      [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
           (tc-module-local-env-list
@@ -15526,7 +15532,7 @@
           (compiler-symbol-handle-index handle))
           [(ResultAstDecl.Ok decl)
             (match decl
-              [(AstDeclExtern _ kind metadata _)
+              [(AstDecl.Extern _ kind metadata _)
                 (match kind
                   [(AstExternFunction)
                     (TcMaybeExternAbi.Some (ast-extern-metadata-abi metadata))]
@@ -17897,7 +17903,7 @@
 
 (define (tc-clone-able-set-build [ctx : TcContext]) : CloneNameSet
   (match (tc-context-program ctx)
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         [pools : AstNodePoolContext (tc-context-pools ctx)]
@@ -19080,16 +19086,16 @@
 
 (define (tc-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultTcSpmdInlineHelper
   (match decl
-    [(AstDeclDefFn _ params ret body-box _)
+    [(AstDecl.DefFn _ params ret body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (ResultTcSpmdInlineHelper.Ok
           (TcSpmdInlineHelper.Some name params ret body)))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (tc-spmd-inline-helper-from-decl name inner))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-spmd-inline-helper-from-decl name template))]
@@ -19302,12 +19308,12 @@
 
 (define (tc-spmd-program-imports-atomic? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclImport (AstImportSpec _ path _ _ _))
+          [(AstDecl.Import (AstImportSpec.Spec _ path _ _ _))
             (or
               (tc-spmd-atomic-import-path? path)
               (tc-spmd-program-imports-atomic? rest))]
@@ -19317,7 +19323,7 @@
   (match ctx
     [(TcContext program _ _ _ _)
       (match program
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
 
 (define (tc-spmd-atomic-imported-symbol-for-name
@@ -19345,7 +19351,7 @@
       (compiler-symbol-handle-index handle))
       [(ResultAstDecl.Ok decl)
         (match decl
-          [(AstDeclExtern _ kind metadata _)
+          [(AstDecl.Extern _ kind metadata _)
             (match kind
               [(AstExternFunction)
                 (let
@@ -23298,19 +23304,19 @@
   [enum-name : String]
   [module : String]) : ResultAstVariantDefList
   (match decls
-    [(AstDeclNil)
+    [(AstDeclList.Nil)
       (ResultAstVariantDefList.Err
         (string.string-append "typecheck: unknown enum " enum-name))]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-program-enum-variants-list-in-module
               rest
               enum-name
               (intern-str next-module))]
-          [(AstDeclDefEnum name _ variants)
+          [(AstDecl.DefEnum name _ variants)
             (if (or
               (string.string-eq (intern-str name) enum-name)
               (string.string-eq
@@ -23318,7 +23324,7 @@
                 enum-name))
               (ResultAstVariantDefList.Ok variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDeclDefEnumLifetimes name _ _ variants)
+          [(AstDecl.DefEnumLifetimes name _ _ variants)
             (if (or
               (string.string-eq (intern-str name) enum-name)
               (string.string-eq
@@ -23326,11 +23332,11 @@
                 enum-name))
               (ResultAstVariantDefList.Ok variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefEnum name _ variants)
+                [(AstDecl.DefEnum name _ variants)
                   (if (or
                     (string.string-eq (intern-str name) enum-name)
                     (string.string-eq
@@ -23341,7 +23347,7 @@
                       rest
                       enum-name
                       module))]
-                [(AstDeclDefEnumLifetimes name _ _ variants)
+                [(AstDecl.DefEnumLifetimes name _ _ variants)
                   (if (or
                     (string.string-eq (intern-str name) enum-name)
                     (string.string-eq
@@ -23361,7 +23367,7 @@
 
 (define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         (tc-program-enum-variants-list decls enum-name))]))
@@ -23382,9 +23388,9 @@
           (compiler-symbol-handle-index handle))
           [(ResultAstDecl.Ok decl)
             (match decl
-              [(AstDeclDefEnum _ _ variants)
+              [(AstDecl.DefEnum _ _ variants)
                 (ResultAstVariantDefList.Ok variants)]
-              [(AstDeclDefEnumLifetimes _ _ _ variants)
+              [(AstDecl.DefEnumLifetimes _ _ _ variants)
                 (ResultAstVariantDefList.Ok variants)]
               [_
                 (ResultAstVariantDefList.Err
@@ -23873,9 +23879,9 @@
               (compiler-symbol-handle-index handle))
               [(ResultAstDecl.Ok decl)
                 (match decl
-                  [(AstDeclDefStruct _ repr cleanup fields)
+                  [(AstDecl.DefStruct _ repr cleanup fields)
                     (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
-                  [(AstDeclDefStructLifetimes _ _ repr cleanup fields)
+                  [(AstDecl.DefStructLifetimes _ _ repr cleanup fields)
                     (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
                   [_
                     (ResultTcStructDecl.Err
@@ -23904,9 +23910,9 @@
               (compiler-symbol-handle-index handle))
               [(ResultAstDecl.Ok decl)
                 (match decl
-                  [(AstDeclDefEnum _ cleanup variants)
+                  [(AstDecl.DefEnum _ cleanup variants)
                     (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
-                  [(AstDeclDefEnumLifetimes _ _ cleanup variants)
+                  [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
                     (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
                   [_
                     (ResultTcEnumDecl.Err
@@ -25087,18 +25093,18 @@
   [module : String]
   [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
   (match decls
-    [(AstDeclNil) layouts]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) layouts]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-ctfe-layouts-from-decls
               ctx
               rest
               (intern-str next-module)
               layouts)]
-          [(AstDeclDefStruct name _ _ _)
+          [(AstDecl.DefStruct name _ _ _)
             (let
               [name-str : String (intern-str name)]
               [key : String (compiler-symbol-module-key module name-str)]
@@ -25108,7 +25114,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDeclDefStructLifetimes name _ _ _ _)
+          [(AstDecl.DefStructLifetimes name _ _ _ _)
             (let
               [name-str : String (intern-str name)]
               [key : String (compiler-symbol-module-key module name-str)]
@@ -25118,7 +25124,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDeclDefEnum name _ _)
+          [(AstDecl.DefEnum name _ _)
             (let
               [name-str : String (intern-str name)]
               [key : String (compiler-symbol-module-key module name-str)]
@@ -25128,7 +25134,7 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDeclDefEnumLifetimes name _ _ _)
+          [(AstDecl.DefEnumLifetimes name _ _ _)
             (let
               [name-str : String (intern-str name)]
               [key : String (compiler-symbol-module-key module name-str)]
@@ -25138,11 +25144,11 @@
                 rest
                 module
                 (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (match template
-                [(AstDeclDefStruct name _ _ _)
+                [(AstDecl.DefStruct name _ _ _)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String (compiler-symbol-module-key module name-str)]
@@ -25152,7 +25158,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDeclDefStructLifetimes name _ _ _ _)
+                [(AstDecl.DefStructLifetimes name _ _ _ _)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String (compiler-symbol-module-key module name-str)]
@@ -25162,7 +25168,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDeclDefEnum name _ _)
+                [(AstDecl.DefEnum name _ _)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String (compiler-symbol-module-key module name-str)]
@@ -25172,7 +25178,7 @@
                       rest
                       module
                       (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDeclDefEnumLifetimes name _ _ _)
+                [(AstDecl.DefEnumLifetimes name _ _ _)
                   (let
                     [name-str : String (intern-str name)]
                     [key : String (compiler-symbol-module-key module name-str)]
@@ -25189,7 +25195,7 @@
   (match ctx
     [(TcContext program _ _ _ _)
       (match program
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             (begin
@@ -25505,7 +25511,7 @@
     [(CompilerSomeString name) (ResultTcString.Ok name)]
     [(CompilerNoString)
       (match (tc-context-program ctx)
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
             (tc-variant-owner-name-list
@@ -25520,34 +25526,35 @@
   [index : i64]
   [module : String]) : ResultTcString
   (match decls
-    [(AstDeclNil) (ResultTcString.Err "typecheck: variant owner is not enum")]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil)
+      (ResultTcString.Err "typecheck: variant owner is not enum")]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclImport _)
+          [(AstDecl.Import _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDeclIncludeStr _ _)
+          [(AstDecl.IncludeStr _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDeclIncludeBin _ _)
+          [(AstDecl.IncludeBin _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-variant-owner-name-list
               rest
               target
               index
               (intern-str next-module))]
-          [(AstDeclTest _ _ _)
+          [(AstDecl.Test _ _ _)
             (tc-variant-owner-name-list rest target index module)]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
               (if (= target index)
                 (match template
-                  [(AstDeclDefEnum name _ _)
+                  [(AstDecl.DefEnum name _ _)
                     (ResultTcString.Ok
                       (compiler-symbol-module-key module (intern-str name)))]
-                  [(AstDeclDefEnumLifetimes name _ _ _)
+                  [(AstDecl.DefEnumLifetimes name _ _ _)
                     (ResultTcString.Ok
                       (compiler-symbol-module-key module (intern-str name)))]
                   [_
@@ -25556,10 +25563,10 @@
           [_
             (if (= target index)
               (match decl
-                [(AstDeclDefEnum name _ _)
+                [(AstDecl.DefEnum name _ _)
                   (ResultTcString.Ok
                     (compiler-symbol-module-key module (intern-str name)))]
-                [(AstDeclDefEnumLifetimes name _ _ _)
+                [(AstDecl.DefEnumLifetimes name _ _ _)
                   (ResultTcString.Ok
                     (compiler-symbol-module-key module (intern-str name)))]
                 [_ (ResultTcString.Err "typecheck: variant owner is not enum")])
@@ -30186,17 +30193,17 @@
   (match summary
     [(CompilerTypecheckSummary values functions externs)
       (match decl
-        [(AstDeclDef _ _ _)
+        [(AstDecl.Def _ _ _)
           (CompilerTypecheckSummary (+ values 1) functions externs)]
-        [(AstDeclDefFn _ _ _ _ _)
+        [(AstDecl.DefFn _ _ _ _ _)
           (CompilerTypecheckSummary values (+ functions 1) externs)]
-        [(AstDeclExtern _ _ _ _)
+        [(AstDecl.Extern _ _ _ _)
           (CompilerTypecheckSummary values functions (+ externs 1))]
-        [(AstDeclComptimeDecl _ template-box)
+        [(AstDecl.ComptimeDecl _ template-box)
           (let
             [template : AstDecl (box-get template-box)]
             (tc-summary-add-decl summary template))]
-        [(AstDeclUnsafe inner-box)
+        [(AstDecl.Unsafe inner-box)
           (let
             [inner : AstDecl (box-get inner-box)]
             (tc-summary-add-decl summary inner))]
@@ -31468,11 +31475,11 @@
   [seen : TcStringList]
   [decl : AstDecl]) : ResultTcUnit
   (match decl
-    [(AstDeclDef _ _ expr-box)
+    [(AstDecl.Def _ _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (tc-comptime-purity-expr ctx env TcStringList.Nil chain seen expr))]
-    [(AstDeclDefFn _ params _ body-box _)
+    [(AstDecl.DefFn _ params _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (tc-comptime-purity-expr
@@ -31482,25 +31489,25 @@
           chain
           seen
           body))]
-    [(AstDeclDefMacro _ _ _ _) ResultTcUnit.Ok]
-    [(AstDeclExtern name _ _ _)
+    [(AstDecl.DefMacro _ _ _ _) ResultTcUnit.Ok]
+    [(AstDecl.Extern name _ _ _)
       (tc-comptime-purity-error
         (AstExprVar name)
         chain
         (intern-str name)
         (str_cat.str-cat "extern reference " (intern-str name)))]
-    [(AstDeclDefDispatch name _)
+    [(AstDecl.DefDispatch name _)
       (tc-comptime-purity-error
         (AstExprVar name)
         chain
         (intern-str name)
         (str_cat.str-cat "runtime dispatch reference " (intern-str name)))]
-    [(AstDeclUnsafe _)
+    [(AstDecl.Unsafe _)
       (ResultTcUnit.Err
         (str_cat.str-cat
           "typecheck: comptime purity rejects unsafe declaration; reference path: "
           (tc-comptime-purity-chain-render chain)))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (tc-comptime-purity-decl ctx env chain seen template))]
@@ -37550,15 +37557,15 @@
     (begin
       (while (not done)
         (match cursor
-          [(AstDeclNil) (set! done true)]
-          [(AstDeclCons head rest)
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons head rest)
             (begin
               (set! result (ast-decl-cons head result))
               (set! cursor (box-get rest)))]))
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (macro-decl-list-reverse-into items AstDeclNil))
+  (macro-decl-list-reverse-into items AstDeclList.Nil))
 
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (macro-decl-list-reverse-into (macro-decl-list-reverse left) right))
@@ -37573,15 +37580,15 @@
     (begin
       (while (not done)
         (match cursor
-          [(AstDeclPathNil) (set! done true)]
-          [(AstDeclPathCons head rest)
+          [(AstDeclPathList.Nil) (set! done true)]
+          [(AstDeclPathList.Cons head rest)
             (begin
               (set! result (ast-decl-path-cons head result))
               (set! cursor (box-get rest)))]))
       result)))
 
 (define (macro-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
-  (macro-decl-path-list-reverse-into items AstDeclPathNil))
+  (macro-decl-path-list-reverse-into items AstDeclPathList.Nil))
 
 (define (macro-decl-path-list-append
   [left : AstDeclPathList]
@@ -37622,15 +37629,15 @@
   [paths : AstDeclPathList]
   [fallback : String]) : String
   (match paths
-    [(AstDeclPathNil) fallback]
-    [(AstDeclPathCons path _) path]))
+    [(AstDeclPathList.Nil) fallback]
+    [(AstDeclPathList.Cons path _) path]))
 
 (define (macro-followup-path-list-last
   [paths : AstDeclPathList]
   [fallback : String]) : String
   (match paths
-    [(AstDeclPathNil) fallback]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Nil) fallback]
+    [(AstDeclPathList.Cons path rest)
       (macro-followup-path-list-last (box-get rest) path)]))
 
 (define (macro-followup-work-at
@@ -37688,9 +37695,9 @@
     macro-followup-generated-import-work-metadata
     (let
       [decls : AstDeclList
-        (ast-decl-cons (ast-decl-module "generated.module") AstDeclNil)]
+        (ast-decl-cons (ast-decl-module "generated.module") AstDeclList.Nil)]
       [paths : AstDeclPathList
-        (ast-decl-path-cons "generated.tl" AstDeclPathNil)]
+        (ast-decl-path-cons "generated.tl" AstDeclPathList.Nil)]
       [items : MacroFollowupWorkList
         (macro-followup-work-for-decls
           2
@@ -37740,21 +37747,21 @@
     (let
       [span : AstSourceSpan (AstSourceSpan 1 1 1 1)]
       [placeholder : AstDecl
-        (AstDeclImport
-          (AstImportSpec
-            (AstImportMacroDecls 0 AstNoModuleName)
+        (AstDecl.Import
+          (AstImportSpec.Spec
+            (AstImportKind.MacroDecls 0 AstMaybeModuleName.No)
             "stdlib/vector.tl"
-            AstNoModuleName
-            AstNoImportAlias
+            AstMaybeModuleName.No
+            AstMaybeImportAlias.No
             span))]
       [decls : AstDeclList
         (ast-decl-cons
           (ast-decl-module "owner.module")
-          (ast-decl-cons placeholder AstDeclNil))]
+          (ast-decl-cons placeholder AstDeclList.Nil))]
       [paths : AstDeclPathList
         (ast-decl-path-cons
           "owner.tl"
-          (ast-decl-path-cons "owner.tl" AstDeclPathNil))]
+          (ast-decl-path-cons "owner.tl" AstDeclPathList.Nil))]
       [items : MacroFollowupWorkList
         (macro-module-placeholder-followup-work-list decls paths)]
       [work : MacroFollowupWork (macro-followup-test-head items)]
@@ -37789,29 +37796,29 @@
 
 (define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
   (match decls
-    [(AstDeclNil) AstDeclPathNil]
-    [(AstDeclCons _ rest)
+    [(AstDeclList.Nil) AstDeclPathList.Nil]
+    [(AstDeclList.Cons _ rest)
       (ast-decl-path-cons path (macro-paths-for-decls (box-get rest) path))]))
 
 (define (macro-decls-final-module [decls : AstDeclList] [module : String]) : String
   (match decls
-    [(AstDeclNil) module]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) module]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (macro-decls-final-module rest (intern-str next-module))]
           [_ (macro-decls-final-module rest module)]))]))
 
 (define (macro-decls-module-count [decls : AstDeclList]) : i64
   (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) 0]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest-count : i64 (macro-decls-module-count (box-get rest))]
         (match decl
-          [(AstDeclModule _) (+ rest-count 1)]
+          [(AstDecl.Module _) (+ rest-count 1)]
           [_ rest-count]))]))
 
 (define (macro-identity-key-join [head : String] [tail : String]) : String
@@ -38102,19 +38109,19 @@
   [generator : String]
   [item : String]
   [key : String]) : AstGeneratedDeclMeta
-  (AstSomeGeneratedDeclMeta generator item AstExprNil key))
+  (AstGeneratedDeclMeta.Some generator item AstExprNil key))
 
 (define (macro-import-placeholder-kind? [kind : AstImportKind]) : bool
   (match kind
-    [(AstImportMacro _ _) true]
-    [(AstImportMacroDecls _ _) true]
+    [(AstImportKind.Macro _ _) true]
+    [(AstImportKind.MacroDecls _ _) true]
     [_ false]))
 
 (define (macro-decl-import-placeholder? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
       (macro-import-placeholder-kind? kind)]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-import-placeholder? (box-get template-box))]
     [_ false]))
 
@@ -38123,8 +38130,8 @@
   [generator : String]
   [key : String]) : AstDecl
   (match decl
-    [(AstDeclModule _) decl]
-    [(AstDeclImport _)
+    [(AstDecl.Module _) decl]
+    [(AstDecl.Import _)
       (ast-decl-comptime-decl-with-meta
         (macro-generated-meta generator "import" key)
         decl)]
@@ -38141,8 +38148,8 @@
   [generator : String]
   [key : String]) : AstDeclList
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
       (ast-decl-cons
         (macro-wrap-generated-decl decl generator key)
         (macro-wrap-generated-decls (box-get rest) generator key))]))
@@ -38163,8 +38170,8 @@
   [generator : String]
   [key : String]) : AstDeclList
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
       (ast-decl-cons
         (macro-wrap-generated-decl-decls decl generator key)
         (macro-wrap-generated-decls-decls (box-get rest) generator key))]))
@@ -38173,15 +38180,19 @@
   [kind : AstImportKind]
   [definition-module : String]) : AstImportKind
   (match kind
-    [(AstImportMacro call-id context)
+    [(AstImportKind.Macro call-id context)
       (match context
-        [(AstNoModuleName)
-          (AstImportMacro call-id (AstSomeModuleName definition-module))]
+        [(AstMaybeModuleName.No)
+          (AstImportKind.Macro
+            call-id
+            (AstMaybeModuleName.Some definition-module))]
         [_ kind])]
-    [(AstImportMacroDecls call-id context)
+    [(AstImportKind.MacroDecls call-id context)
       (match context
-        [(AstNoModuleName)
-          (AstImportMacroDecls call-id (AstSomeModuleName definition-module))]
+        [(AstMaybeModuleName.No)
+          (AstImportKind.MacroDecls
+            call-id
+            (AstMaybeModuleName.Some definition-module))]
         [_ kind])]
     [_ kind]))
 
@@ -38189,18 +38200,18 @@
   [decl : AstDecl]
   [definition-module : String]) : AstDecl
   (match decl
-    [(AstDeclImport (AstImportSpec kind path target alias span))
-      (AstDeclImport
-        (AstImportSpec
+    [(AstDecl.Import (AstImportSpec.Spec kind path target alias span))
+      (AstDecl.Import
+        (AstImportSpec.Spec
           (macro-generated-context-import-kind kind definition-module)
           path
           target
           alias
           span))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (ast-decl-unsafe
         (macro-generated-context-decl (box-get inner-box) definition-module))]
-    [(AstDeclComptimeDecl meta inner-box)
+    [(AstDecl.ComptimeDecl meta inner-box)
       (ast-decl-comptime-decl-with-meta
         meta
         (macro-generated-context-decl (box-get inner-box) definition-module))]
@@ -38210,23 +38221,23 @@
   [decls : AstDeclList]
   [definition-module : String]) : AstDeclList
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
       (ast-decl-cons
         (macro-generated-context-decl decl definition-module)
         (macro-generated-context-decls (box-get rest) definition-module))]))
 
 (define (macro-decl-generated-key? [decl : AstDecl] [key : String]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _ meta-key)
+        [(AstGeneratedDeclMeta.Some _ _ _ meta-key)
           (if (string.string-eq meta-key key)
             true
             (macro-decl-generated-key? (box-get template-box) key))]
-        [(AstNoGeneratedDeclMeta)
+        [(AstGeneratedDeclMeta.No)
           (macro-decl-generated-key? (box-get template-box) key)])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-generated-key? (box-get inner-box) key)]
     [_ false]))
 
@@ -38234,42 +38245,42 @@
   [decl : AstDecl]
   [key : String]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match meta
-          [(AstSomeGeneratedDeclMeta _ _ _ meta-key)
+          [(AstGeneratedDeclMeta.Some _ _ _ meta-key)
             (if (string.string-eq meta-key key)
               (macro-decl-import-placeholder? template)
               (macro-decl-generated-import-placeholder? template key))]
-          [(AstNoGeneratedDeclMeta)
+          [(AstGeneratedDeclMeta.No)
             (macro-decl-generated-import-placeholder? template key)]))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-generated-import-placeholder? (box-get inner-box) key)]
     [_ false]))
 
 (define (macro-decl-import? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport _) true]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.Import _) true]
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-import? (box-get template-box))]
-    [(AstDeclUnsafe inner-box) (macro-decl-import? (box-get inner-box))]
+    [(AstDecl.Unsafe inner-box) (macro-decl-import? (box-get inner-box))]
     [_ false]))
 
 (define (macro-decls-contain-generated-key?
   [decls : AstDeclList]
   [key : String]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (macro-decl-generated-key? decl key)
         (macro-decls-contain-generated-key? (box-get rest) key))]))
 
 (define (macro-decls-filter-generated-key [decls : AstDeclList] [key : String]) : AstDeclList
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
       (let
         [filtered-rest : AstDeclList
           (macro-decls-filter-generated-key (box-get rest) key)]
@@ -38284,10 +38295,10 @@
   [identity : String]
   [module : String]) : CompilerMaybeString
   (match decls
-    [(AstDeclNil) CompilerNoString]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) CompilerNoString]
+    [(AstDeclList.Cons decl rest-box)
       (match decl
-        [(AstDeclModule next-module)
+        [(AstDecl.Module next-module)
           (macro-find-generated-identity-module-in
             (box-get rest-box)
             identity
@@ -38309,15 +38320,15 @@
 
 (define (macro-decl-list-structural-eq? [a : AstDeclList] [b : AstDeclList]) : bool
   (match a
-    [(AstDeclNil)
+    [(AstDeclList.Nil)
       (match b
-        [(AstDeclNil) true]
+        [(AstDeclList.Nil) true]
         [_ false])]
-    [(AstDeclCons a-head a-rest)
+    [(AstDeclList.Cons a-head a-rest)
       (let
         [a-rest : AstDeclList (box-get a-rest)]
         (match b
-          [(AstDeclCons b-head b-rest)
+          [(AstDeclList.Cons b-head b-rest)
             (let
               [b-rest : AstDeclList (box-get b-rest)]
               (and
@@ -38972,10 +38983,10 @@
 
 (define (macro-generated-fingerprint-decl [decl : AstDecl]) : TcMaybeString
   (match decl
-    [(AstDeclModule name)
+    [(AstDecl.Module name)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join "decl:module" (intern-str name) ""))]
-    [(AstDeclDef name ty value-box)
+    [(AstDecl.Def name ty value-box)
       (match (macro-generated-fingerprint-expr (ast-node-get value-box))
         [(TcMaybeString.Some value-key)
           (TcMaybeString.Some
@@ -38985,7 +38996,7 @@
               (macro-generated-fingerprint-maybe-type ty)
               value-key))]
         [(TcMaybeString.No) (TcMaybeString.No)])]
-    [(AstDeclDefFn name params ret body-box export)
+    [(AstDecl.DefFn name params ret body-box export)
       (match (macro-generated-fingerprint-expr (ast-node-get body-box))
         [(TcMaybeString.Some body-key)
           (TcMaybeString.Some
@@ -38999,14 +39010,14 @@
                 body-key
                 (macro-generated-fingerprint-fn-export export))))]
         [(TcMaybeString.No) (TcMaybeString.No)])]
-    [(AstDeclDefEnum name cleanup variants)
+    [(AstDecl.DefEnum name cleanup variants)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join3
           "decl:enum"
           (intern-str name)
           (macro-generated-fingerprint-enum-cleanup cleanup)
           (macro-generated-fingerprint-variant-list variants)))]
-    [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+    [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join3
           "decl:enum-lifetimes"
@@ -39016,7 +39027,7 @@
             "enum-tail"
             (macro-generated-fingerprint-enum-cleanup cleanup)
             (macro-generated-fingerprint-variant-list variants))))]
-    [(AstDeclDefStruct name repr cleanup fields)
+    [(AstDecl.DefStruct name repr cleanup fields)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join3
           "decl:struct"
@@ -39026,7 +39037,7 @@
             "struct-tail"
             (macro-generated-fingerprint-struct-cleanup cleanup)
             (macro-generated-fingerprint-field-list fields))))]
-    [(AstDeclDefStructLifetimes name lifetimes repr cleanup fields)
+    [(AstDecl.DefStructLifetimes name lifetimes repr cleanup fields)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join3
           "decl:struct-lifetimes"
@@ -39037,7 +39048,7 @@
             (macro-generated-fingerprint-struct-repr repr)
             (macro-generated-fingerprint-struct-cleanup cleanup)
             (macro-generated-fingerprint-field-list fields))))]
-    [(AstDeclDefMacro name params ret body-box)
+    [(AstDecl.DefMacro name params ret body-box)
       (match (macro-generated-fingerprint-expr (ast-node-get body-box))
         [(TcMaybeString.Some body-key)
           (TcMaybeString.Some
@@ -39050,13 +39061,13 @@
                 (spec-type-key ret)
                 body-key)))]
         [(TcMaybeString.No) (TcMaybeString.No)])]
-    [(AstDeclIncludeStr name path)
+    [(AstDecl.IncludeStr name path)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join "decl:include-str" name path))]
-    [(AstDeclIncludeBin name path)
+    [(AstDecl.IncludeBin name path)
       (TcMaybeString.Some
         (macro-generated-fingerprint-join "decl:include-bin" name path))]
-    [(AstDeclTest name body-box _)
+    [(AstDecl.Test name body-box _)
       (match (macro-generated-fingerprint-expr (ast-node-get body-box))
         [(TcMaybeString.Some body-key)
           (TcMaybeString.Some
@@ -39065,16 +39076,16 @@
               (intern-str name)
               body-key))]
         [(TcMaybeString.No) (TcMaybeString.No)])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-generated-fingerprint-decl (box-get inner-box))]
-    [(AstDeclComptimeDecl _ inner-box)
+    [(AstDecl.ComptimeDecl _ inner-box)
       (macro-generated-fingerprint-decl (box-get inner-box))]
     [_ (TcMaybeString.No)]))
 
 (define (macro-generated-fingerprint-decl-list [decls : AstDeclList]) : TcMaybeString
   (match decls
-    [(AstDeclNil) (TcMaybeString.Some "decls:nil")]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (TcMaybeString.Some "decls:nil")]
+    [(AstDeclList.Cons decl rest)
       (match (macro-generated-fingerprint-decl decl)
         [(TcMaybeString.Some head-key)
           (match (macro-generated-fingerprint-decl-list (box-get rest))
@@ -39288,12 +39299,12 @@
 
 (define (macro-decl-generated? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _ _) true]
-        [(AstNoGeneratedDeclMeta)
+        [(AstGeneratedDeclMeta.Some _ _ _ _) true]
+        [(AstGeneratedDeclMeta.No)
           (macro-decl-generated? (box-get template-box))])]
-    [(AstDeclUnsafe inner-box) (macro-decl-generated? (box-get inner-box))]
+    [(AstDecl.Unsafe inner-box) (macro-decl-generated? (box-get inner-box))]
     [_ false]))
 
 (define (macro-generated-visible-name [decl : AstDecl]) : SpecMaybeString
@@ -39305,8 +39316,8 @@
   [decls : AstDeclList]
   [name : String]) : MacroMaybeAstDecl
   (match decls
-    [(AstDeclNil) (MacroMaybeAstDecl.No)]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) (MacroMaybeAstDecl.No)]
+    [(AstDeclList.Cons decl rest-box)
       (match (macro-generated-visible-name decl)
         [(SpecMaybeString.Some candidate)
           (if (string.string-eq candidate name)
@@ -39346,8 +39357,8 @@
   [generated-body : AstDeclList]
   [state : MacroGeneratedTargetReplayScan]) : MacroGeneratedTargetReplayScan
   (match generated-body
-    [(AstDeclNil) state]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) state]
+    [(AstDeclList.Cons decl rest-box)
       (match (macro-generated-visible-name decl)
         [(SpecMaybeString.Some name)
           (match (macro-find-generated-visible-decl existing-body name)
@@ -39385,10 +39396,10 @@
 
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (match decl
-        [(AstDeclModule module-name)
+        [(AstDecl.Module module-name)
           (if (string.string-eq (intern-str module-name) target-module)
             true
             (macro-module-exists? (box-get rest) target-module))]
@@ -39399,10 +39410,10 @@
   [target-module : String]
   [current-module : String]) : AstDeclList
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
       (match decl
-        [(AstDeclModule module-name)
+        [(AstDecl.Module module-name)
           (macro-collect-module-body-decls
             (box-get rest)
             target-module
@@ -40341,9 +40352,9 @@
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (parse-ast-decl-maybe dispatch form)
     [(ResultAstMaybeDecl.SomeDecl decl)
-      (ResultMacroParsedDecls.Ok (ast-decl-cons decl AstDeclNil))]
+      (ResultMacroParsedDecls.Ok (ast-decl-cons decl AstDeclList.Nil))]
     [(ResultAstMaybeDecl.Decls decls) (ResultMacroParsedDecls.Ok decls)]
-    [(ResultAstMaybeDecl.NoDecl) (ResultMacroParsedDecls.Ok AstDeclNil)]
+    [(ResultAstMaybeDecl.NoDecl) (ResultMacroParsedDecls.Ok AstDeclList.Nil)]
     [(ResultAstMaybeDecl.Err message)
       (ResultMacroParsedDecls.Err
         (box (macro-output-syntax-diag origin message)))]))
@@ -40375,7 +40386,7 @@
   [exprs : AstExprList]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match exprs
-    [(AstExprNil) (ResultMacroParsedDecls.Ok AstDeclNil)]
+    [(AstExprNil) (ResultMacroParsedDecls.Ok AstDeclList.Nil)]
     [(AstExprCons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -40442,13 +40453,13 @@
   [module : String]
   [acc : TcStringList]) : TcStringList
   (match decl
-    [(AstDeclDefMacro name _ _ _)
+    [(AstDecl.DefMacro name _ _ _)
       (begin
         (ctfe-module-macro-export-add! module (intern-str name))
         (tc-string-list-add acc (intern-str name)))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-collect-decl-name (box-get inner-box) module acc)]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-collect-decl-name (box-get template-box) module acc)]
     [_ acc]))
 
@@ -40459,14 +40470,14 @@
     [out : TcStringList acc]
     (begin
       (while (match cur
-        [(AstDeclNil) false]
+        [(AstDeclList.Nil) false]
         [_ true])
         (match cur
-          [(AstDeclNil) unit]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) unit]
+          [(AstDeclList.Cons decl rest)
             (begin
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (set! cur-module (intern-str next-module))]
                 [_ (set! out (macro-collect-decl-name decl cur-module out))])
               (set! cur (box-get rest)))]))
@@ -40830,16 +40841,16 @@
   [module : String]
   [acc : TcStringList]) : TcStringList
   (match decl
-    [(AstDeclDefMacro name _ _ body-box)
+    [(AstDecl.DefMacro name _ _ body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
         [name-str : String (intern-str name)]
         (if (macro-expr-uses-expr-type? body)
           (tc-string-list-add acc (compiler-symbol-module-key module name-str))
           acc))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-collect-expr-type-decl-name (box-get inner-box) module acc)]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-collect-expr-type-decl-name (box-get template-box) module acc)]
     [_ acc]))
 
@@ -40853,14 +40864,14 @@
     [out : TcStringList acc]
     (begin
       (while (match cur
-        [(AstDeclNil) false]
+        [(AstDeclList.Nil) false]
         [_ true])
         (match cur
-          [(AstDeclNil) unit]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Nil) unit]
+          [(AstDeclList.Cons decl rest)
             (begin
               (match decl
-                [(AstDeclModule next-module) (set! cur-module-id next-module)]
+                [(AstDecl.Module next-module) (set! cur-module-id next-module)]
                 [_
                   (set!
                     out
@@ -41570,14 +41581,14 @@
   [name : String]
   [module : String]) : MacroMaybeDecl
   (match decls
-    [(AstDeclNil) (MacroMaybeDecl.No)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (MacroMaybeDecl.No)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (macro-find-decl-in-module rest name (intern-str next-module))]
-          [(AstDeclDefMacro mname params ret body-box)
+          [(AstDecl.DefMacro mname params ret body-box)
             (let
               [mname-str : String (intern-str mname)]
               [body : AstExpr (ast-node-get body-box)]
@@ -41596,7 +41607,7 @@
 
 (define (macro-decl-from-decl [decl : AstDecl] [module : String]) : MacroMaybeDecl
   (match decl
-    [(AstDeclDefMacro name params ret body-box)
+    [(AstDecl.DefMacro name params ret body-box)
       (let
         [name-str : String (intern-str name)]
         [body : AstExpr (ast-node-get body-box)]
@@ -41606,11 +41617,11 @@
           params
           ret
           body))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-from-decl inner module))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (macro-decl-from-decl template module))]
@@ -41622,7 +41633,7 @@
 ;; writes the array slot and registers the handle with one shared `index`,
 ;; skipping the identical Import/IncludeStr/IncludeBin/Export/Module/Test set
 ;; that the old linear scan skipped. The array already stores the unwrapped decl
-;; (compiler-symbol-indexed-decl peels AstDeclUnsafe/AstDeclComptimeDecl the same
+;; (compiler-symbol-indexed-decl peels AstDecl.Unsafe/AstDecl.ComptimeDecl the same
 ;; way macro-decl-from-decl does), so direct module lookups return the identical
 ;; MacroMaybeDecl.Some the previous O(decls) macro-find-decl-by-index walk produced.
 (define (macro-decl-owner-module-or
@@ -41659,7 +41670,7 @@
     [(ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
-;; previous String-based walk converted every AstDeclModule's interned name
+;; previous String-based walk converted every AstDecl.Module's interned name
 ;; back to a fresh String (`intern-str` allocates) and string-compared it, for
 ;; every declaration walked, on every qualified-alias resolution -- 11.6% of
 ;; the stage2 self-compile CPU profile. Import aliases still compare by
@@ -41670,32 +41681,33 @@
   [alias : String]
   [module-id : i64]) : TcMaybeString
   (match decls
-    [(AstDeclNil) (TcMaybeString.No)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (TcMaybeString.No)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (macro-import-alias-target-ids
               rest
               current-module-id
               alias
               next-module)]
-          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias _))
+          [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
             (match maybe-alias
-              [(AstSomeImportAlias import-alias)
+              [(AstMaybeImportAlias.Some import-alias)
                 (if (and
                   (= module-id current-module-id)
                   (string.string-eq import-alias alias))
                   (match expected
-                    [(AstSomeModuleName target) (TcMaybeString.Some target)]
-                    [(AstNoModuleName) (TcMaybeString.Some alias)])
+                    [(AstMaybeModuleName.Some target)
+                      (TcMaybeString.Some target)]
+                    [(AstMaybeModuleName.No) (TcMaybeString.Some alias)])
                   (macro-import-alias-target-ids
                     rest
                     current-module-id
                     alias
                     module-id))]
-              [(AstNoImportAlias)
+              [(AstMaybeImportAlias.No)
                 (macro-import-alias-target-ids
                   rest
                   current-module-id
@@ -41711,7 +41723,7 @@
 ;; --- import-aware macro resolution caches -------------------------------------
 ;;
 ;; Qualified-alias lookup and unqualified flat-import lookup both derive from the
-;; program's AstDeclModule/AstDeclImport declarations. Cache them at the same
+;; program's AstDecl.Module/AstDecl.Import declarations. Cache them at the same
 ;; per-program boundary so generated macro bodies do not repeatedly rescan the
 ;; whole declaration list.
 (defenum MacroFlatImportTargetList
@@ -41725,7 +41737,7 @@
 ;; Even with id compares, each resolution walks the ENTIRE declaration list
 ;; (most declarations are neither modules nor imports), and the same
 ;; (current-module, qualifier) pair resolves identically for the whole
-;; program: the mapping is derived only from AstDeclModule/AstDeclImport
+;; program: the mapping is derived only from AstDecl.Module/AstDecl.Import
 ;; declarations, which macro expansion, comptime generation, and
 ;; specialization never insert or reorder mid-compile. Memoize per
 ;; generation (same idiom as the marker name-id memos), open-addressed and
@@ -42058,25 +42070,25 @@
   [module-id : i64]
   [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
   (match decls
-    [(AstDeclNil) (macro-flat-import-target-list-reverse targets)]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) (macro-flat-import-target-list-reverse targets)]
+    [(AstDeclList.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (macro-flat-import-targets-from-list
               rest
               current-module-id
               next-module
               targets)]
-          [(AstDeclImport (AstImportSpec _ _ expected maybe-alias _))
+          [(AstDecl.Import (AstImportSpec.Spec _ _ expected maybe-alias _))
             (match maybe-alias
-              [(AstSomeImportAlias alias)
+              [(AstMaybeImportAlias.Some alias)
                 (if (and
                   (= module-id current-module-id)
                   (string.string-eq alias ""))
                   (match expected
-                    [(AstSomeModuleName target-module)
+                    [(AstMaybeModuleName.Some target-module)
                       (let
                         [target-id : i64 (intern target-module)]
                         (macro-flat-import-targets-from-list
@@ -42088,7 +42100,7 @@
                             (macro-flat-import-target-list-add
                               targets
                               target-id))))]
-                    [(AstNoModuleName)
+                    [(AstMaybeModuleName.No)
                       (macro-flat-import-targets-from-list
                         rest
                         current-module-id
@@ -42099,7 +42111,7 @@
                     current-module-id
                     module-id
                     targets))]
-              [(AstNoImportAlias)
+              [(AstMaybeImportAlias.No)
                 (macro-flat-import-targets-from-list
                   rest
                   current-module-id
@@ -42728,7 +42740,7 @@
       (match maybe-decl
         [(MacroMaybeDecl.No)
           (match context
-            [(AstSomeModuleName context-module)
+            [(AstMaybeModuleName.Some context-module)
               (if (string.string-eq context-module module)
                 (ResultMacroCallDeclModule.Ok maybe-decl module)
                 (match (macro-call-decl-with-self-alias
@@ -42747,11 +42759,12 @@
                           context-module)])]
                   [(ResultMacroCallDecl.Err diag)
                     (ResultMacroCallDeclModule.Err diag)]))]
-            [(AstNoModuleName) (ResultMacroCallDeclModule.Ok maybe-decl module)])]
+            [(AstMaybeModuleName.No)
+              (ResultMacroCallDeclModule.Ok maybe-decl module)])]
         [_ (ResultMacroCallDeclModule.Ok maybe-decl module)])]
     [(ResultMacroCallDecl.Err primary-diag)
       (match context
-        [(AstSomeModuleName context-module)
+        [(AstMaybeModuleName.Some context-module)
           (if (string.string-eq context-module module)
             (ResultMacroCallDeclModule.Err primary-diag)
             (match (macro-call-decl-with-self-alias
@@ -42767,7 +42780,7 @@
                   [_ (ResultMacroCallDeclModule.Ok context-decl context-module)])]
               [(ResultMacroCallDecl.Err _)
                 (ResultMacroCallDeclModule.Err primary-diag)]))]
-        [(AstNoModuleName) (ResultMacroCallDeclModule.Err primary-diag)])]))
+        [(AstMaybeModuleName.No) (ResultMacroCallDeclModule.Err primary-diag)])]))
 
 (define (macro-operand-mismatch-message [expected : AstType] [actual : AstType]) : String
   (str_cat.str-cat
@@ -42942,7 +42955,7 @@
           (match ctx
             [(TcContext program _ _ current-module _)
               (match program
-                [(AstProgram decls-box)
+                [(AstProgram.Program decls-box)
                   (match (macro-import-alias-target-cached
                     (box-get decls-box)
                     (intern current-module)
@@ -43185,7 +43198,7 @@
     (match (macro-type-arg
       ctx
       (match (tc-context-program ctx)
-        [(AstProgram decls-box) (box-get decls-box)])
+        [(AstProgram.Program decls-box) (box-get decls-box)])
       arg)
       [(ResultMacroTypeArg.Ok _) ResultMacroCheck.Ok]
       [(ResultMacroTypeArg.Err diag) (ResultMacroCheck.Err diag)])
@@ -43706,7 +43719,7 @@
             lookup-func
             orig-decls
             module
-            (AstSomeModuleName definition-module)
+            (AstMaybeModuleName.Some definition-module)
             call-expr)
             [(ResultMacroCallDeclModule.Ok maybe-decl _)
               (match maybe-decl
@@ -43749,8 +43762,8 @@
   [env : CtfeEnv]
   [kind : AstImportKind]) : AstImportKind
   (match kind
-    [(AstImportMacro call-id context)
-      (AstImportMacro
+    [(AstImportKind.Macro call-id context)
+      (AstImportKind.Macro
         (macro-rewrite-generated-import-call-id
           ctx
           orig-decls
@@ -43759,8 +43772,8 @@
           env
           call-id)
         context)]
-    [(AstImportMacroDecls call-id context)
-      (AstImportMacroDecls
+    [(AstImportKind.MacroDecls call-id context)
+      (AstImportKind.MacroDecls
         (macro-rewrite-generated-import-call-id
           ctx
           orig-decls
@@ -43779,9 +43792,9 @@
   [env : CtfeEnv]
   [decl : AstDecl]) : AstDecl
   (match decl
-    [(AstDeclImport (AstImportSpec kind path expected alias span))
-      (AstDeclImport
-        (AstImportSpec
+    [(AstDecl.Import (AstImportSpec.Spec kind path expected alias span))
+      (AstDecl.Import
+        (AstImportSpec.Spec
           (macro-rewrite-generated-import-kind
             ctx
             orig-decls
@@ -43793,7 +43806,7 @@
           expected
           alias
           span))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (ast-decl-unsafe
         (macro-rewrite-generated-import-decl
           ctx
@@ -43802,7 +43815,7 @@
           definition-module
           env
           (box-get inner-box)))]
-    [(AstDeclComptimeDecl meta inner-box)
+    [(AstDecl.ComptimeDecl meta inner-box)
       (ast-decl-comptime-decl-with-meta
         meta
         (macro-rewrite-generated-import-decl
@@ -43822,8 +43835,8 @@
   [env : CtfeEnv]
   [decls : AstDeclList]) : AstDeclList
   (match decls
-    [(AstDeclNil) AstDeclNil]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) AstDeclList.Nil]
+    [(AstDeclList.Cons decl rest)
       (ast-decl-cons
         (macro-rewrite-generated-import-decl
           ctx
@@ -44261,7 +44274,7 @@
                             grow-name
                             vec-name
                             elem-ty)
-                          AstDeclNil)))))))))))))
+                          AstDeclList.Nil)))))))))))))
 
 (define (macro-vector-family-fast-arity-error [call-expr : AstExpr]) : ResultMacroParsedDecls
   (ResultMacroParsedDecls.Err
@@ -44304,9 +44317,9 @@
                                   (ResultMacroParsedDecls.Ok
                                     (macro-vf-decls elem-ty vec-name base))]
                                 [(TcMaybeString.No)
-                                  (ResultMacroParsedDecls.Ok AstDeclNil)])]
+                                  (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
                             [(TcMaybeString.No)
-                              (ResultMacroParsedDecls.Ok AstDeclNil)])]
+                              (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
                         [(ResultMacroTypeArg.Err diag)
                           (ResultMacroParsedDecls.Err diag)])]
                     [_ (macro-vector-family-fast-arity-error call-expr)])]
@@ -45851,14 +45864,14 @@
   (let
     [global-env : TcTypeEnv (tc-hygiene-global-env top-env)]
     (match decl
-      [(AstDeclDef name maybe-ty expr-box)
+      [(AstDecl.Def name maybe-ty expr-box)
         (let
           [expr : AstExpr (ast-node-get expr-box)]
           (match (macro-expand-expr ctx global-env decls 0 expr)
             [(ResultMacroExpr.Ok nexpr)
               (ResultMacroDecl.Ok (ast-decl-def-id name maybe-ty nexpr))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
-      [(AstDeclDefFn name params ret body-box export)
+      [(AstDecl.DefFn name params ret body-box export)
         (let
           [body : AstExpr (ast-node-get body-box)]
           (match (macro-expand-expr
@@ -45873,15 +45886,15 @@
               (ResultMacroDecl.Ok
                 (ast-decl-def-fn-export-id name params ret nbody export))]
             [(ResultMacroExpr.Err diag) (ResultMacroDecl.Err diag)]))]
-      [(AstDeclTest _ _ _) (ResultMacroDecl.Ok decl)]
-      [(AstDeclImport (AstImportSpec kind _ _ _ _))
+      [(AstDecl.Test _ _ _) (ResultMacroDecl.Ok decl)]
+      [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
         (match kind
-          [(AstImportMacro call-id _)
+          [(AstImportKind.Macro call-id _)
             (macro-expand-module-call-position ctx decls call-id true)]
-          [(AstImportMacroDecls call-id _)
+          [(AstImportKind.MacroDecls call-id _)
             (macro-expand-module-call-position ctx decls call-id false)]
           [_ (ResultMacroDecl.Ok decl)])]
-      [(AstDeclUnsafe inner-box)
+      [(AstDecl.Unsafe inner-box)
         (let
           [inner : AstDecl (box-get inner-box)]
           (match (macro-expand-decl ctx top-env decls inner)
@@ -45892,8 +45905,8 @@
 
 (define (macro-single-decl-expansion [decl : AstDecl] [path : String]) : ResultMacroDeclExpansion
   (ResultMacroDeclExpansion.Ok
-    (ast-decl-cons decl AstDeclNil)
-    (ast-decl-path-cons path AstDeclPathNil)))
+    (ast-decl-cons decl AstDeclList.Nil)
+    (ast-decl-path-cons path AstDeclPathList.Nil)))
 
 (define (macro-module-import-marker-decls
   [target-module : String]
@@ -45902,17 +45915,17 @@
   (let
     [binding-alias : AstMaybeImportAlias
       (match alias
-        [(AstNoImportAlias) (AstSomeImportAlias "")]
+        [(AstMaybeImportAlias.No) (AstMaybeImportAlias.Some "")]
         [_ alias])]
     (ast-decl-cons
-      (AstDeclImport
-        (AstImportSpec
-          (AstImportModule)
+      (AstDecl.Import
+        (AstImportSpec.Spec
+          (AstImportKind.Module)
           target-module
-          (AstSomeModuleName target-module)
+          (AstMaybeModuleName.Some target-module)
           binding-alias
           span))
-      AstDeclNil)))
+      AstDeclList.Nil)))
 
 (define (macro-existing-module-import-target
   [ctx : TcContext]
@@ -45982,13 +45995,13 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match template
-          [(AstDeclImport (AstImportSpec kind _ _ alias span))
+          [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
             (match kind
-              [(AstImportMacro call-id context)
+              [(AstImportKind.Macro call-id context)
                 (match (macro-existing-module-import-target
                   ctx
                   top-env
@@ -46010,9 +46023,9 @@
                     (macro-single-decl-expansion decl decl-path)])]
               [_ (macro-single-decl-expansion decl decl-path)])]
           [_ (macro-single-decl-expansion decl decl-path)]))]
-    [(AstDeclImport (AstImportSpec kind _ _ alias span))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
       (match kind
-        [(AstImportMacro call-id context)
+        [(AstImportKind.Macro call-id context)
           (match (macro-existing-module-import-target
             ctx
             top-env
@@ -46039,8 +46052,9 @@
   [decls : AstDeclList]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decls
-    [(AstDeclNil) (ResultMacroDeclExpansion.Ok AstDeclNil AstDeclPathNil)]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil)
+      (ResultMacroDeclExpansion.Ok AstDeclList.Nil AstDeclPathList.Nil)]
+    [(AstDeclList.Cons decl rest-box)
       (match (macro-collapse-existing-module-import-decl
         ctx
         top-env
@@ -46288,9 +46302,9 @@
               call-expr
               "typecheck: Module macro output must include exactly one module declaration")))
         (match generated
-          [(AstDeclCons first body-rest-box)
+          [(AstDeclList.Cons first body-rest-box)
             (match first
-              [(AstDeclModule target-module-id)
+              [(AstDecl.Module target-module-id)
                 (let
                   [target-module : String (intern-str target-module-id)]
                   [body-rest : AstDeclList (box-get body-rest-box)]
@@ -46332,7 +46346,7 @@
                     (ctfe-diagnostic-at-expr
                       call-expr
                       "typecheck: Module macro output must start with a module declaration")))])]
-          [(AstDeclNil)
+          [(AstDeclList.Nil)
             (ResultMacroDeclExpansion.Err
               (box
                 (ctfe-diagnostic-at-expr
@@ -46639,14 +46653,14 @@
   [decl : AstDecl]
   [decl-path : String]) : ResultMacroDeclExpansion
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match template
-          [(AstDeclImport (AstImportSpec kind _ _ alias span))
+          [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
             (if (macro-import-placeholder-kind? kind)
               (match kind
-                [(AstImportMacro call-id context)
+                [(AstImportKind.Macro call-id context)
                   (macro-expand-module-import
                     ctx
                     top-env
@@ -46657,7 +46671,7 @@
                     alias
                     span
                     decl-path)]
-                [(AstImportMacroDecls call-id context)
+                [(AstImportKind.MacroDecls call-id context)
                   (macro-expand-decls-splice
                     ctx
                     top-env
@@ -46680,9 +46694,9 @@
                       decl-path)]
                   [(ResultMacroDecl.Err diag)
                     (ResultMacroDeclExpansion.Err diag)])))]))]
-    [(AstDeclImport (AstImportSpec kind _ _ alias span))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ alias span))
       (match kind
-        [(AstImportMacro call-id context)
+        [(AstImportKind.Macro call-id context)
           (macro-expand-module-import
             ctx
             top-env
@@ -46693,7 +46707,7 @@
             alias
             span
             decl-path)]
-        [(AstImportMacroDecls call-id context)
+        [(AstImportKind.MacroDecls call-id context)
           (macro-expand-decls-splice
             ctx
             top-env
@@ -46720,15 +46734,15 @@
 
 (define (macro-decl-generated-identity [decl : AstDecl]) : CompilerMaybeString
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (match meta
-        [(AstSomeGeneratedDeclMeta _ _ _ key)
+        [(AstGeneratedDeclMeta.Some _ _ _ key)
           (if (macro-module-generated-key? key)
             (CompilerSomeString key)
             (macro-decl-generated-identity (box-get template-box)))]
-        [(AstNoGeneratedDeclMeta)
+        [(AstGeneratedDeclMeta.No)
           (macro-decl-generated-identity (box-get template-box))])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-generated-identity (box-get inner-box))]
     [_ CompilerNoString]))
 
@@ -46737,10 +46751,10 @@
   [target-module : String]
   [module : String]) : CompilerMaybeString
   (match decls
-    [(AstDeclNil) CompilerNoString]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) CompilerNoString]
+    [(AstDeclList.Cons decl rest-box)
       (match decl
-        [(AstDeclModule next-module)
+        [(AstDecl.Module next-module)
           (macro-module-generated-identity-in
             (box-get rest-box)
             target-module
@@ -46766,13 +46780,13 @@
 
 (define (macro-import-unqualified? [alias : AstMaybeImportAlias]) : bool
   (match alias
-    [(AstSomeImportAlias alias-name) (string.string-eq alias-name "")]
-    [(AstNoImportAlias) false]))
+    [(AstMaybeImportAlias.Some alias-name) (string.string-eq alias-name "")]
+    [(AstMaybeImportAlias.No) false]))
 
 (define (macro-module-import-request-unqualified? [alias : AstMaybeImportAlias]) : bool
   (match alias
-    [(AstSomeImportAlias alias-name) (string.string-eq alias-name "")]
-    [(AstNoImportAlias) true]))
+    [(AstMaybeImportAlias.Some alias-name) (string.string-eq alias-name "")]
+    [(AstMaybeImportAlias.No) true]))
 
 (define (macro-generated-import-diag [span : AstSourceSpan] [message : String]) : CompilerDiagnostic
   (tc-canonical-diagnostic (compiler-diagnostic-from-ast-span "" span message)))
@@ -46783,8 +46797,8 @@
   [import-module : String]
   [identity : String]) : CompilerMaybeString
   (match generated-body
-    [(AstDeclNil) CompilerNoString]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) CompilerNoString]
+    [(AstDeclList.Cons decl rest-box)
       (match decl
         [_
           (macro-check-generated-import-collisions-in
@@ -47098,18 +47112,18 @@
   [decls : AstDeclList]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef _ _ expr-box) (macro-node-uses-macro? ctx decls expr-box)]
-    [(AstDeclDefFn _ _ _ body-box _)
+    [(AstDecl.Def _ _ expr-box) (macro-node-uses-macro? ctx decls expr-box)]
+    [(AstDecl.DefFn _ _ _ body-box _)
       (macro-node-uses-macro? ctx decls body-box)]
-    [(AstDeclTest _ _ _) false]
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+    [(AstDecl.Test _ _ _) false]
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _ _) true]
-        [(AstImportMacroDecls _ _) true]
+        [(AstImportKind.Macro _ _) true]
+        [(AstImportKind.MacroDecls _ _) true]
         [_ false])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-uses-macro? ctx decls (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-uses-macro? ctx decls (box-get template-box))]
     [_ false]))
 
@@ -47500,11 +47514,11 @@
 ;; expr-type macros.
 (define (macro-decl-cannot-fire? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef _ _ expr-box)
+    [(AstDecl.Def _ _ expr-box)
       (not (macro-expr-might-fire? (ast-node-get expr-box)))]
-    [(AstDeclDefFn _ _ _ body-box _)
+    [(AstDecl.DefFn _ _ _ body-box _)
       (not (macro-expr-might-fire? (ast-node-get body-box)))]
-    [(AstDeclTest _ _ _) true]
+    [(AstDecl.Test _ _ _) true]
     [_ false]))
 
 ;; After an inert Decls splice, the next arbitrary macro expansion needs a
@@ -47904,27 +47918,27 @@
       (let
         [decl-ctx : TcContext (tc-context-with-module ctx module)]
         (match decl
-          [(AstDeclDef _ _ expr-box)
+          [(AstDecl.Def _ _ expr-box)
             (macro-expr-safe-after-inert-splice?
               decl-ctx
               decls
               (ast-node-get expr-box))]
-          [(AstDeclDefFn _ _ _ body-box _)
+          [(AstDecl.DefFn _ _ _ body-box _)
             (macro-expr-safe-after-inert-splice?
               decl-ctx
               decls
               (ast-node-get body-box))]
-          [(AstDeclTest _ _ _) true]
-          [(AstDeclImport (AstImportSpec kind _ _ _ _))
+          [(AstDecl.Test _ _ _) true]
+          [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
             (not (macro-import-placeholder-kind? kind))]
-          [(AstDeclUnsafe inner-box)
+          [(AstDecl.Unsafe inner-box)
             (macro-decl-safe-after-inert-splice?
               ctx
               decls
               module
               (box-get inner-box)
               can-share)]
-          [(AstDeclComptimeDecl _ template-box)
+          [(AstDecl.ComptimeDecl _ template-box)
             (macro-decl-safe-after-inert-splice?
               ctx
               decls
@@ -48096,48 +48110,48 @@
 
 (define (ctfe-decl-has-type-literal? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef _ _ expr-box) (ctfe-node-has-type-literal? expr-box)]
-    [(AstDeclDefFn _ _ _ body-box _) (ctfe-node-has-type-literal? body-box)]
-    [(AstDeclTest _ expr-box _) (ctfe-node-has-type-literal? expr-box)]
-    [(AstDeclDefMacro _ _ _ body-box) (ctfe-node-has-type-literal? body-box)]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Def _ _ expr-box) (ctfe-node-has-type-literal? expr-box)]
+    [(AstDecl.DefFn _ _ _ body-box _) (ctfe-node-has-type-literal? body-box)]
+    [(AstDecl.Test _ expr-box _) (ctfe-node-has-type-literal? expr-box)]
+    [(AstDecl.DefMacro _ _ _ body-box) (ctfe-node-has-type-literal? body-box)]
+    [(AstDecl.Unsafe inner-box)
       (ctfe-decl-has-type-literal? (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (ctfe-decl-has-type-literal? (box-get template-box))]
     [_ false]))
 
 (define (ctfe-program-has-type-literal? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (ctfe-decl-has-type-literal? decl)
         (ctfe-program-has-type-literal? (box-get rest)))]))
 
 (define (macro-expanded-decl-inert? [decl : AstDecl] [can-share : bool]) : bool
   (match decl
-    [(AstDeclModule _) true]
-    [(AstDeclDef _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
-    [(AstDeclDefFn _ _ _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
-    [(AstDeclTest _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
-    [(AstDeclExtern _ _ _ _) true]
-    [(AstDeclDefEnum _ _ _) true]
-    [(AstDeclDefEnumLifetimes _ _ _ _) true]
-    [(AstDeclDefStruct _ _ _ _) true]
-    [(AstDeclDefStructLifetimes _ _ _ _ _) true]
-    [(AstDeclIncludeStr _ _) true]
-    [(AstDeclIncludeBin _ _) true]
-    [(AstDeclDefDispatch _ _) true]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Module _) true]
+    [(AstDecl.Def _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
+    [(AstDecl.DefFn _ _ _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
+    [(AstDecl.Test _ _ _) (and can-share (macro-decl-cannot-fire? decl))]
+    [(AstDecl.Extern _ _ _ _) true]
+    [(AstDecl.DefEnum _ _ _) true]
+    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+    [(AstDecl.DefStruct _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+    [(AstDecl.IncludeStr _ _) true]
+    [(AstDecl.IncludeBin _ _) true]
+    [(AstDecl.DefDispatch _ _) true]
+    [(AstDecl.Unsafe inner-box)
       (macro-expanded-decl-inert? (box-get inner-box) can-share)]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-expanded-decl-inert? (box-get template-box) can-share)]
     [_ false]))
 
 (define (macro-expanded-decls-inert? [decls : AstDeclList] [can-share : bool]) : bool
   (match decls
-    [(AstDeclNil) true]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) true]
+    [(AstDeclList.Cons decl rest)
       (and
         (macro-expanded-decl-inert? decl can-share)
         (macro-expanded-decls-inert? (box-get rest) can-share))]))
@@ -48179,9 +48193,9 @@
   [module : String]
   [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
       (match kind
-        [(AstImportMacroDecls call-id context)
+        [(AstImportKind.MacroDecls call-id context)
           (macro-decl-vector-family-placeholder-call?
             ctx
             orig-decls
@@ -48189,7 +48203,7 @@
             call-id
             context)]
         [_ false])]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-vector-family-placeholder?
         ctx
         orig-decls
@@ -48211,8 +48225,8 @@
     [cur-module : String module]
     [cur-index : i64 0]
     [cur-top-env : TcTypeEnv top-env]
-    [out-rev : AstDeclList AstDeclNil]
-    [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [out-rev : AstDeclList AstDeclList.Nil]
+    [out-paths-rev : AstDeclPathList AstDeclPathList.Nil]
     ;; After an inert generated splice, continue across inert declarations,
     ;; vector-family splices, and core fast-path macros. Arbitrary macro work
     ;; needs a rebuilt top env so generated symbols are visible.
@@ -48224,7 +48238,7 @@
     (begin
       (while (not done)
         (match cur-decls
-          [(AstDeclNil)
+          [(AstDeclList.Nil)
             (begin
               (set!
                 result
@@ -48233,22 +48247,22 @@
                   (macro-decl-path-list-reverse out-paths-rev)
                   MacroFollowupWorkList.Nil))
               (set! done true))]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               [decl-path : String
                 (match cur-paths
-                  [(AstDeclPathCons path _) path]
-                  [(AstDeclPathNil) ""])]
+                  [(AstDeclPathList.Cons path _) path]
+                  [(AstDeclPathList.Nil) ""])]
               [rest-paths : AstDeclPathList
                 (match cur-paths
-                  [(AstDeclPathCons _ path-rest)
+                  [(AstDeclPathList.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathNil) AstDeclPathNil])]
+                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! out-rev (ast-decl-cons decl out-rev))
                     (set!
@@ -48389,7 +48403,7 @@
                         (set! done true))]
                     [(and can-share (macro-decl-cannot-fire? decl))
                       ;; Predict-skip: a macro-free value decl can never fire a
-                      ;; macro, so share it unchanged (like the AstDeclModule
+                      ;; macro, so share it unchanged (like the AstDecl.Module
                       ;; arm) instead of copying it through the expander. This
                       ;; avoids the per-decl `tc-context-with-module` allocation
                       ;; and the single-element relist that
@@ -48443,26 +48457,26 @@
 
 (define (macro-decl-needs-expansion? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef _ _ expr-box)
+    [(AstDecl.Def _ _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
         (macro-expr-needs-compat-expansion? expr))]
-    [(AstDeclDefFn _ _ _ body-box _)
+    [(AstDecl.DefFn _ _ _ body-box _)
       (let
         [body : AstExpr (ast-node-get body-box)]
         (macro-expr-needs-compat-expansion? body))]
-    [(AstDeclDefMacro _ _ _ _) true]
-    [(AstDeclTest _ _ _) false]
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+    [(AstDecl.DefMacro _ _ _ _) true]
+    [(AstDecl.Test _ _ _) false]
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _ _) true]
-        [(AstImportMacroDecls _ _) true]
+        [(AstImportKind.Macro _ _) true]
+        [(AstImportKind.MacroDecls _ _) true]
         [_ false])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-needs-expansion? inner))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (macro-decl-needs-expansion? template))]
@@ -48470,12 +48484,12 @@
 
 (define (macro-decl-has-defmacro? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDefMacro _ _ _ _) true]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.DefMacro _ _ _ _) true]
+    [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
         (macro-decl-has-defmacro? inner))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (macro-decl-has-defmacro? template))]
@@ -48484,8 +48498,8 @@
 ;; Whether a program needs the macro expansion pass.
 (define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (or
@@ -48494,35 +48508,36 @@
 
 (define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
 
 (define (macro-decl-might-fire-expression-macro? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclDef _ _ expr-box) (macro-expr-might-fire? (ast-node-get expr-box))]
-    [(AstDeclDefFn _ _ _ body-box _)
+    [(AstDecl.Def _ _ expr-box)
+      (macro-expr-might-fire? (ast-node-get expr-box))]
+    [(AstDecl.DefFn _ _ _ body-box _)
       (macro-expr-might-fire? (ast-node-get body-box))]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-might-fire-expression-macro? (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-might-fire-expression-macro? (box-get template-box))]
     [_ false]))
 
 (define (macro-program-might-fire-expression-macro? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (macro-decl-might-fire-expression-macro? decl)
         (macro-program-might-fire-expression-macro? (box-get rest)))]))
 
 (define (macro-import-kind-summary-backed? [kind : AstImportKind]) : bool
   (match kind
-    [(AstImportPath) true]
-    [(AstImportModule) true]
+    [(AstImportKind.Path) true]
+    [(AstImportKind.Module) true]
     [_ false]))
 
 (define (macro-import-target-has-summary-macro?
@@ -48530,46 +48545,46 @@
   [target : AstMaybeModuleName]) : bool
   (if (macro-import-kind-summary-backed? kind)
     (match target
-      [(AstSomeModuleName target-module)
+      [(AstMaybeModuleName.Some target-module)
         (macro-surface-module-has-macro? target-module)]
-      [(AstNoModuleName) false])
+      [(AstMaybeModuleName.No) false])
     false))
 
 (define (macro-decl-has-summary-macro-import? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport (AstImportSpec kind _ target _ _))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ target _ _))
       (macro-import-target-has-summary-macro? kind target)]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-has-summary-macro-import? (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-has-summary-macro-import? (box-get template-box))]
     [_ false]))
 
 (define (macro-program-has-summary-macro-import? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (macro-decl-has-summary-macro-import? decl)
         (macro-program-has-summary-macro-import? (box-get rest)))]))
 
 (define (macro-decl-has-module-placeholder? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _ _) true]
-        [(AstImportMacroDecls _ _) true]
+        [(AstImportKind.Macro _ _) true]
+        [(AstImportKind.MacroDecls _ _) true]
         [_ false])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-has-module-placeholder? (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-has-module-placeholder? (box-get template-box))]
     [_ false]))
 
 (define (macro-program-has-module-placeholder? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (macro-decl-has-module-placeholder? decl)
         (macro-program-has-module-placeholder? (box-get rest)))]))
@@ -48580,24 +48595,24 @@
   [module : String]
   [index : i64]) : MacroFollowupWorkList
   (match decls
-    [(AstDeclNil) MacroFollowupWorkList.Nil]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) MacroFollowupWorkList.Nil]
+    [(AstDeclList.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         [decl-path : String
           (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
+            [(AstDeclPathList.Cons path _) path]
+            [(AstDeclPathList.Nil) ""])]
         [rest-paths : AstDeclPathList
           (match paths
-            [(AstDeclPathCons _ path-rest)
+            [(AstDeclPathList.Cons _ path-rest)
               (let
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
+            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
         [next-module : String
           (match decl
-            [(AstDeclModule name) (intern-str name)]
+            [(AstDecl.Module name) (intern-str name)]
             [_ module])]
         [tail : MacroFollowupWorkList
           (macro-module-placeholder-followup-work-list-in
@@ -48624,21 +48639,21 @@
 
 (define (macro-decl-module-placeholder-count [decl : AstDecl]) : i64
   (match decl
-    [(AstDeclImport (AstImportSpec kind _ _ _ _))
+    [(AstDecl.Import (AstImportSpec.Spec kind _ _ _ _))
       (match kind
-        [(AstImportMacro _ _) 1]
-        [(AstImportMacroDecls _ _) 1]
+        [(AstImportKind.Macro _ _) 1]
+        [(AstImportKind.MacroDecls _ _) 1]
         [_ 0])]
-    [(AstDeclUnsafe inner-box)
+    [(AstDecl.Unsafe inner-box)
       (macro-decl-module-placeholder-count (box-get inner-box))]
-    [(AstDeclComptimeDecl _ template-box)
+    [(AstDecl.ComptimeDecl _ template-box)
       (macro-decl-module-placeholder-count (box-get template-box))]
     [_ 0]))
 
 (define (macro-program-module-placeholder-count [decls : AstDeclList]) : i64
   (match decls
-    [(AstDeclNil) 0]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) 0]
+    [(AstDeclList.Cons decl rest)
       (+
         (macro-decl-module-placeholder-count decl)
         (macro-program-module-placeholder-count (box-get rest)))]))
@@ -48652,8 +48667,8 @@
 
 (define (macro-decls-materialized-import-need-followup? [decls : AstDeclList]) : bool
   (match decls
-    [(AstDeclNil) false]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) false]
+    [(AstDeclList.Cons decl rest)
       (or
         (macro-decl-materialized-import-needs-followup? decl)
         (macro-decls-materialized-import-need-followup? (box-get rest)))]))
@@ -48681,7 +48696,7 @@
         AstParamNil
         (AstTyI64)
         (ast-node-push (AstExprLiteral (ast-lit-int 1))))
-      AstDeclNil)))
+      AstDeclList.Nil)))
 
 (cfg
   test
@@ -48689,14 +48704,14 @@
     (let
       [span : AstSourceSpan (AstSourceSpan 1 1 1 1)]
       [placeholder : AstDecl
-        (AstDeclImport
-          (AstImportSpec
-            (AstImportMacroDecls 0 AstNoModuleName)
+        (AstDecl.Import
+          (AstImportSpec.Spec
+            (AstImportKind.MacroDecls 0 AstMaybeModuleName.No)
             "generated_next.tl"
-            AstNoModuleName
-            AstNoImportAlias
+            AstMaybeModuleName.No
+            AstMaybeImportAlias.No
             span))]
-      (ast-decl-cons placeholder AstDeclNil))))
+      (ast-decl-cons placeholder AstDeclList.Nil))))
 
 (cfg
   test
@@ -48737,7 +48752,7 @@
   (begin
     (ast-node-pool-context-install! pools)
     (match program
-      [(AstProgram decls-box)
+      [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
           [has-defmacro : bool (macro-program-has-defmacro? decls)]
@@ -48909,7 +48924,7 @@
 ;; legitimate nested module families converge under `test` cfg stdlib imports.
 (define (macro-expand-fixed-point-limit-for-program [program : AstProgram]) : i64
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (+
         (macro-expand-fixed-point-limit)
         (*
@@ -48932,14 +48947,14 @@
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
   (match decl
-    [(AstDeclComptimeDecl meta template-box)
+    [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
         (match meta
-          [(AstSomeGeneratedDeclMeta _ _ _ _)
+          [(AstGeneratedDeclMeta.Some _ _ _ _)
             (match template
-              [(AstDeclImport
-                  (AstImportSpec kind import-path expected alias span))
+              [(AstDecl.Import
+                  (AstImportSpec.Spec kind import-path expected alias span))
                 (if (macro-import-placeholder-kind? kind)
                   (MacroMaybeGeneratedNormalImport.No)
                   (MacroMaybeGeneratedNormalImport.Some
@@ -48950,8 +48965,8 @@
                     span
                     template))]
               [_ (MacroMaybeGeneratedNormalImport.No)])]
-          [(AstNoGeneratedDeclMeta) (macro-generated-normal-import template)]))]
-    [(AstDeclUnsafe inner-box)
+          [(AstGeneratedDeclMeta.No) (macro-generated-normal-import template)]))]
+    [(AstDecl.Unsafe inner-box)
       (macro-generated-normal-import (box-get inner-box))]
     [_ (MacroMaybeGeneratedNormalImport.No)]))
 
@@ -48961,24 +48976,24 @@
   [seen : SymI64Env]
   [module : String]) : SymI64Env
   (match decls
-    [(AstDeclNil) seen]
-    [(AstDeclCons decl rest-box)
+    [(AstDeclList.Nil) seen]
+    [(AstDeclList.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         [decl-path : String
           (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
+            [(AstDeclPathList.Cons path _) path]
+            [(AstDeclPathList.Nil) ""])]
         [rest-paths : AstDeclPathList
           (match paths
-            [(AstDeclPathCons _ path-rest)
+            [(AstDeclPathList.Cons _ path-rest)
               (let
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
+            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
         [next-module : String
           (match decl
-            [(AstDeclModule name) (intern-str name)]
+            [(AstDecl.Module name) (intern-str name)]
             [_ module])]
         [seen-path : SymI64Env
           (if (> (string.string-length decl-path) 0)
@@ -48989,7 +49004,7 @@
             seen)]
         [seen-decl : SymI64Env
           (match decl
-            [(AstDeclModule name)
+            [(AstDecl.Module name)
               (let
                 [module-name : String (intern-str name)]
                 (if (> (string.string-length module-name) 0)
@@ -49017,8 +49032,8 @@
   (match (macro-generated-normal-import decl)
     [(MacroMaybeGeneratedNormalImport.No)
       (ResultMacroMaterializeImport.Ok
-        (ast-decl-cons decl AstDeclNil)
-        (ast-decl-path-cons decl-path AstDeclPathNil)
+        (ast-decl-cons decl AstDeclList.Nil)
+        (ast-decl-path-cons decl-path AstDeclPathList.Nil)
         seen
         MacroFollowupWorkList.Nil)]
     [(MacroMaybeGeneratedNormalImport.Some
@@ -49074,13 +49089,13 @@
                       after-import-alias
                       module
                       imported-decls
-                      AstDeclNil)]
+                      AstDeclList.Nil)]
                   [tail-paths : AstDeclPathList
                     (compiler-load-paths-after-import
                       decl-path
                       after-import-alias
                       imported-decls
-                      AstDeclPathNil)]
+                      AstDeclPathList.Nil)]
                   [materialized-decls : AstDeclList
                     (macro-decl-list-append imported-decls tail-decls)]
                   [materialized-paths : AstDeclPathList
@@ -49115,8 +49130,8 @@
     [cur-paths : AstDeclPathList paths]
     [cur-module : String ""]
     [cur-index : i64 0]
-    [out-rev : AstDeclList AstDeclNil]
-    [out-paths-rev : AstDeclPathList AstDeclPathNil]
+    [out-rev : AstDeclList AstDeclList.Nil]
+    [out-paths-rev : AstDeclPathList AstDeclPathList.Nil]
     [work-rev : MacroFollowupWorkList MacroFollowupWorkList.Nil]
     [result : ResultMacroMaterializeImport
       (ResultMacroMaterializeImport.Err
@@ -49126,7 +49141,7 @@
     (begin
       (while (not done)
         (match cur-decls
-          [(AstDeclNil)
+          [(AstDeclList.Nil)
             (begin
               (set!
                 result
@@ -49136,22 +49151,22 @@
                   seen
                   (macro-followup-work-list-reverse work-rev)))
               (set! done true))]
-          [(AstDeclCons decl rest-box)
+          [(AstDeclList.Cons decl rest-box)
             (let
               [rest : AstDeclList (box-get rest-box)]
               [decl-path : String
                 (match cur-paths
-                  [(AstDeclPathCons path _) path]
-                  [(AstDeclPathNil) ""])]
+                  [(AstDeclPathList.Cons path _) path]
+                  [(AstDeclPathList.Nil) ""])]
               [rest-paths : AstDeclPathList
                 (match cur-paths
-                  [(AstDeclPathCons _ path-rest)
+                  [(AstDeclPathList.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathNil) AstDeclPathNil])]
+                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (set! out-rev (ast-decl-cons decl out-rev))
                     (set!
@@ -49216,7 +49231,7 @@
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (macro-materialize-generated-imports-in
         (box-get decls-box)
         paths
@@ -49269,7 +49284,7 @@
                 (match normalized-result
                   [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
                     (match normalized
-                      [(AstProgram decls-box)
+                      [(AstProgram.Program decls-box)
                         (let
                           [decls : AstDeclList (box-get decls-box)]
                           [module-placeholder-work : MacroFollowupWorkList
@@ -49373,7 +49388,7 @@
     (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
-  (macro-expand-program-with-paths program AstDeclPathNil))
+  (macro-expand-program-with-paths program AstDeclPathList.Nil))
 
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -49469,7 +49484,7 @@
     [qualifier : String (tc-qualified-name-module cleanup-str)]
     [base : String (tc-qualified-name-base cleanup-str)]
     (match (tc-context-program ctx)
-      [(AstProgram decls-box)
+      [(AstProgram.Program decls-box)
         (match (macro-import-alias-target-cached
           (box-get decls-box)
           (intern (tc-context-module ctx))
@@ -49975,7 +49990,7 @@
     ;; walk, so keep cache entries scoped to one checked declaration.
     (tc-nominal-owner-cache-reset!)
     (match decl
-      [(AstDeclDef _ maybe-ty expr-box)
+      [(AstDecl.Def _ maybe-ty expr-box)
         (match maybe-ty
           [(AstSomeType want)
             (match (tc-expr-with-expected-or-actual-id
@@ -50000,19 +50015,19 @@
             (match (tc-expr-id ctx global-env expr-box)
               [(ResultTcType.Ok _) ResultTcUnit.Ok]
               [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
-      [(AstDeclDefFn _ params ret body-box _)
+      [(AstDecl.DefFn _ params ret body-box _)
         (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
-      [(AstDeclDefMacro name params ret body-box)
+      [(AstDecl.DefMacro name params ret body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]
           (tc-check-defmacro name ctx top-env params ret body))]
-      [(AstDeclExtern _ kind metadata ty)
+      [(AstDecl.Extern _ kind metadata ty)
         (tc-check-extern-decl ctx kind metadata ty)]
-      [(AstDeclDefDispatch name variants)
+      [(AstDecl.DefDispatch name variants)
         (match (tc-dispatch-decl-type ctx (intern-str name) variants)
           [(ResultTcType.Ok _) ResultTcUnit.Ok]
           [(ResultTcType.Err message) (ResultTcUnit.Err message)])]
-      [(AstDeclDefEnum name cleanup variants)
+      [(AstDecl.DefEnum name cleanup variants)
         (tc-check-cleanup-enum-decl
           ctx
           top-env
@@ -50020,7 +50035,7 @@
           AstLifetimeNil
           cleanup
           variants)]
-      [(AstDeclDefEnumLifetimes name lifetimes cleanup variants)
+      [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
         (tc-check-cleanup-enum-decl
           ctx
           top-env
@@ -50028,7 +50043,7 @@
           lifetimes
           cleanup
           variants)]
-      [(AstDeclDefStruct name repr cleanup fields)
+      [(AstDecl.DefStruct name repr cleanup fields)
         (tc-check-cleanup-struct-decl
           ctx
           top-env
@@ -50036,7 +50051,7 @@
           repr
           cleanup
           fields)]
-      [(AstDeclDefStructLifetimes name _ repr cleanup fields)
+      [(AstDecl.DefStructLifetimes name _ repr cleanup fields)
         (tc-check-cleanup-struct-decl
           ctx
           top-env
@@ -50044,13 +50059,13 @@
           repr
           cleanup
           fields)]
-      [(AstDeclComptimeDecl meta template-box)
+      [(AstDecl.ComptimeDecl meta template-box)
         (let
           [template : AstDecl (box-get template-box)]
           (match meta
-            [(AstSomeGeneratedDeclMeta _ _ _ _)
+            [(AstGeneratedDeclMeta.Some _ _ _ _)
               (tc-check-decl-with-global-env ctx top-env global-env template)]
-            [(AstNoGeneratedDeclMeta)
+            [(AstGeneratedDeclMeta.No)
               (match (tc-check-comptime-decl-purity ctx top-env template)
                 [(ResultTcUnit.Ok)
                   (tc-check-decl-with-global-env
@@ -50059,7 +50074,7 @@
                     global-env
                     template)]
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]
-      [(AstDeclUnsafe inner-box)
+      [(AstDecl.Unsafe inner-box)
         (let
           [inner : AstDecl (box-get inner-box)]
           (tc-check-decl-with-global-env ctx top-env global-env inner))]
@@ -50096,12 +50111,12 @@
   [summary : CompilerTypecheckSummary]
   [module : String]) : ResultCompilerTypecheck
   (match decls
-    [(AstDeclNil) (ResultCompilerTypecheck.Ok summary)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (ResultCompilerTypecheck.Ok summary)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
-          [(AstDeclModule next-module)
+          [(AstDecl.Module next-module)
             (tc-check-decls-in-module
               ctx
               top-env
@@ -50129,35 +50144,35 @@
 
 (define (tc-decl-path-list-last [paths : AstDeclPathList] [last : String]) : String
   (match paths
-    [(AstDeclPathNil) last]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Nil) last]
+    [(AstDeclPathList.Cons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         (tc-decl-path-list-last rest path))]))
 
 (define (tc-prefix-decl-key [decl : AstDecl]) : String
   (match decl
-    [(AstDeclModule name) (str_cat.str-cat "module:" (intern-str name))]
-    [(AstDeclDef name _ _) (str_cat.str-cat "def:" (intern-str name))]
-    [(AstDeclDefFn name _ _ _ _) (str_cat.str-cat "fn:" (intern-str name))]
-    [(AstDeclDefMacro name _ _ _) (str_cat.str-cat "macro:" (intern-str name))]
-    [(AstDeclExtern name _ _ _) (str_cat.str-cat "extern:" (intern-str name))]
-    [(AstDeclDefEnum name _ _) (str_cat.str-cat "enum:" (intern-str name))]
-    [(AstDeclDefEnumLifetimes name _ _ _)
+    [(AstDecl.Module name) (str_cat.str-cat "module:" (intern-str name))]
+    [(AstDecl.Def name _ _) (str_cat.str-cat "def:" (intern-str name))]
+    [(AstDecl.DefFn name _ _ _ _) (str_cat.str-cat "fn:" (intern-str name))]
+    [(AstDecl.DefMacro name _ _ _) (str_cat.str-cat "macro:" (intern-str name))]
+    [(AstDecl.Extern name _ _ _) (str_cat.str-cat "extern:" (intern-str name))]
+    [(AstDecl.DefEnum name _ _) (str_cat.str-cat "enum:" (intern-str name))]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
       (str_cat.str-cat "enum-lifetimes:" (intern-str name))]
-    [(AstDeclDefStruct name _ _ _)
+    [(AstDecl.DefStruct name _ _ _)
       (str_cat.str-cat "struct:" (intern-str name))]
-    [(AstDeclDefStructLifetimes name _ _ _ _)
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
       (str_cat.str-cat "struct-lifetimes:" (intern-str name))]
-    [(AstDeclImport _) "import"]
-    [(AstDeclIncludeStr name _) (str_cat.str-cat "include-str:" name)]
-    [(AstDeclIncludeBin name _) (str_cat.str-cat "include-bin:" name)]
-    [(AstDeclDefDispatch name _)
+    [(AstDecl.Import _) "import"]
+    [(AstDecl.IncludeStr name _) (str_cat.str-cat "include-str:" name)]
+    [(AstDecl.IncludeBin name _) (str_cat.str-cat "include-bin:" name)]
+    [(AstDecl.DefDispatch name _)
       (str_cat.str-cat "dispatch:" (intern-str name))]
-    [(AstDeclTest name _ _) (str_cat.str-cat "test:" (intern-str name))]
-    [(AstDeclUnsafe inner)
+    [(AstDecl.Test name _ _) (str_cat.str-cat "test:" (intern-str name))]
+    [(AstDecl.Unsafe inner)
       (str_cat.str-cat "unsafe:" (tc-prefix-decl-key (box-get inner)))]
-    [(AstDeclComptimeDecl _ inner)
+    [(AstDecl.ComptimeDecl _ inner)
       (str_cat.str-cat "comptime:" (tc-prefix-decl-key (box-get inner)))]))
 
 (define (tc-prefix-key-add [key : String] [decl-path : String] [decl : AstDecl]) : String
@@ -50198,7 +50213,7 @@
 
 (define (tc-prefix-cache-module-marker? [decl : AstDecl]) : bool
   (match decl
-    [(AstDeclModule name) (> (string.string-length (intern-str name)) 0)]
+    [(AstDecl.Module name) (> (string.string-length (intern-str name)) 0)]
     [_ false]))
 
 (define (tc-prefix-cache-decl-safe?
@@ -50221,21 +50236,21 @@
   [active-path-module-safe : bool]
   [key : String]) : TcPrefixCandidate
   (match decls
-    [(AstDeclNil) (TcPrefixCandidate.No)]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) (TcPrefixCandidate.No)]
+    [(AstDeclList.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String
           (match paths
-            [(AstDeclPathCons path _) path]
-            [(AstDeclPathNil) ""])]
+            [(AstDeclPathList.Cons path _) path]
+            [(AstDeclPathList.Nil) ""])]
         [rest-paths : AstDeclPathList
           (match paths
-            [(AstDeclPathCons _ path-rest)
+            [(AstDeclPathList.Cons _ path-rest)
               (let
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
-            [(AstDeclPathNil) AstDeclPathNil])]
+            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
         [same-path : bool (string.string-eq active-path decl-path)]
         [same-path-module-safe : bool
           (if same-path
@@ -50256,7 +50271,7 @@
             (let
               [next-module : String
                 (match decl
-                  [(AstDeclModule next-module) (intern-str next-module)]
+                  [(AstDecl.Module next-module) (intern-str next-module)]
                   [_ module])]
               (tc-prefix-candidate-from
                 rest
@@ -50295,30 +50310,32 @@
 
 (define (tc-decl-list-take [decls : AstDeclList] [count : i64]) : AstDeclList
   (if (<= count 0)
-    AstDeclNil
+    AstDeclList.Nil
     (match decls
-      [(AstDeclNil) AstDeclNil]
-      [(AstDeclCons decl rest)
+      [(AstDeclList.Nil) AstDeclList.Nil]
+      [(AstDeclList.Cons decl rest)
         (let
           [rest : AstDeclList (box-get rest)]
-          (AstDeclCons decl (box (tc-decl-list-take rest (- count 1)))))])))
+          (AstDeclList.Cons decl (box (tc-decl-list-take rest (- count 1)))))])))
 
 (define (tc-decl-path-list-take [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
   (if (<= count 0)
-    AstDeclPathNil
+    AstDeclPathList.Nil
     (match paths
-      [(AstDeclPathNil) AstDeclPathNil]
-      [(AstDeclPathCons path rest)
+      [(AstDeclPathList.Nil) AstDeclPathList.Nil]
+      [(AstDeclPathList.Cons path rest)
         (let
           [rest : AstDeclPathList (box-get rest)]
-          (AstDeclPathCons path (box (tc-decl-path-list-take rest (- count 1)))))])))
+          (AstDeclPathList.Cons
+            path
+            (box (tc-decl-path-list-take rest (- count 1)))))])))
 
 (define (tc-decl-list-drop [decls : AstDeclList] [count : i64]) : AstDeclList
   (if (<= count 0)
     decls
     (match decls
-      [(AstDeclNil) AstDeclNil]
-      [(AstDeclCons _ rest)
+      [(AstDeclList.Nil) AstDeclList.Nil]
+      [(AstDeclList.Cons _ rest)
         (let
           [rest : AstDeclList (box-get rest)]
           (tc-decl-list-drop rest (- count 1)))])))
@@ -50327,8 +50344,8 @@
   (if (<= count 0)
     paths
     (match paths
-      [(AstDeclPathNil) AstDeclPathNil]
-      [(AstDeclPathCons _ rest)
+      [(AstDeclPathList.Nil) AstDeclPathList.Nil]
+      [(AstDeclPathList.Cons _ rest)
         (let
           [rest : AstDeclPathList (box-get rest)]
           (tc-decl-path-list-drop rest (- count 1)))])))
@@ -50452,7 +50469,8 @@
 (define (tc-generated-clone-decl-with-path? [decl : AstDecl] [path : String]) : bool
   (if (string.string-eq path "")
     (match decl
-      [(AstDeclDefFn name _ _ _ _) (tc-generated-clone-name? (intern-str name))]
+      [(AstDecl.DefFn name _ _ _ _)
+        (tc-generated-clone-name? (intern-str name))]
       [_ false])
     false))
 
@@ -50543,27 +50561,27 @@
     (begin
       (while (not done)
         (match cur-decls
-          [(AstDeclNil)
+          [(AstDeclList.Nil)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set! result (ResultCompilerTypecheck.Ok cur-summary))
               (set! done true))]
-          [(AstDeclCons decl rest)
+          [(AstDeclList.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               [decl-path : String
                 (match cur-paths
-                  [(AstDeclPathCons path _) path]
-                  [(AstDeclPathNil) ""])]
+                  [(AstDeclPathList.Cons path _) path]
+                  [(AstDeclPathList.Nil) ""])]
               [rest-paths : AstDeclPathList
                 (match cur-paths
-                  [(AstDeclPathCons _ path-rest)
+                  [(AstDeclPathList.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathNil) AstDeclPathNil])]
+                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
               (match decl
-                [(AstDeclModule next-module)
+                [(AstDecl.Module next-module)
                   (begin
                     (cfg
                       compile-profile
@@ -50689,7 +50707,7 @@
                       (match (tc-build-top-env ctx program)
                         [(ResultTcEnv.Ok top-env)
                           (match program
-                            [(AstProgram decls-box)
+                            [(AstProgram.Program decls-box)
                               (let
                                 [decls : AstDeclList (box-get decls-box)]
                                 (begin

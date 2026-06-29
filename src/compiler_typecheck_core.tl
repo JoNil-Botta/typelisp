@@ -3709,6 +3709,32 @@
 (define (tc-enter-unsafe [env : TcTypeEnv]) : TcTypeEnv
   (tc-bind env (tc-unsafe-marker-name) (AstTyUnit)))
 
+(define (tc-env-marker-type-scan [env : TcTypeEnv] [name-id : i64]) : AstMaybeType
+  (match env
+    [(TcTypeNil) (AstNoType)]
+    [(TcTypeCache ids values _ _ _ scan-through partial _ below)
+      (if scan-through
+        (match (hashmap.i64-i64-map-get ids name-id)
+          [(hashmap.I64I64MapFound index)
+            (AstSomeType (array.array-ref values index))]
+          [(hashmap.I64I64MapMissing)
+            (if partial
+              (tc-env-marker-type-scan (box-get below) name-id)
+              (AstNoType))])
+        (AstNoType))]
+    [(TcTypeBind key ty rest)
+      (if (= key name-id)
+        (AstSomeType ty)
+        (tc-env-marker-type-scan (box-get rest) name-id))]))
+
+(define (tc-env-marker-type [env : TcTypeEnv] [name-id : i64]) : AstMaybeType
+  (match env
+    [(TcTypeCache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-env-marker-type-scan env name-id)
+        (tc-env-marker-type-scan (box-get rest) name-id))]
+    [_ (tc-env-marker-type-scan env name-id)]))
+
 (define (tc-in-unsafe-scan? [env : TcTypeEnv]) : bool
   (match env
     [(TcTypeNil) false]
@@ -3724,9 +3750,9 @@
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeCache _ _ _ _ _ _ _ rest _) (tc-in-unsafe-scan? (box-get rest))]
-      [_ (tc-in-unsafe-scan? env)])))
+    (match (tc-env-marker-type env (tc-unsafe-marker-id))
+      [(AstSomeType _) true]
+      [(AstNoType) false])))
 
 (define tc-unused-unsafe-tracking-enabled : bool
   false)
@@ -3953,10 +3979,10 @@
 (define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeCache _ _ _ _ _ _ _ rest _)
-        (tc-current-return-type-scan (box-get rest))]
-      [_ (tc-current-return-type-scan env)])))
+    (match (tc-env-marker-type env (tc-return-type-id))
+      [(AstSomeType ty) (OkTcType ty)]
+      [(AstNoType)
+        (ErrTcType "typecheck: try requires enclosing Result-like function")])))
 
 (define (tc-type-list1 [a : AstType]) : AstTypeList
   (ast-type-cons a AstTypeNil))
@@ -5612,10 +5638,10 @@
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeCache _ _ _ _ _ _ _ rest _)
-        (tc-active-region-scan (box-get rest))]
-      [_ (tc-active-region-scan env)])))
+    (match (tc-env-marker-type env (tc-region-marker-id))
+      [(AstSomeType (AstTyVar region)) (TcSomeString (intern-str region))]
+      [(AstSomeType _) (tc-active-region-scan env)]
+      [(AstNoType) (TcNoString)])))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
   (tc-bind env (tc-region-marker-name) (AstTyVar (intern region))))

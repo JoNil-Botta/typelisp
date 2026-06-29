@@ -16425,8 +16425,22 @@
             program-index)]
         [(IrInstrCallIndirectC _ _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
-        [(IrInstrCallCAbiStoreResult _) 0]
-        [(IrInstrCallIndirectCAbiStoreResult _) 0]
+        ;; #65a-ii: reserve the c-abi outgoing args + the 16-byte result-base
+        ;; slot in the prologue frame (safe over-bound: each arg <=2 stack words)
+        ;; so these calls need no per-call %rsp dip. The emission uses the exact
+        ;; call-space for the base-save offset, which fits inside this bound.
+        [(IrInstrCallCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallCAbiStoreResultPayload _ _ args _)
+              (+ (compiler-backend-round-up-16
+                   (* (compiler-backend-call-args-count args) 16))
+                16)])]
+        [(IrInstrCallIndirectCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+              (+ (compiler-backend-round-up-16
+                   (* (compiler-backend-call-args-count args) 16))
+                16)])]
         [(IrInstrTailCallIndirect _ args _)
           (compiler-backend-windows-closure-stack-arg-space args)]
         [_ 0])]))
@@ -24306,6 +24320,10 @@
         c-abi?
         program-index)]
     [total-space : i64 (+ call-space 16)]
+    ;; #65a-ii: on Linux the args + 16-byte base-save region are reserved in the
+    ;; prologue frame (instr-outgoing-stack-space), so no per-call %rsp dip.
+    ;; Windows keeps rbp + dips per-call -> unchanged.
+    [dip : i64 (match target [(BackendTargetLinux) 0] [(BackendTargetWindows) total-space])]
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     (match (compiler-backend-emit-call-args
@@ -24330,7 +24348,7 @@
           [(OkCompilerBackend base-save)
             (OkCompilerBackend
               (string.string-append
-                (compiler-backend-emit-call-space-sub total-space)
+                (compiler-backend-emit-call-space-sub dip)
                 (string.string-append
                   args-asm
                   (string.string-append
@@ -24349,7 +24367,7 @@
                           (compiler-backend-emit-c-abi-return-stores
                             call-space
                             slots)
-                          (compiler-backend-emit-call-space-add total-space))
+                          (compiler-backend-emit-call-space-add dip))
                         ""))))))]
           [(ErrCompilerBackend message)
             (ErrCompilerBackend
@@ -24409,6 +24427,8 @@
         true
         program-index)]
     [total-space : i64 (+ call-space 16)]
+    ;; #65a-ii: Linux folds the c-abi dip into the frame (see named variant).
+    [dip : i64 (match target [(BackendTargetLinux) 0] [(BackendTargetWindows) total-space])]
     (match (compiler-backend-emit-call-args
       target
       assignments
@@ -24438,7 +24458,7 @@
                 [(OkCompilerBackend func-asm)
                   (OkCompilerBackend
                     (string-append
-                      (compiler-backend-emit-call-space-sub total-space)
+                      (compiler-backend-emit-call-space-sub dip)
                       (string-append
                         args-asm
                         (string-append
@@ -24454,7 +24474,7 @@
                                   call-space
                                   slots)
                                 (compiler-backend-emit-call-space-add
-                                  total-space))
+                                  dip))
                               ""
                               ""
                               ""))))))]

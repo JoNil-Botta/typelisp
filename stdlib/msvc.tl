@@ -101,16 +101,13 @@
 
 ;: Return vector-backed process environment overrides for invoking the tool.
 (define (msvc-tool-process-env-vec [tool : MsvcTool]) : process.ProcessEnvVec
-  (process.env-vec-append
-    (process.env-vec-append
-      (process.env-vec-append
-        (process.env-vec-new)
-        "PATH"
-        (msvc-tool-path tool))
-      "LIB"
-      (msvc-tool-lib tool))
-    "INCLUDE"
-    (msvc-tool-include tool)))
+  (let
+    [env : process.ProcessEnvVec (process.env-vec-new)]
+    (begin
+      (process.env-vec-append (&mut env) "PATH" (msvc-tool-path tool))
+      (process.env-vec-append (&mut env) "LIB" (msvc-tool-lib tool))
+      (process.env-vec-append (&mut env) "INCLUDE" (msvc-tool-include tool))
+      env)))
 
 ;: Render a discovery error as a diagnostic message.
 (define (msvc-error-message [error : MsvcError]) : String

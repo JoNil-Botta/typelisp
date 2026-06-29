@@ -32353,14 +32353,14 @@ tl_memchr:
       "<source>"
       src
       (compiler-backend-target-cfgs target))
-      [(OkAstProgramDiagnostic program)
+      [(ResultAstProgramDiagnostic.Ok program)
         (lower-compiler-program-with-path-mode
           "<source>"
           program
           (compiler-backend-lower-mode-for-target
             target
             (CompilerBackendMode.Scalar)))]
-      [(ErrAstProgramDiagnostic diag) (ErrCompilerLower diag)])))
+      [(ResultAstProgramDiagnostic.Err diag) (ErrCompilerLower diag)])))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (lower-compiler-source src)

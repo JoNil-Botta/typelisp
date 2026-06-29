@@ -4821,7 +4821,7 @@
       (match (compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle))
-        [(OkAstDecl decl)
+        [(ResultAstDecl.Ok decl)
           (match decl
             [(AstDeclDefStruct _ _ _ fields)
               (tc-stdlib-check-field-specs
@@ -4831,7 +4831,8 @@
                 specs
                 0)]
             [_ (tc-stdlib-well-known-mismatch type-name "expected defstruct")])]
-        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])
+        [(ResultAstDecl.Err message)
+          (tc-stdlib-well-known-mismatch type-name message)])
       (tc-stdlib-well-known-mismatch type-name "missing declaration"))))
 
 (define (tc-stdlib-check-enum
@@ -4849,7 +4850,7 @@
       (match (compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
         (compiler-symbol-handle-index handle))
-        [(OkAstDecl decl)
+        [(ResultAstDecl.Ok decl)
           (match decl
             [(AstDeclDefEnum _ _ variants)
               (tc-stdlib-check-variant-specs
@@ -4859,7 +4860,8 @@
                 specs
                 0)]
             [_ (tc-stdlib-well-known-mismatch type-name "expected defenum")])]
-        [(ErrAstDecl message) (tc-stdlib-well-known-mismatch type-name message)])
+        [(ResultAstDecl.Err message)
+          (tc-stdlib-well-known-mismatch type-name message)])
       (tc-stdlib-well-known-mismatch type-name "missing declaration"))))
 
 (define (tc-stdlib-comptime-present? [ctx : TcContext]) : bool
@@ -8666,8 +8668,8 @@
 
 (define (tc-current-module-enum? [ctx : TcContext] [name : String]) : bool
   (match (tc-program-enum-variants (tc-context-program ctx) name)
-    [(OkAstVariantDefList _) true]
-    [(ErrAstVariantDefList _) false]))
+    [(ResultAstVariantDefList.Ok _) true]
+    [(ResultAstVariantDefList.Err _) false]))
 
 (define (tc-resolved-current-module-nominal-type
   [ctx : TcContext]
@@ -9250,8 +9252,8 @@
           (match (compiler-symbols-decl-at-index
             symbols
             (compiler-symbol-handle-index handle))
-            [(OkAstDecl decl) (tc-nominal-lifetimes-from-decl decl)]
-            [(ErrAstDecl message) (ResultTcLifetimeList.Err message)])
+            [(ResultAstDecl.Ok decl) (tc-nominal-lifetimes-from-decl decl)]
+            [(ResultAstDecl.Err message) (ResultTcLifetimeList.Err message)])
           (ResultTcLifetimeList.Err "typecheck: nominal type not found")))]))
 
 (define (tc-nominal-lifetime-use-policy-ok
@@ -11429,13 +11431,13 @@
     [(AstTyEnumArgs _ _) true]
     [(AstTyVar name)
       (match (tc-context-enum-variants ctx (intern-str name))
-        [(OkAstVariantDefList _) true]
-        [(ErrAstVariantDefList _)
+        [(ResultAstVariantDefList.Ok _) true]
+        [(ResultAstVariantDefList.Err _)
           (match (tc-program-enum-variants
             (tc-context-program ctx)
             (intern-str name))
-            [(OkAstVariantDefList _) true]
-            [(ErrAstVariantDefList _) false])])]
+            [(ResultAstVariantDefList.Ok _) true]
+            [(ResultAstVariantDefList.Err _) false])])]
     [_ false]))
 
 (define (tc-spmd-lane-type-supported? [ty : AstType]) : bool
@@ -12537,7 +12539,7 @@
                 (match (compiler-program-decl-at-index
                   (tc-context-program ctx)
                   (compiler-symbol-handle-index handle))
-                  [(OkAstDecl decl)
+                  [(ResultAstDecl.Ok decl)
                     (match (tc-top-decl-type ctx decl)
                       [(ResultTcType.Ok ty)
                         (match ty
@@ -12547,7 +12549,7 @@
                               (tc-dispatch-variant-non-function-message
                                 variant-name))])]
                       [(ResultTcType.Err message) (ResultTcType.Err message)])]
-                  [(ErrAstDecl message) (ResultTcType.Err message)])
+                  [(ResultAstDecl.Err message) (ResultTcType.Err message)])
                 (ResultTcType.Err
                   (tc-dispatch-variant-non-function-message variant-name)))))
           (ResultTcType.Err
@@ -14892,12 +14894,12 @@
                 (match (compiler-registries-variant-fields-indexed
                   (tc-context-symbols ctx)
                   handle)
-                  [(OkAstTypeList fields)
+                  [(ResultAstTypeList.Ok fields)
                     (match fields
                       [(AstTypeNil)
                         (ResultTcType.Ok (tc-tag-active-region env ret))]
                       [_ (ResultTcType.Err "typecheck: arity mismatch")])]
-                  [(ErrAstTypeList message) (ResultTcType.Err message)])
+                  [(ResultAstTypeList.Err message) (ResultTcType.Err message)])
                 (ResultTcType.Err "typecheck: call target is not a function"))]
             [(ResultTcString.Err message) (ResultTcType.Err message)])
           (if (tc-name-qualified? lookup-name)
@@ -15521,7 +15523,7 @@
         (match (compiler-symbols-decl-at-index
           (tc-context-symbols ctx)
           (compiler-symbol-handle-index handle))
-          [(OkAstDecl decl)
+          [(ResultAstDecl.Ok decl)
             (match decl
               [(AstDeclExtern _ kind metadata _)
                 (match kind
@@ -15529,7 +15531,7 @@
                     (TcMaybeExternAbi.Some (ast-extern-metadata-abi metadata))]
                   [(AstExternValue) (TcMaybeExternAbi.No)])]
               [_ (TcMaybeExternAbi.No)])]
-          [(ErrAstDecl _) (TcMaybeExternAbi.No)])
+          [(ResultAstDecl.Err _) (TcMaybeExternAbi.No)])
         (TcMaybeExternAbi.No))
       (TcMaybeExternAbi.No))))
 
@@ -19117,9 +19119,10 @@
                 (match (compiler-symbols-decl-at-index
                   (tc-context-symbols ctx)
                   (compiler-symbol-handle-index handle))
-                  [(OkAstDecl decl)
+                  [(ResultAstDecl.Ok decl)
                     (tc-spmd-inline-helper-from-decl lookup-name decl)]
-                  [(ErrAstDecl message) (ResultTcSpmdInlineHelper.Err message)])
+                  [(ResultAstDecl.Err message)
+                    (ResultTcSpmdInlineHelper.Err message)])
                 (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No)))
               (ResultTcSpmdInlineHelper.Ok (TcSpmdInlineHelper.No))))))]
     [(ResultTcString.Err message)
@@ -19339,7 +19342,7 @@
     (match (compiler-symbols-decl-at-index
       symbols
       (compiler-symbol-handle-index handle))
-      [(OkAstDecl decl)
+      [(ResultAstDecl.Ok decl)
         (match decl
           [(AstDeclExtern _ kind metadata _)
             (match kind
@@ -19351,7 +19354,7 @@
                     (TcMaybeString.No)))]
               [(AstExternValue) (TcMaybeString.No)])]
           [_ (TcMaybeString.No)])]
-      [(ErrAstDecl _) (TcMaybeString.No)])
+      [(ResultAstDecl.Err _) (TcMaybeString.No)])
     (TcMaybeString.No)))
 
 (define (tc-spmd-atomic-extern-symbol-lookup
@@ -23295,7 +23298,7 @@
   [module : String]) : ResultAstVariantDefList
   (match decls
     [(AstDeclNil)
-      (ErrAstVariantDefList
+      (ResultAstVariantDefList.Err
         (string.string-append "typecheck: unknown enum " enum-name))]
     [(AstDeclCons decl rest)
       (let
@@ -23312,7 +23315,7 @@
               (string.string-eq
                 (compiler-symbol-module-key module (intern-str name))
                 enum-name))
-              (OkAstVariantDefList variants)
+              (ResultAstVariantDefList.Ok variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
           [(AstDeclDefEnumLifetimes name _ _ variants)
             (if (or
@@ -23320,7 +23323,7 @@
               (string.string-eq
                 (compiler-symbol-module-key module (intern-str name))
                 enum-name))
-              (OkAstVariantDefList variants)
+              (ResultAstVariantDefList.Ok variants)
               (tc-program-enum-variants-list-in-module rest enum-name module))]
           [(AstDeclComptimeDecl _ template-box)
             (let
@@ -23332,7 +23335,7 @@
                     (string.string-eq
                       (compiler-symbol-module-key module (intern-str name))
                       enum-name))
-                    (OkAstVariantDefList variants)
+                    (ResultAstVariantDefList.Ok variants)
                     (tc-program-enum-variants-list-in-module
                       rest
                       enum-name
@@ -23343,7 +23346,7 @@
                     (string.string-eq
                       (compiler-symbol-module-key module (intern-str name))
                       enum-name))
-                    (OkAstVariantDefList variants)
+                    (ResultAstVariantDefList.Ok variants)
                     (tc-program-enum-variants-list-in-module
                       rest
                       enum-name
@@ -23376,16 +23379,17 @@
         (match (compiler-symbols-decl-at-index
           (tc-context-symbols ctx)
           (compiler-symbol-handle-index handle))
-          [(OkAstDecl decl)
+          [(ResultAstDecl.Ok decl)
             (match decl
-              [(AstDeclDefEnum _ _ variants) (OkAstVariantDefList variants)]
+              [(AstDeclDefEnum _ _ variants)
+                (ResultAstVariantDefList.Ok variants)]
               [(AstDeclDefEnumLifetimes _ _ _ variants)
-                (OkAstVariantDefList variants)]
+                (ResultAstVariantDefList.Ok variants)]
               [_
-                (ErrAstVariantDefList
+                (ResultAstVariantDefList.Err
                   (string.string-append "typecheck: unknown enum " enum-name))])]
-          [(ErrAstDecl message) (ErrAstVariantDefList message)])
-        (ErrAstVariantDefList
+          [(ResultAstDecl.Err message) (ResultAstVariantDefList.Err message)])
+        (ResultAstVariantDefList.Err
           (string.string-append "typecheck: unknown enum " enum-name)))
       (tc-program-enum-variants (tc-context-program ctx) enum-name))))
 
@@ -23866,7 +23870,7 @@
             (match (compiler-symbols-decl-at-index
               symbols
               (compiler-symbol-handle-index handle))
-              [(OkAstDecl decl)
+              [(ResultAstDecl.Ok decl)
                 (match decl
                   [(AstDeclDefStruct _ repr cleanup fields)
                     (ResultTcStructDecl.Ok (TcStructDecl repr cleanup fields))]
@@ -23875,7 +23879,7 @@
                   [_
                     (ResultTcStructDecl.Err
                       "typecheck: struct symbol owner is not a struct")])]
-              [(ErrAstDecl message) (ResultTcStructDecl.Err message)])
+              [(ResultAstDecl.Err message) (ResultTcStructDecl.Err message)])
             (ResultTcStructDecl.Err
               (string.string-append "typecheck: unknown struct " struct-name)))
           (ResultTcStructDecl.Err
@@ -23897,7 +23901,7 @@
             (match (compiler-symbols-decl-at-index
               symbols
               (compiler-symbol-handle-index handle))
-              [(OkAstDecl decl)
+              [(ResultAstDecl.Ok decl)
                 (match decl
                   [(AstDeclDefEnum _ cleanup variants)
                     (ResultTcEnumDecl.Ok (TcEnumDecl cleanup variants))]
@@ -23906,7 +23910,7 @@
                   [_
                     (ResultTcEnumDecl.Err
                       "typecheck: enum symbol owner is not an enum")])]
-              [(ErrAstDecl message) (ResultTcEnumDecl.Err message)])
+              [(ResultAstDecl.Err message) (ResultTcEnumDecl.Err message)])
             (ResultTcEnumDecl.Err
               (string.string-append "typecheck: unknown enum " enum-name)))
           (ResultTcEnumDecl.Err
@@ -24003,12 +24007,12 @@
           (compiler-symbol-handle-kind handle)
           (compiler-symbol-kind-defenum))
           (match (tc-context-enum-variants ctx name)
-            [(OkAstVariantDefList variants)
+            [(ResultAstVariantDefList.Ok variants)
               (tc-inline-aggregate-variants-finite-ok
                 ctx
                 variants
                 (TcStringList.Cons name (box stack)))]
-            [(ErrAstVariantDefList message) (ResultTcUnit.Err message)])
+            [(ResultAstVariantDefList.Err message) (ResultTcUnit.Err message)])
           (if (=
             (compiler-symbol-handle-kind handle)
             (compiler-symbol-kind-defstruct))
@@ -24310,14 +24314,14 @@
     (ResultTcInlineAggregateLayout.Err
       (tc-inline-aggregate-cycle-message enum-name stack))
     (match (tc-context-enum-variants ctx enum-name)
-      [(OkAstVariantDefList variants)
+      [(ResultAstVariantDefList.Ok variants)
         (tc-inline-aggregate-variants-layout
           ctx
           variants
           8
           8
           (TcStringList.Cons enum-name (box stack)))]
-      [(ErrAstVariantDefList message)
+      [(ResultAstVariantDefList.Err message)
         (ResultTcInlineAggregateLayout.Err message)])))
 
 ;; --- full inline-aggregate layout memo ---------------------------------------
@@ -25420,16 +25424,18 @@
       (let
         [enum-name-str : String (intern-str enum-name)]
         (match (tc-context-enum-variants ctx enum-name-str)
-          [(OkAstVariantDefList variants)
+          [(ResultAstVariantDefList.Ok variants)
             (tc-result-info-from-variants ctx enum-name-str variants)]
-          [(ErrAstVariantDefList message) (ResultTcResultInfo.Err message)]))]
+          [(ResultAstVariantDefList.Err message)
+            (ResultTcResultInfo.Err message)]))]
     [(AstTyEnumArgs enum-name _)
       (let
         [enum-name-str : String (intern-str enum-name)]
         (match (tc-program-enum-variants (tc-context-program ctx) enum-name-str)
-          [(OkAstVariantDefList variants)
+          [(ResultAstVariantDefList.Ok variants)
             (tc-result-info-from-variants ctx enum-name-str variants)]
-          [(ErrAstVariantDefList message) (ResultTcResultInfo.Err message)]))]
+          [(ResultAstVariantDefList.Err message)
+            (ResultTcResultInfo.Err message)]))]
     [_ (ResultTcResultInfo.Err "typecheck: try requires Result-like enum")]))
 
 (define (tc-try-infos-compatible
@@ -25566,13 +25572,13 @@
       (match (compiler-registries-variant-fields-indexed
         (tc-context-symbols ctx)
         handle)
-        [(OkAstTypeList fields)
+        [(ResultAstTypeList.Ok fields)
           (match (tc-nominal-lifetimes ctx owner)
             [(ResultTcLifetimeList.Ok lifetimes)
               (ResultTcType.Ok
                 (tc-enum-variant-constructor-type ctx owner lifetimes fields))]
             [(ResultTcLifetimeList.Err message) (ResultTcType.Err message)])]
-        [(ErrAstTypeList message) (ResultTcType.Err message)])]
+        [(ResultAstTypeList.Err message) (ResultTcType.Err message)])]
     [(ResultTcString.Err message) (ResultTcType.Err message)]))
 
 (define (tc-variant-constructor-type-for-lookup-or
@@ -25615,8 +25621,9 @@
         (match (compiler-registries-struct-field-type-indexed
           (tc-context-symbols ctx)
           handle)
-          [(OkAstType ty) (ResultTcType.Ok (tc-resolve-type field-ctx ty))]
-          [(ErrAstType message) (ResultTcType.Err message)]))
+          [(ResultAstType.Ok ty)
+            (ResultTcType.Ok (tc-resolve-type field-ctx ty))]
+          [(ResultAstType.Err message) (ResultTcType.Err message)]))
       (ResultTcType.Err
         (string.string-append
           "typecheck: unknown struct field "
@@ -25652,7 +25659,7 @@
         (match (compiler-registries-struct-field-type
           (tc-context-program ctx)
           handle)
-          [(OkAstType ty)
+          [(ResultAstType.Ok ty)
             (match (tc-lifetime-subst-from-nominal-args
               field-ctx
               struct-name
@@ -25661,7 +25668,7 @@
                 (ResultTcType.Ok
                   (tc-resolve-type field-ctx (tc-lifetime-subst-type subst ty)))]
               [(ResultTcLifetimeSubst.Err message) (ResultTcType.Err message)])]
-          [(ErrAstType message) (ResultTcType.Err message)]))
+          [(ResultAstType.Err message) (ResultTcType.Err message)]))
       (ResultTcType.Err
         (string.string-append
           "typecheck: unknown struct field "
@@ -26239,7 +26246,7 @@
             (match (compiler-registries-variant-fields-indexed
               (tc-context-symbols ctx)
               handle)
-              [(OkAstTypeList fields)
+              [(ResultAstTypeList.Ok fields)
                 (match (tc-variant-pattern-payload-types
                   ctx
                   enum-name
@@ -26255,7 +26262,7 @@
                           (tc-tag-type-list-region region payload-fields)]
                         [(TcMaybeString.No) payload-fields]))]
                   [(ErrTcVariantPayloadTypes message) (ResultTcEnv.Err message)])]
-              [(ErrAstTypeList message) (ResultTcEnv.Err message)])
+              [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
             (ResultTcEnv.Err
               (string.string-append
                 "typecheck: variant "
@@ -26628,7 +26635,7 @@
             (match (compiler-registries-variant-fields-indexed
               (tc-context-symbols ctx)
               handle)
-              [(OkAstTypeList fields)
+              [(ResultAstTypeList.Ok fields)
                 (match (tc-variant-pattern-payload-types
                   ctx
                   enum-name
@@ -26642,7 +26649,7 @@
                       args
                       payload-fields)]
                   [(ErrTcVariantPayloadTypes message) (ResultTcEnv.Err message)])]
-              [(ErrAstTypeList message) (ResultTcEnv.Err message)])
+              [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
             (ResultTcEnv.Err
               (string.string-append
                 "typecheck: variant "
@@ -27281,8 +27288,9 @@
       (match (compiler-registries-variant-fields-indexed
         (tc-context-symbols ctx)
         handle)
-        [(OkAstTypeList fields) (tc-pattern-list-irrefutable? ctx args fields)]
-        [(ErrAstTypeList _) false])
+        [(ResultAstTypeList.Ok fields)
+          (tc-pattern-list-irrefutable? ctx args fields)]
+        [(ResultAstTypeList.Err _) false])
       false)))
 
 (define (tc-struct-pattern-irrefutable?
@@ -27324,7 +27332,7 @@
             (let
               [enum-name-str : String (intern-str enum-name)]
               (match (tc-context-enum-variants ctx enum-name-str)
-                [(OkAstVariantDefList variants)
+                [(ResultAstVariantDefList.Ok variants)
                   (match (tc-enum-single-matching-variant-name
                     ctx
                     variants
@@ -27337,14 +27345,14 @@
                         variant-name
                         args)]
                     [(TcMaybeString.No) false])]
-                [(ErrAstVariantDefList _) false]))]
+                [(ResultAstVariantDefList.Err _) false]))]
           [(AstTyEnumArgs enum-name _)
             (let
               [enum-name-str : String (intern-str enum-name)]
               (match (tc-program-enum-variants
                 (tc-context-program ctx)
                 enum-name-str)
-                [(OkAstVariantDefList variants)
+                [(ResultAstVariantDefList.Ok variants)
                   (match (tc-enum-single-matching-variant-name
                     ctx
                     variants
@@ -27357,7 +27365,7 @@
                         variant-name
                         args)]
                     [(TcMaybeString.No) false])]
-                [(ErrAstVariantDefList _) false]))]
+                [(ResultAstVariantDefList.Err _) false]))]
           [(AstTyStruct struct-name)
             (tc-struct-pattern-irrefutable?
               ctx
@@ -27664,17 +27672,17 @@
       (let
         [enum-name-str : String (intern-str enum-name)]
         (match (tc-context-enum-variants ctx enum-name-str)
-          [(OkAstVariantDefList variants)
+          [(ResultAstVariantDefList.Ok variants)
             (tc-enum-variants-exhaustive-ok ctx enum-name-str variants arms)]
-          [(ErrAstVariantDefList _)
+          [(ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err "typecheck: non-exhaustive match")]))]
     [(AstTyEnumArgs enum-name _)
       (let
         [enum-name-str : String (intern-str enum-name)]
         (match (tc-program-enum-variants (tc-context-program ctx) enum-name-str)
-          [(OkAstVariantDefList variants)
+          [(ResultAstVariantDefList.Ok variants)
             (tc-enum-variants-exhaustive-ok ctx enum-name-str variants arms)]
-          [(ErrAstVariantDefList _)
+          [(ResultAstVariantDefList.Err _)
             (ResultTcUnit.Err "typecheck: non-exhaustive match")]))]
     [(AstTyBool) (tc-match-bool-exhaustive-ok arms)]
     [_
@@ -40326,11 +40334,11 @@
   [form : SpannedSexpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (parse-ast-decl-maybe dispatch form)
-    [(OkAstSomeDecl decl)
+    [(ResultAstMaybeDecl.SomeDecl decl)
       (ResultMacroParsedDecls.Ok (ast-decl-cons decl AstDeclNil))]
-    [(OkAstDecls decls) (ResultMacroParsedDecls.Ok decls)]
-    [(OkAstNoDecl) (ResultMacroParsedDecls.Ok AstDeclNil)]
-    [(ErrAstMaybeDecl message)
+    [(ResultAstMaybeDecl.Decls decls) (ResultMacroParsedDecls.Ok decls)]
+    [(ResultAstMaybeDecl.NoDecl) (ResultMacroParsedDecls.Ok AstDeclNil)]
+    [(ResultAstMaybeDecl.Err message)
       (ResultMacroParsedDecls.Err
         (box (macro-output-syntax-diag origin message)))]))
 
@@ -41627,8 +41635,8 @@
   [target : i64]
   [module : String]) : MacroMaybeDecl
   (match (compiler-symbols-decl-at-index symbols target)
-    [(OkAstDecl decl) (macro-decl-from-decl decl module)]
-    [(ErrAstDecl _) (MacroMaybeDecl.No)]))
+    [(ResultAstDecl.Ok decl) (macro-decl-from-decl decl module)]
+    [(ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
 
 ;; Imported macro aliases can be looked up from the importing module. In that
 ;; path, recover the indexed owner module so the transformer still runs as its
@@ -41638,11 +41646,11 @@
   [target : i64]
   [module : String]) : MacroMaybeDecl
   (match (compiler-symbols-decl-at-index symbols target)
-    [(OkAstDecl decl)
+    [(ResultAstDecl.Ok decl)
       (macro-decl-from-decl
         decl
         (macro-decl-owner-module-or symbols target module))]
-    [(ErrAstDecl _) (MacroMaybeDecl.No)]))
+    [(ResultAstDecl.Err _) (MacroMaybeDecl.No)]))
 
 ;; The module accumulator and the current module compare as INTERN IDS: the
 ;; previous String-based walk converted every AstDeclModule's interned name

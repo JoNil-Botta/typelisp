@@ -531,7 +531,7 @@
   (if (string.string-eq expr-source "")
     (repl-print-error-line "Error: .type expects an expression")
     (match (parse-ast-repl-source expr-source)
-      [(OkAstReplItem item)
+      [(ResultAstReplItem.Ok item)
         (match item
           [(AstReplDecl _)
             (repl-print-error-line
@@ -547,7 +547,7 @@
                       (string.string-append "Error: " message))])]
               [(ResultReplDeclList.Err message)
                 (repl-print-error-line (string.string-append "Error: " message))])])]
-      [(ErrAstReplItem message)
+      [(ResultAstReplItem.Err message)
         (repl-print-error-line (string.string-append "Error: " message))])))
 
 (define (repl-session-candidate [session-source : String] [input : String]) : String
@@ -555,7 +555,7 @@
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
   (match (parse-ast-repl-source input)
-    [(OkAstReplItem item)
+    [(ResultAstReplItem.Ok item)
       (match item
         [(AstReplDecl _)
           (let
@@ -570,7 +570,7 @@
           (begin
             (repl-evaluate-expr session-source input (ast-node-get expr))
             session-source)])]
-    [(ErrAstReplItem message)
+    [(ResultAstReplItem.Err message)
       (begin
         (repl-print-error-line
           (string.string-append "REPL parse error: " message))

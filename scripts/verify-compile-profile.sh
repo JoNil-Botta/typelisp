@@ -266,16 +266,28 @@ assert_contains_in \
     "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|" \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$GEN_IMPORT_STDERR" \
     "typecheck.macro.fixed_point_passes" \
-    2 \
+    1 \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
+    "$GEN_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_followup_needs_followup" \
+    0 \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
+assert_profile_counter_eq_in \
     "$GEN_IMPORT_STDERR" \
     "typecheck.macro.fixed_point_followup_generated_imports" \
-    1 \
+    0 \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
+assert_profile_counter_eq_in \
+    "$GEN_IMPORT_STDERR" \
+    "typecheck.macro.fixed_point_followup_module_placeholders" \
+    0 \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
 
@@ -352,13 +364,16 @@ assert_profile_counter_at_least_in \
     1 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
-assert_line_count_in \
+# Local generated-import worklist processing and generated-identity shortcuts can
+# reduce these detail rows; keep upper bounds to guard against re-expanding the
+# repeated replay import.
+assert_line_count_at_most_in \
     "$REPLAY_STDERR" \
     "profile-replay-user arity=1 calls=1" \
     2 \
     "$REPLAY_STDOUT" \
     "$REPLAY_STDERR"
-assert_line_count_in \
+assert_line_count_at_most_in \
     "$REPLAY_STDERR" \
     "profile-replay-nested arity=2 calls=1" \
     2 \

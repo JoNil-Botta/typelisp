@@ -99,7 +99,7 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_os_write:
     call _tl_stdlib_runtime_stdlib_runtime_runtime_ptr_arg
     movq %rax, -48(%rbp)
     movq -8(%rbp), %rdi
-    movq -48(%rbp), %rsi
+    movq %rax, %rsi
     movq -24(%rbp), %rdx
     movl $1, %eax
     syscall
@@ -250,7 +250,7 @@ tl_array_zero:
     movq %rax, -32(%rbp)
     movq %rax, %r8
     movq %r8, -40(%rbp)
-    movq -32(%rbp), %r8
+    movq %rax, %r8
     imulq $8, %r8
     movq %r8, -56(%rbp)
     movq -8(%rbp), %r8

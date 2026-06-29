@@ -4546,18 +4546,115 @@
             (compiler-reg-copy-hints-add-move! hints parents src dst)])
         (compiler-reg-copy-hints-from-moves! hints parents (box-get rest)))]))
 
-;; Build per-root copy hints from the move list, mapping each move endpoint to its
-;; coalesce root. The first move pairing a root with a distinct neighbour wins.
+;; Two-address binop dst<->operand coalesce hints (LLVM TwoAddressInstructionPass).
+;; The backend lowers a two-address binop as `movq lhs,staging; op rhs,staging`,
+;; so biasing dst onto lhs's register elides the `movq` when they coincide. div/mod
+;; are rax:rdx-fixed (staging is not the dst) -> skipped. Commutative ops also hint
+;; dst<->rhs so the allocator can coalesce whichever operand lands free. Pure
+;; tie-break: copy-hints-add-move! is first-wins and the greedy consumes it free-
+;; only (never forces a spill/evict).
+(define (compiler-reg-binop-two-address? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinDiv) false]
+    [(IrBinMod) false]
+    [(IrBinSafeDiv) false]
+    [(IrBinSafeMod) false]
+    [_ true]))
+
+(define (compiler-reg-binop-commutative? [op : CompilerIrBinOp]) : bool
+  (match op
+    [(IrBinAdd) true]
+    [(IrBinMul) true]
+    [(IrBinAnd) true]
+    [(IrBinOr) true]
+    [(IrBinBitAnd) true]
+    [(IrBinBitOr) true]
+    [(IrBinBitXor) true]
+    [_ false]))
+
+(define (compiler-reg-copy-hints-from-binops-instr!
+  [instr : CompilerIrInstr]
+  [hints : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match instr
+    [(IrInstrBinOp dst op lhs rhs _)
+      (if (compiler-reg-binop-two-address? op)
+        (begin
+          (match lhs
+            [(IrValueVar lhs-var)
+              (compiler-reg-copy-hints-add-move! hints parents lhs-var dst)]
+            [_ unit])
+          (if (compiler-reg-binop-commutative? op)
+            (match rhs
+              [(IrValueVar rhs-var)
+                (compiler-reg-copy-hints-add-move! hints parents rhs-var dst)]
+              [_ unit])
+            unit))
+        unit)]
+    [_ unit]))
+
+(define (compiler-reg-copy-hints-from-binops-seq!
+  [instrs : CompilerIrInstrSeq]
+  [hints : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (compiler-reg-copy-hints-from-binops-instr!
+            (array.array-ref slots index)
+            hints
+            parents)
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-copy-hints-from-binops-blocks!
+  [blocks : CompilerIrBlockList]
+  [hints : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-reg-copy-hints-from-binops-seq! instrs hints parents)])
+        (compiler-reg-copy-hints-from-binops-blocks!
+          (box-get rest)
+          hints
+          parents))]
+    [(IrBlockArray seq)
+      (compiler-reg-copy-hints-from-binops-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        hints
+        parents)]))
+
+(define (compiler-reg-copy-hints-from-binops!
+  [func : CompilerIrFunction]
+  [hints : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (compiler-reg-copy-hints-from-binops-blocks! blocks hints parents)]))
+
+;; Build per-root copy hints from the move list + two-address binops, mapping each
+;; endpoint to its coalesce root. Moves are added first (first-wins), then binops
+;; fill the rest, biasing each binop dst toward an operand's register.
 (define (compiler-reg-function-copy-hints
   [moves : CompilerRegMoveList]
   [coalesce : CompilerRegCoalesceMap]
-  [n : i64]) : (Array i64)
+  [n : i64]
+  [func : CompilerIrFunction]) : (Array i64)
   (let
     [hints : (Array i64) (array.make-array i64 n)]
     [parents : (Array i64) (struct-get coalesce parents)]
     (begin
       (compiler-reg-fill-i64-array hints -1)
       (compiler-reg-copy-hints-from-moves! hints parents moves)
+      (compiler-reg-copy-hints-from-binops! func hints parents)
       hints)))
 
 (define (compiler-reg-fixed-preferred-register
@@ -9327,7 +9424,8 @@
       (compiler-reg-function-copy-hints
         moves
         coalesce
-        (array.array-length (struct-get interval-index starts)))]
+        (array.array-length (struct-get interval-index starts))
+        func)]
     ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
     ;; var biased toward the SysV register it will be marshalled into, so the
     ;; backend's `movq <home>, %rdi` becomes an elided self-move. Indexed by

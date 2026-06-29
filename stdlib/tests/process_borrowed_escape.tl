@@ -12,4 +12,4 @@
     inner
     (let
       [exe : String "inner"]
-      (process_borrowed.process-borrowed-command-empty (& exe)))))
+      (process_borrowed.command-empty (& exe)))))

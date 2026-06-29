@@ -87,7 +87,7 @@
 ;: Runtime-owned asynchronous process handle data.
 ;:
 ;: The integer fields are opaque runtime handles. Callers should pass the value
-;: to `process-wait` rather than inspecting or constructing handles directly.
+;: to `wait` rather than inspecting or constructing handles directly.
 (defstruct ProcessChild
   (pid i64)
   (stdout-handle i64)
@@ -111,128 +111,123 @@
   (ErrProcessChild ProcessError))
 
 ;: Return a destructured step from an argv list.
-(define (process-string-step [args : ProcessStringList]) : ProcessStringStep
+(define (string-step [args : ProcessStringList]) : ProcessStringStep
   (match args
     [(ProcessStringNil) (ProcessStringStep false "" (ProcessStringNil))]
     [(ProcessStringCons value rest)
       (ProcessStringStep true value (box-get rest))]))
 
 ;: Return whether a destructured argv step contains an item.
-(define (process-string-step-present? [step : ProcessStringStep]) : bool
+(define (string-step-present? [step : ProcessStringStep]) : bool
   (struct-get step present))
 
 ;: Return the argv value from a destructured step, or the empty string.
-(define (process-string-step-value [step : ProcessStringStep]) : String
+(define (string-step-value [step : ProcessStringStep]) : String
   (struct-get step value))
 
 ;: Return the argv tail from a destructured step.
-(define (process-string-step-rest [step : ProcessStringStep]) : ProcessStringList
+(define (string-step-rest [step : ProcessStringStep]) : ProcessStringList
   (struct-get step rest))
 
 ;: Return a destructured step from an environment override list.
-(define (process-env-step [env : ProcessEnvList]) : ProcessEnvStep
+(define (env-step [env : ProcessEnvList]) : ProcessEnvStep
   (match env
     [(ProcessEnvNil) (ProcessEnvStep false "" "" (ProcessEnvNil))]
     [(ProcessEnvCons name value rest)
       (ProcessEnvStep true name value (box-get rest))]))
 
 ;: Return whether a destructured env step contains an item.
-(define (process-env-step-present? [step : ProcessEnvStep]) : bool
+(define (env-step-present? [step : ProcessEnvStep]) : bool
   (struct-get step present))
 
 ;: Return the env name from a destructured step, or the empty string.
-(define (process-env-step-name [step : ProcessEnvStep]) : String
+(define (env-step-name [step : ProcessEnvStep]) : String
   (struct-get step name))
 
 ;: Return the env value from a destructured step, or the empty string.
-(define (process-env-step-value [step : ProcessEnvStep]) : String
+(define (env-step-value [step : ProcessEnvStep]) : String
   (struct-get step value))
 
 ;: Return the env tail from a destructured step.
-(define (process-env-step-rest [step : ProcessEnvStep]) : ProcessEnvList
+(define (env-step-rest [step : ProcessEnvStep]) : ProcessEnvList
   (struct-get step rest))
 
 ;: Return a destructured optional string.
-(define (process-maybe-string-info [value : ProcessMaybeString]) : ProcessMaybeStringInfo
+(define (maybe-string-info [value : ProcessMaybeString]) : ProcessMaybeStringInfo
   (match value
     [(ProcessNoString) (ProcessMaybeStringInfo false "")]
     [(ProcessSomeString text) (ProcessMaybeStringInfo true text)]))
 
 ;: Return whether a destructured optional string is present.
-(define (process-maybe-string-info-present? [info : ProcessMaybeStringInfo]) : bool
+(define (maybe-string-info-present? [info : ProcessMaybeStringInfo]) : bool
   (struct-get info present))
 
 ;: Return the string from a destructured optional string, or the empty string.
-(define (process-maybe-string-info-value [info : ProcessMaybeStringInfo]) : String
+(define (maybe-string-info-value [info : ProcessMaybeStringInfo]) : String
   (struct-get info value))
 
 ;: Return an empty argument list.
-(define (process-args-empty) : ProcessStringList
+(define (args-empty) : ProcessStringList
   (ProcessStringNil))
 
 ;: Return the number of argv entries in `args`.
-(define (process-args-count [args : ProcessStringList]) : i64
+(define (args-count [args : ProcessStringList]) : i64
   (match args
     [(ProcessStringNil) 0]
-    [(ProcessStringCons _ rest) (+ 1 (process-args-count (box-get rest)))]))
+    [(ProcessStringCons _ rest) (+ 1 (args-count (box-get rest)))]))
 
 ;: Prepend an owned argument string to an argv list.
-(define (process-args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
+(define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
   (ProcessStringCons value (box rest)))
 
 ;: Return a one-element argument list backed by an owned string.
-(define (process-args-single [value : String]) : ProcessStringList
+(define (args-single [value : String]) : ProcessStringList
   (ProcessStringCons value (box (ProcessStringNil))))
 
 ;: Concatenate two argument lists while preserving argv order.
-(define (process-args-append
-  [left : ProcessStringList]
-  [right : ProcessStringList]) : ProcessStringList
+(define (args-append [left : ProcessStringList] [right : ProcessStringList]) : ProcessStringList
   (match left
     [(ProcessStringNil) right]
     [(ProcessStringCons value rest)
-      (ProcessStringCons value (box (process-args-append (box-get rest) right)))]))
+      (ProcessStringCons value (box (args-append (box-get rest) right)))]))
 
 ;: Convert a `StringVec` argv buffer to the list representation consumed by
 ;: `ProcessCommand`, preserving vector order.
-(define (process-args-from-string-vec-from
+(define (args-from-string-vec-from
   [args : vector.StringVec]
   [index : i64]
   [out : ProcessStringList]) : ProcessStringList
   (if (< index 0)
     out
-    (process-args-from-string-vec-from
+    (args-from-string-vec-from
       args
       (- index 1)
-      (process-args-cons (vector.string-vec-get args index "") out))))
+      (args-cons (vector.string-vec-get args index "") out))))
 
 ;: Convert a `StringVec` argv buffer to the list representation consumed by
 ;: `ProcessCommand`, preserving vector order.
-(define (process-args-from-string-vec [args : vector.StringVec]) : ProcessStringList
-  (process-args-from-string-vec-from
+(define (args-from-string-vec [args : vector.StringVec]) : ProcessStringList
+  (args-from-string-vec-from
     args
     (- (vector.string-vec-len args) 1)
     (ProcessStringNil)))
 
 ;: Return an empty environment override list.
-(define (process-env-empty) : ProcessEnvList
+(define (env-empty) : ProcessEnvList
   (ProcessEnvNil))
 
 ;: Return the number of env overrides in `env`.
-(define (process-env-count [env : ProcessEnvList]) : i64
+(define (env-count [env : ProcessEnvList]) : i64
   (match env
     [(ProcessEnvNil) 0]
-    [(ProcessEnvCons _ _ rest) (+ 1 (process-env-count (box-get rest)))]))
+    [(ProcessEnvCons _ _ rest) (+ 1 (env-count (box-get rest)))]))
 
 ;: Prepend owned environment override strings to an env list.
-(define (process-env-cons
-  [name : String]
-  [value : String]
-  [rest : ProcessEnvList]) : ProcessEnvList
+(define (env-cons [name : String] [value : String] [rest : ProcessEnvList]) : ProcessEnvList
   (ProcessEnvCons name value (box rest)))
 
 ;: Return true when `text` contains `needle`.
-(define (process-string-contains-char? [text : (& text str)] [needle : char]) : bool
+(define (string-contains-char? [text : (& text str)] [needle : char]) : bool
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -247,16 +242,16 @@
       found)))
 
 ;: Return the name buffer from a vector-backed env override set.
-(define (process-env-vec-names [env : ProcessEnvVec]) : vector.StringVec
+(define (env-vec-names [env : ProcessEnvVec]) : vector.StringVec
   (struct-get env names))
 
 ;: Return the value buffer from a vector-backed env override set.
-(define (process-env-vec-values [env : ProcessEnvVec]) : vector.StringVec
+(define (env-vec-values [env : ProcessEnvVec]) : vector.StringVec
   (struct-get env values))
 
 ;: Create an empty vector-backed env override set with at least `capacity`
 ;: backing slots in each parallel buffer.
-(define (process-env-vec-with-capacity [capacity : i64]) : ProcessEnvVec
+(define (env-vec-with-capacity [capacity : i64]) : ProcessEnvVec
   (let
     [cap : i64
       (if (< capacity 1)
@@ -267,102 +262,93 @@
       (vector.string-vec-with-capacity cap))))
 
 ;: Create an empty vector-backed env override set.
-(define (process-env-vec-new) : ProcessEnvVec
-  (process-env-vec-with-capacity 4))
+(define (env-vec-new) : ProcessEnvVec
+  (env-vec-with-capacity 4))
 
 ;: Return the number of vector-backed env overrides. Helper-created values keep
 ;: this equal to the live length of both buffers; manually constructed values
-;: should be checked with `process-env-vec-validation-error`.
-(define (process-env-vec-count [env : ProcessEnvVec]) : i64
-  (vector.string-vec-len (process-env-vec-names env)))
+;: should be checked with `env-vec-validation-error`.
+(define (env-vec-count [env : ProcessEnvVec]) : i64
+  (vector.string-vec-len (env-vec-names env)))
 
 ;: Append one owned environment override at the end of the vector-backed set.
 ;: Duplicate names are preserved in append order.
-(define (process-env-vec-append
-  [env : ProcessEnvVec]
-  [name : String]
-  [value : String]) : ProcessEnvVec
+(define (env-vec-append [env : ProcessEnvVec] [name : String] [value : String]) : ProcessEnvVec
   (ProcessEnvVec
-    (vector.string-vec-push (process-env-vec-names env) name)
-    (vector.string-vec-push (process-env-vec-values env) value)))
+    (vector.string-vec-push (env-vec-names env) name)
+    (vector.string-vec-push (env-vec-values env) value)))
 
 ;: Convert vector-backed env overrides to a list, preserving vector order at
 ;: the existing runtime boundary.
-(define (process-env-vec-to-list-from
+(define (env-vec-to-list-from
   [env : ProcessEnvVec]
   [index : i64]
   [out : ProcessEnvList]) : ProcessEnvList
   (if (< index 0)
     out
-    (process-env-vec-to-list-from
+    (env-vec-to-list-from
       env
       (- index 1)
       (ProcessEnvCons
-        (vector.string-vec-get (process-env-vec-names env) index "")
-        (vector.string-vec-get (process-env-vec-values env) index "")
+        (vector.string-vec-get (env-vec-names env) index "")
+        (vector.string-vec-get (env-vec-values env) index "")
         (box out)))))
 
 ;: Convert vector-backed env overrides to the list representation consumed by
 ;: `ProcessCommand` and the process runtime.
-(define (process-env-vec-to-list [env : ProcessEnvVec]) : ProcessEnvList
-  (process-env-vec-to-list-from
-    env
-    (- (process-env-vec-count env) 1)
-    (ProcessEnvNil)))
+(define (env-vec-to-list [env : ProcessEnvVec]) : ProcessEnvList
+  (env-vec-to-list-from env (- (env-vec-count env) 1) (ProcessEnvNil)))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
-(define (process-env-vec-validation-error-from
-  [env : ProcessEnvVec]
-  [index : i64]) : ProcessMaybeString
-  (if (>= index (process-env-vec-count env))
+(define (env-vec-validation-error-from [env : ProcessEnvVec] [index : i64]) : ProcessMaybeString
+  (if (>= index (env-vec-count env))
     (ProcessNoString)
     (let
-      [name : String
-        (vector.string-vec-get (process-env-vec-names env) index "")]
+      [name : String (vector.string-vec-get (env-vec-names env) index "")]
       (if (string.string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
-        (if (process-string-contains-char? (& name) '=')
+        (if (string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
-          (process-env-vec-validation-error-from env (+ index 1)))))))
+          (env-vec-validation-error-from env (+ index 1)))))))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
 ;: The inherited environment is filtered by names that appear in the override
 ;: set, then override entries are emitted in vector order. Duplicate override
 ;: names are preserved in vector order.
-(define (process-env-vec-validation-error [env : ProcessEnvVec]) : ProcessMaybeString
+(define (env-vec-validation-error [env : ProcessEnvVec]) : ProcessMaybeString
   (if (not
     (=
-      (vector.string-vec-len (process-env-vec-names env))
-      (vector.string-vec-len (process-env-vec-values env))))
+      (vector.string-vec-len (env-vec-names env))
+      (vector.string-vec-len (env-vec-values env))))
     (ProcessSomeString "process: environment vector name/value counts differ")
-    (process-env-vec-validation-error-from env 0)))
+    (env-vec-validation-error-from env 0)))
 
 ;: Return true when vector-backed env overrides satisfy the public invariant and
 ;: all override names are valid.
-(define (process-env-vec-valid? [env : ProcessEnvVec]) : bool
-  (match (process-env-vec-validation-error env)
+(define (env-vec-valid? [env : ProcessEnvVec]) : bool
+  (match (env-vec-validation-error env)
     [(ProcessNoString) true]
     [(ProcessSomeString _) false]))
 
 ;: Return a command stdin value that provides no input.
-(define (process-no-stdin) : ProcessMaybeString
+(define (no-stdin) : ProcessMaybeString
   (ProcessNoString))
 
 ;: Return a command stdin value backed by an owned string.
-(define (process-stdin-string [value : String]) : ProcessMaybeString
+(define (stdin-string [value : String]) : ProcessMaybeString
   (ProcessSomeString value))
 
 ;: Return a cwd value that inherits the current working directory.
-(define (process-no-cwd) : ProcessMaybeString
+(define (no-cwd) : ProcessMaybeString
   (ProcessNoString))
 
 ;: Return a cwd value that runs the command under an owned path string.
-(define (process-cwd [value : String]) : ProcessMaybeString
+(define (cwd [value : String]) : ProcessMaybeString
   (ProcessSomeString value))
 
 ;: Construct a process command with owned executable storage and default cwd,
 ;: env, and stdin settings.
-(define (process-command [executable : String] [argv : ProcessStringList]) : ProcessCommand
+(define (command [executable : String] [argv : ProcessStringList]) : ProcessCommand
   (ProcessCommand
     executable
     argv
@@ -372,55 +358,51 @@
 
 ;: Construct a process command from an executable and a vector-backed argv
 ;: buffer. The command keeps the existing list-backed ABI after one conversion.
-(define (process-command-from-argv-vec
-  [executable : String]
-  [argv : vector.StringVec]) : ProcessCommand
-  (process-command executable (process-args-from-string-vec argv)))
+(define (command-from-argv-vec [executable : String] [argv : vector.StringVec]) : ProcessCommand
+  (command executable (args-from-string-vec argv)))
 
 ;: Return a copy of `command` with `arg` appended after existing argv entries.
-(define (process-command-with-arg [command : ProcessCommand] [arg : String]) : ProcessCommand
+(define (command-with-arg [command : ProcessCommand] [arg : String]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-args-append
-      (process-command-argv command)
-      (process-args-single arg))
-    (process-command-cwd command)
-    (process-command-env command)
-    (process-command-stdin command)))
+    (command-executable command)
+    (args-append (command-argv command) (args-single arg))
+    (command-cwd command)
+    (command-env command)
+    (command-stdin command)))
 
 ;: Return a copy of `command` with `args` appended after existing argv entries.
-(define (process-command-with-args
+(define (command-with-args
   [command : ProcessCommand]
   [args : ProcessStringList]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-args-append (process-command-argv command) args)
-    (process-command-cwd command)
-    (process-command-env command)
-    (process-command-stdin command)))
+    (command-executable command)
+    (args-append (command-argv command) args)
+    (command-cwd command)
+    (command-env command)
+    (command-stdin command)))
 
 ;: Return a copy of `command` with the full argv list replaced by a
 ;: vector-backed argv buffer converted once at the compatibility boundary.
-(define (process-command-with-argv-vec
+(define (command-with-argv-vec
   [command : ProcessCommand]
   [argv : vector.StringVec]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-args-from-string-vec argv)
-    (process-command-cwd command)
-    (process-command-env command)
-    (process-command-stdin command)))
+    (command-executable command)
+    (args-from-string-vec argv)
+    (command-cwd command)
+    (command-env command)
+    (command-stdin command)))
 
 ;: Return a copy of `command` with vector-backed args appended after existing
 ;: argv entries through one list conversion and one list append.
-(define (process-command-with-args-vec
+(define (command-with-args-vec
   [command : ProcessCommand]
   [args : vector.StringVec]) : ProcessCommand
-  (process-command-with-args command (process-args-from-string-vec args)))
+  (command-with-args command (args-from-string-vec args)))
 
 ;: Construct a process command with every owned-storage field supplied
 ;: explicitly.
-(define (process-command-full
+(define (command-full
   [executable : String]
   [argv : ProcessStringList]
   [cwd : ProcessMaybeString]
@@ -429,113 +411,111 @@
   (ProcessCommand executable argv cwd env stdin))
 
 ;: Return a copy of `command` with cwd set to `cwd`.
-(define (process-command-with-cwd [command : ProcessCommand] [cwd : String]) : ProcessCommand
+(define (command-with-cwd [command : ProcessCommand] [cwd : String]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-command-argv command)
+    (command-executable command)
+    (command-argv command)
     (ProcessSomeString cwd)
-    (process-command-env command)
-    (process-command-stdin command)))
+    (command-env command)
+    (command-stdin command)))
 
 ;: Return a copy of `command` with an additional env override.
-(define (process-command-with-env
+(define (command-with-env
   [command : ProcessCommand]
   [name : String]
   [value : String]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-command-argv command)
-    (process-command-cwd command)
-    (ProcessEnvCons name value (box (process-command-env command)))
-    (process-command-stdin command)))
+    (command-executable command)
+    (command-argv command)
+    (command-cwd command)
+    (ProcessEnvCons name value (box (command-env command)))
+    (command-stdin command)))
 
 ;: Return a copy of `command` with the full env override list replaced.
-(define (process-command-with-env-list
+(define (command-with-env-list
   [command : ProcessCommand]
   [env : ProcessEnvList]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-command-argv command)
-    (process-command-cwd command)
+    (command-executable command)
+    (command-argv command)
+    (command-cwd command)
     env
-    (process-command-stdin command)))
+    (command-stdin command)))
 
 ;: Return a copy of `command` with env overrides replaced by vector-backed
 ;: storage converted to the existing list-backed runtime boundary.
-(define (process-command-with-env-vec
-  [command : ProcessCommand]
-  [env : ProcessEnvVec]) : ProcessCommand
-  (process-command-with-env-list command (process-env-vec-to-list env)))
+(define (command-with-env-vec [command : ProcessCommand] [env : ProcessEnvVec]) : ProcessCommand
+  (command-with-env-list command (env-vec-to-list env)))
 
 ;: Return a copy of `command` with stdin set to `stdin`.
-(define (process-command-with-stdin [command : ProcessCommand] [stdin : String]) : ProcessCommand
+(define (command-with-stdin [command : ProcessCommand] [stdin : String]) : ProcessCommand
   (ProcessCommand
-    (process-command-executable command)
-    (process-command-argv command)
-    (process-command-cwd command)
-    (process-command-env command)
+    (command-executable command)
+    (command-argv command)
+    (command-cwd command)
+    (command-env command)
     (ProcessSomeString stdin)))
 
 ;: Return the executable path from `command`.
-(define (process-command-executable [command : ProcessCommand]) : String
+(define (command-executable [command : ProcessCommand]) : String
   (struct-get command executable))
 
 ;: Return the argv list from `command`.
-(define (process-command-argv [command : ProcessCommand]) : ProcessStringList
+(define (command-argv [command : ProcessCommand]) : ProcessStringList
   (struct-get command argv))
 
 ;: Return the cwd setting from `command`.
-(define (process-command-cwd [command : ProcessCommand]) : ProcessMaybeString
+(define (command-cwd [command : ProcessCommand]) : ProcessMaybeString
   (struct-get command cwd))
 
 ;: Return the env override list from `command`.
-(define (process-command-env [command : ProcessCommand]) : ProcessEnvList
+(define (command-env [command : ProcessCommand]) : ProcessEnvList
   (struct-get command env))
 
 ;: Return the stdin setting from `command`.
-(define (process-command-stdin [command : ProcessCommand]) : ProcessMaybeString
+(define (command-stdin [command : ProcessCommand]) : ProcessMaybeString
   (struct-get command stdin))
 
 ;: Return the process exit status.
-(define (process-output-status [output : ProcessOutput]) : i64
+(define (output-status [output : ProcessOutput]) : i64
   (struct-get output status))
 
 ;: Return captured stdout from `output`.
-(define (process-output-stdout [output : ProcessOutput]) : String
+(define (output-stdout [output : ProcessOutput]) : String
   (struct-get output stdout))
 
 ;: Return captured stderr from `output`.
-(define (process-output-stderr [output : ProcessOutput]) : String
+(define (output-stderr [output : ProcessOutput]) : String
   (struct-get output stderr))
 
 ;: Return true when the process exit status is zero.
-(define (process-success? [output : ProcessOutput]) : bool
-  (= (process-output-status output) 0))
+(define (success? [output : ProcessOutput]) : bool
+  (= (output-status output) 0))
 
 ;: Return `result` through the aggregate return path so stage0 can match it in
 ;: modules that import other modules.
-(define (process-result-output-normalize [result : ResultProcessOutput]) : ResultProcessOutput
+(define (result-output-normalize [result : ResultProcessOutput]) : ResultProcessOutput
   result)
 
 ;: Return `result` through the aggregate return path so stage0 can match it in
 ;: modules that import other modules.
-(define (process-result-child-normalize [result : ResultProcessChild]) : ResultProcessChild
+(define (result-child-normalize [result : ResultProcessChild]) : ResultProcessChild
   result)
 
 ;: Return true when `result` is a successful zero-exit process output.
-(define (process-result-success? [result : ResultProcessOutput]) : bool
-  (match (process-result-output-normalize result)
-    [(OkProcessOutput output) (process-success? output)]
+(define (result-success? [result : ResultProcessOutput]) : bool
+  (match (result-output-normalize result)
+    [(OkProcessOutput output) (success? output)]
     [(ErrProcessOutput _) false]))
 
 ;: Return true when `result` is a started child handle.
-(define (process-child-started? [result : ResultProcessChild]) : bool
-  (match (process-result-child-normalize result)
+(define (child-started? [result : ResultProcessChild]) : bool
+  (match (result-child-normalize result)
     [(OkProcessChild _) true]
     [(ErrProcessChild _) false]))
 
 ;: Destructure a child result in one pass.
-(define (process-child-result-info [result : ResultProcessChild]) : ProcessChildInfo
+(define (child-result-info [result : ResultProcessChild]) : ProcessChildInfo
   (match result
     [(OkProcessChild child)
       (ProcessChildInfo
@@ -546,183 +526,175 @@
     [(ErrProcessChild _) (ProcessChildInfo false (- 0 1) (- 0 1) (- 0 1))]))
 
 ;: Return true when `info` describes a started child.
-(define (process-child-info-ok? [info : ProcessChildInfo]) : bool
+(define (child-info-ok? [info : ProcessChildInfo]) : bool
   (struct-get info ok))
 
 ;: Return the child pid from `info`, or -1 when it is not ok.
-(define (process-child-info-pid [info : ProcessChildInfo]) : i64
+(define (child-info-pid [info : ProcessChildInfo]) : i64
   (struct-get info pid))
 
 ;: Return the child stdout handle from `info`, or -1 when it is not ok.
-(define (process-child-info-stdout-handle [info : ProcessChildInfo]) : i64
+(define (child-info-stdout-handle [info : ProcessChildInfo]) : i64
   (struct-get info stdout-handle))
 
 ;: Return the child stderr handle from `info`, or -1 when it is not ok.
-(define (process-child-info-stderr-handle [info : ProcessChildInfo]) : i64
+(define (child-info-stderr-handle [info : ProcessChildInfo]) : i64
   (struct-get info stderr-handle))
 
 ;: Return the output status, or `fallback` when `result` is an error.
-(define (process-result-status-or
-  [result : ResultProcessOutput]
-  [fallback : i64]) : i64
-  (match (process-result-output-normalize result)
-    [(OkProcessOutput output) (process-output-status output)]
+(define (result-status-or [result : ResultProcessOutput] [fallback : i64]) : i64
+  (match (result-output-normalize result)
+    [(OkProcessOutput output) (output-status output)]
     [(ErrProcessOutput _) fallback]))
 
 ;: Return true when `result` is an `Ok` output matching all expected fields.
-(define (process-result-output-eq?
+(define (result-output-eq?
   [result : ResultProcessOutput]
   [expected-status : i64]
   [expected-stdout : String]
   [expected-stderr : String]) : bool
   (match result
     [(OkProcessOutput output)
-      (if (= (process-output-status output) expected-status)
-        (if (string.string-eq (process-output-stdout output) expected-stdout)
-          (string.string-eq (process-output-stderr output) expected-stderr)
+      (if (= (output-status output) expected-status)
+        (if (string.string-eq (output-stdout output) expected-stdout)
+          (string.string-eq (output-stderr output) expected-stderr)
           false)
         false)]
     [(ErrProcessOutput _) false]))
 
 ;: Return true when `result` is an `Ok` output with empty stdout and nonempty stderr.
-(define (process-result-stderr-nonempty?
+(define (result-stderr-nonempty?
   [result : ResultProcessOutput]
   [expected-status : i64]) : bool
   (match result
     [(OkProcessOutput output)
-      (if (= (process-output-status output) expected-status)
-        (if (= (string-length (process-output-stdout output)) 0)
-          (> (string-length (process-output-stderr output)) 0)
+      (if (= (output-status output) expected-status)
+        (if (= (string-length (output-stdout output)) 0)
+          (> (string-length (output-stderr output)) 0)
           false)
         false)]
     [(ErrProcessOutput _) false]))
 
 ;: Return the child pid, or `fallback` when `result` is an error.
-(define (process-child-result-pid-or
-  [result : ResultProcessChild]
-  [fallback : i64]) : i64
-  (match (process-result-child-normalize result)
+(define (child-result-pid-or [result : ResultProcessChild] [fallback : i64]) : i64
+  (match (result-child-normalize result)
     [(OkProcessChild child) (struct-get child pid)]
     [(ErrProcessChild _) fallback]))
 
 ;: Return true when an output result carries an invalid-command error.
-(define (process-result-invalid-command? [result : ResultProcessOutput]) : bool
-  (match (process-result-output-normalize result)
-    [(ErrProcessOutput error) (process-error-invalid-command? error)]
+(define (result-invalid-command? [result : ResultProcessOutput]) : bool
+  (match (result-output-normalize result)
+    [(ErrProcessOutput error) (error-invalid-command? error)]
     [(OkProcessOutput _) false]))
 
 ;: Return an output result error message, or `fallback` when it is ok.
-(define (process-result-error-message-or
+(define (result-error-message-or
   [result : ResultProcessOutput]
   [fallback : String]) : String
-  (match (process-result-output-normalize result)
-    [(ErrProcessOutput error) (process-error-message error)]
+  (match (result-output-normalize result)
+    [(ErrProcessOutput error) (error-message error)]
     [(OkProcessOutput _) fallback]))
 
 ;: Return true when a child result carries an invalid-command error.
-(define (process-child-result-invalid-command? [result : ResultProcessChild]) : bool
-  (match (process-result-child-normalize result)
-    [(ErrProcessChild error) (process-error-invalid-command? error)]
+(define (child-result-invalid-command? [result : ResultProcessChild]) : bool
+  (match (result-child-normalize result)
+    [(ErrProcessChild error) (error-invalid-command? error)]
     [(OkProcessChild _) false]))
 
 ;: Return a child result error message, or `fallback` when it is ok.
-(define (process-child-result-error-message-or
+(define (child-result-error-message-or
   [result : ResultProcessChild]
   [fallback : String]) : String
-  (match (process-result-child-normalize result)
-    [(ErrProcessChild error) (process-error-message error)]
+  (match (result-child-normalize result)
+    [(ErrProcessChild error) (error-message error)]
     [(OkProcessChild _) fallback]))
 
 ;: Return `error` through the aggregate return path so stage0 can match it in
 ;: modules that import other modules.
-(define (process-error-normalize [error : ProcessError]) : ProcessError
+(define (error-normalize [error : ProcessError]) : ProcessError
   error)
 
 ;: Return the diagnostic message stored in `error`.
-(define (process-error-message [error : ProcessError]) : String
-  (match (process-error-normalize error)
+(define (error-message [error : ProcessError]) : String
+  (match (error-normalize error)
     [(ProcessInvalidCommand message) message]
     [(ProcessSpawnFailed message) message]
     [(ProcessWaitFailed message) message]
     [(ProcessUnsupported message) message]))
 
 ;: Return true when `error` is a command validation diagnostic.
-(define (process-error-invalid-command? [error : ProcessError]) : bool
-  (match (process-error-normalize error)
+(define (error-invalid-command? [error : ProcessError]) : bool
+  (match (error-normalize error)
     [(ProcessInvalidCommand _) true]
     [_ false]))
 
 ;: Return true when `error` is a spawn failure diagnostic.
-(define (process-error-spawn-failed? [error : ProcessError]) : bool
-  (match (process-error-normalize error)
+(define (error-spawn-failed? [error : ProcessError]) : bool
+  (match (error-normalize error)
     [(ProcessSpawnFailed _) true]
     [_ false]))
 
 ;: Return true when `error` is a wait failure diagnostic.
-(define (process-error-wait-failed? [error : ProcessError]) : bool
-  (match (process-error-normalize error)
+(define (error-wait-failed? [error : ProcessError]) : bool
+  (match (error-normalize error)
     [(ProcessWaitFailed _) true]
     [_ false]))
 
 ;: Return true when `error` is an unsupported runtime/platform diagnostic.
-(define (process-error-unsupported? [error : ProcessError]) : bool
-  (match (process-error-normalize error)
+(define (error-unsupported? [error : ProcessError]) : bool
+  (match (error-normalize error)
     [(ProcessUnsupported _) true]
     [_ false]))
 
 ;: Return the first env validation error, or `ProcessNoString`.
-(define (process-env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
+(define (env-validation-error [env : ProcessEnvList]) : ProcessMaybeString
   (match env
     [(ProcessEnvNil) (ProcessNoString)]
     [(ProcessEnvCons name _ rest)
       (if (string.string-eq name "")
         (ProcessSomeString "process: environment variable name is empty")
-        (if (process-string-contains-char? (& name) '=')
+        (if (string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
-          (process-env-validation-error (box-get rest))))]))
+          (env-validation-error (box-get rest))))]))
 
 ;: Return the first command validation error, or `ProcessNoString`.
-(define (process-command-validation-error [command : ProcessCommand]) : ProcessMaybeString
-  (if (string.string-eq (process-command-executable command) "")
+(define (command-validation-error [command : ProcessCommand]) : ProcessMaybeString
+  (if (string.string-eq (command-executable command) "")
     (ProcessSomeString "process: executable path is empty")
-    (match (process-command-cwd command)
+    (match (command-cwd command)
       [(ProcessSomeString cwd)
         (if (string.string-eq cwd "")
           (ProcessSomeString "process: cwd path is empty")
-          (process-env-validation-error (process-command-env command)))]
-      [(ProcessNoString)
-        (process-env-validation-error (process-command-env command))])))
+          (env-validation-error (command-env command)))]
+      [(ProcessNoString) (env-validation-error (command-env command))])))
 
 ;: Return true when `command` passes stdlib validation.
-(define (process-command-valid? [command : ProcessCommand]) : bool
-  (match (process-command-validation-error command)
+(define (command-valid? [command : ProcessCommand]) : bool
+  (match (command-validation-error command)
     [(ProcessNoString) true]
     [(ProcessSomeString _) false]))
 
 ;: Construct a public captured-output success result.
-(define (process-output-ok-public
-  [status : i64]
-  [stdout : String]
-  [stderr : String]) : ResultProcessOutput
+(define (output-ok-public [status : i64] [stdout : String] [stderr : String]) : ResultProcessOutput
   (OkProcessOutput (ProcessOutput status stdout stderr)))
 
 ;: Construct a public captured-output error result.
-(define (process-output-error-public [error : ProcessError]) : ResultProcessOutput
+(define (output-error-public [error : ProcessError]) : ResultProcessOutput
   (ErrProcessOutput error))
 
 ;: Construct a public child success result.
-(define (process-child-ok-public
+(define (child-ok-public
   [pid : i64]
   [stdout-handle : i64]
   [stderr-handle : i64]) : ResultProcessChild
   (OkProcessChild (ProcessChild pid stdout-handle stderr-handle)))
 
 ;: Construct a public child error result.
-(define (process-child-error-public [error : ProcessError]) : ResultProcessChild
+(define (child-error-public [error : ProcessError]) : ResultProcessChild
   (ErrProcessChild error))
 
 ;: Convert a runtime error kind code and message to the public error enum.
-(define (process-error-from-runtime-kind [kind : i64] [message : String]) : ProcessError
+(define (error-from-runtime-kind [kind : i64] [message : String]) : ProcessError
   (cond
     [(= kind 1) (ProcessSpawnFailed message)]
     [(= kind 2) (ProcessWaitFailed message)]
@@ -737,159 +709,151 @@
 (import stdlib.process_runtime)
 
 ;: Convert public argv storage to the runtime module's no-cycle representation.
-(define (process-runtime-args [args : ProcessStringList]) : process_runtime.ProcessRuntimeStringList
+(define (runtime-args [args : ProcessStringList]) : process_runtime.ProcessRuntimeStringList
   (let
-    [step : ProcessStringStep (process-string-step args)]
-    (if (process-string-step-present? step)
-      (process_runtime.process-runtime-args-cons
-        (process-string-step-value step)
-        (process-runtime-args (process-string-step-rest step)))
-      (process_runtime.process-runtime-args-empty))))
+    [step : ProcessStringStep (string-step args)]
+    (if (string-step-present? step)
+      (process_runtime.args-cons
+        (string-step-value step)
+        (runtime-args (string-step-rest step)))
+      (process_runtime.args-empty))))
 
 ;: Convert public env storage to the runtime module's no-cycle representation.
-(define (process-runtime-env [env : ProcessEnvList]) : process_runtime.ProcessRuntimeEnvList
+(define (runtime-env [env : ProcessEnvList]) : process_runtime.ProcessRuntimeEnvList
   (let
-    [step : ProcessEnvStep (process-env-step env)]
-    (if (process-env-step-present? step)
-      (process_runtime.process-runtime-env-cons
-        (process-env-step-name step)
-        (process-env-step-value step)
-        (process-runtime-env (process-env-step-rest step)))
-      (process_runtime.process-runtime-env-empty))))
+    [step : ProcessEnvStep (env-step env)]
+    (if (env-step-present? step)
+      (process_runtime.env-cons
+        (env-step-name step)
+        (env-step-value step)
+        (runtime-env (env-step-rest step)))
+      (process_runtime.env-empty))))
 
 ;: Convert a public optional string to the runtime module's no-cycle representation.
-(define (process-runtime-maybe-string [value : ProcessMaybeString]) : process_runtime.ProcessRuntimeMaybeString
+(define (runtime-maybe-string [value : ProcessMaybeString]) : process_runtime.ProcessRuntimeMaybeString
   (let
-    [info : ProcessMaybeStringInfo (process-maybe-string-info value)]
-    (if (process-maybe-string-info-present? info)
-      (process_runtime.process-runtime-some-string
-        (process-maybe-string-info-value info))
-      (process_runtime.process-runtime-no-string))))
+    [info : ProcessMaybeStringInfo (maybe-string-info value)]
+    (if (maybe-string-info-present? info)
+      (process_runtime.some-string (maybe-string-info-value info))
+      (process_runtime.no-string))))
 
 ;: Convert a public command to the runtime module's no-cycle representation.
-(define (process-runtime-command [command : ProcessCommand]) : process_runtime.ProcessRuntimeCommand
-  (process_runtime.process-runtime-command-full
-    (process-command-executable command)
-    (process-runtime-args (process-command-argv command))
-    (process-runtime-maybe-string (process-command-cwd command))
-    (process-runtime-env (process-command-env command))
-    (process-runtime-maybe-string (process-command-stdin command))))
+(define (runtime-command [command : ProcessCommand]) : process_runtime.ProcessRuntimeCommand
+  (process_runtime.command-full
+    (command-executable command)
+    (runtime-args (command-argv command))
+    (runtime-maybe-string (command-cwd command))
+    (runtime-env (command-env command))
+    (runtime-maybe-string (command-stdin command))))
 
 ;: Convert a public child handle to the runtime module's no-cycle representation.
-(define (process-runtime-child [child : ProcessChild]) : process_runtime.ProcessRuntimeChild
-  (process_runtime.process-runtime-child
+(define (runtime-child [child : ProcessChild]) : process_runtime.ProcessRuntimeChild
+  (process_runtime.child
     (struct-get child pid)
     (struct-get child stdout-handle)
     (struct-get child stderr-handle)))
 
 ;: Convert a runtime captured-output result to the public result enum.
-(define (process-output-from-runtime
+(define (output-from-runtime
   [result : process_runtime.ResultProcessRuntimeOutput]) : ResultProcessOutput
   (let
     [info : process_runtime.ProcessRuntimeOutputInfo
-      (process_runtime.process-runtime-result-output-info result)]
+      (process_runtime.result-output-info result)]
     (if (struct-get info ok)
-      (process-output-ok-public
+      (output-ok-public
         (struct-get info status)
         (struct-get info stdout)
         (struct-get info stderr))
-      (process-output-error-public
-        (process-error-from-runtime-kind
+      (output-error-public
+        (error-from-runtime-kind
           (struct-get info kind)
           (struct-get info message))))))
 
 ;: Convert a runtime async-start result to the public result enum.
-(define (process-child-from-runtime
+(define (child-from-runtime
   [result : process_runtime.ResultProcessRuntimeChild]) : ResultProcessChild
   (let
     [info : process_runtime.ProcessRuntimeChildInfo
-      (process_runtime.process-runtime-result-child-info result)]
+      (process_runtime.result-child-info result)]
     (if (struct-get info ok)
-      (process-child-ok-public
+      (child-ok-public
         (struct-get info pid)
         (struct-get info stdout-handle)
         (struct-get info stderr-handle))
-      (process-child-error-public
-        (process-error-from-runtime-kind
+      (child-error-public
+        (error-from-runtime-kind
           (struct-get info kind)
           (struct-get info message))))))
 
 ;: Run a command and capture stdout, stderr, and exit status.
-(define (process-output [command : ProcessCommand]) : ResultProcessOutput
+(define (output [command : ProcessCommand]) : ResultProcessOutput
   (let
-    [validation : ProcessMaybeString (process-command-validation-error command)]
-    [info : ProcessMaybeStringInfo (process-maybe-string-info validation)]
-    (if (process-maybe-string-info-present? info)
-      (process-output-error-public
-        (process-error-from-runtime-kind
-          0
-          (process-maybe-string-info-value info)))
-      (process-output-from-runtime
-        (process_runtime.tl_process_output (process-runtime-command command))))))
+    [validation : ProcessMaybeString (command-validation-error command)]
+    [info : ProcessMaybeStringInfo (maybe-string-info validation)]
+    (if (maybe-string-info-present? info)
+      (output-error-public
+        (error-from-runtime-kind 0 (maybe-string-info-value info)))
+      (output-from-runtime
+        (process_runtime.tl_process_output (runtime-command command))))))
 
-;: Run a command using the same captured-output path as `process-output`.
-(define (process-run [command : ProcessCommand]) : ResultProcessOutput
-  (process-output command))
+;: Run a command using the same captured-output path as `output`.
+(define (run [command : ProcessCommand]) : ResultProcessOutput
+  (output command))
 
 ;: Start a command without waiting for process completion. The returned child
-;: owns captured-output descriptors until it is passed to `process-wait`.
-(define (process-start [command : ProcessCommand]) : ResultProcessChild
+;: owns captured-output descriptors until it is passed to `wait`.
+(define (start [command : ProcessCommand]) : ResultProcessChild
   (let
-    [validation : ProcessMaybeString (process-command-validation-error command)]
-    [info : ProcessMaybeStringInfo (process-maybe-string-info validation)]
-    (if (process-maybe-string-info-present? info)
-      (process-child-error-public
-        (process-error-from-runtime-kind
-          0
-          (process-maybe-string-info-value info)))
-      (process-child-from-runtime
-        (process_runtime.tl_process_start (process-runtime-command command))))))
+    [validation : ProcessMaybeString (command-validation-error command)]
+    [info : ProcessMaybeStringInfo (maybe-string-info validation)]
+    (if (maybe-string-info-present? info)
+      (child-error-public
+        (error-from-runtime-kind 0 (maybe-string-info-value info)))
+      (child-from-runtime
+        (process_runtime.tl_process_start (runtime-command command))))))
 
-;: Wait for a child started by `process-start`, collect its captured output, and
+;: Wait for a child started by `start`, collect its captured output, and
 ;: release the child handle resources. Do not wait on the same child twice.
-(define (process-wait [child : ProcessChild]) : ResultProcessOutput
-  (process-output-from-runtime
-    (process_runtime.tl_process_wait (process-runtime-child child))))
+(define (wait [child : ProcessChild]) : ResultProcessOutput
+  (output-from-runtime (process_runtime.tl_process_wait (runtime-child child))))
 
 ;: Inline test failure helper.
-(define (process-test-fail) : unit
+(define (test-fail) : unit
   (begin
     (/ 1 0)
     unit))
 
 ;: Inline test boolean assertion.
-(define (process-test-assert [ok : bool]) : unit
+(define (test-assert [ok : bool]) : unit
   (if ok
     unit
-    (process-test-fail)))
+    (test-fail)))
 
 ;: Inline test integer assertion.
-(define (process-test-assert-i64-eq [actual : i64] [expected : i64]) : unit
-  (process-test-assert (= actual expected)))
+(define (test-assert-i64-eq [actual : i64] [expected : i64]) : unit
+  (test-assert (= actual expected)))
 
 ;: Inline test owned string assertion.
-(define (process-test-assert-string-eq [actual : String] [expected : String]) : unit
-  (process-test-assert (string.string-eq actual expected)))
+(define (test-assert-string-eq [actual : String] [expected : String]) : unit
+  (test-assert (string.string-eq actual expected)))
 
 ;: Inline test assertion for an empty process string list.
-(define (process-test-assert-string-empty [items : ProcessStringList]) : unit
+(define (test-assert-string-empty [items : ProcessStringList]) : unit
   (match items
     [(ProcessStringNil) unit]
-    [(ProcessStringCons _ _) (process-test-fail)]))
+    [(ProcessStringCons _ _) (test-fail)]))
 
 ;: Inline test assertion for a one-item process string list.
-(define (process-test-assert-string-list1
-  [items : ProcessStringList]
-  [first : String]) : unit
+(define (test-assert-string-list1 [items : ProcessStringList] [first : String]) : unit
   (match items
     [(ProcessStringCons a rest)
       (match (box-get rest)
-        [(ProcessStringNil) (process-test-assert-string-eq a first)]
-        [_ (process-test-fail)])]
-    [_ (process-test-fail)]))
+        [(ProcessStringNil) (test-assert-string-eq a first)]
+        [_ (test-fail)])]
+    [_ (test-fail)]))
 
 ;: Inline test assertion for a two-item process string list.
-(define (process-test-assert-string-list2
+(define (test-assert-string-list2
   [items : ProcessStringList]
   [first : String]
   [second : String]) : unit
@@ -900,14 +864,14 @@
           (match (box-get tail)
             [(ProcessStringNil)
               (begin
-                (process-test-assert-string-eq a first)
-                (process-test-assert-string-eq b second))]
-            [_ (process-test-fail)])]
-        [_ (process-test-fail)])]
-    [_ (process-test-fail)]))
+                (test-assert-string-eq a first)
+                (test-assert-string-eq b second))]
+            [_ (test-fail)])]
+        [_ (test-fail)])]
+    [_ (test-fail)]))
 
 ;: Inline test assertion for a three-item process string list.
-(define (process-test-assert-string-list3
+(define (test-assert-string-list3
   [items : ProcessStringList]
   [first : String]
   [second : String]
@@ -921,42 +885,42 @@
               (match (box-get tail)
                 [(ProcessStringNil)
                   (begin
-                    (process-test-assert-string-eq a first)
-                    (process-test-assert-string-eq b second)
-                    (process-test-assert-string-eq c third))]
-                [_ (process-test-fail)])]
-            [_ (process-test-fail)])]
-        [_ (process-test-fail)])]
-    [_ (process-test-fail)]))
+                    (test-assert-string-eq a first)
+                    (test-assert-string-eq b second)
+                    (test-assert-string-eq c third))]
+                [_ (test-fail)])]
+            [_ (test-fail)])]
+        [_ (test-fail)])]
+    [_ (test-fail)]))
 
 ;: Inline test assertion for a present optional process string.
-(define (process-test-assert-some-string
+(define (test-assert-some-string
   [value : ProcessMaybeString]
   [expected : String]) : unit
   (match value
-    [(ProcessSomeString actual) (process-test-assert-string-eq actual expected)]
-    [(ProcessNoString) (process-test-fail)]))
+    [(ProcessSomeString actual) (test-assert-string-eq actual expected)]
+    [(ProcessNoString) (test-fail)]))
 
 ;: Inline test assertion for an absent optional process string.
-(define (process-test-assert-no-string [value : ProcessMaybeString]) : unit
+(define (test-assert-no-string [value : ProcessMaybeString]) : unit
   (match value
     [(ProcessNoString) unit]
-    [(ProcessSomeString _) (process-test-fail)]))
+    [(ProcessSomeString _) (test-fail)]))
 
 ;: Inline test assertion for the head of a process environment list.
-(define (process-test-assert-env-head
+(define (test-assert-env-head
   [env : ProcessEnvList]
   [expected-name : String]
   [expected-value : String]) : unit
   (match env
     [(ProcessEnvCons name value _)
       (begin
-        (process-test-assert-string-eq name expected-name)
-        (process-test-assert-string-eq value expected-value))]
-    [(ProcessEnvNil) (process-test-fail)]))
+        (test-assert-string-eq name expected-name)
+        (test-assert-string-eq value expected-value))]
+    [(ProcessEnvNil) (test-fail)]))
 
 ;: Inline test assertion for a two-entry process environment list.
-(define (process-test-assert-env-list2
+(define (test-assert-env-list2
   [env : ProcessEnvList]
   [first-name : String]
   [first-value : String]
@@ -965,69 +929,58 @@
   (match env
     [(ProcessEnvCons name value rest)
       (begin
-        (process-test-assert-string-eq name first-name)
-        (process-test-assert-string-eq value first-value)
+        (test-assert-string-eq name first-name)
+        (test-assert-string-eq value first-value)
         (match (box-get rest)
           [(ProcessEnvCons next-name next-value tail)
             (begin
-              (process-test-assert-string-eq next-name second-name)
-              (process-test-assert-string-eq next-value second-value)
+              (test-assert-string-eq next-name second-name)
+              (test-assert-string-eq next-value second-value)
               (match (box-get tail)
                 [(ProcessEnvNil) unit]
-                [_ (process-test-fail)]))]
-          [(ProcessEnvNil) (process-test-fail)]))]
-    [(ProcessEnvNil) (process-test-fail)]))
+                [_ (test-fail)]))]
+          [(ProcessEnvNil) (test-fail)]))]
+    [(ProcessEnvNil) (test-fail)]))
 
 ;: Inline test assertion for process validation diagnostics.
-(define (process-test-assert-validation
+(define (test-assert-validation
   [value : ProcessMaybeString]
   [expected : String]) : unit
   (match value
-    [(ProcessSomeString actual) (process-test-assert-string-eq actual expected)]
-    [(ProcessNoString) (process-test-fail)]))
+    [(ProcessSomeString actual) (test-assert-string-eq actual expected)]
+    [(ProcessNoString) (test-fail)]))
 
 ;: Inline test body for command and argv helpers.
-(define (process-test-command-api) : unit
+(define (test-command-api) : unit
   (let
     [args : ProcessStringList
-      (process-args-cons
-        "hello"
-        (process-args-cons "world" (process-args-empty)))]
-    [command : ProcessCommand
-      (process-command-with-arg
-        (process-command-with-env
-          (process-command-with-stdin
-            (process-command-with-cwd (process-command "echo" args) "target")
+      (args-cons "hello" (args-cons "world" (args-empty)))]
+    [cmd : ProcessCommand
+      (command-with-arg
+        (command-with-env
+          (command-with-stdin
+            (command-with-cwd (command "echo" args) "target")
             "stdin")
           "TL_TEST"
           "1")
         "!")]
     (begin
-      (process-test-assert-string-eq
-        (process-command-executable command)
-        "echo")
-      (process-test-assert-string-list2 args "hello" "world")
-      (process-test-assert-string-list3
-        (process-command-argv command)
-        "hello"
-        "world"
-        "!")
-      (process-test-assert-i64-eq
-        (process-args-count (process-command-argv command))
-        3)
-      (process-test-assert-string-list3
-        (process-args-append args (process-args-single "again"))
+      (test-assert-string-eq (command-executable cmd) "echo")
+      (test-assert-string-list2 args "hello" "world")
+      (test-assert-string-list3 (command-argv cmd) "hello" "world" "!")
+      (test-assert-i64-eq (args-count (command-argv cmd)) 3)
+      (test-assert-string-list3
+        (args-append args (args-single "again"))
         "hello"
         "world"
         "again")
-      (process-test-assert-string-empty
-        (process-args-from-string-vec (vector.string-vec-new)))
-      (process-test-assert-string-list1
-        (process-args-from-string-vec
+      (test-assert-string-empty (args-from-string-vec (vector.string-vec-new)))
+      (test-assert-string-list1
+        (args-from-string-vec
           (vector.string-vec-push (vector.string-vec-new) "solo"))
         "solo")
-      (process-test-assert-string-list3
-        (process-args-from-string-vec
+      (test-assert-string-list3
+        (args-from-string-vec
           (vector.string-vec-push
             (vector.string-vec-push
               (vector.string-vec-push
@@ -1038,18 +991,17 @@
         "hello"
         "world"
         "!")
-      (process-test-assert-string-empty
-        (process-command-argv
-          (process-command-from-argv-vec "echo" (vector.string-vec-new))))
-      (process-test-assert-string-list1
-        (process-command-argv
-          (process-command-from-argv-vec
+      (test-assert-string-empty
+        (command-argv (command-from-argv-vec "echo" (vector.string-vec-new))))
+      (test-assert-string-list1
+        (command-argv
+          (command-from-argv-vec
             "echo"
             (vector.string-vec-push (vector.string-vec-new) "solo")))
         "solo")
-      (process-test-assert-string-list3
-        (process-command-argv
-          (process-command-from-argv-vec
+      (test-assert-string-list3
+        (command-argv
+          (command-from-argv-vec
             "echo"
             (vector.string-vec-push
               (vector.string-vec-push
@@ -1061,10 +1013,10 @@
         "hello"
         "world"
         "!")
-      (process-test-assert-string-list3
-        (process-command-argv
-          (process-command-with-argv-vec
-            command
+      (test-assert-string-list3
+        (command-argv
+          (command-with-argv-vec
+            cmd
             (vector.string-vec-push
               (vector.string-vec-push
                 (vector.string-vec-push
@@ -1075,44 +1027,39 @@
         "vec"
         "replace"
         "argv")
-      (process-test-assert-string-list3
-        (process-command-argv
-          (process-command-with-args-vec
-            (process-command "echo" (process-args-single "base"))
+      (test-assert-string-list3
+        (command-argv
+          (command-with-args-vec
+            (command "echo" (args-single "base"))
             (vector.string-vec-push
               (vector.string-vec-push (vector.string-vec-with-capacity 2) "vec")
               "tail")))
         "base"
         "vec"
         "tail")
-      (process-test-assert-some-string (process-command-cwd command) "target")
-      (process-test-assert-some-string (process-command-stdin command) "stdin")
-      (process-test-assert-env-head (process-command-env command) "TL_TEST" "1")
-      (process-test-assert-i64-eq
-        (process-env-count (process-command-env command))
-        1)
-      (process-test-assert-env-head
-        (process-command-env
-          (process-command-with-env-list
-            command
-            (process-env-cons "TL_REPLACED" "yes" (process-env-empty))))
+      (test-assert-some-string (command-cwd cmd) "target")
+      (test-assert-some-string (command-stdin cmd) "stdin")
+      (test-assert-env-head (command-env cmd) "TL_TEST" "1")
+      (test-assert-i64-eq (env-count (command-env cmd)) 1)
+      (test-assert-env-head
+        (command-env
+          (command-with-env-list cmd (env-cons "TL_REPLACED" "yes" (env-empty))))
         "TL_REPLACED"
         "yes")
-      (process-test-assert-no-string
-        (process-command-cwd (process-command "echo" (process-args-empty)))))))
+      (test-assert-no-string (command-cwd (command "echo" (args-empty)))))))
 
 ;: Inline test body for vector-backed environment helpers.
-(define (process-test-env-vec-api [command : ProcessCommand]) : unit
+(define (test-env-vec-api [cmd : ProcessCommand]) : unit
   (let
-    [env-vec-empty : ProcessEnvVec (process-env-vec-new)]
+    [env-vec-empty : ProcessEnvVec (env-vec-new)]
     [env-vec : ProcessEnvVec
-      (process-env-vec-append
-        (process-env-vec-append (process-env-vec-new) "TL_FIRST" "one")
+      (env-vec-append
+        (env-vec-append (env-vec-new) "TL_FIRST" "one")
         "TL_SECOND"
         "two")]
     [env-dup : ProcessEnvVec
-      (process-env-vec-append
-        (process-env-vec-append (process-env-vec-new) "TL_DUP" "first")
+      (env-vec-append
+        (env-vec-append (env-vec-new) "TL_DUP" "first")
         "TL_DUP"
         "second")]
     [bad-shape : ProcessEnvVec
@@ -1120,100 +1067,85 @@
         (vector.string-vec-push (vector.string-vec-new) "ONLY_NAME")
         (vector.string-vec-new))]
     (begin
-      (process-test-assert-i64-eq (process-env-vec-count env-vec-empty) 0)
-      (process-test-assert (process-env-vec-valid? env-vec-empty))
-      (process-test-assert-i64-eq (process-env-vec-count env-vec) 2)
-      (process-test-assert (process-env-vec-valid? env-vec))
-      (process-test-assert-env-list2
-        (process-env-vec-to-list env-vec)
+      (test-assert-i64-eq (env-vec-count env-vec-empty) 0)
+      (test-assert (env-vec-valid? env-vec-empty))
+      (test-assert-i64-eq (env-vec-count env-vec) 2)
+      (test-assert (env-vec-valid? env-vec))
+      (test-assert-env-list2
+        (env-vec-to-list env-vec)
         "TL_FIRST"
         "one"
         "TL_SECOND"
         "two")
-      (process-test-assert-env-list2
-        (process-command-env (process-command-with-env-vec command env-vec))
+      (test-assert-env-list2
+        (command-env (command-with-env-vec cmd env-vec))
         "TL_FIRST"
         "one"
         "TL_SECOND"
         "two")
-      (process-test-assert-env-list2
-        (process-env-vec-to-list env-dup)
+      (test-assert-env-list2
+        (env-vec-to-list env-dup)
         "TL_DUP"
         "first"
         "TL_DUP"
         "second")
-      (process-test-assert-validation
-        (process-env-vec-validation-error
-          (process-env-vec-append (process-env-vec-new) "" "bad"))
+      (test-assert-validation
+        (env-vec-validation-error (env-vec-append (env-vec-new) "" "bad"))
         "process: environment variable name is empty")
-      (process-test-assert-validation
-        (process-env-vec-validation-error
-          (process-env-vec-append (process-env-vec-new) "BAD=NAME" "bad"))
+      (test-assert-validation
+        (env-vec-validation-error
+          (env-vec-append (env-vec-new) "BAD=NAME" "bad"))
         "process: environment variable name contains '='")
-      (process-test-assert-validation
-        (process-env-vec-validation-error bad-shape)
+      (test-assert-validation
+        (env-vec-validation-error bad-shape)
         "process: environment vector name/value counts differ"))))
 
 ;: Inline test body for validation and result helpers.
-(define (process-test-validation-api) : unit
+(define (test-validation-api) : unit
   (let
-    [command : ProcessCommand
-      (process-command-with-env
-        (process-command-with-cwd
-          (process-command "echo" (process-args-empty))
-          "target")
+    [cmd : ProcessCommand
+      (command-with-env
+        (command-with-cwd (command "echo" (args-empty)) "target")
         "TL_TEST"
         "1")]
     (begin
-      (process-test-env-vec-api command)
-      (process-test-assert-validation
-        (process-command-validation-error
-          (process-command "" (process-args-empty)))
+      (test-env-vec-api cmd)
+      (test-assert-validation
+        (command-validation-error (command "" (args-empty)))
         "process: executable path is empty")
-      (process-test-assert-validation
-        (process-command-validation-error (process-command-with-cwd command ""))
+      (test-assert-validation
+        (command-validation-error (command-with-cwd cmd ""))
         "process: cwd path is empty")
-      (process-test-assert-validation
-        (process-command-validation-error
-          (process-command-with-env command "" "1"))
+      (test-assert-validation
+        (command-validation-error (command-with-env cmd "" "1"))
         "process: environment variable name is empty")
-      (process-test-assert-validation
-        (process-command-validation-error
-          (process-command-with-env command "BAD=NAME" "1"))
+      (test-assert-validation
+        (command-validation-error (command-with-env cmd "BAD=NAME" "1"))
         "process: environment variable name contains '='")
-      (process-test-assert (process-command-valid? command))
-      (process-test-assert
-        (not (process-command-valid? (process-command "" (process-args-empty)))))
-      (process-test-assert
-        (process-result-success? (OkProcessOutput (ProcessOutput 0 "" ""))))
-      (process-test-assert
-        (not
-          (process-result-success? (OkProcessOutput (ProcessOutput 7 "" "")))))
-      (process-test-assert
-        (process-result-stderr-nonempty?
+      (test-assert (command-valid? cmd))
+      (test-assert (not (command-valid? (command "" (args-empty)))))
+      (test-assert (result-success? (OkProcessOutput (ProcessOutput 0 "" ""))))
+      (test-assert
+        (not (result-success? (OkProcessOutput (ProcessOutput 7 "" "")))))
+      (test-assert
+        (result-stderr-nonempty?
           (OkProcessOutput (ProcessOutput 7 "" "stderr"))
           7))
-      (process-test-assert
+      (test-assert
         (not
-          (process-result-stderr-nonempty?
+          (result-stderr-nonempty?
             (OkProcessOutput (ProcessOutput 7 "stdout" "stderr"))
             7)))
-      (process-test-assert
+      (test-assert
         (not
-          (process-result-success?
+          (result-success?
             (ErrProcessOutput (ProcessSpawnFailed "spawn failed")))))
-      (process-test-assert
-        (process-error-invalid-command?
-          (ProcessInvalidCommand "invalid command")))
-      (process-test-assert
-        (process-error-spawn-failed? (ProcessSpawnFailed "spawn failed")))
-      (process-test-assert
-        (process-error-wait-failed? (ProcessWaitFailed "wait failed")))
-      (process-test-assert
-        (process-error-unsupported? (ProcessUnsupported "unsupported")))
-      (process-test-assert
-        (process-child-started? (OkProcessChild (ProcessChild 1 2 3))))
-      (process-test-assert
+      (test-assert
+        (error-invalid-command? (ProcessInvalidCommand "invalid command")))
+      (test-assert (error-spawn-failed? (ProcessSpawnFailed "spawn failed")))
+      (test-assert (error-wait-failed? (ProcessWaitFailed "wait failed")))
+      (test-assert (error-unsupported? (ProcessUnsupported "unsupported")))
+      (test-assert (child-started? (OkProcessChild (ProcessChild 1 2 3))))
+      (test-assert
         (not
-          (process-child-started?
-            (ErrProcessChild (ProcessUnsupported "unsupported"))))))))
+          (child-started? (ErrProcessChild (ProcessUnsupported "unsupported"))))))))

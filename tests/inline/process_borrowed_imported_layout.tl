@@ -9,9 +9,8 @@
 (define (process-borrowed-imported-layout-score [text : String]) : i64
   (let
     [borrowed : (process_borrowed.ProcessBorrowedMaybeString text)
-      (process_borrowed.process-borrowed-some-string (& text))]
-    [owned : process.ProcessMaybeString
-      (process_borrowed.process-borrowed-maybe-owned borrowed)]
+      (process_borrowed.some-string (& text))]
+    [owned : process.ProcessMaybeString (process_borrowed.maybe-owned borrowed)]
     (+
       (match borrowed
         [(process_borrowed.ProcessBorrowedNoString) 0]

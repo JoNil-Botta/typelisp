@@ -444,7 +444,7 @@
           (CompilerBackendMode.Scalar)
           (vector.string-vec-new)
           (vector.string-vec-new)
-          (process.process-args-empty)
+          (process.args-empty)
           (compiler-optimize-default-level)
           (source-tool-link-inputs-empty))))))
 

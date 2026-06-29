@@ -3030,15 +3030,14 @@
 
 (define (tltest-report-child-status [output : process.ProcessOutput]) : unit
   (begin
-    (if (tltest-stderr-ends-with-newline?
-      (process.process-output-stderr output))
+    (if (tltest-stderr-ends-with-newline? (process.output-stderr output))
       unit
       (io.print-error "\n"))
     (io.print-error
       (string.string-append
         "typelisp test: test executable exited with exit status: "
         (string.string-append
-          (string.int->string (process.process-output-status output))
+          (string.int->string (process.output-status output))
           "\n")))))
 
 (define (tltest-diagnostic-with-source-fallback
@@ -3067,7 +3066,7 @@
     (string.string-append
       (string.string-append
         (string.string-append "Error: failed to run test executable '" bin-path)
-        (string.string-append "': " (process.process-error-message error)))
+        (string.string-append "': " (process.error-message error)))
       (string.string-append " (" (tltest-executable-spawn-detail bin-path)))
     (string.string-append
       (string.string-append "); preserving test artifacts in '" temp-dir)
@@ -3108,13 +3107,13 @@
     "one:two:three"))
 
 (define (tltest-stdlib-env-fixture-env [target : CompilerBackendTarget]) : process.ProcessEnvList
-  (process.process-env-cons
+  (process.env-cons
     "TYPELISP_STDLIB_TEST_EMPTY"
     ""
-    (process.process-env-cons
+    (process.env-cons
       "TYPELISP_STDLIB_TEST_VALUE"
       "env-value-854"
-      (process.process-env-cons
+      (process.env-cons
         "TYPELISP_STDLIB_TEST_PATH"
         (tltest-stdlib-env-fixture-path target)
         (process.ProcessEnvNil)))))
@@ -3124,13 +3123,13 @@
   [bin-path : String]
   [target : CompilerBackendTarget]) : process.ResultProcessOutput
   (if (tltest-stdlib-env-fixture-source? source)
-    (process.process-output
+    (process.output
       (source-tool-command-for-target
         target
-        (process.process-command-with-env-list
-          (process.process-command bin-path (process.process-args-empty))
+        (process.command-with-env-list
+          (process.command bin-path (process.args-empty))
           (tltest-stdlib-env-fixture-env target))))
-    (source-tool-run-executable bin-path target (process.process-args-empty))))
+    (source-tool-run-executable bin-path target (process.args-empty))))
 
 (define (tltest-stdlib-env-fixture-self-test?) : bool
   (and
@@ -3195,7 +3194,7 @@
               (match (tltest-run-harness-output source bin-path target)
                 [(process.OkProcessOutput output)
                   (let
-                    [status : i64 (process.process-output-status output)]
+                    [status : i64 (process.output-status output)]
                     (begin
                       (source-tool-forward-output output)
                       (if (= status 0)

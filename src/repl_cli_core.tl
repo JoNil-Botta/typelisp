@@ -494,7 +494,7 @@
                   (source-tool-default-target)
                   (vector.string-vec-new)
                   (vector.string-vec-new)
-                  (process.process-args-empty)
+                  (process.args-empty)
                   (compiler-optimize-default-level)
                   (CompilerBackendMode.Scalar)
                   (source-tool-link-inputs-empty)

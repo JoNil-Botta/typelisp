@@ -13520,10 +13520,9 @@
                     (set! cur-module-id next-module)
                     (set! cur rest))]
                 [(AstDecl.ComptimeDecl _ template-box)
-                  (begin
-                    (set!
-                      cur
-                      (AstDeclList.Cons (box-get template-box) (box rest))))]
+                  (set!
+                    cur
+                    (AstDeclList.Cons (box-get template-box) (box rest)))]
                 [(AstDecl.Import
                     (AstImportSpec.Spec
                       _
@@ -49833,36 +49832,37 @@
                   has-pass-followup
                   (macro-local-followup-work-supported? pass-followup-work))]
               [can-process-local-module-placeholder : bool false]
-              (if can-process-local-pass-followup
-                (match (macro-expand-local-followup-with-setup
-                  normalized
-                  normalized-paths
-                  pass-followup-work
-                  pools)
-                  [(ResultMacroLocalFollowup.Ok
-                      local-normalized
-                      local-normalized-paths
-                      remaining-work)
-                    (if (macro-followup-work-list-empty? remaining-work)
-                      (macro-expand-finish-materialized
+              (cond
+                [can-process-local-pass-followup
+                  (match (macro-expand-local-followup-with-setup
+                    normalized
+                    normalized-paths
+                    pass-followup-work
+                    pools)
+                    [(ResultMacroLocalFollowup.Ok
                         local-normalized
                         local-normalized-paths
-                        MacroFollowupWorkList.Nil
-                        materialized-followup-work
-                        pools
-                        stdlib-roots
-                        cfgs
-                        fuel)
-                      (macro-expand-program-with-paths-loop-and-pools
-                        local-normalized
-                        local-normalized-paths
-                        pools
-                        stdlib-roots
-                        cfgs
-                        (- fuel 1)))]
-                  [(ResultMacroLocalFollowup.Err diag)
-                    (ResultMacroExpand.Err diag)])
-                (if can-process-local-module-placeholder
+                        remaining-work)
+                      (if (macro-followup-work-list-empty? remaining-work)
+                        (macro-expand-finish-materialized
+                          local-normalized
+                          local-normalized-paths
+                          MacroFollowupWorkList.Nil
+                          materialized-followup-work
+                          pools
+                          stdlib-roots
+                          cfgs
+                          fuel)
+                        (macro-expand-program-with-paths-loop-and-pools
+                          local-normalized
+                          local-normalized-paths
+                          pools
+                          stdlib-roots
+                          cfgs
+                          (- fuel 1)))]
+                    [(ResultMacroLocalFollowup.Err diag)
+                      (ResultMacroExpand.Err diag)])]
+                [can-process-local-module-placeholder
                   (match (macro-expand-local-followup-with-setup
                     normalized
                     normalized-paths
@@ -49892,35 +49892,35 @@
                           cfgs
                           fuel))]
                     [(ResultMacroLocalFollowup.Err diag)
-                      (ResultMacroExpand.Err diag)])
-                  (if (or
+                      (ResultMacroExpand.Err diag)])]
+                [(or
                     has-pass-followup
                     has-materialized-followup
                     has-module-placeholder-followup)
-                    (begin
-                      (if has-pass-followup
-                        (cfg
-                          compile-profile
-                          (compiler-tc-macro-profile-note-followup-needs-followup))
-                        unit)
-                      (if has-materialized-followup
-                        (cfg
-                          compile-profile
-                          (compiler-tc-macro-profile-note-followup-generated-imports))
-                        unit)
-                      (if has-module-placeholder-followup
-                        (cfg
-                          compile-profile
-                          (compiler-tc-macro-profile-note-followup-module-placeholders))
-                        unit)
-                      (macro-expand-program-with-paths-loop-and-pools
-                        normalized
-                        normalized-paths
-                        pools
-                        stdlib-roots
-                        cfgs
-                        (- fuel 1)))
-                    (ResultMacroExpand.Ok normalized normalized-paths)))))])]
+                  (begin
+                    (if has-pass-followup
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-note-followup-needs-followup))
+                      unit)
+                    (if has-materialized-followup
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-note-followup-generated-imports))
+                      unit)
+                    (if has-module-placeholder-followup
+                      (cfg
+                        compile-profile
+                        (compiler-tc-macro-profile-note-followup-module-placeholders))
+                      unit)
+                    (macro-expand-program-with-paths-loop-and-pools
+                      normalized
+                      normalized-paths
+                      pools
+                      stdlib-roots
+                      cfgs
+                      (- fuel 1)))]
+                [else (ResultMacroExpand.Ok normalized normalized-paths)]))])]
       [(ResultGenProgramWithPaths.Err diag) (ResultMacroExpand.Err diag)])))
 
 (define (macro-expand-finish-materialized-with-local
@@ -50021,9 +50021,6 @@
                 [materialized : AstProgram (ast-program materialized-decls)]
                 [has-pass-followup : bool
                   (not (macro-followup-work-list-empty? pass-followup-work))]
-                [has-materialized-followup : bool
-                  (not
-                    (macro-followup-work-list-empty? materialized-followup-work))]
                 [can-process-local-pass : bool
                   (and
                     has-pass-followup

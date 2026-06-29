@@ -113,7 +113,7 @@
 (define (source-tool-args-append
   [args : process.ProcessStringList]
   [value : String]) : process.ProcessStringList
-  (process.process-args-append args (process.process-args-single value)))
+  (process.args-append args (process.args-single value)))
 
 (define (source-tool-command5
   [executable : String]
@@ -122,13 +122,13 @@
   [c : String]
   [d : String]
   [e : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     executable
     (source-tool-args-append
       (source-tool-args-append
         (source-tool-args-append
           (source-tool-args-append
-            (source-tool-args-append (process.process-args-empty) a)
+            (source-tool-args-append (process.args-empty) a)
             b)
           c)
         d)
@@ -142,14 +142,14 @@
   [d : String]
   [e : String]
   [f : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     executable
     (source-tool-args-append
       (source-tool-args-append
         (source-tool-args-append
           (source-tool-args-append
             (source-tool-args-append
-              (source-tool-args-append (process.process-args-empty) a)
+              (source-tool-args-append (process.args-empty) a)
               b)
             c)
           d)
@@ -165,7 +165,7 @@
   [e : String]
   [f : String]
   [g : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     executable
     (source-tool-args-append
       (source-tool-args-append
@@ -173,7 +173,7 @@
           (source-tool-args-append
             (source-tool-args-append
               (source-tool-args-append
-                (source-tool-args-append (process.process-args-empty) a)
+                (source-tool-args-append (process.args-empty) a)
                 b)
               c)
             d)
@@ -229,19 +229,16 @@
 
 (define (source-tool-link-inputs-empty) : SourceToolLinkInputs
   (SourceToolLinkInputs
-    (process.process-args-empty)
-    (process.process-args-empty)
-    (process.process-args-empty)))
+    (process.args-empty)
+    (process.args-empty)
+    (process.args-empty)))
 
 ;; Wrap a list of fully-resolved archive/object paths (e.g. package dependency
 ;; static archives, #1155) as link inputs. They are passed verbatim as raw args
 ;; so both `ld` and MSVC `link.exe` treat them as positional inputs.
 (define (source-tool-link-inputs-from-archives
   [archives : process.ProcessStringList]) : SourceToolLinkInputs
-  (SourceToolLinkInputs
-    (process.process-args-empty)
-    (process.process-args-empty)
-    archives))
+  (SourceToolLinkInputs (process.args-empty) (process.args-empty) archives))
 
 (define (source-tool-link-inputs-libs [inputs : SourceToolLinkInputs]) : process.ProcessStringList
   (struct-get inputs libs))
@@ -254,11 +251,9 @@
 
 (define (source-tool-link-inputs-empty? [inputs : SourceToolLinkInputs]) : bool
   (and
-    (= (process.process-args-count (source-tool-link-inputs-libs inputs)) 0)
-    (=
-      (process.process-args-count (source-tool-link-inputs-search-dirs inputs))
-      0)
-    (= (process.process-args-count (source-tool-link-inputs-raw-args inputs)) 0)))
+    (= (process.args-count (source-tool-link-inputs-libs inputs)) 0)
+    (= (process.args-count (source-tool-link-inputs-search-dirs inputs)) 0)
+    (= (process.args-count (source-tool-link-inputs-raw-args inputs)) 0)))
 
 (define (source-tool-linux-crt-entry?
   [target : CompilerBackendTarget]
@@ -437,15 +432,13 @@
         "-Wl,b")]
     [expected : SourceToolLinkInputs
       (SourceToolLinkInputs
-        (process.process-args-cons
-          "m"
-          (process.process-args-cons "z" (process.process-args-empty)))
-        (process.process-args-cons
+        (process.args-cons "m" (process.args-cons "z" (process.args-empty)))
+        (process.args-cons
           "native"
-          (process.process-args-cons "cli" (process.process-args-empty)))
-        (process.process-args-cons
+          (process.args-cons "cli" (process.args-empty)))
+        (process.args-cons
           "-Wl,a"
-          (process.process-args-cons "-Wl,b" (process.process-args-empty))))]
+          (process.args-cons "-Wl,b" (process.args-empty))))]
     (source-tool-link-inputs-eq?
       (source-tool-link-inputs-merge metadata-inputs explicit-inputs)
       expected)))
@@ -1075,22 +1068,22 @@
 
 (define (source-tool-forward-output [output : process.ProcessOutput]) : unit
   (begin
-    (source-tool-stdout-write (process.process-output-stdout output))
-    (source-tool-stderr-write (process.process-output-stderr output))))
+    (source-tool-stdout-write (process.output-stdout output))
+    (source-tool-stderr-write (process.output-stderr output))))
 
 (define (source-tool-run-command
   [role : String]
   [target : CompilerBackendTarget]
   [command : process.ProcessCommand]) : SourceToolCommandStatus
   (let
-    [tool : String (process.process-command-executable command)]
+    [tool : String (process.command-executable command)]
     [command-to-run : process.ProcessCommand
       (source-tool-command-for-target target command)]
-    (match (process.process-output command-to-run)
+    (match (process.output command-to-run)
       [(process.OkProcessOutput output)
         (begin
           (source-tool-forward-output output)
-          (if (process.process-success? output)
+          (if (process.success? output)
             SourceToolCommandStatus.Ok
             (SourceToolCommandStatus.Err
               (str_cat.str-cat
@@ -1101,7 +1094,7 @@
                 "' failed for target "
                 (source-tool-target-name target)
                 " with status "
-                (string.int->string (process.process-output-status output))))))]
+                (string.int->string (process.output-status output))))))]
       [(process.ErrProcessOutput error)
         (SourceToolCommandStatus.Err
           (str_cat.str-cat
@@ -1112,7 +1105,7 @@
             "' for target "
             (source-tool-target-name target)
             ": "
-            (process.process-error-message error)))])))
+            (process.error-message error)))])))
 
 (define (source-tool-command-for-target
   [_target : CompilerBackendTarget]
@@ -1127,17 +1120,16 @@
       (let
         [text : String head]
         (or
-          (process.process-string-contains-char? (& text) ' ')
+          (process.string-contains-char? (& text) ' ')
           (source-tool-windows-args-contain-space? (box-get rest))))]))
 
 (define (source-tool-windows-command-needs-cmd?
   [command : process.ProcessCommand]) : bool
   (let
-    [text : String (process.process-command-executable command)]
+    [text : String (process.command-executable command)]
     (or
-      (process.process-string-contains-char? (& text) ' ')
-      (source-tool-windows-args-contain-space?
-        (process.process-command-argv command)))))
+      (process.string-contains-char? (& text) ' ')
+      (source-tool-windows-args-contain-space? (process.command-argv command)))))
 
 (define (source-tool-windows-cmd-quote [value : String]) : String
   (str_cat.str-cat "\"" value "\""))
@@ -1154,69 +1146,67 @@
 (define (source-tool-windows-cmd-line [command : process.ProcessCommand]) : String
   (str_cat.str-cat
     "call "
-    (source-tool-windows-cmd-quote (process.process-command-executable command))
-    (source-tool-windows-cmd-args (process.process-command-argv command))))
+    (source-tool-windows-cmd-quote (process.command-executable command))
+    (source-tool-windows-cmd-args (process.command-argv command))))
 
 (define (source-tool-windows-command-shell) : String
   (source-tool-env-command-or-default "COMSPEC" "cmd.exe"))
 
 (define (source-tool-windows-cmd-command [command : process.ProcessCommand]) : process.ProcessCommand
-  (process.process-command-full
+  (process.command-full
     (source-tool-windows-command-shell)
-    (process.process-args-cons
+    (process.args-cons
       "/C"
-      (process.process-args-single (source-tool-windows-cmd-line command)))
-    (process.process-command-cwd command)
-    (process.process-command-env command)
-    (process.process-command-stdin command)))
+      (process.args-single (source-tool-windows-cmd-line command)))
+    (process.command-cwd command)
+    (process.command-env command)
+    (process.command-stdin command)))
 
 (define (source-tool-assembler-command [asm-path : String] [obj-path : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (source-tool-resolve-command "as")
-    (process.process-args-cons
+    (process.args-cons
       asm-path
-      (process.process-args-cons
-        "-o"
-        (process.process-args-cons obj-path (process.process-args-empty))))))
+      (process.args-cons "-o" (process.args-cons obj-path (process.args-empty))))))
 
 (define (source-tool-windows-assembler-command
   [asm-path : String]
   [obj-path : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (source-tool-env-command-or-default
       "TYPELISP_WINDOWS_CLANG"
       (source-tool-resolve-command "clang"))
-    (process.process-args-cons
+    (process.args-cons
       "--target=x86_64-pc-windows-msvc"
-      (process.process-args-cons
+      (process.args-cons
         "-c"
-        (process.process-args-cons
+        (process.args-cons
           asm-path
-          (process.process-args-cons
+          (process.args-cons
             "-o"
-            (process.process-args-cons obj-path (process.process-args-empty))))))))
+            (process.args-cons obj-path (process.args-empty))))))))
 
 (define (source-tool-linux-link-search-args [dirs : process.ProcessStringList]) : process.ProcessStringList
   (match dirs
-    [(process.ProcessStringNil) (process.process-args-empty)]
+    [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons dir rest)
-      (process.process-args-cons
+      (process.args-cons
         (string.string-append "-L" dir)
         (source-tool-linux-link-search-args (box-get rest)))]))
 
 (define (source-tool-linux-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
   (match libs
-    [(process.ProcessStringNil) (process.process-args-empty)]
+    [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons name rest)
-      (process.process-args-cons
+      (process.args-cons
         (string.string-append "-l" name)
         (source-tool-linux-link-lib-args (box-get rest)))]))
 
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (process.process-args-append
+  (process.args-append
     (source-tool-linux-link-search-args
       (source-tool-link-inputs-search-dirs inputs))
-    (process.process-args-append
+    (process.args-append
       (source-tool-linux-link-lib-args (source-tool-link-inputs-libs inputs))
       (source-tool-link-inputs-raw-args inputs))))
 
@@ -1229,34 +1219,32 @@
     ;; emits its own libc-ABI shims, so link a freestanding static binary with
     ;; no `-lc` and no dynamic loader. Programs that opt into native libraries
     ;; (the non-empty branch below) still go through `cc`.
-    (process.process-command
+    (process.command
       (source-tool-resolve-command "ld")
-      (process.process-args-cons
+      (process.args-cons
         "-static"
-        (process.process-args-cons
+        (process.args-cons
           "-e"
-          (process.process-args-cons
+          (process.args-cons
             "_tl_start"
-            (process.process-args-cons
+            (process.args-cons
               obj-path
-              (process.process-args-cons
+              (process.args-cons
                 "-o"
-                (process.process-args-cons
-                  bin-path
-                  (process.process-args-empty))))))))
-    (process.process-command
+                (process.args-cons bin-path (process.args-empty))))))))
+    (process.command
       (source-tool-env-command-or-default
         "TYPELISP_LINUX_CC"
         (source-tool-env-command-or-default
           "CC"
           (source-tool-resolve-command "cc")))
-      (process.process-args-cons
+      (process.args-cons
         "-no-pie"
-        (process.process-args-cons
+        (process.args-cons
           obj-path
-          (process.process-args-cons
+          (process.args-cons
             "-o"
-            (process.process-args-cons
+            (process.args-cons
               bin-path
               (source-tool-link-inputs-linux-args link-inputs))))))))
 
@@ -1265,7 +1253,7 @@
 ;; CRT-ABI symbols the runtime/stdlib reference. Stdlib random seeding uses
 ;; kernel32 FFI only, so no advapi32; no COM (ole32/oleaut32) is needed either.
 (define (source-tool-windows-link-libs) : process.ProcessStringList
-  (process.process-args-cons "kernel32.lib" (process.process-args-empty)))
+  (process.args-cons "kernel32.lib" (process.args-empty)))
 
 ;; #2599: 64MB, matching scripts/lib-native-link.sh's
 ;; NL_WINDOWS_STACK_RESERVE. The large compiler declaration walks that required
@@ -1277,25 +1265,25 @@
 (define (source-tool-windows-link-search-args
   [dirs : process.ProcessStringList]) : process.ProcessStringList
   (match dirs
-    [(process.ProcessStringNil) (process.process-args-empty)]
+    [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons dir rest)
-      (process.process-args-cons
+      (process.args-cons
         (string.string-append "/LIBPATH:" dir)
         (source-tool-windows-link-search-args (box-get rest)))]))
 
 (define (source-tool-windows-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
   (match libs
-    [(process.ProcessStringNil) (process.process-args-empty)]
+    [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons name rest)
-      (process.process-args-cons
+      (process.args-cons
         (string.string-append name ".lib")
         (source-tool-windows-link-lib-args (box-get rest)))]))
 
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (process.process-args-append
+  (process.args-append
     (source-tool-windows-link-search-args
       (source-tool-link-inputs-search-dirs inputs))
-    (process.process-args-append
+    (process.args-append
       (source-tool-windows-link-lib-args (source-tool-link-inputs-libs inputs))
       (source-tool-link-inputs-raw-args inputs))))
 
@@ -1303,23 +1291,23 @@
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : process.ProcessStringList
-  (process.process-args-cons
+  (process.args-cons
     "/NOLOGO"
-    (process.process-args-cons
+    (process.args-cons
       obj-path
-      (process.process-args-cons
+      (process.args-cons
         (string.string-append "/OUT:" bin-path)
-        (process.process-args-cons
+        (process.args-cons
           "/SUBSYSTEM:CONSOLE"
-          (process.process-args-cons
+          (process.args-cons
             "/ENTRY:_tl_start"
-            (process.process-args-cons
+            (process.args-cons
               "/NODEFAULTLIB"
-              (process.process-args-cons
+              (process.args-cons
                 "/DYNAMICBASE:NO"
-                (process.process-args-cons
+                (process.args-cons
                   (source-tool-windows-stack-reserve-arg)
-                  (process.process-args-append
+                  (process.args-append
                     (source-tool-link-inputs-windows-args link-inputs)
                     (source-tool-windows-link-libs)))))))))))
 
@@ -1415,7 +1403,7 @@
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (source-tool-resolved-env-command-or-default
       "TYPELISP_WINDOWS_LINK"
       (source-tool-resolve-command "lld-link"))
@@ -1437,8 +1425,8 @@
       (match (msvc.msvc-find-tool (& target) (& tool))
         [(msvc.OkMsvcTool resolved-tool)
           (ResultSourceToolCommand.Ok
-            (process.process-command-with-env-list
-              (process.process-command
+            (process.command-with-env-list
+              (process.command
                 (msvc.msvc-tool-executable resolved-tool)
                 (source-tool-windows-linker-args obj-path bin-path link-inputs))
               (msvc.msvc-tool-process-env resolved-tool)))]
@@ -1452,27 +1440,27 @@
 (define (source-tool-archiver-command
   [obj-path : String]
   [archive-path : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (source-tool-resolve-command "ar")
-    (process.process-args-cons
+    (process.args-cons
       "rcs"
-      (process.process-args-cons
+      (process.args-cons
         archive-path
-        (process.process-args-cons obj-path (process.process-args-empty))))))
+        (process.args-cons obj-path (process.args-empty))))))
 
 (define (source-tool-windows-archiver-args
   [obj-path : String]
   [archive-path : String]) : process.ProcessStringList
-  (process.process-args-cons
+  (process.args-cons
     "/NOLOGO"
-    (process.process-args-cons
+    (process.args-cons
       (string.string-append "/OUT:" archive-path)
-      (process.process-args-cons obj-path (process.process-args-empty)))))
+      (process.args-cons obj-path (process.args-empty)))))
 
 (define (source-tool-windows-archiver-fallback-command
   [obj-path : String]
   [archive-path : String]) : process.ProcessCommand
-  (process.process-command
+  (process.command
     (source-tool-resolved-env-command-or-default
       "TYPELISP_WINDOWS_LIB"
       (source-tool-resolve-command "llvm-lib"))
@@ -1490,8 +1478,8 @@
       (match (msvc.msvc-find-tool (& target) (& tool))
         [(msvc.OkMsvcTool resolved-tool)
           (ResultSourceToolCommand.Ok
-            (process.process-command-with-env-list
-              (process.process-command
+            (process.command-with-env-list
+              (process.command
                 (msvc.msvc-tool-executable resolved-tool)
                 (source-tool-windows-archiver-args obj-path archive-path))
               (msvc.msvc-tool-process-env resolved-tool)))]
@@ -2005,10 +1993,10 @@
   [bin-path : String]
   [target : CompilerBackendTarget]
   [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
-  (process.process-output
+  (process.output
     (source-tool-command-for-target
       target
-      (process.process-command bin-path runtime-args))))
+      (process.command bin-path runtime-args))))
 
 (define (source-tool-run-source-in-temp
   [source : String]
@@ -2065,7 +2053,7 @@
               (match (source-tool-run-executable bin-path target runtime-args)
                 [(process.OkProcessOutput output)
                   (let
-                    [status : i64 (process.process-output-status output)]
+                    [status : i64 (process.output-status output)]
                     (begin
                       (source-tool-forward-output output)
                       (source-tool-clean-temp
@@ -2084,7 +2072,7 @@
                         "' for target "
                         (source-tool-target-name target)
                         ": "
-                        (process.process-error-message error)))
+                        (process.error-message error)))
                     (source-tool-clean-temp
                       temp-dir
                       asm-path

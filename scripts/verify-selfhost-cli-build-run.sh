@@ -1642,7 +1642,7 @@ assert_empty run "$WORKDIR/run.err"
 assert_contains run "$WORKDIR/run.out" "run-arg-ok"
 
 if [ "$HOST_OS" = windows ]; then
-    # Windows process-output still cannot spawn a REPL scratch executable while
+    # Windows output still cannot spawn a REPL scratch executable while
     # the REPL owns redirected stdin; Linux keeps expression execution coverage.
     cat > "$WORKDIR/repl.in" <<'EOF'
 .help

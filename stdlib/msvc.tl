@@ -91,23 +91,20 @@
 
 ;: Return process environment overrides for invoking the tool.
 (define (msvc-tool-process-env [tool : MsvcTool]) : process.ProcessEnvList
-  (process.process-env-cons
+  (process.env-cons
     "PATH"
     (msvc-tool-path tool)
-    (process.process-env-cons
+    (process.env-cons
       "LIB"
       (msvc-tool-lib tool)
-      (process.process-env-cons
-        "INCLUDE"
-        (msvc-tool-include tool)
-        (process.process-env-empty)))))
+      (process.env-cons "INCLUDE" (msvc-tool-include tool) (process.env-empty)))))
 
 ;: Return vector-backed process environment overrides for invoking the tool.
 (define (msvc-tool-process-env-vec [tool : MsvcTool]) : process.ProcessEnvVec
-  (process.process-env-vec-append
-    (process.process-env-vec-append
-      (process.process-env-vec-append
-        (process.process-env-vec-new)
+  (process.env-vec-append
+    (process.env-vec-append
+      (process.env-vec-append
+        (process.env-vec-new)
         "PATH"
         (msvc-tool-path tool))
       "LIB"

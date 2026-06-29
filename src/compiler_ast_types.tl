@@ -346,195 +346,195 @@
   (AstVariantDefCons AstVariantDef (Box AstVariantDefList)))
 
 (defenum AstPattern
-  (AstPatVar i64 AstMaybeType)
-  (AstPatTuple (Box AstPatternList))
-  (AstPatWildcard)
-  (AstPatBinding i64)
-  (AstPatVariant i64 (Box AstPatternList))
-  (AstPatLiteral AstLiteral))
+  (Var i64 AstMaybeType)
+  (Tuple (Box AstPatternList))
+  (Wildcard)
+  (Binding i64)
+  (Variant i64 (Box AstPatternList))
+  (Literal AstLiteral))
 
 (defenum AstPatternList
-  (AstPatternNil)
-  (AstPatternCons (Box AstPattern) (Box AstPatternList)))
+  (Nil)
+  (Cons (Box AstPattern) (Box AstPatternList)))
 
 (defenum AstLetBinding
-  (AstLetBinding i64 AstMaybeType i64))
+  (Binding i64 AstMaybeType i64))
 
 (defenum AstLetBindingList
-  (AstLetBindingNil)
-  (AstLetBindingCons AstLetBinding (Box AstLetBindingList)))
+  (Nil)
+  (Cons AstLetBinding (Box AstLetBindingList)))
 
 (defenum AstResourceBinding
-  (AstResourceBinding i64 i64 i64))
+  (Binding i64 i64 i64))
 
 (defenum AstResourceBindingList
-  (AstResourceBindingNil)
-  (AstResourceBindingCons AstResourceBinding (Box AstResourceBindingList)))
+  (Nil)
+  (Cons AstResourceBinding (Box AstResourceBindingList)))
 
 (defenum AstMatchArm
-  (AstMatchArm AstPattern i64))
+  (Arm AstPattern i64))
 
 (defenum AstMatchArmList
-  (AstMatchArmNil)
-  (AstMatchArmCons AstMatchArm (Box AstMatchArmList)))
+  (Nil)
+  (Cons AstMatchArm (Box AstMatchArmList)))
 
-;; Boxed payload for `AstExprLambda`. Lambdas are rare in the AST, but their
+;; Boxed payload for `AstExpr.Lambda`. Lambdas are rare in the AST, but their
 ;; inline payload (AstParamList ~80 B + AstMaybeType ~48 B) made
-;; `AstExprLambda` the single largest `AstExpr` variant at 144 B -- and because
+;; `AstExpr.Lambda` the single largest `AstExpr` variant at 144 B -- and because
 ;; a defenum is laid out as `tag + max(variant)`, every one of the ~2M nodes in
 ;; the flat node pool paid that 144 B. Boxing the payload collapses the variant
 ;; to one word, shrinking every node (pool footprint and the per-node
 ;; `ast-node-get` copy) without slowing the common small variants.
 (defenum AstLambda
-  (AstLambda AstParamList AstMaybeType i64))
+  (Lambda AstParamList AstMaybeType i64))
 
-;; Boxed payload for `AstExprSpmdScan` (#3299). With ten fields including two
+;; Boxed payload for `AstExpr.SpmdScan` (#3299). With ten fields including two
 ;; inline `AstType`s, the variant is 152 B -- the largest `AstExpr` variant,
 ;; which sets the size of every node in the flat pool. spmd-scan is rare, so
 ;; boxing its payload collapses the variant to one word and shrinks every node.
 (defenum AstSpmdScan
-  (AstSpmdScan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64))
+  (Scan AstReduceOp i64 AstType i64 i64 i64 AstType i64 i64 i64))
 
 ;; Boxed payloads for the 104 B AstExpr tier (after #3313/#3317 brought the
-;; node to 104 B). AstExprLet inlines AstLetBindingList; AstExprSpmdReduce has
+;; node to 104 B). AstExpr.Let inlines AstLetBindingList; AstExpr.SpmdReduce has
 ;; an inline AstType plus six scalars. Boxing both drops the node to 80 B.
 (defenum AstLet
-  (AstLet AstLetBindingList i64))
+  (Let AstLetBindingList i64))
 
 (defenum AstSpmdReduce
-  (AstSpmdReduce AstReduceOp i64 AstType i64 i64 i64 i64))
+  (Reduce AstReduceOp i64 AstType i64 i64 i64 i64))
 
 ;; Boxed payloads for the 80 B AstExpr tier (after #3313/#3317/#3325 brought
-;; the node to 80 B). AstExprForeach inlines an AstType plus four scalars;
-;; AstExprWithResource inlines two list heads. Boxing both drops the node to
+;; the node to 80 B). AstExpr.Foreach inlines an AstType plus four scalars;
+;; AstExpr.WithResource inlines two list heads. Boxing both drops the node to
 ;; 56 B (bounded by the AstType-carrying variants like Cast/Ann/Init).
 (defenum AstForeach
-  (AstForeach i64 AstType i64 i64 i64))
+  (Foreach i64 AstType i64 i64 i64))
 
 (defenum AstWithResource
-  (AstWithResource AstResourceBindingList AstExprList))
+  (WithResource AstResourceBindingList AstExprList))
 
-;; Boxed payload for `AstExprMatch`. After boxing AstExprLambda/AstExprSpmdScan
-;; (#3313), `AstExprMatch i64 AstMatchArmList` is the largest variant at 112 B
+;; Boxed payload for `AstExpr.Match`. After boxing AstExpr.Lambda/AstExpr.SpmdScan
+;; (#3313), `AstExpr.Match i64 AstMatchArmList` is the largest variant at 112 B
 ;; (its arm list inlines AstMatchArm -> AstPattern -> AstMaybeType -> AstType).
 ;; Boxing it collapses the variant to one word, dropping the node to 104 B.
 (defenum AstMatch
-  (AstMatch i64 AstMatchArmList))
+  (Match i64 AstMatchArmList))
 
 (defenum AstExpr
-  (AstExprSpanned i64 AstSourceSpan)
-  (AstExprLiteral AstLiteral)
-  (AstExprVar i64)
-  (AstExprBinary AstBinOp i64 i64)
-  (AstExprUnary AstUnOp i64)
-  (AstExprCall i64 AstExprList)
-  (AstExprIf i64 i64 i64)
-  (AstExprLet (Box AstLet))
-  (AstExprLambda (Box AstLambda))
-  (AstExprTuple AstExprList)
-  (AstExprTupleRef i64 i64)
-  (AstExprArray AstExprList)
-  (AstExprMakeArray AstType i64)
-  (AstExprArrayRef i64 i64)
-  (AstExprArraySet i64 i64 i64)
-  (AstExprArrayPush i64 i64)
-  (AstExprStringRef i64 i64)
-  (AstExprWhile i64 i64)
-  (AstExprBegin AstExprList)
+  (Spanned i64 AstSourceSpan)
+  (Literal AstLiteral)
+  (Var i64)
+  (Binary AstBinOp i64 i64)
+  (Unary AstUnOp i64)
+  (Call i64 AstExprList)
+  (If i64 i64 i64)
+  (Let (Box AstLet))
+  (Lambda (Box AstLambda))
+  (Tuple AstExprList)
+  (TupleRef i64 i64)
+  (Array AstExprList)
+  (MakeArray AstType i64)
+  (ArrayRef i64 i64)
+  (ArraySet i64 i64 i64)
+  (ArrayPush i64 i64)
+  (StringRef i64 i64)
+  (While i64 i64)
+  (Begin AstExprList)
   ;; `(unsafe expr+)` (#1053): a `begin`-like block that additionally marks an
   ;; unsafe context (v1 has the same runtime/type behavior as `begin`; the
   ;; unsafe-context flag is consumed by later raw-pointer ops, #955).
-  (AstExprUnsafe AstExprList)
-  (AstExprSet i64 i64)
-  (AstExprAnn i64 AstType)
-  (AstExprCast i64 AstType)
-  (AstExprBorrow bool AstBorrowLifetime i64)
-  (AstExprMatch (Box AstMatch))
-  (AstExprForeach (Box AstForeach))
-  (AstExprSpmdReduce (Box AstSpmdReduce))
-  (AstExprSpmdScan (Box AstSpmdScan))
-  (AstExprSpmdBroadcast i64 i64)
-  (AstExprSpmdShuffle i64 i64)
-  (AstExprSpmdProgramIndex)
-  (AstExprSpmdProgramCount)
-  (AstExprStructGet i64 i64)
-  (AstExprStructSet i64 i64 i64)
-  (AstExprWithRegion String AstExprList)
-  (AstExprWithEscape i64 AstExprList)
-  (AstExprWithScratch AstExprList)
-  (AstExprInArena i64 AstExprList)
-  (AstExprWithResource (Box AstWithResource))
-  (AstExprBox i64)
-  (AstExprBoxGet i64)
-  (AstExprBoxTake i64)
-  (AstExprBoxSet i64 i64)
+  (Unsafe AstExprList)
+  (Set i64 i64)
+  (Ann i64 AstType)
+  (Cast i64 AstType)
+  (Borrow bool AstBorrowLifetime i64)
+  (Match (Box AstMatch))
+  (Foreach (Box AstForeach))
+  (SpmdReduce (Box AstSpmdReduce))
+  (SpmdScan (Box AstSpmdScan))
+  (SpmdBroadcast i64 i64)
+  (SpmdShuffle i64 i64)
+  (SpmdProgramIndex)
+  (SpmdProgramCount)
+  (StructGet i64 i64)
+  (StructSet i64 i64 i64)
+  (WithRegion String AstExprList)
+  (WithEscape i64 AstExprList)
+  (WithScratch AstExprList)
+  (InArena i64 AstExprList)
+  (WithResource (Box AstWithResource))
+  (Box i64)
+  (BoxGet i64)
+  (BoxTake i64)
+  (BoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
-  (AstExprTypeLiteral AstType)
+  (TypeLiteral AstType)
   ;; Zero/identity initialization. `(init : T)` carries `AstSomeType T`;
   ;; contextual `(init)` carries `AstNoType` until type checking/lowering sees
   ;; an expected type.
-  (AstExprInit AstMaybeType)
+  (Init AstMaybeType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
   ;; type-checked (as the inner expression's type); evaluation lands in #719.
-  (AstExprComptime i64)
+  (Comptime i64)
   ;; Macro quote syntax (#1136). The reader desugars prefix quote tokens into
   ;; these list-headed forms before parsing:
   ;;   'x       -> (quote x)
   ;;   `x       -> (quasiquote x)
   ;;   ,x       -> (unquote x)
   ;;   ,@xs     -> (unquote-splicing xs)
-  (AstExprQuote i64)
-  (AstExprQuasiquote i64)
-  (AstExprUnquote i64)
-  (AstExprUnquoteSplicing i64)
+  (Quote i64)
+  (Quasiquote i64)
+  (Unquote i64)
+  (UnquoteSplicing i64)
   ;; Macro-only call operand syntax: `[expr expr]` bracket clauses are parsed
   ;; only inside call argument lists. Ordinary typechecking rejects this node;
   ;; macro binding consumes it for `ExprClause` operands.
-  (AstExprBracketClause AstExprList)
+  (BracketClause AstExprList)
   ;; Narrow Result-like propagation form `(try expr)` (#903). The temporary
   ;; convention recognizes concrete enums with one `Ok*` and one `Err*`
   ;; variant, each carrying exactly one payload.
-  (AstExprTry i64)
+  (Try i64)
   ;; General function-local early exit: `(return expr)` checks `expr` against
   ;; the enclosing function's return type and has the internal `never` type.
-  (AstExprReturn i64)
+  (Return i64)
   ;; Null raw-pointer construction `(ptr-null : T)` where `T` is `(Ptr U)` or
   ;; `(MutPtr U)` (#1054). Lowers to a pointer-sized zero; type is `T`.
-  (AstExprPtrNull AstType)
+  (PtrNull AstType)
   ;; Null check `(ptr-null? p)` on a raw pointer (#1054). Result is `bool`.
-  (AstExprPtrNullCheck i64)
+  (PtrNullCheck i64)
   ;; Unsafe raw-pointer operations (#1055). The typechecker admits these only
   ;; inside `(unsafe ...)`; lowering maps them to existing pointer IR.
-  (AstExprPtrAddrOf i64)
-  (AstExprPtrRead i64)
-  (AstExprPtrWrite i64 i64)
-  (AstExprPtrOffset i64 i64)
-  (AstExprPtrCast i64 AstType)
-  (AstExprPtrToInt i64)
-  (AstExprIntToPtr i64 AstType)
+  (PtrAddrOf i64)
+  (PtrRead i64)
+  (PtrWrite i64 i64)
+  (PtrOffset i64 i64)
+  (PtrCast i64 AstType)
+  (PtrToInt i64)
+  (IntToPtr i64 AstType)
   ;; Low-level FFI bridge operations used by stdlib. These expose raw backing
   ;; storage and process entry state without synthesizing runtime wrapper calls.
-  (AstExprStringData i64)
-  (AstExprStringFromBytes i64 i64)
-  (AstExprArrayData i64)
+  (StringData i64)
+  (StringFromBytes i64 i64)
+  (ArrayData i64)
   ;; Loader-generated payload for `(include-bin name "path")`. This is not a
   ;; source expression; it typechecks as `(Array u8)` and lowers to static data.
-  (AstExprBinaryData String)
-  (AstExprProgramArgc)
-  (AstExprProgramArgv)
-  (AstExprProgramEnvp)
+  (BinaryData String)
+  (ProgramArgc)
+  (ProgramArgv)
+  (ProgramEnvp)
   ;; Inline CPU feature instructions. These lower directly to x86_64 `cpuid`
   ;; and `xgetbv` instructions, avoiding emitted forwarding helpers.
-  (AstExprCpuIdEax i64 i64)
-  (AstExprCpuIdEbx i64 i64)
-  (AstExprCpuIdEcx i64 i64)
-  (AstExprCpuIdEdx i64 i64)
-  (AstExprXgetbv i64)
+  (CpuIdEax i64 i64)
+  (CpuIdEbx i64 i64)
+  (CpuIdEcx i64 i64)
+  (CpuIdEdx i64 i64)
+  (Xgetbv i64)
   ;; Raw Linux x86_64 syscall. `(unsafe (syscall number a0 .. a5))` lowers
   ;; directly to a `syscall` instruction: the number plus up to six arguments.
   ;; Returns the raw kernel result in an i64 (negative is `-errno`); callers
   ;; translate errno.
-  (AstExprSyscall AstExprList))
+  (Syscall AstExprList))
 
 ;; --- flat AST node pool (flat-node rewrite; owner directive "do the hard thing")
 ;; AstExpr nodes live in one growable pool, referenced by AstNodeId (an index)
@@ -1706,16 +1706,16 @@
       node)))
 
 (defenum AstExprList
-  (AstExprNil)
-  (AstExprCons i64 (Box AstExprList)))
+  (Nil)
+  (Cons i64 (Box AstExprList)))
 
 (defstruct AstExprClause
   (first i64)
   (second i64))
 
 (defenum AstExprClauseList
-  (AstExprClauseNil)
-  (AstExprClauseCons AstExprClause (Box AstExprClauseList)))
+  (Nil)
+  (Cons AstExprClause (Box AstExprClauseList)))
 
 (defstruct AstExprBindingClause
   (name i64)
@@ -1725,8 +1725,8 @@
   (span AstSourceSpan))
 
 (defenum AstExprBindingClauseList
-  (AstExprBindingClauseNil)
-  (AstExprBindingClauseCons AstExprBindingClause (Box AstExprBindingClauseList)))
+  (Nil)
+  (Cons AstExprBindingClause (Box AstExprBindingClauseList)))
 
 (defenum AstMaybeModuleName
   (No)
@@ -1990,63 +1990,63 @@
   (AstVariantPayloadCleanupCons head (box rest)))
 
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
-  (AstPatternCons (box head) (box rest)))
+  (AstPatternList.Cons (box head) (box rest)))
 
 (define (ast-pat-binding [name : String]) : AstPattern
-  (AstPatBinding (ci.intern name)))
+  (AstPattern.Binding (ci.intern name)))
 
 (define (ast-pat-binding-id [name : i64]) : AstPattern
-  (AstPatBinding name))
+  (AstPattern.Binding name))
 
 (define (ast-pat-tuple [items : AstPatternList]) : AstPattern
-  (AstPatTuple (box items)))
+  (AstPattern.Tuple (box items)))
 
 (define (ast-pat-variant [name : String] [items : AstPatternList]) : AstPattern
-  (AstPatVariant (ci.intern name) (box items)))
+  (AstPattern.Variant (ci.intern name) (box items)))
 
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
-  (AstPatVariant name (box items)))
+  (AstPattern.Variant name (box items)))
 
 (define (ast-let-binding
   [name : String]
   [maybe-ty : AstMaybeType]
   [value : i64]) : AstLetBinding
-  (AstLetBinding (ci.intern name) maybe-ty value))
+  (AstLetBinding.Binding (ci.intern name) maybe-ty value))
 
 (define (ast-let-binding-id
   [name : i64]
   [maybe-ty : AstMaybeType]
   [value : i64]) : AstLetBinding
-  (AstLetBinding name maybe-ty value))
+  (AstLetBinding.Binding name maybe-ty value))
 
 (define (ast-let-binding-cons [head : AstLetBinding] [rest : AstLetBindingList]) : AstLetBindingList
-  (AstLetBindingCons head (box rest)))
+  (AstLetBindingList.Cons head (box rest)))
 
 (define (ast-resource-binding [name : String] [init : i64] [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding (ci.intern name) init cleanup))
+  (AstResourceBinding.Binding (ci.intern name) init cleanup))
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding name init cleanup))
+  (AstResourceBinding.Binding name init cleanup))
 
 (define (ast-resource-binding-cons
   [head : AstResourceBinding]
   [rest : AstResourceBindingList]) : AstResourceBindingList
-  (AstResourceBindingCons head (box rest)))
+  (AstResourceBindingList.Cons head (box rest)))
 
 (define (ast-match-arm [pattern : AstPattern] [body : i64]) : AstMatchArm
-  (AstMatchArm pattern body))
+  (AstMatchArm.Arm pattern body))
 
 (define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
-  (AstMatchArmCons head (box rest)))
+  (AstMatchArmList.Cons head (box rest)))
 
 (define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
-  (AstExprCons head (box rest)))
+  (AstExprList.Cons head (box rest)))
 
 (define (ast-expr-clause [first : i64] [second : i64]) : AstExprClause
   (AstExprClause first second))
 
 (define (ast-expr-clause-cons [head : AstExprClause] [rest : AstExprClauseList]) : AstExprClauseList
-  (AstExprClauseCons head (box rest)))
+  (AstExprClauseList.Cons head (box rest)))
 
 (define (ast-expr-binding-clause
   [name : String]
@@ -2067,76 +2067,76 @@
 (define (ast-expr-binding-clause-cons
   [head : AstExprBindingClause]
   [rest : AstExprBindingClauseList]) : AstExprBindingClauseList
-  (AstExprBindingClauseCons head (box rest)))
+  (AstExprBindingClauseList.Cons head (box rest)))
 
 (define (ast-expr-spanned [inner : i64] [span : AstSourceSpan]) : i64
-  (ast-node-push (AstExprSpanned inner span)))
+  (ast-node-push (AstExpr.Spanned inner span)))
 
 (define (ast-expr-binary [op : AstBinOp] [left : i64] [right : i64]) : i64
-  (ast-node-push (AstExprBinary op left right)))
+  (ast-node-push (AstExpr.Binary op left right)))
 
 (define (ast-expr-unary [op : AstUnOp] [inner : i64]) : i64
-  (ast-node-push (AstExprUnary op inner)))
+  (ast-node-push (AstExpr.Unary op inner)))
 
 (define (ast-expr-call [callee : i64] [args : AstExprList]) : i64
-  (ast-node-push (AstExprCall callee args)))
+  (ast-node-push (AstExpr.Call callee args)))
 
 (define (ast-expr-bracket-clause [items : AstExprList]) : i64
-  (ast-node-push (AstExprBracketClause items)))
+  (ast-node-push (AstExpr.BracketClause items)))
 
 (define (ast-expr-if [cond : i64] [then-expr : i64] [else-expr : i64]) : i64
-  (ast-node-push (AstExprIf cond then-expr else-expr)))
+  (ast-node-push (AstExpr.If cond then-expr else-expr)))
 
 (define (ast-expr-let [bindings : AstLetBindingList] [body : i64]) : i64
-  (ast-node-push (AstExprLet (box (AstLet bindings body)))))
+  (ast-node-push (AstExpr.Let (box (AstLet.Let bindings body)))))
 
 (define (ast-expr-lambda
   [params : AstParamList]
   [ret : AstMaybeType]
   [body : i64]) : i64
-  (ast-node-push (AstExprLambda (box (AstLambda params ret body)))))
+  (ast-node-push (AstExpr.Lambda (box (AstLambda.Lambda params ret body)))))
 
 (define (ast-expr-tuple-ref [target : i64] [index : i64]) : i64
-  (ast-node-push (AstExprTupleRef target index)))
+  (ast-node-push (AstExpr.TupleRef target index)))
 
 (define (ast-expr-make-array [elem : AstType] [size : i64]) : i64
-  (ast-node-push (AstExprMakeArray elem size)))
+  (ast-node-push (AstExpr.MakeArray elem size)))
 
 (define (ast-expr-array-ref [target : i64] [index : i64]) : i64
-  (ast-node-push (AstExprArrayRef target index)))
+  (ast-node-push (AstExpr.ArrayRef target index)))
 
 (define (ast-expr-array-set [target : i64] [index : i64] [value : i64]) : i64
-  (ast-node-push (AstExprArraySet target index value)))
+  (ast-node-push (AstExpr.ArraySet target index value)))
 
 (define (ast-expr-array-push [target : i64] [value : i64]) : i64
-  (ast-node-push (AstExprArrayPush target value)))
+  (ast-node-push (AstExpr.ArrayPush target value)))
 
 (define (ast-expr-string-ref [target : i64] [index : i64]) : i64
-  (ast-node-push (AstExprStringRef target index)))
+  (ast-node-push (AstExpr.StringRef target index)))
 
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
-  (ast-node-push (AstExprWhile cond body)))
+  (ast-node-push (AstExpr.While cond body)))
 
 (define (ast-expr-set [name : String] [value : i64]) : i64
-  (ast-node-push (AstExprSet (ci.intern name) value)))
+  (ast-node-push (AstExpr.Set (ci.intern name) value)))
 
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
-  (ast-node-push (AstExprSet name value)))
+  (ast-node-push (AstExpr.Set name value)))
 
 (define (ast-expr-ann [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExprAnn expr ty)))
+  (ast-node-push (AstExpr.Ann expr ty)))
 
 (define (ast-expr-cast [expr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExprCast expr ty)))
+  (ast-node-push (AstExpr.Cast expr ty)))
 
 (define (ast-expr-borrow
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [expr : i64]) : i64
-  (ast-node-push (AstExprBorrow mutable lifetime expr)))
+  (ast-node-push (AstExpr.Borrow mutable lifetime expr)))
 
 (define (ast-expr-match [scrutinee : i64] [arms : AstMatchArmList]) : i64
-  (ast-node-push (AstExprMatch (box (AstMatch scrutinee arms)))))
+  (ast-node-push (AstExpr.Match (box (AstMatch.Match scrutinee arms)))))
 
 (define (ast-expr-foreach
   [name : String]
@@ -2145,7 +2145,8 @@
   [end : i64]
   [body : i64]) : i64
   (ast-node-push
-    (AstExprForeach (box (AstForeach (ci.intern name) index-ty start end body)))))
+    (AstExpr.Foreach
+      (box (AstForeach.Foreach (ci.intern name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id
   [name : i64]
@@ -2154,7 +2155,7 @@
   [end : i64]
   [body : i64]) : i64
   (ast-node-push
-    (AstExprForeach (box (AstForeach name index-ty start end body)))))
+    (AstExpr.Foreach (box (AstForeach.Foreach name index-ty start end body)))))
 
 (define (ast-expr-spmd-reduce
   [op : AstReduceOp]
@@ -2165,8 +2166,9 @@
   [init : i64]
   [value : i64]) : i64
   (ast-node-push
-    (AstExprSpmdReduce
-      (box (AstSpmdReduce op (ci.intern name) index-ty start end init value)))))
+    (AstExpr.SpmdReduce
+      (box
+        (AstSpmdReduce.Reduce op (ci.intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id
   [op : AstReduceOp]
@@ -2177,8 +2179,8 @@
   [init : i64]
   [value : i64]) : i64
   (ast-node-push
-    (AstExprSpmdReduce
-      (box (AstSpmdReduce op name index-ty start end init value)))))
+    (AstExpr.SpmdReduce
+      (box (AstSpmdReduce.Reduce op name index-ty start end init value)))))
 
 (define (ast-expr-spmd-scan
   [op : AstReduceOp]
@@ -2192,9 +2194,9 @@
   [value : i64]
   [body : i64]) : i64
   (ast-node-push
-    (AstExprSpmdScan
+    (AstExpr.SpmdScan
       (box
-        (AstSpmdScan
+        (AstSpmdScan.Scan
           op
           (ci.intern index)
           index-ty
@@ -2218,9 +2220,9 @@
   [value : i64]
   [body : i64]) : i64
   (ast-node-push
-    (AstExprSpmdScan
+    (AstExpr.SpmdScan
       (box
-        (AstSpmdScan
+        (AstSpmdScan.Scan
           op
           index
           index-ty
@@ -2233,55 +2235,55 @@
           body)))))
 
 (define (ast-expr-spmd-broadcast [value : i64] [lane : i64]) : i64
-  (ast-node-push (AstExprSpmdBroadcast value lane)))
+  (ast-node-push (AstExpr.SpmdBroadcast value lane)))
 
 (define (ast-expr-spmd-shuffle [value : i64] [lane : i64]) : i64
-  (ast-node-push (AstExprSpmdShuffle value lane)))
+  (ast-node-push (AstExpr.SpmdShuffle value lane)))
 
 (define (ast-expr-spmd-program-index) : i64
-  (ast-node-push (AstExprSpmdProgramIndex)))
+  (ast-node-push (AstExpr.SpmdProgramIndex)))
 
 (define (ast-expr-spmd-program-count) : i64
-  (ast-node-push (AstExprSpmdProgramCount)))
+  (ast-node-push (AstExpr.SpmdProgramCount)))
 
 (define (ast-expr-struct-get [target : i64] [field : String]) : i64
-  (ast-node-push (AstExprStructGet target (ci.intern field))))
+  (ast-node-push (AstExpr.StructGet target (ci.intern field))))
 
 (define (ast-expr-struct-get-id [target : i64] [field : i64]) : i64
-  (ast-node-push (AstExprStructGet target field)))
+  (ast-node-push (AstExpr.StructGet target field)))
 
 (define (ast-expr-struct-set [target : i64] [field : String] [value : i64]) : i64
-  (ast-node-push (AstExprStructSet target (ci.intern field) value)))
+  (ast-node-push (AstExpr.StructSet target (ci.intern field) value)))
 
 (define (ast-expr-struct-set-id [target : i64] [field : i64] [value : i64]) : i64
-  (ast-node-push (AstExprStructSet target field value)))
+  (ast-node-push (AstExpr.StructSet target field value)))
 
 (define (ast-expr-unquote-set-target-field-id) : i64
   (ci.intern "__tl_unquote_set_target"))
 
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
-  (ast-node-push (AstExprWithEscape escape body)))
+  (ast-node-push (AstExpr.WithEscape escape body)))
 
 (define (ast-expr-with-scratch [body : AstExprList]) : i64
-  (ast-node-push (AstExprWithScratch body)))
+  (ast-node-push (AstExpr.WithScratch body)))
 
 (define (ast-expr-in-arena [arena : i64] [body : AstExprList]) : i64
-  (ast-node-push (AstExprInArena arena body)))
+  (ast-node-push (AstExpr.InArena arena body)))
 
 (define (ast-expr-box [value : i64]) : i64
-  (ast-node-push (AstExprBox value)))
+  (ast-node-push (AstExpr.Box value)))
 
 (define (ast-expr-box-get [value : i64]) : i64
-  (ast-node-push (AstExprBoxGet value)))
+  (ast-node-push (AstExpr.BoxGet value)))
 
 (define (ast-expr-box-take [value : i64]) : i64
-  (ast-node-push (AstExprBoxTake value)))
+  (ast-node-push (AstExpr.BoxTake value)))
 
 (define (ast-expr-box-set [target : i64] [value : i64]) : i64
-  (ast-node-push (AstExprBoxSet target value)))
+  (ast-node-push (AstExpr.BoxSet target value)))
 
 (define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
-  (ast-node-push (AstExprInit maybe-ty)))
+  (ast-node-push (AstExpr.Init maybe-ty)))
 
 (define (ast-expr-init [ty : AstType]) : i64
   (ast-expr-init-maybe (AstSomeType ty)))
@@ -2290,116 +2292,116 @@
   (ast-expr-init-maybe AstNoType))
 
 (define (ast-expr-comptime [inner : i64]) : i64
-  (ast-node-push (AstExprComptime inner)))
+  (ast-node-push (AstExpr.Comptime inner)))
 
 (define (ast-expr-quote [inner : i64]) : i64
-  (ast-node-push (AstExprQuote inner)))
+  (ast-node-push (AstExpr.Quote inner)))
 
 (define (ast-expr-quasiquote [inner : i64]) : i64
-  (ast-node-push (AstExprQuasiquote inner)))
+  (ast-node-push (AstExpr.Quasiquote inner)))
 
 (define (ast-expr-unquote [inner : i64]) : i64
-  (ast-node-push (AstExprUnquote inner)))
+  (ast-node-push (AstExpr.Unquote inner)))
 
 (define (ast-expr-unquote-splicing [inner : i64]) : i64
-  (ast-node-push (AstExprUnquoteSplicing inner)))
+  (ast-node-push (AstExpr.UnquoteSplicing inner)))
 
 (define (ast-expr-try [inner : i64]) : i64
-  (ast-node-push (AstExprTry inner)))
+  (ast-node-push (AstExpr.Try inner)))
 
 (define (ast-expr-return [inner : i64]) : i64
-  (ast-node-push (AstExprReturn inner)))
+  (ast-node-push (AstExpr.Return inner)))
 
 (define (ast-expr-ptr-null-check [ptr : i64]) : i64
-  (ast-node-push (AstExprPtrNullCheck ptr)))
+  (ast-node-push (AstExpr.PtrNullCheck ptr)))
 
 (define (ast-expr-ptr-addr-of [name : String]) : i64
-  (ast-node-push (AstExprPtrAddrOf (ci.intern name))))
+  (ast-node-push (AstExpr.PtrAddrOf (ci.intern name))))
 
 (define (ast-expr-ptr-addr-of-id [name : i64]) : i64
-  (ast-node-push (AstExprPtrAddrOf name)))
+  (ast-node-push (AstExpr.PtrAddrOf name)))
 
 (define (ast-expr-ptr-read [ptr : i64]) : i64
-  (ast-node-push (AstExprPtrRead ptr)))
+  (ast-node-push (AstExpr.PtrRead ptr)))
 
 (define (ast-expr-ptr-write [ptr : i64] [value : i64]) : i64
-  (ast-node-push (AstExprPtrWrite ptr value)))
+  (ast-node-push (AstExpr.PtrWrite ptr value)))
 
 (define (ast-expr-ptr-offset [ptr : i64] [offset : i64]) : i64
-  (ast-node-push (AstExprPtrOffset ptr offset)))
+  (ast-node-push (AstExpr.PtrOffset ptr offset)))
 
 (define (ast-expr-ptr-cast [ptr : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExprPtrCast ptr ty)))
+  (ast-node-push (AstExpr.PtrCast ptr ty)))
 
 (define (ast-expr-ptr-to-int [ptr : i64]) : i64
-  (ast-node-push (AstExprPtrToInt ptr)))
+  (ast-node-push (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr [value : i64] [ty : AstType]) : i64
-  (ast-node-push (AstExprIntToPtr value ty)))
+  (ast-node-push (AstExpr.IntToPtr value ty)))
 
 (define (ast-expr-string-data [value : i64]) : i64
-  (ast-node-push (AstExprStringData value)))
+  (ast-node-push (AstExpr.StringData value)))
 
 (define (ast-expr-string-from-bytes [data : i64] [len : i64]) : i64
-  (ast-node-push (AstExprStringFromBytes data len)))
+  (ast-node-push (AstExpr.StringFromBytes data len)))
 
 (define (ast-expr-array-data [value : i64]) : i64
-  (ast-node-push (AstExprArrayData value)))
+  (ast-node-push (AstExpr.ArrayData value)))
 
 (define (ast-expr-cpuid-eax [leaf : i64] [subleaf : i64]) : i64
-  (ast-node-push (AstExprCpuIdEax leaf subleaf)))
+  (ast-node-push (AstExpr.CpuIdEax leaf subleaf)))
 
 (define (ast-expr-cpuid-ebx [leaf : i64] [subleaf : i64]) : i64
-  (ast-node-push (AstExprCpuIdEbx leaf subleaf)))
+  (ast-node-push (AstExpr.CpuIdEbx leaf subleaf)))
 
 (define (ast-expr-cpuid-ecx [leaf : i64] [subleaf : i64]) : i64
-  (ast-node-push (AstExprCpuIdEcx leaf subleaf)))
+  (ast-node-push (AstExpr.CpuIdEcx leaf subleaf)))
 
 (define (ast-expr-cpuid-edx [leaf : i64] [subleaf : i64]) : i64
-  (ast-node-push (AstExprCpuIdEdx leaf subleaf)))
+  (ast-node-push (AstExpr.CpuIdEdx leaf subleaf)))
 
 (define (ast-expr-xgetbv [index : i64]) : i64
-  (ast-node-push (AstExprXgetbv index)))
+  (ast-node-push (AstExpr.Xgetbv index)))
 
 (define (ast-expr-syscall [args : AstExprList]) : i64
-  (ast-node-push (AstExprSyscall args)))
+  (ast-node-push (AstExpr.Syscall args)))
 
 (define (ast-expr-spanned-with-pools
   [pools : AstNodePoolContext]
   [inner : i64]
   [span : AstSourceSpan]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSpanned inner span)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Spanned inner span)))
 
 (define (ast-expr-binary-with-pools
   [pools : AstNodePoolContext]
   [op : AstBinOp]
   [left : i64]
   [right : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBinary op left right)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Binary op left right)))
 
 (define (ast-expr-unary-with-pools
   [pools : AstNodePoolContext]
   [op : AstUnOp]
   [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprUnary op inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Unary op inner)))
 
 (define (ast-expr-call-with-pools
   [pools : AstNodePoolContext]
   [callee : i64]
   [args : AstExprList]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprCall callee args)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Call callee args)))
 
 (define (ast-expr-bracket-clause-with-pools
   [pools : AstNodePoolContext]
   [items : AstExprList]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBracketClause items)))
+  (ast-node-pool-context-expr-push pools (AstExpr.BracketClause items)))
 
 (define (ast-expr-if-with-pools
   [pools : AstNodePoolContext]
   [cond : i64]
   [then-expr : i64]
   [else-expr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprIf cond then-expr else-expr)))
+  (ast-node-pool-context-expr-push pools (AstExpr.If cond then-expr else-expr)))
 
 (define (ast-expr-let-with-pools
   [pools : AstNodePoolContext]
@@ -2407,7 +2409,7 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprLet (box (AstLet bindings body)))))
+    (AstExpr.Let (box (AstLet.Let bindings body)))))
 
 (define (ast-expr-lambda-with-pools
   [pools : AstNodePoolContext]
@@ -2416,81 +2418,81 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprLambda (box (AstLambda params ret body)))))
+    (AstExpr.Lambda (box (AstLambda.Lambda params ret body)))))
 
 (define (ast-expr-tuple-ref-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [index : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprTupleRef target index)))
+  (ast-node-pool-context-expr-push pools (AstExpr.TupleRef target index)))
 
 (define (ast-expr-make-array-with-pools
   [pools : AstNodePoolContext]
   [elem : AstType]
   [size : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprMakeArray elem size)))
+  (ast-node-pool-context-expr-push pools (AstExpr.MakeArray elem size)))
 
 (define (ast-expr-array-ref-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [index : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprArrayRef target index)))
+  (ast-node-pool-context-expr-push pools (AstExpr.ArrayRef target index)))
 
 (define (ast-expr-array-set-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [index : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprArraySet target index value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.ArraySet target index value)))
 
 (define (ast-expr-array-push-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprArrayPush target value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.ArrayPush target value)))
 
 (define (ast-expr-string-ref-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [index : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprStringRef target index)))
+  (ast-node-pool-context-expr-push pools (AstExpr.StringRef target index)))
 
 (define (ast-expr-while-with-pools
   [pools : AstNodePoolContext]
   [cond : i64]
   [body : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprWhile cond body)))
+  (ast-node-pool-context-expr-push pools (AstExpr.While cond body)))
 
 (define (ast-expr-set-with-pools
   [pools : AstNodePoolContext]
   [name : String]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSet (ci.intern name) value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Set (ci.intern name) value)))
 
 (define (ast-expr-set-id-with-pools
   [pools : AstNodePoolContext]
   [name : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSet name value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Set name value)))
 
 (define (ast-expr-ann-with-pools
   [pools : AstNodePoolContext]
   [expr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprAnn expr ty)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Ann expr ty)))
 
 (define (ast-expr-cast-with-pools
   [pools : AstNodePoolContext]
   [expr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprCast expr ty)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Cast expr ty)))
 
 (define (ast-expr-borrow-with-pools
   [pools : AstNodePoolContext]
   [mutable : bool]
   [lifetime : AstBorrowLifetime]
   [expr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBorrow mutable lifetime expr)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Borrow mutable lifetime expr)))
 
 (define (ast-expr-match-with-pools
   [pools : AstNodePoolContext]
@@ -2498,7 +2500,7 @@
   [arms : AstMatchArmList]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprMatch (box (AstMatch scrutinee arms)))))
+    (AstExpr.Match (box (AstMatch.Match scrutinee arms)))))
 
 (define (ast-expr-foreach-with-pools
   [pools : AstNodePoolContext]
@@ -2509,7 +2511,8 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprForeach (box (AstForeach (ci.intern name) index-ty start end body)))))
+    (AstExpr.Foreach
+      (box (AstForeach.Foreach (ci.intern name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id-with-pools
   [pools : AstNodePoolContext]
@@ -2520,7 +2523,7 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprForeach (box (AstForeach name index-ty start end body)))))
+    (AstExpr.Foreach (box (AstForeach.Foreach name index-ty start end body)))))
 
 (define (ast-expr-spmd-reduce-with-pools
   [pools : AstNodePoolContext]
@@ -2533,8 +2536,9 @@
   [value : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprSpmdReduce
-      (box (AstSpmdReduce op (ci.intern name) index-ty start end init value)))))
+    (AstExpr.SpmdReduce
+      (box
+        (AstSpmdReduce.Reduce op (ci.intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id-with-pools
   [pools : AstNodePoolContext]
@@ -2547,8 +2551,8 @@
   [value : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprSpmdReduce
-      (box (AstSpmdReduce op name index-ty start end init value)))))
+    (AstExpr.SpmdReduce
+      (box (AstSpmdReduce.Reduce op name index-ty start end init value)))))
 
 (define (ast-expr-spmd-scan-with-pools
   [pools : AstNodePoolContext]
@@ -2564,9 +2568,9 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprSpmdScan
+    (AstExpr.SpmdScan
       (box
-        (AstSpmdScan
+        (AstSpmdScan.Scan
           op
           (ci.intern index)
           index-ty
@@ -2592,9 +2596,9 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprSpmdScan
+    (AstExpr.SpmdScan
       (box
-        (AstSpmdScan
+        (AstSpmdScan.Scan
           op
           index
           index-ty
@@ -2610,19 +2614,19 @@
   [pools : AstNodePoolContext]
   [value : i64]
   [lane : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSpmdBroadcast value lane)))
+  (ast-node-pool-context-expr-push pools (AstExpr.SpmdBroadcast value lane)))
 
 (define (ast-expr-spmd-shuffle-with-pools
   [pools : AstNodePoolContext]
   [value : i64]
   [lane : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSpmdShuffle value lane)))
+  (ast-node-pool-context-expr-push pools (AstExpr.SpmdShuffle value lane)))
 
 (define (ast-expr-spmd-program-index-with-pools [pools : AstNodePoolContext]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSpmdProgramIndex)))
+  (ast-node-pool-context-expr-push pools (AstExpr.SpmdProgramIndex)))
 
 (define (ast-expr-spmd-program-count-with-pools [pools : AstNodePoolContext]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSpmdProgramCount)))
+  (ast-node-pool-context-expr-push pools (AstExpr.SpmdProgramCount)))
 
 (define (ast-expr-struct-get-with-pools
   [pools : AstNodePoolContext]
@@ -2630,13 +2634,13 @@
   [field : String]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprStructGet target (ci.intern field))))
+    (AstExpr.StructGet target (ci.intern field))))
 
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [field : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprStructGet target field)))
+  (ast-node-pool-context-expr-push pools (AstExpr.StructGet target field)))
 
 (define (ast-expr-struct-set-with-pools
   [pools : AstNodePoolContext]
@@ -2645,53 +2649,53 @@
   [value : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExprStructSet target (ci.intern field) value)))
+    (AstExpr.StructSet target (ci.intern field) value)))
 
 (define (ast-expr-struct-set-id-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [field : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprStructSet target field value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.StructSet target field value)))
 
 (define (ast-expr-with-escape-with-pools
   [pools : AstNodePoolContext]
   [escape : i64]
   [body : AstExprList]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprWithEscape escape body)))
+  (ast-node-pool-context-expr-push pools (AstExpr.WithEscape escape body)))
 
 (define (ast-expr-with-scratch-with-pools
   [pools : AstNodePoolContext]
   [body : AstExprList]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprWithScratch body)))
+  (ast-node-pool-context-expr-push pools (AstExpr.WithScratch body)))
 
 (define (ast-expr-in-arena-with-pools
   [pools : AstNodePoolContext]
   [arena : i64]
   [body : AstExprList]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprInArena arena body)))
+  (ast-node-pool-context-expr-push pools (AstExpr.InArena arena body)))
 
 (define (ast-expr-box-with-pools [pools : AstNodePoolContext] [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBox value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Box value)))
 
 (define (ast-expr-box-get-with-pools [pools : AstNodePoolContext] [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBoxGet value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.BoxGet value)))
 
 (define (ast-expr-box-take-with-pools
   [pools : AstNodePoolContext]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBoxTake value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.BoxTake value)))
 
 (define (ast-expr-box-set-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprBoxSet target value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.BoxSet target value)))
 
 (define (ast-expr-init-maybe-with-pools
   [pools : AstNodePoolContext]
   [maybe-ty : AstMaybeType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprInit maybe-ty)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Init maybe-ty)))
 
 (define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
   (ast-expr-init-maybe-with-pools pools (AstSomeType ty)))
@@ -2702,124 +2706,124 @@
 (define (ast-expr-comptime-with-pools
   [pools : AstNodePoolContext]
   [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprComptime inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Comptime inner)))
 
 (define (ast-expr-quote-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprQuote inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Quote inner)))
 
 (define (ast-expr-quasiquote-with-pools
   [pools : AstNodePoolContext]
   [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprQuasiquote inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Quasiquote inner)))
 
 (define (ast-expr-unquote-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprUnquote inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Unquote inner)))
 
 (define (ast-expr-unquote-splicing-with-pools
   [pools : AstNodePoolContext]
   [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprUnquoteSplicing inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.UnquoteSplicing inner)))
 
 (define (ast-expr-try-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprTry inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Try inner)))
 
 (define (ast-expr-return-with-pools [pools : AstNodePoolContext] [inner : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprReturn inner)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Return inner)))
 
 (define (ast-expr-ptr-null-check-with-pools
   [pools : AstNodePoolContext]
   [ptr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrNullCheck ptr)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrNullCheck ptr)))
 
 (define (ast-expr-ptr-addr-of-with-pools
   [pools : AstNodePoolContext]
   [name : String]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrAddrOf (ci.intern name))))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrAddrOf (ci.intern name))))
 
 (define (ast-expr-ptr-addr-of-id-with-pools
   [pools : AstNodePoolContext]
   [name : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrAddrOf name)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrAddrOf name)))
 
 (define (ast-expr-ptr-read-with-pools [pools : AstNodePoolContext] [ptr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrRead ptr)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrRead ptr)))
 
 (define (ast-expr-ptr-write-with-pools
   [pools : AstNodePoolContext]
   [ptr : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrWrite ptr value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrWrite ptr value)))
 
 (define (ast-expr-ptr-offset-with-pools
   [pools : AstNodePoolContext]
   [ptr : i64]
   [offset : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrOffset ptr offset)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrOffset ptr offset)))
 
 (define (ast-expr-ptr-cast-with-pools
   [pools : AstNodePoolContext]
   [ptr : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrCast ptr ty)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrCast ptr ty)))
 
 (define (ast-expr-ptr-to-int-with-pools
   [pools : AstNodePoolContext]
   [ptr : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprPtrToInt ptr)))
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrToInt ptr)))
 
 (define (ast-expr-int-to-ptr-with-pools
   [pools : AstNodePoolContext]
   [value : i64]
   [ty : AstType]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprIntToPtr value ty)))
+  (ast-node-pool-context-expr-push pools (AstExpr.IntToPtr value ty)))
 
 (define (ast-expr-string-data-with-pools
   [pools : AstNodePoolContext]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprStringData value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.StringData value)))
 
 (define (ast-expr-string-from-bytes-with-pools
   [pools : AstNodePoolContext]
   [data : i64]
   [len : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprStringFromBytes data len)))
+  (ast-node-pool-context-expr-push pools (AstExpr.StringFromBytes data len)))
 
 (define (ast-expr-array-data-with-pools
   [pools : AstNodePoolContext]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprArrayData value)))
+  (ast-node-pool-context-expr-push pools (AstExpr.ArrayData value)))
 
 (define (ast-expr-cpuid-eax-with-pools
   [pools : AstNodePoolContext]
   [leaf : i64]
   [subleaf : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprCpuIdEax leaf subleaf)))
+  (ast-node-pool-context-expr-push pools (AstExpr.CpuIdEax leaf subleaf)))
 
 (define (ast-expr-cpuid-ebx-with-pools
   [pools : AstNodePoolContext]
   [leaf : i64]
   [subleaf : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprCpuIdEbx leaf subleaf)))
+  (ast-node-pool-context-expr-push pools (AstExpr.CpuIdEbx leaf subleaf)))
 
 (define (ast-expr-cpuid-ecx-with-pools
   [pools : AstNodePoolContext]
   [leaf : i64]
   [subleaf : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprCpuIdEcx leaf subleaf)))
+  (ast-node-pool-context-expr-push pools (AstExpr.CpuIdEcx leaf subleaf)))
 
 (define (ast-expr-cpuid-edx-with-pools
   [pools : AstNodePoolContext]
   [leaf : i64]
   [subleaf : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprCpuIdEdx leaf subleaf)))
+  (ast-node-pool-context-expr-push pools (AstExpr.CpuIdEdx leaf subleaf)))
 
 (define (ast-expr-xgetbv-with-pools [pools : AstNodePoolContext] [index : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprXgetbv index)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Xgetbv index)))
 
 (define (ast-expr-syscall-with-pools
   [pools : AstNodePoolContext]
   [args : AstExprList]) : i64
-  (ast-node-pool-context-expr-push pools (AstExprSyscall args)))
+  (ast-node-pool-context-expr-push pools (AstExpr.Syscall args)))
 
 (define (ast-dispatch-variant-cons
   [head : AstDispatchVariant]
@@ -3302,26 +3306,26 @@
   [remap : AstProgramCompactionRemap]
   [pattern : AstPattern]) : AstPattern
   (match pattern
-    [(AstPatVar name maybe-ty)
-      (AstPatVar name (ast-compaction-remap-maybe-type remap maybe-ty))]
-    [(AstPatTuple items)
-      (AstPatTuple
+    [(AstPattern.Var name maybe-ty)
+      (AstPattern.Var name (ast-compaction-remap-maybe-type remap maybe-ty))]
+    [(AstPattern.Tuple items)
+      (AstPattern.Tuple
         (box (ast-compaction-remap-pattern-list remap (box-get items))))]
-    [(AstPatWildcard) AstPatWildcard]
-    [(AstPatBinding name) (AstPatBinding name)]
-    [(AstPatVariant name items)
-      (AstPatVariant
+    [(AstPattern.Wildcard) AstPattern.Wildcard]
+    [(AstPattern.Binding name) (AstPattern.Binding name)]
+    [(AstPattern.Variant name items)
+      (AstPattern.Variant
         name
         (box (ast-compaction-remap-pattern-list remap (box-get items))))]
-    [(AstPatLiteral lit) (AstPatLiteral lit)]))
+    [(AstPattern.Literal lit) (AstPattern.Literal lit)]))
 
 (define (ast-compaction-remap-pattern-list
   [remap : AstProgramCompactionRemap]
   [patterns : AstPatternList]) : AstPatternList
   (match patterns
-    [(AstPatternNil) AstPatternNil]
-    [(AstPatternCons pattern rest)
-      (AstPatternCons
+    [(AstPatternList.Nil) AstPatternList.Nil]
+    [(AstPatternList.Cons pattern rest)
+      (AstPatternList.Cons
         (box (ast-compaction-remap-pattern remap (box-get pattern)))
         (box (ast-compaction-remap-pattern-list remap (box-get rest))))]))
 
@@ -3329,8 +3333,8 @@
   [remap : AstProgramCompactionRemap]
   [binding : AstLetBinding]) : AstLetBinding
   (match binding
-    [(AstLetBinding name maybe-ty value)
-      (AstLetBinding
+    [(AstLetBinding.Binding name maybe-ty value)
+      (AstLetBinding.Binding
         name
         (ast-compaction-remap-maybe-type remap maybe-ty)
         (ast-compaction-remap-expr-id remap value))]))
@@ -3339,9 +3343,9 @@
   [remap : AstProgramCompactionRemap]
   [bindings : AstLetBindingList]) : AstLetBindingList
   (match bindings
-    [(AstLetBindingNil) AstLetBindingNil]
-    [(AstLetBindingCons binding rest)
-      (AstLetBindingCons
+    [(AstLetBindingList.Nil) AstLetBindingList.Nil]
+    [(AstLetBindingList.Cons binding rest)
+      (AstLetBindingList.Cons
         (ast-compaction-remap-let-binding remap binding)
         (box (ast-compaction-remap-let-binding-list remap (box-get rest))))]))
 
@@ -3349,8 +3353,8 @@
   [remap : AstProgramCompactionRemap]
   [binding : AstResourceBinding]) : AstResourceBinding
   (match binding
-    [(AstResourceBinding name init cleanup)
-      (AstResourceBinding
+    [(AstResourceBinding.Binding name init cleanup)
+      (AstResourceBinding.Binding
         name
         (ast-compaction-remap-expr-id remap init)
         (ast-compaction-remap-expr-id remap cleanup))]))
@@ -3359,9 +3363,9 @@
   [remap : AstProgramCompactionRemap]
   [bindings : AstResourceBindingList]) : AstResourceBindingList
   (match bindings
-    [(AstResourceBindingNil) AstResourceBindingNil]
-    [(AstResourceBindingCons binding rest)
-      (AstResourceBindingCons
+    [(AstResourceBindingList.Nil) AstResourceBindingList.Nil]
+    [(AstResourceBindingList.Cons binding rest)
+      (AstResourceBindingList.Cons
         (ast-compaction-remap-resource-binding remap binding)
         (box (ast-compaction-remap-resource-binding-list remap (box-get rest))))]))
 
@@ -3369,8 +3373,8 @@
   [remap : AstProgramCompactionRemap]
   [arm : AstMatchArm]) : AstMatchArm
   (match arm
-    [(AstMatchArm pattern body)
-      (AstMatchArm
+    [(AstMatchArm.Arm pattern body)
+      (AstMatchArm.Arm
         (ast-compaction-remap-pattern remap pattern)
         (ast-compaction-remap-expr-id remap body))]))
 
@@ -3378,9 +3382,9 @@
   [remap : AstProgramCompactionRemap]
   [arms : AstMatchArmList]) : AstMatchArmList
   (match arms
-    [(AstMatchArmNil) AstMatchArmNil]
-    [(AstMatchArmCons arm rest)
-      (AstMatchArmCons
+    [(AstMatchArmList.Nil) AstMatchArmList.Nil]
+    [(AstMatchArmList.Cons arm rest)
+      (AstMatchArmList.Cons
         (ast-compaction-remap-match-arm remap arm)
         (box (ast-compaction-remap-match-arm-list remap (box-get rest))))]))
 
@@ -3388,9 +3392,9 @@
   [remap : AstProgramCompactionRemap]
   [exprs : AstExprList]) : AstExprList
   (match exprs
-    [(AstExprNil) AstExprNil]
-    [(AstExprCons head rest)
-      (AstExprCons
+    [(AstExprList.Nil) AstExprList.Nil]
+    [(AstExprList.Cons head rest)
+      (AstExprList.Cons
         (ast-compaction-remap-expr-id remap head)
         (box (ast-compaction-remap-expr-list remap (box-get rest))))]))
 
@@ -3398,116 +3402,116 @@
   [remap : AstProgramCompactionRemap]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExprSpanned inner span)
-      (AstExprSpanned (ast-compaction-remap-expr-id remap inner) span)]
-    [(AstExprLiteral lit) (AstExprLiteral lit)]
-    [(AstExprVar name) (AstExprVar name)]
-    [(AstExprBinary op left right)
-      (AstExprBinary
+    [(AstExpr.Spanned inner span)
+      (AstExpr.Spanned (ast-compaction-remap-expr-id remap inner) span)]
+    [(AstExpr.Literal lit) (AstExpr.Literal lit)]
+    [(AstExpr.Var name) (AstExpr.Var name)]
+    [(AstExpr.Binary op left right)
+      (AstExpr.Binary
         op
         (ast-compaction-remap-expr-id remap left)
         (ast-compaction-remap-expr-id remap right))]
-    [(AstExprUnary op inner)
-      (AstExprUnary op (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprCall callee args)
-      (AstExprCall
+    [(AstExpr.Unary op inner)
+      (AstExpr.Unary op (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Call callee args)
+      (AstExpr.Call
         (ast-compaction-remap-expr-id remap callee)
         (ast-compaction-remap-expr-list remap args))]
-    [(AstExprIf cond then-expr else-expr)
-      (AstExprIf
+    [(AstExpr.If cond then-expr else-expr)
+      (AstExpr.If
         (ast-compaction-remap-expr-id remap cond)
         (ast-compaction-remap-expr-id remap then-expr)
         (ast-compaction-remap-expr-id remap else-expr))]
-    [(AstExprLet payload)
+    [(AstExpr.Let payload)
       (match (box-get payload)
-        [(AstLet bindings body)
-          (AstExprLet
+        [(AstLet.Let bindings body)
+          (AstExpr.Let
             (box
-              (AstLet
+              (AstLet.Let
                 (ast-compaction-remap-let-binding-list remap bindings)
                 (ast-compaction-remap-expr-id remap body))))])]
-    [(AstExprLambda payload)
+    [(AstExpr.Lambda payload)
       (match (box-get payload)
-        [(AstLambda params ret body)
-          (AstExprLambda
+        [(AstLambda.Lambda params ret body)
+          (AstExpr.Lambda
             (box
-              (AstLambda
+              (AstLambda.Lambda
                 (ast-compaction-remap-param-list remap params)
                 (ast-compaction-remap-maybe-type remap ret)
                 (ast-compaction-remap-expr-id remap body))))])]
-    [(AstExprTuple items)
-      (AstExprTuple (ast-compaction-remap-expr-list remap items))]
-    [(AstExprTupleRef target index)
-      (AstExprTupleRef (ast-compaction-remap-expr-id remap target) index)]
-    [(AstExprArray items)
-      (AstExprArray (ast-compaction-remap-expr-list remap items))]
-    [(AstExprMakeArray elem size)
-      (AstExprMakeArray (ast-compaction-remap-type remap elem) size)]
-    [(AstExprArrayRef target index)
-      (AstExprArrayRef
+    [(AstExpr.Tuple items)
+      (AstExpr.Tuple (ast-compaction-remap-expr-list remap items))]
+    [(AstExpr.TupleRef target index)
+      (AstExpr.TupleRef (ast-compaction-remap-expr-id remap target) index)]
+    [(AstExpr.Array items)
+      (AstExpr.Array (ast-compaction-remap-expr-list remap items))]
+    [(AstExpr.MakeArray elem size)
+      (AstExpr.MakeArray (ast-compaction-remap-type remap elem) size)]
+    [(AstExpr.ArrayRef target index)
+      (AstExpr.ArrayRef
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap index))]
-    [(AstExprArraySet target index value)
-      (AstExprArraySet
+    [(AstExpr.ArraySet target index value)
+      (AstExpr.ArraySet
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap index)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstExprArrayPush target value)
-      (AstExprArrayPush
+    [(AstExpr.ArrayPush target value)
+      (AstExpr.ArrayPush
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstExprStringRef target index)
-      (AstExprStringRef
+    [(AstExpr.StringRef target index)
+      (AstExpr.StringRef
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap index))]
-    [(AstExprWhile cond body)
-      (AstExprWhile
+    [(AstExpr.While cond body)
+      (AstExpr.While
         (ast-compaction-remap-expr-id remap cond)
         (ast-compaction-remap-expr-id remap body))]
-    [(AstExprBegin exprs)
-      (AstExprBegin (ast-compaction-remap-expr-list remap exprs))]
-    [(AstExprUnsafe exprs)
-      (AstExprUnsafe (ast-compaction-remap-expr-list remap exprs))]
-    [(AstExprSet name value)
-      (AstExprSet name (ast-compaction-remap-expr-id remap value))]
-    [(AstExprAnn inner ty)
-      (AstExprAnn
+    [(AstExpr.Begin exprs)
+      (AstExpr.Begin (ast-compaction-remap-expr-list remap exprs))]
+    [(AstExpr.Unsafe exprs)
+      (AstExpr.Unsafe (ast-compaction-remap-expr-list remap exprs))]
+    [(AstExpr.Set name value)
+      (AstExpr.Set name (ast-compaction-remap-expr-id remap value))]
+    [(AstExpr.Ann inner ty)
+      (AstExpr.Ann
         (ast-compaction-remap-expr-id remap inner)
         (ast-compaction-remap-type remap ty))]
-    [(AstExprCast inner ty)
-      (AstExprCast
+    [(AstExpr.Cast inner ty)
+      (AstExpr.Cast
         (ast-compaction-remap-expr-id remap inner)
         (ast-compaction-remap-type remap ty))]
-    [(AstExprBorrow mutable lifetime inner)
-      (AstExprBorrow
+    [(AstExpr.Borrow mutable lifetime inner)
+      (AstExpr.Borrow
         mutable
         lifetime
         (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprMatch payload)
+    [(AstExpr.Match payload)
       (match (box-get payload)
-        [(AstMatch scrutinee arms)
-          (AstExprMatch
+        [(AstMatch.Match scrutinee arms)
+          (AstExpr.Match
             (box
-              (AstMatch
+              (AstMatch.Match
                 (ast-compaction-remap-expr-id remap scrutinee)
                 (ast-compaction-remap-match-arm-list remap arms))))])]
-    [(AstExprForeach payload)
+    [(AstExpr.Foreach payload)
       (match (box-get payload)
-        [(AstForeach name index-ty start end body)
-          (AstExprForeach
+        [(AstForeach.Foreach name index-ty start end body)
+          (AstExpr.Foreach
             (box
-              (AstForeach
+              (AstForeach.Foreach
                 name
                 (ast-compaction-remap-type remap index-ty)
                 (ast-compaction-remap-expr-id remap start)
                 (ast-compaction-remap-expr-id remap end)
                 (ast-compaction-remap-expr-id remap body))))])]
-    [(AstExprSpmdReduce payload)
+    [(AstExpr.SpmdReduce payload)
       (match (box-get payload)
-        [(AstSpmdReduce op index index-ty start end init value)
-          (AstExprSpmdReduce
+        [(AstSpmdReduce.Reduce op index index-ty start end init value)
+          (AstExpr.SpmdReduce
             (box
-              (AstSpmdReduce
+              (AstSpmdReduce.Reduce
                 op
                 index
                 (ast-compaction-remap-type remap index-ty)
@@ -3515,9 +3519,9 @@
                 (ast-compaction-remap-expr-id remap end)
                 (ast-compaction-remap-expr-id remap init)
                 (ast-compaction-remap-expr-id remap value))))])]
-    [(AstExprSpmdScan payload)
+    [(AstExpr.SpmdScan payload)
       (match (box-get payload)
-        [(AstSpmdScan
+        [(AstSpmdScan.Scan
             op
             index
             index-ty
@@ -3528,9 +3532,9 @@
             init
             value
             body)
-          (AstExprSpmdScan
+          (AstExpr.SpmdScan
             (box
-              (AstSpmdScan
+              (AstSpmdScan.Scan
                 op
                 index
                 (ast-compaction-remap-type remap index-ty)
@@ -3541,127 +3545,130 @@
                 (ast-compaction-remap-expr-id remap init)
                 (ast-compaction-remap-expr-id remap value)
                 (ast-compaction-remap-expr-id remap body))))])]
-    [(AstExprSpmdBroadcast value lane)
-      (AstExprSpmdBroadcast
+    [(AstExpr.SpmdBroadcast value lane)
+      (AstExpr.SpmdBroadcast
         (ast-compaction-remap-expr-id remap value)
         (ast-compaction-remap-expr-id remap lane))]
-    [(AstExprSpmdShuffle value lane)
-      (AstExprSpmdShuffle
+    [(AstExpr.SpmdShuffle value lane)
+      (AstExpr.SpmdShuffle
         (ast-compaction-remap-expr-id remap value)
         (ast-compaction-remap-expr-id remap lane))]
-    [(AstExprSpmdProgramIndex) AstExprSpmdProgramIndex]
-    [(AstExprSpmdProgramCount) AstExprSpmdProgramCount]
-    [(AstExprStructGet target field)
-      (AstExprStructGet (ast-compaction-remap-expr-id remap target) field)]
-    [(AstExprStructSet target field value)
-      (AstExprStructSet
+    [(AstExpr.SpmdProgramIndex) AstExpr.SpmdProgramIndex]
+    [(AstExpr.SpmdProgramCount) AstExpr.SpmdProgramCount]
+    [(AstExpr.StructGet target field)
+      (AstExpr.StructGet (ast-compaction-remap-expr-id remap target) field)]
+    [(AstExpr.StructSet target field value)
+      (AstExpr.StructSet
         (ast-compaction-remap-expr-id remap target)
         field
         (ast-compaction-remap-expr-id remap value))]
-    [(AstExprWithRegion region body)
-      (AstExprWithRegion region (ast-compaction-remap-expr-list remap body))]
-    [(AstExprWithEscape escape body)
-      (AstExprWithEscape
+    [(AstExpr.WithRegion region body)
+      (AstExpr.WithRegion region (ast-compaction-remap-expr-list remap body))]
+    [(AstExpr.WithEscape escape body)
+      (AstExpr.WithEscape
         (ast-compaction-remap-expr-id remap escape)
         (ast-compaction-remap-expr-list remap body))]
-    [(AstExprWithScratch body)
-      (AstExprWithScratch (ast-compaction-remap-expr-list remap body))]
-    [(AstExprInArena arena body)
-      (AstExprInArena
+    [(AstExpr.WithScratch body)
+      (AstExpr.WithScratch (ast-compaction-remap-expr-list remap body))]
+    [(AstExpr.InArena arena body)
+      (AstExpr.InArena
         (ast-compaction-remap-expr-id remap arena)
         (ast-compaction-remap-expr-list remap body))]
-    [(AstExprWithResource payload)
+    [(AstExpr.WithResource payload)
       (match (box-get payload)
-        [(AstWithResource bindings body)
-          (AstExprWithResource
+        [(AstWithResource.WithResource bindings body)
+          (AstExpr.WithResource
             (box
-              (AstWithResource
+              (AstWithResource.WithResource
                 (ast-compaction-remap-resource-binding-list remap bindings)
                 (ast-compaction-remap-expr-list remap body))))])]
-    [(AstExprBox value) (AstExprBox (ast-compaction-remap-expr-id remap value))]
-    [(AstExprBoxGet value)
-      (AstExprBoxGet (ast-compaction-remap-expr-id remap value))]
-    [(AstExprBoxTake value)
-      (AstExprBoxTake (ast-compaction-remap-expr-id remap value))]
-    [(AstExprBoxSet target value)
-      (AstExprBoxSet
+    [(AstExpr.Box value)
+      (AstExpr.Box (ast-compaction-remap-expr-id remap value))]
+    [(AstExpr.BoxGet value)
+      (AstExpr.BoxGet (ast-compaction-remap-expr-id remap value))]
+    [(AstExpr.BoxTake value)
+      (AstExpr.BoxTake (ast-compaction-remap-expr-id remap value))]
+    [(AstExpr.BoxSet target value)
+      (AstExpr.BoxSet
         (ast-compaction-remap-expr-id remap target)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstExprTypeLiteral ty)
-      (AstExprTypeLiteral (ast-compaction-remap-type remap ty))]
-    [(AstExprInit maybe-ty)
-      (AstExprInit (ast-compaction-remap-maybe-type remap maybe-ty))]
-    [(AstExprComptime inner)
-      (AstExprComptime (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprQuote inner)
-      (AstExprQuote (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprQuasiquote inner)
-      (AstExprQuasiquote (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprUnquote inner)
-      (AstExprUnquote (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprUnquoteSplicing inner)
-      (AstExprUnquoteSplicing (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprBracketClause items)
-      (AstExprBracketClause (ast-compaction-remap-expr-list remap items))]
-    [(AstExprTry inner) (AstExprTry (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprReturn inner)
-      (AstExprReturn (ast-compaction-remap-expr-id remap inner))]
-    [(AstExprPtrNull ty) (AstExprPtrNull (ast-compaction-remap-type remap ty))]
-    [(AstExprPtrNullCheck ptr)
-      (AstExprPtrNullCheck (ast-compaction-remap-expr-id remap ptr))]
-    [(AstExprPtrAddrOf name) (AstExprPtrAddrOf name)]
-    [(AstExprPtrRead ptr)
-      (AstExprPtrRead (ast-compaction-remap-expr-id remap ptr))]
-    [(AstExprPtrWrite ptr value)
-      (AstExprPtrWrite
+    [(AstExpr.TypeLiteral ty)
+      (AstExpr.TypeLiteral (ast-compaction-remap-type remap ty))]
+    [(AstExpr.Init maybe-ty)
+      (AstExpr.Init (ast-compaction-remap-maybe-type remap maybe-ty))]
+    [(AstExpr.Comptime inner)
+      (AstExpr.Comptime (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Quote inner)
+      (AstExpr.Quote (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Quasiquote inner)
+      (AstExpr.Quasiquote (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Unquote inner)
+      (AstExpr.Unquote (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.UnquoteSplicing inner)
+      (AstExpr.UnquoteSplicing (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.BracketClause items)
+      (AstExpr.BracketClause (ast-compaction-remap-expr-list remap items))]
+    [(AstExpr.Try inner)
+      (AstExpr.Try (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.Return inner)
+      (AstExpr.Return (ast-compaction-remap-expr-id remap inner))]
+    [(AstExpr.PtrNull ty)
+      (AstExpr.PtrNull (ast-compaction-remap-type remap ty))]
+    [(AstExpr.PtrNullCheck ptr)
+      (AstExpr.PtrNullCheck (ast-compaction-remap-expr-id remap ptr))]
+    [(AstExpr.PtrAddrOf name) (AstExpr.PtrAddrOf name)]
+    [(AstExpr.PtrRead ptr)
+      (AstExpr.PtrRead (ast-compaction-remap-expr-id remap ptr))]
+    [(AstExpr.PtrWrite ptr value)
+      (AstExpr.PtrWrite
         (ast-compaction-remap-expr-id remap ptr)
         (ast-compaction-remap-expr-id remap value))]
-    [(AstExprPtrOffset ptr offset)
-      (AstExprPtrOffset
+    [(AstExpr.PtrOffset ptr offset)
+      (AstExpr.PtrOffset
         (ast-compaction-remap-expr-id remap ptr)
         (ast-compaction-remap-expr-id remap offset))]
-    [(AstExprPtrCast ptr ty)
-      (AstExprPtrCast
+    [(AstExpr.PtrCast ptr ty)
+      (AstExpr.PtrCast
         (ast-compaction-remap-expr-id remap ptr)
         (ast-compaction-remap-type remap ty))]
-    [(AstExprPtrToInt ptr)
-      (AstExprPtrToInt (ast-compaction-remap-expr-id remap ptr))]
-    [(AstExprIntToPtr value ty)
-      (AstExprIntToPtr
+    [(AstExpr.PtrToInt ptr)
+      (AstExpr.PtrToInt (ast-compaction-remap-expr-id remap ptr))]
+    [(AstExpr.IntToPtr value ty)
+      (AstExpr.IntToPtr
         (ast-compaction-remap-expr-id remap value)
         (ast-compaction-remap-type remap ty))]
-    [(AstExprStringData value)
-      (AstExprStringData (ast-compaction-remap-expr-id remap value))]
-    [(AstExprStringFromBytes data len)
-      (AstExprStringFromBytes
+    [(AstExpr.StringData value)
+      (AstExpr.StringData (ast-compaction-remap-expr-id remap value))]
+    [(AstExpr.StringFromBytes data len)
+      (AstExpr.StringFromBytes
         (ast-compaction-remap-expr-id remap data)
         (ast-compaction-remap-expr-id remap len))]
-    [(AstExprArrayData value)
-      (AstExprArrayData (ast-compaction-remap-expr-id remap value))]
-    [(AstExprBinaryData name) (AstExprBinaryData name)]
-    [(AstExprProgramArgc) AstExprProgramArgc]
-    [(AstExprProgramArgv) AstExprProgramArgv]
-    [(AstExprProgramEnvp) AstExprProgramEnvp]
-    [(AstExprCpuIdEax leaf subleaf)
-      (AstExprCpuIdEax
+    [(AstExpr.ArrayData value)
+      (AstExpr.ArrayData (ast-compaction-remap-expr-id remap value))]
+    [(AstExpr.BinaryData name) (AstExpr.BinaryData name)]
+    [(AstExpr.ProgramArgc) AstExpr.ProgramArgc]
+    [(AstExpr.ProgramArgv) AstExpr.ProgramArgv]
+    [(AstExpr.ProgramEnvp) AstExpr.ProgramEnvp]
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (AstExpr.CpuIdEax
         (ast-compaction-remap-expr-id remap leaf)
         (ast-compaction-remap-expr-id remap subleaf))]
-    [(AstExprCpuIdEbx leaf subleaf)
-      (AstExprCpuIdEbx
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (AstExpr.CpuIdEbx
         (ast-compaction-remap-expr-id remap leaf)
         (ast-compaction-remap-expr-id remap subleaf))]
-    [(AstExprCpuIdEcx leaf subleaf)
-      (AstExprCpuIdEcx
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (AstExpr.CpuIdEcx
         (ast-compaction-remap-expr-id remap leaf)
         (ast-compaction-remap-expr-id remap subleaf))]
-    [(AstExprCpuIdEdx leaf subleaf)
-      (AstExprCpuIdEdx
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (AstExpr.CpuIdEdx
         (ast-compaction-remap-expr-id remap leaf)
         (ast-compaction-remap-expr-id remap subleaf))]
-    [(AstExprXgetbv index)
-      (AstExprXgetbv (ast-compaction-remap-expr-id remap index))]
-    [(AstExprSyscall args)
-      (AstExprSyscall (ast-compaction-remap-expr-list remap args))]))
+    [(AstExpr.Xgetbv index)
+      (AstExpr.Xgetbv (ast-compaction-remap-expr-id remap index))]
+    [(AstExpr.Syscall args)
+      (AstExpr.Syscall (ast-compaction-remap-expr-list remap args))]))
 
 (define (ast-compaction-remap-expr-id
   [remap : AstProgramCompactionRemap]
@@ -3870,92 +3877,92 @@
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
-    [(AstExprSpanned _ _) 1]
-    [(AstExprLiteral _) 2]
-    [(AstExprVar _) 3]
-    [(AstExprBinary _ _ _) 4]
-    [(AstExprUnary _ _) 5]
-    [(AstExprCall _ _) 6]
-    [(AstExprIf _ _ _) 7]
-    [(AstExprLet _) 8]
-    [(AstExprLambda _) 9]
-    [(AstExprTuple _) 10]
-    [(AstExprTupleRef _ _) 11]
-    [(AstExprArray _) 12]
-    [(AstExprMakeArray _ _) 13]
-    [(AstExprArrayRef _ _) 14]
-    [(AstExprArraySet _ _ _) 15]
-    [(AstExprArrayPush _ _) 41]
-    [(AstExprStringRef _ _) 16]
-    [(AstExprWhile _ _) 17]
-    [(AstExprBegin _) 18]
-    [(AstExprUnsafe _) 32]
-    [(AstExprSet _ _) 19]
-    [(AstExprAnn _ _) 20]
-    [(AstExprCast _ _) 21]
-    [(AstExprBorrow _ _ _) 40]
-    [(AstExprMatch _) 22]
-    [(AstExprForeach _) 23]
-    [(AstExprStructGet _ _) 24]
-    [(AstExprStructSet _ _ _) 63]
-    [(AstExprWithRegion _ _) 25]
-    [(AstExprWithEscape _ _) 48]
-    [(AstExprWithScratch _) 67]
-    [(AstExprInArena _ _) 65]
-    [(AstExprTypeLiteral _) 26]
-    [(AstExprInit _) 61]
-    [(AstExprComptime _) 27]
-    [(AstExprSpmdReduce _) 28]
-    [(AstExprSpmdScan _) 68]
-    [(AstExprSpmdBroadcast _ _) 64]
-    [(AstExprSpmdShuffle _ _) 71]
-    [(AstExprSpmdProgramIndex) 69]
-    [(AstExprSpmdProgramCount) 70]
-    [(AstExprTry _) 29]
-    [(AstExprReturn _) 48]
-    [(AstExprPtrNull _) 30]
-    [(AstExprPtrNullCheck _) 31]
-    [(AstExprWithResource _) 33]
-    [(AstExprPtrAddrOf _) 62]
-    [(AstExprPtrRead _) 34]
-    [(AstExprPtrWrite _ _) 35]
-    [(AstExprPtrOffset _ _) 36]
-    [(AstExprPtrCast _ _) 37]
-    [(AstExprPtrToInt _) 38]
-    [(AstExprIntToPtr _ _) 39]
-    [(AstExprBox _) 42]
-    [(AstExprBoxGet _) 43]
-    [(AstExprBoxTake _) 65]
-    [(AstExprBoxSet _ _) 66]
-    [(AstExprQuote _) 44]
-    [(AstExprQuasiquote _) 45]
-    [(AstExprUnquote _) 46]
-    [(AstExprUnquoteSplicing _) 47]
-    [(AstExprBracketClause _) 63]
-    [(AstExprStringData _) 49]
-    [(AstExprStringFromBytes _ _) 50]
-    [(AstExprArrayData _) 51]
-    [(AstExprBinaryData _) 64]
-    [(AstExprProgramArgc) 52]
-    [(AstExprProgramArgv) 53]
-    [(AstExprProgramEnvp) 54]
-    [(AstExprCpuIdEax _ _) 55]
-    [(AstExprCpuIdEbx _ _) 56]
-    [(AstExprCpuIdEcx _ _) 57]
-    [(AstExprCpuIdEdx _ _) 58]
-    [(AstExprXgetbv _) 59]
-    [(AstExprSyscall _) 60]))
+    [(AstExpr.Spanned _ _) 1]
+    [(AstExpr.Literal _) 2]
+    [(AstExpr.Var _) 3]
+    [(AstExpr.Binary _ _ _) 4]
+    [(AstExpr.Unary _ _) 5]
+    [(AstExpr.Call _ _) 6]
+    [(AstExpr.If _ _ _) 7]
+    [(AstExpr.Let _) 8]
+    [(AstExpr.Lambda _) 9]
+    [(AstExpr.Tuple _) 10]
+    [(AstExpr.TupleRef _ _) 11]
+    [(AstExpr.Array _) 12]
+    [(AstExpr.MakeArray _ _) 13]
+    [(AstExpr.ArrayRef _ _) 14]
+    [(AstExpr.ArraySet _ _ _) 15]
+    [(AstExpr.ArrayPush _ _) 41]
+    [(AstExpr.StringRef _ _) 16]
+    [(AstExpr.While _ _) 17]
+    [(AstExpr.Begin _) 18]
+    [(AstExpr.Unsafe _) 32]
+    [(AstExpr.Set _ _) 19]
+    [(AstExpr.Ann _ _) 20]
+    [(AstExpr.Cast _ _) 21]
+    [(AstExpr.Borrow _ _ _) 40]
+    [(AstExpr.Match _) 22]
+    [(AstExpr.Foreach _) 23]
+    [(AstExpr.StructGet _ _) 24]
+    [(AstExpr.StructSet _ _ _) 63]
+    [(AstExpr.WithRegion _ _) 25]
+    [(AstExpr.WithEscape _ _) 48]
+    [(AstExpr.WithScratch _) 67]
+    [(AstExpr.InArena _ _) 65]
+    [(AstExpr.TypeLiteral _) 26]
+    [(AstExpr.Init _) 61]
+    [(AstExpr.Comptime _) 27]
+    [(AstExpr.SpmdReduce _) 28]
+    [(AstExpr.SpmdScan _) 68]
+    [(AstExpr.SpmdBroadcast _ _) 64]
+    [(AstExpr.SpmdShuffle _ _) 71]
+    [(AstExpr.SpmdProgramIndex) 69]
+    [(AstExpr.SpmdProgramCount) 70]
+    [(AstExpr.Try _) 29]
+    [(AstExpr.Return _) 48]
+    [(AstExpr.PtrNull _) 30]
+    [(AstExpr.PtrNullCheck _) 31]
+    [(AstExpr.WithResource _) 33]
+    [(AstExpr.PtrAddrOf _) 62]
+    [(AstExpr.PtrRead _) 34]
+    [(AstExpr.PtrWrite _ _) 35]
+    [(AstExpr.PtrOffset _ _) 36]
+    [(AstExpr.PtrCast _ _) 37]
+    [(AstExpr.PtrToInt _) 38]
+    [(AstExpr.IntToPtr _ _) 39]
+    [(AstExpr.Box _) 42]
+    [(AstExpr.BoxGet _) 43]
+    [(AstExpr.BoxTake _) 65]
+    [(AstExpr.BoxSet _ _) 66]
+    [(AstExpr.Quote _) 44]
+    [(AstExpr.Quasiquote _) 45]
+    [(AstExpr.Unquote _) 46]
+    [(AstExpr.UnquoteSplicing _) 47]
+    [(AstExpr.BracketClause _) 63]
+    [(AstExpr.StringData _) 49]
+    [(AstExpr.StringFromBytes _ _) 50]
+    [(AstExpr.ArrayData _) 51]
+    [(AstExpr.BinaryData _) 64]
+    [(AstExpr.ProgramArgc) 52]
+    [(AstExpr.ProgramArgv) 53]
+    [(AstExpr.ProgramEnvp) 54]
+    [(AstExpr.CpuIdEax _ _) 55]
+    [(AstExpr.CpuIdEbx _ _) 56]
+    [(AstExpr.CpuIdEcx _ _) 57]
+    [(AstExpr.CpuIdEdx _ _) 58]
+    [(AstExpr.Xgetbv _) 59]
+    [(AstExpr.Syscall _) 60]))
 
 (define (ast-expr-unspan [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExprSpanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
+    [(AstExpr.Spanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
     [_ expr]))
 
 (define (ast-expr-unspan-with-pools
   [pools : AstNodePoolContext]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExprSpanned inner-id _)
+    [(AstExpr.Spanned inner-id _)
       (ast-expr-unspan-with-pools
         pools
         (ast-node-pool-context-expr-get pools inner-id))]
@@ -4340,50 +4347,50 @@
 
 (define (compiler-ast-begin-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprBegin _) true]
+    [(AstExpr.Begin _) true]
     [_ false]))
 
 (define (compiler-ast-nested-pattern-box-ok? [pattern : AstPattern]) : bool
   (match pattern
-    [(AstPatVariant name args-box)
+    [(AstPattern.Variant name args-box)
       (let
         [args : AstPatternList (box-get args-box)]
         (and
           (= name (ci.intern "Some"))
           (match args
-            [(AstPatternCons tuple-pattern rest-box)
+            [(AstPatternList.Cons tuple-pattern rest-box)
               (let
                 [tuple-pattern : AstPattern (box-get tuple-pattern)]
                 [rest : AstPatternList (box-get rest-box)]
                 (and
                   (match rest
-                    [(AstPatternNil) true]
+                    [(AstPatternList.Nil) true]
                     [_ false])
                   (match tuple-pattern
-                    [(AstPatTuple items-box)
+                    [(AstPattern.Tuple items-box)
                       (let
                         [items : AstPatternList (box-get items-box)]
                         (match items
-                          [(AstPatternCons first tail-box)
+                          [(AstPatternList.Cons first tail-box)
                             (let
                               [first : AstPattern (box-get first)]
                               [tail : AstPatternList (box-get tail-box)]
                               (and
                                 (match first
-                                  [(AstPatBinding bind-name)
+                                  [(AstPattern.Binding bind-name)
                                     (= bind-name (ci.intern "item"))]
                                   [_ false])
                                 (match tail
-                                  [(AstPatternCons second done-box)
+                                  [(AstPatternList.Cons second done-box)
                                     (let
                                       [second : AstPattern (box-get second)]
                                       [done : AstPatternList (box-get done-box)]
                                       (and
                                         (match second
-                                          [(AstPatWildcard) true]
+                                          [(AstPattern.Wildcard) true]
                                           [_ false])
                                         (match done
-                                          [(AstPatternNil) true]
+                                          [(AstPatternList.Nil) true]
                                           [_ false])))]
                                   [_ false])))]
                           [_ false]))]
@@ -4393,15 +4400,15 @@
 
 (define (compiler-ast-single-arm-box-ok? [arms : AstMatchArmList]) : bool
   (match arms
-    [(AstMatchArmCons arm rest-box)
+    [(AstMatchArmList.Cons arm rest-box)
       (let
         [rest : AstMatchArmList (box-get rest-box)]
         (and
           (match rest
-            [(AstMatchArmNil) true]
+            [(AstMatchArmList.Nil) true]
             [_ false])
           (match arm
-            [(AstMatchArm pattern body-id)
+            [(AstMatchArm.Arm pattern body-id)
               (let
                 [body : AstExpr (ast-node-get body-id)]
                 (and
@@ -4412,22 +4419,22 @@
 
 (define (compiler-ast-nested-expr-box-ok? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body-box)
+        [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (and
               (match bindings
-                [(AstLetBindingCons binding rest-box)
+                [(AstLetBindingList.Cons binding rest-box)
                   (let
                     [rest : AstLetBindingList (box-get rest-box)]
                     (and
                       (match rest
-                        [(AstLetBindingNil) true]
+                        [(AstLetBindingList.Nil) true]
                         [_ false])
                       (match binding
-                        [(AstLetBinding name _ init-box)
+                        [(AstLetBinding.Binding name _ init-box)
                           (let
                             [init : AstExpr (ast-node-get init-box)]
                             (and
@@ -4436,25 +4443,25 @@
                         [_ false])))]
                 [_ false])
               (match body
-                [(AstExprIf cond-box then-box else-box)
+                [(AstExpr.If cond-box then-box else-box)
                   (let
                     [cond : AstExpr (ast-node-get cond-box)]
                     [then-expr : AstExpr (ast-node-get then-box)]
                     [else-expr : AstExpr (ast-node-get else-box)]
                     (and
                       (match cond
-                        [(AstExprVar name)
+                        [(AstExpr.Var name)
                           (string.eq (ci.intern-str name) "cond")]
                         [_ false])
                       (match then-expr
-                        [(AstExprMatch match-box)
+                        [(AstExpr.Match match-box)
                           (match (box-get match-box)
-                            [(AstMatch scrut-box arms)
+                            [(AstMatch.Match scrut-box arms)
                               (let
                                 [scrut : AstExpr (ast-node-get scrut-box)]
                                 (and
                                   (match scrut
-                                    [(AstExprVar name)
+                                    [(AstExpr.Var name)
                                       (string.eq (ci.intern-str name) "input")]
                                     [_ false])
                                   (compiler-ast-single-arm-box-ok? arms)))])]
@@ -4465,33 +4472,35 @@
 
 (define (compiler-ast-expr-pattern-box-smoke?) : bool
   (let
-    [one : i64 (ast-node-push (AstExprLiteral (ast-lit-int 1)))]
-    [two : i64 (ast-node-push (AstExprLiteral (ast-lit-int 2)))]
+    [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
+    [two : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 2)))]
     [begin-expr : i64
       (ast-node-push
-        (AstExprBegin (ast-expr-cons one (ast-expr-cons two AstExprNil))))]
+        (AstExpr.Begin (ast-expr-cons one (ast-expr-cons two AstExprList.Nil))))]
     [bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "x" (AstNoType) begin-expr)
-        AstLetBindingNil)]
+        AstLetBindingList.Nil)]
     [tuple-pattern : AstPattern
       (ast-pat-tuple
         (ast-pattern-cons
           (ast-pat-binding "item")
-          (ast-pattern-cons (AstPatWildcard) AstPatternNil)))]
+          (ast-pattern-cons (AstPattern.Wildcard) AstPatternList.Nil)))]
     [variant-pattern : AstPattern
-      (ast-pat-variant "Some" (ast-pattern-cons tuple-pattern AstPatternNil))]
+      (ast-pat-variant
+        "Some"
+        (ast-pattern-cons tuple-pattern AstPatternList.Nil))]
     [arms : AstMatchArmList
       (ast-match-arm-cons
         (ast-match-arm variant-pattern begin-expr)
-        AstMatchArmNil)]
+        AstMatchArmList.Nil)]
     [match-expr : i64
-      (ast-expr-match (ast-node-push (AstExprVar (ci.intern "input"))) arms)]
+      (ast-expr-match (ast-node-push (AstExpr.Var (ci.intern "input"))) arms)]
     [nested : i64
       (ast-expr-let
         bindings
         (ast-expr-if
-          (ast-node-push (AstExprVar (ci.intern "cond")))
+          (ast-node-push (AstExpr.Var (ci.intern "cond")))
           match-expr
           begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))
@@ -4507,7 +4516,7 @@
         (and
           (= name (ci.intern want-name))
           (match value
-            [(AstExprLiteral (AstLitInt actual _)) (= actual want-value)]
+            [(AstExpr.Literal (AstLitInt actual _)) (= actual want-value)]
             [_ false])))]
     [_ false]))
 
@@ -4530,12 +4539,12 @@
       (ast-decl-def
         "generated"
         (AstSomeType (AstTyI64))
-        (ast-node-push (AstExprLiteral (ast-lit-int 7))))]
+        (ast-node-push (AstExpr.Literal (ast-lit-int 7))))]
     [runtime : AstDecl
       (ast-decl-def
         "runtime"
         (AstSomeType (AstTyI64))
-        (ast-node-push (AstExprLiteral (ast-lit-int 9))))]
+        (ast-node-push (AstExpr.Literal (ast-lit-int 9))))]
     [nested : AstDecl (ast-decl-unsafe (ast-decl-comptime-decl generated))]
     [program : AstProgram
       (ast-program
@@ -4644,9 +4653,9 @@
             [_ false])]
         [_ false])]
     [lit : AstLiteral (ast-lit-int 41)]
-    [one : i64 (ast-node-push (AstExprLiteral (ast-lit-int 1)))]
+    [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
     [expr : i64
-      (ast-expr-binary (AstBinAdd) (ast-node-push (AstExprLiteral lit)) one)]
+      (ast-expr-binary (AstBinAdd) (ast-node-push (AstExpr.Literal lit)) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]

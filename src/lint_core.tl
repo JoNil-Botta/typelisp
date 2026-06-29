@@ -465,11 +465,11 @@
 ;: transparent.
 (define (lint-ladder-length [expr : AstExpr]) : i64
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-ladder-length inner))]
-    [(AstExprIf _ _ else-branch-box)
+    [(AstExpr.If _ _ else-branch-box)
       (let
         [else-branch : AstExpr (ast-node-get else-branch-box)]
         (+ 1 (lint-ladder-length else-branch)))]
@@ -477,11 +477,11 @@
 
 (define (lint-return-path-chain-length [expr : AstExpr]) : i64
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-return-path-chain-length inner))]
-    [(AstExprIf _ then-branch-box _)
+    [(AstExpr.If _ then-branch-box _)
       (let
         [then-branch : AstExpr (ast-node-get then-branch-box)]
         (+ 1 (lint-return-path-chain-length then-branch)))]
@@ -489,54 +489,54 @@
 
 (define (lint-unit-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-unit-expr? inner))]
-    [(AstExprLiteral AstLitUnit) true]
+    [(AstExpr.Literal AstLitUnit) true]
     [_ false]))
 
 (define (lint-single-arg-call? [args : AstExprList]) : bool
   (match args
-    [(AstExprCons _ rest)
+    [(AstExprList.Cons _ rest)
       (let
         [rest : AstExprList (box-get rest)]
         (match rest
-          [(AstExprNil) true]
+          [(AstExprList.Nil) true]
           [_ false]))]
     [_ false]))
 
 (define (lint-not-call? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-not-call? inner))]
-    [(AstExprCall func-box args)
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match func
-          [(AstExprVar name)
+          [(AstExpr.Var name)
             (and
               (string.eq (intern-str name) "not")
               (lint-single-arg-call? args))]
           [_ false]))]
-    [(AstExprUnary (AstUnNot) _) true]
+    [(AstExpr.Unary (AstUnNot) _) true]
     [_ false]))
 
 (define (lint-return-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-return-expr? inner))]
-    [(AstExprReturn _) true]
+    [(AstExpr.Return _) true]
     [_ false]))
 
 (define (lint-expr-list-has-return? [exprs : AstExprList]) : bool
   (match exprs
-    [(AstExprNil) false]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -546,31 +546,31 @@
 
 (define (lint-return-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-return-branch? inner))]
-    [(AstExprReturn _) true]
-    [(AstExprBegin exprs) (lint-expr-list-has-return? exprs)]
+    [(AstExpr.Return _) true]
+    [(AstExpr.Begin exprs) (lint-expr-list-has-return? exprs)]
     [_ false]))
 
 (define (lint-side-effect-branch? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-side-effect-branch? inner))]
-    [(AstExprSet _ _) true]
-    [(AstExprArraySet _ _ _) true]
-    [(AstExprArrayPush _ _) true]
-    [(AstExprStructSet _ _ _) true]
-    [(AstExprBegin exprs) (lint-expr-list-has-side-effect? exprs)]
+    [(AstExpr.Set _ _) true]
+    [(AstExpr.ArraySet _ _ _) true]
+    [(AstExpr.ArrayPush _ _) true]
+    [(AstExpr.StructSet _ _ _) true]
+    [(AstExpr.Begin exprs) (lint-expr-list-has-side-effect? exprs)]
     [_ false]))
 
 (define (lint-expr-list-has-side-effect? [exprs : AstExprList]) : bool
   (match exprs
-    [(AstExprNil) false]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -580,7 +580,7 @@
 
 ;: Sentinel span for a finding whose AST node carried no source location (a
 ;: synthesized or in-memory expression). Parsed ladders carry the span from
-;: their `AstExprSpanned` wrapper instead.
+;: their `AstExpr.Spanned` wrapper instead.
 (define (lint-no-span) : AstSourceSpan
   (AstSourceSpan 0 0 0 0))
 
@@ -701,7 +701,7 @@
 
 (define (lint-no-effect-span [expr : AstExpr]) : AstSourceSpan
   (match expr
-    [(AstExprSpanned _ span) span]
+    [(AstExpr.Spanned _ span) span]
     [_ (lint-no-span)]))
 
 (define (lint-terminal-callee-name? [text : String]) : bool
@@ -717,11 +717,11 @@
 
 (define (lint-terminal-callee? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-terminal-callee? inner))]
-    [(AstExprVar name)
+    [(AstExpr.Var name)
       (let
         [text : String (intern-str name)]
         (lint-terminal-callee-name? text))]
@@ -729,20 +729,20 @@
 
 (define (lint-terminal-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-terminal-expr? inner))]
-    [(AstExprAnn inner-box _)
+    [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-terminal-expr? inner))]
-    [(AstExprCast inner-box _)
+    [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-terminal-expr? inner))]
-    [(AstExprReturn _) true]
-    [(AstExprCall func-box _)
+    [(AstExpr.Return _) true]
+    [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (lint-terminal-callee? func))]
@@ -750,19 +750,19 @@
 
 (define (lint-diverging-call-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-diverging-call-expr? inner))]
-    [(AstExprAnn inner-box _)
+    [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-diverging-call-expr? inner))]
-    [(AstExprCast inner-box _)
+    [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-diverging-call-expr? inner))]
-    [(AstExprCall func-box _)
+    [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (lint-terminal-callee? func))]
@@ -773,7 +773,7 @@
   [rest : AstExprList]
   [acc : LintFindings]) : LintFindings
   (match rest
-    [(AstExprNil) acc]
+    [(AstExprList.Nil) acc]
     [_
       (if (lint-diverging-call-expr? head)
         (lint-findings-add
@@ -798,14 +798,14 @@
 
 (define (lint-no-effect-pure-expr? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-no-effect-pure-expr? inner))]
-    [(AstExprLiteral lit) (lint-no-effect-pure-literal? lit)]
-    [(AstExprVar _) true]
-    [(AstExprTypeLiteral _) true]
-    [(AstExprBinary op left-box right-box)
+    [(AstExpr.Literal lit) (lint-no-effect-pure-literal? lit)]
+    [(AstExpr.Var _) true]
+    [(AstExpr.TypeLiteral _) true]
+    [(AstExpr.Binary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
@@ -813,19 +813,19 @@
           (lint-no-effect-pure-binop? op)
           (lint-no-effect-pure-expr? left)
           (lint-no-effect-pure-expr? right)))]
-    [(AstExprUnary _ inner-box)
+    [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-no-effect-pure-expr? inner))]
-    [(AstExprAnn inner-box _)
+    [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-no-effect-pure-expr? inner))]
-    [(AstExprCast inner-box _)
+    [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-no-effect-pure-expr? inner))]
-    [(AstExprPtrNull _) true]
+    [(AstExpr.PtrNull _) true]
     [_ false]))
 
 (define (lint-deprecated-string-concat-name? [name : String]) : bool
@@ -892,20 +892,20 @@
 
 (define (lint-and-or-func-op [func : AstExpr]) : String
   (match func
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-and-or-func-op inner))]
-    [(AstExprVar name) (lint-and-or-op-name (intern-str name))]
+    [(AstExpr.Var name) (lint-and-or-op-name (intern-str name))]
     [_ ""]))
 
 (define (lint-str-cat-func? [func : AstExpr]) : bool
   (match func
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-str-cat-func? inner))]
-    [(AstExprVar name) (string.eq (intern-str name) "str-cat")]
+    [(AstExpr.Var name) (string.eq (intern-str name) "str-cat")]
     [_ false]))
 
 (define (lint-literal-render [lit : AstLiteral]) : String
@@ -957,8 +957,8 @@
 
 (define (lint-expr-list-render [exprs : AstExprList]) : String
   (match exprs
-    [(AstExprNil) ""]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) ""]
+    [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -975,19 +975,19 @@
 
 (define (lint-expr-render [expr : AstExpr]) : String
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-expr-render inner))]
-    [(AstExprVar name) (intern-str name)]
-    [(AstExprLiteral lit) (lint-literal-render lit)]
-    [(AstExprCall func-box args)
+    [(AstExpr.Var name) (intern-str name)]
+    [(AstExpr.Literal lit) (lint-literal-render lit)]
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (lint-parenthesized-call-render
           (lint-expr-render func)
           (lint-expr-list-render args)))]
-    [(AstExprBinary op left-box right-box)
+    [(AstExpr.Binary op left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
@@ -996,7 +996,7 @@
           (lint-render-args-join
             (lint-expr-render left)
             (lint-expr-render right))))]
-    [(AstExprUnary op inner-box)
+    [(AstExpr.Unary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-parenthesized-call-render
@@ -1006,11 +1006,11 @@
 
 (define (lint-and-or-call-kind? [op : String] [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-and-or-call-kind? op inner))]
-    [(AstExprCall func-box _)
+    [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (string.eq (lint-and-or-func-op func) op))]
@@ -1018,8 +1018,8 @@
 
 (define (lint-and-or-args-have-kind? [op : String] [args : AstExprList]) : bool
   (match args
-    [(AstExprNil) false]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -1029,11 +1029,11 @@
 
 (define (lint-str-cat-call? [expr : AstExpr]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-str-cat-call? inner))]
-    [(AstExprCall func-box _)
+    [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (lint-str-cat-func? func))]
@@ -1041,8 +1041,8 @@
 
 (define (lint-str-cat-args-have-nested? [args : AstExprList]) : bool
   (match args
-    [(AstExprNil) false]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -1052,11 +1052,11 @@
 
 (define (lint-cascading-and-or-flat-arg-render [op : String] [expr : AstExpr]) : String
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-cascading-and-or-flat-arg-render op inner))]
-    [(AstExprCall func-box args)
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (if (string.eq (lint-and-or-func-op func) op)
@@ -1068,8 +1068,8 @@
   [op : String]
   [args : AstExprList]) : String
   (match args
-    [(AstExprNil) ""]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) ""]
+    [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -1079,11 +1079,11 @@
 
 (define (lint-cascading-and-or-flat-arg-count [op : String] [expr : AstExpr]) : i64
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-cascading-and-or-flat-arg-count op inner))]
-    [(AstExprCall func-box args)
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (if (string.eq (lint-and-or-func-op func) op)
@@ -1095,8 +1095,8 @@
   [op : String]
   [args : AstExprList]) : i64
   (match args
-    [(AstExprNil) 0]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) 0]
+    [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -1393,8 +1393,8 @@
   [alias : String]
   [module-name : String]) : bool
   (match patterns
-    [(AstPatternNil) false]
-    [(AstPatternCons head rest)
+    [(AstPatternList.Nil) false]
+    [(AstPatternList.Cons head rest)
       (let
         [head : AstPattern (box-get head)]
         [rest : AstPatternList (box-get rest)]
@@ -1407,17 +1407,17 @@
   [alias : String]
   [module-name : String]) : bool
   (match pattern
-    [(AstPatVar _ maybe-ty)
+    [(AstPattern.Var _ maybe-ty)
       (lint-maybe-type-uses-import? maybe-ty alias module-name)]
-    [(AstPatTuple items)
+    [(AstPattern.Tuple items)
       (lint-pattern-list-uses-import? (box-get items) alias module-name)]
-    [(AstPatWildcard) false]
-    [(AstPatBinding _) false]
-    [(AstPatVariant name items)
+    [(AstPattern.Wildcard) false]
+    [(AstPattern.Binding _) false]
+    [(AstPattern.Variant name items)
       (if (lint-name-id-uses-import? name alias module-name)
         true
         (lint-pattern-list-uses-import? (box-get items) alias module-name))]
-    [(AstPatLiteral _) false]))
+    [(AstPattern.Literal _) false]))
 
 (define (lint-unused-unsafe-candidate-sentinel?
   [alias : String]
@@ -1441,8 +1441,8 @@
   [alias : String]
   [module-name : String]) : bool
   (match exprs
-    [(AstExprNil) false]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -1455,12 +1455,12 @@
   [alias : String]
   [module-name : String]) : bool
   (match bindings
-    [(AstLetBindingNil) false]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) false]
+    [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ maybe-ty init)
+          [(AstLetBinding.Binding _ maybe-ty init)
             (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
               true
               (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
@@ -1472,12 +1472,12 @@
   [alias : String]
   [module-name : String]) : bool
   (match arms
-    [(AstMatchArmNil) false]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) false]
+    [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm pattern body)
+          [(AstMatchArm.Arm pattern body)
             (if (lint-pattern-uses-import? pattern alias module-name)
               true
               (if (lint-expr-uses-import? (ast-node-get body) alias module-name)
@@ -1489,12 +1489,12 @@
   [alias : String]
   [module-name : String]) : bool
   (match bindings
-    [(AstResourceBindingNil) false]
-    [(AstResourceBindingCons binding rest)
+    [(AstResourceBindingList.Nil) false]
+    [(AstResourceBindingList.Cons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding _ init cleanup)
+          [(AstResourceBinding.Binding _ init cleanup)
             (if (lint-expr-uses-import? (ast-node-get init) alias module-name)
               true
               (if (lint-expr-uses-import?
@@ -1509,21 +1509,21 @@
   [alias : String]
   [module-name : String]) : bool
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (lint-expr-uses-import? (ast-node-get inner-box) alias module-name)]
-    [(AstExprLiteral _) false]
-    [(AstExprVar name) (lint-name-id-uses-import? name alias module-name)]
-    [(AstExprBinary _ left right)
+    [(AstExpr.Literal _) false]
+    [(AstExpr.Var name) (lint-name-id-uses-import? name alias module-name)]
+    [(AstExpr.Binary _ left right)
       (if (lint-expr-uses-import? (ast-node-get left) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get right) alias module-name))]
-    [(AstExprUnary _ inner)
+    [(AstExpr.Unary _ inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprCall func args)
+    [(AstExpr.Call func args)
       (if (lint-expr-uses-import? (ast-node-get func) alias module-name)
         true
         (lint-expr-list-uses-import? args alias module-name))]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (if (lint-expr-uses-import? (ast-node-get cond) alias module-name)
         true
         (if (lint-expr-uses-import?
@@ -1532,52 +1532,55 @@
           module-name)
           true
           (lint-expr-uses-import? (ast-node-get else-branch) alias module-name)))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body)
+        [(AstLet.Let bindings body)
           (if (lint-let-bindings-use-import? bindings alias module-name)
             true
             (lint-expr-uses-import? (ast-node-get body) alias module-name))])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda params ret body)
+        [(AstLambda.Lambda params ret body)
           (if (lint-param-list-uses-import? params alias module-name)
             true
             (if (lint-maybe-type-uses-import? ret alias module-name)
               true
               (lint-expr-uses-import? (ast-node-get body) alias module-name)))])]
-    [(AstExprTuple exprs) (lint-expr-list-uses-import? exprs alias module-name)]
-    [(AstExprTupleRef tuple _)
+    [(AstExpr.Tuple exprs)
+      (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExpr.TupleRef tuple _)
       (lint-expr-uses-import? (ast-node-get tuple) alias module-name)]
-    [(AstExprArray exprs) (lint-expr-list-uses-import? exprs alias module-name)]
-    [(AstExprMakeArray elem len)
+    [(AstExpr.Array exprs)
+      (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExpr.MakeArray elem len)
       (if (lint-type-uses-import? elem alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get len) alias module-name))]
-    [(AstExprArrayRef array index)
+    [(AstExpr.ArrayRef array index)
       (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get index) alias module-name))]
-    [(AstExprArraySet array index value)
+    [(AstExpr.ArraySet array index value)
       (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get index) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get value) alias module-name)))]
-    [(AstExprArrayPush array value)
+    [(AstExpr.ArrayPush array value)
       (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExprStringRef text index)
+    [(AstExpr.StringRef text index)
       (if (lint-expr-uses-import? (ast-node-get text) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get index) alias module-name))]
-    [(AstExprWhile cond body)
+    [(AstExpr.While cond body)
       (if (lint-expr-uses-import? (ast-node-get cond) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get body) alias module-name))]
-    [(AstExprBegin exprs) (lint-expr-list-uses-import? exprs alias module-name)]
-    [(AstExprUnsafe exprs)
+    [(AstExpr.Begin exprs)
+      (lint-expr-list-uses-import? exprs alias module-name)]
+    [(AstExpr.Unsafe exprs)
       (cond
         [(lint-requires-enclosing-unsafe-sentinel? alias module-name) false]
         [(lint-unused-unsafe-candidate-sentinel? alias module-name)
@@ -1585,32 +1588,32 @@
             (lint-expr-list-uses-import? exprs alias module-name)
             true)]
         [else (lint-expr-list-uses-import? exprs alias module-name)])]
-    [(AstExprSet target value)
+    [(AstExpr.Set target value)
       (if (lint-name-id-uses-import? target alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExprAnn inner ty)
+    [(AstExpr.Ann inner ty)
       (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
-    [(AstExprCast inner ty)
+    [(AstExpr.Cast inner ty)
       (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
-    [(AstExprBorrow _ _ place)
+    [(AstExpr.Borrow _ _ place)
       (lint-expr-uses-import? (ast-node-get place) alias module-name)]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee arms)
+        [(AstMatch.Match scrutinee arms)
           (if (lint-expr-uses-import?
             (ast-node-get scrutinee)
             alias
             module-name)
             true
             (lint-match-arms-use-import? arms alias module-name))])]
-    [(AstExprForeach fe-box)
+    [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ index-ty start end body)
+        [(AstForeach.Foreach _ index-ty start end body)
           (cond
             [(lint-type-uses-import? index-ty alias module-name) true]
             [(lint-expr-uses-import? (ast-node-get start) alias module-name)
@@ -1618,9 +1621,9 @@
             [(lint-expr-uses-import? (ast-node-get end) alias module-name) true]
             [else
               (lint-expr-uses-import? (ast-node-get body) alias module-name)])])]
-    [(AstExprSpmdReduce reduce-box)
+    [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce _ _ index-ty start end init value)
+        [(AstSpmdReduce.Reduce _ _ index-ty start end init value)
           (cond
             [(lint-type-uses-import? index-ty alias module-name) true]
             [(lint-expr-uses-import? (ast-node-get start) alias module-name)
@@ -1630,9 +1633,9 @@
               true]
             [else
               (lint-expr-uses-import? (ast-node-get value) alias module-name)])])]
-    [(AstExprSpmdScan scan-box)
+    [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan _ _ index-ty start end _ prefix-ty init value body)
+        [(AstSpmdScan.Scan _ _ index-ty start end _ prefix-ty init value body)
           (cond
             [(lint-type-uses-import? index-ty alias module-name) true]
             [(lint-type-uses-import? prefix-ty alias module-name) true]
@@ -1645,145 +1648,145 @@
               true]
             [else
               (lint-expr-uses-import? (ast-node-get body) alias module-name)])])]
-    [(AstExprSpmdBroadcast value lane)
+    [(AstExpr.SpmdBroadcast value lane)
       (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get lane) alias module-name))]
-    [(AstExprSpmdShuffle value lane)
+    [(AstExpr.SpmdShuffle value lane)
       (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get lane) alias module-name))]
-    [(AstExprStructGet receiver _)
+    [(AstExpr.StructGet receiver _)
       (lint-expr-uses-import? (ast-node-get receiver) alias module-name)]
-    [(AstExprStructSet receiver _ value)
+    [(AstExpr.StructSet receiver _ value)
       (if (lint-expr-uses-import? (ast-node-get receiver) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExprWithRegion _ body)
+    [(AstExpr.WithRegion _ body)
       (lint-expr-list-uses-import? body alias module-name)]
-    [(AstExprWithEscape scratch body)
+    [(AstExpr.WithEscape scratch body)
       (if (lint-expr-uses-import? (ast-node-get scratch) alias module-name)
         true
         (lint-expr-list-uses-import? body alias module-name))]
-    [(AstExprWithScratch body)
+    [(AstExpr.WithScratch body)
       (lint-expr-list-uses-import? body alias module-name)]
-    [(AstExprInArena arena body)
+    [(AstExpr.InArena arena body)
       (if (lint-expr-uses-import? (ast-node-get arena) alias module-name)
         true
         (lint-expr-list-uses-import? body alias module-name))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (if (lint-resource-bindings-use-import? bindings alias module-name)
             true
             (lint-expr-list-uses-import? body alias module-name))])]
-    [(AstExprBox inner)
+    [(AstExpr.Box inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprBoxGet inner)
+    [(AstExpr.BoxGet inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprBoxTake inner)
+    [(AstExpr.BoxTake inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprBoxSet inner value)
+    [(AstExpr.BoxSet inner value)
       (if (lint-expr-uses-import? (ast-node-get inner) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get value) alias module-name))]
-    [(AstExprTypeLiteral ty) (lint-type-uses-import? ty alias module-name)]
-    [(AstExprInit maybe-ty)
+    [(AstExpr.TypeLiteral ty) (lint-type-uses-import? ty alias module-name)]
+    [(AstExpr.Init maybe-ty)
       (lint-maybe-type-uses-import? maybe-ty alias module-name)]
-    [(AstExprComptime inner)
+    [(AstExpr.Comptime inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprQuote inner)
+    [(AstExpr.Quote inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprQuasiquote inner)
+    [(AstExpr.Quasiquote inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprUnquote inner)
+    [(AstExpr.Unquote inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprUnquoteSplicing inner)
+    [(AstExpr.UnquoteSplicing inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprBracketClause items)
+    [(AstExpr.BracketClause items)
       (lint-expr-list-uses-import? items alias module-name)]
-    [(AstExprTry inner)
+    [(AstExpr.Try inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprReturn inner)
+    [(AstExpr.Return inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprPtrNull ty) (lint-type-uses-import? ty alias module-name)]
-    [(AstExprPtrNullCheck inner)
+    [(AstExpr.PtrNull ty) (lint-type-uses-import? ty alias module-name)]
+    [(AstExpr.PtrNullCheck inner)
       (lint-expr-uses-import? (ast-node-get inner) alias module-name)]
-    [(AstExprPtrAddrOf place)
+    [(AstExpr.PtrAddrOf place)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get place) alias module-name))]
-    [(AstExprPtrRead ptr)
+    [(AstExpr.PtrRead ptr)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get ptr) alias module-name))]
-    [(AstExprPtrWrite ptr value)
+    [(AstExpr.PtrWrite ptr value)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get value) alias module-name)))]
-    [(AstExprPtrOffset ptr offset)
+    [(AstExpr.PtrOffset ptr offset)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get offset) alias module-name)))]
-    [(AstExprPtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
           (lint-type-uses-import? ty alias module-name)))]
-    [(AstExprPtrToInt ptr)
+    [(AstExpr.PtrToInt ptr)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get ptr) alias module-name))]
-    [(AstExprIntToPtr value ty)
+    [(AstExpr.IntToPtr value ty)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get value) alias module-name)
           true
           (lint-type-uses-import? ty alias module-name)))]
-    [(AstExprStringData inner)
+    [(AstExpr.StringData inner)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get inner) alias module-name))]
-    [(AstExprStringFromBytes ptr len)
+    [(AstExpr.StringFromBytes ptr len)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (if (lint-expr-uses-import? (ast-node-get ptr) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get len) alias module-name)))]
-    [(AstExprArrayData inner)
+    [(AstExpr.ArrayData inner)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get inner) alias module-name))]
-    [(AstExprBinaryData _) false]
-    [(AstExprSpmdProgramIndex) false]
-    [(AstExprSpmdProgramCount) false]
-    [(AstExprProgramArgc) false]
-    [(AstExprProgramArgv) false]
-    [(AstExprProgramEnvp) false]
-    [(AstExprCpuIdEax leaf subleaf)
+    [(AstExpr.BinaryData _) false]
+    [(AstExpr.SpmdProgramIndex) false]
+    [(AstExpr.SpmdProgramCount) false]
+    [(AstExpr.ProgramArgc) false]
+    [(AstExpr.ProgramArgv) false]
+    [(AstExpr.ProgramEnvp) false]
+    [(AstExpr.CpuIdEax leaf subleaf)
       (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
-    [(AstExprCpuIdEbx leaf subleaf)
+    [(AstExpr.CpuIdEbx leaf subleaf)
       (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
-    [(AstExprCpuIdEcx leaf subleaf)
+    [(AstExpr.CpuIdEcx leaf subleaf)
       (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
-    [(AstExprCpuIdEdx leaf subleaf)
+    [(AstExpr.CpuIdEdx leaf subleaf)
       (if (lint-expr-uses-import? (ast-node-get leaf) alias module-name)
         true
         (lint-expr-uses-import? (ast-node-get subleaf) alias module-name))]
-    [(AstExprXgetbv index)
+    [(AstExpr.Xgetbv index)
       (lint-expr-uses-import? (ast-node-get index) alias module-name)]
-    [(AstExprSyscall args)
+    [(AstExpr.Syscall args)
       (if (lint-requires-enclosing-unsafe-sentinel? alias module-name)
         true
         (lint-expr-list-uses-import? args alias module-name))]))
@@ -2330,8 +2333,8 @@
   [exprs : AstExprList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match exprs
-    [(AstExprNil) state]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
       (lint-unused-assignment-note-reads-list
         (box-get rest)
         (lint-unused-assignment-note-reads (ast-node-get head) state))]))
@@ -2340,10 +2343,10 @@
   [bindings : AstLetBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match bindings
-    [(AstLetBindingNil) state]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
       (match binding
-        [(AstLetBinding _ _ init)
+        [(AstLetBinding.Binding _ _ init)
           (lint-unused-assignment-note-reads-let-bindings
             (box-get rest)
             (lint-unused-assignment-note-reads (ast-node-get init) state))])]))
@@ -2352,10 +2355,10 @@
   [arms : AstMatchArmList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match arms
-    [(AstMatchArmNil) state]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) state]
+    [(AstMatchArmList.Cons arm rest)
       (match arm
-        [(AstMatchArm _ body)
+        [(AstMatchArm.Arm _ body)
           (lint-unused-assignment-note-reads-match-arms
             (box-get rest)
             (lint-unused-assignment-note-reads (ast-node-get body) state))])]))
@@ -2364,10 +2367,10 @@
   [bindings : AstResourceBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match bindings
-    [(AstResourceBindingNil) state]
-    [(AstResourceBindingCons binding rest)
+    [(AstResourceBindingList.Nil) state]
+    [(AstResourceBindingList.Cons binding rest)
       (match binding
-        [(AstResourceBinding _ init cleanup)
+        [(AstResourceBinding.Binding _ init cleanup)
           (lint-unused-assignment-note-reads-resource-bindings
             (box-get rest)
             (lint-unused-assignment-note-reads
@@ -2378,98 +2381,99 @@
   [expr : AstExpr]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (lint-unused-assignment-note-reads (ast-node-get inner-box) state)]
-    [(AstExprLiteral _) state]
-    [(AstExprVar name) (lint-unused-assignment-read-id state name)]
-    [(AstExprBinary _ left right)
+    [(AstExpr.Literal _) state]
+    [(AstExpr.Var name) (lint-unused-assignment-read-id state name)]
+    [(AstExpr.Binary _ left right)
       (lint-unused-assignment-note-reads
         (ast-node-get right)
         (lint-unused-assignment-note-reads (ast-node-get left) state))]
-    [(AstExprUnary _ inner)
+    [(AstExpr.Unary _ inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprCall func args)
+    [(AstExpr.Call func args)
       (lint-unused-assignment-clear-pending
         (lint-unused-assignment-note-reads-list
           args
           (lint-unused-assignment-note-reads (ast-node-get func) state)))]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (lint-unused-assignment-clear-pending
         (lint-unused-assignment-note-reads
           (ast-node-get else-branch)
           (lint-unused-assignment-note-reads
             (ast-node-get then-branch)
             (lint-unused-assignment-note-reads (ast-node-get cond) state))))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body)
+        [(AstLet.Let bindings body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
               (ast-node-get body)
               (lint-unused-assignment-note-reads-let-bindings bindings state)))])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda _ _ body)
+        [(AstLambda.Lambda _ _ body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads (ast-node-get body) state))])]
-    [(AstExprTuple exprs) (lint-unused-assignment-note-reads-list exprs state)]
-    [(AstExprTupleRef tuple _)
+    [(AstExpr.Tuple exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExpr.TupleRef tuple _)
       (lint-unused-assignment-note-reads (ast-node-get tuple) state)]
-    [(AstExprArray exprs) (lint-unused-assignment-note-reads-list exprs state)]
-    [(AstExprMakeArray _ len)
+    [(AstExpr.Array exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExpr.MakeArray _ len)
       (lint-unused-assignment-note-reads (ast-node-get len) state)]
-    [(AstExprArrayRef array index)
+    [(AstExpr.ArrayRef array index)
       (lint-unused-assignment-note-reads
         (ast-node-get index)
         (lint-unused-assignment-note-reads (ast-node-get array) state))]
-    [(AstExprArraySet array index value)
+    [(AstExpr.ArraySet array index value)
       (lint-unused-assignment-note-reads
         (ast-node-get value)
         (lint-unused-assignment-note-reads
           (ast-node-get index)
           (lint-unused-assignment-note-reads (ast-node-get array) state)))]
-    [(AstExprArrayPush array value)
+    [(AstExpr.ArrayPush array value)
       (lint-unused-assignment-note-reads
         (ast-node-get value)
         (lint-unused-assignment-note-reads (ast-node-get array) state))]
-    [(AstExprStringRef text index)
+    [(AstExpr.StringRef text index)
       (lint-unused-assignment-note-reads
         (ast-node-get index)
         (lint-unused-assignment-note-reads (ast-node-get text) state))]
-    [(AstExprWhile cond body)
+    [(AstExpr.While cond body)
       (lint-unused-assignment-clear-pending
         (lint-unused-assignment-note-reads
           (ast-node-get body)
           (lint-unused-assignment-note-reads (ast-node-get cond) state)))]
-    [(AstExprBegin exprs) (lint-unused-assignment-note-reads-list exprs state)]
-    [(AstExprUnsafe exprs) (lint-unused-assignment-note-reads-list exprs state)]
-    [(AstExprSet _ value)
+    [(AstExpr.Begin exprs) (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExpr.Unsafe exprs)
+      (lint-unused-assignment-note-reads-list exprs state)]
+    [(AstExpr.Set _ value)
       (lint-unused-assignment-note-reads (ast-node-get value) state)]
-    [(AstExprAnn inner _)
+    [(AstExpr.Ann inner _)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprCast inner _)
+    [(AstExpr.Cast inner _)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprBorrow _ _ place)
+    [(AstExpr.Borrow _ _ place)
       (lint-unused-assignment-note-reads (ast-node-get place) state)]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee arms)
+        [(AstMatch.Match scrutinee arms)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads-match-arms
               arms
               (lint-unused-assignment-note-reads (ast-node-get scrutinee) state)))])]
-    [(AstExprForeach fe-box)
+    [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ _ start end body)
+        [(AstForeach.Foreach _ _ start end body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
               (ast-node-get body)
               (lint-unused-assignment-note-reads
                 (ast-node-get end)
                 (lint-unused-assignment-note-reads (ast-node-get start) state))))])]
-    [(AstExprSpmdReduce reduce-box)
+    [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce _ _ _ start end init value)
+        [(AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
               (ast-node-get value)
@@ -2478,9 +2482,9 @@
                 (lint-unused-assignment-note-reads
                   (ast-node-get end)
                   (lint-unused-assignment-note-reads (ast-node-get start) state)))))])]
-    [(AstExprSpmdScan scan-box)
+    [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan _ _ _ start end _ _ init value body)
+        [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-unused-assignment-clear-pending
             (lint-unused-assignment-note-reads
               (ast-node-get body)
@@ -2493,118 +2497,118 @@
                     (lint-unused-assignment-note-reads
                       (ast-node-get start)
                       state))))))])]
-    [(AstExprSpmdBroadcast value lane)
+    [(AstExpr.SpmdBroadcast value lane)
       (lint-unused-assignment-note-reads
         (ast-node-get lane)
         (lint-unused-assignment-note-reads (ast-node-get value) state))]
-    [(AstExprSpmdShuffle value lane)
+    [(AstExpr.SpmdShuffle value lane)
       (lint-unused-assignment-note-reads
         (ast-node-get lane)
         (lint-unused-assignment-note-reads (ast-node-get value) state))]
-    [(AstExprStructGet receiver _)
+    [(AstExpr.StructGet receiver _)
       (lint-unused-assignment-note-reads (ast-node-get receiver) state)]
-    [(AstExprStructSet receiver _ value)
+    [(AstExpr.StructSet receiver _ value)
       (lint-unused-assignment-note-reads
         (ast-node-get value)
         (lint-unused-assignment-note-reads (ast-node-get receiver) state))]
-    [(AstExprWithRegion _ body)
+    [(AstExpr.WithRegion _ body)
       (lint-unused-assignment-note-reads-list body state)]
-    [(AstExprWithEscape scratch body)
+    [(AstExpr.WithEscape scratch body)
       (lint-unused-assignment-note-reads-list
         body
         (lint-unused-assignment-note-reads (ast-node-get scratch) state))]
-    [(AstExprWithScratch body)
+    [(AstExpr.WithScratch body)
       (lint-unused-assignment-note-reads-list body state)]
-    [(AstExprInArena arena body)
+    [(AstExpr.InArena arena body)
       (lint-unused-assignment-note-reads-list
         body
         (lint-unused-assignment-note-reads (ast-node-get arena) state))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (lint-unused-assignment-note-reads-list
             body
             (lint-unused-assignment-note-reads-resource-bindings bindings state))])]
-    [(AstExprBox inner)
+    [(AstExpr.Box inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprBoxGet inner)
+    [(AstExpr.BoxGet inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprBoxTake inner)
+    [(AstExpr.BoxTake inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprBoxSet inner value)
+    [(AstExpr.BoxSet inner value)
       (lint-unused-assignment-note-reads
         (ast-node-get value)
         (lint-unused-assignment-note-reads (ast-node-get inner) state))]
-    [(AstExprTypeLiteral _) state]
-    [(AstExprInit _) state]
-    [(AstExprComptime inner)
+    [(AstExpr.TypeLiteral _) state]
+    [(AstExpr.Init _) state]
+    [(AstExpr.Comptime inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprQuote _) state]
-    [(AstExprQuasiquote _) state]
-    [(AstExprUnquote inner)
+    [(AstExpr.Quote _) state]
+    [(AstExpr.Quasiquote _) state]
+    [(AstExpr.Unquote inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprUnquoteSplicing inner)
+    [(AstExpr.UnquoteSplicing inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprBracketClause items)
+    [(AstExpr.BracketClause items)
       (lint-unused-assignment-note-reads-list items state)]
-    [(AstExprTry inner)
+    [(AstExpr.Try inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprReturn inner)
+    [(AstExpr.Return inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprPtrNull _) state]
-    [(AstExprPtrNullCheck inner)
+    [(AstExpr.PtrNull _) state]
+    [(AstExpr.PtrNullCheck inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprPtrAddrOf place)
+    [(AstExpr.PtrAddrOf place)
       (lint-unused-assignment-note-reads (ast-node-get place) state)]
-    [(AstExprPtrRead ptr)
+    [(AstExpr.PtrRead ptr)
       (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
-    [(AstExprPtrWrite ptr value)
+    [(AstExpr.PtrWrite ptr value)
       (lint-unused-assignment-note-reads
         (ast-node-get value)
         (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
-    [(AstExprPtrOffset ptr offset)
+    [(AstExpr.PtrOffset ptr offset)
       (lint-unused-assignment-note-reads
         (ast-node-get offset)
         (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
-    [(AstExprPtrCast ptr _)
+    [(AstExpr.PtrCast ptr _)
       (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
-    [(AstExprPtrToInt ptr)
+    [(AstExpr.PtrToInt ptr)
       (lint-unused-assignment-note-reads (ast-node-get ptr) state)]
-    [(AstExprIntToPtr value _)
+    [(AstExpr.IntToPtr value _)
       (lint-unused-assignment-note-reads (ast-node-get value) state)]
-    [(AstExprStringData inner)
+    [(AstExpr.StringData inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprStringFromBytes ptr len)
+    [(AstExpr.StringFromBytes ptr len)
       (lint-unused-assignment-note-reads
         (ast-node-get len)
         (lint-unused-assignment-note-reads (ast-node-get ptr) state))]
-    [(AstExprArrayData inner)
+    [(AstExpr.ArrayData inner)
       (lint-unused-assignment-note-reads (ast-node-get inner) state)]
-    [(AstExprBinaryData _) state]
-    [(AstExprSpmdProgramIndex) state]
-    [(AstExprSpmdProgramCount) state]
-    [(AstExprProgramArgc) state]
-    [(AstExprProgramArgv) state]
-    [(AstExprProgramEnvp) state]
-    [(AstExprCpuIdEax leaf subleaf)
+    [(AstExpr.BinaryData _) state]
+    [(AstExpr.SpmdProgramIndex) state]
+    [(AstExpr.SpmdProgramCount) state]
+    [(AstExpr.ProgramArgc) state]
+    [(AstExpr.ProgramArgv) state]
+    [(AstExpr.ProgramEnvp) state]
+    [(AstExpr.CpuIdEax leaf subleaf)
       (lint-unused-assignment-note-reads
         (ast-node-get subleaf)
         (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
-    [(AstExprCpuIdEbx leaf subleaf)
+    [(AstExpr.CpuIdEbx leaf subleaf)
       (lint-unused-assignment-note-reads
         (ast-node-get subleaf)
         (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
-    [(AstExprCpuIdEcx leaf subleaf)
+    [(AstExpr.CpuIdEcx leaf subleaf)
       (lint-unused-assignment-note-reads
         (ast-node-get subleaf)
         (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
-    [(AstExprCpuIdEdx leaf subleaf)
+    [(AstExpr.CpuIdEdx leaf subleaf)
       (lint-unused-assignment-note-reads
         (ast-node-get subleaf)
         (lint-unused-assignment-note-reads (ast-node-get leaf) state))]
-    [(AstExprXgetbv index)
+    [(AstExpr.Xgetbv index)
       (lint-unused-assignment-note-reads (ast-node-get index) state)]
-    [(AstExprSyscall args) (lint-unused-assignment-note-reads-list args state)]))
+    [(AstExpr.Syscall args) (lint-unused-assignment-note-reads-list args state)]))
 
 (define (lint-unused-assignment-binding-span [init : i64]) : AstSourceSpan
   (lint-no-effect-span (ast-node-get init)))
@@ -2619,8 +2623,8 @@
   [state : LintUnusedAssignmentState]
   [after-terminal : bool]) : LintUnusedAssignmentState
   (match exprs
-    [(AstExprNil) state]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
       (if after-terminal
         state
         (let
@@ -2634,10 +2638,10 @@
   [bindings : AstLetBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (match bindings
-    [(AstLetBindingNil) state]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
       (match binding
-        [(AstLetBinding name _ init)
+        [(AstLetBinding.Binding name _ init)
           (let
             [after-init : LintUnusedAssignmentState
               (lint-unused-assignment-expr
@@ -2686,31 +2690,31 @@
   [state : LintUnusedAssignmentState]
   [span : AstSourceSpan]) : LintUnusedAssignmentState
   (match expr
-    [(AstExprSpanned inner-box inner-span)
+    [(AstExpr.Spanned inner-box inner-span)
       (lint-unused-assignment-expr (ast-node-get inner-box) state inner-span)]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body)
+        [(AstLet.Let bindings body)
           (lint-unused-assignment-let bindings (ast-node-get body) state span)])]
-    [(AstExprBegin exprs) (lint-unused-assignment-expr-list exprs state)]
-    [(AstExprUnsafe exprs) (lint-unused-assignment-expr-list exprs state)]
-    [(AstExprWithRegion _ body) (lint-unused-assignment-expr-list body state)]
-    [(AstExprWithScratch body) (lint-unused-assignment-expr-list body state)]
-    [(AstExprWithEscape scratch body)
+    [(AstExpr.Begin exprs) (lint-unused-assignment-expr-list exprs state)]
+    [(AstExpr.Unsafe exprs) (lint-unused-assignment-expr-list exprs state)]
+    [(AstExpr.WithRegion _ body) (lint-unused-assignment-expr-list body state)]
+    [(AstExpr.WithScratch body) (lint-unused-assignment-expr-list body state)]
+    [(AstExpr.WithEscape scratch body)
       (lint-unused-assignment-expr-list
         body
         (lint-unused-assignment-note-reads (ast-node-get scratch) state))]
-    [(AstExprInArena arena body)
+    [(AstExpr.InArena arena body)
       (lint-unused-assignment-expr-list
         body
         (lint-unused-assignment-note-reads (ast-node-get arena) state))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (lint-unused-assignment-expr-list
             body
             (lint-unused-assignment-note-reads-resource-bindings bindings state))])]
-    [(AstExprSet target value)
+    [(AstExpr.Set target value)
       (lint-unused-assignment-write-id
         (lint-unused-assignment-note-reads (ast-node-get value) state)
         target
@@ -3041,32 +3045,32 @@
 
 (define (lint-redundant-function-name-callee [expr : AstExpr]) : String
   (match (ast-expr-unspan expr)
-    [(AstExprVar name) (intern-str name)]
+    [(AstExpr.Var name) (intern-str name)]
     [_ ""]))
 
 (define (lint-redundant-function-name-generated-head [args : AstExprList]) : String
   (match args
-    [(AstExprNil) ""]
-    [(AstExprCons head _)
+    [(AstExprList.Nil) ""]
+    [(AstExprList.Cons head _)
       (match (ast-expr-unspan (ast-node-get head))
-        [(AstExprCall fn-head _)
+        [(AstExpr.Call fn-head _)
           (lint-redundant-function-name-callee (ast-node-get fn-head))]
         [_ ""])]))
 
 (define (lint-redundant-function-name-literal-module [args : AstExprList]) : String
   (match args
-    [(AstExprNil) ""]
-    [(AstExprCons head _)
+    [(AstExprList.Nil) ""]
+    [(AstExprList.Cons head _)
       (match (ast-expr-unspan (ast-node-get head))
-        [(AstExprVar name) (lint-module-default-alias (intern-str name))]
+        [(AstExpr.Var name) (lint-module-default-alias (intern-str name))]
         [_ ""])]))
 
 (define (lint-redundant-function-name-quoted-expr-list
   [exprs : AstExprList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match exprs
-    [(AstExprNil) state]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
       (lint-redundant-function-name-quoted-expr-list
         (box-get rest)
         (lint-redundant-function-name-quoted-expr (ast-node-get head) state))]))
@@ -3075,8 +3079,8 @@
   [exprs : AstExprList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match exprs
-    [(AstExprNil) state]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
       (lint-redundant-function-name-macro-expr-list
         (box-get rest)
         (lint-redundant-function-name-macro-expr (ast-node-get head) state))]))
@@ -3109,9 +3113,9 @@
   [expr : AstExpr]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match expr
-    [(AstExprSpanned inner span)
+    [(AstExpr.Spanned inner span)
       (match (ast-node-get inner)
-        [(AstExprCall func args)
+        [(AstExpr.Call func args)
           (lint-redundant-function-name-quoted-call
             (lint-redundant-function-name-callee (ast-node-get func))
             args
@@ -3119,67 +3123,67 @@
             state)]
         [_
           (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)])]
-    [(AstExprCall func args)
+    [(AstExpr.Call func args)
       (lint-redundant-function-name-quoted-call
         (lint-redundant-function-name-callee (ast-node-get func))
         args
         (lint-no-span)
         state)]
-    [(AstExprBegin exprs)
+    [(AstExpr.Begin exprs)
       (lint-redundant-function-name-quoted-expr-list exprs state)]
-    [(AstExprUnsafe exprs)
+    [(AstExpr.Unsafe exprs)
       (lint-redundant-function-name-quoted-expr-list exprs state)]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (lint-redundant-function-name-quoted-expr
         (ast-node-get else-branch)
         (lint-redundant-function-name-quoted-expr
           (ast-node-get then-branch)
           (lint-redundant-function-name-quoted-expr (ast-node-get cond) state)))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet _ body)
+        [(AstLet.Let _ body)
           (lint-redundant-function-name-quoted-expr (ast-node-get body) state)])]
-    [(AstExprQuote inner)
+    [(AstExpr.Quote inner)
       (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
-    [(AstExprQuasiquote inner)
+    [(AstExpr.Quasiquote inner)
       (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
-    [(AstExprUnquote _) state]
-    [(AstExprUnquoteSplicing _) state]
+    [(AstExpr.Unquote _) state]
+    [(AstExpr.UnquoteSplicing _) state]
     [_ state]))
 
 (define (lint-redundant-function-name-macro-expr
   [expr : AstExpr]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match expr
-    [(AstExprSpanned inner _)
+    [(AstExpr.Spanned inner _)
       (lint-redundant-function-name-macro-expr (ast-node-get inner) state)]
-    [(AstExprQuote inner)
+    [(AstExpr.Quote inner)
       (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
-    [(AstExprQuasiquote inner)
+    [(AstExpr.Quasiquote inner)
       (lint-redundant-function-name-quoted-expr (ast-node-get inner) state)]
-    [(AstExprCall func args)
+    [(AstExpr.Call func args)
       (lint-redundant-function-name-macro-expr-list
         args
         (lint-redundant-function-name-macro-expr (ast-node-get func) state))]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (lint-redundant-function-name-macro-expr
         (ast-node-get else-branch)
         (lint-redundant-function-name-macro-expr
           (ast-node-get then-branch)
           (lint-redundant-function-name-macro-expr (ast-node-get cond) state)))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body)
+        [(AstLet.Let bindings body)
           (lint-redundant-function-name-macro-expr
             (ast-node-get body)
             (lint-redundant-function-name-macro-let-bindings bindings state))])]
-    [(AstExprBegin exprs)
+    [(AstExpr.Begin exprs)
       (lint-redundant-function-name-macro-expr-list exprs state)]
-    [(AstExprUnsafe exprs)
+    [(AstExpr.Unsafe exprs)
       (lint-redundant-function-name-macro-expr-list exprs state)]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee arms)
+        [(AstMatch.Match scrutinee arms)
           (lint-redundant-function-name-macro-match-arms
             arms
             (lint-redundant-function-name-macro-expr
@@ -3191,10 +3195,10 @@
   [bindings : AstLetBindingList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match bindings
-    [(AstLetBindingNil) state]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
       (match binding
-        [(AstLetBinding _ _ init)
+        [(AstLetBinding.Binding _ _ init)
           (lint-redundant-function-name-macro-let-bindings
             (box-get rest)
             (lint-redundant-function-name-macro-expr (ast-node-get init) state))])]))
@@ -3203,10 +3207,10 @@
   [arms : AstMatchArmList]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (match arms
-    [(AstMatchArmNil) state]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) state]
+    [(AstMatchArmList.Cons arm rest)
       (match arm
-        [(AstMatchArm _ body)
+        [(AstMatchArm.Arm _ body)
           (lint-redundant-function-name-macro-match-arms
             (box-get rest)
             (lint-redundant-function-name-macro-expr (ast-node-get body) state))])]))
@@ -3516,8 +3520,8 @@
   [patterns : AstPatternList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match patterns
-    [(AstPatternNil) state]
-    [(AstPatternCons head rest)
+    [(AstPatternList.Nil) state]
+    [(AstPatternList.Cons head rest)
       (lint-unused-variable-pattern-list-bindings
         (box-get rest)
         (lint-unused-variable-pattern-bindings (box-get head) state))]))
@@ -3623,27 +3627,27 @@
   [pattern : AstPattern]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match pattern
-    [(AstPatVar name maybe-ty)
+    [(AstPattern.Var name maybe-ty)
       (lint-unused-variable-add-to-current-frame
         (lint-unused-variable-maybe-type maybe-ty state)
         (lint-unused-variable-binding (intern-str name) (lint-no-span) false))]
-    [(AstPatTuple items)
+    [(AstPattern.Tuple items)
       (lint-unused-variable-pattern-list-bindings (box-get items) state)]
-    [(AstPatWildcard) state]
-    [(AstPatBinding name)
+    [(AstPattern.Wildcard) state]
+    [(AstPattern.Binding name)
       (lint-unused-variable-add-to-current-frame
         state
         (lint-unused-variable-binding (intern-str name) (lint-no-span) false))]
-    [(AstPatVariant _ items)
+    [(AstPattern.Variant _ items)
       (lint-unused-variable-pattern-list-bindings (box-get items) state)]
-    [(AstPatLiteral _) state]))
+    [(AstPattern.Literal _) state]))
 
 (define (lint-unused-variable-expr-list
   [exprs : AstExprList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match exprs
-    [(AstExprNil) state]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
       (lint-unused-variable-expr-list
         (box-get rest)
         (lint-unused-variable-expr (ast-node-get head) state (lint-no-span)))]))
@@ -3652,8 +3656,8 @@
   [exprs : AstExprList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match exprs
-    [(AstExprNil) state]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
       (lint-unused-variable-quasiquote-expr-list
         (box-get rest)
         (lint-unused-variable-quasiquote-expr (ast-node-get head) state))]))
@@ -3662,10 +3666,10 @@
   [bindings : AstLetBindingList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match bindings
-    [(AstLetBindingNil) state]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
       (match binding
-        [(AstLetBinding _ _ init)
+        [(AstLetBinding.Binding _ _ init)
           (lint-unused-variable-quasiquote-let-bindings
             (box-get rest)
             (lint-unused-variable-quasiquote-expr (ast-node-get init) state))])]))
@@ -3674,10 +3678,10 @@
   [arms : AstMatchArmList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match arms
-    [(AstMatchArmNil) state]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) state]
+    [(AstMatchArmList.Cons arm rest)
       (match arm
-        [(AstMatchArm _ body)
+        [(AstMatchArm.Arm _ body)
           (lint-unused-variable-quasiquote-match-arms
             (box-get rest)
             (lint-unused-variable-quasiquote-expr (ast-node-get body) state))])]))
@@ -3686,10 +3690,10 @@
   [bindings : AstResourceBindingList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match bindings
-    [(AstResourceBindingNil) state]
-    [(AstResourceBindingCons binding rest)
+    [(AstResourceBindingList.Nil) state]
+    [(AstResourceBindingList.Cons binding rest)
       (match binding
-        [(AstResourceBinding _ init cleanup)
+        [(AstResourceBinding.Binding _ init cleanup)
           (lint-unused-variable-quasiquote-resource-bindings
             (box-get rest)
             (lint-unused-variable-quasiquote-expr
@@ -3700,105 +3704,105 @@
   [expr : AstExpr]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner-box) state)]
-    [(AstExprUnquote inner)
+    [(AstExpr.Unquote inner)
       (lint-unused-variable-expr
         (ast-node-get inner)
         state
         (lint-no-effect-span (ast-node-get inner)))]
-    [(AstExprUnquoteSplicing inner)
+    [(AstExpr.UnquoteSplicing inner)
       (lint-unused-variable-expr
         (ast-node-get inner)
         state
         (lint-no-effect-span (ast-node-get inner)))]
-    [(AstExprBinary _ left right)
+    [(AstExpr.Binary _ left right)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get right)
         (lint-unused-variable-quasiquote-expr (ast-node-get left) state))]
-    [(AstExprUnary _ inner)
+    [(AstExpr.Unary _ inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprCall func args)
+    [(AstExpr.Call func args)
       (lint-unused-variable-quasiquote-expr-list
         args
         (lint-unused-variable-quasiquote-expr (ast-node-get func) state))]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get else-branch)
         (lint-unused-variable-quasiquote-expr
           (ast-node-get then-branch)
           (lint-unused-variable-quasiquote-expr (ast-node-get cond) state)))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body)
+        [(AstLet.Let bindings body)
           (lint-unused-variable-quasiquote-expr
             (ast-node-get body)
             (lint-unused-variable-quasiquote-let-bindings bindings state))])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda _ _ body)
+        [(AstLambda.Lambda _ _ body)
           (lint-unused-variable-quasiquote-expr (ast-node-get body) state)])]
-    [(AstExprTuple exprs)
+    [(AstExpr.Tuple exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
-    [(AstExprTupleRef tuple _)
+    [(AstExpr.TupleRef tuple _)
       (lint-unused-variable-quasiquote-expr (ast-node-get tuple) state)]
-    [(AstExprArray exprs)
+    [(AstExpr.Array exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
-    [(AstExprMakeArray _ len)
+    [(AstExpr.MakeArray _ len)
       (lint-unused-variable-quasiquote-expr (ast-node-get len) state)]
-    [(AstExprArrayRef array index)
+    [(AstExpr.ArrayRef array index)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get index)
         (lint-unused-variable-quasiquote-expr (ast-node-get array) state))]
-    [(AstExprArraySet array index value)
+    [(AstExpr.ArraySet array index value)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get value)
         (lint-unused-variable-quasiquote-expr
           (ast-node-get index)
           (lint-unused-variable-quasiquote-expr (ast-node-get array) state)))]
-    [(AstExprArrayPush array value)
+    [(AstExpr.ArrayPush array value)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get value)
         (lint-unused-variable-quasiquote-expr (ast-node-get array) state))]
-    [(AstExprStringRef text index)
+    [(AstExpr.StringRef text index)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get index)
         (lint-unused-variable-quasiquote-expr (ast-node-get text) state))]
-    [(AstExprWhile cond body)
+    [(AstExpr.While cond body)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get body)
         (lint-unused-variable-quasiquote-expr (ast-node-get cond) state))]
-    [(AstExprBegin exprs)
+    [(AstExpr.Begin exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
-    [(AstExprUnsafe exprs)
+    [(AstExpr.Unsafe exprs)
       (lint-unused-variable-quasiquote-expr-list exprs state)]
-    [(AstExprSet _ value)
+    [(AstExpr.Set _ value)
       (lint-unused-variable-quasiquote-expr (ast-node-get value) state)]
-    [(AstExprAnn inner _)
+    [(AstExpr.Ann inner _)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprCast inner _)
+    [(AstExpr.Cast inner _)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprBorrow _ _ place)
+    [(AstExpr.Borrow _ _ place)
       (lint-unused-variable-quasiquote-expr (ast-node-get place) state)]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee arms)
+        [(AstMatch.Match scrutinee arms)
           (lint-unused-variable-quasiquote-match-arms
             arms
             (lint-unused-variable-quasiquote-expr
               (ast-node-get scrutinee)
               state))])]
-    [(AstExprForeach fe-box)
+    [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ _ start end body)
+        [(AstForeach.Foreach _ _ start end body)
           (lint-unused-variable-quasiquote-expr
             (ast-node-get body)
             (lint-unused-variable-quasiquote-expr
               (ast-node-get end)
               (lint-unused-variable-quasiquote-expr (ast-node-get start) state)))])]
-    [(AstExprSpmdReduce reduce-box)
+    [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce _ _ _ start end init value)
+        [(AstSpmdReduce.Reduce _ _ _ start end init value)
           (lint-unused-variable-quasiquote-expr
             (ast-node-get value)
             (lint-unused-variable-quasiquote-expr
@@ -3808,9 +3812,9 @@
                 (lint-unused-variable-quasiquote-expr
                   (ast-node-get start)
                   state))))])]
-    [(AstExprSpmdScan scan-box)
+    [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan _ _ _ start end _ _ init value body)
+        [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
           (lint-unused-variable-quasiquote-expr
             (ast-node-get body)
             (lint-unused-variable-quasiquote-expr
@@ -3822,104 +3826,104 @@
                   (lint-unused-variable-quasiquote-expr
                     (ast-node-get start)
                     state)))))])]
-    [(AstExprSpmdBroadcast value lane)
+    [(AstExpr.SpmdBroadcast value lane)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get lane)
         (lint-unused-variable-quasiquote-expr (ast-node-get value) state))]
-    [(AstExprSpmdShuffle value lane)
+    [(AstExpr.SpmdShuffle value lane)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get lane)
         (lint-unused-variable-quasiquote-expr (ast-node-get value) state))]
-    [(AstExprStructGet receiver _)
+    [(AstExpr.StructGet receiver _)
       (lint-unused-variable-quasiquote-expr (ast-node-get receiver) state)]
-    [(AstExprStructSet receiver _ value)
+    [(AstExpr.StructSet receiver _ value)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get value)
         (lint-unused-variable-quasiquote-expr (ast-node-get receiver) state))]
-    [(AstExprWithRegion _ body)
+    [(AstExpr.WithRegion _ body)
       (lint-unused-variable-quasiquote-expr-list body state)]
-    [(AstExprWithEscape scratch body)
+    [(AstExpr.WithEscape scratch body)
       (lint-unused-variable-quasiquote-expr-list
         body
         (lint-unused-variable-quasiquote-expr (ast-node-get scratch) state))]
-    [(AstExprWithScratch body)
+    [(AstExpr.WithScratch body)
       (lint-unused-variable-quasiquote-expr-list body state)]
-    [(AstExprInArena arena body)
+    [(AstExpr.InArena arena body)
       (lint-unused-variable-quasiquote-expr-list
         body
         (lint-unused-variable-quasiquote-expr (ast-node-get arena) state))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (lint-unused-variable-quasiquote-expr-list
             body
             (lint-unused-variable-quasiquote-resource-bindings bindings state))])]
-    [(AstExprBox inner)
+    [(AstExpr.Box inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprBoxGet inner)
+    [(AstExpr.BoxGet inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprBoxTake inner)
+    [(AstExpr.BoxTake inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprBoxSet inner value)
+    [(AstExpr.BoxSet inner value)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get value)
         (lint-unused-variable-quasiquote-expr (ast-node-get inner) state))]
-    [(AstExprComptime inner)
+    [(AstExpr.Comptime inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprQuasiquote _) state]
-    [(AstExprBracketClause items)
+    [(AstExpr.Quasiquote _) state]
+    [(AstExpr.BracketClause items)
       (lint-unused-variable-quasiquote-expr-list items state)]
-    [(AstExprTry inner)
+    [(AstExpr.Try inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprReturn inner)
+    [(AstExpr.Return inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprPtrNullCheck inner)
+    [(AstExpr.PtrNullCheck inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprPtrAddrOf place)
+    [(AstExpr.PtrAddrOf place)
       (lint-unused-variable-quasiquote-expr (ast-node-get place) state)]
-    [(AstExprPtrRead ptr)
+    [(AstExpr.PtrRead ptr)
       (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
-    [(AstExprPtrWrite ptr value)
+    [(AstExpr.PtrWrite ptr value)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get value)
         (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
-    [(AstExprPtrOffset ptr offset)
+    [(AstExpr.PtrOffset ptr offset)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get offset)
         (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
-    [(AstExprPtrCast ptr _)
+    [(AstExpr.PtrCast ptr _)
       (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
-    [(AstExprPtrToInt ptr)
+    [(AstExpr.PtrToInt ptr)
       (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state)]
-    [(AstExprIntToPtr value _)
+    [(AstExpr.IntToPtr value _)
       (lint-unused-variable-quasiquote-expr (ast-node-get value) state)]
-    [(AstExprStringData inner)
+    [(AstExpr.StringData inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprStringFromBytes ptr len)
+    [(AstExpr.StringFromBytes ptr len)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get len)
         (lint-unused-variable-quasiquote-expr (ast-node-get ptr) state))]
-    [(AstExprArrayData inner)
+    [(AstExpr.ArrayData inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprCpuIdEax leaf subleaf)
+    [(AstExpr.CpuIdEax leaf subleaf)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get subleaf)
         (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
-    [(AstExprCpuIdEbx leaf subleaf)
+    [(AstExpr.CpuIdEbx leaf subleaf)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get subleaf)
         (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
-    [(AstExprCpuIdEcx leaf subleaf)
+    [(AstExpr.CpuIdEcx leaf subleaf)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get subleaf)
         (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
-    [(AstExprCpuIdEdx leaf subleaf)
+    [(AstExpr.CpuIdEdx leaf subleaf)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get subleaf)
         (lint-unused-variable-quasiquote-expr (ast-node-get leaf) state))]
-    [(AstExprXgetbv index)
+    [(AstExpr.Xgetbv index)
       (lint-unused-variable-quasiquote-expr (ast-node-get index) state)]
-    [(AstExprSyscall args)
+    [(AstExpr.Syscall args)
       (lint-unused-variable-quasiquote-expr-list args state)]
     [_ state]))
 
@@ -3928,10 +3932,10 @@
   [state : LintUnusedVariableState]
   [cursor : i64]) : LintUnusedVariableState
   (match bindings
-    [(AstLetBindingNil) state]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
       (match binding
-        [(AstLetBinding name maybe-ty init)
+        [(AstLetBinding.Binding name maybe-ty init)
           (let
             [after-ty : LintUnusedVariableState
               (lint-unused-variable-maybe-type maybe-ty state)]
@@ -3981,10 +3985,10 @@
   [bindings : AstResourceBindingList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match bindings
-    [(AstResourceBindingNil) state]
-    [(AstResourceBindingCons binding rest)
+    [(AstResourceBindingList.Nil) state]
+    [(AstResourceBindingList.Cons binding rest)
       (match binding
-        [(AstResourceBinding name init cleanup)
+        [(AstResourceBinding.Binding name init cleanup)
           (lint-unused-variable-resource-bindings
             (box-get rest)
             (lint-unused-variable-add-to-current-frame
@@ -4004,10 +4008,10 @@
   [arms : AstMatchArmList]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match arms
-    [(AstMatchArmNil) state]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) state]
+    [(AstMatchArmList.Cons arm rest)
       (match arm
-        [(AstMatchArm pattern body)
+        [(AstMatchArm.Arm pattern body)
           (let
             [with-frame : LintUnusedVariableState
               (lint-unused-variable-push-frame
@@ -4093,22 +4097,22 @@
   [state : LintUnusedVariableState]
   [span : AstSourceSpan]) : LintUnusedVariableState
   (match expr
-    [(AstExprSpanned inner-box inner-span)
+    [(AstExpr.Spanned inner-box inner-span)
       (lint-unused-variable-expr (ast-node-get inner-box) state inner-span)]
-    [(AstExprLiteral _) state]
-    [(AstExprVar name) (lint-unused-variable-read-var-id state name)]
-    [(AstExprBinary _ left right)
+    [(AstExpr.Literal _) state]
+    [(AstExpr.Var name) (lint-unused-variable-read-var-id state name)]
+    [(AstExpr.Binary _ left right)
       (lint-unused-variable-expr
         (ast-node-get right)
         (lint-unused-variable-expr (ast-node-get left) state span)
         span)]
-    [(AstExprUnary _ inner)
+    [(AstExpr.Unary _ inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprCall func args)
+    [(AstExpr.Call func args)
       (lint-unused-variable-expr-list
         args
         (lint-unused-variable-expr (ast-node-get func) state span))]
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (lint-unused-variable-expr
         (ast-node-get else-branch)
         (lint-unused-variable-expr
@@ -4116,34 +4120,34 @@
           (lint-unused-variable-expr (ast-node-get cond) state span)
           span)
         span)]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body)
+        [(AstLet.Let bindings body)
           (lint-unused-variable-let bindings (ast-node-get body) state span)])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda params ret body)
+        [(AstLambda.Lambda params ret body)
           (lint-unused-variable-lambda
             params
             ret
             (ast-node-get body)
             state
             span)])]
-    [(AstExprTuple exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExprTupleRef tuple _)
+    [(AstExpr.Tuple exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExpr.TupleRef tuple _)
       (lint-unused-variable-expr (ast-node-get tuple) state span)]
-    [(AstExprArray exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExprMakeArray ty len)
+    [(AstExpr.Array exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExpr.MakeArray ty len)
       (lint-unused-variable-expr
         (ast-node-get len)
         (lint-unused-variable-type ty state)
         span)]
-    [(AstExprArrayRef array index)
+    [(AstExpr.ArrayRef array index)
       (lint-unused-variable-expr
         (ast-node-get index)
         (lint-unused-variable-expr (ast-node-get array) state span)
         span)]
-    [(AstExprArraySet array index value)
+    [(AstExpr.ArraySet array index value)
       (lint-unused-variable-expr
         (ast-node-get value)
         (lint-unused-variable-expr
@@ -4151,47 +4155,47 @@
           (lint-unused-variable-expr (ast-node-get array) state span)
           span)
         span)]
-    [(AstExprArrayPush array value)
+    [(AstExpr.ArrayPush array value)
       (lint-unused-variable-expr
         (ast-node-get value)
         (lint-unused-variable-expr (ast-node-get array) state span)
         span)]
-    [(AstExprStringRef text index)
+    [(AstExpr.StringRef text index)
       (lint-unused-variable-expr
         (ast-node-get index)
         (lint-unused-variable-expr (ast-node-get text) state span)
         span)]
-    [(AstExprWhile cond body)
+    [(AstExpr.While cond body)
       (lint-unused-variable-expr
         (ast-node-get body)
         (lint-unused-variable-expr (ast-node-get cond) state span)
         span)]
-    [(AstExprBegin exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExprUnsafe exprs) (lint-unused-variable-expr-list exprs state)]
-    [(AstExprSet _ value)
+    [(AstExpr.Begin exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExpr.Unsafe exprs) (lint-unused-variable-expr-list exprs state)]
+    [(AstExpr.Set _ value)
       (lint-unused-variable-expr (ast-node-get value) state span)]
-    [(AstExprAnn inner ty)
+    [(AstExpr.Ann inner ty)
       (lint-unused-variable-type
         ty
         (lint-unused-variable-expr (ast-node-get inner) state span))]
-    [(AstExprCast inner ty)
+    [(AstExpr.Cast inner ty)
       (lint-unused-variable-type
         ty
         (lint-unused-variable-expr (ast-node-get inner) state span))]
-    [(AstExprBorrow _ lifetime place)
+    [(AstExpr.Borrow _ lifetime place)
       (lint-unused-variable-expr
         (ast-node-get place)
         (lint-unused-variable-borrow-lifetime lifetime state)
         span)]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee arms)
+        [(AstMatch.Match scrutinee arms)
           (lint-unused-variable-match-arms
             arms
             (lint-unused-variable-expr (ast-node-get scrutinee) state span))])]
-    [(AstExprForeach fe-box)
+    [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach index index-ty start end body)
+        [(AstForeach.Foreach index index-ty start end body)
           (lint-unused-variable-index-scope
             index
             (ast-node-get body)
@@ -4202,9 +4206,9 @@
                 (lint-unused-variable-expr (ast-node-get start) state span)
                 span))
             span)])]
-    [(AstExprSpmdReduce reduce-box)
+    [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce _ index index-ty start end init value)
+        [(AstSpmdReduce.Reduce _ index index-ty start end init value)
           (lint-unused-variable-index-scope
             index
             (ast-node-get value)
@@ -4218,9 +4222,9 @@
                   span)
                 span))
             span)])]
-    [(AstExprSpmdScan scan-box)
+    [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan
+        [(AstSpmdScan.Scan
             _
             index
             index-ty
@@ -4259,36 +4263,36 @@
               (ast-node-get body)
               value-state
               span))])]
-    [(AstExprSpmdBroadcast value lane)
+    [(AstExpr.SpmdBroadcast value lane)
       (lint-unused-variable-expr
         (ast-node-get lane)
         (lint-unused-variable-expr (ast-node-get value) state span)
         span)]
-    [(AstExprSpmdShuffle value lane)
+    [(AstExpr.SpmdShuffle value lane)
       (lint-unused-variable-expr
         (ast-node-get lane)
         (lint-unused-variable-expr (ast-node-get value) state span)
         span)]
-    [(AstExprStructGet receiver _)
+    [(AstExpr.StructGet receiver _)
       (lint-unused-variable-expr (ast-node-get receiver) state span)]
-    [(AstExprStructSet receiver _ value)
+    [(AstExpr.StructSet receiver _ value)
       (lint-unused-variable-expr
         (ast-node-get value)
         (lint-unused-variable-expr (ast-node-get receiver) state span)
         span)]
-    [(AstExprWithRegion _ body) (lint-unused-variable-expr-list body state)]
-    [(AstExprWithEscape scratch body)
+    [(AstExpr.WithRegion _ body) (lint-unused-variable-expr-list body state)]
+    [(AstExpr.WithEscape scratch body)
       (lint-unused-variable-expr-list
         body
         (lint-unused-variable-expr (ast-node-get scratch) state span))]
-    [(AstExprWithScratch body) (lint-unused-variable-expr-list body state)]
-    [(AstExprInArena arena body)
+    [(AstExpr.WithScratch body) (lint-unused-variable-expr-list body state)]
+    [(AstExpr.InArena arena body)
       (lint-unused-variable-expr-list
         body
         (lint-unused-variable-expr (ast-node-get arena) state span))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (let
             [with-frame : LintUnusedVariableState
               (lint-unused-variable-push-frame
@@ -4299,98 +4303,98 @@
             [with-body : LintUnusedVariableState
               (lint-unused-variable-expr-list body with-bindings)]
             (lint-unused-variable-pop-frame with-body))])]
-    [(AstExprBox inner)
+    [(AstExpr.Box inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprBoxGet inner)
+    [(AstExpr.BoxGet inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprBoxTake inner)
+    [(AstExpr.BoxTake inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprBoxSet inner value)
+    [(AstExpr.BoxSet inner value)
       (lint-unused-variable-expr
         (ast-node-get value)
         (lint-unused-variable-expr (ast-node-get inner) state span)
         span)]
-    [(AstExprTypeLiteral ty) (lint-unused-variable-type ty state)]
-    [(AstExprInit maybe-ty) (lint-unused-variable-maybe-type maybe-ty state)]
-    [(AstExprComptime inner)
+    [(AstExpr.TypeLiteral ty) (lint-unused-variable-type ty state)]
+    [(AstExpr.Init maybe-ty) (lint-unused-variable-maybe-type maybe-ty state)]
+    [(AstExpr.Comptime inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprQuote _) state]
-    [(AstExprQuasiquote inner)
+    [(AstExpr.Quote _) state]
+    [(AstExpr.Quasiquote inner)
       (lint-unused-variable-quasiquote-expr (ast-node-get inner) state)]
-    [(AstExprUnquote inner)
+    [(AstExpr.Unquote inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprUnquoteSplicing inner)
+    [(AstExpr.UnquoteSplicing inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprBracketClause items) (lint-unused-variable-expr-list items state)]
-    [(AstExprTry inner)
+    [(AstExpr.BracketClause items) (lint-unused-variable-expr-list items state)]
+    [(AstExpr.Try inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprReturn inner)
+    [(AstExpr.Return inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprPtrNull ty) (lint-unused-variable-type ty state)]
-    [(AstExprPtrNullCheck inner)
+    [(AstExpr.PtrNull ty) (lint-unused-variable-type ty state)]
+    [(AstExpr.PtrNullCheck inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprPtrAddrOf place)
+    [(AstExpr.PtrAddrOf place)
       (lint-unused-variable-expr (ast-node-get place) state span)]
-    [(AstExprPtrRead ptr)
+    [(AstExpr.PtrRead ptr)
       (lint-unused-variable-expr (ast-node-get ptr) state span)]
-    [(AstExprPtrWrite ptr value)
+    [(AstExpr.PtrWrite ptr value)
       (lint-unused-variable-expr
         (ast-node-get value)
         (lint-unused-variable-expr (ast-node-get ptr) state span)
         span)]
-    [(AstExprPtrOffset ptr offset)
+    [(AstExpr.PtrOffset ptr offset)
       (lint-unused-variable-expr
         (ast-node-get offset)
         (lint-unused-variable-expr (ast-node-get ptr) state span)
         span)]
-    [(AstExprPtrCast ptr ty)
+    [(AstExpr.PtrCast ptr ty)
       (lint-unused-variable-type
         ty
         (lint-unused-variable-expr (ast-node-get ptr) state span))]
-    [(AstExprPtrToInt ptr)
+    [(AstExpr.PtrToInt ptr)
       (lint-unused-variable-expr (ast-node-get ptr) state span)]
-    [(AstExprIntToPtr value ty)
+    [(AstExpr.IntToPtr value ty)
       (lint-unused-variable-type
         ty
         (lint-unused-variable-expr (ast-node-get value) state span))]
-    [(AstExprStringData inner)
+    [(AstExpr.StringData inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprStringFromBytes ptr len)
+    [(AstExpr.StringFromBytes ptr len)
       (lint-unused-variable-expr
         (ast-node-get len)
         (lint-unused-variable-expr (ast-node-get ptr) state span)
         span)]
-    [(AstExprArrayData inner)
+    [(AstExpr.ArrayData inner)
       (lint-unused-variable-expr (ast-node-get inner) state span)]
-    [(AstExprBinaryData _) state]
-    [(AstExprSpmdProgramIndex) state]
-    [(AstExprSpmdProgramCount) state]
-    [(AstExprProgramArgc) state]
-    [(AstExprProgramArgv) state]
-    [(AstExprProgramEnvp) state]
-    [(AstExprCpuIdEax leaf subleaf)
+    [(AstExpr.BinaryData _) state]
+    [(AstExpr.SpmdProgramIndex) state]
+    [(AstExpr.SpmdProgramCount) state]
+    [(AstExpr.ProgramArgc) state]
+    [(AstExpr.ProgramArgv) state]
+    [(AstExpr.ProgramEnvp) state]
+    [(AstExpr.CpuIdEax leaf subleaf)
       (lint-unused-variable-expr
         (ast-node-get subleaf)
         (lint-unused-variable-expr (ast-node-get leaf) state span)
         span)]
-    [(AstExprCpuIdEbx leaf subleaf)
+    [(AstExpr.CpuIdEbx leaf subleaf)
       (lint-unused-variable-expr
         (ast-node-get subleaf)
         (lint-unused-variable-expr (ast-node-get leaf) state span)
         span)]
-    [(AstExprCpuIdEcx leaf subleaf)
+    [(AstExpr.CpuIdEcx leaf subleaf)
       (lint-unused-variable-expr
         (ast-node-get subleaf)
         (lint-unused-variable-expr (ast-node-get leaf) state span)
         span)]
-    [(AstExprCpuIdEdx leaf subleaf)
+    [(AstExpr.CpuIdEdx leaf subleaf)
       (lint-unused-variable-expr
         (ast-node-get subleaf)
         (lint-unused-variable-expr (ast-node-get leaf) state span)
         span)]
-    [(AstExprXgetbv index)
+    [(AstExpr.Xgetbv index)
       (lint-unused-variable-expr (ast-node-get index) state span)]
-    [(AstExprSyscall args) (lint-unused-variable-expr-list args state)]))
+    [(AstExpr.Syscall args) (lint-unused-variable-expr-list args state)]))
 
 (define (lint-unused-variable-decl-param-cursor
   [source : String]
@@ -4549,8 +4553,8 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match exprs
-    [(AstExprNil) acc]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) acc]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -4568,8 +4572,8 @@
   [acc : LintFindings]
   [after-terminal : bool]) : LintFindings
   (match exprs
-    [(AstExprNil) acc]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) acc]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -4603,23 +4607,23 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match inner
-          [(AstExprBegin _) (lint-walk-expr expr threshold acc)]
-          [(AstExprWithRegion _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExprWithEscape _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExprWithScratch _) (lint-walk-expr expr threshold acc)]
-          [(AstExprInArena _ _) (lint-walk-expr expr threshold acc)]
-          [(AstExprWithResource _) (lint-walk-expr expr threshold acc)]
+          [(AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
+          [(AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
+          [(AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
+          [(AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
           [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))]
-    [(AstExprBegin _) (lint-walk-expr expr threshold acc)]
-    [(AstExprWithRegion _ _) (lint-walk-expr expr threshold acc)]
-    [(AstExprWithEscape _ _) (lint-walk-expr expr threshold acc)]
-    [(AstExprWithScratch _) (lint-walk-expr expr threshold acc)]
-    [(AstExprInArena _ _) (lint-walk-expr expr threshold acc)]
-    [(AstExprWithResource _) (lint-walk-expr expr threshold acc)]
+    [(AstExpr.Begin _) (lint-walk-expr expr threshold acc)]
+    [(AstExpr.WithRegion _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExpr.WithEscape _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExpr.WithScratch _) (lint-walk-expr expr threshold acc)]
+    [(AstExpr.InArena _ _) (lint-walk-expr expr threshold acc)]
+    [(AstExpr.WithResource _) (lint-walk-expr expr threshold acc)]
     [_ (lint-walk-discarded-nonsequence-expr expr threshold acc)]))
 
 (define (lint-walk-value-sequence-expr-list
@@ -4634,8 +4638,8 @@
   [acc : LintFindings]
   [after-terminal : bool]) : LintFindings
   (match exprs
-    [(AstExprNil) acc]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) acc]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -4648,7 +4652,7 @@
               (lint-add-redundant-divergence-padding head rest acc)]
             [walked : LintFindings
               (match rest
-                [(AstExprNil) (lint-walk-expr head threshold with-padding)]
+                [(AstExprList.Nil) (lint-walk-expr head threshold with-padding)]
                 [_ (lint-walk-discarded-expr head threshold with-padding)])]
             (lint-walk-value-sequence-expr-list-after-terminal
               rest
@@ -4664,10 +4668,10 @@
 
 (define (lint-expr-list-single? [exprs : AstExprList]) : bool
   (match exprs
-    [(AstExprNil) false]
-    [(AstExprCons _ rest)
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons _ rest)
       (match (box-get rest)
-        [(AstExprNil) true]
+        [(AstExprList.Nil) true]
         [_ false])]))
 
 (define (lint-add-single-begin
@@ -4684,8 +4688,8 @@
   [acc : LintFindings]
   [after-terminal : bool]) : LintFindings
   (match exprs
-    [(AstExprNil) acc]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) acc]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -4698,7 +4702,8 @@
               (lint-add-redundant-divergence-padding head rest acc)]
             [walked : LintFindings
               (match rest
-                [(AstExprNil) (lint-walk-tail-expr head threshold with-padding)]
+                [(AstExprList.Nil)
+                  (lint-walk-tail-expr head threshold with-padding)]
                 [_ (lint-walk-discarded-expr head threshold with-padding)])]
             (lint-walk-tail-sequence-expr-list-after-terminal
               rest
@@ -4712,12 +4717,12 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match bindings
-    [(AstLetBindingNil) acc]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) acc]
+    [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding _ _ init-box)
+          [(AstLetBinding.Binding _ _ init-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
               (lint-walk-let-bindings
@@ -4729,12 +4734,12 @@
   [bindings : AstLetBindingList]
   [name : i64]) : bool
   (match bindings
-    [(AstLetBindingNil) false]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) false]
+    [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding binding-name _ _)
+          [(AstLetBinding.Binding binding-name _ _)
             (if (= binding-name name)
               true
               (lint-let-bindings-contain-name? rest name))]))]))
@@ -4743,34 +4748,34 @@
   [outer : AstLetBindingList]
   [inner : AstLetBindingList]) : bool
   (match inner
-    [(AstLetBindingNil) false]
-    [(AstLetBindingCons binding rest)
+    [(AstLetBindingList.Nil) false]
+    [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
         (match binding
-          [(AstLetBinding name _ _)
+          [(AstLetBinding.Binding name _ _)
             (if (lint-let-bindings-contain-name? outer name)
               true
               (lint-let-bindings-shadow-outer? outer rest))]))]))
 
 (define (lint-nested-let-body? [body : AstExpr]) : bool
   (match body
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-nested-let-body? inner))]
-    [(AstExprLet _) true]
+    [(AstExpr.Let _) true]
     [_ false]))
 
 (define (lint-nested-let-shadows? [outer : AstLetBindingList] [body : AstExpr]) : bool
   (match body
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-nested-let-shadows? outer inner))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet inner-bindings _)
+        [(AstLet.Let inner-bindings _)
           (lint-let-bindings-shadow-outer? outer inner-bindings)])]
     [_ false]))
 
@@ -4816,12 +4821,12 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match bindings
-    [(AstResourceBindingNil) acc]
-    [(AstResourceBindingCons binding rest)
+    [(AstResourceBindingList.Nil) acc]
+    [(AstResourceBindingList.Cons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
         (match binding
-          [(AstResourceBinding _ init-box cleanup-box)
+          [(AstResourceBinding.Binding _ init-box cleanup-box)
             (let
               [init : AstExpr (ast-node-get init-box)]
               [cleanup : AstExpr (ast-node-get cleanup-box)]
@@ -4839,12 +4844,12 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match arms
-    [(AstMatchArmNil) acc]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) acc]
+    [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body-box)
+          [(AstMatchArm.Arm _ body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (lint-walk-match-arms
@@ -4862,11 +4867,11 @@
   [tail-return-path : bool]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-ladder inner threshold tail-return-path acc))]
-    [(AstExprIf cond-box then-branch-box else-branch-box)
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -4894,11 +4899,11 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-return-path-chain inner threshold acc))]
-    [(AstExprIf cond-box then-branch-box else-branch-box)
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -4965,7 +4970,7 @@
             (lint-walk-expr cond threshold acc)))]
       [(and tail-return-path (>= return-chain threshold))
         (lint-walk-return-path-chain
-          (AstExprIf
+          (AstExpr.If
             (ast-node-push cond)
             (ast-node-push then-branch)
             (ast-node-push else-branch))
@@ -4980,7 +4985,7 @@
       ;; rule is active.
       [(>= ladder threshold)
         (lint-walk-ladder
-          (AstExprIf
+          (AstExpr.If
             (ast-node-push cond)
             (ast-node-push then-branch)
             (ast-node-push else-branch))
@@ -5018,8 +5023,8 @@
   [acc : LintFindings]
   [after-terminal : bool]) : LintFindings
   (match exprs
-    [(AstExprNil) acc]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) acc]
+    [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -5032,7 +5037,8 @@
               (lint-add-redundant-divergence-padding head rest acc)]
             [walked : LintFindings
               (match rest
-                [(AstExprNil) (lint-walk-tail-expr head threshold with-padding)]
+                [(AstExprList.Nil)
+                  (lint-walk-tail-expr head threshold with-padding)]
                 [_ (lint-walk-expr head threshold with-padding)])]
             (lint-walk-tail-expr-list-after-terminal
               rest
@@ -5046,12 +5052,12 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match arms
-    [(AstMatchArmNil) acc]
-    [(AstMatchArmCons arm rest)
+    [(AstMatchArmList.Nil) acc]
+    [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
         (match arm
-          [(AstMatchArm _ body-box)
+          [(AstMatchArm.Arm _ body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (lint-walk-tail-match-arms
@@ -5067,11 +5073,11 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExprSpanned inner-box span)
+    [(AstExpr.Spanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match inner
-          [(AstExprIf cond-box then-branch-box else-branch-box)
+          [(AstExpr.If cond-box then-branch-box else-branch-box)
             (let
               [cond : AstExpr (ast-node-get cond-box)]
               [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -5084,23 +5090,23 @@
                 true
                 threshold
                 acc))]
-          [(AstExprLet let-box)
+          [(AstExpr.Let let-box)
             (match (box-get let-box)
-              [(AstLet bindings body-box)
+              [(AstLet.Let bindings body-box)
                 (let
                   [body : AstExpr (ast-node-get body-box)]
                   (lint-walk-tail-let bindings body span threshold acc))])]
-          [(AstExprCall func-box args)
+          [(AstExpr.Call func-box args)
             (let
               [func : AstExpr (ast-node-get func-box)]
               (lint-walk-call func args span threshold acc))]
-          [(AstExprBegin exprs)
+          [(AstExpr.Begin exprs)
             (lint-walk-tail-sequence-expr-list
               exprs
               threshold
               (lint-add-single-begin exprs span acc))]
           [_ (lint-walk-tail-expr inner threshold acc)]))]
-    [(AstExprIf cond-box then-branch-box else-branch-box)
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -5113,67 +5119,67 @@
           true
           threshold
           acc))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body-box)
+        [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (lint-walk-tail-let bindings body (lint-no-span) threshold acc))])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda _ _ body-box)
+        [(AstLambda.Lambda _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (lint-walk-tail-expr body threshold acc))])]
-    [(AstExprBegin exprs)
+    [(AstExpr.Begin exprs)
       (lint-walk-tail-sequence-expr-list
         exprs
         threshold
         (lint-add-single-begin exprs (lint-no-span) acc))]
-    [(AstExprUnsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
-    [(AstExprAnn inner-box _)
+    [(AstExpr.Unsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
+    [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-tail-expr inner threshold acc))]
-    [(AstExprCast inner-box _)
+    [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-tail-expr inner threshold acc))]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee-box arms)
+        [(AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (lint-walk-tail-match-arms
               arms
               threshold
               (lint-walk-expr scrutinee threshold acc)))])]
-    [(AstExprWithRegion _ body)
+    [(AstExpr.WithRegion _ body)
       (lint-walk-tail-sequence-expr-list body threshold acc)]
-    [(AstExprWithEscape scratch-box body)
+    [(AstExpr.WithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (lint-walk-tail-sequence-expr-list
           body
           threshold
           (lint-walk-expr scratch threshold acc)))]
-    [(AstExprWithScratch body)
+    [(AstExpr.WithScratch body)
       (lint-walk-tail-sequence-expr-list body threshold acc)]
-    [(AstExprInArena arena-box body)
+    [(AstExpr.InArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (lint-walk-tail-sequence-expr-list
           body
           threshold
           (lint-walk-expr arena threshold acc)))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (lint-walk-tail-sequence-expr-list
             body
             threshold
             (lint-walk-resource-bindings bindings threshold acc))])]
-    [(AstExprTry inner-box)
+    [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-tail-expr inner threshold acc))]
@@ -5185,13 +5191,13 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExprSpanned inner-box _)
+    [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (if (lint-and-or-call-kind? op inner)
           (lint-walk-and-or-skip-expr op inner threshold acc)
           (lint-walk-expr expr threshold acc)))]
-    [(AstExprCall func-box args)
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (if (string.eq (lint-and-or-func-op func) op)
@@ -5205,8 +5211,8 @@
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match args
-    [(AstExprNil) acc]
-    [(AstExprCons head rest)
+    [(AstExprList.Nil) acc]
+    [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
@@ -5246,11 +5252,11 @@
 ;: need source locations.
 (define (lint-walk-expr [expr : AstExpr] [threshold : i64] [acc : LintFindings]) : LintFindings
   (match expr
-    [(AstExprSpanned inner-box span)
+    [(AstExpr.Spanned inner-box span)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match inner
-          [(AstExprIf cond-box then-branch-box else-branch-box)
+          [(AstExpr.If cond-box then-branch-box else-branch-box)
             (let
               [cond : AstExpr (ast-node-get cond-box)]
               [then-branch : AstExpr (ast-node-get then-branch-box)]
@@ -5263,40 +5269,40 @@
                 false
                 threshold
                 acc))]
-          [(AstExprLet let-box)
+          [(AstExpr.Let let-box)
             (match (box-get let-box)
-              [(AstLet bindings body-box)
+              [(AstLet.Let bindings body-box)
                 (let
                   [body : AstExpr (ast-node-get body-box)]
                   (lint-walk-let bindings body span threshold acc))])]
-          [(AstExprCall func-box args)
+          [(AstExpr.Call func-box args)
             (let
               [func : AstExpr (ast-node-get func-box)]
               (lint-walk-call func args span threshold acc))]
-          [(AstExprBegin exprs)
+          [(AstExpr.Begin exprs)
             (lint-walk-value-sequence-expr-list
               exprs
               threshold
               (lint-add-single-begin exprs span acc))]
           [_ (lint-walk-expr inner threshold acc)]))]
-    [(AstExprLiteral _) acc]
-    [(AstExprVar _) acc]
-    [(AstExprTypeLiteral _) acc]
-    [(AstExprInit _) acc]
-    [(AstExprBinary _ left-box right-box)
+    [(AstExpr.Literal _) acc]
+    [(AstExpr.Var _) acc]
+    [(AstExpr.TypeLiteral _) acc]
+    [(AstExpr.Init _) acc]
+    [(AstExpr.Binary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (lint-walk-expr right threshold (lint-walk-expr left threshold acc)))]
-    [(AstExprUnary _ inner-box)
+    [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprCall func-box args)
+    [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (lint-walk-call func args (lint-no-span) threshold acc))]
-    [(AstExprIf cond-box then-branch-box else-branch-box)
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
       ;; A directly-reached (unspanned) `if`: no wrapper span, so the finding
       ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
       (let
@@ -5311,34 +5317,34 @@
           false
           threshold
           acc))]
-    [(AstExprLet let-box)
+    [(AstExpr.Let let-box)
       (match (box-get let-box)
-        [(AstLet bindings body-box)
+        [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (lint-walk-let bindings body (lint-no-span) threshold acc))])]
-    [(AstExprLambda lambda-box)
+    [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
-        [(AstLambda _ _ body-box)
+        [(AstLambda.Lambda _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
             (lint-walk-expr body threshold acc))])]
-    [(AstExprTuple exprs) (lint-walk-expr-list exprs threshold acc)]
-    [(AstExprTupleRef tuple-box _)
+    [(AstExpr.Tuple exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(AstExpr.TupleRef tuple-box _)
       (let
         [tuple : AstExpr (ast-node-get tuple-box)]
         (lint-walk-expr tuple threshold acc))]
-    [(AstExprArray exprs) (lint-walk-expr-list exprs threshold acc)]
-    [(AstExprMakeArray _ len-box)
+    [(AstExpr.Array exprs) (lint-walk-expr-list exprs threshold acc)]
+    [(AstExpr.MakeArray _ len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
         (lint-walk-expr len threshold acc))]
-    [(AstExprArrayRef array-box index-box)
+    [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (lint-walk-expr index threshold (lint-walk-expr array threshold acc)))]
-    [(AstExprArraySet array-box index-box value-box)
+    [(AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
@@ -5347,56 +5353,56 @@
           value
           threshold
           (lint-walk-expr index threshold (lint-walk-expr array threshold acc))))]
-    [(AstExprArrayPush array-box value-box)
+    [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold (lint-walk-expr array threshold acc)))]
-    [(AstExprStringRef str-box index-box)
+    [(AstExpr.StringRef str-box index-box)
       (let
         [str : AstExpr (ast-node-get str-box)]
         [index : AstExpr (ast-node-get index-box)]
         (lint-walk-expr index threshold (lint-walk-expr str threshold acc)))]
-    [(AstExprWhile cond-box body-box)
+    [(AstExpr.While cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (lint-walk-expr body threshold (lint-walk-expr cond threshold acc)))]
-    [(AstExprBegin exprs)
+    [(AstExpr.Begin exprs)
       (lint-walk-value-sequence-expr-list
         exprs
         threshold
         (lint-add-single-begin exprs (lint-no-span) acc))]
-    [(AstExprUnsafe exprs)
+    [(AstExpr.Unsafe exprs)
       (lint-walk-plain-sequence-expr-list exprs threshold acc)]
-    [(AstExprSet _ value-box)
+    [(AstExpr.Set _ value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold acc))]
-    [(AstExprAnn inner-box _)
+    [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprCast inner-box _)
+    [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBorrow _ _ place-box)
+    [(AstExpr.Borrow _ _ place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (lint-walk-expr place threshold acc))]
-    [(AstExprMatch match-box)
+    [(AstExpr.Match match-box)
       (match (box-get match-box)
-        [(AstMatch scrutinee-box arms)
+        [(AstMatch.Match scrutinee-box arms)
           (let
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (lint-walk-match-arms
               arms
               threshold
               (lint-walk-expr scrutinee threshold acc)))])]
-    [(AstExprForeach fe-box)
+    [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
-        [(AstForeach _ _ start-box end-box body-box)
+        [(AstForeach.Foreach _ _ start-box end-box body-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
@@ -5408,9 +5414,9 @@
                 end
                 threshold
                 (lint-walk-expr start threshold acc))))])]
-    [(AstExprSpmdReduce reduce-box)
+    [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
-        [(AstSpmdReduce _ _ _ start-box end-box init-box value-box)
+        [(AstSpmdReduce.Reduce _ _ _ start-box end-box init-box value-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
@@ -5426,9 +5432,19 @@
                   end
                   threshold
                   (lint-walk-expr start threshold acc)))))])]
-    [(AstExprSpmdScan scan-box)
+    [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
-        [(AstSpmdScan _ _ _ start-box end-box _ _ init-box value-box body-box)
+        [(AstSpmdScan.Scan
+            _
+            _
+            _
+            start-box
+            end-box
+            _
+            _
+            init-box
+            value-box
+            body-box)
           (let
             [start : AstExpr (ast-node-get start-box)]
             [end : AstExpr (ast-node-get end-box)]
@@ -5448,166 +5464,166 @@
                     end
                     threshold
                     (lint-walk-expr start threshold acc))))))])]
-    [(AstExprSpmdBroadcast value-box lane-box)
+    [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (lint-walk-expr lane threshold (lint-walk-expr value threshold acc)))]
-    [(AstExprSpmdShuffle value-box lane-box)
+    [(AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (lint-walk-expr lane threshold (lint-walk-expr value threshold acc)))]
-    [(AstExprStructGet receiver-box _)
+    [(AstExpr.StructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         (lint-walk-expr receiver threshold acc))]
-    [(AstExprStructSet receiver-box _ value-box)
+    [(AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold (lint-walk-expr receiver threshold acc)))]
-    [(AstExprWithRegion _ body)
+    [(AstExpr.WithRegion _ body)
       (lint-walk-value-sequence-expr-list body threshold acc)]
-    [(AstExprWithEscape scratch-box body)
+    [(AstExpr.WithEscape scratch-box body)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (lint-walk-value-sequence-expr-list
           body
           threshold
           (lint-walk-expr scratch threshold acc)))]
-    [(AstExprWithScratch body)
+    [(AstExpr.WithScratch body)
       (lint-walk-value-sequence-expr-list body threshold acc)]
-    [(AstExprInArena arena-box body)
+    [(AstExpr.InArena arena-box body)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (lint-walk-value-sequence-expr-list
           body
           threshold
           (lint-walk-expr arena threshold acc)))]
-    [(AstExprWithResource wr-box)
+    [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
-        [(AstWithResource bindings body)
+        [(AstWithResource.WithResource bindings body)
           (lint-walk-value-sequence-expr-list
             body
             threshold
             (lint-walk-resource-bindings bindings threshold acc))])]
-    [(AstExprBox inner-box)
+    [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBoxGet inner-box)
+    [(AstExpr.BoxGet inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBoxTake inner-box)
+    [(AstExpr.BoxTake inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBoxSet inner-box value-box)
+    [(AstExpr.BoxSet inner-box value-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold (lint-walk-expr inner threshold acc)))]
-    [(AstExprComptime inner-box)
+    [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprQuote _) acc]
-    [(AstExprQuasiquote _) acc]
-    [(AstExprUnquote inner-box)
+    [(AstExpr.Quote _) acc]
+    [(AstExpr.Quasiquote _) acc]
+    [(AstExpr.Unquote inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprUnquoteSplicing inner-box)
+    [(AstExpr.UnquoteSplicing inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBracketClause items) (lint-walk-expr-list items threshold acc)]
-    [(AstExprTry inner-box)
+    [(AstExpr.BracketClause items) (lint-walk-expr-list items threshold acc)]
+    [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprReturn inner-box)
+    [(AstExpr.Return inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprPtrNull _) acc]
-    [(AstExprPtrNullCheck inner-box)
+    [(AstExpr.PtrNull _) acc]
+    [(AstExpr.PtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprPtrAddrOf _) acc]
-    [(AstExprPtrRead ptr-box)
+    [(AstExpr.PtrAddrOf _) acc]
+    [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (lint-walk-expr ptr threshold acc))]
-    [(AstExprPtrWrite ptr-box value-box)
+    [(AstExpr.PtrWrite ptr-box value-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold (lint-walk-expr ptr threshold acc)))]
-    [(AstExprPtrOffset ptr-box offset-box)
+    [(AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (lint-walk-expr offset threshold (lint-walk-expr ptr threshold acc)))]
-    [(AstExprPtrCast ptr-box _)
+    [(AstExpr.PtrCast ptr-box _)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (lint-walk-expr ptr threshold acc))]
-    [(AstExprPtrToInt ptr-box)
+    [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (lint-walk-expr ptr threshold acc))]
-    [(AstExprIntToPtr value-box _)
+    [(AstExpr.IntToPtr value-box _)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (lint-walk-expr value threshold acc))]
-    [(AstExprStringData inner-box)
+    [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprStringFromBytes ptr-box len-box)
+    [(AstExpr.StringFromBytes ptr-box len-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (lint-walk-expr len threshold (lint-walk-expr ptr threshold acc)))]
-    [(AstExprArrayData inner-box)
+    [(AstExpr.ArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExprBinaryData _) acc]
-    [(AstExprSpmdProgramIndex) acc]
-    [(AstExprSpmdProgramCount) acc]
-    [(AstExprProgramArgc) acc]
-    [(AstExprProgramArgv) acc]
-    [(AstExprProgramEnvp) acc]
-    [(AstExprCpuIdEax leaf-box subleaf-box)
+    [(AstExpr.BinaryData _) acc]
+    [(AstExpr.SpmdProgramIndex) acc]
+    [(AstExpr.SpmdProgramCount) acc]
+    [(AstExpr.ProgramArgc) acc]
+    [(AstExpr.ProgramArgv) acc]
+    [(AstExpr.ProgramEnvp) acc]
+    [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
-    [(AstExprCpuIdEbx leaf-box subleaf-box)
+    [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
-    [(AstExprCpuIdEcx leaf-box subleaf-box)
+    [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
-    [(AstExprCpuIdEdx leaf-box subleaf-box)
+    [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (lint-walk-expr subleaf threshold (lint-walk-expr leaf threshold acc)))]
-    [(AstExprXgetbv index-box)
+    [(AstExpr.Xgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
         (lint-walk-expr index threshold acc))]
-    [(AstExprSyscall args) (lint-walk-expr-list args threshold acc)]))
+    [(AstExpr.Syscall args) (lint-walk-expr-list args threshold acc)]))
 
 ;: Walk the body expression(s) carried by a declaration, if any.
 (define (lint-walk-decl [decl : AstDecl] [threshold : i64] [acc : LintFindings]) : LintFindings
@@ -5716,21 +5732,21 @@
   (lint-walk-tail-expr (ast-node-get e) threshold acc))
 
 (define (lint-test-var [name : String]) : i64
-  (ast-node-push (AstExprVar (intern name))))
+  (ast-node-push (AstExpr.Var (intern name))))
 
 (define (lint-test-expr-list2 [a : i64] [b : i64]) : AstExprList
-  (ast-expr-cons a (ast-expr-cons b AstExprNil)))
+  (ast-expr-cons a (ast-expr-cons b AstExprList.Nil)))
 
 (define (lint-test-expr-list3 [a : i64] [b : i64] [c : i64]) : AstExprList
-  (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c AstExprNil))))
+  (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c AstExprList.Nil))))
 
 (define (compiler-lint-self-test) : i64
   (let
     [vx : i64 (lint-test-var "x")]
     [vy : i64 (lint-test-var "y")]
     [vz : i64 (lint-test-var "z")]
-    [one : i64 (ast-node-push (AstExprLiteral (ast-lit-int 1)))]
-    [unit-expr : i64 (ast-node-push (AstExprLiteral AstLitUnit))]
+    [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal AstLitUnit))]
     [ladder3 : i64
       (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one)))]
     [ladder2 : i64 (ast-expr-if vx one (ast-expr-if vx one one))]
@@ -5744,33 +5760,33 @@
     [return-one : i64 (ast-expr-return one)]
     [not-vx : i64 (ast-expr-unary (AstUnNot) vx)]
     [set-ok-false : i64
-      (ast-expr-set "ok" (ast-node-push (AstExprLiteral (AstLitBool false))))]
+      (ast-expr-set "ok" (ast-node-push (AstExpr.Literal (AstLitBool false))))]
     [unit-then-guard : i64 (ast-expr-if vx unit-expr return-one)]
     [unit-else-guard : i64 (ast-expr-if vx return-one unit-expr)]
     [unit-value-guard : i64 (ast-expr-if vx one unit-expr)]
     [unit-not-set-guard : i64 (ast-expr-if not-vx unit-expr set-ok-false)]
     [nested : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons unit-expr (ast-expr-cons ladder3 AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons unit-expr (ast-expr-cons ladder3 AstExprList.Nil))))]
     [in-let : i64
       (ast-expr-let
         (ast-let-binding-cons
           (ast-let-binding "y" (AstNoType) ladder3)
-          (AstLetBindingNil))
+          (AstLetBindingList.Nil))
         vx)]
     [outer-let-bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "a" (AstNoType) one)
-        (AstLetBindingNil))]
+        (AstLetBindingList.Nil))]
     [inner-let-bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "b" (AstNoType) vx)
-        (AstLetBindingNil))]
+        (AstLetBindingList.Nil))]
     [shadowing-let-bindings : AstLetBindingList
       (ast-let-binding-cons
         (ast-let-binding "a" (AstNoType) one)
-        (AstLetBindingNil))]
+        (AstLetBindingList.Nil))]
     [nested-let : i64
       (ast-expr-let outer-let-bindings (ast-expr-let inner-let-bindings vx))]
     [shadowing-nested-let : i64
@@ -5779,10 +5795,10 @@
       (ast-expr-let
         outer-let-bindings
         (ast-node-push
-          (AstExprBegin
+          (AstExpr.Begin
             (ast-expr-cons
               (ast-expr-let inner-let-bindings vx)
-              (ast-expr-cons vx (AstExprNil))))))]
+              (ast-expr-cons vx (AstExprList.Nil))))))]
     [spanned : i64 (ast-expr-spanned ladder3 (AstSourceSpan 7 3 9 4))]
     [spanned-nested-let : i64
       (ast-expr-spanned nested-let (AstSourceSpan 11 5 15 6))]
@@ -5808,89 +5824,95 @@
     [discarded-add : i64 (ast-expr-binary (AstBinAdd) one vx)]
     [discarded-cast : i64 (ast-expr-cast one (AstTyI64))]
     [discarded-call : i64
-      (ast-expr-call (lint-test-var "side-effect?") AstExprNil)]
+      (ast-expr-call (lint-test-var "side-effect?") AstExprList.Nil)]
     [no-effect-literal-begin : i64
       (ast-node-push
-        (AstExprBegin (ast-expr-cons one (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Begin (ast-expr-cons one (ast-expr-cons vx AstExprList.Nil))))]
     [no-effect-var-begin : i64
       (ast-node-push
-        (AstExprBegin (ast-expr-cons vx (ast-expr-cons one AstExprNil))))]
+        (AstExpr.Begin (ast-expr-cons vx (ast-expr-cons one AstExprList.Nil))))]
     [no-effect-add-begin : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons discarded-add (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons discarded-add (ast-expr-cons vx AstExprList.Nil))))]
     [no-effect-cast-begin : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons discarded-cast (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons discarded-cast (ast-expr-cons vx AstExprList.Nil))))]
     [no-effect-tail-begin : i64
       (ast-node-push
-        (AstExprBegin (ast-expr-cons unit-expr (ast-expr-cons one AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons unit-expr (ast-expr-cons one AstExprList.Nil))))]
     [no-effect-clean-call-begin : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons discarded-call (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons discarded-call (ast-expr-cons vx AstExprList.Nil))))]
     [no-effect-clean-mutation-begin : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons set-ok-false (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons set-ok-false (ast-expr-cons vx AstExprList.Nil))))]
     [no-effect-unsafe-begin : i64
       (ast-node-push
-        (AstExprUnsafe (ast-expr-cons one (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Unsafe (ast-expr-cons one (ast-expr-cons vx AstExprList.Nil))))]
     [spanned-no-effect-var : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
             (ast-expr-spanned vx (AstSourceSpan 31 9 31 10))
-            (ast-expr-cons one AstExprNil))))]
+            (ast-expr-cons one AstExprList.Nil))))]
     [spanned-unreachable-var : i64
       (ast-expr-spanned vx (AstSourceSpan 41 9 41 10))]
     [unreachable-return-begin : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
             return-one
             (ast-expr-cons
               spanned-unreachable-var
-              (ast-expr-cons vy AstExprNil)))))]
+              (ast-expr-cons vy AstExprList.Nil)))))]
     [panic-call : i64
-      (ast-expr-call (lint-test-var "panic") (ast-expr-cons one AstExprNil))]
+      (ast-expr-call
+        (lint-test-var "panic")
+        (ast-expr-cons one AstExprList.Nil))]
     [spanned-panic-call : i64
       (ast-expr-spanned panic-call (AstSourceSpan 43 9 43 24))]
     [qualified-panic-call : i64
-      (ast-expr-call (lint-test-var "io.panic") (ast-expr-cons one AstExprNil))]
+      (ast-expr-call
+        (lint-test-var "io.panic")
+        (ast-expr-cons one AstExprList.Nil))]
     [spanned-qualified-panic-call : i64
       (ast-expr-spanned qualified-panic-call (AstSourceSpan 44 9 44 27))]
     [redundant-padding-begin : i64
       (ast-node-push
-        (AstExprBegin
-          (ast-expr-cons spanned-panic-call (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Begin
+          (ast-expr-cons spanned-panic-call (ast-expr-cons vx AstExprList.Nil))))]
     [qualified-padding-begin : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
             spanned-qualified-panic-call
-            (ast-expr-cons vx AstExprNil))))]
+            (ast-expr-cons vx AstExprList.Nil))))]
     [clean-panic-tail-begin : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
             unit-expr
-            (ast-expr-cons spanned-panic-call AstExprNil))))]
+            (ast-expr-cons spanned-panic-call AstExprList.Nil))))]
     [unreachable-panic-unsafe : i64
       (ast-node-push
-        (AstExprUnsafe (ast-expr-cons panic-call (ast-expr-cons vx AstExprNil))))]
+        (AstExpr.Unsafe
+          (ast-expr-cons panic-call (ast-expr-cons vx AstExprList.Nil))))]
     [branch-local-return-begin : i64
       (ast-node-push
-        (AstExprBegin
+        (AstExpr.Begin
           (ast-expr-cons
             (ast-expr-if vx return-one return-one)
-            (ast-expr-cons vx AstExprNil))))]
+            (ast-expr-cons vx AstExprList.Nil))))]
     [single-begin : i64
-      (ast-node-push (AstExprBegin (ast-expr-cons vx AstExprNil)))]
+      (ast-node-push (AstExpr.Begin (ast-expr-cons vx AstExprList.Nil)))]
     [spanned-single-begin : i64
       (ast-expr-spanned single-begin (AstSourceSpan 51 3 51 13))]
-    [empty-begin : i64 (ast-node-push (AstExprBegin AstExprNil))]
+    [empty-begin : i64 (ast-node-push (AstExpr.Begin AstExprList.Nil))]
     (begin
       ;; ladder length math
       (if (= (lint-test-ladder-length ladder3) 3)

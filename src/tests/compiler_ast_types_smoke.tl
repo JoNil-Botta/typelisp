@@ -6,7 +6,7 @@
   [id : i64]
   [expected : i64]) : bool
   (match (ast-expr-node-pool-state-get pool id)
-    [(AstExprLiteral lit)
+    [(AstExpr.Literal lit)
       (match lit
         [(AstLitInt value _) (= value expected)]
         [_ false])]
@@ -46,24 +46,24 @@
     [a0 : AstExprNodePoolState (ast-expr-node-pool-state-create 1)]
     [aid0 : i64 (ast-expr-node-pool-state-mark a0)]
     [a1 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool a0 (AstExprLiteral (ast-lit-int 1)))]
+      (compiler-ast-state-expr-push-pool a0 (AstExpr.Literal (ast-lit-int 1)))]
     [aid1 : i64 (ast-expr-node-pool-state-mark a1)]
     [a2 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool a1 (AstExprLiteral (ast-lit-int 2)))]
+      (compiler-ast-state-expr-push-pool a1 (AstExpr.Literal (ast-lit-int 2)))]
     [b0 : AstExprNodePoolState (ast-expr-node-pool-state-create 1)]
     [bmark : i64 (ast-expr-node-pool-state-mark b0)]
     [bid0 : i64 (ast-expr-node-pool-state-mark b0)]
     [b1 : AstExprNodePoolState
-      (compiler-ast-state-expr-push-pool b0 (AstExprLiteral (ast-lit-int 10)))]
+      (compiler-ast-state-expr-push-pool b0 (AstExpr.Literal (ast-lit-int 10)))]
     [breset : AstExprNodePoolState
       (ast-expr-node-pool-state-reset-to-mark b1 bmark)]
     [bid1 : i64 (ast-expr-node-pool-state-mark breset)]
     [b2 : AstExprNodePoolState
       (compiler-ast-state-expr-push-pool
         breset
-        (AstExprLiteral (ast-lit-int 11)))]
+        (AstExpr.Literal (ast-lit-int 11)))]
     [b3 : AstExprNodePoolState
-      (ast-expr-node-pool-state-set! b2 bid1 (AstExprLiteral (ast-lit-int 12)))]
+      (ast-expr-node-pool-state-set! b2 bid1 (AstExpr.Literal (ast-lit-int 12)))]
     (and
       (= aid0 0)
       (= aid1 1)
@@ -177,7 +177,7 @@
   [id : i64]
   [expected : i64]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExprLiteral lit)
+    [(AstExpr.Literal lit)
       (match lit
         [(AstLitInt value _) (= value expected)]
         [_ false])]
@@ -189,10 +189,10 @@
   [old-lit : i64]
   [old-span : i64]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExprBinary _ left right)
+    [(AstExpr.Binary _ left right)
       (if (= left right)
         (match (ast-node-pool-context-expr-get pools left)
-          [(AstExprSpanned inner span)
+          [(AstExpr.Spanned inner span)
             (and
               (not (= left old-span))
               (not (= inner old-lit))
@@ -208,12 +208,12 @@
 (define (compiler-ast-global-shared-binary? [id : i64] [ptr-ty-id : i64]) : bool
   (and
     (match (ast-node-get id)
-      [(AstExprBinary _ left right)
+      [(AstExpr.Binary _ left right)
         (if (= left right)
           (match (ast-node-get left)
-            [(AstExprSpanned inner _)
+            [(AstExpr.Spanned inner _)
               (match (ast-node-get inner)
-                [(AstExprLiteral lit)
+                [(AstExpr.Literal lit)
                   (match lit
                     [(AstLitInt value _) (= value 7)]
                     [_ false])]
@@ -294,7 +294,7 @@
     [source-decoy-expr : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExprLiteral (ast-lit-int 999)))]
+        (AstExpr.Literal (ast-lit-int 999)))]
     [source-decoy-ty : i64
       (ast-node-pool-context-type-push source-pools (AstTyChar))]
     [source-i64-ty : i64
@@ -305,15 +305,15 @@
     [source-lit : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExprLiteral (ast-lit-int 7)))]
+        (AstExpr.Literal (ast-lit-int 7)))]
     [source-span : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExprSpanned source-lit (AstSourceSpan 1 2 3 4)))]
+        (AstExpr.Spanned source-lit (AstSourceSpan 1 2 3 4)))]
     [source-body : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExprBinary (AstBinAdd) source-span source-span))]
+        (AstExpr.Binary (AstBinAdd) source-span source-span))]
     [program : AstProgram
       (ast-program
         (ast-decl-cons
@@ -324,7 +324,7 @@
     [dest-decoy-expr : i64
       (ast-node-pool-context-expr-push
         dest-pools
-        (AstExprLiteral (ast-lit-int 1234)))]
+        (AstExpr.Literal (ast-lit-int 1234)))]
     [dest-decoy-ty : i64
       (ast-node-pool-context-type-push dest-pools (AstTyBool))]
     [compacted : AstProgramCompaction

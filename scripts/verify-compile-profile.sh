@@ -243,7 +243,7 @@ assert_contains_in \
     "$VECTOR_STDERR"
 assert_contains_in \
     "$VECTOR_STDERR" \
-    "stdlib.vector/vector-family arity=3 calls=2" \
+    "stdlib.vector/family arity=3 calls=2" \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
 

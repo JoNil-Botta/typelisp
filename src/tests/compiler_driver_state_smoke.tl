@@ -12,7 +12,7 @@
   [value : i64]) : AstExprNodePoolState
   (match (ast-expr-node-pool-state-push
     pool
-    (AstExprLiteral (ast-lit-int value)))
+    (AstExpr.Literal (ast-lit-int value)))
     [(AstExprNodePoolPushOk next _) next]))
 
 (define (compiler-driver-state-smoke-type-push
@@ -26,7 +26,7 @@
   [id : i64]
   [expected : i64]) : bool
   (match (ast-expr-node-pool-state-get pool id)
-    [(AstExprLiteral lit)
+    [(AstExpr.Literal lit)
       (match lit
         [(AstLitInt value _) (= value expected)]
         [_ false])]
@@ -50,7 +50,7 @@
   [id : i64]
   [expected : i64]) : bool
   (match (ast-node-get id)
-    [(AstExprLiteral lit)
+    [(AstExpr.Literal lit)
       (match lit
         [(AstLitInt value _) (= value expected)]
         [_ false])]
@@ -255,7 +255,7 @@
   [pools : AstNodePoolContext]
   [expr : AstExpr]) : AstExpr
   (match expr
-    [(AstExprSpanned inner-id _)
+    [(AstExpr.Spanned inner-id _)
       (compiler-driver-state-smoke-context-expr-unspan
         pools
         (ast-node-pool-context-expr-get pools inner-id))]
@@ -273,14 +273,14 @@
   [id : i64]
   [want : bool]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExprLiteral (AstLitBool value)) (= value want)]
+    [(AstExpr.Literal (AstLitBool value)) (= value want)]
     [_ false]))
 
 (define (compiler-driver-state-smoke-context-if-bool-lits?
   [pools : AstNodePoolContext]
   [id : i64]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExprIf cond then-branch else-branch)
+    [(AstExpr.If cond then-branch else-branch)
       (and
         (compiler-driver-state-smoke-context-bool-lit? pools cond true)
         (compiler-driver-state-smoke-context-bool-lit? pools then-branch true)
@@ -293,7 +293,7 @@
   (match (compiler-driver-state-smoke-context-expr-unspan
     pools
     (ast-node-pool-context-expr-get pools id))
-    [(AstExprPtrNull (AstTyPtr inner-id))
+    [(AstExpr.PtrNull (AstTyPtr inner-id))
       (compiler-driver-state-smoke-context-type-u8? pools inner-id)]
     [_ false]))
 
@@ -402,9 +402,9 @@
                           (intern-str fn-name)
                           (clone-helper-name name))
                         (match (ast-node-pool-context-expr-get pools body)
-                          [(AstExprCall callee _)
+                          [(AstExpr.Call callee _)
                             (match (ast-node-pool-context-expr-get pools callee)
-                              [(AstExprVar ctor)
+                              [(AstExpr.Var ctor)
                                 (string.eq (intern-str ctor) name)]
                               [_ false])]
                           [_ false]))]
@@ -460,18 +460,18 @@
   (match (compiler-driver-state-smoke-context-expr-unspan
     pools
     (ast-node-pool-context-expr-get pools body))
-    [(AstExprBinary op left right)
+    [(AstExpr.Binary op left right)
       (match op
         [(AstBinAdd)
           (match (compiler-driver-state-smoke-context-expr-unspan
             pools
             (ast-node-pool-context-expr-get pools left))
-            [(AstExprVar name)
+            [(AstExpr.Var name)
               (if (string.eq (intern-str name) "x")
                 (match (compiler-driver-state-smoke-context-expr-unspan
                   pools
                   (ast-node-pool-context-expr-get pools right))
-                  [(AstExprLiteral lit)
+                  [(AstExpr.Literal lit)
                     (match lit
                       [(AstLitInt value _) (= value 7)]
                       [_ false])]
@@ -562,13 +562,13 @@
     (begin
       (compiler-driver-state-install-pools! state-a)
       (let
-        [expr-a-id : i64 (ast-node-push (AstExprLiteral (ast-lit-int 7)))]
+        [expr-a-id : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 7)))]
         [type-a-id : i64 (ty-node-push (AstTyI64))]
         (begin
           (compiler-driver-state-capture-active-pools! state-a)
           (compiler-driver-state-install-pools! state-b)
           (let
-            [expr-b-id : i64 (ast-node-push (AstExprLiteral (ast-lit-int 11)))]
+            [expr-b-id : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 11)))]
             [type-b-id : i64 (ty-node-push (AstTyChar))]
             (begin
               (compiler-driver-state-capture-active-pools! state-b)
@@ -604,28 +604,28 @@
         [cond-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (AstLitBool true)))]
+            (AstExpr.Literal (AstLitBool true)))]
         [then-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (ast-lit-int 7)))]
+            (AstExpr.Literal (ast-lit-int 7)))]
         [else-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (ast-lit-int 9)))]
+            (AstExpr.Literal (ast-lit-int 9)))]
         [if-id : i64 (ast-expr-if-with-pools pools-a cond-id then-id else-id)]
         [quote-cond-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (AstLitBool true)))]
+            (AstExpr.Literal (AstLitBool true)))]
         [quote-false-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprLiteral (AstLitBool false)))]
+            (AstExpr.Literal (AstLitBool false)))]
         [quote-var-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExprVar (intern "replacement")))]
+            (AstExpr.Var (intern "replacement")))]
         [quote-unquote-id : i64
           (ast-expr-unquote-with-pools pools-a quote-var-id)]
         [quote-if-id : i64

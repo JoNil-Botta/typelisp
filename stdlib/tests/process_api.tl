@@ -202,10 +202,7 @@
       (svec.push (&mut items) b)
       items)))
 
-(define (process-api-string-vec3
-  [a : String]
-  [b : String]
-  [c : String]) : svec.Vec
+(define (process-api-string-vec3 [a : String] [b : String] [c : String]) : svec.Vec
   (let
     [items : svec.Vec (svec.with-capacity 3)]
     (begin
@@ -383,7 +380,8 @@
         [env-dup : process.ProcessEnvVec
           (process-api-env-vec2 "TL_DUP" "first" "TL_DUP" "second")]
         [bad-empty : process.ProcessEnvVec (process-api-env-vec1 "" "bad")]
-        [bad-name : process.ProcessEnvVec (process-api-env-vec1 "BAD=NAME" "bad")]
+        [bad-name : process.ProcessEnvVec
+          (process-api-env-vec1 "BAD=NAME" "bad")]
         [bad-shape : process.ProcessEnvVec (process-api-bad-shape-env-vec)]
         (begin
           (test.assert-i64-eq
@@ -408,7 +406,8 @@
             "two"
             "process env vec order")
           (assert-process-env-list2
-            (process.command-env (process.command-with-env-vec command (& env-vec)))
+            (process.command-env
+              (process.command-with-env-vec command (& env-vec)))
             "TL_FIRST"
             "one"
             "TL_SECOND"
@@ -438,8 +437,7 @@
               (process.command-with-env-vec command (& bad-empty)))
             "process: environment variable name is empty")
           (assert-process-child-invalid-command
-            (process.start
-              (process.command-with-env-vec command (& bad-name)))
+            (process.start (process.command-with-env-vec command (& bad-name)))
             "process: environment variable name contains '='")))
       (assert-process-no-string
         (process.command-cwd (process.command "echo" (process.args-empty)))

@@ -156,7 +156,7 @@
   (generation (Array i64))
   (ids (Array i64)))
 
-(define (compiler-builtin-ids-state-new) : CompilerBuiltinIdsState
+(define (state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
     [ids : (Array i64) (make-array i64 73)]
@@ -169,473 +169,192 @@
           (set! i (+ i 1))))
       (CompilerBuiltinIdsState generation ids))))
 
-(define (compiler-builtin-ids-state-generation
-  [state : CompilerBuiltinIdsState]) : i64
+(define (state-generation [state : CompilerBuiltinIdsState]) : i64
   (array-ref (struct-get state generation) 0))
 
-(define (compiler-builtin-ids-state-set-generation!
+(define (state-set-generation!
   [state : CompilerBuiltinIdsState]
   [generation : i64]) : unit
   (array-set! (struct-get state generation) 0 generation))
 
-(define (compiler-builtin-ids-state-ref
-  [state : CompilerBuiltinIdsState]
-  [index : i64]) : i64
+(define (state-ref [state : CompilerBuiltinIdsState] [index : i64]) : i64
   (array-ref (struct-get state ids) index))
 
-(define (compiler-builtin-ids-state-ids-data-addr
-  [state : CompilerBuiltinIdsState]) : i64
+(define (state-ids-data-addr [state : CompilerBuiltinIdsState]) : i64
   (cast
     (unsafe
       (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
     : i64))
 
-(define (compiler-builtin-ids-state-set!
+(define (state-set!
   [state : CompilerBuiltinIdsState]
   [index : i64]
   [value : i64]) : unit
   (array-set! (struct-get state ids) index value))
 
-(define (compiler-builtin-ids-state-reset! [state : CompilerBuiltinIdsState]) : unit
-  (compiler-builtin-ids-state-set-generation! state -1))
+(define (state-reset! [state : CompilerBuiltinIdsState]) : unit
+  (state-set-generation! state -1))
 
-(define (compiler-builtin-ids-state-capture-from-globals!
-  [state : CompilerBuiltinIdsState]) : unit
+(define (state-capture-from-globals! [state : CompilerBuiltinIdsState]) : unit
   (begin
-    (compiler-builtin-ids-state-set-generation!
-      state
-      compiler-builtin-generation)
-    (compiler-builtin-ids-state-set! state 0 compiler-builtin-id-tl-alloc)
-    (compiler-builtin-ids-state-set! state 1 compiler-builtin-id-tl-region-mark)
-    (compiler-builtin-ids-state-set!
-      state
-      2
-      compiler-builtin-id-tl-region-reset)
-    (compiler-builtin-ids-state-set! state 3 compiler-builtin-id-tl-arena-make)
-    (compiler-builtin-ids-state-set!
-      state
-      4
-      compiler-builtin-id-tl-arena-make-atomic)
-    (compiler-builtin-ids-state-set!
-      state
-      5
-      compiler-builtin-id-tl-arena-current)
-    (compiler-builtin-ids-state-set! state 6 compiler-builtin-id-tl-arena-set)
-    (compiler-builtin-ids-state-set!
-      state
-      7
-      compiler-builtin-id-tl-arena-destroy)
-    (compiler-builtin-ids-state-set!
-      state
-      8
-      compiler-builtin-id-tl-arena-poison-enable)
-    (compiler-builtin-ids-state-set!
-      state
-      9
-      compiler-builtin-id-tl-thread-entry-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      10
-      compiler-builtin-id-tl-thread-init)
-    (compiler-builtin-ids-state-set!
-      state
-      11
-      compiler-builtin-id-tl-atomic-i64-load-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      12
-      compiler-builtin-id-tl-atomic-i64-store-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      13
-      compiler-builtin-id-tl-atomic-i64-add-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      14
-      compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      15
-      compiler-builtin-id-tl-atomic-i32-load-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      16
-      compiler-builtin-id-tl-atomic-i32-store-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      17
-      compiler-builtin-id-tl-atomic-i32-add-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      18
-      compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      19
-      compiler-builtin-id-tl-profile-alloc-total)
-    (compiler-builtin-ids-state-set!
-      state
-      20
-      compiler-builtin-id-tl-profile-alloc-live)
-    (compiler-builtin-ids-state-set!
-      state
-      21
-      compiler-builtin-id-tl-profile-alloc-peak)
-    (compiler-builtin-ids-state-set!
-      state
-      22
-      compiler-builtin-id-tl-profile-alloc-reset-peak)
-    (compiler-builtin-ids-state-set! state 23 compiler-builtin-id-tl-substring)
-    (compiler-builtin-ids-state-set! state 24 compiler-builtin-id-tl-str-view)
-    (compiler-builtin-ids-state-set!
-      state
-      25
-      compiler-builtin-id-tl-string-concat)
-    (compiler-builtin-ids-state-set!
-      state
-      26
-      compiler-builtin-id-tl-string-concat3)
-    (compiler-builtin-ids-state-set!
-      state
-      27
-      compiler-builtin-id-tl-string-concat4)
-    (compiler-builtin-ids-state-set!
-      state
-      28
-      compiler-builtin-id-tl-string-concat5)
-    (compiler-builtin-ids-state-set! state 29 compiler-builtin-id-tl-string-eq)
-    (compiler-builtin-ids-state-set!
-      state
-      30
-      compiler-builtin-id-tl-string-to-int)
-    (compiler-builtin-ids-state-set!
-      state
-      31
-      compiler-builtin-id-tl-int-to-string)
-    (compiler-builtin-ids-state-set!
-      state
-      32
-      compiler-builtin-id-tl-hash-string)
-    (compiler-builtin-ids-state-set!
-      state
-      33
-      compiler-builtin-id-tl-env-var-exists)
-    (compiler-builtin-ids-state-set!
-      state
-      34
-      compiler-builtin-id-tl-env-var-value)
-    (compiler-builtin-ids-state-set!
-      state
-      35
-      compiler-builtin-id-env-path-separator)
-    (compiler-builtin-ids-state-set! state 36 compiler-builtin-id-tl-oob-abort)
-    (compiler-builtin-ids-state-set!
-      state
-      37
-      compiler-builtin-id-tl-abort-label)
-    (compiler-builtin-ids-state-set! state 38 compiler-builtin-id-tl-div-abort)
-    (compiler-builtin-ids-state-set!
-      state
-      39
-      compiler-builtin-id-tl-shift-abort)
-    (compiler-builtin-ids-state-set!
-      state
-      40
-      compiler-builtin-id-tl-array-fill8)
-    (compiler-builtin-ids-state-set! state 41 compiler-builtin-id-tl-array-zero)
-    (compiler-builtin-ids-state-set! state 42 compiler-builtin-id-tl-print-char)
-    (compiler-builtin-ids-state-set! state 43 compiler-builtin-id-tl-print-f64)
-    (compiler-builtin-ids-state-set! state 44 compiler-builtin-id-string-length)
-    (compiler-builtin-ids-state-set! state 45 compiler-builtin-id-length)
-    (compiler-builtin-ids-state-set! state 46 compiler-builtin-id-string-eq)
-    (compiler-builtin-ids-state-set!
-      state
-      47
-      compiler-builtin-id-string-eq-question)
-    (compiler-builtin-ids-state-set! state 48 compiler-builtin-id-string-to-int)
-    (compiler-builtin-ids-state-set! state 49 compiler-builtin-id-string-ref)
-    (compiler-builtin-ids-state-set! state 50 compiler-builtin-id-char-at)
-    (compiler-builtin-ids-state-set! state 51 compiler-builtin-id-array-length)
-    (compiler-builtin-ids-state-set! state 52 compiler-builtin-id-cpuid)
-    (compiler-builtin-ids-state-set! state 53 compiler-builtin-id-xgetbv)
-    (compiler-builtin-ids-state-set! state 54 compiler-builtin-id-clone)
-    (compiler-builtin-ids-state-set! state 55 compiler-builtin-id-arena-make)
-    (compiler-builtin-ids-state-set!
-      state
-      56
-      compiler-builtin-id-arena-make-atomic)
-    (compiler-builtin-ids-state-set! state 57 compiler-builtin-id-arena-current)
-    (compiler-builtin-ids-state-set! state 58 compiler-builtin-id-arena-mark)
-    (compiler-builtin-ids-state-set!
-      state
-      59
-      compiler-builtin-id-arena-set-bang)
-    (compiler-builtin-ids-state-set! state 60 compiler-builtin-id-arena-destroy)
-    (compiler-builtin-ids-state-set! state 61 compiler-builtin-id-arena-rewind)
-    (compiler-builtin-ids-state-set!
-      state
-      62
-      compiler-builtin-id-tl-atomic-i64-cas-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      63
-      compiler-builtin-id-tl-atomic-i32-cas-ptr)
-    (compiler-builtin-ids-state-set!
-      state
-      64
-      compiler-builtin-id-private-array-length)
-    (compiler-builtin-ids-state-set!
-      state
-      65
-      compiler-builtin-id-tl-private-string-length)
-    (compiler-builtin-ids-state-set!
-      state
-      66
-      compiler-builtin-id-tl-private-string-ref)
-    (compiler-builtin-ids-state-set!
-      state
-      67
-      compiler-builtin-id-tl-private-string-eq)
-    (compiler-builtin-ids-state-set!
-      state
-      68
-      compiler-builtin-id-tl-private-string-to-int)
-    (compiler-builtin-ids-state-set!
-      state
-      69
-      compiler-builtin-id-tls-current-arena)
-    (compiler-builtin-ids-state-set!
-      state
-      70
-      compiler-builtin-id-tls-current-arena-set-bang)
-    (compiler-builtin-ids-state-set!
-      state
-      71
-      compiler-builtin-id-tl-tls-current-arena-load)
-    (compiler-builtin-ids-state-set!
-      state
-      72
-      compiler-builtin-id-tl-tls-current-arena-store)))
+    (state-set-generation! state compiler-builtin-generation)
+    (state-set! state 0 compiler-builtin-id-tl-alloc)
+    (state-set! state 1 compiler-builtin-id-tl-region-mark)
+    (state-set! state 2 compiler-builtin-id-tl-region-reset)
+    (state-set! state 3 compiler-builtin-id-tl-arena-make)
+    (state-set! state 4 compiler-builtin-id-tl-arena-make-atomic)
+    (state-set! state 5 compiler-builtin-id-tl-arena-current)
+    (state-set! state 6 compiler-builtin-id-tl-arena-set)
+    (state-set! state 7 compiler-builtin-id-tl-arena-destroy)
+    (state-set! state 8 compiler-builtin-id-tl-arena-poison-enable)
+    (state-set! state 9 compiler-builtin-id-tl-thread-entry-ptr)
+    (state-set! state 10 compiler-builtin-id-tl-thread-init)
+    (state-set! state 11 compiler-builtin-id-tl-atomic-i64-load-ptr)
+    (state-set! state 12 compiler-builtin-id-tl-atomic-i64-store-ptr)
+    (state-set! state 13 compiler-builtin-id-tl-atomic-i64-add-ptr)
+    (state-set! state 14 compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+    (state-set! state 15 compiler-builtin-id-tl-atomic-i32-load-ptr)
+    (state-set! state 16 compiler-builtin-id-tl-atomic-i32-store-ptr)
+    (state-set! state 17 compiler-builtin-id-tl-atomic-i32-add-ptr)
+    (state-set! state 18 compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+    (state-set! state 19 compiler-builtin-id-tl-profile-alloc-total)
+    (state-set! state 20 compiler-builtin-id-tl-profile-alloc-live)
+    (state-set! state 21 compiler-builtin-id-tl-profile-alloc-peak)
+    (state-set! state 22 compiler-builtin-id-tl-profile-alloc-reset-peak)
+    (state-set! state 23 compiler-builtin-id-tl-substring)
+    (state-set! state 24 compiler-builtin-id-tl-str-view)
+    (state-set! state 25 compiler-builtin-id-tl-string-concat)
+    (state-set! state 26 compiler-builtin-id-tl-string-concat3)
+    (state-set! state 27 compiler-builtin-id-tl-string-concat4)
+    (state-set! state 28 compiler-builtin-id-tl-string-concat5)
+    (state-set! state 29 compiler-builtin-id-tl-string-eq)
+    (state-set! state 30 compiler-builtin-id-tl-string-to-int)
+    (state-set! state 31 compiler-builtin-id-tl-int-to-string)
+    (state-set! state 32 compiler-builtin-id-tl-hash-string)
+    (state-set! state 33 compiler-builtin-id-tl-env-var-exists)
+    (state-set! state 34 compiler-builtin-id-tl-env-var-value)
+    (state-set! state 35 compiler-builtin-id-env-path-separator)
+    (state-set! state 36 compiler-builtin-id-tl-oob-abort)
+    (state-set! state 37 compiler-builtin-id-tl-abort-label)
+    (state-set! state 38 compiler-builtin-id-tl-div-abort)
+    (state-set! state 39 compiler-builtin-id-tl-shift-abort)
+    (state-set! state 40 compiler-builtin-id-tl-array-fill8)
+    (state-set! state 41 compiler-builtin-id-tl-array-zero)
+    (state-set! state 42 compiler-builtin-id-tl-print-char)
+    (state-set! state 43 compiler-builtin-id-tl-print-f64)
+    (state-set! state 44 compiler-builtin-id-string-length)
+    (state-set! state 45 compiler-builtin-id-length)
+    (state-set! state 46 compiler-builtin-id-string-eq)
+    (state-set! state 47 compiler-builtin-id-string-eq-question)
+    (state-set! state 48 compiler-builtin-id-string-to-int)
+    (state-set! state 49 compiler-builtin-id-string-ref)
+    (state-set! state 50 compiler-builtin-id-char-at)
+    (state-set! state 51 compiler-builtin-id-array-length)
+    (state-set! state 52 compiler-builtin-id-cpuid)
+    (state-set! state 53 compiler-builtin-id-xgetbv)
+    (state-set! state 54 compiler-builtin-id-clone)
+    (state-set! state 55 compiler-builtin-id-arena-make)
+    (state-set! state 56 compiler-builtin-id-arena-make-atomic)
+    (state-set! state 57 compiler-builtin-id-arena-current)
+    (state-set! state 58 compiler-builtin-id-arena-mark)
+    (state-set! state 59 compiler-builtin-id-arena-set-bang)
+    (state-set! state 60 compiler-builtin-id-arena-destroy)
+    (state-set! state 61 compiler-builtin-id-arena-rewind)
+    (state-set! state 62 compiler-builtin-id-tl-atomic-i64-cas-ptr)
+    (state-set! state 63 compiler-builtin-id-tl-atomic-i32-cas-ptr)
+    (state-set! state 64 compiler-builtin-id-private-array-length)
+    (state-set! state 65 compiler-builtin-id-tl-private-string-length)
+    (state-set! state 66 compiler-builtin-id-tl-private-string-ref)
+    (state-set! state 67 compiler-builtin-id-tl-private-string-eq)
+    (state-set! state 68 compiler-builtin-id-tl-private-string-to-int)
+    (state-set! state 69 compiler-builtin-id-tls-current-arena)
+    (state-set! state 70 compiler-builtin-id-tls-current-arena-set-bang)
+    (state-set! state 71 compiler-builtin-id-tl-tls-current-arena-load)
+    (state-set! state 72 compiler-builtin-id-tl-tls-current-arena-store)))
 
-(define (compiler-builtin-ids-state-capture) : CompilerBuiltinIdsState
+(define (state-capture) : CompilerBuiltinIdsState
   (let
-    [state : CompilerBuiltinIdsState (compiler-builtin-ids-state-new)]
+    [state : CompilerBuiltinIdsState (state-new)]
     (begin
-      (compiler-builtin-ids-state-capture-from-globals! state)
+      (state-capture-from-globals! state)
       state)))
 
-(define (compiler-builtin-ids-state-install! [state : CompilerBuiltinIdsState]) : unit
+(define (state-install! [state : CompilerBuiltinIdsState]) : unit
   (begin
-    (set!
-      compiler-builtin-generation
-      (compiler-builtin-ids-state-generation state))
-    (set! compiler-builtin-id-tl-alloc (compiler-builtin-ids-state-ref state 0))
-    (set!
-      compiler-builtin-id-tl-region-mark
-      (compiler-builtin-ids-state-ref state 1))
-    (set!
-      compiler-builtin-id-tl-region-reset
-      (compiler-builtin-ids-state-ref state 2))
-    (set!
-      compiler-builtin-id-tl-arena-make
-      (compiler-builtin-ids-state-ref state 3))
-    (set!
-      compiler-builtin-id-tl-arena-make-atomic
-      (compiler-builtin-ids-state-ref state 4))
-    (set!
-      compiler-builtin-id-tl-arena-current
-      (compiler-builtin-ids-state-ref state 5))
-    (set!
-      compiler-builtin-id-tl-arena-set
-      (compiler-builtin-ids-state-ref state 6))
-    (set!
-      compiler-builtin-id-tl-arena-destroy
-      (compiler-builtin-ids-state-ref state 7))
-    (set!
-      compiler-builtin-id-tl-arena-poison-enable
-      (compiler-builtin-ids-state-ref state 8))
-    (set!
-      compiler-builtin-id-tl-thread-entry-ptr
-      (compiler-builtin-ids-state-ref state 9))
-    (set!
-      compiler-builtin-id-tl-thread-init
-      (compiler-builtin-ids-state-ref state 10))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-load-ptr
-      (compiler-builtin-ids-state-ref state 11))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-store-ptr
-      (compiler-builtin-ids-state-ref state 12))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-add-ptr
-      (compiler-builtin-ids-state-ref state 13))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-fetch-add-ptr
-      (compiler-builtin-ids-state-ref state 14))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-load-ptr
-      (compiler-builtin-ids-state-ref state 15))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-store-ptr
-      (compiler-builtin-ids-state-ref state 16))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-add-ptr
-      (compiler-builtin-ids-state-ref state 17))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-fetch-add-ptr
-      (compiler-builtin-ids-state-ref state 18))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-total
-      (compiler-builtin-ids-state-ref state 19))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-live
-      (compiler-builtin-ids-state-ref state 20))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-peak
-      (compiler-builtin-ids-state-ref state 21))
-    (set!
-      compiler-builtin-id-tl-profile-alloc-reset-peak
-      (compiler-builtin-ids-state-ref state 22))
-    (set!
-      compiler-builtin-id-tl-substring
-      (compiler-builtin-ids-state-ref state 23))
-    (set!
-      compiler-builtin-id-tl-str-view
-      (compiler-builtin-ids-state-ref state 24))
-    (set!
-      compiler-builtin-id-tl-string-concat
-      (compiler-builtin-ids-state-ref state 25))
-    (set!
-      compiler-builtin-id-tl-string-concat3
-      (compiler-builtin-ids-state-ref state 26))
-    (set!
-      compiler-builtin-id-tl-string-concat4
-      (compiler-builtin-ids-state-ref state 27))
-    (set!
-      compiler-builtin-id-tl-string-concat5
-      (compiler-builtin-ids-state-ref state 28))
-    (set!
-      compiler-builtin-id-tl-string-eq
-      (compiler-builtin-ids-state-ref state 29))
-    (set!
-      compiler-builtin-id-tl-string-to-int
-      (compiler-builtin-ids-state-ref state 30))
-    (set!
-      compiler-builtin-id-tl-int-to-string
-      (compiler-builtin-ids-state-ref state 31))
-    (set!
-      compiler-builtin-id-tl-hash-string
-      (compiler-builtin-ids-state-ref state 32))
-    (set!
-      compiler-builtin-id-tl-env-var-exists
-      (compiler-builtin-ids-state-ref state 33))
-    (set!
-      compiler-builtin-id-tl-env-var-value
-      (compiler-builtin-ids-state-ref state 34))
-    (set!
-      compiler-builtin-id-env-path-separator
-      (compiler-builtin-ids-state-ref state 35))
-    (set!
-      compiler-builtin-id-tl-oob-abort
-      (compiler-builtin-ids-state-ref state 36))
-    (set!
-      compiler-builtin-id-tl-abort-label
-      (compiler-builtin-ids-state-ref state 37))
-    (set!
-      compiler-builtin-id-tl-div-abort
-      (compiler-builtin-ids-state-ref state 38))
-    (set!
-      compiler-builtin-id-tl-shift-abort
-      (compiler-builtin-ids-state-ref state 39))
-    (set!
-      compiler-builtin-id-tl-array-fill8
-      (compiler-builtin-ids-state-ref state 40))
-    (set!
-      compiler-builtin-id-tl-array-zero
-      (compiler-builtin-ids-state-ref state 41))
-    (set!
-      compiler-builtin-id-tl-print-char
-      (compiler-builtin-ids-state-ref state 42))
-    (set!
-      compiler-builtin-id-tl-print-f64
-      (compiler-builtin-ids-state-ref state 43))
-    (set!
-      compiler-builtin-id-string-length
-      (compiler-builtin-ids-state-ref state 44))
-    (set! compiler-builtin-id-length (compiler-builtin-ids-state-ref state 45))
-    (set!
-      compiler-builtin-id-string-eq
-      (compiler-builtin-ids-state-ref state 46))
-    (set!
-      compiler-builtin-id-string-eq-question
-      (compiler-builtin-ids-state-ref state 47))
-    (set!
-      compiler-builtin-id-string-to-int
-      (compiler-builtin-ids-state-ref state 48))
-    (set!
-      compiler-builtin-id-string-ref
-      (compiler-builtin-ids-state-ref state 49))
-    (set! compiler-builtin-id-char-at (compiler-builtin-ids-state-ref state 50))
-    (set!
-      compiler-builtin-id-array-length
-      (compiler-builtin-ids-state-ref state 51))
-    (set! compiler-builtin-id-cpuid (compiler-builtin-ids-state-ref state 52))
-    (set! compiler-builtin-id-xgetbv (compiler-builtin-ids-state-ref state 53))
-    (set! compiler-builtin-id-clone (compiler-builtin-ids-state-ref state 54))
-    (set!
-      compiler-builtin-id-arena-make
-      (compiler-builtin-ids-state-ref state 55))
-    (set!
-      compiler-builtin-id-arena-make-atomic
-      (compiler-builtin-ids-state-ref state 56))
-    (set!
-      compiler-builtin-id-arena-current
-      (compiler-builtin-ids-state-ref state 57))
-    (set!
-      compiler-builtin-id-arena-mark
-      (compiler-builtin-ids-state-ref state 58))
-    (set!
-      compiler-builtin-id-arena-set-bang
-      (compiler-builtin-ids-state-ref state 59))
-    (set!
-      compiler-builtin-id-arena-destroy
-      (compiler-builtin-ids-state-ref state 60))
-    (set!
-      compiler-builtin-id-arena-rewind
-      (compiler-builtin-ids-state-ref state 61))
-    (set!
-      compiler-builtin-id-tl-atomic-i64-cas-ptr
-      (compiler-builtin-ids-state-ref state 62))
-    (set!
-      compiler-builtin-id-tl-atomic-i32-cas-ptr
-      (compiler-builtin-ids-state-ref state 63))
-    (set!
-      compiler-builtin-id-private-array-length
-      (compiler-builtin-ids-state-ref state 64))
-    (set!
-      compiler-builtin-id-tl-private-string-length
-      (compiler-builtin-ids-state-ref state 65))
-    (set!
-      compiler-builtin-id-tl-private-string-ref
-      (compiler-builtin-ids-state-ref state 66))
-    (set!
-      compiler-builtin-id-tl-private-string-eq
-      (compiler-builtin-ids-state-ref state 67))
-    (set!
-      compiler-builtin-id-tl-private-string-to-int
-      (compiler-builtin-ids-state-ref state 68))
-    (set!
-      compiler-builtin-id-tls-current-arena
-      (compiler-builtin-ids-state-ref state 69))
-    (set!
-      compiler-builtin-id-tls-current-arena-set-bang
-      (compiler-builtin-ids-state-ref state 70))
-    (set!
-      compiler-builtin-id-tl-tls-current-arena-load
-      (compiler-builtin-ids-state-ref state 71))
-    (set!
-      compiler-builtin-id-tl-tls-current-arena-store
-      (compiler-builtin-ids-state-ref state 72))))
+    (set! compiler-builtin-generation (state-generation state))
+    (set! compiler-builtin-id-tl-alloc (state-ref state 0))
+    (set! compiler-builtin-id-tl-region-mark (state-ref state 1))
+    (set! compiler-builtin-id-tl-region-reset (state-ref state 2))
+    (set! compiler-builtin-id-tl-arena-make (state-ref state 3))
+    (set! compiler-builtin-id-tl-arena-make-atomic (state-ref state 4))
+    (set! compiler-builtin-id-tl-arena-current (state-ref state 5))
+    (set! compiler-builtin-id-tl-arena-set (state-ref state 6))
+    (set! compiler-builtin-id-tl-arena-destroy (state-ref state 7))
+    (set! compiler-builtin-id-tl-arena-poison-enable (state-ref state 8))
+    (set! compiler-builtin-id-tl-thread-entry-ptr (state-ref state 9))
+    (set! compiler-builtin-id-tl-thread-init (state-ref state 10))
+    (set! compiler-builtin-id-tl-atomic-i64-load-ptr (state-ref state 11))
+    (set! compiler-builtin-id-tl-atomic-i64-store-ptr (state-ref state 12))
+    (set! compiler-builtin-id-tl-atomic-i64-add-ptr (state-ref state 13))
+    (set! compiler-builtin-id-tl-atomic-i64-fetch-add-ptr (state-ref state 14))
+    (set! compiler-builtin-id-tl-atomic-i32-load-ptr (state-ref state 15))
+    (set! compiler-builtin-id-tl-atomic-i32-store-ptr (state-ref state 16))
+    (set! compiler-builtin-id-tl-atomic-i32-add-ptr (state-ref state 17))
+    (set! compiler-builtin-id-tl-atomic-i32-fetch-add-ptr (state-ref state 18))
+    (set! compiler-builtin-id-tl-profile-alloc-total (state-ref state 19))
+    (set! compiler-builtin-id-tl-profile-alloc-live (state-ref state 20))
+    (set! compiler-builtin-id-tl-profile-alloc-peak (state-ref state 21))
+    (set! compiler-builtin-id-tl-profile-alloc-reset-peak (state-ref state 22))
+    (set! compiler-builtin-id-tl-substring (state-ref state 23))
+    (set! compiler-builtin-id-tl-str-view (state-ref state 24))
+    (set! compiler-builtin-id-tl-string-concat (state-ref state 25))
+    (set! compiler-builtin-id-tl-string-concat3 (state-ref state 26))
+    (set! compiler-builtin-id-tl-string-concat4 (state-ref state 27))
+    (set! compiler-builtin-id-tl-string-concat5 (state-ref state 28))
+    (set! compiler-builtin-id-tl-string-eq (state-ref state 29))
+    (set! compiler-builtin-id-tl-string-to-int (state-ref state 30))
+    (set! compiler-builtin-id-tl-int-to-string (state-ref state 31))
+    (set! compiler-builtin-id-tl-hash-string (state-ref state 32))
+    (set! compiler-builtin-id-tl-env-var-exists (state-ref state 33))
+    (set! compiler-builtin-id-tl-env-var-value (state-ref state 34))
+    (set! compiler-builtin-id-env-path-separator (state-ref state 35))
+    (set! compiler-builtin-id-tl-oob-abort (state-ref state 36))
+    (set! compiler-builtin-id-tl-abort-label (state-ref state 37))
+    (set! compiler-builtin-id-tl-div-abort (state-ref state 38))
+    (set! compiler-builtin-id-tl-shift-abort (state-ref state 39))
+    (set! compiler-builtin-id-tl-array-fill8 (state-ref state 40))
+    (set! compiler-builtin-id-tl-array-zero (state-ref state 41))
+    (set! compiler-builtin-id-tl-print-char (state-ref state 42))
+    (set! compiler-builtin-id-tl-print-f64 (state-ref state 43))
+    (set! compiler-builtin-id-string-length (state-ref state 44))
+    (set! compiler-builtin-id-length (state-ref state 45))
+    (set! compiler-builtin-id-string-eq (state-ref state 46))
+    (set! compiler-builtin-id-string-eq-question (state-ref state 47))
+    (set! compiler-builtin-id-string-to-int (state-ref state 48))
+    (set! compiler-builtin-id-string-ref (state-ref state 49))
+    (set! compiler-builtin-id-char-at (state-ref state 50))
+    (set! compiler-builtin-id-array-length (state-ref state 51))
+    (set! compiler-builtin-id-cpuid (state-ref state 52))
+    (set! compiler-builtin-id-xgetbv (state-ref state 53))
+    (set! compiler-builtin-id-clone (state-ref state 54))
+    (set! compiler-builtin-id-arena-make (state-ref state 55))
+    (set! compiler-builtin-id-arena-make-atomic (state-ref state 56))
+    (set! compiler-builtin-id-arena-current (state-ref state 57))
+    (set! compiler-builtin-id-arena-mark (state-ref state 58))
+    (set! compiler-builtin-id-arena-set-bang (state-ref state 59))
+    (set! compiler-builtin-id-arena-destroy (state-ref state 60))
+    (set! compiler-builtin-id-arena-rewind (state-ref state 61))
+    (set! compiler-builtin-id-tl-atomic-i64-cas-ptr (state-ref state 62))
+    (set! compiler-builtin-id-tl-atomic-i32-cas-ptr (state-ref state 63))
+    (set! compiler-builtin-id-private-array-length (state-ref state 64))
+    (set! compiler-builtin-id-tl-private-string-length (state-ref state 65))
+    (set! compiler-builtin-id-tl-private-string-ref (state-ref state 66))
+    (set! compiler-builtin-id-tl-private-string-eq (state-ref state 67))
+    (set! compiler-builtin-id-tl-private-string-to-int (state-ref state 68))
+    (set! compiler-builtin-id-tls-current-arena (state-ref state 69))
+    (set! compiler-builtin-id-tls-current-arena-set-bang (state-ref state 70))
+    (set! compiler-builtin-id-tl-tls-current-arena-load (state-ref state 71))
+    (set! compiler-builtin-id-tl-tls-current-arena-store (state-ref state 72))))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))

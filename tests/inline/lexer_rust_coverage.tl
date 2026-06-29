@@ -36,28 +36,28 @@
         (let
           [ok : bool true]
           (begin
-            (if (= (token.token-tag (array-ref toks 0)) (token.tag-lparen))
+            (if (= (token.tag (array-ref toks 0)) (token.tag-lparen))
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 1)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 1)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 1)) "define")
+            (if (string-eq (token.sym (array-ref toks 1)) "define")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 2)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 2)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 2)) "x")
+            (if (string-eq (token.sym (array-ref toks 2)) "x")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 3)) (token.tag-int))
+            (if (= (token.tag (array-ref toks 3)) (token.tag-int))
               unit
               (set! ok false))
-            (if (= (token.token-int (array-ref toks 3)) 42)
+            (if (= (token.int (array-ref toks 3)) 42)
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 4)) (token.tag-rparen))
+            (if (= (token.tag (array-ref toks 4)) (token.tag-rparen))
               unit
               (set! ok false))
             (lexer-assert-bool-eq
@@ -76,28 +76,28 @@
         (let
           [ok : bool true]
           (begin
-            (if (= (token.token-tag (array-ref toks 0)) (token.tag-lparen))
+            (if (= (token.tag (array-ref toks 0)) (token.tag-lparen))
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 1)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 1)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 1)) "->")
+            (if (string-eq (token.sym (array-ref toks 1)) "->")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 2)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 2)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 2)) "i64")
+            (if (string-eq (token.sym (array-ref toks 2)) "i64")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 3)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 3)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 3)) "i64")
+            (if (string-eq (token.sym (array-ref toks 3)) "i64")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 4)) (token.tag-rparen))
+            (if (= (token.tag (array-ref toks 4)) (token.tag-rparen))
               unit
               (set! ok false))
             (lexer-assert-bool-eq
@@ -115,14 +115,14 @@
         (lexer-assert-true
           (and
             (=
-              (token.token-sym-id (array-ref toks 1))
-              (token.token-sym-id (array-ref toks 2)))
+              (token.sym-id (array-ref toks 1))
+              (token.sym-id (array-ref toks 2)))
             (not
               (=
-                (token.token-sym-id (array-ref toks 1))
-                (token.token-sym-id (array-ref toks 3))))
-            (string-eq (token.token-sym (array-ref toks 1)) "x")
-            (string-eq (token.token-sym (array-ref toks 3)) "y"))
+                (token.sym-id (array-ref toks 1))
+                (token.sym-id (array-ref toks 3))))
+            (string-eq (token.sym (array-ref toks 1)) "x")
+            (string-eq (token.sym (array-ref toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
       [(ResultTokens.Err e) (lexer-assert-true false e)])))
 
@@ -132,7 +132,7 @@
   (let
     [toks : (Array token.Token) (lex "'a'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       'a'
       "lowercase single char")))
 
@@ -141,7 +141,7 @@
   (let
     [toks : (Array token.Token) (lex "'Z'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       'Z'
       "uppercase single char")))
 
@@ -150,7 +150,7 @@
   (let
     [toks : (Array token.Token) (lex "'0'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '0'
       "digit single char")))
 
@@ -159,7 +159,7 @@
   (let
     [toks : (Array token.Token) (lex "'('")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '('
       "punctuation single char")))
 
@@ -168,7 +168,7 @@
   (let
     [toks : (Array token.Token) (lex "'+'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '+'
       "symbol single char")))
 
@@ -177,7 +177,7 @@
   (let
     [toks : (Array token.Token) (lex "' '")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       ' '
       "space single char")))
 
@@ -203,7 +203,7 @@
   (let
     [toks : (Array token.Token) (lex "'a'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       'a'
       "apostrophe lowercase single char")))
 
@@ -212,7 +212,7 @@
   (let
     [toks : (Array token.Token) (lex "' '")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       ' '
       "apostrophe space single char")))
 
@@ -221,7 +221,7 @@
   (let
     [toks : (Array token.Token) (lex "'\"'")]
     (lexer-assert-bool-eq
-      (= (cast (token.token-char (array-ref toks 0)) : i64) 34)
+      (= (cast (token.char (array-ref toks 0)) : i64) 34)
       true
       "apostrophe double quote single char")))
 
@@ -230,7 +230,7 @@
   (let
     [toks : (Array token.Token) (lex "'\\n'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '\n'
       "apostrophe escaped newline")))
 
@@ -255,10 +255,10 @@
     [(ResultTokens.Ok toks)
       (lexer-assert-true
         (and
-          (= (token.token-tag (array-ref toks 0)) (token.tag-quote))
-          (= (token.token-tag (array-ref toks 1)) (token.tag-sym))
-          (string-eq (token.token-sym (array-ref toks 1)) "form")
-          (= (token.token-tag (array-ref toks 2)) (token.tag-end)))
+          (= (token.tag (array-ref toks 0)) (token.tag-quote))
+          (= (token.tag (array-ref toks 1)) (token.tag-sym))
+          (string-eq (token.sym (array-ref toks 1)) "form")
+          (= (token.tag (array-ref toks 2)) (token.tag-end)))
         "apostrophe quote should still quote forms")]
     [(ResultTokens.Err msg) (lexer-assert-true false msg)]))
 
@@ -272,28 +272,28 @@
         (let
           [ok : bool true]
           (begin
-            (if (= (token.token-tag (array-ref toks 0)) (token.tag-lparen))
+            (if (= (token.tag (array-ref toks 0)) (token.tag-lparen))
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 1)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 1)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 1)) "=")
+            (if (string-eq (token.sym (array-ref toks 1)) "=")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 2)) (token.tag-sym))
+            (if (= (token.tag (array-ref toks 2)) (token.tag-sym))
               unit
               (set! ok false))
-            (if (string-eq (token.token-sym (array-ref toks 2)) "c")
+            (if (string-eq (token.sym (array-ref toks 2)) "c")
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 3)) (token.tag-char))
+            (if (= (token.tag (array-ref toks 3)) (token.tag-char))
               unit
               (set! ok false))
-            (if (= (token.token-char (array-ref toks 3)) ' ')
+            (if (= (token.char (array-ref toks 3)) ' ')
               unit
               (set! ok false))
-            (if (= (token.token-tag (array-ref toks 4)) (token.tag-rparen))
+            (if (= (token.tag (array-ref toks 4)) (token.tag-rparen))
               unit
               (set! ok false))
             (lexer-assert-bool-eq
@@ -349,7 +349,7 @@
               unit
               (set! ok false))
             (if (=
-              (token.token-tag (token.spanned-token-tok (array-ref s 5)))
+              (token.tag (token.spanned-token-tok (array-ref s 5)))
               (token.tag-end))
               unit
               (set! ok false))
@@ -395,7 +395,7 @@
   (let
     [toks : (Array token.Token) (lex "")]
     (lexer-assert-bool-eq
-      (= (token.token-tag (array-ref toks 0)) (token.tag-end))
+      (= (token.tag (array-ref toks 0)) (token.tag-end))
       true
       "empty source should yield just EOF")))
 
@@ -420,31 +420,31 @@
   (let
     [toks : (Array token.Token) (lex "' '")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       ' '
       "space char literal"))
   (let
     [toks : (Array token.Token) (lex "'\\n'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '\n'
       "newline char literal"))
   (let
     [toks : (Array token.Token) (lex "'\\t'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '\t'
       "tab char literal"))
   (let
     [toks : (Array token.Token) (lex "'\\r'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '\r'
       "return char literal"))
   (let
     [toks : (Array token.Token) (lex "'\\0'")]
     (lexer-assert-char-eq
-      (token.token-char (array-ref toks 0))
+      (token.char (array-ref toks 0))
       '\0'
       "nul char literal")))
 
@@ -452,15 +452,15 @@
   lexer-apostrophe-escaped-char-literals
   (let
     [toks : (Array token.Token) (lex "'\\n'")]
-    (lexer-assert-char-eq (token.token-char (array-ref toks 0)) '\n' "escape n"))
+    (lexer-assert-char-eq (token.char (array-ref toks 0)) '\n' "escape n"))
   (let
     [toks : (Array token.Token) (lex "'\\t'")]
-    (lexer-assert-char-eq (token.token-char (array-ref toks 0)) '\t' "escape t"))
+    (lexer-assert-char-eq (token.char (array-ref toks 0)) '\t' "escape t"))
   (let
     [toks : (Array token.Token) (lex "'\\r'")]
-    (lexer-assert-char-eq (token.token-char (array-ref toks 0)) '\r' "escape r"))
+    (lexer-assert-char-eq (token.char (array-ref toks 0)) '\r' "escape r"))
   (let
     [toks : (Array token.Token) (lex "'\\0'")]
-    (lexer-assert-char-eq (token.token-char (array-ref toks 0)) '\0' "escape 0"))
+    (lexer-assert-char-eq (token.char (array-ref toks 0)) '\0' "escape 0"))
   ;; ordinary letters are direct character payloads in the apostrophe syntax
   )

@@ -195,11 +195,11 @@
 (define (cur-pos [cur : (Array i64)]) : i64
   (array.array-ref cur 0))
 
-;; Kind tag of the token under the cursor, via the imported `token.token-tag`. This is
+;; Kind tag of the token under the cursor, via the imported `token.tag`. This is
 ;; the load-bearing cross-import call: the reader classifies a `token.Token` produced
 ;; by the imported `lex` using the accessor defined in the imported token model.
 (define (peek-tag [toks : (Array token.Token)] [cur : (Array i64)]) : i64
-  (token.token-tag (array.array-ref toks (cur-pos cur))))
+  (token.tag (array.array-ref toks (cur-pos cur))))
 
 ;; The `token.Token` value under the cursor (for projecting its int/symbol payload).
 (define (peek-tok [toks : (Array token.Token)] [cur : (Array i64)]) : token.Token
@@ -213,7 +213,7 @@
 (define (peek-spanned-tag
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : i64
-  (token.token-tag (token.spanned-token-token (peek-spanned-token toks cur))))
+  (token.tag (token.spanned-token-token (peek-spanned-token toks cur))))
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (Array i64)]) : unit
@@ -317,36 +317,36 @@
     [st : token.SpannedToken (peek-spanned-token toks cur)]
     [tok : token.Token (token.spanned-token-token st)]
     [span : token.SourceSpan (token.spanned-token-span st)]
-    [t : i64 (token.token-tag tok)]
+    [t : i64 (token.tag tok)]
     (cond
       [(= t (token.tag-int))
         (let
-          [v : i64 (token.token-int tok)]
-          [text : String (token.token-int-text tok)]
+          [v : i64 (token.int tok)]
+          [text : String (token.int-text tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Int v text span))))]
       [(= t (token.tag-float))
         (let
-          [s : String (token.token-float tok)]
+          [s : String (token.float tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Float s span))))]
       [(= t (token.tag-sym))
         (let
-          [s : String (token.token-sym tok)]
+          [s : String (token.sym tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Sym s span))))]
       [(= t (token.tag-str))
         (let
-          [s : String (token.token-str tok)]
+          [s : String (token.str tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Str s span))))]
       [(= t (token.tag-char))
         (let
-          [c : char (token.token-char tok)]
+          [c : char (token.char tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Char c span))))]
@@ -386,7 +386,7 @@
   (let
     [st : token.SpannedToken (peek-spanned-token toks cur)]
     [span : token.SourceSpan (token.spanned-token-span st)]
-    [t : i64 (token.token-tag (token.spanned-token-token st))]
+    [t : i64 (token.tag (token.spanned-token-token st))]
     (cond
       [(= t close-tag)
         (begin
@@ -443,32 +443,32 @@
       [(= t (token.tag-int))
         (let
           [tok : token.Token (peek-tok toks cur)]
-          [v : i64 (token.token-int tok)]
-          [text : String (token.token-int-text tok)]
+          [v : i64 (token.int tok)]
+          [text : String (token.int-text tok)]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Int v text))))]
       [(= t (token.tag-float))
         (let
-          [s : String (token.token-float (peek-tok toks cur))]
+          [s : String (token.float (peek-tok toks cur))]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Float s))))]
       [(= t (token.tag-sym))
         (let
-          [s : String (token.token-sym (peek-tok toks cur))]
+          [s : String (token.sym (peek-tok toks cur))]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Sym s))))]
       [(= t (token.tag-str))
         (let
-          [s : String (token.token-str (peek-tok toks cur))]
+          [s : String (token.str (peek-tok toks cur))]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Str s))))]
       [(= t (token.tag-char))
         (let
-          [c : char (token.token-char (peek-tok toks cur))]
+          [c : char (token.char (peek-tok toks cur))]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Char c))))]

@@ -26,8 +26,8 @@
 ;; stays as the lexer's standalone demo. This mirrors how `calc.tl` imports the
 ;; `main`-less `token.tl`: a `main`-less module is the unit of reuse, a
 ;; `main`-bearing file is a runnable demo.
-;; The shared token model: the `token.Token` enum and the `token.token-tag` / `token.token-int` /
-;; `token.token-sym` / `token.token-str` / `token.token-char` / `token.token-float` accessors and tag
+;; The shared token model: the `token.Token` enum and the `token.tag` / `token.int` /
+;; `token.sym` / `token.str` / `token.char` / `token.float` accessors and tag
 ;; constants.
 ;; Imported by module name so token declarations stay behind the `token.`
 ;; qualifier instead of flattening through `lex.tl`.
@@ -1141,36 +1141,36 @@
   (match (lex-result "(% n 16)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
-        (string.string-eq (token.token-sym (array.array-ref toks 1)) "%"))]
+        (= (token.tag (array.array-ref toks 1)) (token.tag-sym))
+        (string.string-eq (token.sym (array.array-ref toks 1)) "%"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-ampersand-symbol-ok?) : bool
   (match (lex-result "(& r String) (&mut r String)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
-        (string.string-eq (token.token-sym (array.array-ref toks 1)) "&")
-        (= (token.token-tag (array.array-ref toks 6)) (token.tag-sym))
-        (string.string-eq (token.token-sym (array.array-ref toks 6)) "&mut"))]
+        (= (token.tag (array.array-ref toks 1)) (token.tag-sym))
+        (string.string-eq (token.sym (array.array-ref toks 1)) "&")
+        (= (token.tag (array.array-ref toks 6)) (token.tag-sym))
+        (string.string-eq (token.sym (array.array-ref toks 6)) "&mut"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-float-token-ok?) : bool
   (match (lex-result "(3.14)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token.token-tag (array.array-ref toks 1)) (token.tag-float))
-        (string.string-eq (token.token-float (array.array-ref toks 1)) "3.14"))]
+        (= (token.tag (array.array-ref toks 1)) (token.tag-float))
+        (string.string-eq (token.float (array.array-ref toks 1)) "3.14"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-negative-int-token-ok?) : bool
   (match (lex-result "(-1 - x)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token.token-tag (array.array-ref toks 1)) (token.tag-int))
-        (= (token.token-int (array.array-ref toks 1)) -1)
-        (= (token.token-tag (array.array-ref toks 2)) (token.tag-sym))
-        (string.string-eq (token.token-sym (array.array-ref toks 2)) "-"))]
+        (= (token.tag (array.array-ref toks 1)) (token.tag-int))
+        (= (token.int (array.array-ref toks 1)) -1)
+        (= (token.tag (array.array-ref toks 2)) (token.tag-sym))
+        (string.string-eq (token.sym (array.array-ref toks 2)) "-"))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-token-int-eq?
@@ -1178,16 +1178,16 @@
   [idx : i64]
   [value : i64]) : bool
   (and
-    (= (token.token-tag (array.array-ref toks idx)) (token.tag-int))
-    (= (token.token-int (array.array-ref toks idx)) value)))
+    (= (token.tag (array.array-ref toks idx)) (token.tag-int))
+    (= (token.int (array.array-ref toks idx)) value)))
 
 (define (lex-token-sym-eq?
   [toks : (Array token.Token)]
   [idx : i64]
   [value : String]) : bool
   (and
-    (= (token.token-tag (array.array-ref toks idx)) (token.tag-sym))
-    (string.string-eq (token.token-sym (array.array-ref toks idx)) value)))
+    (= (token.tag (array.array-ref toks idx)) (token.tag-sym))
+    (string.string-eq (token.sym (array.array-ref toks idx)) value)))
 
 (define (lex-prefixed-int-token-ok?) : bool
   (match (lex-result "(0x2a 0x2A -0x2a 0b101010 -0b101010)")
@@ -1198,7 +1198,7 @@
         (lex-token-int-eq? toks 3 -42)
         (lex-token-int-eq? toks 4 42)
         (lex-token-int-eq? toks 5 -42)
-        (= (token.token-tag (array.array-ref toks 7)) (token.tag-end)))]
+        (= (token.tag (array.array-ref toks 7)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 ;; Returns 42 when the spanned lexer records correct 1-based line/column
@@ -1218,51 +1218,43 @@
       (let
         [ok : bool true]
         (begin
-          (if (= (token.token-tag (array.array-ref toks 0)) (token.tag-lparen))
+          (if (= (token.tag (array.array-ref toks 0)) (token.tag-lparen))
             unit
             (set! ok false))
-          (if (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
+          (if (= (token.tag (array.array-ref toks 1)) (token.tag-sym))
             unit
             (set! ok false))
-          (if (string.string-eq
-            (token.token-sym (array.array-ref toks 1))
-            "define")
+          (if (string.string-eq (token.sym (array.array-ref toks 1)) "define")
             unit
             (set! ok false))
-          (if (=
-            (token.token-tag (array.array-ref toks 2))
-            (token.tag-lbracket))
+          (if (= (token.tag (array.array-ref toks 2)) (token.tag-lbracket))
             unit
             (set! ok false))
-          (if (string.string-eq (token.token-sym (array.array-ref toks 3)) "x")
+          (if (string.string-eq (token.sym (array.array-ref toks 3)) "x")
             unit
             (set! ok false))
-          (if (string.string-eq (token.token-sym (array.array-ref toks 4)) ":")
+          (if (string.string-eq (token.sym (array.array-ref toks 4)) ":")
             unit
             (set! ok false))
-          (if (string.string-eq
-            (token.token-sym (array.array-ref toks 5))
-            "i64")
+          (if (string.string-eq (token.sym (array.array-ref toks 5)) "i64")
             unit
             (set! ok false))
-          (if (=
-            (token.token-tag (array.array-ref toks 6))
-            (token.tag-rbracket))
+          (if (= (token.tag (array.array-ref toks 6)) (token.tag-rbracket))
             unit
             (set! ok false))
-          (if (= (token.token-int (array.array-ref toks 7)) -42)
+          (if (= (token.int (array.array-ref toks 7)) -42)
             unit
             (set! ok false))
-          (if (string.string-eq (token.token-str (array.array-ref toks 8)) "ok")
+          (if (string.string-eq (token.str (array.array-ref toks 8)) "ok")
             unit
             (set! ok false))
-          (if (= (token.token-char (array.array-ref toks 9)) '\n')
+          (if (= (token.char (array.array-ref toks 9)) '\n')
             unit
             (set! ok false))
-          (if (= (token.token-tag (array.array-ref toks 10)) (token.tag-rparen))
+          (if (= (token.tag (array.array-ref toks 10)) (token.tag-rparen))
             unit
             (set! ok false))
-          (if (= (token.token-tag (array.array-ref toks 11)) (token.tag-end))
+          (if (= (token.tag (array.array-ref toks 11)) (token.tag-end))
             unit
             (set! ok false))
           ok))]
@@ -1283,7 +1275,7 @@
         (lex-token-sym-eq? toks 15 ":unknown")
         (lex-token-sym-eq? toks 20 "pkg:math.core")
         (lex-token-sym-eq? toks 21 ":as")
-        (= (token.token-tag (array.array-ref toks 24)) (token.tag-end)))]
+        (= (token.tag (array.array-ref toks 24)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-spanned-token-sym-eq?
@@ -1293,8 +1285,8 @@
   (let
     [tok : token.Token (token.spanned-token-tok (array.array-ref toks idx))]
     (and
-      (= (token.token-tag tok) (token.tag-sym))
-      (string.string-eq (token.token-sym tok) value))))
+      (= (token.tag tok) (token.tag-sym))
+      (string.string-eq (token.sym tok) value))))
 
 (define (lex-spanned-colon-annotation-tokens-ok?) : bool
   (match (lex-spanned-result "[x:i64] (:link \"m\")")
@@ -1305,7 +1297,7 @@
         (lex-spanned-token-sym-eq? toks 3 "i64")
         (lex-spanned-token-sym-eq? toks 6 ":link")
         (=
-          (token.token-tag (token.spanned-token-tok (array.array-ref toks 9)))
+          (token.tag (token.spanned-token-tok (array.array-ref toks 9)))
           (token.tag-end)))]
     [(ResultSpannedTokens.Err _) false]))
 
@@ -1317,35 +1309,35 @@
     (match (lex-result "'form")
       [(ResultTokens.Ok toks)
         (and
-          (= (token.token-tag (array.array-ref toks 0)) (token.tag-quote))
-          (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
-          (string.string-eq (token.token-sym (array.array-ref toks 1)) "form")
-          (= (token.token-tag (array.array-ref toks 2)) (token.tag-end)))]
+          (= (token.tag (array.array-ref toks 0)) (token.tag-quote))
+          (= (token.tag (array.array-ref toks 1)) (token.tag-sym))
+          (string.string-eq (token.sym (array.array-ref toks 1)) "form")
+          (= (token.tag (array.array-ref toks 2)) (token.tag-end)))]
       [(ResultTokens.Err _) false])
     (match (lex-result "'ab'")
       [(ResultTokens.Ok toks)
         (and
-          (= (token.token-tag (array.array-ref toks 0)) (token.tag-quote))
-          (= (token.token-tag (array.array-ref toks 1)) (token.tag-sym))
-          (string.string-eq (token.token-sym (array.array-ref toks 1)) "ab")
-          (= (token.token-tag (array.array-ref toks 2)) (token.tag-quote))
-          (= (token.token-tag (array.array-ref toks 3)) (token.tag-end)))]
+          (= (token.tag (array.array-ref toks 0)) (token.tag-quote))
+          (= (token.tag (array.array-ref toks 1)) (token.tag-sym))
+          (string.string-eq (token.sym (array.array-ref toks 1)) "ab")
+          (= (token.tag (array.array-ref toks 2)) (token.tag-quote))
+          (= (token.tag (array.array-ref toks 3)) (token.tag-end)))]
       [(ResultTokens.Err _) false])
     (match (lex-result "'a'")
       [(ResultTokens.Ok toks)
         (and
-          (= (token.token-tag (array.array-ref toks 0)) (token.tag-char))
-          (= (token.token-char (array.array-ref toks 0)) 'a')
-          (= (token.token-tag (array.array-ref toks 1)) (token.tag-end)))]
+          (= (token.tag (array.array-ref toks 0)) (token.tag-char))
+          (= (token.char (array.array-ref toks 0)) 'a')
+          (= (token.tag (array.array-ref toks 1)) (token.tag-end)))]
       [(ResultTokens.Err _) false])))
 
 (define (lex-one-apostrophe-char-ok? [body : String] [want : char]) : bool
   (match (lex-result (lex-apostrophe-char-source body))
     [(ResultTokens.Ok toks)
       (and
-        (= (token.token-tag (array.array-ref toks 0)) (token.tag-char))
-        (= (token.token-char (array.array-ref toks 0)) want)
-        (= (token.token-tag (array.array-ref toks 1)) (token.tag-end)))]
+        (= (token.tag (array.array-ref toks 0)) (token.tag-char))
+        (= (token.char (array.array-ref toks 0)) want)
+        (= (token.tag (array.array-ref toks 1)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-legacy-char-rejected? [src : String]) : bool
@@ -1433,9 +1425,9 @@
   (let
     [toks : (Array token.Token) (lex src)]
     (and
-      (= (token.token-tag (array.array-ref toks 0)) (token.tag-str))
-      (string.string-eq (token.token-str (array.array-ref toks 0)) expected)
-      (= (token.token-tag (array.array-ref toks 1)) (token.tag-end)))))
+      (= (token.tag (array.array-ref toks 0)) (token.tag-str))
+      (string.string-eq (token.str (array.array-ref toks 0)) expected)
+      (= (token.tag (array.array-ref toks 1)) (token.tag-end)))))
 
 (define (lex-escaped-quote-source-inner) : String
   (string.string-append
@@ -1477,11 +1469,11 @@
   (match (lex-result "`(if ,x ,@xs)")
     [(ResultTokens.Ok toks)
       (and
-        (= (token.token-tag (array.array-ref toks 0)) (token.tag-backtick))
-        (= (token.token-tag (array.array-ref toks 3)) (token.tag-comma))
-        (= (token.token-tag (array.array-ref toks 5)) (token.tag-comma-at))
-        (= (token.token-tag (array.array-ref toks 7)) (token.tag-rparen))
-        (= (token.token-tag (array.array-ref toks 8)) (token.tag-end)))]
+        (= (token.tag (array.array-ref toks 0)) (token.tag-backtick))
+        (= (token.tag (array.array-ref toks 3)) (token.tag-comma))
+        (= (token.tag (array.array-ref toks 5)) (token.tag-comma-at))
+        (= (token.tag (array.array-ref toks 7)) (token.tag-rparen))
+        (= (token.tag (array.array-ref toks 8)) (token.tag-end)))]
     [(ResultTokens.Err _) false]))
 
 (define (lex-span-positions-ok? [s : (Array token.SpannedToken)]) : bool
@@ -1516,7 +1508,7 @@
         unit
         (set! ok false))
       (if (=
-        (token.token-tag (token.spanned-token-tok (array.array-ref s 7)))
+        (token.tag (token.spanned-token-tok (array.array-ref s 7)))
         (token.tag-end))
         unit
         (set! ok false))

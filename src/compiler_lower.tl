@@ -19,6 +19,7 @@
 (import stdlib.string)
 (import stdlib.str_cat)
 (cfg compile-profile (import stdlib.profile))
+(import sym_i64_env)
 
 (defenum LowerNameEnv
   (LowerNameNil)
@@ -361,7 +362,7 @@
   (LowerDirectStoreErr (Box CompilerDiagnostic)))
 
 (defenum ResultLowerEnv
-  (OkLowerEnv LowerState SymI64Env TcTypeEnv)
+  (OkLowerEnv LowerState sym_i64_env.SymI64Env TcTypeEnv)
   (ErrLowerEnv (Box CompilerDiagnostic)))
 
 ;; #3759: OkLowerModuleLocalEnv carries, in order, the full module-local type
@@ -446,7 +447,11 @@
   (count i64))
 
 (defenum LowerResourceBindings
-  (LowerResourceBindings LowerState SymI64Env TcTypeEnv LowerCleanupStack))
+  (LowerResourceBindings
+    LowerState
+    sym_i64_env.SymI64Env
+    TcTypeEnv
+    LowerCleanupStack))
 
 (defenum ResultLowerResourceBindings
   (OkLowerResourceBindings LowerResourceBindings)
@@ -1292,7 +1297,7 @@
 (define (lower-lookup-type
   [ctx : TcContext]
   [type-cache : LowerTypeCache]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]) : ResultTcType
   (if (tc-dotted-local-field-name? type-env name)
@@ -1307,7 +1312,7 @@
         type-env
         name)
         [(ResultTcString.Ok lookup-name)
-          (if (sym-i64-contains env lookup-name)
+          (if (sym_i64_env.sym-i64-contains env lookup-name)
             (tc-lookup type-env lookup-name)
             (match (tc-lookup type-env lookup-name)
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
@@ -1329,14 +1334,14 @@
 (define (lower-lookup-type-id
   [ctx : TcContext]
   [type-cache : LowerTypeCache]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
   (let
     [name : String (intern-str name-id)]
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
-      (if (sym-i64-contains-id env name-id)
+      (if (sym_i64_env.sym-i64-contains-id env name-id)
         (tc-lookup-id type-env name-id)
         (lower-lookup-type ctx type-cache env type-env name)))))
 
@@ -1488,9 +1493,9 @@
 
 (define (lower-resolve-call-name
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [source-name : String]) : String
-  (if (sym-i64-contains env source-name)
+  (if (sym_i64_env.sym-i64-contains env source-name)
     source-name
     (lower-resolve-name state source-name)))
 
@@ -3128,7 +3133,7 @@
 
 (define (lower-spmd-inline-helper-name
   [ctx : TcContext]
-  [_env : SymI64Env]
+  [_env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [shadowed : LowerStringSet]
   [func : AstExpr]) : ResultTcString
@@ -3146,7 +3151,7 @@
 
 (define (lower-spmd-inline-helper-lookup
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [shadowed : LowerStringSet]
   [func : AstExpr]) : ResultLowerSpmdInlineHelper
@@ -3223,7 +3228,7 @@
 
 (define (lower-spmd-inline-expr-list
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
   [subst : LowerSpmdInlineSubst]
@@ -3251,7 +3256,7 @@
 
 (define (lower-spmd-inline-let-bindings
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [bindings : AstLetBindingList]
   [subst : LowerSpmdInlineSubst]
@@ -3319,7 +3324,7 @@
 
 (define (lower-spmd-inline-helper-body
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [params : AstParamList]
@@ -3355,7 +3360,7 @@
 
 (define (lower-spmd-inline-call
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]
@@ -3397,7 +3402,7 @@
 
 (define (lower-spmd-inline-expr
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [subst : LowerSpmdInlineSubst]
@@ -9946,7 +9951,7 @@
 
 (define (lower-string-concat-call-parts
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : LowerMaybeStringConcatCall
   (match (ast-expr-unspan-with-pools (tc-context-pools ctx) expr)
     [(AstExpr.Call callee-box args)
@@ -9979,7 +9984,7 @@
 
 (define (lower-string-concat-exprs-right
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [left : AstExpr]
   [right : AstExpr]
   [remaining : i64]) : AstExprList
@@ -10012,7 +10017,7 @@
 (define (lower-string-concat-values-rev
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
   [acc : CompilerIrValueList]
@@ -10050,7 +10055,7 @@
 (define (lower-string-concat-exprs
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : ResultLowerExpr
   (match (lower-string-concat-values-rev
@@ -10336,7 +10341,7 @@
 (define (lower-borrowed-str-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [origin : AstExpr]
@@ -10437,11 +10442,12 @@
 
 (define (lower-borrow-reference-var-address
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (let
-    [id : i64 (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+    [id : i64
+      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? id)
       (OkLowerExpr (LowerExpr state (CompilerIrValue.Var id) result-ty))
       (OkLowerExpr
@@ -10453,14 +10459,15 @@
 (define (lower-borrow-var-address-by-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [place-ty : AstType]
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (let
     [referent-ty : AstType (tc-borrow-referent-type place-ty)]
-    [id : i64 (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+    [id : i64
+      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? id)
       (if (lower-borrow-place-value-reference? ctx referent-ty)
         (OkLowerExpr (LowerExpr state (CompilerIrValue.Var id) result-ty))
@@ -10488,7 +10495,7 @@
 (define (lower-borrow-var-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [origin : AstExpr]
@@ -10594,7 +10601,7 @@
 (define (lower-borrow-struct-field-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [receiver : AstExpr]
   [field : String]
@@ -10688,7 +10695,7 @@
 (define (lower-borrow-tuple-field-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [tuple-expr : AstExpr]
   [index : i64]
@@ -10765,7 +10772,7 @@
 (define (lower-borrow-array-element-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [index : AstExpr]
@@ -10871,7 +10878,7 @@
 (define (lower-borrow-place-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [place : AstExpr]
   [origin : AstExpr]
@@ -10959,7 +10966,7 @@
 (define (lower-borrow-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [origin : AstExpr]
@@ -11363,7 +11370,7 @@
 (define (lower-bind-irrefutable-box-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [pattern : AstPattern]
@@ -11375,7 +11382,7 @@
         [(CompilerIrValue.Var value-var)
           (OkLowerEnv
             state
-            (sym-i64-bind-id env name value-var)
+            (sym_i64_env.sym-i64-bind-id env name value-var)
             (tc-bind-id type-env name inner-ty))]
         [_
           (ErrLowerEnv
@@ -11399,7 +11406,7 @@
 (define (lower-bind-box-pattern
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [box-value : CompilerIrValue]
   [box-ty : AstType]
@@ -11447,7 +11454,7 @@
 (define (lower-bind-box-variant-payload
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [nested-args : AstPatternList]
@@ -11506,7 +11513,7 @@
 (define (lower-bind-struct-variant-payload
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [nested-args : AstPatternList]
@@ -11568,7 +11575,7 @@
 (define (lower-bind-variant-payloads
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [patterns : AstPatternList]
@@ -11663,7 +11670,7 @@
                             (lower-bind-variant-payloads
                               ctx
                               load-state
-                              (sym-i64-bind-id env name field-var)
+                              (sym_i64_env.sym-i64-bind-id env name field-var)
                               (tc-bind-id type-env name resolved)
                               base
                               rest-patterns
@@ -11933,7 +11940,7 @@
 (define (lower-bind-borrowed-variant-payloads
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [borrow-lifetime : String]
   [base : CompilerIrValue]
@@ -12020,7 +12027,7 @@
                               (lower-bind-borrowed-variant-payloads
                                 ctx
                                 ref-state
-                                (sym-i64-bind-id env name field-var)
+                                (sym_i64_env.sym-i64-bind-id env name field-var)
                                 (tc-bind-id type-env name ref-ty)
                                 borrow-lifetime
                                 base
@@ -12192,7 +12199,7 @@
 (define (lower-bind-match-variant-payloads
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [borrow-lifetime : TcMaybeString]
   [base : CompilerIrValue]
@@ -12422,11 +12429,12 @@
 
 (define (lower-var
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [ty : AstType]) : ResultLowerExpr
   (let
-    [id : i64 (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+    [id : i64
+      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? id)
       (OkLowerExpr (LowerExpr state (CompilerIrValue.Var id) ty))
       (OkLowerExpr
@@ -12437,12 +12445,15 @@
 
 (define (lower-var-id
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name-id : i64]
   [ty : AstType]) : ResultLowerExpr
   (let
     [id : i64
-      (sym-i64-lookup-id-or env name-id (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name-id
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? id)
       (OkLowerExpr (LowerExpr state (CompilerIrValue.Var id) ty))
       (OkLowerExpr
@@ -12674,11 +12685,11 @@
 (define (lower-function-value-or-var
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [ty : AstType]) : ResultLowerExpr
   (cond
-    [(sym-i64-contains env name) (lower-var state env name ty)]
+    [(sym_i64_env.sym-i64-contains env name) (lower-var state env name ty)]
     [(lower-extern-value-decl? ctx name)
       (match (lower-var state env name ty)
         [(OkLowerExpr lowered)
@@ -12705,12 +12716,12 @@
     [else (lower-var state env name ty)]))
 
 (define (lower-lambda-captures-env?
-  [outer-env : SymI64Env]
+  [outer-env : sym_i64_env.SymI64Env]
   [body : AstExpr]
   [bound : TcStringList]) : bool
   (match outer-env
-    [(SymI64Nil) false]
-    [(SymI64Bind name-id _ rest)
+    [(sym_i64_env.SymI64Nil) false]
+    [(sym_i64_env.SymI64Bind name-id _ rest)
       (if (tc-expr-uses-free-name? body (intern-str name-id) bound)
         true
         (lower-lambda-captures-env? (box-get rest) body bound))]))
@@ -12850,7 +12861,7 @@
 (define (lower-capture-snapshot-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
@@ -13028,7 +13039,7 @@
 (define (lower-capture-snapshot-type-list
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [src : CompilerIrValue]
   [dst : CompilerIrValue]
@@ -13092,7 +13103,7 @@
 (define (lower-capture-snapshot-tuple-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [elem-tys : AstTypeList]
@@ -13118,7 +13129,7 @@
 (define (lower-capture-snapshot-fixed-array-elems
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [src : CompilerIrValue]
   [dst : CompilerIrValue]
@@ -13183,7 +13194,7 @@
 (define (lower-capture-snapshot-fixed-array-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [elem-ty : AstType]
@@ -13214,7 +13225,7 @@
 (define (lower-capture-snapshot-struct-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [struct-name : String]
@@ -13251,7 +13262,7 @@
 (define (lower-capture-snapshot-enum-variants
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [src : CompilerIrValue]
   [dst : CompilerIrValue]
@@ -13325,7 +13336,7 @@
 (define (lower-capture-snapshot-enum-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [enum-name : String]
@@ -13362,7 +13373,7 @@
 
 (define (lower-capture-plan-scan
   [ctx : TcContext]
-  [outer-env : SymI64Env]
+  [outer-env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [body : AstExpr]
   [bound : TcStringList]
@@ -13370,10 +13381,10 @@
   [captures : LowerCaptureList]
   [origin : AstExpr]) : ResultLowerCapturePlan
   (match outer-env
-    [(SymI64Nil)
+    [(sym_i64_env.SymI64Nil)
       (OkLowerCapturePlan
         (LowerCapturePlan captures (lower-capture-env-size cursor)))]
-    [(SymI64Bind name-id var-id rest)
+    [(sym_i64_env.SymI64Bind name-id var-id rest)
       (let
         [name : String (intern-str name-id)]
         (if (or
@@ -13426,7 +13437,7 @@
 
 (define (lower-capture-plan
   [ctx : TcContext]
-  [outer-env : SymI64Env]
+  [outer-env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]
@@ -13444,7 +13455,7 @@
 (define (lower-store-captures-from-index
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [env-value : CompilerIrValue]
   [items : (Array LowerCapture)]
@@ -13493,7 +13504,7 @@
 (define (lower-store-captures
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [env-value : CompilerIrValue]
   [captures : LowerCaptureList]) : ResultLowerState
@@ -13531,7 +13542,7 @@
 (define (lower-capturing-lambda-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lambda-name : String]
   [captures : LowerCaptureList]
@@ -13562,7 +13573,7 @@
   [env-value : CompilerIrValue]
   [items : (Array LowerCapture)]
   [index : i64]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerEnv
   (if (< index 0)
     (OkLowerEnv state env type-env)
@@ -13589,7 +13600,7 @@
                     env-value
                     items
                     (- index 1)
-                    (sym-i64-bind env name loaded-var)
+                    (sym_i64_env.sym-i64-bind env name loaded-var)
                     (tc-bind type-env name capture-ty))]
                 [_
                   (ErrLowerEnv
@@ -13602,7 +13613,7 @@
   [state : LowerState]
   [env-value : CompilerIrValue]
   [captures : LowerCaptureList]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerEnv
   (lower-load-captures-from-index
     ctx
@@ -13674,11 +13685,12 @@
         state
         (CompilerIrValue.Var 0)
         captures
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (tc-bind-return-type top-env ret-ty))
         [(OkLowerEnv captured-state captured-env captured-type-env)
           (let
-            [env : SymI64Env (lower-bind-params params 1 captured-env)]
+            [env : sym_i64_env.SymI64Env
+              (lower-bind-params params 1 captured-env)]
             [type-env : TcTypeEnv (tc-bind-params ctx captured-type-env params)]
             (match (lower-tail-expr
               ctx
@@ -13746,7 +13758,7 @@
 (define (lower-lambda-capturing
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [params : AstParamList]
   [maybe-ret : AstMaybeType]
@@ -13800,7 +13812,7 @@
 (define (lower-lambda
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [params : AstParamList]
   [maybe-ret : AstMaybeType]
@@ -13999,12 +14011,15 @@
 
 (define (lower-emit-cleanup-call
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [hidden-name : String]
   [cleanup-name : String]) : ResultLowerState
   (let
     [resource-id : i64
-      (sym-i64-lookup-or env hidden-name (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-or
+        env
+        hidden-name
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? resource-id)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated var-id)
@@ -14021,11 +14036,14 @@
 
 (define (lower-emit-region-reset
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [hidden-name : String]) : ResultLowerState
   (let
     [mark-var : i64
-      (sym-i64-lookup-or env hidden-name (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-or
+        env
+        hidden-name
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? mark-var)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated reset-var)
@@ -14042,11 +14060,14 @@
 
 (define (lower-emit-arena-restore
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [hidden-name : String]) : ResultLowerState
   (let
     [arena-var : i64
-      (sym-i64-lookup-or env hidden-name (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-or
+        env
+        hidden-name
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? arena-var)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated restore-var)
@@ -14097,7 +14118,7 @@
 
 (define (lower-emit-cleanup-stack-at
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [hidden-names : (Array String)]
   [cleanup-names : (Array String)]
   [index : i64]) : ResultLowerState
@@ -14119,7 +14140,7 @@
 
 (define (lower-emit-cleanup-stack
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [cleanups : LowerCleanupStack]) : ResultLowerState
   (lower-emit-cleanup-stack-at
     state
@@ -14137,7 +14158,7 @@
   [cleanup-marker-id : i64]
   [region-reset-marker-id : i64]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (let
     [cur-env : TcTypeEnv type-env]
@@ -14239,7 +14260,7 @@
 
 (define (lower-emit-active-exits
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (lower-emit-active-exits-with
     (lower-cleanup-marker-id)
@@ -14251,7 +14272,7 @@
 (define (lower-emit-active-cleanups-with
   [cleanup-marker-id : i64]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
     [(TcTypeEnv.Nil) (OkLowerState state)]
@@ -14338,14 +14359,14 @@
 
 (define (lower-emit-active-cleanups
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (lower-emit-active-cleanups-with (lower-cleanup-marker-id) state env type-env))
 
 (define (lower-return-form
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
@@ -14498,7 +14519,7 @@
 (define (lower-try-finish
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [result-value : CompilerIrValue]
   [operand-info : TcResultInfo]
@@ -14537,7 +14558,7 @@
 (define (lower-try-with-info
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [result-value : CompilerIrValue]
   [operand-info : TcResultInfo]
@@ -14598,7 +14619,7 @@
 (define (lower-try
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
@@ -14667,10 +14688,10 @@
 
 (define (lower-builtin-call-available?
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
   (and
-    (not (sym-i64-contains env name))
+    (not (sym_i64_env.sym-i64-contains env name))
     (not (lower-top-level-value-defined? ctx name))))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
@@ -14709,7 +14730,7 @@
 (define (lower-arena-builtin-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -14772,7 +14793,7 @@
 (define (lower-tls-current-arena-set-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
@@ -14813,7 +14834,7 @@
 (define (lower-tls-current-arena-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]
   [args : AstExprList]
@@ -14836,7 +14857,7 @@
 (define (lower-clone-named
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
@@ -14895,7 +14916,7 @@
 (define (lower-clone-type-list
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [src : CompilerIrValue]
   [dst : CompilerIrValue]
@@ -14959,7 +14980,7 @@
 (define (lower-clone-tuple-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [elem-tys : AstTypeList]
@@ -14985,7 +15006,7 @@
 (define (lower-clone-fixed-array-elems
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [src : CompilerIrValue]
   [dst : CompilerIrValue]
@@ -15050,7 +15071,7 @@
 (define (lower-clone-fixed-array-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [elem-ty : AstType]
@@ -15134,7 +15155,7 @@
 (define (lower-clone-dynarray-copy-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -15181,7 +15202,7 @@
 (define (lower-clone-dynarray-copy-nonempty
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -15241,7 +15262,7 @@
 (define (lower-clone-dynarray-copy-loop
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [old-buf : CompilerIrValue]
   [new-buf : CompilerIrValue]
@@ -15267,7 +15288,7 @@
 (define (lower-clone-dynarray-finish
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [old-buf : CompilerIrValue]
   [len : CompilerIrValue]
@@ -15310,7 +15331,7 @@
 (define (lower-clone-dynarray-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [elem-ty : AstType]
@@ -15354,7 +15375,7 @@
 (define (lower-clone-box-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [inner-ty : AstType]
@@ -15402,7 +15423,7 @@
 (define (lower-clone-dispatch
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
@@ -15473,7 +15494,7 @@
 (define (lower-clone-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arg : AstExpr]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env arg)
@@ -15496,7 +15517,7 @@
 (define (lower-call-arg-normal-as
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arg : AstExpr]
   [effective-arg : AstExpr]
@@ -15511,7 +15532,7 @@
 (define (lower-call-arg-mut-borrow-var-as
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arg : AstExpr]
   [effective-arg : AstExpr]
@@ -15536,7 +15557,10 @@
             arg-ty)
           (let
             [local-id : i64
-              (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+              (sym_i64_env.sym-i64-lookup-or
+                env
+                name
+                (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? local-id)
               (match (lower-borrow-copy-to-inline-storage
                 ctx
@@ -15565,7 +15589,7 @@
 (define (lower-call-arg-as
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arg : AstExpr]
   [expected : AstType]
@@ -15662,7 +15686,7 @@
 (define (lower-call-args-as
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerCallArgs
@@ -15765,7 +15789,7 @@
 (define (lower-args-as
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerArgs
@@ -15835,7 +15859,7 @@
 (define (lower-call-args-as-needed
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerCallArgs
@@ -16103,7 +16127,7 @@
 (define (lower-construct-enum-with-name
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [variant-name : String]
   [handle : i64]
@@ -16189,7 +16213,7 @@
 (define (lower-construct-enum-with-handle
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [variant-name : String]
   [handle : i64]
@@ -16232,7 +16256,7 @@
 (define (lower-construct-enum-with-name-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [variant-name : String]
@@ -16281,7 +16305,7 @@
 (define (lower-construct-enum-with-handle-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [variant-name : String]
@@ -16373,7 +16397,7 @@
 (define (lower-construct-struct
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [struct-name : String]
   [args : AstExprList]
@@ -16439,7 +16463,7 @@
 (define (lower-construct-struct-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [struct-name : String]
@@ -16502,7 +16526,7 @@
 (define (lower-init-struct
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [struct-name : String]
   [struct-ty : AstType]) : ResultLowerExpr
@@ -16538,7 +16562,7 @@
 (define (lower-init-enum
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
@@ -16599,7 +16623,7 @@
 (define (lower-init-struct-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [struct-name : String]
@@ -16637,7 +16661,7 @@
 (define (lower-init-enum-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [enum-name : String]
@@ -16700,7 +16724,7 @@
 (define (lower-init-expr-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [ty : AstType]
@@ -16756,7 +16780,7 @@
 (define (lower-init-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [ty : AstType]
   [origin : AstExpr]
@@ -16868,7 +16892,7 @@
 (define (lower-nullary-variant-or-function-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [expr-ty : AstType]) : ResultLowerExpr
@@ -16931,13 +16955,13 @@
 (define (lower-var-or-nullary-variant
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [expr-ty : AstType]) : ResultLowerExpr
   (lower-materialize-group-global
     ctx
-    (if (sym-i64-contains env name)
+    (if (sym_i64_env.sym-i64-contains env name)
       (lower-var state env name expr-ty)
       (lower-nullary-variant-or-function-value
         ctx
@@ -16950,7 +16974,7 @@
 (define (lower-var-or-nullary-variant-id
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]
   [expr-ty : AstType]) : ResultLowerExpr
@@ -16960,7 +16984,7 @@
   ;; -id path dropped this wrapper, so reg-group globals faulted.
   (lower-materialize-group-global
     ctx
-    (if (sym-i64-contains-id env name-id)
+    (if (sym_i64_env.sym-i64-contains-id env name-id)
       (lower-var-id state env name-id expr-ty)
       (let
         [name : String (intern-str name-id)]
@@ -16978,7 +17002,7 @@
 
 (define (lower-call-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [func : AstExpr]
@@ -17130,7 +17154,7 @@
 
 (define (lower-if-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [then-branch : AstExpr]
@@ -17149,7 +17173,7 @@
 
 (define (lower-expr-list-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [exprs : AstExprList]) : ResultTcType
@@ -17166,8 +17190,8 @@
             (lower-expr-list-result-type-fast ctx env type-env type-cache rest)]))]))
 
 (define (lower-pattern-list-bind-local-names
-  [env : SymI64Env]
-  [patterns : AstPatternList]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]
+  [patterns : AstPatternList]) : sym_i64_env.SymI64Env
   (match patterns
     [(AstPatternList.Nil) env]
     [(AstPatternList.Cons pattern rest)
@@ -17179,15 +17203,15 @@
           rest))]))
 
 (define (lower-pattern-bind-local-names
-  [env : SymI64Env]
-  [pattern : AstPattern]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]
+  [pattern : AstPattern]) : sym_i64_env.SymI64Env
   (match pattern
-    [(AstPattern.Var name _) (sym-i64-bind-id env name 0)]
+    [(AstPattern.Var name _) (sym_i64_env.sym-i64-bind-id env name 0)]
     [(AstPattern.Tuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
         (lower-pattern-list-bind-local-names env patterns))]
-    [(AstPattern.Binding name) (sym-i64-bind-id env name 0)]
+    [(AstPattern.Binding name) (sym_i64_env.sym-i64-bind-id env name 0)]
     [(AstPattern.Variant _ args-box)
       (let
         [args : AstPatternList (box-get args-box)]
@@ -17196,9 +17220,9 @@
 
 (define (lower-match-pattern-bind-local-names
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [scrut-ty : AstType]
-  [pattern : AstPattern]) : SymI64Env
+  [pattern : AstPattern]) : sym_i64_env.SymI64Env
   (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
     [(AstTyEnum _)
       (match pattern
@@ -17211,7 +17235,7 @@
 
 (define (lower-match-arm-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [scrut-ty : AstType]
@@ -17232,7 +17256,7 @@
 
 (define (lower-match-rest-result-types-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [scrut-ty : AstType]
@@ -17266,7 +17290,7 @@
 
 (define (lower-match-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [scrutinee : AstExpr]
@@ -17300,7 +17324,7 @@
 
 (define (lower-let-binding-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [maybe-ty : AstMaybeType]
@@ -17327,7 +17351,7 @@
 
 (define (lower-let-bindings-type-env-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [bindings : AstLetBindingList]) : ResultTcEnv
@@ -17351,7 +17375,7 @@
                 [(ResultTcType.Ok binding-ty)
                   (lower-let-bindings-type-env-fast
                     ctx
-                    (sym-i64-bind-id env name-id 0)
+                    (sym_i64_env.sym-i64-bind-id env name-id 0)
                     (tc-bind-c-abi-fnptr-if-needed-id
                       ctx
                       type-env
@@ -17363,8 +17387,8 @@
                 [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]))]))
 
 (define (lower-let-bindings-local-env
-  [env : SymI64Env]
-  [bindings : AstLetBindingList]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]
+  [bindings : AstLetBindingList]) : sym_i64_env.SymI64Env
   (match bindings
     [(AstLetBindingList.Nil) env]
     [(AstLetBindingList.Cons binding rest)
@@ -17372,7 +17396,9 @@
         [rest : AstLetBindingList (box-get rest)]
         (match binding
           [(AstLetBinding.Binding name _ _)
-            (lower-let-bindings-local-env (sym-i64-bind-id env name 0) rest)]))]))
+            (lower-let-bindings-local-env
+              (sym_i64_env.sym-i64-bind-id env name 0)
+              rest)]))]))
 
 (define (lower-projected-result-type-fast
   [ctx : TcContext]
@@ -17385,7 +17411,7 @@
 
 (define (lower-index-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [index : AstExpr]) : ResultTcType
@@ -17398,7 +17424,7 @@
 
 (define (lower-unary-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [op : AstUnOp]
@@ -17414,7 +17440,7 @@
 
 (define (lower-tuple-ref-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [tuple-expr : AstExpr]
@@ -17434,7 +17460,7 @@
 
 (define (lower-array-ref-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [array-expr : AstExpr]
@@ -17469,7 +17495,7 @@
 
 (define (lower-string-ref-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [str : AstExpr]
@@ -17487,7 +17513,7 @@
 
 (define (lower-struct-get-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [receiver : AstExpr]
@@ -17518,7 +17544,7 @@
 
 (define (lower-box-get-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [box-expr : AstExpr]) : ResultTcType
@@ -17576,7 +17602,7 @@
 
 (define (lower-expr-result-type-fast
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [expr : AstExpr]) : ResultTcType
@@ -17741,7 +17767,7 @@
 
 (define (lower-expr-result-type-or-check
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [expr : AstExpr]) : ResultTcType
@@ -17751,7 +17777,7 @@
 
 (define (lower-index-result-type-or-check
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
   [index : AstExpr]) : ResultTcType
@@ -17769,7 +17795,7 @@
 (define (lower-integer-expr-with-expected-or-actual
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [expected-ty : AstType]
@@ -17789,7 +17815,7 @@
 (define (lower-expr-typechecked
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
@@ -17809,7 +17835,7 @@
 (define (lower-cast-source-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
@@ -17823,7 +17849,7 @@
 (define (lower-expr-origin
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
@@ -17990,7 +18016,7 @@
 (define (lower-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : ResultLowerExpr
   (lower-expr-origin ctx state env type-env expr expr))
@@ -17998,7 +18024,7 @@
 (define (lower-expr-with-type
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [origin : AstExpr]
@@ -18310,7 +18336,7 @@
                       [(LowerExpr value-state value-ir _)
                         (let
                           [id : i64
-                            (sym-i64-lookup-id-or
+                            (sym_i64_env.sym-i64-lookup-id-or
                               env
                               name-id
                               (compiler-symbols-missing-handle))]
@@ -18780,7 +18806,10 @@
     [(AstExpr.PtrAddrOf name)
       (let
         [local-id : i64
-          (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            name
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? local-id)
           (match (lower-state-alloc-var state)
             [(LowerAlloc allocated var-id)
@@ -18985,7 +19014,7 @@
 (define (lower-expr-with-type-and-coerce
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [origin : AstExpr]
@@ -19002,7 +19031,7 @@
 (define (lower-expr-and-coerce
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [expected-ty : AstType]) : ResultLowerExpr
@@ -19023,7 +19052,7 @@
 (define (lower-expr-expected
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [expected-ty : AstType]
@@ -19333,7 +19362,7 @@
 (define (lower-struct-get
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [receiver : AstExpr]
   [field : String]
@@ -19427,7 +19456,7 @@
 (define (lower-box
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
@@ -19499,7 +19528,7 @@
 (define (lower-box-get
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [inner : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
@@ -19532,7 +19561,7 @@
 (define (lower-box-storage-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [box-expr : AstExpr]
   [origin : AstExpr]
@@ -19603,7 +19632,7 @@
 (define (lower-tuple-store-elems
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [values : AstExprList]
@@ -19665,7 +19694,7 @@
 (define (lower-tuple
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [values : AstExprList]
   [result-ty : AstType]
@@ -19701,7 +19730,7 @@
 (define (lower-array-literal-store-elems
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [values : AstExprList]
@@ -19798,7 +19827,7 @@
 (define (lower-array-literal
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [values : AstExprList]
   [result-ty : AstType]
@@ -19837,7 +19866,7 @@
 (define (lower-tuple-ref
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [tuple-expr : AstExpr]
   [index : i64]
@@ -19923,7 +19952,7 @@
 (define (lower-string-ref
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [str : AstExpr]
   [index : AstExpr]) : ResultLowerExpr
@@ -20120,7 +20149,7 @@
 (define (lower-substring
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [str : AstExpr]
   [start : AstExpr]
@@ -20184,7 +20213,7 @@
 (define (lower-string-concat
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [left : AstExpr]
   [right : AstExpr]) : ResultLowerExpr
@@ -20203,11 +20232,11 @@
 (define (lower-c-abi-extern-call?
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
   (cond
     [(not (lower-mode-c-abi? (lower-state-mode state))) false]
-    [(sym-i64-contains env name) false]
+    [(sym_i64_env.sym-i64-contains env name) false]
     [(lower-c-abi-runtime-handle-extern? name) false]
     [else
       (let
@@ -20221,11 +20250,11 @@
 (define (lower-c-abi-extern-value-call?
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
   (cond
     [(not (lower-mode-c-abi? (lower-state-mode state))) false]
-    [(sym-i64-contains env name) false]
+    [(sym_i64_env.sym-i64-contains env name) false]
     [(lower-c-abi-runtime-handle-extern? name) false]
     [else (lower-extern-value-decl? ctx name)]))
 
@@ -20858,7 +20887,7 @@
 (define (lower-c-abi-args-as
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [types : AstTypeList]) : ResultLowerArgs
@@ -21192,7 +21221,7 @@
 (define (lower-direct-c-abi-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -21469,7 +21498,7 @@
 (define (lower-extern-value-c-abi-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -21543,7 +21572,7 @@
 (define (lower-direct-call-values
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [values : CompilerIrValueList]
   [result-ty : AstType]
@@ -21653,7 +21682,7 @@
 (define (lower-bytes-view-from-parts-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]
@@ -21667,7 +21696,7 @@
 (define (lower-direct-call-from-args
   [ctx : TcContext]
   [args-result : ResultLowerArgs]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
@@ -21679,7 +21708,7 @@
 (define (lower-direct-call-from-call-args
   [ctx : TcContext]
   [args-result : ResultLowerCallArgs]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
@@ -21720,7 +21749,7 @@
 (define (lower-direct-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -21836,7 +21865,7 @@
 (define (lower-indirect-call-args
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [func-ty : AstType]) : ResultLowerArgs
@@ -21854,7 +21883,7 @@
 (define (lower-indirect-call-args-with-writebacks
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [func-ty : AstType]) : ResultLowerCallArgs
@@ -21876,7 +21905,7 @@
 (define (lower-indirect-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func-ty : AstType]
   [func-value : CompilerIrValue]
@@ -21912,7 +21941,7 @@
 (define (lower-indirect-c-abi-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func-ty : AstType]
   [func-value : CompilerIrValue]
@@ -21952,7 +21981,7 @@
 (define (lower-substring-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -22011,7 +22040,7 @@
 (define (lower-string-concat-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -22055,7 +22084,7 @@
 (define (lower-string-runtime-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -22089,7 +22118,7 @@
 (define (lower-one-arg-runtime-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [fallback-name : String]
@@ -22144,7 +22173,7 @@
 (define (lower-one-string-object-runtime-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arg : AstExpr]
   [runtime-name : String]
@@ -22639,7 +22668,7 @@
 (define (lower-string-to-int-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]
@@ -22694,7 +22723,7 @@
 (define (lower-int-to-string-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]
@@ -22746,7 +22775,7 @@
 (define (lower-string-eq-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]
@@ -22829,7 +22858,7 @@
 (define (lower-bootstrap-runtime-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -22859,7 +22888,7 @@
 (define (lower-string-ref-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -22951,13 +22980,13 @@
 (define (lower-call-non-builtin
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (sym-i64-contains env name)
+  (if (sym_i64_env.sym-i64-contains env name)
     (lower-direct-call ctx state env type-env name args result-ty origin)
     (let
       [source-name : String (lower-hygiene-source-name name)]
@@ -23027,14 +23056,14 @@
 (define (lower-direct-constructor-call-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [name : String]
   [args : AstExprList]
   [result-ty : AstType]
   [_origin : AstExpr]) : LowerMaybeDirectStore
-  (if (sym-i64-contains env name)
+  (if (sym_i64_env.sym-i64-contains env name)
     (LowerNoDirectStore)
     (let
       [source-name : String (lower-hygiene-source-name name)]
@@ -23101,12 +23130,12 @@
 (define (lower-direct-nullary-variant-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [name : String]
   [result-ty : AstType]) : LowerMaybeDirectStore
-  (if (sym-i64-contains env name)
+  (if (sym_i64_env.sym-i64-contains env name)
     (LowerNoDirectStore)
     (let
       [source-name : String (lower-hygiene-source-name name)]
@@ -23143,7 +23172,7 @@
 (define (lower-direct-init-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [maybe-ty : AstMaybeType]
@@ -23167,7 +23196,7 @@
 (define (lower-direct-store-rhs-into
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [value : AstExpr]
@@ -23242,7 +23271,7 @@
 (define (lower-direct-store-rhs-at-offset
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [offset : i64]
@@ -23276,7 +23305,7 @@
 (define (lower-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]
@@ -23364,7 +23393,7 @@
             [(ErrLowerExpr message) (ErrLowerExpr message)])
           (let
             [local-id : i64
-              (sym-i64-lookup-or
+              (sym_i64_env.sym-i64-lookup-or
                 env
                 (intern-str raw-name)
                 (compiler-symbols-missing-handle))]
@@ -23688,7 +23717,7 @@
 (define (lower-array-length
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -23758,7 +23787,7 @@
 (define (lower-array-length-with-type
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -23779,7 +23808,7 @@
 (define (lower-array-length-load
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env arr)
@@ -23814,7 +23843,7 @@
 (define (lower-string-data
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [str : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
@@ -23830,7 +23859,7 @@
 (define (lower-array-data
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [array : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
@@ -23854,7 +23883,7 @@
 (define (lower-string-from-bytes
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [ptr : AstExpr]
   [len : AstExpr]) : ResultLowerExpr
@@ -23926,7 +23955,7 @@
 (define (lower-cpuid-like
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [leaf : AstExpr]
   [subleaf : AstExpr]
@@ -23980,7 +24009,7 @@
 (define (lower-xgetbv
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : AstExpr]) : ResultLowerExpr
   (match (lower-integer-expr-with-expected-or-actual
@@ -24057,7 +24086,7 @@
 (define (lower-cpuid-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [result-ty : AstType]
@@ -24137,7 +24166,7 @@
 (define (lower-xgetbv-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [origin : AstExpr]) : ResultLowerExpr
@@ -24470,7 +24499,7 @@
 (define (lower-atomic-pointer-cas-tail
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [ptr : CompilerIrValue]
@@ -24522,7 +24551,7 @@
 (define (lower-atomic-pointer-nonload-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [ptr : CompilerIrValue]
@@ -24574,7 +24603,7 @@
 (define (lower-atomic-pointer-call-with-elem
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [ptr : AstExpr]
@@ -24619,7 +24648,7 @@
 (define (lower-atomic-pointer-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -24713,7 +24742,7 @@
 (define (lower-atomic-array-element-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [array : AstExpr]
   [index : AstExpr]
@@ -24763,7 +24792,7 @@
 (define (lower-atomic-call-load
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [symbol : String]
   [array : AstExpr]
@@ -24788,7 +24817,7 @@
 (define (lower-atomic-call-update
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [symbol : String]
   [array : AstExpr]
@@ -24833,7 +24862,7 @@
 (define (lower-atomic-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [symbol : String]
   [args : AstExprList]
@@ -25096,7 +25125,7 @@
 (define (lower-make-array-init-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [index-var : i64]
@@ -25130,7 +25159,7 @@
 (define (lower-make-array-init-loop-with-labels
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -25230,7 +25259,7 @@
 (define (lower-make-array-init-loop-runtime
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -25365,7 +25394,7 @@
 (define (lower-make-array-init-loop-nonzero
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -25408,7 +25437,7 @@
 (define (lower-make-array-init-loop
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [buf-value : CompilerIrValue]
   [len-i64 : CompilerIrValue]
@@ -25450,7 +25479,7 @@
 (define (lower-make-array-alloc-buffer
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr-ty : AstType]
   [len-i64 : CompilerIrValue]
@@ -25495,7 +25524,7 @@
 (define (lower-make-array-after-max-check
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [fail-label : String]
   [alloc-label : String]
@@ -25528,7 +25557,7 @@
 (define (lower-make-array-from-len
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [elem-ty : AstType]
   [len-value : CompilerIrValue]
@@ -25599,7 +25628,7 @@
 (define (lower-make-array
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [elem-ty : AstType]
   [len : AstExpr]
@@ -25656,7 +25685,7 @@
 (define (lower-array-ref
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [index : AstExpr]) : ResultLowerExpr
@@ -25840,7 +25869,7 @@
 (define (lower-array-set-direct-store
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [arr-value : CompilerIrValue]
@@ -25900,13 +25929,16 @@
 
 (define (lower-mutable-var-storage-address-id
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : i64]
   [place-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (let
     [local-id : i64
-      (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? local-id)
       (match (lower-state-alloc-var state)
         [(LowerAlloc allocated var-id)
@@ -25928,7 +25960,7 @@
 (define (lower-mutable-var-address-id
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : i64]
   [origin : AstExpr]) : ResultLowerExpr
@@ -26064,7 +26096,7 @@
 (define (lower-mutable-array-element-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [index : AstExpr]
@@ -26097,7 +26129,7 @@
 (define (lower-mutable-place-address
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [place : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
@@ -26221,7 +26253,7 @@
 (define (lower-store-expr-into-address-result
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [value : AstExpr]
@@ -26274,7 +26306,7 @@
 (define (lower-box-set
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [box-expr : AstExpr]
   [value : AstExpr]
@@ -26319,7 +26351,7 @@
 (define (lower-refresh-register-resident-root-after-store
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [place : AstExpr]
   [origin : AstExpr]) : ResultLowerState
@@ -26327,7 +26359,10 @@
     [(TcMaybeString.Some root)
       (let
         [local-id : i64
-          (sym-i64-lookup-or env root (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-or
+            env
+            root
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? local-id)
           (match (tc-lookup type-env root)
             [(ResultTcType.Ok root-ty)
@@ -26359,12 +26394,12 @@
 
 (define (lower-register-resident-local-place?
   [ctx : TcContext]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [receiver : AstExpr]
   [receiver-ty : AstType]) : bool
   (if (lower-type-register-resident? ctx receiver-ty)
     (match (ast-expr-unspan receiver)
-      [(AstExpr.Var name) (sym-i64-contains-id env name)]
+      [(AstExpr.Var name) (sym_i64_env.sym-i64-contains-id env name)]
       [_ false])
     false))
 
@@ -26393,7 +26428,7 @@
 (define (lower-struct-set-register-resident-local
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [receiver : AstExpr]
   [receiver-ty : AstType]
@@ -26405,7 +26440,10 @@
     [(AstExpr.Var name)
       (let
         [local-id : i64
-          (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            name
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? local-id)
           (let
             [receiver-ir-ty : AstType
@@ -26476,7 +26514,7 @@
 (define (lower-struct-set
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [receiver : AstExpr]
   [field : String]
@@ -26567,7 +26605,7 @@
 (define (lower-array-set
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [index : AstExpr]
@@ -26923,7 +26961,7 @@
 (define (lower-array-push
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arr : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
@@ -26974,7 +27012,7 @@
 (define (lower-syscall-args
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerArgs
   (match args
@@ -27000,7 +27038,7 @@
 (define (lower-syscall
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerExpr
   (match (lower-syscall-args ctx state env type-env args)
@@ -27021,7 +27059,7 @@
 (define (lower-args
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]) : ResultLowerArgs
   (match args
@@ -27053,7 +27091,7 @@
 (define (lower-let-init
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [maybe-ty : AstMaybeType]
   [init : AstExpr]) : ResultLowerExpr
@@ -27139,7 +27177,7 @@
 (define (lower-let-bindings
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [bindings : AstLetBindingList]) : ResultLowerEnv
   (match bindings
@@ -27179,7 +27217,7 @@
                                     var-id
                                     init-value
                                     binding-ir-ty))
-                                (sym-i64-bind-id env name-id var-id)
+                                (sym_i64_env.sym-i64-bind-id env name-id var-id)
                                 next-type-env
                                 rest))]))])]
                 [(ErrLowerExpr message) (ErrLowerEnv message)]))]))]))
@@ -27187,7 +27225,7 @@
 (define (lower-resource-bindings
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [bindings : AstResourceBindingList]
   [cleanups : LowerCleanupStack]) : ResultLowerResourceBindings
@@ -27237,9 +27275,12 @@
                                             var-id
                                             init-value
                                             binding-ir-ty))]
-                                      [bound-env : SymI64Env
-                                        (sym-i64-bind
-                                          (sym-i64-bind-id env name var-id)
+                                      [bound-env : sym_i64_env.SymI64Env
+                                        (sym_i64_env.sym-i64-bind
+                                          (sym_i64_env.sym-i64-bind-id
+                                            env
+                                            name
+                                            var-id)
                                           hidden-name
                                           var-id)]
                                       [bound-type-env : TcTypeEnv
@@ -27268,7 +27309,7 @@
 (define (lower-with-resource
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [bindings : AstResourceBindingList]
   [body : AstExprList]) : ResultLowerExpr
@@ -27301,7 +27342,7 @@
 (define (lower-begin
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : ResultLowerExpr
   (match exprs
@@ -27327,7 +27368,7 @@
 (define (lower-begin-expected
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
   [expected-ty : AstType]) : ResultLowerExpr
@@ -27361,7 +27402,7 @@
 (define (lower-with-arena
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [body : AstExprList]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
@@ -27376,7 +27417,8 @@
               "tl_region_mark"
               (CompilerIrCallArgs.Nil)
               (AstTyU64)))]
-        [region-env : SymI64Env (sym-i64-bind env hidden-name mark-var)]
+        [region-env : sym_i64_env.SymI64Env
+          (sym_i64_env.sym-i64-bind env hidden-name mark-var)]
         [region-type-env : TcTypeEnv
           (lower-type-env-push-region-reset type-env hidden-name)]
         (match (lower-begin ctx marked-state region-env region-type-env body)
@@ -27404,7 +27446,7 @@
 (define (lower-arena-handle
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arena : AstExpr]
   [form : String]) : ResultLowerExpr
@@ -27429,7 +27471,7 @@
 (define (lower-in-arena
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [arena : AstExpr]
   [body : AstExprList]) : ResultLowerExpr
@@ -27465,8 +27507,8 @@
                         (let
                           [hidden-name : String
                             (lower-arena-restore-hidden-name saved-var)]
-                          [body-env : SymI64Env
-                            (sym-i64-bind env hidden-name saved-var)]
+                          [body-env : sym_i64_env.SymI64Env
+                            (sym_i64_env.sym-i64-bind env hidden-name saved-var)]
                           [body-type-env : TcTypeEnv
                             (lower-type-env-push-arena-restore
                               type-env
@@ -27570,7 +27612,7 @@
 (define (lower-with-escape-clone
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scratch-head-value : CompilerIrValue]
   [mark-value : CompilerIrValue]
@@ -27591,7 +27633,7 @@
 (define (lower-with-escape-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [enclosing-value : CompilerIrValue]
   [mark-value : CompilerIrValue]
@@ -27632,7 +27674,7 @@
 (define (lower-with-escape
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scratch : AstExpr]
   [body : AstExprList]) : ResultLowerExpr
@@ -27729,7 +27771,7 @@
 (define (lower-with-scratch-clone
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scratch-head-value : CompilerIrValue]
   [body-value : CompilerIrValue]
@@ -27748,7 +27790,7 @@
 (define (lower-with-scratch-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [enclosing-value : CompilerIrValue]
   [body : AstExprList]) : ResultLowerExpr
@@ -27787,7 +27829,7 @@
 (define (lower-with-scratch
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [body : AstExprList]) : ResultLowerExpr
   (match (lower-runtime-call-values
@@ -27907,7 +27949,7 @@
 (define (lower-if-else
   [ctx : TcContext]
   [else-start : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [else-branch : AstExpr]
   [then-value : CompilerIrValue]
@@ -27941,7 +27983,7 @@
 (define (lower-if-then
   [ctx : TcContext]
   [then-start : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [then-branch : AstExpr]
   [else-branch : AstExpr]
@@ -27985,7 +28027,7 @@
 (define (lower-if
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [cond : AstExpr]
   [then-branch : AstExpr]
@@ -28030,7 +28072,7 @@
 (define (lower-while
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [cond : AstExpr]
   [body : AstExpr]) : ResultLowerExpr
@@ -28131,7 +28173,7 @@
 (define (lower-spmd-reduce-scaffold
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [_result-ty : AstType]
   [index : String]
@@ -28195,7 +28237,7 @@
 (define (lower-spmd-reduce
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [result-ty : AstType]
   [op : AstReduceOp]
@@ -28309,7 +28351,7 @@
 (define (lower-spmd-scan-scaffold
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -28380,7 +28422,7 @@
 (define (lower-spmd-scan
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [index : String]
@@ -28410,7 +28452,7 @@
 (define (lower-spmd-broadcast
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : AstExpr]
   [lane : AstExpr]) : ResultLowerExpr
@@ -28435,7 +28477,7 @@
 (define (lower-spmd-shuffle
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : AstExpr]
   [lane : AstExpr]) : ResultLowerExpr
@@ -28633,7 +28675,7 @@
     [_ false]))
 
 (define (lower-dynamic-array-var
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : LowerMaybeArrayVar
   (match expr
@@ -28648,7 +28690,10 @@
     [(AstExpr.Var name)
       (let
         [var-id : i64
-          (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            name
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (match (tc-lookup type-env (intern-str name))
             [(ResultTcType.Ok ty)
@@ -28677,7 +28722,7 @@
     [_ LowerNoArrayVar]))
 
 (define (lower-array-ref-var-for-index
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [index : String]) : LowerMaybeArrayVar
@@ -28696,7 +28741,7 @@
     [_ LowerNoArrayVar]))
 
 (define (lower-simple-spmd-broadcast-lane
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : LowerMaybeIrValue
   (match expr
@@ -28717,7 +28762,10 @@
     [(AstExpr.Var name)
       (let
         [var-id : i64
-          (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            name
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (match (tc-lookup type-env (intern-str name))
             [(ResultTcType.Ok ty)
@@ -28934,7 +28982,7 @@
 
 (define (lower-masked-vector-expr-list-lanes-with-locals
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -28963,7 +29011,7 @@
 
 (define (lower-masked-vector-let-bindings-locals
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29002,7 +29050,7 @@
 
 (define (lower-masked-vector-let-bindings-lanes-with-locals
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29081,7 +29129,7 @@
 
 (define (lower-masked-vector-match-arms-lanes-with-locals
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29120,7 +29168,7 @@
 
 (define (lower-masked-vector-expr-lanes-with-locals
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29374,7 +29422,7 @@
 
 (define (lower-masked-vector-expr-list-lanes
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : i64
@@ -29388,7 +29436,7 @@
 
 (define (lower-masked-vector-let-bindings-lanes
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : i64
@@ -29402,7 +29450,7 @@
 
 (define (lower-masked-vector-expr-lanes
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : i64
@@ -29416,7 +29464,7 @@
 
 (define (lower-masked-vector-body-has-varying-if-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29616,7 +29664,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-if-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29645,7 +29693,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-if-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29692,7 +29740,7 @@
 
 (define (lower-masked-vector-body-has-varying-if?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
@@ -29706,7 +29754,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-if?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : bool
@@ -29720,7 +29768,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-if?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : bool
@@ -29734,7 +29782,7 @@
 
 (define (lower-masked-vector-body-has-varying-while-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29934,7 +29982,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-while-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -29960,7 +30008,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-while-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -30005,7 +30053,7 @@
 
 (define (lower-masked-vector-body-has-varying-while?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
@@ -30019,7 +30067,7 @@
 
 (define (lower-masked-vector-body-has-varying-match-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -30210,7 +30258,7 @@
 
 (define (lower-masked-vector-expr-list-has-varying-match-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -30236,7 +30284,7 @@
 
 (define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -30281,7 +30329,7 @@
 
 (define (lower-masked-vector-match-arms-have-varying-match-with-locals?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [lane-locals : hashmap.StringI64Map]
@@ -30314,7 +30362,7 @@
 
 (define (lower-masked-vector-body-has-varying-match?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
@@ -30333,7 +30381,7 @@
     [_ false]))
 
 (define (lower-masked-vector-array-ref-varying-enum?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [arr : AstExpr]
@@ -30345,7 +30393,7 @@
       [LowerNoArrayVar false])))
 
 (define (lower-masked-vector-expr-varying-enum-with-locals?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [enum-locals : LowerStringSet]
@@ -30384,7 +30432,7 @@
     [_ false]))
 
 (define (lower-masked-vector-enum-let-locals
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [enum-locals : LowerStringSet]
@@ -30415,7 +30463,7 @@
                 rest))]))]))
 
 (define (lower-masked-vector-body-has-varying-enum-match-with-locals?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [enum-locals : LowerStringSet]
@@ -30586,7 +30634,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [enum-locals : LowerStringSet]
@@ -30609,7 +30657,7 @@
           (box-get rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [enum-locals : LowerStringSet]
@@ -30645,7 +30693,7 @@
                 (box-get rest))))])]))
 
 (define (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [enum-locals : LowerStringSet]
@@ -30670,7 +30718,7 @@
               (box-get rest)))])]))
 
 (define (lower-masked-vector-body-has-varying-enum-match?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
@@ -30682,7 +30730,7 @@
     expr))
 
 (define (lower-masked-vector-bool-array-lane?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [arr : AstExpr]
@@ -30694,7 +30742,7 @@
     false))
 
 (define (lower-masked-vector-body-has-bool-array-lane?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
@@ -30820,7 +30868,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-bool-array-lane?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : bool
@@ -30843,7 +30891,7 @@
             rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : bool
@@ -30870,7 +30918,7 @@
 
 (define (lower-masked-vector-map
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [body : AstExpr]) : LowerMaybeMaskedVectorMap
@@ -30890,7 +30938,7 @@
     LowerNoMaskedVectorMap))
 
 (define (lower-masked-vector-array-vars
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : LowerArrayVarSet
@@ -31005,7 +31053,7 @@
     [_ (lower-array-var-set-empty)]))
 
 (define (lower-masked-vector-expr-list-array-vars
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : LowerArrayVarSet
@@ -31020,7 +31068,7 @@
           (lower-masked-vector-expr-list-array-vars env type-env index rest)))]))
 
 (define (lower-masked-vector-match-arms-array-vars
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [arms : AstMatchArmList]) : LowerArrayVarSet
@@ -31042,7 +31090,7 @@
               (box-get rest)))])]))
 
 (define (lower-masked-vector-let-binding-array-vars
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : LowerArrayVarSet
@@ -31493,7 +31541,7 @@
 
 (define (lower-simple-vector-map-has-unsupported-byte-mul?
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [body : AstExpr]) : bool
@@ -31548,7 +31596,7 @@
 
 (define (lower-simple-vector-map-value
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [dst-elem : AstType]
@@ -31627,7 +31675,10 @@
           LowerNoVectorMapValue
           (let
             [var-id : i64
-              (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+              (sym_i64_env.sym-i64-lookup-id-or
+                env
+                name
+                (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? var-id)
               (match (tc-lookup type-env lookup-name)
                 [(ResultTcType.Ok ty)
@@ -31708,7 +31759,7 @@
 
 (define (lower-simple-vector-map
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [body : AstExpr]) : LowerMaybeVectorMap
@@ -31774,7 +31825,7 @@
 
 (define (lower-simple-vector-reduce
   [mode : CompilerLowerMode]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [index : String]
@@ -32060,7 +32111,7 @@
 (define (lower-spmd-reduce-apply-update
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [acc-var : i64]
@@ -32072,8 +32123,8 @@
     (lower-expr
       ctx
       state
-      (sym-i64-bind-id
-        (sym-i64-bind-id env acc-name-id acc-var)
+      (sym_i64_env.sym-i64-bind-id
+        (sym_i64_env.sym-i64-bind-id env acc-name-id acc-var)
         current-name-id
         value-var)
       (tc-bind-id
@@ -32185,7 +32236,7 @@
 (define (lower-avx2-reduce-vector-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [index-var : i64]
@@ -32241,7 +32292,7 @@
 (define (lower-avx2-reduce-vector-value-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [index-var : i64]
@@ -32298,7 +32349,7 @@
 (define (lower-spmd-reduce-scalar-tail-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [index-var : i64]
@@ -32357,7 +32408,7 @@
 (define (lower-spmd-reduce-scalar-tail-value-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [op : AstReduceOp]
   [base-index-var : i64]
@@ -32430,7 +32481,7 @@
 (define (lower-avx2-spmd-reduce-build
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index-ty : AstType]
   [init-value : CompilerIrValue]
@@ -32603,7 +32654,7 @@
 (define (lower-avx2-spmd-reduce-value-build
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index-ty : AstType]
   [init-value : CompilerIrValue]
@@ -32813,7 +32864,7 @@
 (define (lower-avx2-spmd-reduce-lowered
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index-ty : AstType]
   [start : AstExpr]
@@ -33764,7 +33815,7 @@
 (define (lower-avx512-masked-var
   [_ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -33775,7 +33826,10 @@
   (if (lower-string-set-contains? lane-locals name)
     (let
       [var-id : i64
-        (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+        (sym_i64_env.sym-i64-lookup-or
+          env
+          name
+          (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? var-id)
         (match (tc-lookup type-env name)
           [(ResultTcType.Ok ty)
@@ -33791,7 +33845,10 @@
       (OkLowerExpr (lower-emit-foreach-index-vector state index-var lanes))
       (let
         [var-id : i64
-          (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-or
+            env
+            name
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (match (tc-lookup type-env name)
             [(ResultTcType.Ok ty)
@@ -33818,7 +33875,7 @@
 (define (lower-avx512-masked-array-ref
   [_ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-var : i64]
@@ -33872,7 +33929,7 @@
 (define (lower-avx512-masked-array-set
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -33968,7 +34025,7 @@
 (define (lower-avx512-masked-let-bindings
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34007,7 +34064,7 @@
                             (lower-avx512-masked-let-bindings
                               ctx
                               init-state
-                              (sym-i64-bind-id env name init-var)
+                              (sym_i64_env.sym-i64-bind-id env name init-var)
                               (tc-bind-id type-env name binding-ty)
                               (lower-string-set-insert
                                 lane-locals
@@ -34028,7 +34085,7 @@
 (define (lower-avx512-masked-begin
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34087,7 +34144,7 @@
 (define (lower-avx512-masked-while
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34213,7 +34270,7 @@
 (define (lower-avx512-masked-if
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34328,7 +34385,7 @@
 (define (lower-avx512-masked-binary
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34586,7 +34643,7 @@
 (define (lower-avx512-masked-compare
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34743,7 +34800,7 @@
 (define (lower-avx512-masked-match-after-body
   [ctx : TcContext]
   [body-state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34814,7 +34871,7 @@
 (define (lower-avx512-masked-match-arm
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34909,7 +34966,7 @@
           (lower-avx512-masked-expr-expected
             ctx
             state
-            (sym-i64-bind-id env name scrut-var)
+            (sym_i64_env.sym-i64-bind-id env name scrut-var)
             (tc-bind-id type-env name scrut-ty)
             (lower-string-set-insert lane-locals (intern-str name))
             index
@@ -34928,7 +34985,7 @@
           (lower-avx512-masked-expr-expected
             ctx
             state
-            (sym-i64-bind-id env name scrut-var)
+            (sym_i64_env.sym-i64-bind-id env name scrut-var)
             (tc-bind-id type-env name scrut-ty)
             (lower-string-set-insert lane-locals (intern-str name))
             index
@@ -34949,7 +35006,7 @@
 (define (lower-avx512-masked-match-arms
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -34990,7 +35047,7 @@
 (define (lower-avx512-masked-match
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -35035,7 +35092,7 @@
 (define (lower-avx512-masked-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -35304,7 +35361,7 @@
 (define (lower-avx512-masked-expr-expected
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
   [index : String]
@@ -35436,7 +35493,7 @@
 (define (lower-avx512-masked-map-body
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -35447,7 +35504,7 @@
   (lower-avx512-masked-expr
     ctx
     state
-    (sym-i64-bind env index index-var)
+    (sym_i64_env.sym-i64-bind env index index-var)
     (tc-bind type-env index index-ty)
     LowerStringNil
     index
@@ -35459,7 +35516,7 @@
 (define (lower-avx512-masked-foreach-lowered
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -35476,7 +35533,8 @@
               (lower-state-emit
                 index-alloc
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
-            [body-env : SymI64Env (sym-i64-bind env index index-var)]
+            [body-env : sym_i64_env.SymI64Env
+              (sym_i64_env.sym-i64-bind env index index-var)]
             [body-type-env : TcTypeEnv (tc-bind type-env index index-ty)]
             [arrays : LowerArrayVarSet
               (lower-masked-vector-array-vars body-env body-type-env index body)]
@@ -35712,7 +35770,7 @@
 (define (lower-scalar-foreach-lowered
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -35755,7 +35813,7 @@
                               body-label
                               exit-label))
                           body-label)
-                        (sym-i64-bind env index index-var)
+                        (sym_i64_env.sym-i64-bind env index index-var)
                         (tc-bind type-env index index-ty)
                         body)
                         [(OkLowerExpr body-lowered)
@@ -35789,7 +35847,7 @@
 (define (lower-avx2-foreach-lowered
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -35981,7 +36039,7 @@
                 (match (lower-expr
                   ctx
                   s
-                  (sym-i64-bind env index index-var)
+                  (sym_i64_env.sym-i64-bind env index index-var)
                   (tc-bind type-env index index-ty)
                   body)
                   [(OkLowerExpr body-lowered)
@@ -36026,7 +36084,7 @@
 (define (lower-foreach-lowered-inlined
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -36216,7 +36274,7 @@
 (define (lower-foreach-lowered
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -36246,7 +36304,7 @@
 (define (lower-foreach
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [index-ty : AstType]
@@ -36292,7 +36350,7 @@
 (define (lower-match-value
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]
@@ -36410,7 +36468,7 @@
 (define (lower-match-borrowed-enum
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [place : AstExpr]
   [borrow-lifetime : String]
@@ -36470,7 +36528,7 @@
 (define (lower-match
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]
@@ -36537,7 +36595,7 @@
 (define (lower-match-enum
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -36655,7 +36713,7 @@
 (define (lower-bind-struct-field-pattern
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [struct-name : String]
@@ -36679,7 +36737,7 @@
                 [(CompilerIrValue.Var field-var)
                   (OkLowerEnv
                     field-state
-                    (sym-i64-bind-id env name field-var)
+                    (sym_i64_env.sym-i64-bind-id env name field-var)
                     (tc-bind-id type-env name field-ty))]
                 [_
                   (ErrLowerEnv
@@ -36702,7 +36760,7 @@
                 [(CompilerIrValue.Var field-var)
                   (OkLowerEnv
                     field-state
-                    (sym-i64-bind-id env name field-var)
+                    (sym_i64_env.sym-i64-bind-id env name field-var)
                     (tc-bind-id type-env name field-ty))]
                 [_
                   (ErrLowerEnv
@@ -36742,7 +36800,7 @@
 (define (lower-bind-struct-pattern-fields
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [struct-name : String]
@@ -36805,7 +36863,7 @@
 (define (lower-bind-struct-pattern
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [base : CompilerIrValue]
   [scrut-ty : AstType]
@@ -36837,7 +36895,7 @@
 (define (lower-bind-match-catch-all-pattern
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -36846,7 +36904,7 @@
     [(AstPattern.Binding name)
       (OkLowerEnv
         state
-        (sym-i64-bind-id env name scrut-var)
+        (sym_i64_env.sym-i64-bind-id env name scrut-var)
         (tc-bind-id type-env name scrut-ty))]
     [(AstPattern.Variant name args-box)
       (if (lower-box-pattern-for-type? ctx scrut-ty name)
@@ -36876,7 +36934,7 @@
 (define (lower-match-arms
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -36993,7 +37051,7 @@
 (define (lower-match-enum-arms
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -37129,7 +37187,7 @@
 (define (lower-match-variant-final
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -37239,7 +37297,7 @@
   [ctx : TcContext]
   [body-start : LowerState]
   [next-label : String]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -37315,7 +37373,7 @@
 (define (lower-match-variant-arm
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -37412,7 +37470,7 @@
 (define (lower-match-literal-arm
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -37489,7 +37547,7 @@
 (define (lower-match-catch-all
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -37575,14 +37633,16 @@
                   (CompilerIrValue.Var var-id)
                   expr-ty))])]))))
 
-(define (lower-tail-call-var-unshadowed? [env : SymI64Env] [name : i64]) : bool
-  (not (sym-i64-contains-id env name)))
+(define (lower-tail-call-var-unshadowed?
+  [env : sym_i64_env.SymI64Env]
+  [name : i64]) : bool
+  (not (sym_i64_env.sym-i64-contains-id env name)))
 
 (define (lower-tail-call-local-indirect-safe?
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : i64]) : bool
-  (if (sym-i64-contains-id env name)
+  (if (sym_i64_env.sym-i64-contains-id env name)
     (not (lower-type-env-contains-reference? type-env))
     true))
 
@@ -37608,7 +37668,7 @@
 
 (define (lower-tail-call-target?
   [_state : LowerState]
-  [_env : SymI64Env]
+  [_env : sym_i64_env.SymI64Env]
   [_callee : AstExpr]) : bool
   true)
 
@@ -37638,7 +37698,7 @@
 (define (lower-tail-call-direct-supported?
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : i64]
   [ret-ty : AstType]) : bool
@@ -37673,7 +37733,7 @@
 (define (lower-tail-call-args-for-target
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : i64]
   [args : AstExprList]) : ResultLowerArgs
@@ -37699,7 +37759,7 @@
 (define (lower-tail-call-indirect-supported?
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func-ty : AstType]
   [args : AstExprList]
@@ -37725,7 +37785,7 @@
 (define (lower-tail-call-indirect-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [callee : AstExpr]
   [args : AstExprList]
@@ -37778,8 +37838,8 @@
       (ErrLowerState (box (lower-diagnostic-at-expr callee message)))]))
 
 (define (lower-tail-let-bindings-candidate-env
-  [env : SymI64Env]
-  [bindings : AstLetBindingList]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]
+  [bindings : AstLetBindingList]) : sym_i64_env.SymI64Env
   (match bindings
     [(AstLetBindingList.Nil) env]
     [(AstLetBindingList.Cons binding rest)
@@ -37788,12 +37848,12 @@
         (match binding
           [(AstLetBinding.Binding name _ _)
             (lower-tail-let-bindings-candidate-env
-              (sym-i64-bind-id env name 0)
+              (sym_i64_env.sym-i64-bind-id env name 0)
               rest)]))]))
 
 (define (lower-tail-begin-candidate?
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [exprs : AstExprList]) : bool
   (match exprs
     [(AstExprList.Nil) false]
@@ -37807,7 +37867,7 @@
 
 (define (lower-tail-match-arms-candidate?
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [arms : AstMatchArmList]) : bool
   (match arms
     [(AstMatchArmList.Nil) false]
@@ -37818,9 +37878,10 @@
           [(AstMatchArm.Arm pat body-box)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              [body-env : SymI64Env
+              [body-env : sym_i64_env.SymI64Env
                 (match pat
-                  [(AstPattern.Binding name) (sym-i64-bind-id env name 0)]
+                  [(AstPattern.Binding name)
+                    (sym_i64_env.sym-i64-bind-id env name 0)]
                   [_ env])]
               (if (lower-tail-expr-candidate? state body-env body)
                 true
@@ -37828,7 +37889,7 @@
 
 (define (lower-tail-expr-candidate?
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -37895,7 +37956,7 @@
 (define (lower-return-expr-generic
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [ret-ty : AstType]
@@ -38218,7 +38279,7 @@
 
 (define (lower-rvo-callee-has-early-return?
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
   (hashmap.string-i64-map-contains?
     lower-rvo-early-return-functions
@@ -38243,7 +38304,7 @@
 (define (lower-return-direct-call-into-sret
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -38346,7 +38407,7 @@
 (define (lower-return-call-fallback-to-sret
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -38371,7 +38432,7 @@
 (define (lower-return-call-name-to-sret
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
   [args : AstExprList]
@@ -38457,7 +38518,7 @@
 (define (lower-return-call-to-sret
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [func : AstExpr]
   [args : AstExprList]
@@ -38477,7 +38538,7 @@
             origin
             ret-ty
             sret-var)
-          (if (sym-i64-contains env raw-text)
+          (if (sym_i64_env.sym-i64-contains env raw-text)
             (lower-return-expr-generic
               ctx
               state
@@ -38516,7 +38577,7 @@
 (define (lower-return-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [ret-ty : AstType]
@@ -38548,7 +38609,7 @@
 
 (define (lower-tail-call-safe-param-aggregate-arg?
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -38564,7 +38625,10 @@
     [(AstExpr.Var name)
       (let
         [var-id : i64
-          (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            name
+            (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (lower-state-tail-param-range-contains? state var-id)
           false))]
@@ -38573,7 +38637,7 @@
 (define (lower-expr-list-contains-unsafe-inline-aggregate?
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : bool
   (match exprs
@@ -38605,7 +38669,7 @@
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [args : AstExprList]
   [ret-ty : AstType]
@@ -38640,7 +38704,7 @@
 (define (lower-tail-call
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [callee : AstExpr]
   [args : AstExprList]
@@ -38737,7 +38801,7 @@
 (define (lower-tail-begin
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]
   [ret-ty : AstType]
@@ -38776,7 +38840,7 @@
 (define (lower-tail-if
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [cond : AstExpr]
   [then-branch : AstExpr]
@@ -38822,7 +38886,7 @@
 (define (lower-tail-match-arms
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -38929,7 +38993,7 @@
 (define (lower-tail-match-literal-arm
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -38988,7 +39052,7 @@
 (define (lower-tail-match-catch-all
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -39021,7 +39085,7 @@
 (define (lower-tail-match-enum
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -39099,7 +39163,7 @@
 (define (lower-tail-match-enum-arms
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -39228,7 +39292,7 @@
 (define (lower-tail-match-variant-final
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -39309,7 +39373,7 @@
   [ctx : TcContext]
   [body-start : LowerState]
   [next-label : String]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -39368,7 +39432,7 @@
 (define (lower-tail-match-variant-arm
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
@@ -39487,7 +39551,7 @@
 (define (lower-tail-match
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]
@@ -39569,7 +39633,7 @@
 (define (lower-tail-expr
   [ctx : TcContext]
   [state : LowerState]
-  [env : SymI64Env]
+  [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
   [ret-ty : AstType]
@@ -39678,7 +39742,7 @@
 (define (lower-bind-params
   [params : AstParamList]
   [idx : i64]
-  [env : SymI64Env]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match params
     [(AstParamNil) env]
     [(AstParamCons param rest)
@@ -39686,7 +39750,10 @@
         [rest : AstParamList (box-get rest)]
         (match param
           [(AstParam name _ _)
-            (lower-bind-params rest (+ idx 1) (sym-i64-bind-id env name idx))]))]))
+            (lower-bind-params
+              rest
+              (+ idx 1)
+              (sym_i64_env.sym-i64-bind-id env name idx))]))]))
 
 (define (lower-param-list [ctx : TcContext] [params : AstParamList] [idx : i64]) : CompilerIrParamList
   (match params
@@ -39862,7 +39929,8 @@
         (if sret-needed
           param-count
           (- 0 1))]
-      [env : SymI64Env (lower-bind-params params 0 (sym-i64-empty))]
+      [env : sym_i64_env.SymI64Env
+        (lower-bind-params params 0 (sym_i64_env.sym-i64-empty))]
       [type-env : TcTypeEnv
         (tc-bind-return-type
           (tc-bind-params ctx (tc-hygiene-global-env top-env) params)
@@ -42428,7 +42496,8 @@
         (if (lower-source-program-needs-loader? program)
           (let
             [stdlib-roots : vector.StringVec (vector.string-vec-new)]
-            [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
+            [cfgs : sym_i64_env.SymI64Env
+              (typecheck-compiler-source-language-cfgs)]
             (match (typecheck-compiler-source-load src)
               [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
                 (lower-compiler-program-with-decl-paths-mode-cache

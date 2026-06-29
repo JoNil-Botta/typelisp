@@ -18,6 +18,7 @@
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
+(import sym_i64_env)
 
 ;; TcTypeEnv.Cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
@@ -3091,20 +3092,24 @@
       (tc-name-id (compiler-symbol-module-key module (intern-str name)))
       ty)))
 
-(define tc-unqualified-import-owner-modules : SymI64Env
-  (sym-i64-empty))
-(define tc-unqualified-import-ambiguous-first-modules : SymI64Env
-  (sym-i64-empty))
-(define tc-unqualified-import-ambiguous-second-modules : SymI64Env
-  (sym-i64-empty))
+(define tc-unqualified-import-owner-modules : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define tc-unqualified-import-ambiguous-first-modules : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define tc-unqualified-import-ambiguous-second-modules : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
 (define tc-unqualified-import-has-ambiguity : bool
   false)
 
 (define (tc-unqualified-import-ambiguity-reset!) : unit
   (begin
-    (set! tc-unqualified-import-owner-modules (sym-i64-empty))
-    (set! tc-unqualified-import-ambiguous-first-modules (sym-i64-empty))
-    (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))
+    (set! tc-unqualified-import-owner-modules (sym_i64_env.sym-i64-empty))
+    (set!
+      tc-unqualified-import-ambiguous-first-modules
+      (sym_i64_env.sym-i64-empty))
+    (set!
+      tc-unqualified-import-ambiguous-second-modules
+      (sym_i64_env.sym-i64-empty))
     (set! tc-unqualified-import-has-ambiguity false)))
 
 (define (tc-unqualified-import-key-id
@@ -3128,14 +3133,14 @@
       [source-id : i64 (intern source-module)]
       [binding-id : i64 (tc-module-name-id alias name-id)]
       [owner-id : i64
-        (sym-i64-lookup-id-or
+        (sym_i64_env.sym-i64-lookup-id-or
           tc-unqualified-import-owner-modules
           key-id
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? owner-id)
         (if (= owner-id source-id)
           unit
-          (if (sym-i64-contains-id
+          (if (sym_i64_env.sym-i64-contains-id
             tc-unqualified-import-ambiguous-first-modules
             key-id)
             unit
@@ -3143,13 +3148,13 @@
               (set! tc-unqualified-import-has-ambiguity true)
               (set!
                 tc-unqualified-import-ambiguous-first-modules
-                (sym-i64-bind-id
+                (sym_i64_env.sym-i64-bind-id
                   tc-unqualified-import-ambiguous-first-modules
                   key-id
                   owner-id))
               (set!
                 tc-unqualified-import-ambiguous-second-modules
-                (sym-i64-bind-id
+                (sym_i64_env.sym-i64-bind-id
                   tc-unqualified-import-ambiguous-second-modules
                   key-id
                   source-id)))))
@@ -3157,7 +3162,7 @@
           unit
           (set!
             tc-unqualified-import-owner-modules
-            (sym-i64-bind-id
+            (sym_i64_env.sym-i64-bind-id
               tc-unqualified-import-owner-modules
               key-id
               source-id)))))
@@ -5882,7 +5887,7 @@
   [key-id : i64]) : TcMaybeString
   (let
     [first-module : i64
-      (sym-i64-lookup-id-or
+      (sym_i64_env.sym-i64-lookup-id-or
         tc-unqualified-import-ambiguous-first-modules
         key-id
         (compiler-symbols-missing-handle))]
@@ -5892,7 +5897,7 @@
         (TcMaybeString.No)
         (let
           [second-module : i64
-            (sym-i64-lookup-id-or
+            (sym_i64_env.sym-i64-lookup-id-or
               tc-unqualified-import-ambiguous-second-modules
               key-id
               (compiler-symbols-missing-handle))]
@@ -40382,13 +40387,13 @@
 
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]
-  [definition-module : String]) : SymI64Env
+  [definition-module : String]) : sym_i64_env.SymI64Env
   (if (macro-stdlib-private-dynamic-buffer-macro? macro-name definition-module)
     (compiler-parse-dispatch-private-types (compiler-parse-dispatch-env))
     (compiler-parse-dispatch-env)))
 
 (define (macro-parse-decl-sexpr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [form : SpannedSexpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (parse-ast-decl-maybe dispatch form)
@@ -40401,7 +40406,7 @@
         (box (macro-output-syntax-diag origin message)))]))
 
 (define (macro-parse-decls-from-one-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (let
@@ -40423,7 +40428,7 @@
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [exprs : AstExprList]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match exprs
@@ -40443,7 +40448,7 @@
           [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))]))
 
 (define (macro-parse-decls-from-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (ast-expr-unspan expr)
@@ -40464,7 +40469,7 @@
 (define (macro-module-decls-from-ctfe-value
   [value : CompilerCtfeValue]
   [origin : AstExpr]
-  [dispatch : SymI64Env]) : ResultMacroParsedDecls
+  [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(CtfeExpr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
@@ -40478,7 +40483,7 @@
 (define (macro-decls-from-ctfe-value
   [value : CompilerCtfeValue]
   [origin : AstExpr]
-  [dispatch : SymI64Env]) : ResultMacroParsedDecls
+  [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(CtfeExpr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
@@ -46513,7 +46518,7 @@
                                   call-expr)
                                   [(ResultMacroValueEnv.Ok value macro-env)
                                     (let
-                                      [parse-dispatch : SymI64Env
+                                      [parse-dispatch : sym_i64_env.SymI64Env
                                         (macro-parse-dispatch-for-macro
                                           macro-name
                                           definition-module)]
@@ -46645,7 +46650,7 @@
                                 call-expr)
                                 [(ResultMacroValueEnv.Ok value macro-env)
                                   (let
-                                    [parse-dispatch : SymI64Env
+                                    [parse-dispatch : sym_i64_env.SymI64Env
                                       (macro-parse-dispatch-for-macro
                                         macro-name
                                         definition-module)]
@@ -49010,7 +49015,7 @@
     AstDecl))
 
 (defenum ResultMacroMaterializeImport
-  (Ok AstDeclList AstDeclPathList SymI64Env MacroFollowupWorkList)
+  (Ok AstDeclList AstDeclPathList sym_i64_env.SymI64Env MacroFollowupWorkList)
   (Err (Box CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
@@ -49041,8 +49046,8 @@
 (define (macro-materialize-seen-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [seen : SymI64Env]
-  [module : String]) : SymI64Env
+  [seen : sym_i64_env.SymI64Env]
+  [module : String]) : sym_i64_env.SymI64Env
   (match decls
     [(AstDeclList.Nil) seen]
     [(AstDeclList.Cons decl rest-box)
@@ -49063,20 +49068,20 @@
           (match decl
             [(AstDecl.Module name) (intern-str name)]
             [_ module])]
-        [seen-path : SymI64Env
+        [seen-path : sym_i64_env.SymI64Env
           (if (> (string.string-length decl-path) 0)
-            (sym-i64-bind
+            (sym_i64_env.sym-i64-bind
               seen
               (compiler-load-seen-path-key-in-module decl-path module)
               1)
             seen)]
-        [seen-decl : SymI64Env
+        [seen-decl : sym_i64_env.SymI64Env
           (match decl
             [(AstDecl.Module name)
               (let
                 [module-name : String (intern-str name)]
                 (if (> (string.string-length module-name) 0)
-                  (sym-i64-bind seen-path module-name 1)
+                  (sym_i64_env.sym-i64-bind seen-path module-name 1)
                   seen-path))]
             [_ seen-path])]
         (macro-materialize-seen-from rest rest-paths seen-decl next-module))]))
@@ -49093,9 +49098,9 @@
   [decl-path : String]
   [module : String]
   [decl-index : i64]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match (macro-generated-normal-import decl)
     [(MacroMaybeGeneratedNormalImport.No)
@@ -49189,11 +49194,11 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (let
-    [seen : SymI64Env
-      (macro-materialize-seen-from decls paths (sym-i64-empty) "")]
+    [seen : sym_i64_env.SymI64Env
+      (macro-materialize-seen-from decls paths (sym_i64_env.sym-i64-empty) "")]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String ""]
@@ -49296,7 +49301,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match program
     [(AstProgram.Program decls-box)
@@ -49312,7 +49317,7 @@
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ResultMacroExpand.Err
@@ -49424,7 +49429,7 @@
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultMacroExpand
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-reset-loop-counters))
     (tc-stdlib-comptime-macro-surface-ok-reset!)

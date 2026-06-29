@@ -4,6 +4,7 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 (import "../compiler_driver_core.tl")
+(import sym_i64_env)
 
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
@@ -56,7 +57,7 @@
       [(maybe_string.SomeString head) head])))")
       (match (compiler-load-file-with-paths-and-roots
         entry
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         roots)
         [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
           (match (lower-compiler-program-with-decl-paths

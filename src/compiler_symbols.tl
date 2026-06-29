@@ -6,7 +6,7 @@
 (import stdlib.array)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
-(import "sym_i64_env.tl")
+(import sym_i64_env)
 (import stdlib.hashmap)
 (import stdlib.string)
 (import stdlib.option)
@@ -1644,14 +1644,14 @@
     [_ symbols]))
 
 (define (compiler-symbols-macro-module-set-add-decl
-  [modules : SymI64Env]
+  [modules : sym_i64_env.SymI64Env]
   [module-id : i64]
-  [decl : AstDecl]) : SymI64Env
+  [decl : AstDecl]) : sym_i64_env.SymI64Env
   (match decl
     [(AstDecl.DefMacro _ _ _ _)
-      (if (sym-i64-contains-id modules module-id)
+      (if (sym_i64_env.sym-i64-contains-id modules module-id)
         modules
-        (sym-i64-bind-id modules module-id 1))]
+        (sym_i64_env.sym-i64-bind-id modules module-id 1))]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -1665,7 +1665,7 @@
 (define (compiler-symbols-macro-module-set-list
   [decls : AstDeclList]
   [module-id : i64]
-  [modules : SymI64Env]) : SymI64Env
+  [modules : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match decls
     [(AstDeclList.Nil) modules]
     [(AstDeclList.Cons decl rest)
@@ -1691,8 +1691,11 @@
                 module-id
                 decl))]))]))
 
-(define (compiler-symbols-macro-module-set [decls : AstDeclList]) : SymI64Env
-  (compiler-symbols-macro-module-set-list decls (intern "") (sym-i64-empty)))
+(define (compiler-symbols-macro-module-set [decls : AstDeclList]) : sym_i64_env.SymI64Env
+  (compiler-symbols-macro-module-set-list
+    decls
+    (intern "")
+    (sym_i64_env.sym-i64-empty)))
 
 ;; An explicit `module ... as alias` import resolves dotted uses through the
 ;; import target directly. It should not leave the module's legacy bare macro
@@ -1866,7 +1869,7 @@
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [module : String]
-  [macro-modules : SymI64Env]) : CompilerSymbols
+  [macro-modules : sym_i64_env.SymI64Env]) : CompilerSymbols
   (match decls
     [(AstDeclList.Nil) symbols]
     [(AstDeclList.Cons decl rest)
@@ -1883,7 +1886,9 @@
                   _))
               (let
                 [without-bare-macros : CompilerSymbols
-                  (if (sym-i64-contains-id macro-modules (intern target-module))
+                  (if (sym_i64_env.sym-i64-contains-id
+                    macro-modules
+                    (intern target-module))
                     (compiler-symbols-remove-module-macro-aliases
                       symbols
                       all-decls
@@ -2820,7 +2825,7 @@
 (define (build-compiler-field-registry-list
   [fields : AstFieldDefList]
   [registries : CompilerRegistries]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [struct-name : String]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
@@ -2831,7 +2836,7 @@
         [rest : AstFieldDefList (box-get rest)]
         (match field
           [(AstFieldDef name _ _)
-            (if (sym-i64-contains-id seen name)
+            (if (sym_i64_env.sym-i64-contains-id seen name)
               (ResultCompilerRegistries.Err
                 (compiler-registries-duplicate-field-message
                   struct-name
@@ -2846,7 +2851,7 @@
                   (build-compiler-field-registry-list
                     rest
                     next-registries
-                    (sym-i64-bind-id seen name field-index)
+                    (sym_i64_env.sym-i64-bind-id seen name field-index)
                     struct-name
                     struct-index
                     (+ field-index 1))]
@@ -2929,7 +2934,7 @@
                   (match (build-compiler-field-registry-list
                     fields
                     cur-registries
-                    (sym-i64-empty)
+                    (sym_i64_env.sym-i64-empty)
                     (compiler-symbol-module-key cur-module (intern-str name))
                     cur-index
                     0)
@@ -2946,7 +2951,7 @@
                   (match (build-compiler-field-registry-list
                     fields
                     cur-registries
-                    (sym-i64-empty)
+                    (sym_i64_env.sym-i64-empty)
                     (compiler-symbol-module-key cur-module (intern-str name))
                     cur-index
                     0)
@@ -3005,7 +3010,7 @@
                         (match (build-compiler-field-registry-list
                           fields
                           cur-registries
-                          (sym-i64-empty)
+                          (sym_i64_env.sym-i64-empty)
                           (compiler-symbol-module-key
                             cur-module
                             (intern-str name))
@@ -3026,7 +3031,7 @@
                         (match (build-compiler-field-registry-list
                           fields
                           cur-registries
-                          (sym-i64-empty)
+                          (sym_i64_env.sym-i64-empty)
                           (compiler-symbol-module-key
                             cur-module
                             (intern-str name))

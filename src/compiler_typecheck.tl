@@ -6,11 +6,12 @@
 (import "compiler_specialize.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
+(import sym_i64_env)
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : String
+  [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
 (define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
@@ -259,7 +260,7 @@
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths program AstDeclPathList.Nil))
 
-(define (typecheck-compiler-source-language-cfgs) : SymI64Env
+(define (typecheck-compiler-source-language-cfgs) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable
@@ -279,9 +280,9 @@
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let
     [stdlib-roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (typecheck-compiler-source-language-cfgs)]
+    [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
     (match (compiler-load-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       stdlib-roots
       cfgs)
       [(ResultCompilerLoadWithPaths.Ok
@@ -412,7 +413,9 @@
       (compiler-typecheck-reset-file-state!)
       result)))
 
-(define (typecheck-compiler-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultCompilerTypecheck
+(define (typecheck-compiler-source-with-cfg
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerTypecheck
   (let
     [_cache-reset : unit (tc-prefix-snapshot-cache-clear!)]
     [_dedup-reset : unit (ty-node-dedup-clear!)]
@@ -713,7 +716,9 @@
     [(ResultCompilerTypecheck.Ok _) true]
     [(ResultCompilerTypecheck.Err _) false]))
 
-(define (compiler-typecheck-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+(define (compiler-typecheck-ok-with-cfg?
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (typecheck-compiler-source-with-cfg src cfgs)
     [(ResultCompilerTypecheck.Ok _) true]
     [(ResultCompilerTypecheck.Err _) false]))
@@ -6148,7 +6153,7 @@
 
 (define (compiler-typecheck-type-literal-tests-ok?) : bool
   (let
-    [private-cfg : SymI64Env
+    [private-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable
         (compiler-cfg-empty)
         "feature-compiler-private-dynamic-buffer")]

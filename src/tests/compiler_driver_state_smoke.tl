@@ -942,7 +942,7 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
-    [program : AstProgram (ast-program AstDeclNil)]
+    [program : AstProgram (ast-program AstDeclList.Nil)]
     (begin
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)

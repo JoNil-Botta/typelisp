@@ -2100,7 +2100,7 @@
   (compiler-load-decls-module-id-loop
     path
     decls
-    (compiler-load-normalize-path path)
+    (compiler-load-canonical-module-id-from-path path)
     CompilerLoadNoModuleId))
 
 (define (compiler-load-decls-module-id-with-fallback
@@ -2139,6 +2139,82 @@
 
 (define (compiler-load-seen-path-key [path : String]) : String
   (string.string-append "path:" (compiler-load-normalize-path path)))
+
+(define (compiler-load-strip-tl-extension [path : String]) : String
+  (let
+    [n : i64 (string.string-length path)]
+    (if (and
+      (>= n 3)
+      (string.string-eq (string.substring path (- n 3) 3) ".tl"))
+      (string.substring path 0 (- n 3))
+      path)))
+
+(define (compiler-load-module-id-from-path-text [path : String]) : String
+  (let
+    [normalized : String
+      (compiler-load-strip-tl-extension (compiler-load-normalize-path path))]
+    [n : i64 (string.string-length normalized)]
+    [i : i64 0]
+    [out : String ""]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (string.string-ref normalized i)]
+          (begin
+            (if (compiler-load-path-separator? c)
+              (set! out (string.string-concat3 out "." ""))
+              (set!
+                out
+                (string.string-concat3 out (string.substring normalized i 1) "")))
+            (set! i (+ i 1)))))
+      out)))
+
+(define (compiler-load-canonical-module-id-from-path [path : String]) : String
+  (compiler-load-module-id-from-path-text path))
+
+(define (compiler-load-canonical-module-id-from-pkg-import
+  [import-path : String]) : String
+  (if (compiler-load-pkg-import? import-path)
+    (compiler-load-module-id-from-path-text
+      (string.substring import-path 4 (- (string.string-length import-path) 4)))
+    (compiler-load-module-id-from-path-text import-path)))
+
+(define (compiler-load-canonical-module-id-from-import
+  [kind : AstImportKind]
+  [import-path : String]
+  [resolved-path : String]) : String
+  (match kind
+    [(AstImportModule) import-path]
+    [(AstImportPath)
+      (let
+        [normalized-import : String (compiler-load-normalize-path import-path)]
+        (if (compiler-load-pkg-import? import-path)
+          (compiler-load-canonical-module-id-from-pkg-import import-path)
+          (if (compiler-load-stdlib-import? normalized-import)
+            (compiler-load-canonical-module-id-from-path normalized-import)
+            (compiler-load-canonical-module-id-from-path resolved-path))))]
+    [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
+
+(define (compiler-load-canonical-source-module-from-import
+  [kind : AstImportKind]
+  [import-path : String]
+  [resolved-path : String]
+  [expected-module : AstMaybeModuleName]
+  [context-module : String]) : String
+  (let
+    [fallback : String
+      (compiler-load-canonical-module-id-from-import
+        kind
+        import-path
+        resolved-path)]
+    (match kind
+      [(AstImportPath)
+        (if (compiler-load-pkg-import? import-path)
+          fallback
+          (if (compiler-load-no-expected-module? expected-module)
+            context-module
+            fallback))]
+      [_ fallback])))
 
 (define (compiler-load-moduleless-context-id [path : String] [module : String]) : String
   (if (> (string.string-length module) 0)
@@ -2187,6 +2263,36 @@
         (match decl
           [(AstDeclModule _) true]
           [_ (compiler-load-decl-list-has-module? rest)]))]))
+
+(define (compiler-load-decl-list-has-module-name?
+  [decls : AstDeclList]
+  [want : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclModule name)
+            (if (string.string-eq (intern-str name) want)
+              true
+              (compiler-load-decl-list-has-module-name? rest want))]
+          [_ (compiler-load-decl-list-has-module-name? rest want)]))]))
+
+(define (compiler-load-decl-list-has-extern-symbol?
+  [decls : AstDeclList]
+  [want : String]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (match decl
+          [(AstDeclExtern _ _ metadata _)
+            (if (string.string-eq (ast-extern-metadata-symbol metadata) want)
+              true
+              (compiler-load-decl-list-has-extern-symbol? rest want))]
+          [_ (compiler-load-decl-list-has-extern-symbol? rest want)]))]))
 
 (define (compiler-load-contextual-moduleless-decls
   [decls : AstDeclList]
@@ -3195,10 +3301,12 @@
                 import-path
                 stdlib-roots)
                 [(ResultPkgResolve.Ok resolved)
-                  (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-context-with-pools
+                  (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
                     resolved
                     seen
                     stdlib-roots
+                    kind
+                    import-path
                     expected-module
                     import-root
                     cfgs
@@ -3590,7 +3698,7 @@
     import-root
     cfgs
     pools
-    (compiler-load-normalize-path path)
+    (compiler-load-canonical-module-id-from-path path)
     ""))
 
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
@@ -4328,27 +4436,39 @@
     true
     pools))
 
-(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-context-with-pools
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
   [path : String]
   [seen : SymI64Env]
   [stdlib-roots : vector.StringVec]
+  [kind : AstImportKind]
+  [import-path : String]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]
   [context-module : String]) : ResultCompilerLoadWithPaths
-  (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
-    path
-    seen
-    stdlib-roots
-    expected-module
-    import-root
-    cfgs
-    true
-    pools
-    (compiler-load-seen-path-key-in-module path context-module)
-    (compiler-load-moduleless-context-id path context-module)
-    context-module))
+  (let
+    [fallback : String
+      (compiler-load-canonical-module-id-from-import kind import-path path)]
+    [source-module : String
+      (compiler-load-canonical-source-module-from-import
+        kind
+        import-path
+        path
+        expected-module
+        context-module)]
+    (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+      path
+      seen
+      stdlib-roots
+      expected-module
+      import-root
+      cfgs
+      true
+      pools
+      (compiler-load-seen-path-key-in-module path context-module)
+      fallback
+      source-module)))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
@@ -4448,7 +4568,7 @@
     cache-current
     pools
     (compiler-load-seen-path-key path)
-    (compiler-load-normalize-path path)
+    (compiler-load-canonical-module-id-from-path path)
     ""))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
@@ -4544,6 +4664,33 @@
                     (string.string-append
                       "compiler-load: cannot read import "
                       path))))]))))))
+
+(define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : vector.StringVec]
+  [expected-module : AstMaybeModuleName]
+  [cfgs : SymI64Env]
+  [module-id-fallback : String]
+  [source-module-fallback : String]) : ResultCompilerLoadWithPaths
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultCompilerLoadWithPaths
+      (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
+        path
+        seen
+        stdlib-roots
+        expected-module
+        (compiler-load-dirname path)
+        cfgs
+        true
+        pools
+        (compiler-load-seen-path-key path)
+        module-id-fallback
+        source-module-fallback)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : String]
@@ -5141,18 +5288,22 @@
   [seen : SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : SymI64Env]
+  [module-id-fallback : String]
+  [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-for-source resolved)
     [(ResultCompilerLoadPackageEntry.Err message)
       (ResultCompilerLoadWithPaths.Err
         (box (compiler-diagnostic-at-start resolved message)))]
     [(ResultCompilerLoadPackageEntry.Ok entry)
-      (match (compiler-load-file-with-paths-and-roots-expect-cfg
+      (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
         resolved
         seen
         stdlib-roots
         expected-module
-        cfgs)
+        cfgs
+        module-id-fallback
+        source-module-fallback)
         [(ResultCompilerLoadWithPaths.Ok
             imported-decls
             imported-paths
@@ -5275,21 +5426,38 @@
                         kind
                         import-path
                         deps)]
+                    [fallback : String
+                      (compiler-load-canonical-module-id-from-import
+                        kind
+                        import-path
+                        resolved)]
+                    [source-fallback : String
+                      (compiler-load-canonical-source-module-from-import
+                        kind
+                        import-path
+                        resolved
+                        expected-module
+                        importer-source-module)]
                     (match (if package-externs
                       (compiler-load-package-externs-from-import
                         resolved
                         seen
                         stdlib-roots
                         expected-module
-                        cfgs)
-                      (compiler-load-package-file-with-paths-and-roots-expect
+                        cfgs
+                        fallback
+                        "")
+                      (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
                         resolved
                         seen
                         stdlib-roots
                         expected-module
                         manifest-dir
                         deps
-                        cfgs))
+                        cfgs
+                        true
+                        fallback
+                        source-fallback))
                       [(ResultCompilerLoadWithPaths.Ok
                           imported-decls
                           imported-paths
@@ -5483,7 +5651,7 @@
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultCompilerLoadWithPaths.Err diag)])]))]))
 
-(define (compiler-load-package-program-with-paths-and-roots-expect
+(define (compiler-load-package-program-with-paths-and-roots-expect-fallback
   [path : String]
   [program : AstProgram]
   [seen : SymI64Env]
@@ -5491,7 +5659,9 @@
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : SymI64Env]
+  [module-id-fallback : String]
+  [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
     [_ : unit (compiler-load-surface-summary-load-enter!)]
     [loaded : ResultCompilerLoadWithPaths
@@ -5499,8 +5669,16 @@
         [(AstProgram decls-box)
           (let
             [decls : AstDeclList (box-get decls-box)]
-            [source-module : String (compiler-load-decls-source-module decls)]
-            (match (compiler-load-decls-module-id path decls)
+            [source-module : String
+              (compiler-load-decls-source-module-or
+                decls
+                source-module-fallback)]
+            [load-decls : AstDeclList
+              (compiler-load-contextual-moduleless-decls decls source-module)]
+            (match (compiler-load-decls-module-id-with-fallback
+              path
+              decls
+              module-id-fallback)
               [(ResultCompilerLoadModuleId.Ok module-id)
                 (match (compiler-load-check-expected-module
                   path
@@ -5511,11 +5689,11 @@
                       (compiler-load-seen-module-with-paths
                         path
                         module-id
-                        decls
+                        load-decls
                         seen)
                       (match (compiler-load-check-dotted-import-aliases
                         path
-                        decls
+                        load-decls
                         source-module)
                         [(ResultCompilerLoadAliasCheck.Ok)
                           (begin
@@ -5525,9 +5703,9 @@
                                 manifest-dir
                                 cfgs
                                 module-id
-                                decls))
+                                load-decls))
                             (compiler-load-package-decls-with-module-and-roots
-                              decls
+                              load-decls
                               path
                               module-id
                               source-module
@@ -5546,7 +5724,28 @@
       (compiler-load-surface-summary-load-exit!)
       loaded)))
 
-(define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
+(define (compiler-load-package-program-with-paths-and-roots-expect
+  [path : String]
+  [program : AstProgram]
+  [seen : SymI64Env]
+  [stdlib-roots : vector.StringVec]
+  [expected-module : AstMaybeModuleName]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  (compiler-load-package-program-with-paths-and-roots-expect-fallback
+    path
+    program
+    seen
+    stdlib-roots
+    expected-module
+    manifest-dir
+    deps
+    cfgs
+    (compiler-load-canonical-module-id-from-path path)
+    ""))
+
+(define (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
   [path : String]
   [seen : SymI64Env]
   [stdlib-roots : vector.StringVec]
@@ -5554,7 +5753,9 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [cfgs : SymI64Env]
-  [cache-current : bool]) : ResultCompilerLoadWithPaths
+  [cache-current : bool]
+  [module-id-fallback : String]
+  [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
     [parse-cfgs : SymI64Env
       (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
@@ -5566,7 +5767,7 @@
           parse-cfgs)
         (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
         [(OkAstProgramDiagnostic program)
-          (compiler-load-package-program-with-paths-and-roots-expect
+          (compiler-load-package-program-with-paths-and-roots-expect-fallback
             path
             program
             seen
@@ -5574,7 +5775,9 @@
             expected-module
             manifest-dir
             deps
-            parse-cfgs)]
+            parse-cfgs
+            module-id-fallback
+            source-module-fallback)]
         [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)])
       (match (compiler-load-embedded-stdlib-source-for-path path)
         [(CompilerEmbeddedStdlibSomeSource source)
@@ -5588,7 +5791,7 @@
               source
               parse-cfgs))
             [(OkAstProgramDiagnostic program)
-              (compiler-load-package-program-with-paths-and-roots-expect
+              (compiler-load-package-program-with-paths-and-roots-expect-fallback
                 path
                 program
                 seen
@@ -5596,7 +5799,9 @@
                 expected-module
                 manifest-dir
                 deps
-                parse-cfgs)]
+                parse-cfgs
+                module-id-fallback
+                source-module-fallback)]
             [(ErrAstProgramDiagnostic diag)
               (ResultCompilerLoadWithPaths.Err diag)])]
         [(CompilerEmbeddedStdlibNoSource)
@@ -5605,6 +5810,27 @@
               (compiler-diagnostic-at-start
                 path
                 (string.string-append "compiler-load: cannot read import " path))))]))))
+
+(define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
+  [path : String]
+  [seen : SymI64Env]
+  [stdlib-roots : vector.StringVec]
+  [expected-module : AstMaybeModuleName]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]
+  [cfgs : SymI64Env]
+  [cache-current : bool]) : ResultCompilerLoadWithPaths
+  (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
+    path
+    seen
+    stdlib-roots
+    expected-module
+    manifest-dir
+    deps
+    cfgs
+    cache-current
+    (compiler-load-canonical-module-id-from-path path)
+    ""))
 
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]
@@ -6238,6 +6464,24 @@
       (compiler-load-normalize-path "target\\loader\\..\\dep.tl")
       "target/dep.tl")))
 
+(define (compiler-load-canonical-module-id-ok?) : bool
+  (and
+    (string.string-eq
+      (compiler-load-canonical-module-id-from-path "stdlib/array.tl")
+      "stdlib.array")
+    (string.string-eq
+      (compiler-load-canonical-module-id-from-path "src\\compiler_intern.tl")
+      "src.compiler_intern")
+    (string.string-eq
+      (compiler-load-canonical-module-id-from-pkg-import "pkg:math/src/add.tl")
+      "math.src.add")
+    (string.string-eq
+      (compiler-load-canonical-module-id-from-import
+        (AstImportModule)
+        "stdlib.some_name"
+        "target/ignored/some_name.tl")
+      "stdlib.some_name")))
+
 (define (compiler-load-source-provenance-ok?) : bool
   (match (compiler-load-source-with-paths
     "src/./main.tl"
@@ -6401,27 +6645,8 @@
       [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (match modules
-            [(AstDeclModuleCons first tail-box)
-              (let
-                [tail : AstDeclModuleList (box-get tail-box)]
-                (match tail
-                  [(AstDeclModuleCons second rest-box)
-                    (let
-                      [rest : AstDeclModuleList (box-get rest-box)]
-                      (match rest
-                        [(AstDeclModuleNil)
-                          (and
-                            (string.string-eq
-                              first
-                              "target/compiler_load_legacy_dep.tl")
-                            (string.string-eq
-                              second
-                              "target/compiler_load_legacy_entry.tl"))]
-                        [_ false]))]
-                  [_ false]))]
-            [_ false])
-          (sym-i64-contains seen "target/compiler_load_legacy_dep.tl"))]
+          (sym-i64-contains seen "target.compiler_load_legacy_dep")
+          (not (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-alias-preserved-ok?) : bool
@@ -6937,6 +7162,34 @@
           (sym-i64-contains seen "root_leaf"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
+(define (compiler-load-moduleless-dotted-source-root-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_moduleless_dotted_src")
+    (compiler-load-test-mkdir "target/cl_moduleless_dotted_src/nested")
+    (io.write-file
+      "target/cl_moduleless_dotted_src/root_leaf.tl"
+      "(define leaf-val : i64 1)")
+    (io.write-file
+      "target/cl_moduleless_dotted_src/nested/dep.tl"
+      "(import root_leaf as leaf)
+(define dep-val : i64 leaf.leaf-val)")
+    (io.write-file
+      "target/cl_moduleless_dotted_src/entry.tl"
+      "(module moduleless.dotted.entry)
+(import nested.dep)
+(define (main) : i64 dep.dep-val)")
+    (match (compiler-load-file-with-paths
+      "target/cl_moduleless_dotted_src/entry.tl"
+      (sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+        (and
+          (compiler-load-decl-list-has-module-name? decls "root_leaf")
+          (compiler-load-decl-list-has-module-name? decls "nested.dep")
+          (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
+          (sym-i64-contains seen "root_leaf")
+          (sym-i64-contains seen "nested.dep"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
 (define (compiler-load-dotted-source-root-fallback-ok?) : bool
   (let
     [root : String "target/cl_dotted_src_fallback/src"]
@@ -7056,6 +7309,50 @@
         [(ResultPkgResolve.Ok path)
           (string.string-eq path (compiler-load-normalize-path dep))]
         [(ResultPkgResolve.Err _) false]))))
+
+(define (compiler-load-package-moduleless-pkg-import-id-ok?) : bool
+  (let
+    [base : String "target/cl_pkg_moduleless_id"]
+    [app-root : String (compiler-load-join-root-path base "app")]
+    [app-src : String (compiler-load-join-root-path app-root "src")]
+    [math-root : String (compiler-load-join-root-path base "math")]
+    [math-src : String (compiler-load-join-root-path math-root "src")]
+    [entry : String (compiler-load-join-root-path app-src "main.tl")]
+    [dep : String (compiler-load-join-root-path math-src "add.tl")]
+    [deps : CompilerPkgDeps
+      (compiler-pkg-deps-from-list
+        (CompilerPkgDepCons
+          (CompilerPkgDep "math" "../math")
+          (box CompilerPkgDepNil)))]
+    (begin
+      (compiler-load-test-mkdir base)
+      (compiler-load-test-mkdir app-root)
+      (compiler-load-test-mkdir app-src)
+      (compiler-load-test-mkdir math-root)
+      (compiler-load-test-mkdir math-src)
+      (io.write-file
+        (compiler-load-join-root-path math-root "typelisp.pkg")
+        "(package (name \"math\") (version \"1\") (kind staticlib) (entry \"src/add.tl\"))")
+      (io.write-file dep "(define (add [x : i64]) : i64 (+ x 1))")
+      (io.write-file
+        entry
+        "(module pkg.moduleless.entry)
+(import \"pkg:math/src/add.tl\")
+(define (main) : i64 0)")
+      (match (compiler-load-package-file-with-paths-and-roots
+        entry
+        (sym-i64-empty)
+        (vector.string-vec-new)
+        app-root
+        deps)
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
+          (and
+            (compiler-load-decl-list-has-extern-symbol?
+              decls
+              "_tl_math_src_add_add")
+            (sym-i64-contains seen "math.src.add")
+            (not (sym-i64-contains seen dep)))]
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
   (let
@@ -9489,6 +9786,9 @@
       (compiler-load-normalize-ok?)
       (return (io.panic "compiler-load: normalize smoke mismatch")))
     (unless
+      (compiler-load-canonical-module-id-ok?)
+      (return (io.panic "compiler-load: canonical module id smoke mismatch")))
+    (unless
       (compiler-load-relative-resolution-ok?)
       (return (io.panic "compiler-load: relative resolution smoke mismatch")))
     (unless
@@ -9603,6 +9903,10 @@
       (compiler-load-dotted-source-root-ok?)
       (return (io.panic "compiler-load: dotted source root smoke mismatch")))
     (unless
+      (compiler-load-moduleless-dotted-source-root-ok?)
+      (return
+        (io.panic "compiler-load: moduleless dotted source root smoke mismatch")))
+    (unless
       (compiler-load-dotted-source-root-fallback-ok?)
       (return
         (io.panic "compiler-load: dotted source root fallback smoke mismatch")))
@@ -9619,6 +9923,10 @@
       (compiler-load-package-dotted-sibling-source-ok?)
       (return
         (io.panic "compiler-load: package dotted sibling source smoke mismatch")))
+    (unless
+      (compiler-load-package-moduleless-pkg-import-id-ok?)
+      (return
+        (io.panic "compiler-load: package moduleless pkg import smoke mismatch")))
     (unless
       (compiler-load-generated-meta-preserved-ok?)
       (return

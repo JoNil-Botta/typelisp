@@ -38138,8 +38138,116 @@ tl_memchr:
       (compiler-backend-peephole-self-move-operands? src dst)]
     [(CompilerBackendPeepholeNoMove) false]))
 
+;; ---- #56: fold `movq SRC,%r10 ; movq DISP(%r10),DST` -> `movq DISP(SRC),DST` ----
+;; SRC must be a register (not %r10); the deref source must be a base-only %r10
+;; memory operand DISP(%r10) (no index). Sound iff %r10 is dead after the deref:
+;; either DST==%r10 (the staged value is immediately overwritten by the load), or
+;; the forward scan proves %r10's next textual touch is a clean re-write with only
+;; non-%r10 movq lines in between (conservative: any non-movq / control flow stops
+;; the scan as "not provably dead").
+(define (compiler-backend-peephole-mem-base-r10? [operand : String]) : bool
+  (let
+    [len : i64 (string.string-length operand)]
+    (and
+      (>= len 6)
+      (string.string-eq (string.substring operand (- len 6) 6) "(%r10)"))))
+
+(define (compiler-backend-peephole-r10-base-rewrite
+  [operand : String]
+  [base : String]) : String
+  (let
+    [len : i64 (string.string-length operand)]
+    (str_cat.str-cat (string.substring operand 0 (- len 6)) "(" base ")")))
+
+(define (compiler-backend-peephole-r10-base-fold-operands?
+  [src : String]
+  [dst : String]
+  [next-src : String]
+  [next-dst : String]) : bool
+  (and
+    (compiler-backend-peephole-register-operand? src)
+    (not (string.string-eq src "%r10"))
+    (string.string-eq dst "%r10")
+    (compiler-backend-peephole-mem-base-r10? next-src)
+    (compiler-backend-peephole-register-operand? next-dst)))
+
+(define (compiler-backend-peephole-range-mentions-r10?
+  [asm : String]
+  [start : i64]
+  [end : i64]) : bool
+  (if (>= start end)
+    false
+    (compiler-backend-string-contains?
+      (string.substring asm start (- end start)) "%r10")))
+
+(define (compiler-backend-peephole-line-clean-writes-r10?
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (match (compiler-backend-peephole-movq-range asm asm-data start end)
+    [(CompilerBackendPeepholeMove src dst)
+      (and
+        (string.string-eq dst "%r10")
+        (not (compiler-backend-string-contains? src "%r10")))]
+    [(CompilerBackendPeepholeNoMove) false]))
+
+;; Is %r10 dead after `start`? Conservative movq-only scan: the first line that
+;; touches %r10 must be a clean write; the scan passes only over non-%r10 movq
+;; lines; any other line (ALU / call / jmp / label / ret / directive) stops the
+;; scan as "not provably dead". Returns true only on a definite clean re-write.
+(define (compiler-backend-peephole-r10-dead-after?
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [start : i64]
+  [n : i64]) : bool
+  (let
+    [i : i64 start]
+    [k : i64 0]
+    [result : i64 -1]
+    (begin
+      (while (and (< i n) (< result 0) (< k 32))
+        (let
+          [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
+          (begin
+            (if (compiler-backend-peephole-range-mentions-r10? asm i end)
+              (if (compiler-backend-peephole-line-clean-writes-r10? asm asm-data i end)
+                (set! result 1)
+                (set! result 0))
+              (if (compiler-backend-peephole-movq-prefix-at-range? asm-data i end)
+                unit
+                (set! result 0)))
+            (set! i (if (< end n) (+ end 1) end))
+            (set! k (+ k 1)))))
+      (= result 1))))
+
+(define (compiler-backend-peephole-r10-base-fold-line-range
+  [asm : String]
+  [asm-data : (Ptr u8)]
+  [pending-start : i64]
+  [pending-end : i64]
+  [pending-line : String]
+  [pending-owned? : bool]
+  [next-start : i64]
+  [next-end : i64]) : String
+  (match (compiler-backend-peephole-line-movq
+    asm asm-data pending-start pending-end pending-line pending-owned?)
+    [(CompilerBackendPeepholeMove src dst)
+      (match (compiler-backend-peephole-movq-range asm asm-data next-start next-end)
+        [(CompilerBackendPeepholeMove next-src next-dst)
+          (str_cat.str-cat
+            "    movq "
+            (compiler-backend-peephole-r10-base-rewrite next-src src)
+            ", "
+            next-dst)]
+        [(CompilerBackendPeepholeNoMove)
+          (string.substring asm next-start (- next-end next-start))])]
+    [(CompilerBackendPeepholeNoMove)
+      (string.substring asm next-start (- next-end next-start))]))
+
 ;; Pair action: 0 emits pending, 1 drops pending, 2 keeps pending and skips next,
-;; 3 emits pending and replaces next with a register-forwarded move.
+;; 3 emits pending and replaces next with a register-forwarded move, 4 drops the
+;; pending %r10 address-staging and folds the deref to a direct base (#56).
 (define (compiler-backend-peephole-pair-action
   [pending : String]
   [next : String]) : i64
@@ -38234,6 +38342,22 @@ tl_memchr:
                   next-src
                   next-dst)
                 3]
+              [(and
+                  (compiler-backend-peephole-r10-base-fold-operands?
+                    src
+                    dst
+                    next-src
+                    next-dst)
+                  (or
+                    (string.string-eq next-dst "%r10")
+                    (compiler-backend-peephole-r10-dead-after?
+                      asm
+                      asm-data
+                      (if (< next-end (string.string-length asm))
+                        (+ next-end 1)
+                        next-end)
+                      (string.string-length asm))))
+                4]
               [else 0])]
           [(CompilerBackendPeepholeNoMove) 0]))]
     [(CompilerBackendPeepholeNoMove) 0]))
@@ -38818,6 +38942,24 @@ tl_memchr:
                         (set! pending-start 0)
                         (set! pending-end 0)
                         (set! pending-line forwarded-line)
+                        (set! pending-owned? true)
+                        (set! pending-newline line-newline)))]
+                  [(= action 4)
+                    (let
+                      [folded-line : String
+                        (compiler-backend-peephole-r10-base-fold-line-range
+                          asm
+                          asm-data
+                          pending-start
+                          pending-end
+                          pending-line
+                          pending-owned?
+                          i
+                          end)]
+                      (begin
+                        (set! pending-start 0)
+                        (set! pending-end 0)
+                        (set! pending-line folded-line)
                         (set! pending-owned? true)
                         (set! pending-newline line-newline)))]
                   [else

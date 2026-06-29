@@ -18503,6 +18503,60 @@
                     (lower-diagnostic-at-expr
                       origin
                       "ExprBindingClauseList value is compile-time only")))]
+              [(CtfeTypeInfo _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeInfo value is compile-time only")))]
+              [(CtfeTypeInfoBox _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeInfo box value is compile-time only")))]
+              [(CtfeTypeInfoList _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeInfoList value is compile-time only")))]
+              [(CtfeTypeField _ _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeField value is compile-time only")))]
+              [(CtfeTypeFieldList _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeFieldList value is compile-time only")))]
+              [(CtfeTypeVariantPayload _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeVariantPayload value is compile-time only")))]
+              [(CtfeTypeVariantPayloadList _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeVariantPayloadList value is compile-time only")))]
+              [(CtfeTypeVariant _ _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeVariant value is compile-time only")))]
+              [(CtfeTypeVariantList _)
+                (ErrLowerExpr
+                  (box
+                    (lower-diagnostic-at-expr
+                      origin
+                      "TypeVariantList value is compile-time only")))]
               [_
                 (lower-materialize
                   state

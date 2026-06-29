@@ -4184,29 +4184,66 @@
 (define (tc-stdlib-comptime-type-display-name [name : String]) : String
   (str_cat.str-cat (tc-stdlib-comptime-module-name) "." name))
 
+(define tc-stdlib-comptime-syntax-type-cache-generation : i64
+  -1)
+(define tc-stdlib-comptime-expr-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-expr-list-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-expr-clause-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-expr-clause-list-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-expr-binding-clause-key-id-cache : i64
+  -1)
+(define tc-stdlib-comptime-expr-binding-clause-list-key-id-cache : i64
+  -1)
+
+(define (tc-stdlib-comptime-syntax-type-cache-refresh!) : unit
+  (begin
+    (set!
+      tc-stdlib-comptime-expr-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "Expr")))
+    (set!
+      tc-stdlib-comptime-expr-list-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "ExprList")))
+    (set!
+      tc-stdlib-comptime-expr-clause-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "ExprClause")))
+    (set!
+      tc-stdlib-comptime-expr-clause-list-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "ExprClauseList")))
+    (set!
+      tc-stdlib-comptime-expr-binding-clause-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "ExprBindingClause")))
+    (set!
+      tc-stdlib-comptime-expr-binding-clause-list-key-id-cache
+      (tc-name-id (tc-stdlib-comptime-type-key "ExprBindingClauseList")))
+    (set! tc-stdlib-comptime-syntax-type-cache-generation (intern-generation))))
+
+(define (tc-stdlib-comptime-syntax-type-cache-ensure!) : unit
+  (if (= tc-stdlib-comptime-syntax-type-cache-generation (intern-generation))
+    unit
+    (tc-stdlib-comptime-syntax-type-cache-refresh!)))
+
 (define (tc-stdlib-comptime-syntax-type [canonical-name : String]) : AstMaybeType
-  (cond
-    [(string.string-eq canonical-name (tc-stdlib-comptime-type-key "Expr"))
-      (AstSomeType (AstTyExpr))]
-    [(string.string-eq canonical-name (tc-stdlib-comptime-type-key "ExprList"))
-      (AstSomeType (AstTyExprList))]
-    [(string.string-eq
-        canonical-name
-        (tc-stdlib-comptime-type-key "ExprClause"))
-      (AstSomeType (tc-macro-expr-clause-type))]
-    [(string.string-eq
-        canonical-name
-        (tc-stdlib-comptime-type-key "ExprClauseList"))
-      (AstSomeType (tc-macro-expr-clause-list-type))]
-    [(string.string-eq
-        canonical-name
-        (tc-stdlib-comptime-type-key "ExprBindingClause"))
-      (AstSomeType (tc-macro-expr-binding-clause-type))]
-    [(string.string-eq
-        canonical-name
-        (tc-stdlib-comptime-type-key "ExprBindingClauseList"))
-      (AstSomeType (tc-macro-expr-binding-clause-list-type))]
-    [else (AstNoType)]))
+  (let
+    [_ : unit (tc-stdlib-comptime-syntax-type-cache-ensure!)]
+    [canonical-id : i64 (tc-name-id canonical-name)]
+    (cond
+      [(= canonical-id tc-stdlib-comptime-expr-key-id-cache)
+        (AstSomeType (AstTyExpr))]
+      [(= canonical-id tc-stdlib-comptime-expr-list-key-id-cache)
+        (AstSomeType (AstTyExprList))]
+      [(= canonical-id tc-stdlib-comptime-expr-clause-key-id-cache)
+        (AstSomeType (tc-macro-expr-clause-type))]
+      [(= canonical-id tc-stdlib-comptime-expr-clause-list-key-id-cache)
+        (AstSomeType (tc-macro-expr-clause-list-type))]
+      [(= canonical-id tc-stdlib-comptime-expr-binding-clause-key-id-cache)
+        (AstSomeType (tc-macro-expr-binding-clause-type))]
+      [(= canonical-id tc-stdlib-comptime-expr-binding-clause-list-key-id-cache)
+        (AstSomeType (tc-macro-expr-binding-clause-list-type))]
+      [else (AstNoType)])))
 
 (defenum TcStdlibTypeSpec
   (TcStdlibTyI64)
@@ -4328,13 +4365,13 @@
     (match (tc-stdlib-comptime-raw-type-name decl)
       [(TcNoString) OkTcUnit]
       [(TcSomeString type-name)
-        (if (not (tc-stdlib-comptime-well-known-type? type-name))
-          OkTcUnit
-          (if (tc-stdlib-comptime-raw-comptime-decl? decl)
+        (if (tc-stdlib-comptime-raw-comptime-decl? decl)
+          (if (tc-stdlib-comptime-well-known-type? type-name)
             (tc-stdlib-well-known-mismatch
               type-name
               (tc-stdlib-comptime-plain-declaration-message))
-            OkTcUnit))])))
+            OkTcUnit)
+          OkTcUnit)])))
 
 (define (tc-stdlib-check-comptime-declaration-surface-list
   [decls : AstDeclList]
@@ -4987,9 +5024,29 @@
       (ast-node-pool-context-install! prev)
       result)))
 
+(define tc-stdlib-comptime-macro-surface-ok-ready : bool
+  false)
+
+(define (tc-stdlib-comptime-macro-surface-ok-reset!) : unit
+  (set! tc-stdlib-comptime-macro-surface-ok-ready false))
+
+(define (tc-stdlib-comptime-surface-ok-for-macro [ctx : TcContext]) : ResultTcUnit
+  (if tc-stdlib-comptime-macro-surface-ok-ready
+    OkTcUnit
+    (match (tc-stdlib-comptime-surface-ok ctx)
+      [(OkTcUnit)
+        (begin
+          (if (tc-stdlib-comptime-present? ctx)
+            (set! tc-stdlib-comptime-macro-surface-ok-ready true)
+            unit)
+          OkTcUnit)]
+      [(ErrTcUnit message) (ErrTcUnit message)])))
+
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
     [expr : AstType (AstTyExpr)]
+    [type-info : AstType
+      (AstTyVar (intern (tc-stdlib-comptime-type-key "TypeInfo")))]
     [clause : AstType (tc-macro-expr-clause-type)]
     [clause-list : AstType (tc-macro-expr-clause-list-type)]
     [binding-clause : AstType (tc-macro-expr-binding-clause-type)]
@@ -5043,6 +5100,7 @@
       (set! out (tc-bind out "expr-splice" (tc-fn1 expr expr)))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set! out (tc-bind out "expr-type" (tc-fn1 expr expr)))
+      (set! out (tc-bind out "type-info" (tc-fn1 expr type-info)))
       (set!
         out
         (tc-bind out "module-name" (tc-fn1 (AstTyString) (AstTyString))))
@@ -7782,6 +7840,7 @@
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
     (string.string-eq name "expr-type")
+    (string.string-eq name "type-info")
     (string.string-eq name "module-name")
     (string.string-eq name "module-export-macro?")
     (string.string-eq name "module-hook")
@@ -13560,7 +13619,20 @@
     [(CtfeExprClauseList _) (OkTcType (tc-macro-expr-clause-list-type))]
     [(CtfeExprBindingClause _) (OkTcType (tc-macro-expr-binding-clause-type))]
     [(CtfeExprBindingClauseList _)
-      (OkTcType (tc-macro-expr-binding-clause-list-type))]))
+      (OkTcType (tc-macro-expr-binding-clause-list-type))]
+    [(CtfeTypeInfo _) (ErrTcType "TypeInfo value is compile-time only")]
+    [(CtfeTypeInfoBox _) (ErrTcType "TypeInfo box value is compile-time only")]
+    [(CtfeTypeInfoList _) (ErrTcType "TypeInfoList value is compile-time only")]
+    [(CtfeTypeField _ _) (ErrTcType "TypeField value is compile-time only")]
+    [(CtfeTypeFieldList _)
+      (ErrTcType "TypeFieldList value is compile-time only")]
+    [(CtfeTypeVariantPayload _)
+      (ErrTcType "TypeVariantPayload value is compile-time only")]
+    [(CtfeTypeVariantPayloadList _)
+      (ErrTcType "TypeVariantPayloadList value is compile-time only")]
+    [(CtfeTypeVariant _ _) (ErrTcType "TypeVariant value is compile-time only")]
+    [(CtfeTypeVariantList _)
+      (ErrTcType "TypeVariantList value is compile-time only")]))
 
 (define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
   (match value
@@ -29226,6 +29298,7 @@
       [(string.string-eq call-name "expr-splice") true]
       [(string.string-eq call-name "expr-if") true]
       [(string.string-eq call-name "expr-type") true]
+      [(string.string-eq call-name "type-info") true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-list-inspector-name? call-name) true]
       [(ctfe-expr-binding-clause-inspector-name? call-name) true]
@@ -47280,7 +47353,7 @@
                           (let
                             [ctx : TcContext
                               (TcContext program symbols registries "" pools)]
-                            (match (tc-stdlib-comptime-surface-ok ctx)
+                            (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
                               [(OkTcUnit)
                                 (match (tc-build-top-env ctx program)
                                   [(OkTcEnv top-env)
@@ -47804,6 +47877,7 @@
   [cfgs : SymI64Env]) : ResultMacroExpand
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-reset-loop-counters))
+    (tc-stdlib-comptime-macro-surface-ok-reset!)
     (macro-expand-program-with-paths-loop-and-pools
       program
       paths
@@ -49261,6 +49335,7 @@
     (tc-spmd-inline-helper-stack-reset!)
     (tc-agg-caches-reset!)
     (tc-nominal-owner-cache-reset!)
+    (tc-stdlib-comptime-macro-surface-ok-reset!)
     (tc-unqualified-import-ambiguity-reset!)
     (macro-alias-cache-reset!)
     (compiler-load-surface-summaries-reset!)

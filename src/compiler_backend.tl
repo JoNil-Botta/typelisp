@@ -39020,8 +39020,28 @@ tl_memchr:
         unit)
       (text_buf.text-buf-render out))))
 
+;; Iterate the peephole to a fixpoint. A rewrite in one pass can expose further
+;; rewrites a single pass misses (an into-%r10 fold creating a new adjacency, a
+;; reload->reg-reg rewrite exposing an adjacent redundant/self move). Every
+;; peephole rule only ever SHORTENS the output, so "length stopped shrinking" =
+;; converged. Bounded to 4 passes (cascades converge in 1-2 in practice; the cap
+;; prevents any pathological loop). asm-once is self-contained (fresh owner map
+;; per call), so re-running on its own output needs no state reset.
+(define (compiler-backend-peephole-asm-iter
+  [asm : String]
+  [prev-len : i64]
+  [pass : i64]) : String
+  (if (>= pass 4)
+    asm
+    (let
+      [next : String (compiler-backend-peephole-asm-once asm)]
+      [next-len : i64 (string.string-length next)]
+      (if (>= next-len prev-len)
+        next
+        (compiler-backend-peephole-asm-iter next next-len (+ pass 1))))))
+
 (define (compiler-backend-peephole-asm [asm : String]) : String
-  (compiler-backend-peephole-asm-once asm))
+  (compiler-backend-peephole-asm-iter asm (string.string-length asm) 0))
 
 (define (compiler-backend-peephole-text-buf [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (text_buf.text-buf-append

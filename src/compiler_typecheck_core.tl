@@ -47194,6 +47194,89 @@
         (macro-decl-module-placeholder-count decl)
         (macro-program-module-placeholder-count (box-get rest)))]))
 
+(define (macro-decl-materialized-import-needs-followup? [decl : AstDecl]) : bool
+  (or
+    (macro-decl-needs-expansion? decl)
+    (macro-decl-has-summary-macro-import? decl)
+    (macro-decl-has-module-placeholder? decl)
+    (macro-decl-might-fire-expression-macro? decl)))
+
+(define (macro-decls-materialized-import-need-followup? [decls : AstDeclList]) : bool
+  (match decls
+    [(AstDeclNil) false]
+    [(AstDeclCons decl rest)
+      (or
+        (macro-decl-materialized-import-needs-followup? decl)
+        (macro-decls-materialized-import-need-followup? (box-get rest)))]))
+
+(define (macro-generated-import-followup-work-for-decls
+  [start-index : i64]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [module : String]) : MacroFollowupWorkList
+  (if (macro-decls-materialized-import-need-followup? decls)
+    (macro-followup-work-for-decls
+      start-index
+      decls
+      paths
+      module
+      MacroFollowupGeneratedImport)
+    MacroFollowupWorkNil))
+
+(cfg
+  test
+  (define (macro-materialized-import-test-inert-decls) : AstDeclList
+    (ast-decl-cons
+      (ast-decl-def-fn
+        "generated_inert_value"
+        AstParamNil
+        (AstTyI64)
+        (ast-node-push (AstExprLiteral (ast-lit-int 1))))
+      AstDeclNil)))
+
+(cfg
+  test
+  (define (macro-materialized-import-test-placeholder-decls) : AstDeclList
+    (let
+      [span : AstSourceSpan (AstSourceSpan 1 1 1 1)]
+      [placeholder : AstDecl
+        (AstDeclImport
+          (AstImportSpec
+            (AstImportMacroDecls 0 AstNoModuleName)
+            "generated_next.tl"
+            AstNoModuleName
+            AstNoImportAlias
+            span))]
+      (ast-decl-cons placeholder AstDeclNil))))
+
+(cfg
+  test
+  (test
+    macro-generated-import-inert-followup-suppressed
+    (let
+      [decls : AstDeclList (macro-materialized-import-test-inert-decls)]
+      [paths : AstDeclPathList
+        (macro-paths-for-decls decls "generated_inert.tl")]
+      [work : MacroFollowupWorkList
+        (macro-generated-import-followup-work-for-decls 3 decls paths "owner")]
+      (test.assert-true
+        (macro-followup-work-list-empty? work)
+        "inert generated imports should not request a macro follow-up pass"))))
+
+(cfg
+  test
+  (test
+    macro-generated-import-placeholder-followup-kept
+    (let
+      [decls : AstDeclList (macro-materialized-import-test-placeholder-decls)]
+      [paths : AstDeclPathList
+        (macro-paths-for-decls decls "generated_placeholder.tl")]
+      [work : MacroFollowupWorkList
+        (macro-generated-import-followup-work-for-decls 3 decls paths "owner")]
+      (test.assert-false
+        (macro-followup-work-list-empty? work)
+        "generated imports with macro placeholders still request follow-up"))))
+
 ;; Expand all macro calls in a parsed program before typechecking. Programs that
 ;; need no macro or guard-compatibility expansion are returned unchanged without
 ;; rebuilding the AST, so the expansion phase adds no allocation for the common
@@ -47543,15 +47626,11 @@
                   [materialized-paths : AstDeclPathList
                     (macro-decl-path-list-append imported-paths tail-paths)]
                   [followup-work : MacroFollowupWorkList
-                    (match imported-decls
-                      [(AstDeclNil) MacroFollowupWorkNil]
-                      [_
-                        (macro-followup-work-for-decls
-                          decl-index
-                          materialized-decls
-                          materialized-paths
-                          module
-                          MacroFollowupGeneratedImport)])]
+                    (macro-generated-import-followup-work-for-decls
+                      decl-index
+                      materialized-decls
+                      materialized-paths
+                      module)]
                   (ResultMacroMaterializeImport.Ok
                     materialized-decls
                     materialized-paths

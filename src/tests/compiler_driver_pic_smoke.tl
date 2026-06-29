@@ -15,8 +15,8 @@
   [paths : AstDeclPathList]
   [needle : String]) : bool
   (match paths
-    [(AstDeclPathNil) false]
-    [(AstDeclPathCons path rest)
+    [(AstDeclPathList.Nil) false]
+    [(AstDeclPathList.Cons path rest)
       (or
         (compiler-driver-pic-smoke-contains? path needle)
         (compiler-driver-pic-smoke-paths-contain? (box-get rest) needle))]))

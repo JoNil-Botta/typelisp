@@ -101,7 +101,7 @@
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-check-program [path : String] [decls : AstDeclList]) : ResultCompilerCheck
-  (compiler-check-program-with-paths path decls AstDeclPathNil))
+  (compiler-check-program-with-paths path decls AstDeclPathList.Nil))
 
 (define (compiler-check-loaded-with-prelude-cache
   [path : String]
@@ -287,7 +287,7 @@
                 program
                 prelude-seen
                 stdlib-roots
-                AstNoModuleName
+                AstMaybeModuleName.No
                 manifest-dir
                 deps
                 (compiler-check-language-cfgs))
@@ -434,11 +434,11 @@
       (compiler-check-language-cfgs))
       [(ResultAstProgramDiagnostic.Ok program)
         (match program
-          [(AstProgram decls-box)
+          [(AstProgram.Program decls-box)
             (compiler-check-program-with-paths-cache
               path
               (box-get decls-box)
-              AstDeclPathNil
+              AstDeclPathList.Nil
               (vector.string-vec-new)
               (compiler-typecheck-prefix-cache-scope
                 "typecheck-prefix-check"
@@ -717,7 +717,7 @@
     (sym-i64-bind (sym-i64-empty) "src.already_loaded" 1))
     [(ResultCompilerLoad.Ok decls _)
       (match decls
-        [(AstDeclNil) true]
+        [(AstDeclList.Nil) true]
         [_ false])]
     [(ResultCompilerLoad.Err _) false]))
 

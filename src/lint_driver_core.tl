@@ -541,7 +541,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : LintFindings
   (match program
-    [(AstProgram decls-box)
+    [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         [base : LintFindings
@@ -1377,10 +1377,10 @@
   [variants : AstDispatchVariantList]
   [refs : vector.StringVec]) : vector.StringVec
   (match variants
-    [(AstDispatchVariantNil) refs]
-    [(AstDispatchVariantCons variant rest)
+    [(AstDispatchVariantList.Nil) refs]
+    [(AstDispatchVariantList.Cons variant rest)
       (match variant
-        [(AstDispatchVariant _ name)
+        [(AstDispatchVariant.Variant _ name)
           (selfhost-lint-dead-dispatch-variant-list-refs
             (box-get rest)
             (selfhost-lint-dead-ref-add refs name))])]))
@@ -1405,8 +1405,8 @@
   [meta : AstGeneratedDeclMeta]
   [refs : vector.StringVec]) : vector.StringVec
   (match meta
-    [(AstNoGeneratedDeclMeta) refs]
-    [(AstSomeGeneratedDeclMeta _ _ args _)
+    [(AstGeneratedDeclMeta.No) refs]
+    [(AstGeneratedDeclMeta.Some _ _ args _)
       (selfhost-lint-dead-expr-list-refs args refs)]))
 
 (define (selfhost-lint-dead-add-node
@@ -1443,8 +1443,8 @@
   [visible-root : bool]
   [allow-report : bool]) : SelfhostLintDeadScan
   (match decl
-    [(AstDeclModule _) scan]
-    [(AstDeclDef name maybe-ty body)
+    [(AstDecl.Module _) scan]
+    [(AstDecl.Def name maybe-ty body)
       (let
         [text : String (intern-str name)]
         [refs : vector.StringVec
@@ -1466,7 +1466,7 @@
           refs
           visible-root
           allow-report))]
-    [(AstDeclDefFn name params ret body _)
+    [(AstDecl.DefFn name params ret body _)
       (let
         [text : String (intern-str name)]
         [refs : vector.StringVec
@@ -1490,7 +1490,7 @@
           refs
           visible-root
           allow-report))]
-    [(AstDeclDefMacro name params ret body)
+    [(AstDecl.DefMacro name params ret body)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1505,7 +1505,7 @@
               (vector.string-vec-new))))
         visible-root
         allow-report)]
-    [(AstDeclExtern name _ meta ty)
+    [(AstDecl.Extern name _ meta ty)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1516,7 +1516,7 @@
           (selfhost-lint-dead-extern-metadata-refs meta (vector.string-vec-new)))
         visible-root
         allow-report)]
-    [(AstDeclDefEnum name cleanup variants)
+    [(AstDecl.DefEnum name cleanup variants)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1527,7 +1527,7 @@
           (selfhost-lint-dead-enum-cleanup-refs cleanup (vector.string-vec-new)))
         visible-root
         allow-report)]
-    [(AstDeclDefEnumLifetimes name _ cleanup variants)
+    [(AstDecl.DefEnumLifetimes name _ cleanup variants)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1538,7 +1538,7 @@
           (selfhost-lint-dead-enum-cleanup-refs cleanup (vector.string-vec-new)))
         visible-root
         allow-report)]
-    [(AstDeclDefStruct name _ cleanup fields)
+    [(AstDecl.DefStruct name _ cleanup fields)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1551,7 +1551,7 @@
             (vector.string-vec-new)))
         visible-root
         allow-report)]
-    [(AstDeclDefStructLifetimes name _ _ cleanup fields)
+    [(AstDecl.DefStructLifetimes name _ _ cleanup fields)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1564,22 +1564,24 @@
             (vector.string-vec-new)))
         visible-root
         allow-report)]
-    [(AstDeclImport (AstImportSpec (AstImportMacro call-expr _) _ _ _ _))
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
         (selfhost-lint-dead-expr-refs
           (ast-node-get call-expr)
           (vector.string-vec-new)))]
-    [(AstDeclImport (AstImportSpec (AstImportMacroDecls call-expr _) _ _ _ _))
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
       (selfhost-lint-dead-refs-to-roots
         scan
         (selfhost-lint-dead-expr-refs
           (ast-node-get call-expr)
           (vector.string-vec-new)))]
-    [(AstDeclImport _) scan]
-    [(AstDeclIncludeStr _ _) scan]
-    [(AstDeclIncludeBin _ _) scan]
-    [(AstDeclDefDispatch name variants)
+    [(AstDecl.Import _) scan]
+    [(AstDecl.IncludeStr _ _) scan]
+    [(AstDecl.IncludeBin _ _) scan]
+    [(AstDecl.DefDispatch name variants)
       (selfhost-lint-dead-add-visible-node
         scan
         path
@@ -1590,13 +1592,13 @@
           (vector.string-vec-new))
         visible-root
         allow-report)]
-    [(AstDeclTest _ body _)
+    [(AstDecl.Test _ body _)
       (selfhost-lint-dead-refs-to-roots
         scan
         (selfhost-lint-dead-expr-refs
           (ast-node-get body)
           (vector.string-vec-new)))]
-    [(AstDeclUnsafe inner)
+    [(AstDecl.Unsafe inner)
       (selfhost-lint-dead-scan-decl
         scan
         path
@@ -1604,7 +1606,7 @@
         (box-get inner)
         visible-root
         allow-report)]
-    [(AstDeclComptimeDecl meta inner)
+    [(AstDecl.ComptimeDecl meta inner)
       (selfhost-lint-dead-refs-to-roots
         (selfhost-lint-dead-scan-decl
           scan
@@ -1623,8 +1625,8 @@
   [reportable : bool]
   [decls : AstDeclList]) : SelfhostLintDeadScan
   (match decls
-    [(AstDeclNil) scan]
-    [(AstDeclCons decl rest)
+    [(AstDeclList.Nil) scan]
+    [(AstDeclList.Cons decl rest)
       (selfhost-lint-dead-scan-decls
         (selfhost-lint-dead-scan-decl
           scan
@@ -1648,7 +1650,7 @@
   (match (parse-ast-source-diagnostic path source)
     [(ResultAstProgramDiagnostic.Ok program)
       (match program
-        [(AstProgram decls-box)
+        [(AstProgram.Program decls-box)
           (selfhost-lint-dead-scan-decls
             scan
             path

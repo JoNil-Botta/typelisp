@@ -12,6 +12,7 @@
 (import "sym_i64_env.tl")
 (import stdlib.string)
 (import stdlib.option)
+(import token)
 (import (option i64) as option_i64)
 
 (defenum ResultAstType
@@ -378,12 +379,12 @@
     [(string.string-eq name "impl") true]
     [else (string.string-eq name "where")]))
 
-(define (ast-source-span-from-source-span [span : SourceSpan]) : AstSourceSpan
+(define (ast-source-span-from-source-span [span : token.SourceSpan]) : AstSourceSpan
   (AstSourceSpan
-    (span-start-line span)
-    (span-start-col span)
-    (span-end-line span)
-    (span-end-col span)))
+    (token.span-start-line span)
+    (token.span-start-col span)
+    (token.span-end-line span)
+    (token.span-end-col span)))
 
 (define (ast-expr-wrap-span
   [pools : AstNodePoolContext]
@@ -6994,10 +6995,10 @@
 (define (parse-ast-program-forms-into-vec
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
-  (if (= (peek-spanned-tag toks cur) (tag-end))
+  (if (= (peek-spanned-tag toks cur) (token.tag-end))
     (ResultParseAstDeclVec.Ok)
     (let
       ;; The spanned tree for one top-level form is dead once its AstDecl is
@@ -7025,12 +7026,12 @@
             [(ResultAstMaybeDecl.Err message)
               (ResultParseAstDeclVec.Err message)])]
         [(ResultSpannedSexpr.Err err)
-          (ResultParseAstDeclVec.Err (source-error-message err))]))))
+          (ResultParseAstDeclVec.Err (token.source-error-message err))]))))
 
 (define (parse-ast-program-forms
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclList
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
@@ -7050,7 +7051,7 @@
     [_ (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs)]))
 
 (define (parse-ast-program-with-cfg-and-pools
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
@@ -7064,7 +7065,7 @@
         [(ResultAstDeclList.Err message) (ResultAstProgram.Err message)]))))
 
 (define (parse-ast-program-with-cfg
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cfgs : SymI64Env]) : ResultAstProgram
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -7074,7 +7075,7 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (parse-ast-program [toks : (Array SpannedToken)]) : ResultAstProgram
+(define (parse-ast-program [toks : (Array token.SpannedToken)]) : ResultAstProgram
   (parse-ast-program-with-cfg toks (compiler-cfg-empty)))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
@@ -7088,7 +7089,7 @@
     [(ResultSpannedTokens.Ok toks)
       (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
     [(ResultSpannedTokens.Err err)
-      (ResultAstProgram.Err (source-error-message err))]))
+      (ResultAstProgram.Err (token.source-error-message err))]))
 
 (define (parse-ast-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultAstProgram
   (let
@@ -7130,11 +7131,11 @@
         (begin
           (sp-node-pool-reset!)
           (array.array-set! cur 0 0)
-          (if (= (peek-spanned-tag toks cur) (tag-end))
+          (if (= (peek-spanned-tag toks cur) (token.tag-end))
             (ResultAstReplItem.Err "parse: expected REPL input")
             (match (read-form-spanned-result toks cur)
               [(ResultSpannedSexpr.Ok form)
-                (if (= (peek-spanned-tag toks cur) (tag-end))
+                (if (= (peek-spanned-tag toks cur) (token.tag-end))
                   (match (parse-ast-decl dispatch pools form)
                     [(ResultAstDecl.Ok decl)
                       (if (parse-ast-repl-module-macro-call-decl? decl)
@@ -7145,9 +7146,9 @@
                   (ResultAstReplItem.Err
                     "parse: trailing tokens after REPL input"))]
               [(ResultSpannedSexpr.Err err)
-                (ResultAstReplItem.Err (source-error-message err))]))))]
+                (ResultAstReplItem.Err (token.source-error-message err))]))))]
     [(ResultSpannedTokens.Err err)
-      (ResultAstReplItem.Err (source-error-message err))]))
+      (ResultAstReplItem.Err (token.source-error-message err))]))
 
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (let
@@ -7166,10 +7167,10 @@
   [path : String]
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVecDiagnostic
-  (if (= (peek-spanned-tag toks cur) (tag-end))
+  (if (= (peek-spanned-tag toks cur) (token.tag-end))
     (ResultParseAstDeclVecDiagnostic.Ok)
     (let
       ;; Bound the spanned pool to a single top-level form (see
@@ -7229,7 +7230,7 @@
   [path : String]
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclListDiagnostic
   (let
     [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
@@ -7249,12 +7250,12 @@
 
 (define (parse-ast-program-diagnostic
   [path : String]
-  [toks : (Array SpannedToken)]) : ResultAstProgramDiagnostic
+  [toks : (Array token.SpannedToken)]) : ResultAstProgramDiagnostic
   (parse-ast-program-diagnostic-with-cfg path toks (compiler-cfg-empty)))
 
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cfgs : SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
@@ -7271,7 +7272,7 @@
 
 (define (parse-ast-program-diagnostic-with-cfg
   [path : String]
-  [toks : (Array SpannedToken)]
+  [toks : (Array token.SpannedToken)]
   [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -7778,10 +7779,10 @@
               (match (read-form-spanned-result toks cur)
                 [(ResultSpannedSexpr.Ok form)
                   (let
-                    [span : SourceSpan (spanned-sexpr-span form)]
+                    [span : token.SourceSpan (spanned-sexpr-span form)]
                     (and
-                      (= (span-start-line span) 1)
-                      (= (span-start-col span) 1)))]
+                      (= (token.span-start-line span) 1)
+                      (= (token.span-start-col span) 1)))]
                 [(ResultSpannedSexpr.Err _) false])))]
         [(ResultSpannedTokens.Err _) false]))))
 

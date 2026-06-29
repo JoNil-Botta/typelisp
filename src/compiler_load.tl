@@ -12,6 +12,7 @@
 (import "compiler_embedded_stdlib.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
+(import token)
 
 (defenum ResultCompilerLoad
   (Ok AstDeclList SymI64Env)
@@ -8787,11 +8788,11 @@
 ;: reader span to the source-facing diagnostic result.
 (define (compiler-load-manifest-source-error-diagnostic
   [path : String]
-  [err : SourceError]) : CompilerDiagnostic
+  [err : token.SourceError]) : CompilerDiagnostic
   (compiler-diagnostic-from-span
     path
-    (source-error-span err)
-    (string.string-append "manifest: " (source-error-message err))))
+    (token.source-error-span err)
+    (string.string-append "manifest: " (token.source-error-message err))))
 
 (define (compiler-load-manifest-validation-diagnostic
   [path : String]

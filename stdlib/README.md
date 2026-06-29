@@ -233,8 +233,8 @@ use.
   and `alloc-reset-peak`. Import it with
   `(import stdlib.profile)`.
 - `queue.tl`: generated growable deque family (collections v1, #1549/#2797)
-  over a circular `(Array T)`. Import `(deque T)` with a module alias, such as
-  `(import (deque i64) as deque_i64)`, to get `Deque`, `Pop`, `new`,
+  over a circular `(Array T)`. Import `(queue.deque T)` with a module alias,
+  such as `(import (queue.deque i64) as deque_i64)`, to get `Deque`, `Pop`, `new`,
   `with-capacity`, `push-back`, `push-front`, `pop-front`, `pop-back`,
   `peek-front`, `peek-back`, `get`, `len`, `capacity`, and `is-empty?` in that
   generated module namespace. Mutators take `&mut` and update in place; reads

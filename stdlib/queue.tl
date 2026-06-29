@@ -15,7 +15,7 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.queue)
-;# (import (deque i64) as deque_i64)
+;# (import (queue.deque i64) as deque_i64)
 ;#
 ;# (define (main) : i64
 ;#   (let

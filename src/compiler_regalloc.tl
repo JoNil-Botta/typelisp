@@ -10698,10 +10698,34 @@
 ;; small multi-block functions, structural ineligibility that keeps
 ;; call-spanning integers/handles in callee-saved registers, and
 ;; float-call-spanning exclusion for the caller-saved XMM pool. Single-block
-;; functions cannot have loop-carried values; very large functions stay on the
-;; cheap block-level interval builder to cap opt2 compiler cost.
+;; functions cannot have loop-carried values.
+;;
+;; The precise (segmented, hole-aware) interval builder feeds
+;; compiler-reg-vars-interfere-segmented-index?, whose exact segment-overlap test
+;; only fires when BOTH values carry segments; otherwise it falls back to the
+;; coarse whole-[start,end] overlap, which manufactures phantom conflicts between
+;; values whose live ranges are actually disjoint. The cheap block-level builder
+;; (compiler-reg-block-intervals) leaves segments empty, so every function on it
+;; is stuck with that conservative fallback.
+;;
+;; Two windows get the precise builder: tiny functions (<= 10 blocks) and
+;; GENUINELY LARGE ones (>= 100 blocks). The large window is the added tier
+;; (#regalloc): the worst spillers in the self-host -- emit-instrs-step (299
+;; blocks), ctfe-quote-expr (378), lower-expr-with-type, the tc_/lower/spec
+;; walkers -- have hundreds of blocks and dozens of disjoint live ranges, so
+;; precise interference removes real phantom conflicts there (measured: -90 net
+;; static stack reloads across s2, concentrated in functions over 500 reloads,
+;; 91 improved / 1 regressed; full-liveness cost was negligible -- s1->s2 build
+;; time unchanged). The MEDIUM band (11-99 blocks) is deliberately left on the
+;; coarse builder: measurement showed precise intervals there perturb the greedy
+;; spill-victim/eviction heuristics non-monotonically and net-REGRESS reloads, so
+;; extending the tier downward (or removing the cap outright) is a net loss until
+;; that interaction is reworked.
 (define (compiler-reg-scalar-full-interval-block-limit) : i64
   10)
+
+(define (compiler-reg-scalar-full-interval-huge-floor) : i64
+  100)
 
 (define (compiler-reg-scalar-full-intervals? [func : CompilerIrFunction]) : bool
   (match func
@@ -10710,7 +10734,9 @@
         [count : i64 (compiler-ir-block-list-count blocks)]
         (and
           (> count 1)
-          (<= count (compiler-reg-scalar-full-interval-block-limit))))]))
+          (or
+            (<= count (compiler-reg-scalar-full-interval-block-limit))
+            (>= count (compiler-reg-scalar-full-interval-huge-floor)))))]))
 
 (define (compiler-reg-plan-function-scalar-for-abi
   [abi : CompilerRegTargetAbi]

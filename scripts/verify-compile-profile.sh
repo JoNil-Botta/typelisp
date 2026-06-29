@@ -42,6 +42,8 @@ VECTOR_STDOUT="$WORKDIR/profile-vector.stdout"
 VECTOR_STDERR="$WORKDIR/profile-vector.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
+GEN_IMPORT_INERT_STDOUT="$WORKDIR/profile-generated-import-inert.stdout"
+GEN_IMPORT_INERT_STDERR="$WORKDIR/profile-generated-import-inert.stderr"
 REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
 REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
@@ -132,6 +134,21 @@ assert_profile_counter_at_least_in() {
     ' "$_file"; then
         show_failure_logs "$_stdout" "$_stderr"
         fail "expected profile counter $_phase to be at least $_min"
+    fi
+}
+
+assert_profile_counter_eq_in() {
+    _file=$1
+    _phase=$2
+    _want=$3
+    _stdout=$4
+    _stderr=$5
+    if ! awk -F'|' -v phase="$_phase" -v want="$_want" '
+        $1 == "compile-profile" && $2 == phase && ($3 + 0) == want { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$_file"; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected profile counter $_phase to equal $_want"
     fi
 }
 
@@ -261,6 +278,28 @@ assert_profile_counter_at_least_in \
     1 \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
+
+echo "[compile-profile] check inert generated import fixture"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import_inert.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$GEN_IMPORT_INERT_STDOUT" 2> "$GEN_IMPORT_INERT_STDERR"; then
+    show_failure_logs "$GEN_IMPORT_INERT_STDOUT" "$GEN_IMPORT_INERT_STDERR"
+    fail "profiled inert generated import fixture check failed"
+fi
+
+assert_profile_counter_at_least_in \
+    "$GEN_IMPORT_INERT_STDERR" \
+    "typecheck.macro.fixed_point_passes" \
+    2 \
+    "$GEN_IMPORT_INERT_STDOUT" \
+    "$GEN_IMPORT_INERT_STDERR"
+assert_profile_counter_eq_in \
+    "$GEN_IMPORT_INERT_STDERR" \
+    "typecheck.macro.fixed_point_followup_generated_imports" \
+    0 \
+    "$GEN_IMPORT_INERT_STDOUT" \
+    "$GEN_IMPORT_INERT_STDERR"
 
 echo "[compile-profile] check generated module replay lazy fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_replay_lazy.tl \

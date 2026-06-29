@@ -6688,6 +6688,51 @@
         region
         remap)]))
 
+;; A loop region (one loop block) is clobber-free for caller-saved registers iff it
+;; contains no call/syscall -- those clobber the whole caller-saved set. (div/mod/
+;; shift clobber only rax/rdx/rcx, which the widened candidate set below excludes;
+;; cpuid/xgetbv don't touch r8/r9/rsi/rdi.) In a clobber-free region a caller-saved
+;; reg survives the loop and is protected from scratch use by the scavenger freeness
+;; check (the rescued var's home is occupied while live) -- exactly as for the
+;; callee-saved regs the rescue already uses, so no prologue save is needed.
+(define (compiler-reg-loop-split-seq-has-call-or-syscall?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (set! found
+            (match (array.array-ref slots index)
+              [(IrInstrCall _ _ _ _) true]
+              [(IrInstrCallIndirect _ _ _ _) true]
+              [(IrInstrCallIndirectC _ _ _ _) true]
+              [(IrInstrCallCAbiStoreResult _) true]
+              [(IrInstrCallIndirectCAbiStoreResult _) true]
+              [(IrInstrTailCall _ _ _) true]
+              [(IrInstrTailCallIndirect _ _ _) true]
+              [(IrInstrSyscall _ _) true]
+              [_ false]))
+          (set! index (+ index 1))))
+      found)))
+
+;; Candidate registers for the loop-split rescue. Always the 5 callee-saved (sound
+;; everywhere). When the region is clobber-free, ALSO offer caller-saved r8/r9/rsi/
+;; rdi (tried first), so a clobber-free hot loop can keep a value in a register
+;; without adding a callee reg to the prologue save set.
+(define (compiler-reg-loop-split-candidate-regs
+  [clobber-free? : bool]) : CompilerRegStringList
+  (if clobber-free?
+    (compiler-reg-string-cons "%r8"
+      (compiler-reg-string-cons "%r9"
+        (compiler-reg-string-cons "%rsi"
+          (compiler-reg-string-cons "%rdi"
+            (compiler-reg-sysv-integer-registers)))))
+    (compiler-reg-sysv-integer-registers)))
+
 (define (compiler-reg-loop-split-try-var
   [func : CompilerIrFunction]
   [region-label : String]
@@ -6743,7 +6788,10 @@
                             depth
                             copy-count))
                           (match (compiler-reg-loop-split-first-register
-                            (compiler-reg-sysv-integer-registers)
+                            (compiler-reg-loop-split-candidate-regs
+                              (not
+                                (compiler-reg-loop-split-seq-has-call-or-syscall?
+                                  instrs)))
                             assignments
                             intervals
                             region-intervals
@@ -7097,7 +7145,9 @@
                                         rest-types))]))])]))])]))]))))
 
 (define (compiler-reg-loop-split-max-rounds) : i64
-  (compiler-reg-sysv-integer-register-count))
+  ;; 5 callee-saved + the 4 caller-saved (r8/r9/rsi/rdi) the rescue may use in
+  ;; clobber-free regions; extra rounds stop early when no free candidate remains.
+  (+ (compiler-reg-sysv-integer-register-count) 4))
 
 (define (compiler-reg-loop-split-rewrite-rounds
   [func : CompilerIrFunction]

@@ -721,12 +721,12 @@
             0))
         86]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-message rule)
             (lint-rule-copy-on-update-struct-message)))
         87]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-suggestion rule)
             (lint-rule-copy-on-update-struct-suggestion)))
         88]

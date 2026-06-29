@@ -684,13 +684,13 @@
   [field : String]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "copy-on-update struct mutation: "
-      (string.string-append
+      (string.append
         name
-        (string.string-append
+        (string.append
           " rebuilds the same struct to change field "
-          (string.string-append field "; use in-place field assignment"))))
+          (string.append field "; use in-place field assignment"))))
     (lint-rule-copy-on-update-struct-id)
     1
     span))
@@ -2310,7 +2310,7 @@
   (match shapes
     [(LintCopyOnUpdateStructList.Nil) LintCopyOnUpdateMaybeStruct.NoStruct]
     [(LintCopyOnUpdateStructList.Cons shape rest)
-      (if (string.string-eq (struct-get shape name) name)
+      (if (string.eq (struct-get shape name) name)
         (LintCopyOnUpdateMaybeStruct.SomeStruct shape)
         (lint-copy-on-update-struct-find (box-get rest) name))]))
 
@@ -2349,7 +2349,7 @@
     [(LintCopyOnUpdateLocalList.Cons local rest)
       (let
         [rest-locals : LintCopyOnUpdateLocalList (box-get rest)]
-        (if (string.string-eq (struct-get local name) name)
+        (if (string.eq (struct-get local name) name)
           (lint-copy-on-update-local-remove rest-locals name)
           (LintCopyOnUpdateLocalList.Cons
             local
@@ -2362,7 +2362,7 @@
   (let
     [without : LintCopyOnUpdateLocalList
       (lint-copy-on-update-local-remove locals name)]
-    (if (string.string-eq type-name "")
+    (if (string.eq type-name "")
       without
       (LintCopyOnUpdateLocalList.Cons
         (LintCopyOnUpdateLocal name type-name)
@@ -2374,7 +2374,7 @@
   (match locals
     [(LintCopyOnUpdateLocalList.Nil) ""]
     [(LintCopyOnUpdateLocalList.Cons local rest)
-      (if (string.string-eq (struct-get local name) name)
+      (if (string.eq (struct-get local name) name)
         (struct-get local type-name)
         (lint-copy-on-update-local-type (box-get rest) name))]))
 
@@ -2431,14 +2431,14 @@
         (ast-node-get inner))]
     [(AstExpr.StructGet receiver field)
       (and
-        (string.string-eq
+        (string.eq
           (lint-copy-on-update-expr-var-name (ast-node-get receiver))
           target-name)
-        (string.string-eq (intern-str field) field-name))]
+        (string.eq (intern-str field) field-name))]
     [(AstExpr.Var name)
-      (string.string-eq
+      (string.eq
         (intern-str name)
-        (string.string-append target-name (string.string-append "." field-name)))]
+        (string.append target-name (string.append "." field-name)))]
     [_ false]))
 
 (define (lint-copy-on-update-arg-check-invalid) : LintCopyOnUpdateArgCheck
@@ -2509,9 +2509,7 @@
     [target-name : String (intern-str target)]
     [type-name : String
       (lint-copy-on-update-local-type (struct-get state locals) target-name)]
-    (if (or
-      (string.string-eq type-name "")
-      (lint-underscore-prefixed? target-name))
+    (if (or (string.eq type-name "") (lint-underscore-prefixed? target-name))
       state
       (match value
         [(AstExpr.Spanned inner _)
@@ -2536,7 +2534,7 @@
           (let
             [callee-name : String
               (lint-copy-on-update-expr-var-name (ast-node-get callee))]
-            (if (not (string.string-eq callee-name type-name))
+            (if (not (string.eq callee-name type-name))
               state
               (match (lint-copy-on-update-struct-find
                 (struct-get state shapes)
@@ -2573,7 +2571,7 @@
           (lint-copy-on-update-struct-name-from-type
             (struct-get state shapes)
             ty)]
-        (if (string.string-eq annotated "")
+        (if (string.eq annotated "")
           (lint-copy-on-update-init-type-name state (ast-node-get inner))
           annotated))]
     [(AstExpr.Cast inner ty)
@@ -2582,7 +2580,7 @@
           (lint-copy-on-update-struct-name-from-type
             (struct-get state shapes)
             ty)]
-        (if (string.string-eq casted "")
+        (if (string.eq casted "")
           (lint-copy-on-update-init-type-name state (ast-node-get inner))
           casted))]
     [(AstExpr.Call callee _)
@@ -2609,7 +2607,7 @@
       (lint-copy-on-update-struct-name-from-maybe-type
         (struct-get state shapes)
         maybe-ty)]
-    (if (string.string-eq annotated "")
+    (if (string.eq annotated "")
       (lint-copy-on-update-init-type-name state (ast-node-get init))
       annotated)))
 

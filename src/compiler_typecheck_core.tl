@@ -15772,41 +15772,37 @@
   [name : String]) : i64
   (let
     [source-kind : i64 (tc-arena-owner-source-name-kind name)]
-    (if (= source-kind (tc-arena-owner-kind-none))
-      (tc-arena-owner-kind-none)
-      (if (and
-        (= source-kind (tc-arena-owner-kind-atomic))
-        (tc-arena-owner-call-name? ctx env name "arena-make-atomic"))
-        (tc-arena-owner-kind-atomic)
-        (if (and
+    (cond
+      [(= source-kind (tc-arena-owner-kind-none)) (tc-arena-owner-kind-none)]
+      [(and
+          (= source-kind (tc-arena-owner-kind-atomic))
+          (tc-arena-owner-call-name? ctx env name "arena-make-atomic"))
+        (tc-arena-owner-kind-atomic)]
+      [(and
           (= source-kind (tc-arena-owner-kind-ordinary))
           (tc-arena-owner-call-name? ctx env name "arena-make"))
-          (tc-arena-owner-kind-ordinary)
-          (let
-            [lookup-name : String
-              (tc-arena-owner-call-lookup-name ctx env name)]
-            (cond
-              [(or
-                  (tc-arena-owner-call-name?
-                    ctx
-                    env
-                    lookup-name
-                    "arena-make-atomic")
-                  (tc-arena-owner-canonical-call-name?
-                    ctx
-                    env
-                    lookup-name
-                    "make-atomic"))
-                (tc-arena-owner-kind-atomic)]
-              [(or
-                  (tc-arena-owner-call-name? ctx env lookup-name "arena-make")
-                  (tc-arena-owner-canonical-call-name?
-                    ctx
-                    env
-                    lookup-name
-                    "make"))
-                (tc-arena-owner-kind-ordinary)]
-              [else (tc-arena-owner-kind-none)])))))))
+        (tc-arena-owner-kind-ordinary)]
+      [else
+        (let
+          [lookup-name : String (tc-arena-owner-call-lookup-name ctx env name)]
+          (cond
+            [(or
+                (tc-arena-owner-call-name?
+                  ctx
+                  env
+                  lookup-name
+                  "arena-make-atomic")
+                (tc-arena-owner-canonical-call-name?
+                  ctx
+                  env
+                  lookup-name
+                  "make-atomic"))
+              (tc-arena-owner-kind-atomic)]
+            [(or
+                (tc-arena-owner-call-name? ctx env lookup-name "arena-make")
+                (tc-arena-owner-canonical-call-name? ctx env lookup-name "make"))
+              (tc-arena-owner-kind-ordinary)]
+            [else (tc-arena-owner-kind-none)]))])))
 
 (define (tc-arena-owner-call-kind
   [ctx : TcContext]
@@ -46242,7 +46238,7 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [module : String]) : ResultTcEnv
-  (if (string.string-eq module "")
+  (if (string.eq module "")
     (ResultTcEnv.Ok top-env)
     (tc-module-local-env ctx top-env module)))
 
@@ -49655,7 +49651,7 @@
                             (set! followup-start-index cur-index)
                             (set!
                               followup-start-module
-                              (string.string-copy (& cur-module))))
+                              (string.copy (& cur-module))))
                           unit)
                         (set!
                           cur-module

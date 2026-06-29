@@ -183,6 +183,13 @@
   [index : i64]) : i64
   (array-ref (struct-get state ids) index))
 
+(define (compiler-builtin-ids-state-ids-data-addr
+  [state : CompilerBuiltinIdsState]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data (struct-get state ids)) : (Ptr u8))))
+    : i64))
+
 (define (compiler-builtin-ids-state-set!
   [state : CompilerBuiltinIdsState]
   [index : i64]

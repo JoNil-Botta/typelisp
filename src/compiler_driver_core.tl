@@ -6,6 +6,7 @@
 (import stdlib.vector)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_backend.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_load.tl")
 (import "compiler_optimize.tl")
@@ -34,7 +35,7 @@
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
-  (builtin-ids (Array CompilerBuiltinIdsState))
+  (builtin-ids (Array cbi.CompilerBuiltinIdsState))
   (lower-arenas (Array CompilerLowerArenaState))
   (load-session CompilerLoadSessionState)
   (pool-arena (Array i64)))
@@ -48,15 +49,15 @@
       (array.make-array AstExprNodePoolState 1)]
     [type-cell : (Array AstTypeNodePoolState)
       (array.make-array AstTypeNodePoolState 1)]
-    [builtin-cell : (Array CompilerBuiltinIdsState)
-      (array.make-array CompilerBuiltinIdsState 1)]
+    [builtin-cell : (Array cbi.CompilerBuiltinIdsState)
+      (array.make-array cbi.CompilerBuiltinIdsState 1)]
     [lower-cell : (Array CompilerLowerArenaState)
       (array.make-array CompilerLowerArenaState 1)]
     [pool-arena-cell : (Array i64) (array.make-array i64 1)]
     (begin
       (array.array-set! expr-cell 0 expr-pool)
       (array.array-set! type-cell 0 type-pool)
-      (array.array-set! builtin-cell 0 (compiler-builtin-ids-state-new))
+      (array.array-set! builtin-cell 0 (cbi.compiler-builtin-ids-state-new))
       (array.array-set! lower-cell 0 (compiler-lower-arena-state-new))
       (array.array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
@@ -86,7 +87,7 @@
         (ast-type-node-pool-state-init 262144 pool-arena)
         pool-arena)]
     (begin
-      (compiler-builtin-ids-state-capture-from-globals!
+      (cbi.compiler-builtin-ids-state-capture-from-globals!
         (array.array-ref (struct-get state builtin-ids) 0))
       (compiler-lower-arena-state-capture-from-globals!
         (array.array-ref (struct-get state lower-arenas) 0))
@@ -177,7 +178,7 @@
     (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (compiler-builtin-ids-state-install!
+  (cbi.compiler-builtin-ids-state-install!
     (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-install-lower-arenas!
@@ -199,8 +200,26 @@
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
-  (compiler-builtin-ids-state-capture-from-globals!
+  (cbi.compiler-builtin-ids-state-capture-from-globals!
     (array.array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-state-builtin-generation [state : CompilerDriverState]) : i64
+  (cbi.compiler-builtin-ids-state-generation
+    (array.array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-state-builtin-ids-data-addr
+  [state : CompilerDriverState]) : i64
+  (cbi.compiler-builtin-ids-state-ids-data-addr
+    (array.array-ref (struct-get state builtin-ids) 0)))
+
+(define (compiler-driver-builtin-reset!) : unit
+  (cbi.compiler-builtin-reset!))
+
+(define (compiler-driver-builtin-typecheck-string-length-id? [name-id : i64]) : bool
+  (cbi.compiler-builtin-typecheck-string-length-id? name-id))
+
+(define (compiler-driver-builtin-typecheck-array-length-id? [name-id : i64]) : bool
+  (cbi.compiler-builtin-typecheck-array-length-id? name-id))
 
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
@@ -283,7 +302,7 @@
     (compiler-load-session-reset-pools!)
     (compiler-load-session-reset-interns!)
     (compiler-typecheck-reset-intern-owned-state!)
-    (compiler-builtin-reset!)
+    (cbi.compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
     ;; #2596/#3259: drop the previous entry's lowerer arenas. At opt level 0
@@ -292,7 +311,7 @@
 
 (define (compiler-driver-reset-analysis-state!) : unit
   (begin
-    (compiler-builtin-reset!)
+    (cbi.compiler-builtin-reset!)
     (compiler-typecheck-reset-file-state!)
     (lower-reset-file-state!)
     (lower-arenas-release!)))
@@ -309,7 +328,7 @@
         (compiler-load-session-reset-interns!)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
-        (compiler-builtin-reset!)
+        (cbi.compiler-builtin-reset!)
         (compiler-typecheck-reset-file-state!)
         (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)

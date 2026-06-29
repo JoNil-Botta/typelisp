@@ -2,7 +2,7 @@
 (cfg compile-profile (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_lower.tl")
-(import "compiler_builtin_ids.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_optimize.tl")
 (import "compiler_regalloc.tl")
@@ -4407,13 +4407,15 @@
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (and
       (>= name-id 0)
-      (compiler-builtin-backend-env-path-separator-id? name-id))))
+      (cbi.compiler-builtin-backend-env-path-separator-id? name-id))))
 
 (define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
   (or
     (let
       [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-      (and (>= name-id 0) (compiler-builtin-backend-fixed-fault-id? name-id)))
+      (and
+        (>= name-id 0)
+        (cbi.compiler-builtin-backend-fixed-fault-id? name-id)))
     ;; #2386/#3396: primitive copy/search helpers are emitted unconditionally;
     ;; calls to them use raw symbols, not user-mangled _tl_ names. Main's
     ;; intern-id fault set (#2529) does not include them, so keep explicit checks.
@@ -11482,11 +11484,11 @@
         (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
       (>= symbol-id 0)
       (or
-        (compiler-builtin-backend-tl-substring-id? symbol-id)
-        (compiler-builtin-backend-tl-str-view-id? symbol-id)
-        (compiler-builtin-backend-runtime-concat-id? symbol-id)
-        (compiler-builtin-backend-runtime-atomic-id? symbol-id)
-        (compiler-builtin-backend-tl-int-to-string-id? symbol-id)))))
+        (cbi.compiler-builtin-backend-tl-substring-id? symbol-id)
+        (cbi.compiler-builtin-backend-tl-str-view-id? symbol-id)
+        (cbi.compiler-builtin-backend-runtime-concat-id? symbol-id)
+        (cbi.compiler-builtin-backend-runtime-atomic-id? symbol-id)
+        (cbi.compiler-builtin-backend-tl-int-to-string-id? symbol-id)))))
 
 (define (compiler-backend-validate-function-symbols-into
   [functions : CompilerIrFunctionList]
@@ -11619,15 +11621,15 @@
   (let
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (cond
-      [(compiler-builtin-backend-tl-print-char-id? name-id)
+      [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
         (ast-type-cons (AstTyChar) AstTypeNil)]
-      [(compiler-builtin-backend-tl-print-f64-id? name-id)
+      [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
         (ast-type-cons (AstTyF64) AstTypeNil)]
-      [(compiler-builtin-backend-tl-array-fill8-id? name-id)
+      [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
         (ast-type-cons
           (ast-ty-mut-ptr (AstTyU8))
           (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))]
-      [(compiler-builtin-backend-tl-array-zero-id? name-id)
+      [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
         (ast-type-cons
           (ast-ty-mut-ptr (AstTyU8))
           (ast-type-cons (AstTyI64) AstTypeNil))]
@@ -15086,7 +15088,7 @@
         [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
         (and
           (>= name-id 0)
-          (compiler-builtin-backend-tls-current-arena-call-id? name-id)))
+          (cbi.compiler-builtin-backend-tls-current-arena-call-id? name-id)))
       false)))
 
 (define (compiler-backend-tls-current-arena-inline-asm
@@ -15096,9 +15098,9 @@
   (let
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (cond
-      [(compiler-builtin-backend-tls-current-arena-load-id? name-id)
+      [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
         (OkCompilerBackend (compiler-backend-current-arena-load target "%rax"))]
-      [(compiler-builtin-backend-tls-current-arena-store-id? name-id)
+      [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
         (match (compiler-backend-target-arg-reg target 0)
           [(OkBackendReg reg)
             (OkCompilerBackend
@@ -15466,10 +15468,10 @@
     (cond
       [(and
           (> fast-alloc-size 0)
-          (compiler-builtin-backend-tl-alloc-id?
+          (cbi.compiler-builtin-backend-tl-alloc-id?
             (compiler-backend-runtime-helper-name-id name))
           (compiler-backend-plan-provides? plan "tl_alloc")
-          (compiler-builtin-backend-tl-alloc-id?
+          (cbi.compiler-builtin-backend-tl-alloc-id?
             (compiler-backend-runtime-helper-name-id call-symbol)))
         (OkCompilerBackend
           (str_cat.str-cat
@@ -24811,7 +24813,7 @@
   (if (not (compiler-backend-runtime-helper-name-plausible? name))
     -1
     (begin
-      (compiler-builtin-refresh!)
+      (cbi.compiler-builtin-refresh!)
       (compiler-backend-runtime-name-id name))))
 
 (define (compiler-backend-runtime-helper-core-id? [name-id : i64]) : bool
@@ -24828,7 +24830,7 @@
   ;; (stdlib/runtime.tl) and are now provided by #2143 export-symbol, so they are
   ;; no longer backend-owned runtime helpers (keeping them here would make the
   ;; export collide with a "known runtime symbol").
-  (compiler-builtin-backend-runtime-core-id? name-id))
+  (cbi.compiler-builtin-backend-runtime-core-id? name-id))
 
 (define (compiler-backend-runtime-helper-core? [name : String]) : bool
   (let
@@ -24838,7 +24840,7 @@
 ;; Current stdlib modules still depend on these backend runtime shims for
 ;; unavoidable profile operations.
 (define (compiler-backend-runtime-helper-stdlib-ffi-id? [name-id : i64]) : bool
-  (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id))
+  (cbi.compiler-builtin-backend-runtime-stdlib-ffi-id? name-id))
 
 (define (compiler-backend-runtime-helper-stdlib-ffi? [name : String]) : bool
   (let
@@ -24854,7 +24856,7 @@
 ;; are stdlib-owned and must remain external from the backend runtime plan for
 ;; normal source builds.
 (define (compiler-backend-runtime-helper-stdlib-type-lisp-id? [name-id : i64]) : bool
-  (compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id))
+  (cbi.compiler-builtin-backend-runtime-stdlib-type-lisp-id? name-id))
 
 (define (compiler-backend-runtime-helper-stdlib-type-lisp? [name : String]) : bool
   (let
@@ -24865,7 +24867,7 @@
 
 (define (compiler-backend-runtime-helper-compatibility-alias-id?
   [name-id : i64]) : bool
-  (compiler-builtin-backend-runtime-compatibility-alias-id? name-id))
+  (cbi.compiler-builtin-backend-runtime-compatibility-alias-id? name-id))
 
 (define (compiler-backend-runtime-helper-compatibility-alias? [name : String]) : bool
   (let
@@ -24941,7 +24943,9 @@
 (define (compiler-backend-runtime-concat-name? [name : String]) : bool
   (let
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (and (>= name-id 0) (compiler-builtin-backend-runtime-concat-id? name-id))))
+    (and
+      (>= name-id 0)
+      (cbi.compiler-builtin-backend-runtime-concat-id? name-id))))
 
 (define (compiler-backend-runtime-index-defines-concat?
   [index : CompilerBackendRuntimeIndex]) : bool
@@ -24996,7 +25000,7 @@
     (and
       enabled
       (>= name-id 0)
-      (compiler-builtin-backend-runtime-profile-id? name-id))))
+      (cbi.compiler-builtin-backend-runtime-profile-id? name-id))))
 
 (define (compiler-backend-runtime-name-id [name : String]) : i64
   (match (ci.intern-lookup name)
@@ -25018,11 +25022,15 @@
     [_flush-stdout : bool flush-stdout]
     [_random-system-seed : bool random-system-seed]
     (or
-      (and env-var-exists (compiler-builtin-backend-env-var-exists-id? name-id))
-      (and env-var-value (compiler-builtin-backend-env-var-value-id? name-id))
+      (and
+        env-var-exists
+        (cbi.compiler-builtin-backend-env-var-exists-id? name-id))
+      (and
+        env-var-value
+        (cbi.compiler-builtin-backend-env-var-value-id? name-id))
       (and
         env-path-separator
-        (compiler-builtin-backend-env-path-separator-id? name-id)))))
+        (cbi.compiler-builtin-backend-env-path-separator-id? name-id)))))
 
 ;; The first-class arena runtime helpers (#1633) and arena poison debug toggle
 ;; (#1690) are always emitted, so they are provided runtime symbols (resolve to
@@ -25031,7 +25039,7 @@
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (begin
-    (compiler-builtin-refresh!)
+    (cbi.compiler-builtin-refresh!)
     (let
       [name-id : i64 (compiler-backend-runtime-name-id name)]
       (if (>= name-id 0)
@@ -25042,8 +25050,8 @@
   [plan : CompilerBackendRuntimePlan]
   [name-id : i64]) : bool
   (or
-    (compiler-builtin-backend-runtime-always-provided-id? name-id)
-    (compiler-builtin-backend-runtime-always-provided-tail-id? name-id)
+    (cbi.compiler-builtin-backend-runtime-always-provided-id? name-id)
+    (cbi.compiler-builtin-backend-runtime-always-provided-tail-id? name-id)
     (compiler-backend-plan-provides-rest-id? plan name-id)))
 
 (define (compiler-backend-plan-provides-rest-id?
@@ -25094,22 +25102,28 @@
         [_provides-shift-abort : bool provides-shift-abort]
         (or
           (backend-or8
-            (and alloc (compiler-builtin-backend-tl-alloc-id? name-id))
+            (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
             (and
               region-mark
-              (compiler-builtin-backend-tl-region-mark-id? name-id))
+              (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
             (and
               region-reset
-              (compiler-builtin-backend-tl-region-reset-id? name-id))
+              (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
             false
-            (and substring (compiler-builtin-backend-tl-substring-id? name-id))
-            (and str-view (compiler-builtin-backend-tl-str-view-id? name-id))
-            (and concat (compiler-builtin-backend-runtime-concat-id? name-id))
+            (and
+              substring
+              (cbi.compiler-builtin-backend-tl-substring-id? name-id))
+            (and
+              str-view
+              (cbi.compiler-builtin-backend-tl-str-view-id? name-id))
+            (and
+              concat
+              (cbi.compiler-builtin-backend-runtime-concat-id? name-id))
             false)
           (backend-or8
             (and
               provides-int-to-string
-              (compiler-builtin-backend-tl-int-to-string-id? name-id))
+              (cbi.compiler-builtin-backend-tl-int-to-string-id? name-id))
             false
             false
             false
@@ -25131,7 +25145,7 @@
             false
             (and
               (compiler-backend-runtime-tail-profile? provides-tail)
-              (compiler-builtin-backend-runtime-profile-id? name-id))
+              (cbi.compiler-builtin-backend-runtime-profile-id? name-id))
             false)))]))
 
 (define (compiler-backend-runtime-plan-with-index-for
@@ -25596,7 +25610,7 @@
   (begin
     ;; Seed builtin/runtime ids before scratch-backed per-function emission. The
     ;; runtime-plan id predicates are then lookup-only in scratch arenas.
-    (compiler-builtin-refresh!)
+    (cbi.compiler-builtin-refresh!)
     (match program
       [(IrProgram _ functions externs)
         (compiler-backend-runtime-plan-for functions externs)])))
@@ -25605,7 +25619,7 @@
   (begin
     ;; Seed builtin/runtime ids before scratch-backed per-function emission. The
     ;; runtime-plan id predicates are then lookup-only in scratch arenas.
-    (compiler-builtin-refresh!)
+    (cbi.compiler-builtin-refresh!)
     (match program
       [(IrProgram _ functions externs)
         (compiler-backend-runtime-plan-with-index-for functions externs)])))
@@ -32017,7 +32031,7 @@ tl_memchr:
   [target : CompilerBackendTarget]) : ResultCompilerLower
   (begin
     (ci.intern-reset!)
-    (compiler-builtin-reset!)
+    (cbi.compiler-builtin-reset!)
     (match (parse-ast-source-diagnostic-with-cfg
       "<source>"
       src

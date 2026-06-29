@@ -2528,6 +2528,26 @@
             [(ErrAstExpr message) (ErrAstExprList message)])])]
     [_ (ErrAstExprList "parse: malformed expression list")]))
 
+(define (parse-ast-body-tail
+  [dispatch : SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : SpannedSexpr]
+  [missing-message : String]) : ResultAstExpr
+  (match s
+    [(SpannedSexpr.Nil _) (ErrAstExpr missing-message)]
+    [_
+      (match (parse-ast-expr-list dispatch pools s)
+        [(OkAstExprList exprs)
+          (match exprs
+            [(AstExprNil) (ErrAstExpr missing-message)]
+            [(AstExprCons head rest)
+              (match (box-get rest)
+                [(AstExprNil) (OkAstExpr head)]
+                [_
+                  (OkAstExpr
+                    (ast-node-pool-context-expr-push pools (AstExprBegin exprs)))])])]
+        [(ErrAstExprList message) (ErrAstExpr message)])]))
+
 (define (parse-ast-call-bracket-clause
   [dispatch : SymI64Env]
   [pools : AstNodePoolContext]
@@ -2737,29 +2757,18 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons cond body-tail _)
-      (match (sp-node-get body-tail)
-        [(SpannedSexpr.Cons body end _)
-          (match (sp-node-get end)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get cond))
-                [(OkAstExpr parsed-cond)
-                  (match (parse-ast-expr-with-pools
-                    dispatch
-                    pools
-                    (sp-node-get body))
-                    [(OkAstExpr parsed-body)
-                      (OkAstExpr
-                        (ast-expr-while-with-pools
-                          pools
-                          parsed-cond
-                          parsed-body))]
-                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                [(ErrAstExpr message) (ErrAstExpr message)])]
-            [_ (ErrAstExpr "parse: malformed while")])]
-        [_ (ErrAstExpr "parse: malformed while")])]
+      (match (parse-ast-expr-with-pools dispatch pools (sp-node-get cond))
+        [(OkAstExpr parsed-cond)
+          (match (parse-ast-body-tail
+            dispatch
+            pools
+            (sp-node-get body-tail)
+            "parse: malformed while")
+            [(OkAstExpr parsed-body)
+              (OkAstExpr
+                (ast-expr-while-with-pools pools parsed-cond parsed-body))]
+            [(ErrAstExpr message) (ErrAstExpr message)])]
+        [(ErrAstExpr message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed while")]))
 
 (define (parse-ast-set
@@ -2958,16 +2967,14 @@
                 [(ErrAstLetParts message) (ErrAstLetParts message)])]
             [(ErrAstLetBinding message) (ErrAstLetParts message)])]
         [_
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get head))
-                [(OkAstExpr parsed-body)
-                  (OkAstLetParts AstLetBindingNil parsed-body)]
-                [(ErrAstExpr message) (ErrAstLetParts message)])]
-            [_ (ErrAstLetParts "parse: let expects exactly one body")])])]
+          (match (parse-ast-body-tail
+            dispatch
+            pools
+            rest
+            "parse: let missing body")
+            [(OkAstExpr parsed-body)
+              (OkAstLetParts AstLetBindingNil parsed-body)]
+            [(ErrAstExpr message) (ErrAstLetParts message)])])]
     [(SpannedSexpr.Nil _) (ErrAstLetParts "parse: let missing body")]
     [_ (ErrAstLetParts "parse: malformed let")]))
 
@@ -2978,14 +2985,23 @@
   (match rest
     [(SpannedSexpr.Cons head _ _)
       (match (sp-node-get head)
-        [(SpannedSexpr.BracketList _ _)
-          (match (parse-ast-let-flat-tail dispatch pools rest)
-            [(OkAstLetParts parsed-bindings parsed-body)
-              (if (ast-let-binding-list-empty? parsed-bindings)
-                (ErrAstExpr "parse: let requires at least one binding")
-                (OkAstExpr
-                  (ast-expr-let-with-pools pools parsed-bindings parsed-body)))]
-            [(ErrAstLetParts message) (ErrAstExpr message)])]
+        [(SpannedSexpr.BracketList items _)
+          (match (sp-node-get items)
+            [(SpannedSexpr.Nil _)
+              (match rest
+                [(SpannedSexpr.Cons _ body-tail _)
+                  (parse-ast-body-tail
+                    dispatch
+                    pools
+                    (sp-node-get body-tail)
+                    "parse: let missing body")]
+                [_ (ErrAstExpr "parse: malformed let")])]
+            [_
+              (match (parse-ast-let-flat-tail dispatch pools rest)
+                [(OkAstLetParts parsed-bindings parsed-body)
+                  (OkAstExpr
+                    (ast-expr-let-with-pools pools parsed-bindings parsed-body))]
+                [(ErrAstLetParts message) (ErrAstExpr message)])])]
         [_ (ErrAstExpr "parse: let requires at least one binding")])]
     [_ (ErrAstExpr "parse: malformed let")]))
 
@@ -2998,34 +3014,34 @@
       (match (sp-node-get bindings)
         [(SpannedSexpr.BracketList _ _)
           (parse-ast-let-flat dispatch pools rest)]
-        [_
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Cons body end _)
-              (match (sp-node-get end)
-                [(SpannedSexpr.Nil _)
-                  (match (parse-ast-let-binding-list
-                    dispatch
-                    pools
-                    (sp-node-get bindings))
-                    [(OkAstLetBindingList parsed-bindings)
-                      (if (ast-let-binding-list-empty? parsed-bindings)
-                        (ErrAstExpr "parse: let requires at least one binding")
-                        (match (parse-ast-expr-with-pools
-                          dispatch
-                          pools
-                          (sp-node-get body))
-                          [(OkAstExpr parsed-body)
-                            (OkAstExpr
-                              (ast-expr-let-with-pools
-                                pools
-                                parsed-bindings
-                                parsed-body))]
-                          [(ErrAstExpr message) (ErrAstExpr message)]))]
-                    [(ErrAstLetBindingList message) (ErrAstExpr message)])]
-                [_ (ErrAstExpr "parse: let requires at least one binding")])]
-            [_ (ErrAstExpr "parse: let requires at least one binding")])])]
-    [(SpannedSexpr.Cons _ _ _)
-      (ErrAstExpr "parse: let requires at least one binding")]
+        [(SpannedSexpr.Nil _)
+          (parse-ast-body-tail
+            dispatch
+            pools
+            (sp-node-get tail)
+            "parse: let missing body")]
+        [(SpannedSexpr.Cons _ _ _)
+          (match (parse-ast-let-binding-list
+            dispatch
+            pools
+            (sp-node-get bindings))
+            [(OkAstLetBindingList parsed-bindings)
+              (match (parse-ast-body-tail
+                dispatch
+                pools
+                (sp-node-get tail)
+                "parse: let missing body")
+                [(OkAstExpr parsed-body)
+                  (if (ast-let-binding-list-empty? parsed-bindings)
+                    (OkAstExpr parsed-body)
+                    (OkAstExpr
+                      (ast-expr-let-with-pools
+                        pools
+                        parsed-bindings
+                        parsed-body)))]
+                [(ErrAstExpr message) (ErrAstExpr message)])]
+            [(ErrAstLetBindingList message) (ErrAstExpr message)])]
+        [_ (ErrAstExpr "parse: let requires at least one binding")])]
     [_ (ErrAstExpr "parse: malformed let")]))
 
 (define (parse-ast-lambda
@@ -3034,70 +3050,54 @@
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
     [(SpannedSexpr.Cons params tail _)
-      (match (sp-node-get tail)
-        [(SpannedSexpr.Cons second rest-tail _)
-          (match (sp-node-get rest-tail)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-param-list
-                dispatch
-                pools
-                (spanned-sexpr-form (sp-node-get params)))
-                [(OkAstParamList parsed-params)
-                  (if (ast-param-list-has-comptime? parsed-params)
-                    (ErrAstExpr
-                      "comptime parameters are only supported on top-level function definitions")
-                    (match (parse-ast-expr-with-pools
-                      dispatch
-                      pools
-                      (sp-node-get second))
-                      [(OkAstExpr parsed-body)
-                        (OkAstExpr
-                          (ast-expr-lambda-with-pools
+      (match (parse-ast-param-list
+        dispatch
+        pools
+        (spanned-sexpr-form (sp-node-get params)))
+        [(OkAstParamList parsed-params)
+          (if (ast-param-list-has-comptime? parsed-params)
+            (ErrAstExpr
+              "comptime parameters are only supported on top-level function definitions")
+            (match (sp-node-get tail)
+              [(SpannedSexpr.Cons first rest-tail _)
+                (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
+                  (match (sp-node-get rest-tail)
+                    [(SpannedSexpr.Cons ret body-tail _)
+                      (match (parse-ast-type
+                        dispatch
+                        pools
+                        (spanned-sexpr-form (sp-node-get ret)))
+                        [(OkAstType parsed-ret)
+                          (match (parse-ast-body-tail
+                            dispatch
                             pools
-                            parsed-params
-                            AstNoType
-                            parsed-body))]
-                      [(ErrAstExpr message) (ErrAstExpr message)]))]
-                [(ErrAstParamList message) (ErrAstExpr message)])]
-            [(SpannedSexpr.Cons ret body-tail _)
-              (match (sp-node-get body-tail)
-                [(SpannedSexpr.Cons body end _)
-                  (match (sp-node-get end)
-                    [(SpannedSexpr.Nil _)
-                      (if (sexpr-colon?
-                        (spanned-sexpr-form (sp-node-get second)))
-                        (match (parse-ast-param-list
-                          dispatch
+                            (sp-node-get body-tail)
+                            "parse: malformed lambda")
+                            [(OkAstExpr parsed-body)
+                              (OkAstExpr
+                                (ast-expr-lambda-with-pools
+                                  pools
+                                  parsed-params
+                                  (AstSomeType parsed-ret)
+                                  parsed-body))]
+                            [(ErrAstExpr message) (ErrAstExpr message)])]
+                        [(ErrAstType message) (ErrAstExpr message)])]
+                    [_ (ErrAstExpr "parse: malformed lambda")])
+                  (match (parse-ast-body-tail
+                    dispatch
+                    pools
+                    (sp-node-get tail)
+                    "parse: malformed lambda")
+                    [(OkAstExpr parsed-body)
+                      (OkAstExpr
+                        (ast-expr-lambda-with-pools
                           pools
-                          (spanned-sexpr-form (sp-node-get params)))
-                          [(OkAstParamList parsed-params)
-                            (if (ast-param-list-has-comptime? parsed-params)
-                              (ErrAstExpr
-                                "comptime parameters are only supported on top-level function definitions")
-                              (match (parse-ast-type
-                                dispatch
-                                pools
-                                (spanned-sexpr-form (sp-node-get ret)))
-                                [(OkAstType parsed-ret)
-                                  (match (parse-ast-expr-with-pools
-                                    dispatch
-                                    pools
-                                    (sp-node-get body))
-                                    [(OkAstExpr parsed-body)
-                                      (OkAstExpr
-                                        (ast-expr-lambda-with-pools
-                                          pools
-                                          parsed-params
-                                          (AstSomeType parsed-ret)
-                                          parsed-body))]
-                                    [(ErrAstExpr message) (ErrAstExpr message)])]
-                                [(ErrAstType message) (ErrAstExpr message)]))]
-                          [(ErrAstParamList message) (ErrAstExpr message)])
-                        (ErrAstExpr "parse: expected ':' in lambda"))]
-                    [_ (ErrAstExpr "parse: malformed lambda")])]
-                [_ (ErrAstExpr "parse: malformed lambda")])]
-            [_ (ErrAstExpr "parse: malformed lambda")])]
-        [_ (ErrAstExpr "parse: malformed lambda")])]
+                          parsed-params
+                          AstNoType
+                          parsed-body))]
+                    [(ErrAstExpr message) (ErrAstExpr message)]))]
+              [_ (ErrAstExpr "parse: malformed lambda")]))]
+        [(ErrAstParamList message) (ErrAstExpr message)])]
     [_ (ErrAstExpr "parse: malformed lambda")]))
 
 (define (parse-ast-tuple-ref
@@ -5072,30 +5072,25 @@
       (if (sexpr-colon? (spanned-sexpr-form (sp-node-get first)))
         (match (sp-node-get tail)
           [(SpannedSexpr.Cons ret body-tail _)
-            (match (sp-node-get body-tail)
-              [(SpannedSexpr.Cons body end _)
-                (match (sp-node-get end)
-                  [(SpannedSexpr.Nil _)
-                    (match (parse-ast-type
-                      dispatch
-                      pools
-                      (spanned-sexpr-form (sp-node-get ret)))
-                      [(OkAstType parsed-ret)
-                        (match (parse-ast-expr-with-pools
-                          dispatch
-                          pools
-                          (sp-node-get body))
-                          [(OkAstExpr parsed-body)
-                            (parse-ast-define-fn-finish
-                              name
-                              params
-                              parsed-ret
-                              parsed-body
-                              export)]
-                          [(ErrAstExpr message) (ErrAstDecl message)])]
-                      [(ErrAstType message) (ErrAstDecl message)])]
-                  [_ (ErrAstDecl "parse: malformed function definition")])]
-              [_ (ErrAstDecl "parse: malformed function definition")])]
+            (match (parse-ast-type
+              dispatch
+              pools
+              (spanned-sexpr-form (sp-node-get ret)))
+              [(OkAstType parsed-ret)
+                (match (parse-ast-body-tail
+                  dispatch
+                  pools
+                  (sp-node-get body-tail)
+                  "parse: malformed function definition")
+                  [(OkAstExpr parsed-body)
+                    (parse-ast-define-fn-finish
+                      name
+                      params
+                      parsed-ret
+                      parsed-body
+                      export)]
+                  [(ErrAstExpr message) (ErrAstDecl message)])]
+              [(ErrAstType message) (ErrAstDecl message)])]
           [_ (ErrAstDecl "parse: malformed function definition")])
         (if (parse-ast-define-fn-metadata? (sp-node-get first))
           (match (spanned-sexpr-form (sp-node-get first))
@@ -5127,21 +5122,19 @@
                         "parse: malformed define :export-symbol metadata")))]
                 [_ (ErrAstDecl "parse: malformed function definition")])]
             [_ (ErrAstDecl "parse: malformed function definition")])
-          (match (sp-node-get tail)
-            [(SpannedSexpr.Nil _)
-              (match (parse-ast-expr-with-pools
-                dispatch
-                pools
-                (sp-node-get first))
-                [(OkAstExpr parsed-body)
-                  (parse-ast-define-fn-finish
-                    name
-                    params
-                    (AstTyUnit)
-                    parsed-body
-                    export)]
-                [(ErrAstExpr message) (ErrAstDecl message)])]
-            [_ (ErrAstDecl "parse: expected ':' in function definition")])))]
+          (match (parse-ast-body-tail
+            dispatch
+            pools
+            rest
+            "parse: malformed function definition")
+            [(OkAstExpr parsed-body)
+              (parse-ast-define-fn-finish
+                name
+                params
+                (AstTyUnit)
+                parsed-body
+                export)]
+            [(ErrAstExpr message) (ErrAstDecl message)])))]
     [_ (ErrAstDecl "parse: malformed function definition")]))
 
 (define (parse-ast-define-fn
@@ -9153,8 +9146,11 @@
       "(define (main) : i64 (let [x : i64 1]))"
       "parse: let missing body")
     (compiler-parse-error-ok?
-      "(define (main) : i64 (let [x : i64 1] x x))"
-      "parse: let expects exactly one body")))
+      "(define (main) : i64 (let []))"
+      "parse: let missing body")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (let ()))"
+      "parse: let missing body")))
 
 (define (compiler-parse-abstraction-policy-tests-ok?) : bool
   (and
@@ -9499,18 +9495,28 @@
       "(define (f [box : (RefBox n)]) : (& n i64) (struct-get box value))")))
 
 ;
-;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, and
-;; legacy-parenthesized binding forms; reject an empty binding list. Completes
-;; the let family alongside the existing flat-let accept and let error tests.
+;; let-binding parsing (#1072 / #1041): accept untyped, multi-binding, legacy
+;; parenthesized binding forms, and empty-binding body wrappers. Completes the
+;; let family alongside the existing flat-let accept and let error tests.
 (define (compiler-parse-let-tests-ok?) : bool
   (and
     (compiler-parse-ok? "(define (main) : i64 (let [x 1] x))")
     (compiler-parse-ok?
       "(define (main) : i64 (let [x : i64 1] [y : i64 2] (+ x y)))")
     (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (let [] 0))"
-      "parse: malformed let binding")))
+    (compiler-parse-ok? "(define (main) : i64 (let [] 0))")
+    (compiler-parse-ok? "(define (main) : i64 (let () 0))")))
+
+(define (compiler-parse-implicit-body-tail-ok?) : bool
+  (and
+    (compiler-parse-ok? "(define (main) : i64 (let [x : i64 1] x (+ x 1)))")
+    (compiler-parse-ok? "(define (main) : i64 (let ([x : i64 1]) x (+ x 1)))")
+    (compiler-parse-ok? "(define (main) : i64 (let [] 1 2))")
+    (compiler-parse-ok? "(define (main) : i64 (let () 1 2))")
+    (compiler-parse-ok?
+      "(define (main) : i64 (begin (while false unit unit) 0))")
+    (compiler-parse-ok? "(define (main) : i64 unit 42)")
+    (compiler-parse-ok? "(define (main) : i64 ((lambda () : i64 unit 42)))")))
 
 (define (compiler-parse-spmd-tests-ok?) : bool
   (and
@@ -10099,6 +10105,7 @@
     (compiler-parse-module-macro-surface-ok?)
     (compiler-parse-defdispatch-tests-ok?)
     (compiler-parse-flat-let-call-body-ok?)
+    (compiler-parse-implicit-body-tail-ok?)
     (compiler-parse-inline-test-ok?)
     (compiler-parse-try-ok?)))
 
@@ -10230,6 +10237,7 @@
         (compiler-parse-module-macro-surface-ok?)
         (compiler-parse-defdispatch-tests-ok?)
         (compiler-parse-flat-let-call-body-ok?)
+        (compiler-parse-implicit-body-tail-ok?)
         (compiler-parse-inline-test-ok?)
         (compiler-parse-try-ok?)
         (compiler-parse-return-ok?)

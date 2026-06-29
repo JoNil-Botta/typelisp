@@ -4713,6 +4713,17 @@
 (define (compiler-typecheck-stmt-ok-cast-ann-source) : String
   "(define (main [c : char]) : i64 (ann (cast c : i64) : i64))")
 
+(define (compiler-typecheck-stmt-ok-implicit-body-source) : String
+  "(define (main) : i64
+  (let [] unit)
+  (let [i : i64 0]
+    (while (< i 3)
+      (let [copy : i64 i] unit)
+      (set! i (+ i 1)))
+    ((lambda ([x : i64]) : i64
+      (let () unit)
+      (+ x i)) 39)))")
+
 (define (compiler-typecheck-statement-tests-ok?) : bool
   (and
     (compiler-typecheck-error-ok?
@@ -4735,7 +4746,8 @@
       "typecheck: annotation type mismatch")
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-while-source))
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-if-set-source))
-    (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-cast-ann-source))))
+    (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-cast-ann-source))
+    (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-implicit-body-source))))
 
 ;; Operator and call type rules (#1042): equality/comparison/integer operato
 ;; operand matching and call arity, plus accepting arithmetic/comparison/call
@@ -7659,7 +7671,9 @@
   "(define (main) : unit
   (begin
     (when true unit)
-    (unless false unit)))")
+    (when true unit unit)
+    (unless false unit)
+    (unless false unit unit)))")
 
 (define (compiler-typecheck-macro-ownership-tests-ok?) : bool
   (and

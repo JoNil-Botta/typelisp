@@ -43,23 +43,27 @@
       true
       (or ,@(comptime.expr-list-tail args)))))
 
-;: Evaluate `body` only when `condition` is true.
+;: Evaluate `body` expressions only when `condition` is true.
 ;:
-;: `body` must be a unit-valued expression. Use an explicit `begin` when more
-;: than one expression should run in the guarded branch.
-(defmacro (when [condition : bool] [body : unit]) : unit
-  `(if ,condition
-    ,body
-    unit))
+;: Each body expression must be unit-valued.
+(defmacro (when [condition : bool] [body : unit ...]) : unit
+  (if (comptime.expr-list-empty? body)
+    (comptime.expr-var "core-when-missing-body")
+    `(if ,condition
+      (begin
+        ,@body)
+      unit)))
 
-;: Evaluate `body` only when `condition` is false.
+;: Evaluate `body` expressions only when `condition` is false.
 ;:
-;: `body` must be a unit-valued expression. Use an explicit `begin` when more
-;: than one expression should run in the guarded branch.
-(defmacro (unless [condition : bool] [body : unit]) : unit
-  `(if ,condition
-    unit
-    ,body))
+;: Each body expression must be unit-valued.
+(defmacro (unless [condition : bool] [body : unit ...]) : unit
+  (if (comptime.expr-list-empty? body)
+    (comptime.expr-var "core-unless-missing-body")
+    `(if ,condition
+      unit
+      (begin
+        ,@body))))
 
 ;: Bracket-arm conditional expression macro.
 ;:

@@ -37645,9 +37645,14 @@
   (match cause
     [(MacroFollowupCause.GeneratedImport) true]
     [(MacroFollowupCause.ModulePlaceholder) true]
-    [(MacroFollowupCause.ExpandedDecl) true]
-    [(MacroFollowupCause.ImportPlaceholder) true]
+    [(MacroFollowupCause.ExpandedDecl) false]
+    [(MacroFollowupCause.ImportPlaceholder) false]
     [_ false]))
+
+;; Keep local follow-up on small generated/module ranges; broader work falls
+;; back to the existing whole-program fixed-point pass.
+(define (macro-local-followup-range-limit) : i64
+  256)
 
 (define (macro-local-followup-work-supported? [items : MacroFollowupWorkList]) : bool
   (match items
@@ -37655,6 +37660,9 @@
     [(MacroFollowupWorkList.Cons work rest)
       (and
         (macro-local-followup-cause-supported? (struct-get work cause))
+        (<=
+          (- (struct-get work end-index) (struct-get work start-index))
+          (macro-local-followup-range-limit))
         (macro-local-followup-work-supported? (box-get rest)))]))
 
 (define (macro-followup-cause-expanded-decl? [cause : MacroFollowupCause]) : bool
@@ -39602,6 +39610,22 @@
             (CompilerSomeString target-module))]
         [(MacroMaybeDeclList.No) (CompilerSomeString target-module)])]
     [(CompilerNoString) CompilerNoString]))
+
+(define (macro-generated-identity-shortcut-safe-params?
+  [ctx : TcContext]
+  [definition-module : String]
+  [params : AstMacroParamList]) : bool
+  (match params
+    [(AstMacroParamNil) true]
+    [(AstMacroParamCons param rest)
+      (match param
+        [(AstMacroParam _ ty _)
+          (and
+            (not (macro-identity-syntax-param-type? ctx definition-module ty))
+            (macro-generated-identity-shortcut-safe-params?
+              ctx
+              definition-module
+              (box-get rest)))])]))
 
 (define (macro-expr-list-with-head-symbol
   [name : String]
@@ -46788,61 +46812,73 @@
                             (tc-ctfe-env call-ctx)
                             call-expr)
                             [(ResultGenKey.Ok identity _)
-                              (match (macro-generated-identity-shortcut-target
-                                orig-decls
-                                identity)
-                                [(CompilerSomeString target-module)
-                                  (let
-                                    [expanded : AstDeclList
-                                      (macro-module-import-marker-decls
-                                        target-module
-                                        alias
-                                        span)]
-                                    (ResultMacroDeclExpansion.Ok
-                                      expanded
-                                      (macro-paths-for-decls expanded decl-path)))]
-                                [(CompilerNoString)
-                                  (match (macro-eval-transformer-expanded-with-env
+                              (let
+                                [shortcut-target : CompilerMaybeString
+                                  (if (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
-                                    orig-decls
                                     definition-module
-                                    global-env
-                                    macro-name
-                                    params
-                                    body
-                                    expanded-args
-                                    call-expr)
-                                    [(ResultMacroValueEnv.Ok value macro-env)
-                                      (let
-                                        [parse-dispatch : SymI64Env
-                                          (macro-parse-dispatch-for-macro
-                                            macro-name
-                                            definition-module)]
-                                        (match (macro-module-decls-from-ctfe-value
-                                          value
-                                          call-expr
-                                          parse-dispatch)
-                                          [(ResultMacroParsedDecls.Ok generated)
-                                            (macro-expand-module-generated-decls
-                                              ctx
-                                              top-env
-                                              orig-decls
-                                              module
-                                              alias
-                                              span
-                                              decl-path
+                                    params)
+                                    (macro-generated-identity-shortcut-target
+                                      orig-decls
+                                      identity)
+                                    CompilerNoString)]
+                                (match shortcut-target
+                                  [(CompilerSomeString target-module)
+                                    (let
+                                      [expanded : AstDeclList
+                                        (macro-module-import-marker-decls
+                                          target-module
+                                          alias
+                                          span)]
+                                      (ResultMacroDeclExpansion.Ok
+                                        expanded
+                                        (macro-paths-for-decls
+                                          expanded
+                                          decl-path)))]
+                                  [(CompilerNoString)
+                                    (match (macro-eval-transformer-expanded-with-env
+                                      call-ctx
+                                      orig-decls
+                                      definition-module
+                                      global-env
+                                      macro-name
+                                      params
+                                      body
+                                      expanded-args
+                                      call-expr)
+                                      [(ResultMacroValueEnv.Ok value macro-env)
+                                        (let
+                                          [parse-dispatch : SymI64Env
+                                            (macro-parse-dispatch-for-macro
                                               macro-name
-                                              identity
-                                              definition-module
-                                              macro-env
-                                              (tc-macro-param-list-needs-call-context?
-                                                params)
-                                              generated
-                                              call-expr)]
-                                          [(ResultMacroParsedDecls.Err diag)
-                                            (ResultMacroDeclExpansion.Err diag)]))]
-                                    [(ResultMacroValueEnv.Err diag)
-                                      (ResultMacroDeclExpansion.Err diag)])])]
+                                              definition-module)]
+                                          (match (macro-module-decls-from-ctfe-value
+                                            value
+                                            call-expr
+                                            parse-dispatch)
+                                            [(ResultMacroParsedDecls.Ok
+                                                generated)
+                                              (macro-expand-module-generated-decls
+                                                ctx
+                                                top-env
+                                                orig-decls
+                                                module
+                                                alias
+                                                span
+                                                decl-path
+                                                macro-name
+                                                identity
+                                                definition-module
+                                                macro-env
+                                                (tc-macro-param-list-needs-call-context?
+                                                  params)
+                                                generated
+                                                call-expr)]
+                                            [(ResultMacroParsedDecls.Err diag)
+                                              (ResultMacroDeclExpansion.Err
+                                                diag)]))]
+                                      [(ResultMacroValueEnv.Err diag)
+                                        (ResultMacroDeclExpansion.Err diag)])]))]
                             [(ResultGenKey.Err diag)
                               (ResultMacroDeclExpansion.Err diag)])]
                         [(ResultMacroExprList.Err diag)

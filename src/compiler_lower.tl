@@ -18584,9 +18584,9 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-          [(OkCtfe value _)
+          [(ResultCtfe.Ok value _)
             (match value
-              [(CtfeType ty)
+              [(CompilerCtfeValue.Type ty)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
@@ -18596,121 +18596,121 @@
                         (string.append
                           (tc-type-render (tc-resolve-type ctx ty))
                           " is compile-time only")))))]
-              [(CtfeString _)
+              [(CompilerCtfeValue.String _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "String value is compile-time only")))]
-              [(CtfeExpr _ _)
+              [(CompilerCtfeValue.Expr _ _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "Expr value is compile-time only")))]
-              [(CtfeExprList _)
+              [(CompilerCtfeValue.ExprList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "ExprList value is compile-time only")))]
-              [(CtfeExprClause _)
+              [(CompilerCtfeValue.ExprClause _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "ExprClause value is compile-time only")))]
-              [(CtfeExprClauseList _)
+              [(CompilerCtfeValue.ExprClauseList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "ExprClauseList value is compile-time only")))]
-              [(CtfeExprBindingClause _)
+              [(CompilerCtfeValue.ExprBindingClause _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "ExprBindingClause value is compile-time only")))]
-              [(CtfeExprBindingClauseList _)
+              [(CompilerCtfeValue.ExprBindingClauseList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "ExprBindingClauseList value is compile-time only")))]
-              [(CtfePattern _)
+              [(CompilerCtfeValue.Pattern _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "Pattern value is compile-time only")))]
-              [(CtfePatternList _)
+              [(CompilerCtfeValue.PatternList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "PatternList value is compile-time only")))]
-              [(CtfeMatchArm _)
+              [(CompilerCtfeValue.MatchArm _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "MatchArm value is compile-time only")))]
-              [(CtfeMatchArmList _)
+              [(CompilerCtfeValue.MatchArmList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "MatchArmList value is compile-time only")))]
-              [(CtfeTypeInfo _)
+              [(CompilerCtfeValue.TypeInfo _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeInfo value is compile-time only")))]
-              [(CtfeTypeInfoBox _)
+              [(CompilerCtfeValue.TypeInfoBox _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeInfo box value is compile-time only")))]
-              [(CtfeTypeInfoList _)
+              [(CompilerCtfeValue.TypeInfoList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeInfoList value is compile-time only")))]
-              [(CtfeTypeField _ _)
+              [(CompilerCtfeValue.TypeField _ _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeField value is compile-time only")))]
-              [(CtfeTypeFieldList _)
+              [(CompilerCtfeValue.TypeFieldList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeFieldList value is compile-time only")))]
-              [(CtfeTypeVariantPayload _)
+              [(CompilerCtfeValue.TypeVariantPayload _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeVariantPayload value is compile-time only")))]
-              [(CtfeTypeVariantPayloadList _)
+              [(CompilerCtfeValue.TypeVariantPayloadList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeVariantPayloadList value is compile-time only")))]
-              [(CtfeTypeVariant _ _)
+              [(CompilerCtfeValue.TypeVariant _ _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
                       origin
                       "TypeVariant value is compile-time only")))]
-              [(CtfeTypeVariantList _)
+              [(CompilerCtfeValue.TypeVariantList _)
                 (ErrLowerExpr
                   (box
                     (lower-diagnostic-at-expr
@@ -18723,7 +18723,7 @@
                     (ctfe-value-to-literal-for-type value expr-ty)
                     expr-ty)
                   expr-ty)])]
-          [(ErrCtfe diag) (ErrLowerExpr diag)]))]
+          [(ResultCtfe.Err diag) (ErrLowerExpr diag)]))]
     [(AstExpr.Quote _)
       (ErrLowerExpr
         (box

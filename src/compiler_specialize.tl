@@ -1,4 +1,5 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization (#832).
+(import stdlib.array)
 (import "compiler_parse_core.tl")
 (import "compiler_ctfe.tl")
 (import "compiler_diagnostic.tl")
@@ -271,7 +272,8 @@
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
     [count : i64 (spec-template-list-count templates)]
-    [values : (Array SpecMaybeTemplate) (make-array SpecMaybeTemplate count)]
+    [values : (Array SpecMaybeTemplate)
+      (array.make-array SpecMaybeTemplate count)]
     (begin
       (spec-template-values-fill-empty values 0 count)
       (SpecTemplateEnv
@@ -288,7 +290,7 @@
     (SpecMaybeTemplate.None)
     (match (hashmap.string-i64-map-get (struct-get templates index) name)
       [(hashmap.StringI64MapFound slot)
-        (array-ref (struct-get templates values) slot)]
+        (array.ref (struct-get templates values) slot)]
       [(hashmap.StringI64MapMissing) (SpecMaybeTemplate.None)])))
 
 (define (spec-template-env-shadow-name
@@ -544,41 +546,44 @@
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
-    [(CtfeI64 n) (string.append "i64_" (spec-int-key n))]
-    [(CtfeF64 n)
+    [(CompilerCtfeValue.I64 n) (string.append "i64_" (spec-int-key n))]
+    [(CompilerCtfeValue.F64 n)
       (string.append "f64_" (spec-string-key (compiler-float-format-f64 n)))]
-    [(CtfeF32 n)
+    [(CompilerCtfeValue.F32 n)
       (string.append
         "f32_"
         (spec-string-key
           (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n))))]
-    [(CtfeBool b)
+    [(CompilerCtfeValue.Bool b)
       (if b
         "bool_1"
         "bool_0")]
-    [(CtfeChar c) (string.append "char_" (string.int->string (cast c : i64)))]
-    [(CtfeString text) (spec-string-key text)]
-    [(CtfeUnit) "unit"]
-    [(CtfeType ty) (string.append "type_" (spec-type-key ty))]
-    [(CtfeExpr _ _) "Expr"]
-    [(CtfeExprList _) "expr-list"]
-    [(CtfeExprClause _) "expr-clause"]
-    [(CtfeExprClauseList _) "expr-clause-list"]
-    [(CtfeExprBindingClause _) "expr-binding-clause"]
-    [(CtfeExprBindingClauseList _) "expr-binding-clause-list"]
-    [(CtfePattern _) "pattern"]
-    [(CtfePatternList _) "pattern-list"]
-    [(CtfeMatchArm _) "match-arm"]
-    [(CtfeMatchArmList _) "match-arm-list"]
-    [(CtfeTypeInfo ty) (string.append "typeinfo_" (spec-type-key ty))]
-    [(CtfeTypeInfoBox ty) (string.append "typeinfo-box_" (spec-type-key ty))]
-    [(CtfeTypeInfoList _) "typeinfo-list"]
-    [(CtfeTypeField _ _) "type-field"]
-    [(CtfeTypeFieldList _) "type-field-list"]
-    [(CtfeTypeVariantPayload _) "type-variant-payload"]
-    [(CtfeTypeVariantPayloadList _) "type-variant-payload-list"]
-    [(CtfeTypeVariant _ _) "type-variant"]
-    [(CtfeTypeVariantList _) "type-variant-list"]))
+    [(CompilerCtfeValue.Char c)
+      (string.append "char_" (string.int->string (cast c : i64)))]
+    [(CompilerCtfeValue.String text) (spec-string-key text)]
+    [(CompilerCtfeValue.Unit) "unit"]
+    [(CompilerCtfeValue.Type ty) (string.append "type_" (spec-type-key ty))]
+    [(CompilerCtfeValue.Expr _ _) "Expr"]
+    [(CompilerCtfeValue.ExprList _) "expr-list"]
+    [(CompilerCtfeValue.ExprClause _) "expr-clause"]
+    [(CompilerCtfeValue.ExprClauseList _) "expr-clause-list"]
+    [(CompilerCtfeValue.ExprBindingClause _) "expr-binding-clause"]
+    [(CompilerCtfeValue.ExprBindingClauseList _) "expr-binding-clause-list"]
+    [(CompilerCtfeValue.Pattern _) "pattern"]
+    [(CompilerCtfeValue.PatternList _) "pattern-list"]
+    [(CompilerCtfeValue.MatchArm _) "match-arm"]
+    [(CompilerCtfeValue.MatchArmList _) "match-arm-list"]
+    [(CompilerCtfeValue.TypeInfo ty)
+      (string.append "typeinfo_" (spec-type-key ty))]
+    [(CompilerCtfeValue.TypeInfoBox ty)
+      (string.append "typeinfo-box_" (spec-type-key ty))]
+    [(CompilerCtfeValue.TypeInfoList _) "typeinfo-list"]
+    [(CompilerCtfeValue.TypeField _ _) "type-field"]
+    [(CompilerCtfeValue.TypeFieldList _) "type-field-list"]
+    [(CompilerCtfeValue.TypeVariantPayload _) "type-variant-payload"]
+    [(CompilerCtfeValue.TypeVariantPayloadList _) "type-variant-payload-list"]
+    [(CompilerCtfeValue.TypeVariant _ _) "type-variant"]
+    [(CompilerCtfeValue.TypeVariantList _) "type-variant-list"]))
 
 (define (spec-values-key [values : SpecValueList]) : String
   (match values
@@ -599,13 +604,13 @@
 (define (gen-registry-empty) : GenRegistry
   (let
     [capacity : i64 64]
-    [decls : (Array AstDecl) (make-array AstDecl capacity)]
+    [decls : (Array AstDecl) (array.make-array AstDecl capacity)]
     (GenRegistry (hashmap.string-i64-map-with-capacity capacity) decls 0)))
 
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
   (match (hashmap.string-i64-map-get (struct-get registry index) key)
     [(hashmap.StringI64MapFound slot)
-      (GenMaybeEntry.Some (array-ref (struct-get registry decls) slot))]
+      (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))]
     [(hashmap.StringI64MapMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
@@ -616,7 +621,7 @@
   (if (>= index count)
     unit
     (begin
-      (array-set! dst index (array-ref src index))
+      (array-set! dst index (array.ref src index))
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
@@ -624,12 +629,12 @@
     [old-index : hashmap.StringI64Map (struct-get registry index)]
     [old-decls : (Array AstDecl) (struct-get registry decls)]
     [old-len : i64 (struct-get registry len)]
-    [old-capacity : i64 (array-length old-decls)]
+    [old-capacity : i64 (array.length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
         (* old-capacity 2))]
-    [new-decls : (Array AstDecl) (make-array AstDecl new-capacity)]
+    [new-decls : (Array AstDecl) (array.make-array AstDecl new-capacity)]
     (begin
       (gen-registry-copy-decls old-decls new-decls 0 old-len)
       (GenRegistry old-index new-decls old-len))))
@@ -642,7 +647,7 @@
     [ready : GenRegistry
       (if (>=
         (struct-get registry len)
-        (array-length (struct-get registry decls)))
+        (array.length (struct-get registry decls)))
         (gen-registry-grow registry)
         registry)]
     [slot : i64 (struct-get ready len)]
@@ -1082,9 +1087,9 @@
       (let
         [head-expr : AstExpr (ast-node-get head)]
         (match (compiler-ctfe-eval head-expr env fuel)
-          [(OkCtfe value head-fuel)
+          [(ResultCtfe.Ok value head-fuel)
             (match value
-              [(CtfeString text)
+              [(CompilerCtfeValue.String text)
                 (match (gen-key-exprs (box-get rest) env head-fuel)
                   [(ResultGenKey.Ok tail tail-fuel)
                     (ResultGenKey.Ok
@@ -1099,7 +1104,7 @@
                     (spec-diagnostic-at-expr
                       head-expr
                       "generated-decl: key expression must evaluate to String")))])]
-          [(ErrCtfe diag) (ResultGenKey.Err diag)]))]))
+          [(ResultCtfe.Err diag) (ResultGenKey.Err diag)]))]))
 
 (define (gen-full-key
   [module : String]
@@ -1471,66 +1476,71 @@
   [value : CompilerCtfeValue]
   [ty : AstType]) : bool
   (match value
-    [(CtfeI64 _) (ctfe-type-eq ty (AstTyI64))]
-    [(CtfeF64 _) (ctfe-type-eq ty (AstTyF64))]
-    [(CtfeF32 _) (ctfe-type-eq ty (AstTyF32))]
-    [(CtfeBool _) (ctfe-type-eq ty (AstTyBool))]
-    [(CtfeChar _) (ctfe-type-eq ty (AstTyChar))]
-    [(CtfeString _) (ctfe-type-eq ty (AstTyString))]
-    [(CtfeUnit) (ctfe-type-eq ty (AstTyUnit))]
-    [(CtfeType _) false]
-    [(CtfeExpr _ _) (ctfe-type-eq ty (AstTyExpr))]
-    [(CtfeExprList _) (ctfe-type-eq ty (AstTyExprList))]
-    [(CtfeExprClause _) (ctfe-type-eq ty (AstTyVar (intern "ExprClause")))]
-    [(CtfeExprClauseList _)
+    [(CompilerCtfeValue.I64 _) (ctfe-type-eq ty (AstTyI64))]
+    [(CompilerCtfeValue.F64 _) (ctfe-type-eq ty (AstTyF64))]
+    [(CompilerCtfeValue.F32 _) (ctfe-type-eq ty (AstTyF32))]
+    [(CompilerCtfeValue.Bool _) (ctfe-type-eq ty (AstTyBool))]
+    [(CompilerCtfeValue.Char _) (ctfe-type-eq ty (AstTyChar))]
+    [(CompilerCtfeValue.String _) (ctfe-type-eq ty (AstTyString))]
+    [(CompilerCtfeValue.Unit) (ctfe-type-eq ty (AstTyUnit))]
+    [(CompilerCtfeValue.Type _) false]
+    [(CompilerCtfeValue.Expr _ _) (ctfe-type-eq ty (AstTyExpr))]
+    [(CompilerCtfeValue.ExprList _) (ctfe-type-eq ty (AstTyExprList))]
+    [(CompilerCtfeValue.ExprClause _)
+      (ctfe-type-eq ty (AstTyVar (intern "ExprClause")))]
+    [(CompilerCtfeValue.ExprClauseList _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprClauseList")))]
-    [(CtfeExprBindingClause _)
+    [(CompilerCtfeValue.ExprBindingClause _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClause")))]
-    [(CtfeExprBindingClauseList _)
+    [(CompilerCtfeValue.ExprBindingClauseList _)
       (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]
-    [(CtfePattern _) (ctfe-type-eq ty (AstTyVar (intern "Pattern")))]
-    [(CtfePatternList _) (ctfe-type-eq ty (AstTyVar (intern "PatternList")))]
-    [(CtfeMatchArm _) (ctfe-type-eq ty (AstTyVar (intern "MatchArm")))]
-    [(CtfeMatchArmList _) (ctfe-type-eq ty (AstTyVar (intern "MatchArmList")))]
-    [(CtfeTypeInfo _) false]
-    [(CtfeTypeInfoBox _) false]
-    [(CtfeTypeInfoList _) false]
-    [(CtfeTypeField _ _) false]
-    [(CtfeTypeFieldList _) false]
-    [(CtfeTypeVariantPayload _) false]
-    [(CtfeTypeVariantPayloadList _) false]
-    [(CtfeTypeVariant _ _) false]
-    [(CtfeTypeVariantList _) false]))
+    [(CompilerCtfeValue.Pattern _)
+      (ctfe-type-eq ty (AstTyVar (intern "Pattern")))]
+    [(CompilerCtfeValue.PatternList _)
+      (ctfe-type-eq ty (AstTyVar (intern "PatternList")))]
+    [(CompilerCtfeValue.MatchArm _)
+      (ctfe-type-eq ty (AstTyVar (intern "MatchArm")))]
+    [(CompilerCtfeValue.MatchArmList _)
+      (ctfe-type-eq ty (AstTyVar (intern "MatchArmList")))]
+    [(CompilerCtfeValue.TypeInfo _) false]
+    [(CompilerCtfeValue.TypeInfoBox _) false]
+    [(CompilerCtfeValue.TypeInfoList _) false]
+    [(CompilerCtfeValue.TypeField _ _) false]
+    [(CompilerCtfeValue.TypeFieldList _) false]
+    [(CompilerCtfeValue.TypeVariantPayload _) false]
+    [(CompilerCtfeValue.TypeVariantPayloadList _) false]
+    [(CompilerCtfeValue.TypeVariant _ _) false]
+    [(CompilerCtfeValue.TypeVariantList _) false]))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value
-    [(CtfeI64 _) "i64"]
-    [(CtfeF64 _) "f64"]
-    [(CtfeF32 _) "f32"]
-    [(CtfeBool _) "bool"]
-    [(CtfeChar _) "char"]
-    [(CtfeString _) "String"]
-    [(CtfeUnit) "unit"]
-    [(CtfeType _) "type"]
-    [(CtfeExpr _ _) "Expr"]
-    [(CtfeExprList _) "expr-list"]
-    [(CtfeExprClause _) "ExprClause"]
-    [(CtfeExprClauseList _) "ExprClauseList"]
-    [(CtfeExprBindingClause _) "ExprBindingClause"]
-    [(CtfeExprBindingClauseList _) "ExprBindingClauseList"]
-    [(CtfePattern _) "Pattern"]
-    [(CtfePatternList _) "PatternList"]
-    [(CtfeMatchArm _) "MatchArm"]
-    [(CtfeMatchArmList _) "MatchArmList"]
-    [(CtfeTypeInfo _) "TypeInfo"]
-    [(CtfeTypeInfoBox _) "TypeInfoBox"]
-    [(CtfeTypeInfoList _) "TypeInfoList"]
-    [(CtfeTypeField _ _) "TypeField"]
-    [(CtfeTypeFieldList _) "TypeFieldList"]
-    [(CtfeTypeVariantPayload _) "TypeVariantPayload"]
-    [(CtfeTypeVariantPayloadList _) "TypeVariantPayloadList"]
-    [(CtfeTypeVariant _ _) "TypeVariant"]
-    [(CtfeTypeVariantList _) "TypeVariantList"]))
+    [(CompilerCtfeValue.I64 _) "i64"]
+    [(CompilerCtfeValue.F64 _) "f64"]
+    [(CompilerCtfeValue.F32 _) "f32"]
+    [(CompilerCtfeValue.Bool _) "bool"]
+    [(CompilerCtfeValue.Char _) "char"]
+    [(CompilerCtfeValue.String _) "String"]
+    [(CompilerCtfeValue.Unit) "unit"]
+    [(CompilerCtfeValue.Type _) "type"]
+    [(CompilerCtfeValue.Expr _ _) "Expr"]
+    [(CompilerCtfeValue.ExprList _) "expr-list"]
+    [(CompilerCtfeValue.ExprClause _) "ExprClause"]
+    [(CompilerCtfeValue.ExprClauseList _) "ExprClauseList"]
+    [(CompilerCtfeValue.ExprBindingClause _) "ExprBindingClause"]
+    [(CompilerCtfeValue.ExprBindingClauseList _) "ExprBindingClauseList"]
+    [(CompilerCtfeValue.Pattern _) "Pattern"]
+    [(CompilerCtfeValue.PatternList _) "PatternList"]
+    [(CompilerCtfeValue.MatchArm _) "MatchArm"]
+    [(CompilerCtfeValue.MatchArmList _) "MatchArmList"]
+    [(CompilerCtfeValue.TypeInfo _) "TypeInfo"]
+    [(CompilerCtfeValue.TypeInfoBox _) "TypeInfoBox"]
+    [(CompilerCtfeValue.TypeInfoList _) "TypeInfoList"]
+    [(CompilerCtfeValue.TypeField _ _) "TypeField"]
+    [(CompilerCtfeValue.TypeFieldList _) "TypeFieldList"]
+    [(CompilerCtfeValue.TypeVariantPayload _) "TypeVariantPayload"]
+    [(CompilerCtfeValue.TypeVariantPayloadList _) "TypeVariantPayloadList"]
+    [(CompilerCtfeValue.TypeVariant _ _) "TypeVariant"]
+    [(CompilerCtfeValue.TypeVariantList _) "TypeVariantList"]))
 
 (define (spec-type-subst-lookup [subs : SpecTypeSubst] [name : String]) : SpecMaybeString
   (match subs
@@ -1558,7 +1568,7 @@
 
 (define (spec-value-subst-value [subs : SpecValueSubst] [name : String]) : CompilerCtfeValue
   (match subs
-    [(SpecValueSubst.Nil) (CtfeUnit)]
+    [(SpecValueSubst.Nil) (CompilerCtfeValue.Unit)]
     [(SpecValueSubst.Cons key value rest)
       (if (string.eq key name)
         value
@@ -1771,13 +1781,13 @@
 
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
   (match value
-    [(CtfeI64 n)
+    [(CompilerCtfeValue.I64 n)
       (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (ast-lit-int n))))]
-    [(CtfeF64 n)
+    [(CompilerCtfeValue.F64 n)
       (ResultSpecSubExpr.Ok
         (ast-node-push
           (AstExpr.Literal (AstLitFloat (compiler-float-format-f64 n)))))]
-    [(CtfeF32 n)
+    [(CompilerCtfeValue.F32 n)
       (ResultSpecSubExpr.Ok
         (ast-expr-ann
           (ast-node-push
@@ -1785,19 +1795,19 @@
               (AstLitFloat
                 (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))))
           (AstTyF32)))]
-    [(CtfeBool b)
+    [(CompilerCtfeValue.Bool b)
       (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitBool b))))]
-    [(CtfeChar c)
+    [(CompilerCtfeValue.Char c)
       (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitChar c))))]
-    [(CtfeString _)
+    [(CompilerCtfeValue.String _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time String value into runtime expression")))]
-    [(CtfeUnit)
+    [(CompilerCtfeValue.Unit)
       (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitUnit))))]
-    [(CtfeType ty)
+    [(CompilerCtfeValue.Type ty)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
@@ -1805,115 +1815,115 @@
             (string.append
               "cannot substitute compile-time type value "
               (string.append (spec-type-key ty) " into runtime expression")))))]
-    [(CtfeExpr _ _)
+    [(CompilerCtfeValue.Expr _ _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time Expr value into runtime expression")))]
-    [(CtfeExprList _)
+    [(CompilerCtfeValue.ExprList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprList value into runtime expression")))]
-    [(CtfeExprClause _)
+    [(CompilerCtfeValue.ExprClause _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClause value into runtime expression")))]
-    [(CtfeExprClauseList _)
+    [(CompilerCtfeValue.ExprClauseList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClauseList value into runtime expression")))]
-    [(CtfeExprBindingClause _)
+    [(CompilerCtfeValue.ExprBindingClause _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprBindingClause value into runtime expression")))]
-    [(CtfeExprBindingClauseList _)
+    [(CompilerCtfeValue.ExprBindingClauseList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprBindingClauseList value into runtime expression")))]
-    [(CtfePattern _)
+    [(CompilerCtfeValue.Pattern _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time Pattern value into runtime expression")))]
-    [(CtfePatternList _)
+    [(CompilerCtfeValue.PatternList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time PatternList value into runtime expression")))]
-    [(CtfeMatchArm _)
+    [(CompilerCtfeValue.MatchArm _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time MatchArm value into runtime expression")))]
-    [(CtfeMatchArmList _)
+    [(CompilerCtfeValue.MatchArmList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time MatchArmList value into runtime expression")))]
-    [(CtfeTypeInfo _)
+    [(CompilerCtfeValue.TypeInfo _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeInfo value into runtime expression")))]
-    [(CtfeTypeInfoBox _)
+    [(CompilerCtfeValue.TypeInfoBox _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeInfo box value into runtime expression")))]
-    [(CtfeTypeInfoList _)
+    [(CompilerCtfeValue.TypeInfoList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeInfoList value into runtime expression")))]
-    [(CtfeTypeField _ _)
+    [(CompilerCtfeValue.TypeField _ _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeField value into runtime expression")))]
-    [(CtfeTypeFieldList _)
+    [(CompilerCtfeValue.TypeFieldList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeFieldList value into runtime expression")))]
-    [(CtfeTypeVariantPayload _)
+    [(CompilerCtfeValue.TypeVariantPayload _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeVariantPayload value into runtime expression")))]
-    [(CtfeTypeVariantPayloadList _)
+    [(CompilerCtfeValue.TypeVariantPayloadList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeVariantPayloadList value into runtime expression")))]
-    [(CtfeTypeVariant _ _)
+    [(CompilerCtfeValue.TypeVariant _ _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time TypeVariant value into runtime expression")))]
-    [(CtfeTypeVariantList _)
+    [(CompilerCtfeValue.TypeVariantList _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
@@ -2056,10 +2066,10 @@
                 [(AstParam param-name param-ty is-comptime)
                   (if is-comptime
                     (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
-                      [(OkCtfe value _)
+                      [(ResultCtfe.Ok value _)
                         (if (spec-type-kind? param-ty)
                           (match value
-                            [(CtfeType _)
+                            [(CompilerCtfeValue.Type _)
                               (match (spec-rewrite-specialized-args
                                 rest-params
                                 rest-args
@@ -2126,7 +2136,7 @@
                                               (string.append
                                                 ", expected "
                                                 (spec-type-key param-ty)))))))))))))]
-                      [(ErrCtfe diag) (ResultSpecArgs.Err diag)])
+                      [(ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
                     (match (spec-rewrite-expr arg templates state)
                       [(ResultSpecExpr.Ok rewritten-arg arg-state)
                         (match (spec-rewrite-specialized-args
@@ -2172,7 +2182,7 @@
                     [(ResultSpecBuild.Ok runtime value-subs type-subs)
                       (if (spec-type-kind? ty)
                         (match value
-                          [(CtfeType actual-ty)
+                          [(CompilerCtfeValue.Type actual-ty)
                             (ResultSpecBuild.Ok
                               runtime
                               value-subs
@@ -5031,15 +5041,15 @@
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
-      (spec-value-cons (CtfeType (AstTyI64)) (SpecValueList.Nil))]
+      (spec-value-cons (CompilerCtfeValue.Type (AstTyI64)) (SpecValueList.Nil))]
     [vals-bool : SpecValueList
-      (spec-value-cons (CtfeType (AstTyBool)) (SpecValueList.Nil))]
+      (spec-value-cons (CompilerCtfeValue.Type (AstTyBool)) (SpecValueList.Nil))]
     [vals-multi : SpecValueList
       (spec-value-cons
-        (CtfeType (AstTyI64))
-        (spec-value-cons (CtfeI64 5) (SpecValueList.Nil)))]
+        (CompilerCtfeValue.Type (AstTyI64))
+        (spec-value-cons (CompilerCtfeValue.I64 5) (SpecValueList.Nil)))]
     [vals-string : SpecValueList
-      (spec-value-cons (CtfeString "a b") (SpecValueList.Nil))]
+      (spec-value-cons (CompilerCtfeValue.String "a b") (SpecValueList.Nil))]
     (and
       (string.eq
         (spec-specialized-name "alloc" vals-i64)
@@ -5057,7 +5067,7 @@
       (string.eq
         (spec-specialized-name "pair" vals-multi)
         "__tl_specialized_pair_type_i64_i64_5_none")
-      (string.eq (spec-value-key (CtfeI64 (- 0 3))) "i64_m3")
+      (string.eq (spec-value-key (CompilerCtfeValue.I64 (- 0 3))) "i64_m3")
       (string.eq
         (spec-specialized-name "name" vals-string)
         "__tl_specialized_name_string_3_97_32_98_none"))))
@@ -5196,7 +5206,7 @@
 (define (compiler-specialize-value-subst-ok?) : bool
   (let
     [subs : SpecValueSubst
-      (spec-value-subst-cons "x" (CtfeI64 5) SpecValueSubst.Nil)]
+      (spec-value-subst-cons "x" (CompilerCtfeValue.I64 5) SpecValueSubst.Nil)]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr (AstExpr.Var (intern "x")) subs)
@@ -5268,13 +5278,16 @@
         "generated-one")]
     [values : SpecValueList
       (spec-value-cons
-        (CtfeI64 1)
-        (spec-value-cons (CtfeBool true) SpecValueList.Nil))]
+        (CompilerCtfeValue.I64 1)
+        (spec-value-cons (CompilerCtfeValue.Bool true) SpecValueList.Nil))]
     [value-subs : SpecValueSubst
       (spec-value-subst-cons
         "x"
-        (CtfeI64 1)
-        (spec-value-subst-cons "flag" (CtfeBool true) SpecValueSubst.Nil))]
+        (CompilerCtfeValue.I64 1)
+        (spec-value-subst-cons
+          "flag"
+          (CompilerCtfeValue.Bool true)
+          SpecValueSubst.Nil))]
     [type-subs : SpecTypeSubst
       (spec-type-subst-cons
         "T"
@@ -5291,7 +5304,7 @@
         [(SpecMaybeString.None) false])
       (string.eq (spec-values-key values) "i64_1_bool_1_none")
       (match (spec-value-subst-value value-subs "flag")
-        [(CtfeBool flag) flag]
+        [(CompilerCtfeValue.Bool flag) flag]
         [_ false])
       (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstTyBool)))))
 

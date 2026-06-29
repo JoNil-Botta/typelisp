@@ -10071,6 +10071,11 @@
                       (compiler-backend-scavenge-exclude-regs2 dst-home lhs-reg)
                       7
                       "%r8")]
+                  [rhs-operand : String
+                    (compiler-backend-binop-spill-source-operand
+                      assignments
+                      rhs
+                      operand-ty)]
                   (if (and
                     (or
                       (string-eq mnem "and")
@@ -10108,8 +10113,16 @@
                         dst-home
                         "\n"))
                     (if (and
-                      (not (string-eq rhs-reg ""))
-                      (not (string-eq rhs-reg dst-home)))
+                      (not (string-eq rhs-reg dst-home))
+                      (not (string-eq rhs-operand "")))
+                      ;; #62 scalar load-fold: rhs-operand is the rhs's sized register
+                      ;; (rhs already in a distinct reg) OR, when rhs is a spilled var,
+                      ;; its DISP(%rbp) slot. Either way: load lhs into dst-home, then
+                      ;; "<op> rhs-operand, dst-home" directly -- for a spilled rhs this
+                      ;; folds the memory operand and skips the "movq rhs-slot,%scav"
+                      ;; reload (rhs lives in memory, so loading lhs into dst-home cannot
+                      ;; clobber it). rhs-reg==dst-home still falls through to the reload
+                      ;; (rhs must be saved before lhs overwrites dst-home).
                       (match (compiler-backend-emit-load-value-with-plan
                         assignments
                         lhs
@@ -10121,7 +10134,7 @@
                               (compiler-backend-binop-reg-asm
                                 mnem
                                 operand-ty
-                                (compiler-backend-sized-reg rhs-reg operand-ty)
+                                rhs-operand
                                 (compiler-backend-sized-reg dst-home operand-ty))))]
                         [(ErrCompilerBackend message)
                           (ErrCompilerBackend message)])

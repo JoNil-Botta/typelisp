@@ -1382,7 +1382,7 @@
       (CompilerIrFunction.Function
         (clone name)
         (compiler-ir-clone-param-list params)
-        (clone ret)
+        (compiler-ir-clone-type ret)
         vars
         (compiler-ir-block-list-compact (compiler-ir-clone-block-list blocks)))]))
 

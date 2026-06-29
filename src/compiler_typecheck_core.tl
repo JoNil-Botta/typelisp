@@ -44060,8 +44060,6 @@
                   same-identity-body
                   generated-key-body))]
             (if same-body?
-              (match CompilerNoString
-                [CompilerNoString
                   (let
                     [expanded : AstDeclList
                       (macro-module-import-marker-decls
@@ -44070,14 +44068,9 @@
                         span)]
                     (OkMacroDeclExpansion
                       expanded
-                      (macro-paths-for-decls expanded decl-path)))]
-                [(CompilerSomeString message)
-                  (ErrMacroDeclExpansion
-                    (box (macro-generated-import-diag span message)))])
+                      (macro-paths-for-decls expanded decl-path)))
               (ErrMacroDeclExpansion
                 (box (macro-module-incompatible-output-diag call-expr identity)))))
-          (match CompilerNoString
-            [CompilerNoString
               (let
                 [expanded : AstDeclList
                   (macro-decl-list-append
@@ -44090,13 +44083,8 @@
                         span)))]
                 (OkMacroDeclExpansion
                   expanded
-                  (macro-paths-for-decls expanded decl-path)))]
-            [(CompilerSomeString message)
-              (ErrMacroDeclExpansion
-                (box (macro-generated-import-diag span message)))]))]
+                  (macro-paths-for-decls expanded decl-path))))]
       [(MacroNoDeclList)
-        (match CompilerNoString
-          [CompilerNoString
             (let
               [expanded : AstDeclList
                 (macro-decl-list-append
@@ -44106,10 +44094,7 @@
                     (macro-module-import-marker-decls target-module alias span)))]
               (OkMacroDeclExpansion
                 expanded
-                (macro-paths-for-decls expanded decl-path)))]
-          [(CompilerSomeString message)
-            (ErrMacroDeclExpansion
-              (box (macro-generated-import-diag span message)))])])))
+                (macro-paths-for-decls expanded decl-path)))])))
 
 (define (macro-expand-module-generated-decls
   [ctx : TcContext]
@@ -44609,9 +44594,6 @@
   (match alias
     [(AstSomeImportAlias alias-name) (string.string-eq alias-name "")]
     [(AstNoImportAlias) true]))
-
-(define (macro-generated-import-diag [span : AstSourceSpan] [message : String]) : CompilerDiagnostic
-  (tc-canonical-diagnostic (compiler-diagnostic-from-ast-span "" span message)))
 
 ;; Macro-expansion skip analysis (#2350-regression fix). Once any module defines
 ;; a macro, `has-defmacro` forces the full macro-expand walk over EVERY decl in

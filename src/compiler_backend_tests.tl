@@ -16052,20 +16052,6 @@
               (IrValueVar 6))
             7
             "%r8")
-          "%r10")
-        (string-eq
-          (compiler-backend-scavenge-pick
-            starts
-            ends
-            (compiler-reg-assignment-index-build assignments 7)
-            7
-            5
-            (compiler-backend-scavenge-exclude-ops2-r8
-              assignments
-              (IrValueVar 5)
-              (IrValueVar 6))
-            8
-            "%r8")
           "%r10")))))
 
 (define (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?) : bool

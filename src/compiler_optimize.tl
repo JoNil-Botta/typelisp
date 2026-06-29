@@ -19790,11 +19790,6 @@
                   (OptConstNil)
                   (opt-fold-instr-seq (OptConstNil) instrs)))))))]))
 
-(define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
-  (match block
-    [(IrBlock label instrs)
-      (compiler-ir-block label (opt-copy-instr-seq (OptCopyNil) instrs))]))
-
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(IrBlockNil) (IrBlockNil)]

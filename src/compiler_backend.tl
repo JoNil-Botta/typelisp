@@ -5813,11 +5813,6 @@
 (define (compiler-backend-emit-load-register [reg : String] [ty : AstType]) : String
   (compiler-backend-emit-load-register-to-reg reg ty "%rax"))
 
-(define (compiler-backend-emit-store-rax-to-memory
-  [addr : String]
-  [ty : AstType]) : String
-  (compiler-backend-emit-store-reg-to-memory addr "%rax" ty))
-
 (define (compiler-backend-emit-store-reg-to-memory
   [addr : String]
   [reg : String]
@@ -11212,17 +11207,6 @@
     [(IrBinNe) true]
     [_ false]))
 
-(define (compiler-backend-emit-compare-flags
-  [op : CompilerIrBinOp]
-  [rhs : String]
-  [ty : AstType]) : String
-  (compiler-backend-emit-compare-operand-flags
-    op
-    rhs
-    (compiler-backend-sized-reg "%rax" ty)
-    ty
-    true))
-
 (define (compiler-backend-emit-compare-operand-flags
   [op : CompilerIrBinOp]
   [rhs : String]
@@ -12430,50 +12414,6 @@
       (array-set! a 2 "%r8")
       (array-set! a 3 "%r9")
       (array-set! a 4 extra)
-      a)))
-
-(define (compiler-backend-c-abi-stage-exclude-with2
-  [extra1 : String]
-  [extra2 : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 6)]
-    (begin
-      (array-set! a 0 "%rcx")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%r8")
-      (array-set! a 3 "%r9")
-      (array-set! a 4 extra1)
-      (array-set! a 5 extra2)
-      a)))
-
-;; Like scavenge-exclude-ops2 but also reserves %r8 for a later fallback scratch.
-(define (compiler-backend-scavenge-exclude-ops2-r8
-  [assignments : CompilerRegAssignmentList]
-  [v1 : CompilerIrValue]
-  [v2 : CompilerIrValue]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 8)]
-    [h1 : String (compiler-backend-value-scalar-register assignments v1)]
-    [h2 : String (compiler-backend-value-scalar-register assignments v2)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "%r8")
-      (array-set! a 4 "%rax")
-      (array-set! a 5 "%rax")
-      (array-set!
-        a
-        6
-        (if (string-eq h1 "")
-          "%rax"
-          h1))
-      (array-set!
-        a
-        7
-        (if (string-eq h2 "")
-          "%rax"
-          h2))
       a)))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String

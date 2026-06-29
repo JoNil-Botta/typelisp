@@ -2791,15 +2791,6 @@
           types
           limit))]))
 
-(define (compiler-reg-ineligible-vars
-  [func : CompilerIrFunction]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
-  (match func
-    [(IrFunction _ params _ _ _)
-      (compiler-reg-ineligible-params
-        params
-        (compiler-reg-ineligible-vars-non-params func types 4))]))
-
 ;; SIMD/AVX register planning keeps the original (pre-#perf) ineligibility: every
 ;; value live across a call is ineligible (the vector/mask/XMM pools are
 ;; caller-saved and the backend has no callee-saved save/restore for them), and
@@ -15088,13 +15079,6 @@
                   (compiler-reg-instr-list-has-mov-var? items (+ vars 1) 5)
                   (compiler-reg-instr-list-has-store-var? items "g5" (+ vars 1))
                   (not (compiler-reg-instr-list-has-store-var? items "g5" 5))))]))])))
-
-(cfg
-  test
-  (define (compiler-reg-call-spanning-rewrite-shape-ok?
-    [func : CompilerIrFunction]
-    [plan : CompilerRegPlan]) : bool
-    (compiler-reg-call-spanning-rewrite-shape-label-ok? func plan "entry")))
 
 (define (compiler-reg-scalar-call-spanning-caller-saved-ok?) : bool
   (let

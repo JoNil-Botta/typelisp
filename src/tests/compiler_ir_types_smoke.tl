@@ -6,44 +6,51 @@
   [functions : CompilerIrFunctionList]
   [want : String]) : bool
   (match (compiler-ir-function-list-force-cons functions)
-    [(IrFunctionCons func _)
+    [(CompilerIrFunctionList.Cons func _)
       (match func
-        [(IrFunction name _ _ _ _) (string.string-eq name want)])]
-    [(IrFunctionNil) false]
-    [(IrFunctionArray _) false]))
+        [(CompilerIrFunction.Function name _ _ _ _)
+          (string.string-eq name want)])]
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Array _) false]))
 
 (define (compiler-ir-smoke-function-list-compact-kind?
   [functions : CompilerIrFunctionList]) : bool
   (match functions
-    [(IrFunctionArray seq) (= (compiler-ir-function-seq-count seq) 2)]
+    [(CompilerIrFunctionList.Array seq)
+      (= (compiler-ir-function-seq-count seq) 2)]
     [_ false]))
 
 (define (compiler-ir-smoke-function-seq-roundtrip-ok?) : bool
   (let
     [entry-instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (IrInstrMov 1 (IrValueI64 10) (AstTyI64))
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstTyI64))
         (compiler-ir-instr-cons
-          (IrInstrReturn (IrSomeValue (IrValueVar 1)))
-          IrInstrNil))]
+          (CompilerIrInstr.Return
+            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+          CompilerIrInstrList.Nil))]
     [blocks : CompilerIrBlockList
       (compiler-ir-block-list-compact
         (compiler-ir-block-cons
           (compiler-ir-block "entry" entry-instrs)
-          IrBlockNil))]
+          CompilerIrBlockList.Nil))]
     [first : CompilerIrFunction
-      (IrFunction "first" IrParamNil (AstTyI64) 2 blocks)]
+      (CompilerIrFunction.Function "first" IrParamNil (AstTyI64) 2 blocks)]
     [second : CompilerIrFunction
-      (IrFunction "second" IrParamNil (AstTyI64) 2 blocks)]
+      (CompilerIrFunction.Function "second" IrParamNil (AstTyI64) 2 blocks)]
     [functions : CompilerIrFunctionList
       (compiler-ir-function-cons
         first
-        (compiler-ir-function-cons second IrFunctionNil))]
+        (compiler-ir-function-cons second CompilerIrFunctionList.Nil))]
     [compact : CompilerIrFunctionList
       (compiler-ir-function-list-compact functions)]
     [cloned : CompilerIrFunctionList (compiler-ir-clone-function-list compact)]
     [summary : CompilerIrSummary
-      (compiler-ir-program-summary (IrProgram IrGlobalNil compact IrExternNil))]
+      (compiler-ir-program-summary
+        (CompilerIrProgram.Program
+          CompilerIrGlobalList.Nil
+          compact
+          CompilerIrExternList.Nil))]
     (and
       (compiler-ir-smoke-function-list-compact-kind? compact)
       (compiler-ir-smoke-function-list-compact-kind? cloned)
@@ -59,16 +66,19 @@
   (let
     [args : CompilerIrSpmdCallArgList
       (ir-spmd-call-arg-cons
-        (IrSpmdCallArg (IrSpmdValueUniform) (IrValueVar 21) (AstTyI64))
+        (IrSpmdCallArg (IrSpmdValueUniform) (CompilerIrValue.Var 21) (AstTyI64))
         (ir-spmd-call-arg-cons
-          (IrSpmdCallArg (IrSpmdValueVarying) (IrValueVar 22) (AstTyI64))
+          (IrSpmdCallArg
+            (IrSpmdValueVarying)
+            (CompilerIrValue.Var 22)
+            (AstTyI64))
           IrSpmdCallArgNil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call
         "helper"
         (IrSpmdBackendAvx2)
         8
-        (IrValueVar 20)
+        (CompilerIrValue.Var 20)
         args
         (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (AstTyI64)))]
     [span : AstSourceSpan (AstSourceSpan 3 4 3 9)]
@@ -85,17 +95,17 @@
       (string.string-eq
         (compiler-ir-instr-describe instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
-      (compiler-ir-effect-is? instr IrEffectUnknown)
+      (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)
       (= (compiler-ir-instr-call-arg-count instr) 2)
       (string.string-eq
         (compiler-ir-instr-render (compiler-ir-clone-instr instr))
         (compiler-ir-instr-render instr))
       (match (compiler-source-spans-lookup-instr spans "func" instr)
-        [(CompilerSomeSourceSpan found)
+        [(CompilerMaybeSourceSpan.Some found)
           (and
             (= (struct-get found start-line) 3)
             (= (struct-get found end-col) 9))]
-        [(CompilerNoSourceSpan) false]))))
+        [(CompilerMaybeSourceSpan.No) false]))))
 
 (define (main) : i64
   (begin

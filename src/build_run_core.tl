@@ -61,13 +61,13 @@
 
 (define (source-tool-target-name [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux) "linux-x86_64"]
-    [(BackendTargetWindows) "windows-x86_64"]))
+    [(CompilerBackendTarget.Linux) "linux-x86_64"]
+    [(CompilerBackendTarget.Windows) "windows-x86_64"]))
 
 (define (source-tool-default-target) : CompilerBackendTarget
   (if (string.string-eq (env.env-path-separator) ";")
-    (BackendTargetWindows)
-    (BackendTargetLinux)))
+    (CompilerBackendTarget.Windows)
+    (CompilerBackendTarget.Linux)))
 
 (define (source-tool-default-target-name) : String
   (source-tool-target-name (source-tool-default-target)))
@@ -76,27 +76,27 @@
   (if (or
     (string.string-eq value "linux-x86_64")
     (string.string-eq value "linux_x86_64"))
-    (ResultSourceToolTarget.Ok (BackendTargetLinux))
+    (ResultSourceToolTarget.Ok (CompilerBackendTarget.Linux))
     (if (or
       (string.string-eq value "windows-x86_64")
       (string.string-eq value "windows_x86_64"))
-      (ResultSourceToolTarget.Ok (BackendTargetWindows))
+      (ResultSourceToolTarget.Ok (CompilerBackendTarget.Windows))
       (ResultSourceToolTarget.Err
         (string.string-append "unknown target " value)))))
 
 (define (source-tool-target-supported? [target : CompilerBackendTarget]) : bool
   (match target
-    [(BackendTargetLinux) true]
-    [(BackendTargetWindows) true]))
+    [(CompilerBackendTarget.Linux) true]
+    [(CompilerBackendTarget.Windows) true]))
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (cond
     [(string.string-eq value "scalar")
-      (ResultSourceToolBackendMode.Ok (BackendModeScalar))]
+      (ResultSourceToolBackendMode.Ok (CompilerBackendMode.Scalar))]
     [(string.string-eq value "avx2")
-      (ResultSourceToolBackendMode.Ok (BackendModeAvx2))]
+      (ResultSourceToolBackendMode.Ok (CompilerBackendMode.Avx2))]
     [(string.string-eq value "avx512")
-      (ResultSourceToolBackendMode.Ok (BackendModeAvx512))]
+      (ResultSourceToolBackendMode.Ok (CompilerBackendMode.Avx512))]
     [else
       (ResultSourceToolBackendMode.Err
         (str_cat.str-cat command ": unknown backend mode " value))]))
@@ -264,8 +264,9 @@
   [target : CompilerBackendTarget]
   [link-inputs : SourceToolLinkInputs]) : bool
   (match target
-    [(BackendTargetLinux) (not (source-tool-link-inputs-empty? link-inputs))]
-    [(BackendTargetWindows) false]))
+    [(CompilerBackendTarget.Linux)
+      (not (source-tool-link-inputs-empty? link-inputs))]
+    [(CompilerBackendTarget.Windows) false]))
 
 (define (source-tool-link-inputs-add-lib
   [inputs : SourceToolLinkInputs]
@@ -630,31 +631,32 @@
   [source : String]
   [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux) (source-tool-replace-extension source "")]
-    [(BackendTargetWindows) (source-tool-replace-extension source ".exe")]))
+    [(CompilerBackendTarget.Linux) (source-tool-replace-extension source "")]
+    [(CompilerBackendTarget.Windows)
+      (source-tool-replace-extension source ".exe")]))
 
 (define (source-tool-object-extension [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux) "o"]
-    [(BackendTargetWindows) "obj"]))
+    [(CompilerBackendTarget.Linux) "o"]
+    [(CompilerBackendTarget.Windows) "obj"]))
 
 (define (source-tool-executable-extension [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux) ""]
-    [(BackendTargetWindows) ".exe"]))
+    [(CompilerBackendTarget.Linux) ""]
+    [(CompilerBackendTarget.Windows) ".exe"]))
 
 (define (source-tool-static-library-extension [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux) ".a"]
-    [(BackendTargetWindows) ".lib"]))
+    [(CompilerBackendTarget.Linux) ".a"]
+    [(CompilerBackendTarget.Windows) ".lib"]))
 
 (define (source-tool-static-library-filename
   [name : String]
   [target : CompilerBackendTarget]) : String
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (str_cat.str-cat "lib" name (source-tool-static-library-extension target))]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (str_cat.str-cat name (source-tool-static-library-extension target))]))
 
 (define (source-tool-artifact-stem [source : String]) : String
@@ -831,7 +833,7 @@
   [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (match (source-tool-try-read-file source)
         [(io.ErrIoString error)
           (ResultSourceToolString.Err
@@ -851,7 +853,7 @@
             [(ResultCompilerDriverObject.Err diag)
               (ResultSourceToolString.Err
                 (compiler-diagnostic-render (box-get diag)))])])]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
 
@@ -863,14 +865,14 @@
   [opt-level : i64]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (match (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
         source
         program
         spans
         target
         true
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         opt-level
         true
         (source-tool-linux-crt-entry? target link-inputs))
@@ -879,7 +881,7 @@
         [(ResultCompilerDriverObject.Err diag)
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (ResultSourceToolString.Err
         "direct ELF object emission is only available for linux-x86_64")]))
 
@@ -993,10 +995,10 @@
   [cfgs : SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (ResultSourceToolString.Err
         "direct COFF object emission is only available for windows-x86_64")]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (match (source-tool-try-read-file source)
         [(io.ErrIoString error)
           (ResultSourceToolString.Err
@@ -1024,17 +1026,17 @@
   [target : CompilerBackendTarget]
   [opt-level : i64]) : ResultSourceToolString
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (ResultSourceToolString.Err
         "direct COFF object emission is only available for windows-x86_64")]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (match (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
         source
         program
         spans
         target
         true
-        (BackendModeScalar)
+        (CompilerBackendMode.Scalar)
         opt-level
         true
         false)
@@ -1334,36 +1336,36 @@
     "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : i64 (inc answer))"
-    (BackendTargetLinux))
-    [(OkCompilerBackendObject image)
+    (CompilerBackendTarget.Linux))
+    [(ResultCompilerBackendObject.Ok image)
       (if (source-tool-linux-direct-object-linkable? image)
         (match (source-tool-render-linkable-linux-elf-object image)
           [(ResultSourceToolString.Ok obj) (> (string.string-length obj) 0)]
           [(ResultSourceToolString.Err _) false])
         false)]
-    [(ErrCompilerBackendObject _) false]))
+    [(ResultCompilerBackendObject.Err _) false]))
 
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64 0)"
-    (BackendTargetWindows))
-    [(OkCompilerBackendObject image)
+    (CompilerBackendTarget.Windows))
+    [(ResultCompilerBackendObject.Ok image)
       (if (source-tool-windows-direct-object-linkable? image)
         (match (source-tool-render-linkable-windows-coff-object image)
           [(ResultSourceToolString.Ok obj) (> (string.string-length obj) 0)]
           [(ResultSourceToolString.Err _) false])
         false)]
-    [(ErrCompilerBackendObject _) false]))
+    [(ResultCompilerBackendObject.Err _) false]))
 
 (define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64
   (let [items : (Array i64) (make-array i64 1)]
     (array-length items)))"
-    (BackendTargetWindows))
-    [(OkCompilerBackendObject image)
+    (CompilerBackendTarget.Windows))
+    [(ResultCompilerBackendObject.Ok image)
       (not (source-tool-windows-direct-object-linkable? image))]
-    [(ErrCompilerBackendObject _) false]))
+    [(ResultCompilerBackendObject.Err _) false]))
 
 (define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
   (let
@@ -1519,12 +1521,12 @@
   [asm-path : String]
   [obj-path : String]) : SourceToolCommandStatus
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (source-tool-run-command
         "assembler"
         target
         (source-tool-assembler-command asm-path obj-path))]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (source-tool-run-command
         "assembler"
         target
@@ -1536,12 +1538,12 @@
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (source-tool-run-command
         "linker"
         target
         (source-tool-linker-command obj-path bin-path link-inputs))]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (match (source-tool-windows-linker-command obj-path bin-path link-inputs)
         [(ResultSourceToolCommand.Ok command)
           (source-tool-run-command "linker" target command)]
@@ -1553,12 +1555,12 @@
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
   (match target
-    [(BackendTargetLinux)
+    [(CompilerBackendTarget.Linux)
       (source-tool-run-command
         "archiver"
         target
         (source-tool-archiver-command obj-path archive-path))]
-    [(BackendTargetWindows)
+    [(CompilerBackendTarget.Windows)
       (match (source-tool-windows-archiver-command obj-path archive-path)
         [(ResultSourceToolCommand.Ok command)
           (source-tool-run-command "archiver" target command)]

@@ -44,7 +44,7 @@
     true
     (compiler-driver-pic-smoke-roots)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty))
     [(ResultCompilerDriverPic.Ok output)
       (compiler-driver-pic-smoke-output-ok? output)]
@@ -84,11 +84,11 @@
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     (compiler-driver-pic-smoke-write-extern-fixture)
-    (BackendTargetWindows)
+    (CompilerBackendTarget.Windows)
     true
     (compiler-driver-pic-smoke-roots)
     (compiler-optimize-default-level)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (compiler-cfg-empty))
     [(ResultCompilerDriverPic.Ok _) false]
     [(ResultCompilerDriverPic.Err diag)
@@ -107,10 +107,11 @@
 (define (main) : i64
   (begin
     (unless
-      (compiler-driver-pic-smoke-core-macros-ok? (BackendTargetLinux))
+      (compiler-driver-pic-smoke-core-macros-ok? (CompilerBackendTarget.Linux))
       (return 1))
     (unless
-      (compiler-driver-pic-smoke-core-macros-ok? (BackendTargetWindows))
+      (compiler-driver-pic-smoke-core-macros-ok?
+        (CompilerBackendTarget.Windows))
       (return 2))
     (unless (compiler-driver-pic-smoke-extern-reject-ok?) (return 3))
     (unless

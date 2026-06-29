@@ -10,12 +10,12 @@
       1)
     (match (compiler-backend-emit-source-for-target
       (compiler-backend-windows-driver-runtime-source)
-      (BackendTargetWindows))
-      [(OkCompilerBackend asm)
+      (CompilerBackendTarget.Windows))
+      [(ResultCompilerBackend.Ok asm)
         (begin
           (io.write-file (io.arg 1) asm)
           0)]
-      [(ErrCompilerBackend diag)
+      [(ResultCompilerBackend.Err diag)
         (begin
           (io.print-error (compiler-diagnostic-render (box-get diag)))
           1)])))

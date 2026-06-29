@@ -441,7 +441,7 @@
           count
           source
           (source-tool-default-target)
-          (BackendModeScalar)
+          (CompilerBackendMode.Scalar)
           (vector.string-vec-new)
           (vector.string-vec-new)
           (process.process-args-empty)

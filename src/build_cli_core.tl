@@ -269,9 +269,9 @@
 
 (define (build-backend-mode-name [mode : CompilerBackendMode]) : String
   (match mode
-    [(BackendModeScalar) "scalar"]
-    [(BackendModeAvx2) "avx2"]
-    [(BackendModeAvx512) "avx512"]))
+    [(CompilerBackendMode.Scalar) "scalar"]
+    [(CompilerBackendMode.Avx2) "avx2"]
+    [(CompilerBackendMode.Avx512) "avx512"]))
 
 (define (build-profile-default-opt-level [profile : BuildProfile]) : i64
   (match profile
@@ -334,11 +334,11 @@
   (if (or
     (string.string-eq value "linux-x86_64")
     (string.string-eq value "linux_x86_64"))
-    (ResultBuildTarget.Ok (BackendTargetLinux))
+    (ResultBuildTarget.Ok (CompilerBackendTarget.Linux))
     (if (or
       (string.string-eq value "windows-x86_64")
       (string.string-eq value "windows_x86_64"))
-      (ResultBuildTarget.Ok (BackendTargetWindows))
+      (ResultBuildTarget.Ok (CompilerBackendTarget.Windows))
       (ResultBuildTarget.Err (build-unknown-target value)))))
 
 (define (build-parse-opt-level [value : String]) : i64
@@ -952,7 +952,7 @@
     ""
     false
     (source-tool-default-target)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (build-default-profile)
     (build-package-default-opt-level)
     false
@@ -1157,14 +1157,14 @@
         "root/app"
         "pkg"
         (BuildProfile.Release)
-        (BackendTargetWindows))
+        (CompilerBackendTarget.Windows))
       "root/app/target/release/pkg.exe")
     (string.string-eq
       (build-package-lib-path-profile
         "root/app"
         "pkg"
         (BuildProfile.Release)
-        (BackendTargetLinux))
+        (CompilerBackendTarget.Linux))
       "root/app/target/release/libpkg.a")
     (string.string-eq
       (build-package-tlci-path-profile "root/app" "pkg" (BuildProfile.Dev))
@@ -1176,7 +1176,7 @@
           "pkg"
           (CompilerPkgKindBin)
           (BuildProfile.Dev)
-          (BackendTargetWindows)))
+          (CompilerBackendTarget.Windows)))
       "root/app/target/dev/pkg.tlci")))
 
 (test
@@ -2569,8 +2569,8 @@
       (struct-get link all))
     manifest-dir
     (match target
-      [(BackendTargetLinux) (struct-get link linux)]
-      [(BackendTargetWindows) (struct-get link windows)])))
+      [(CompilerBackendTarget.Linux) (struct-get link linux)]
+      [(CompilerBackendTarget.Windows) (struct-get link windows)])))
 
 (define (build-package-artifact-status
   [kind : CompilerPkgKind]
@@ -2666,7 +2666,7 @@
 
 (define (build-package-direct-object-mode? [mode : CompilerBackendMode]) : bool
   (match mode
-    [(BackendModeScalar) true]
+    [(CompilerBackendMode.Scalar) true]
     [_ false]))
 
 (define (build-package-try-render-linux-direct-object
@@ -2804,7 +2804,7 @@
     (build-package-graph-node-artifact-path node (BuildProfile.Release) target)))
 
 (define (build-package-graph-test-link-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
-  (build-package-graph-test-link-arg-target node (BackendTargetLinux)))
+  (build-package-graph-test-link-arg-target node (CompilerBackendTarget.Linux)))
 
 (define (build-package-graph-test-tlci-arg [node : BuildPackageGraphNode]) : process.ProcessStringList
   (process.process-args-single
@@ -2830,12 +2830,12 @@
       (build-package-graph-link-libs
         nodes
         (BuildProfile.Release)
-        (BackendTargetLinux))]
+        (CompilerBackendTarget.Linux))]
     [windows-libs : process.ProcessStringList
       (build-package-graph-link-libs
         nodes
         (BuildProfile.Release)
-        (BackendTargetWindows))]
+        (CompilerBackendTarget.Windows))]
     [tlcis : process.ProcessStringList
       (build-package-graph-tlci-paths nodes (BuildProfile.Release))]
     [expected : process.ProcessStringList
@@ -2855,11 +2855,13 @@
         (process.process-args-append
           (build-package-graph-test-link-arg-target
             third
-            (BackendTargetWindows))
+            (CompilerBackendTarget.Windows))
           (build-package-graph-test-link-arg-target
             second
-            (BackendTargetWindows)))
-        (build-package-graph-test-link-arg-target first (BackendTargetWindows)))]
+            (CompilerBackendTarget.Windows)))
+        (build-package-graph-test-link-arg-target
+          first
+          (CompilerBackendTarget.Windows)))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
       (string.string-eq
@@ -2889,12 +2891,12 @@
         (build-package-graph-node-artifact-paths
           bin-node
           (BuildProfile.Dev)
-          (BackendTargetWindows))]
+          (CompilerBackendTarget.Windows))]
       [dep-artifacts : BuildPackageArtifactPaths
         (build-package-graph-node-artifact-paths
           dep-node
           (BuildProfile.Release)
-          (BackendTargetLinux))]
+          (CompilerBackendTarget.Linux))]
       (and
         (string.string-eq
           (build-package-runtime-artifact-path bin-artifacts)
@@ -2925,10 +2927,10 @@
       nodes
       (hashmap.string-i64-map-with-capacity 4)
       (hashmap.string-i64-map-with-capacity 4)
-      (BackendTargetLinux)
+      (CompilerBackendTarget.Linux)
       0
       (BuildProfile.Release)
-      (BackendModeScalar)
+      (CompilerBackendMode.Scalar)
       (BuildPackageLockPolicy.Default)
       (vector.string-vec-new)
       (build-package-graph-worker-vec-new))
@@ -4799,7 +4801,7 @@
     ""
     false
     (source-tool-default-target)
-    (BackendModeScalar)
+    (CompilerBackendMode.Scalar)
     (vector.string-vec-new)
     (compiler-optimize-default-level)
     (source-tool-link-inputs-empty)))

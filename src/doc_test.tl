@@ -1184,8 +1184,8 @@
 ;; runnable doctests can hide target-specific compiler/runtime bugs.
 (define (doc-test-runnable-target-supported? [target : CompilerBackendTarget]) : bool
   (match target
-    [(BackendTargetLinux) true]
-    [(BackendTargetWindows) true]))
+    [(CompilerBackendTarget.Linux) true]
+    [(CompilerBackendTarget.Windows) true]))
 
 (define (doc-test-runnable-supported?) : bool
   (doc-test-runnable-target-supported? (source-tool-default-target)))
@@ -1263,8 +1263,8 @@
   [target : CompilerBackendTarget]
   [text : String]) : String
   (match target
-    [(BackendTargetLinux) text]
-    [(BackendTargetWindows) (doc-test-normalize-windows-crlf text)]))
+    [(CompilerBackendTarget.Linux) text]
+    [(CompilerBackendTarget.Windows) (doc-test-normalize-windows-crlf text)]))
 
 (define (doc-test-runnable-mismatch-message
   [index : i64]

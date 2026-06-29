@@ -783,7 +783,7 @@
 (define (lower-name-env-lookup [names : LowerNameEnv] [source-name : String]) : TcMaybeString
   (let
     [cur : LowerNameEnv names]
-    [result : TcMaybeString (TcNoString)]
+    [result : TcMaybeString (TcMaybeString.No)]
     [done : bool false]
     (begin
       (while (and
@@ -796,15 +796,15 @@
           [(LowerNameBind source _ logical rest)
             (if (string.string-eq source source-name)
               (begin
-                (set! result (TcSomeString logical))
+                (set! result (TcMaybeString.Some logical))
                 (set! done true))
               (set! cur (box-get rest)))]))
       result)))
 
 (define (lower-name-env-resolve [names : LowerNameEnv] [source-name : String]) : String
   (match (lower-name-env-lookup names source-name)
-    [(TcSomeString logical) logical]
-    [(TcNoString) source-name]))
+    [(TcMaybeString.Some logical) logical]
+    [(TcMaybeString.No) source-name]))
 
 (define (lower-name-env-count [names : LowerNameEnv]) : i64
   (let
@@ -967,10 +967,10 @@
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
   (match (hashmap.i64-i64-map-get (struct-get cache ids) source-id)
     [(hashmap.I64I64MapFound index)
-      (TcSomeString (array.array-ref (struct-get cache values) index))]
+      (TcMaybeString.Some (array.array-ref (struct-get cache values) index))]
     [(hashmap.I64I64MapMissing)
       (match (struct-get cache parent)
-        [(LowerNameParentNone) (TcNoString)]
+        [(LowerNameParentNone) (TcMaybeString.No)]
         [(LowerNameParentGlobal)
           (lower-name-cache-lookup-id lower-active-global-name-cache source-id)])]))
 
@@ -980,8 +980,8 @@
   (match (lower-name-cache-source-id source-name)
     [(LowerNameCacheSomeId source-id)
       (match (lower-name-cache-lookup-id cache source-id)
-        [(TcSomeString logical-name) logical-name]
-        [(TcNoString) source-name])]
+        [(TcMaybeString.Some logical-name) logical-name]
+        [(TcMaybeString.No) source-name])]
     [(LowerNameCacheNoId) source-name]))
 
 (define (lower-name-cache-resolve-dotted
@@ -1013,11 +1013,11 @@
                       (match (lower-name-cache-lookup-id
                         cache
                         (compiler-symbol-module-key-id-by-id module-id base-id))
-                        [(TcSomeString resolved)
+                        [(TcMaybeString.Some resolved)
                           (begin
                             (set! out (string.string-copy resolved))
                             (set! done true))]
-                        [(TcNoString) unit])]
+                        [(TcMaybeString.No) unit])]
                     [(InternLookupMissing) unit])]
                 [(InternLookupMissing) unit]))
             unit)
@@ -1037,16 +1037,17 @@
 
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
-    [(TcTypeNil) 0]
-    [(TcTypeCache _ _ _ _ _ _ _ rest _) (lower-type-env-count (box-get rest))]
-    [(TcTypeBind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
+    [(TcTypeEnv.Nil) 0]
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+      (lower-type-env-count (box-get rest))]
+    [(TcTypeEnv.Bind _ _ rest) (+ 1 (lower-type-env-count (box-get rest)))]))
 
 (define (lower-type-env-contains-reference? [env : TcTypeEnv]) : bool
   (match env
-    [(TcTypeNil) false]
-    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+    [(TcTypeEnv.Nil) false]
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
       (lower-type-env-contains-reference? (box-get rest))]
-    [(TcTypeBind _ ty rest)
+    [(TcTypeEnv.Bind _ ty rest)
       (if (tc-type-contains-reference? ty)
         true
         (lower-type-env-contains-reference? (box-get rest)))]))
@@ -1078,10 +1079,10 @@
   [env : TcTypeEnv]
   [cache : LowerTypeCache]) : LowerTypeCache
   (match env
-    [(TcTypeNil) cache]
-    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+    [(TcTypeEnv.Nil) cache]
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
       (lower-type-cache-from-env-into (box-get rest) cache)]
-    [(TcTypeBind name-id ty rest)
+    [(TcTypeEnv.Bind name-id ty rest)
       (lower-type-cache-from-env-into
         (box-get rest)
         (lower-type-cache-add cache name-id ty))]))
@@ -1117,15 +1118,16 @@
   [display-name : String]) : ResultTcType
   (match cache
     [(LowerNoTypeCache)
-      (ErrTcType (string.string-append "typecheck: unbound name " display-name))]
+      (ResultTcType.Err
+        (string.string-append "typecheck: unbound name " display-name))]
     [(LowerSomeTypeCache ids values _ parent)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
-          (OkTcType (array.array-ref values index))]
+          (ResultTcType.Ok (array.array-ref values index))]
         [(hashmap.I64I64MapMissing)
           (match parent
             [(LowerTypeParentNone)
-              (ErrTcType
+              (ResultTcType.Err
                 (string.string-append "typecheck: unbound name " display-name))]
             [(LowerTypeParentGlobal)
               (lower-type-cache-lookup-id
@@ -1138,7 +1140,7 @@
     [(InternLookupFound name-id)
       (lower-type-cache-lookup-id cache name-id name)]
     [(InternLookupMissing)
-      (ErrTcType (string.string-append "typecheck: unbound name " name))]))
+      (ResultTcType.Err (string.string-append "typecheck: unbound name " name))]))
 
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
@@ -1153,14 +1155,14 @@
 (define (lower-hygiene-fallback-source-name [name : String]) : TcMaybeString
   (if (tc-hygiene-global-name? name)
     (match (tc-hygiene-global-decode name)
-      [(TcHygieneLegacyGlobal _) (TcNoString)]
+      [(TcHygieneLegacyGlobal _) (TcMaybeString.No)]
       [(TcHygieneContextGlobal module lookup-name)
         (if (and
           (> (string.string-length module) 0)
           (not (tc-name-qualified? lookup-name)))
-          (TcSomeString lookup-name)
-          (TcNoString))])
-    (TcNoString)))
+          (TcMaybeString.Some lookup-name)
+          (TcMaybeString.No))])
+    (TcMaybeString.No)))
 
 (define (lower-hygiene-context-source-name
   [ctx : TcContext]
@@ -1174,8 +1176,8 @@
         (tc-context-with-module ctx module)
         type-env
         lookup-name)
-        [(OkTcString resolved-name) resolved-name]
-        [(ErrTcString _) (compiler-symbol-module-key module lookup-name)])
+        [(ResultTcString.Ok resolved-name) resolved-name]
+        [(ResultTcString.Err _) (compiler-symbol-module-key module lookup-name)])
       (compiler-symbol-module-key module lookup-name))))
 
 (define (lower-hygiene-source-name-in-context
@@ -1195,14 +1197,14 @@
   (let
     [source-name : String (lower-hygiene-source-name name)]
     (match (lower-type-cache-lookup cache source-name)
-      [(OkTcType ty) (OkTcType ty)]
-      [(ErrTcType message)
+      [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+      [(ResultTcType.Err message)
         (match (lower-hygiene-fallback-source-name name)
-          [(TcSomeString fallback)
+          [(TcMaybeString.Some fallback)
             (match (lower-type-cache-lookup cache fallback)
-              [(OkTcType ty) (OkTcType ty)]
-              [(ErrTcType _) (ErrTcType message)])]
-          [(TcNoString) (ErrTcType message)])])))
+              [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+              [(ResultTcType.Err _) (ResultTcType.Err message)])]
+          [(TcMaybeString.No) (ResultTcType.Err message)])])))
 
 (define (lower-name-cache-resolve-hygiene
   [cache : LowerNameCache]
@@ -1212,9 +1214,9 @@
     [resolved : String (lower-name-cache-resolve-source cache primary)]
     (if (string.string-eq resolved primary)
       (match (lower-hygiene-fallback-source-name source-name)
-        [(TcSomeString fallback)
+        [(TcMaybeString.Some fallback)
           (lower-name-cache-resolve-source cache fallback)]
-        [(TcNoString) resolved])
+        [(TcMaybeString.No) resolved])
       resolved)))
 
 (define (lower-symbols-lookup-value-hygiene
@@ -1230,12 +1232,12 @@
     (if (compiler-symbols-handle-found? handle)
       handle
       (match (lower-hygiene-fallback-source-name source-name)
-        [(TcSomeString fallback)
+        [(TcMaybeString.Some fallback)
           (compiler-symbols-lookup-value-or
             symbols
             fallback
             (compiler-symbols-missing-handle))]
-        [(TcNoString) (compiler-symbols-missing-handle)]))))
+        [(TcMaybeString.No) (compiler-symbols-missing-handle)]))))
 
 (define (lower-source-name-lookup-key
   [ctx : TcContext]
@@ -1245,18 +1247,19 @@
     [source-name : String
       (lower-hygiene-source-name-in-context ctx type-env name)]
     (if (tc-source-slash-qualified? source-name)
-      (OkTcString source-name)
+      (ResultTcString.Ok source-name)
       (match (tc-source-name-lookup-key ctx type-env source-name)
-        [(OkTcString lookup-name) (OkTcString lookup-name)]
-        [(ErrTcString message)
+        [(ResultTcString.Ok lookup-name) (ResultTcString.Ok lookup-name)]
+        [(ResultTcString.Err message)
           (match (lower-hygiene-fallback-source-name name)
-            [(TcSomeString fallback)
+            [(TcMaybeString.Some fallback)
               (if (tc-source-slash-qualified? fallback)
-                (OkTcString fallback)
+                (ResultTcString.Ok fallback)
                 (match (tc-source-name-lookup-key ctx type-env fallback)
-                  [(OkTcString lookup-name) (OkTcString lookup-name)]
-                  [(ErrTcString _) (ErrTcString message)]))]
-            [(TcNoString) (ErrTcString message)])]))))
+                  [(ResultTcString.Ok lookup-name)
+                    (ResultTcString.Ok lookup-name)]
+                  [(ResultTcString.Err _) (ResultTcString.Err message)]))]
+            [(TcMaybeString.No) (ResultTcString.Err message)])]))))
 
 (define (lower-source-name-lookup-key-after-local-field-check
   [ctx : TcContext]
@@ -1266,24 +1269,25 @@
     [source-name : String
       (lower-hygiene-source-name-in-context ctx type-env name)]
     (if (tc-source-slash-qualified? source-name)
-      (OkTcString source-name)
+      (ResultTcString.Ok source-name)
       (match (tc-source-name-lookup-key-after-local-field-check
         ctx
         type-env
         source-name)
-        [(OkTcString lookup-name) (OkTcString lookup-name)]
-        [(ErrTcString message)
+        [(ResultTcString.Ok lookup-name) (ResultTcString.Ok lookup-name)]
+        [(ResultTcString.Err message)
           (match (lower-hygiene-fallback-source-name name)
-            [(TcSomeString fallback)
+            [(TcMaybeString.Some fallback)
               (if (tc-source-slash-qualified? fallback)
-                (OkTcString fallback)
+                (ResultTcString.Ok fallback)
                 (match (tc-source-name-lookup-key-after-local-field-check
                   ctx
                   type-env
                   fallback)
-                  [(OkTcString lookup-name) (OkTcString lookup-name)]
-                  [(ErrTcString _) (ErrTcString message)]))]
-            [(TcNoString) (ErrTcString message)])]))))
+                  [(ResultTcString.Ok lookup-name)
+                    (ResultTcString.Ok lookup-name)]
+                  [(ResultTcString.Err _) (ResultTcString.Err message)]))]
+            [(TcMaybeString.No) (ResultTcString.Err message)])]))))
 
 (define (lower-lookup-type
   [ctx : TcContext]
@@ -1293,23 +1297,24 @@
   [name : String]) : ResultTcType
   (if (tc-dotted-local-field-name? type-env name)
     (match (tc-dotted-local-field-expr-id type-env name)
-      [(OkTcExprId virtual-id) (tc-expr ctx type-env (ast-node-get virtual-id))]
-      [(ErrTcExprId message) (ErrTcType message)])
+      [(ResultTcExprId.Ok virtual-id)
+        (tc-expr ctx type-env (ast-node-get virtual-id))]
+      [(ResultTcExprId.Err message) (ResultTcType.Err message)])
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
       (match (lower-source-name-lookup-key-after-local-field-check
         ctx
         type-env
         name)
-        [(OkTcString lookup-name)
+        [(ResultTcString.Ok lookup-name)
           (if (sym-i64-contains env lookup-name)
             (tc-lookup type-env lookup-name)
             (match (tc-lookup type-env lookup-name)
-              [(OkTcType ty) (OkTcType ty)]
-              [(ErrTcType _)
+              [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+              [(ResultTcType.Err _)
                 (match (lower-type-cache-lookup type-cache lookup-name)
-                  [(OkTcType ty) (OkTcType ty)]
-                  [(ErrTcType message)
+                  [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                  [(ResultTcType.Err message)
                     (tc-variant-constructor-type-for-lookup-or
                       ctx
                       lookup-name
@@ -1319,7 +1324,7 @@
                         name
                         lookup-name
                         message))])]))]
-        [(ErrTcString message) (ErrTcType message)]))))
+        [(ResultTcString.Err message) (ResultTcType.Err message)]))))
 
 (define (lower-lookup-type-id
   [ctx : TcContext]
@@ -1340,8 +1345,8 @@
   [source-name : String]
   [logical-name : String]) : LowerNameEnv
   (match (lower-name-env-lookup names source-name)
-    [(TcSomeString _) names]
-    [(TcNoString) (lower-name-env-bind source-name logical-name names)]))
+    [(TcMaybeString.Some _) names]
+    [(TcMaybeString.No) (lower-name-env-bind source-name logical-name names)]))
 
 (define (lower-name-env-add-alias-if-free-id
   [names : LowerNameEnv]
@@ -1349,8 +1354,8 @@
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
   (match (lower-name-env-lookup names source-name)
-    [(TcSomeString _) names]
-    [(TcNoString)
+    [(TcMaybeString.Some _) names]
+    [(TcMaybeString.No)
       (lower-name-env-bind-id source-name source-id logical-name names)]))
 
 (define (lower-name-env-add-import-alias-binding
@@ -2745,8 +2750,8 @@
   [module : String]
   [name : String]) : ResultTcEnv
   (match (tc-lookup top-env (compiler-symbol-module-key module name))
-    [(OkTcType ty) (OkTcEnv (tc-bind env name ty))]
-    [(ErrTcType message) (ErrTcEnv message)]))
+    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind env name ty))]
+    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
 (define (lower-module-local-type-env-bind-qualified-if-free
   [top-env : TcTypeEnv]
@@ -2754,8 +2759,8 @@
   [module : String]
   [name : String]) : ResultTcEnv
   (match (tc-lookup top-env (compiler-symbol-module-key module name))
-    [(OkTcType ty) (OkTcEnv (tc-bind-alias-if-free env name ty))]
-    [(ErrTcType message) (ErrTcEnv message)]))
+    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-alias-if-free env name ty))]
+    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
 (define (lower-module-local-type-env-bind-qualified-id-if-free
   [top-env : TcTypeEnv]
@@ -2763,8 +2768,9 @@
   [module : String]
   [name-id : i64]) : ResultTcEnv
   (match (tc-lookup-id top-env (tc-module-name-id module name-id))
-    [(OkTcType ty) (OkTcEnv (tc-bind-alias-id-if-free env name-id ty))]
-    [(ErrTcType message) (ErrTcEnv message)]))
+    [(ResultTcType.Ok ty)
+      (ResultTcEnv.Ok (tc-bind-alias-id-if-free env name-id ty))]
+    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
 (define (lower-module-local-type-env-add-variants
   [top-env : TcTypeEnv]
@@ -2773,7 +2779,7 @@
   [enum-name : String]
   [variants : AstVariantDefList]) : ResultTcEnv
   (match variants
-    [(AstVariantDefNil) (OkTcEnv env)]
+    [(AstVariantDefNil) (ResultTcEnv.Ok env)]
     [(AstVariantDefCons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
@@ -2784,14 +2790,14 @@
               env
               module
               name)
-              [(OkTcEnv next-env)
+              [(ResultTcEnv.Ok next-env)
                 (lower-module-local-type-env-add-variants
                   top-env
                   next-env
                   module
                   enum-name
                   rest)]
-              [(ErrTcEnv message) (ErrTcEnv message)])]))]))
+              [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))]))
 
 (define (lower-module-local-type-env-add-decl
   [top-env : TcTypeEnv]
@@ -2830,16 +2836,16 @@
         module
         (intern-str name)
         variants)
-        [(OkTcEnv next-env)
+        [(ResultTcEnv.Ok next-env)
           (match cleanup
-            [(AstEnumNoCleanup) (OkTcEnv next-env)]
+            [(AstEnumNoCleanup) (ResultTcEnv.Ok next-env)]
             [(AstEnumCleanupFn cleanup-name)
               (lower-module-local-type-env-bind-qualified
                 top-env
                 next-env
                 module
                 (intern-str cleanup-name))])]
-        [(ErrTcEnv message) (ErrTcEnv message)])]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
     [(AstDeclDefEnumLifetimes name _ cleanup variants)
       (match (lower-module-local-type-env-add-variants
         top-env
@@ -2847,48 +2853,48 @@
         module
         (intern-str name)
         variants)
-        [(OkTcEnv next-env)
+        [(ResultTcEnv.Ok next-env)
           (match cleanup
-            [(AstEnumNoCleanup) (OkTcEnv next-env)]
+            [(AstEnumNoCleanup) (ResultTcEnv.Ok next-env)]
             [(AstEnumCleanupFn cleanup-name)
               (lower-module-local-type-env-bind-qualified
                 top-env
                 next-env
                 module
                 (intern-str cleanup-name))])]
-        [(ErrTcEnv message) (ErrTcEnv message)])]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
     [(AstDeclDefStruct name _ cleanup _)
       (match (lower-module-local-type-env-bind-qualified
         top-env
         env
         module
         (intern-str name))
-        [(OkTcEnv next-env)
+        [(ResultTcEnv.Ok next-env)
           (match cleanup
-            [(AstStructNoCleanup) (OkTcEnv next-env)]
+            [(AstStructNoCleanup) (ResultTcEnv.Ok next-env)]
             [(AstStructCleanupFn cleanup-name)
               (lower-module-local-type-env-bind-qualified
                 top-env
                 next-env
                 module
                 (intern-str cleanup-name))])]
-        [(ErrTcEnv message) (ErrTcEnv message)])]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
     [(AstDeclDefStructLifetimes name _ _ cleanup _)
       (match (lower-module-local-type-env-bind-qualified
         top-env
         env
         module
         (intern-str name))
-        [(OkTcEnv next-env)
+        [(ResultTcEnv.Ok next-env)
           (match cleanup
-            [(AstStructNoCleanup) (OkTcEnv next-env)]
+            [(AstStructNoCleanup) (ResultTcEnv.Ok next-env)]
             [(AstStructCleanupFn cleanup-name)
               (lower-module-local-type-env-bind-qualified
                 top-env
                 next-env
                 module
                 (intern-str cleanup-name))])]
-        [(ErrTcEnv message) (ErrTcEnv message)])]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
     [(AstDeclComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -2897,7 +2903,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (lower-module-local-type-env-add-decl top-env env module inner))]
-    [_ (OkTcEnv env)]))
+    [_ (ResultTcEnv.Ok env)]))
 
 (define (lower-module-local-envs-list
   [top-env : TcTypeEnv]
@@ -2936,7 +2942,7 @@
                 type-env
                 target-module
                 decl)
-                [(OkTcEnv next-type-env)
+                [(ResultTcEnv.Ok next-type-env)
                   ;; #3759: rebind the same decl onto a fresh local-only base.
                   ;; lower-module-local-type-env-add-decl resolves every type
                   ;; against top-env (passed separately), so the bindings are
@@ -2948,7 +2954,7 @@
                     local-type-env
                     target-module
                     decl)
-                    [(OkTcEnv next-local-type-env)
+                    [(ResultTcEnv.Ok next-local-type-env)
                       (lower-module-local-envs-list
                         top-env
                         rest
@@ -2972,8 +2978,8 @@
                         target-module
                         target-module-id
                         module-id)]
-                    [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])]
-                [(ErrTcEnv message) (ErrLowerModuleLocalEnv message)])
+                    [(ResultTcEnv.Err message) (ErrLowerModuleLocalEnv message)])]
+                [(ResultTcEnv.Err message) (ErrLowerModuleLocalEnv message)])
               (lower-module-local-envs-list
                 top-env
                 rest
@@ -2993,7 +2999,7 @@
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string.string-eq module "")
-    (OkLowerModuleLocalEnv top-env names (TcTypeNil) (LowerNameNil))
+    (OkLowerModuleLocalEnv top-env names (TcTypeEnv.Nil) (LowerNameNil))
     (match (tc-context-program ctx)
       [(AstProgram decls-box)
         (let
@@ -3019,7 +3025,7 @@
             top-env
             decls
             top-env
-            (TcTypeNil)
+            (TcTypeEnv.Nil)
             module-names
             local-alias-names
             name-cache
@@ -3128,11 +3134,12 @@
       (let
         [raw-text : String (intern-str raw-name)]
         (cond
-          [(lower-string-set-contains? shadowed raw-text) (ErrTcString "")]
+          [(lower-string-set-contains? shadowed raw-text)
+            (ResultTcString.Err "")]
           [(tc-hygiene-global-name? raw-text)
-            (OkTcString (tc-hygiene-global-call-name raw-text))]
+            (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))]
           [else (lower-source-name-lookup-key ctx type-env raw-text)]))]
-    [_ (ErrTcString "")]))
+    [_ (ResultTcString.Err "")]))
 
 (define (lower-spmd-inline-helper-lookup
   [ctx : TcContext]
@@ -3141,7 +3148,7 @@
   [shadowed : LowerStringSet]
   [func : AstExpr]) : ResultLowerSpmdInlineHelper
   (match (lower-spmd-inline-helper-name ctx env type-env shadowed func)
-    [(OkTcString name)
+    [(ResultTcString.Ok name)
       (if (string.string-eq name "")
         (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
         (if (lower-string-set-contains? lower-spmd-inline-helper-stack name)
@@ -3166,7 +3173,7 @@
                     (ErrLowerSpmdInlineHelper (box (lower-diagnostic message)))])
                 (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))
               (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))))))]
-    [(ErrTcString message)
+    [(ResultTcString.Err message)
       (if (string.string-eq message "")
         (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
         (ErrLowerSpmdInlineHelper (box (lower-diagnostic-at-expr func message))))]))
@@ -3717,7 +3724,7 @@
   [decl : AstDecl]) : TcMaybeString
   (match decl
     [(AstDeclDefFn name _ _ _ _)
-      (TcSomeString
+      (TcMaybeString.Some
         (lower-decl-logical-name entry-path decl-path module (intern-str name)))]
     [(AstDeclComptimeDecl _ template-box)
       (let
@@ -3735,7 +3742,7 @@
           decl-path
           module
           inner))]
-    [_ (TcNoString)]))
+    [_ (TcMaybeString.No)]))
 
 (define (lower-function-set-from-decls-in-module
   [decls : AstDeclList]
@@ -3783,14 +3790,14 @@
                 ;; prune reachability `reachable` set can key on that i64 slot.
                 ;; Skip names already present so the slot stays a bijection
                 ;; (string-i64-map-len is the live-entry count == next free slot).
-                [(TcSomeString logical-name)
+                [(TcMaybeString.Some logical-name)
                   (if (hashmap.string-i64-map-contains? out logical-name)
                     out
                     (hashmap.string-i64-map-put
                       out
                       logical-name
                       (hashmap.string-i64-map-len out)))]
-                [(TcNoString) out]))]))]))
+                [(TcMaybeString.No) out]))]))]))
 
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
@@ -4350,8 +4357,8 @@
     [(AstSomeType want) (tc-bind-id env name (tc-resolve-type ctx want))]
     [(AstNoType)
       (match (tc-expr ctx env init)
-        [(OkTcType init-ty) (tc-bind-id env name init-ty)]
-        [(ErrTcType _) env])]))
+        [(ResultTcType.Ok init-ty) (tc-bind-id env name init-ty)]
+        [(ResultTcType.Err _) env])]))
 
 (define (lower-clone-roots-let-bindings
   [ctx : TcContext]
@@ -4400,8 +4407,8 @@
               [body : AstExpr (ast-node-get body-box)]
               [arm-env : TcTypeEnv
                 (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-                  [(OkTcEnv next-env) next-env]
-                  [(ErrTcEnv _) env])]
+                  [(ResultTcEnv.Ok next-env) next-env]
+                  [(ResultTcEnv.Err _) env])]
               (lower-clone-roots-match-arms
                 ctx
                 env
@@ -4489,14 +4496,14 @@
                               (tc-context-pools ctx)
                               callee)
                             args)))
-                        [(OkTcType clone-ty)
+                        [(ResultTcType.Ok clone-ty)
                           (lower-clone-root-add-type
                             ctx
                             decls
                             able
                             walked
                             clone-ty)]
-                        [(ErrTcType _) walked])]
+                        [(ResultTcType.Err _) walked])]
                     [_ walked]))]
               [_ walked])
             walked))]
@@ -4698,7 +4705,7 @@
             [value-roots : CloneNameList
               (lower-clone-roots-expr ctx env decls able roots value)]
             (match (tc-expr ctx env value)
-              [(OkTcType scrut-ty)
+              [(ResultTcType.Ok scrut-ty)
                 (lower-clone-roots-match-arms
                   ctx
                   env
@@ -4707,7 +4714,7 @@
                   value-roots
                   scrut-ty
                   arms)]
-              [(ErrTcType _) value-roots]))])]
+              [(ResultTcType.Err _) value-roots]))])]
     [(AstExprForeach fe-box)
       (match (box-get fe-box)
         [(AstForeach index index-ty start-box end-box body-box)
@@ -4853,17 +4860,17 @@
             (lower-clone-roots-expr ctx env decls able roots scratch)
             exprs)]
         (match (tc-with-escape-expr ctx env scratch exprs)
-          [(OkTcType result-ty)
+          [(ResultTcType.Ok result-ty)
             (lower-clone-root-add-type ctx decls able walked result-ty)]
-          [(ErrTcType _) walked]))]
+          [(ResultTcType.Err _) walked]))]
     [(AstExprWithScratch exprs)
       (let
         [walked : CloneNameList
           (lower-clone-roots-expr-list ctx env decls able roots exprs)]
         (match (tc-with-scratch-expr ctx env exprs)
-          [(OkTcType result-ty)
+          [(ResultTcType.Ok result-ty)
             (lower-clone-root-add-type ctx decls able walked result-ty)]
-          [(ErrTcType _) walked]))]
+          [(ResultTcType.Err _) walked]))]
     [(AstExprInArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
@@ -4888,8 +4895,8 @@
                 bindings)]
             [body-env : TcTypeEnv
               (match (tc-resource-bindings ctx env bindings)
-                [(OkTcEnv next-env) next-env]
-                [(ErrTcEnv _) env])]
+                [(ResultTcEnv.Ok next-env) next-env]
+                [(ResultTcEnv.Err _) env])]
             (lower-clone-roots-expr-list
               ctx
               body-env
@@ -5296,7 +5303,7 @@
                     [ctx : TcContext
                       (TcContext program symbols registries "" pools)]
                     (match (tc-build-top-env ctx program)
-                      [(OkTcEnv top-env)
+                      [(ResultTcEnv.Ok top-env)
                         (begin
                           (tc-context-capture-active-pools! ctx)
                           (OkLowerCloneRoots
@@ -5305,7 +5312,7 @@
                               top-env
                               names
                               program)))]
-                      [(ErrTcEnv message)
+                      [(ResultTcEnv.Err message)
                         (ErrLowerCloneRoots (box (lower-diagnostic message)))]))]
                 [(ResultCompilerRegistries.Err message)
                   (ErrLowerCloneRoots (box (lower-diagnostic message)))])]
@@ -7192,13 +7199,13 @@
       decl-path
       module
       decl)
-      [(TcSomeString logical-name)
+      [(TcMaybeString.Some logical-name)
         (lower-function-kept-by-reach-or-dispatch?
           all-functions
           reachable
           dispatch-variants
           logical-name)]
-      [(TcNoString) true])))
+      [(TcMaybeString.No) true])))
 
 (define (lower-used-types-add-type-decl-name
   [used : hashmap.I64I64Map]
@@ -8357,8 +8364,8 @@
     [(AstTyEnum name) (tc-inline-aggregate-size-cached ctx name fallback)]
     [_
       (match (tc-inline-aggregate-type-layout ctx ty)
-        [(OkTcLayoutInfo info) (tc-layout-info-size info)]
-        [(ErrTcLayoutInfo _) fallback])]))
+        [(ResultTcLayoutInfo.Ok info) (tc-layout-info-size info)]
+        [(ResultTcLayoutInfo.Err _) fallback])]))
 
 (define (lower-inline-layout-align-or
   [ctx : TcContext]
@@ -8369,8 +8376,8 @@
     [(AstTyEnum name) (tc-inline-aggregate-align-cached ctx name fallback)]
     [_
       (match (tc-inline-aggregate-type-layout ctx ty)
-        [(OkTcLayoutInfo info) (tc-layout-info-align info)]
-        [(ErrTcLayoutInfo _) fallback])]))
+        [(ResultTcLayoutInfo.Ok info) (tc-layout-info-align info)]
+        [(ResultTcLayoutInfo.Err _) fallback])]))
 
 (define (lower-type-size [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
@@ -8581,10 +8588,10 @@
 
 (define (lower-struct-repr-c? [ctx : TcContext] [struct-name : String]) : bool
   (match (tc-struct-decl ctx struct-name)
-    [(OkTcStructDecl decl)
+    [(ResultTcStructDecl.Ok decl)
       (match decl
         [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
-    [(ErrTcStructDecl _) false]))
+    [(ResultTcStructDecl.Err _) false]))
 
 (define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool
   (match (tc-resolve-type ctx field-ty)
@@ -8595,8 +8602,8 @@
   (match (tc-resolve-type ctx field-ty)
     [(AstTyStruct nested)
       (match (tc-repr-c-struct-layout ctx (intern-str nested))
-        [(OkTcReprCLayout layout) (tc-repr-c-layout-size layout)]
-        [(ErrTcReprCLayout _) 8])]
+        [(ResultTcReprCLayout.Ok layout) (tc-repr-c-layout-size layout)]
+        [(ResultTcReprCLayout.Err _) 8])]
     [_ (lower-type-size ctx field-ty)]))
 
 (define (lower-reserve-heap-storage
@@ -8715,7 +8722,7 @@
 
 ;; #2386 / lever #1: inline the hottest by-value aggregate copies. The flip to
 ;; inline-by-value aggregates (#1867) made the 17-64 B band, especially
-;; AstTypeList/AstType and ResultTcType/OkTcType copies, dynamically dominant,
+;; AstTypeList/AstType and ResultTcType/ResultTcType.Ok copies, dynamically dominant,
 ;; but the 16 B ceiling pushed every one of them onto a `tl_memcpy` CALL (~88
 ;; dynamic instructions each). Inline they cost only `size/8` load+store pairs.
 ;; Raising the ceiling to 64 B turns that band into straight movs (a few
@@ -8922,8 +8929,8 @@
   [word-index : i64]
   [current : AstType]) : AstType
   (match fields
-    [(TcInlineFieldLayoutNil) current]
-    [(TcInlineFieldLayoutCons field rest)
+    [(TcInlineFieldLayoutList.Nil) current]
+    [(TcInlineFieldLayoutList.Cons field rest)
       (lower-register-struct-word-type-fields
         (box-get rest)
         word-index
@@ -8938,8 +8945,8 @@
   [word-index : i64]
   [current : AstType]) : AstType
   (match payloads
-    [(TcInlinePayloadLayoutNil) current]
-    [(TcInlinePayloadLayoutCons payload rest)
+    [(TcInlinePayloadLayoutList.Nil) current]
+    [(TcInlinePayloadLayoutList.Cons payload rest)
       (lower-register-payload-word-type-fields
         (box-get rest)
         word-index
@@ -8954,8 +8961,8 @@
   [word-index : i64]
   [current : AstType]) : AstType
   (match variants
-    [(TcInlineVariantLayoutNil) current]
-    [(TcInlineVariantLayoutCons variant rest)
+    [(TcInlineVariantLayoutList.Nil) current]
+    [(TcInlineVariantLayoutList.Cons variant rest)
       (match variant
         [(TcInlineVariantLayout _ _ _ payloads)
           (lower-register-enum-word-type-variants
@@ -8976,30 +8983,30 @@
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstTyStruct name)
       (match (tc-inline-aggregate-layout-for ctx (intern-str name))
-        [(OkTcInlineAggregateLayout layout)
+        [(ResultTcInlineAggregateLayout.Ok layout)
           (match layout
-            [(TcInlineStructLayout _ _ fields)
+            [(TcInlineAggregateLayout.Struct _ _ fields)
               (lower-register-struct-word-type-fields
                 fields
                 word-index
                 (AstTyI64))]
-            [(TcInlineEnumLayout _ _ _) (AstTyI64)])]
-        [(ErrTcInlineAggregateLayout _) (AstTyI64)])]
+            [(TcInlineAggregateLayout.Enum _ _ _) (AstTyI64)])]
+        [(ResultTcInlineAggregateLayout.Err _) (AstTyI64)])]
     [(AstTyStructArgs name _)
       (lower-register-word-type ctx (AstTyStruct name) word-index)]
     [(AstTyEnum name)
       (if (= word-index 0)
         (AstTyI64)
         (match (tc-inline-aggregate-layout-for ctx (intern-str name))
-          [(OkTcInlineAggregateLayout layout)
+          [(ResultTcInlineAggregateLayout.Ok layout)
             (match layout
-              [(TcInlineEnumLayout _ _ variants)
+              [(TcInlineAggregateLayout.Enum _ _ variants)
                 (lower-register-enum-word-type-variants
                   variants
                   word-index
                   (AstTyI64))]
-              [(TcInlineStructLayout _ _ _) (AstTyI64)])]
-          [(ErrTcInlineAggregateLayout _) (AstTyI64)]))]
+              [(TcInlineAggregateLayout.Struct _ _ _) (AstTyI64)])]
+          [(ResultTcInlineAggregateLayout.Err _) (AstTyI64)]))]
     [(AstTyEnumArgs name _)
       (lower-register-word-type ctx (AstTyEnum name) word-index)]
     [_ (AstTyI64)]))
@@ -9712,10 +9719,10 @@
 
 (define (lower-inline-aggregate-copy-size [ctx : TcContext] [ty : AstType]) : ResultLowerSize
   (match (tc-inline-aggregate-type-layout ctx ty)
-    [(OkTcLayoutInfo info)
+    [(ResultTcLayoutInfo.Ok info)
       (match info
         [(TcLayoutInfo size _) (OkLowerSize size)])]
-    [(ErrTcLayoutInfo message) (ErrLowerSize message)]))
+    [(ResultTcLayoutInfo.Err message) (ErrLowerSize message)]))
 
 (define (lower-copy-inline-aggregate-to-inline
   [ctx : TcContext]
@@ -10197,11 +10204,11 @@
   (if (lower-string-set-contains? stack name)
     true
     (match (tc-lifetime-subst-from-nominal-args ctx name lifetimes)
-      [(ErrTcLifetimeSubst _) false]
-      [(OkTcLifetimeSubst subst)
+      [(ResultTcLifetimeSubst.Err _) false]
+      [(ResultTcLifetimeSubst.Ok subst)
         (match (tc-struct-decl ctx name)
-          [(ErrTcStructDecl _) false]
-          [(OkTcStructDecl decl)
+          [(ResultTcStructDecl.Err _) false]
+          [(ResultTcStructDecl.Ok decl)
             (match decl
               [(TcStructDecl _ _ fields)
                 (lower-supported-reference-field-list-with-stack?
@@ -10218,8 +10225,8 @@
   (if (lower-string-set-contains? stack name)
     true
     (match (tc-lifetime-subst-from-nominal-args ctx name lifetimes)
-      [(ErrTcLifetimeSubst _) false]
-      [(OkTcLifetimeSubst subst)
+      [(ResultTcLifetimeSubst.Err _) false]
+      [(ResultTcLifetimeSubst.Ok subst)
         (match (tc-context-enum-variants ctx name)
           [(ErrAstVariantDefList _) false]
           [(OkAstVariantDefList variants)
@@ -10454,7 +10461,7 @@
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (match (tc-lookup type-env name)
-    [(OkTcType place-ty)
+    [(ResultTcType.Ok place-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx place-ty))
         [(AstTyRef _ _)
           (lower-borrow-reference-var-address state env name result-ty)]
@@ -10477,7 +10484,7 @@
               place-ty
               origin
               result-ty))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))]))
 
 (define (lower-borrow-struct-field-address-from-memory
@@ -10737,7 +10744,7 @@
     type-env
     (lower-state-type-cache state)
     arr)
-    [(OkTcType arr-ty)
+    [(ResultTcType.Ok arr-ty)
       (match (tc-type-strip-region arr-ty)
         [(AstTyDynArray elem-ty)
           (match (lower-expr ctx state env type-env arr)
@@ -10750,7 +10757,7 @@
                     type-env
                     (lower-state-type-cache arr-state)
                     index)
-                    [(OkTcType idx-ty)
+                    [(ResultTcType.Ok idx-ty)
                       (match (lower-expr-expected
                         ctx
                         arr-state
@@ -10773,7 +10780,7 @@
                                   (OkLowerExpr
                                     (LowerExpr addr-state elem-ptr result-ty))])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                    [(ErrTcType message)
+                    [(ResultTcType.Err message)
                       (ErrLowerExpr
                         (box (lower-diagnostic-at-expr index message)))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])]
@@ -10791,7 +10798,7 @@
                       type-env
                       (lower-state-type-cache arr-state)
                       index)
-                      [(OkTcType idx-ty)
+                      [(ResultTcType.Ok idx-ty)
                         (match (lower-expr-expected
                           ctx
                           arr-state
@@ -10815,7 +10822,7 @@
                                     (OkLowerExpr
                                       (LowerExpr addr-state elem-ptr result-ty))])])]
                           [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                      [(ErrTcType message)
+                      [(ResultTcType.Err message)
                         (ErrLowerExpr
                           (box (lower-diagnostic-at-expr index message)))])])]
               [(ErrLowerExpr message) (ErrLowerExpr message)]))]
@@ -10825,7 +10832,7 @@
               (lower-diagnostic-at-expr
                 origin
                 "lower: array-ref borrow requires array place")))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))]))
 
 (define (lower-borrow-place-address
@@ -10842,7 +10849,7 @@
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
-            [(OkTcExprId virtual-id)
+            [(ResultTcExprId.Ok virtual-id)
               (lower-borrow-place-address
                 ctx
                 state
@@ -10851,7 +10858,7 @@
                 (ast-node-get virtual-id)
                 origin
                 result-ty)]
-            [(ErrTcExprId message)
+            [(ResultTcExprId.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])
           (lower-borrow-var-address
             ctx
@@ -11009,13 +11016,13 @@
   (match values
     [(IrValueNil)
       (match fields
-        [(TcReprCFieldLayoutNil) (OkLowerState state)]
+        [(TcReprCFieldLayoutList.Nil) (OkLowerState state)]
         [_
           (ErrLowerState
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
     [(IrValueCons value rest-values)
       (match fields
-        [(TcReprCFieldLayoutCons field rest-fields)
+        [(TcReprCFieldLayoutList.Cons field rest-fields)
           (match field
             [(TcReprCFieldLayout _ field-ty offset)
               (let
@@ -11035,7 +11042,7 @@
                   base
                   (box-get rest-values)
                   (box-get rest-fields)))])]
-        [(TcReprCFieldLayoutNil)
+        [(TcReprCFieldLayoutList.Nil)
           (ErrLowerState
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]))
 
@@ -11073,7 +11080,7 @@
                             "lower: inline struct layout missing field "
                             name-str))))
                     (match (tc-inline-aggregate-type-layout ctx resolved)
-                      [(OkTcLayoutInfo info)
+                      [(ResultTcLayoutInfo.Ok info)
                         (let
                           [stored-state : LowerState
                             (if (<= (tc-layout-info-size info) 0)
@@ -11093,7 +11100,7 @@
                             (box-get rest-values)
                             rest-fields
                             layout))]
-                      [(ErrTcLayoutInfo message)
+                      [(ResultTcLayoutInfo.Err message)
                         (ErrLowerState (box (lower-diagnostic message)))])))]))]
         [(AstFieldDefNil)
           (ErrLowerState
@@ -11135,7 +11142,7 @@
                       "lower: inline enum layout missing payload for "
                       variant-name))))
               (match (tc-inline-aggregate-type-layout ctx resolved)
-                [(OkTcLayoutInfo info)
+                [(ResultTcLayoutInfo.Ok info)
                   (lower-store-inline-payload-values
                     ctx
                     (if (<= (tc-layout-info-size info) 0)
@@ -11154,7 +11161,7 @@
                     layout
                     variant-name
                     (+ index 1))]
-                [(ErrTcLayoutInfo message)
+                [(ResultTcLayoutInfo.Err message)
                   (ErrLowerState (box (lower-diagnostic message)))])))]
         [(AstTypeNil)
           (ErrLowerState
@@ -11259,12 +11266,12 @@
     (lower-mode-inline-aggregates? mode)
     (> (string.string-length enum-name) 0))
     (match (tc-inline-aggregate-layout-for ctx enum-name)
-      [(OkTcInlineAggregateLayout layout)
+      [(ResultTcInlineAggregateLayout.Ok layout)
         (tc-inline-aggregate-layout-variant-payload-offset
           layout
           (lower-member-name-base variant-name)
           index)]
-      [(ErrTcInlineAggregateLayout _) (- 0 1)])
+      [(ResultTcInlineAggregateLayout.Err _) (- 0 1)])
     (lower-align-up cursor (lower-type-align ctx resolved))))
 
 (define (lower-string-payload-literal-eq
@@ -12166,7 +12173,7 @@
   [fail-label : String]
   [scrut-reg-group? : bool]) : ResultLowerEnv
   (match borrow-lifetime
-    [(TcNoString)
+    [(TcMaybeString.No)
       (lower-bind-variant-payloads
         ctx
         state
@@ -12182,7 +12189,7 @@
         cursor
         fail-label
         scrut-reg-group?)]
-    [(TcSomeString lifetime)
+    [(TcMaybeString.Some lifetime)
       ;; A borrowed scrutinee is always memory-backed (matched behind a pointer),
       ;; never a 2-word register-group value, so the register-group path does not
       ;; apply here.
@@ -12314,12 +12321,12 @@
   [fields : TcReprCFieldLayoutList]
   [field-name : String]) : ResultLowerFieldInfo
   (match fields
-    [(TcReprCFieldLayoutNil)
+    [(TcReprCFieldLayoutList.Nil)
       (ErrLowerFieldInfo
         (box
           (lower-diagnostic
             (string.string-append "lower: unknown struct field " field-name))))]
-    [(TcReprCFieldLayoutCons field rest)
+    [(TcReprCFieldLayoutList.Cons field rest)
       (match field
         [(TcReprCFieldLayout name ty offset)
           (if (string.string-eq name field-name)
@@ -12335,11 +12342,11 @@
       (lower-context-with-nominal-owner-module ctx struct-name)]
     (if (lower-struct-repr-c? field-ctx struct-name)
       (match (tc-repr-c-struct-layout field-ctx struct-name)
-        [(OkTcReprCLayout layout)
+        [(ResultTcReprCLayout.Ok layout)
           (lower-field-info-from-repr-c-list
             (tc-repr-c-layout-fields layout)
             field-name)]
-        [(ErrTcReprCLayout message)
+        [(ResultTcReprCLayout.Err message)
           (ErrLowerFieldInfo (box (lower-diagnostic message)))])
       (match (lower-struct-fields field-ctx struct-name)
         [(OkAstFieldDefList fields)
@@ -12361,7 +12368,7 @@
           (match info
             [(LowerFieldInfo _ field-ty)
               (match (tc-inline-aggregate-layout-for field-ctx struct-name)
-                [(OkTcInlineAggregateLayout layout)
+                [(ResultTcInlineAggregateLayout.Ok layout)
                   (let
                     [offset : i64
                       (tc-inline-aggregate-layout-field-offset
@@ -12375,7 +12382,7 @@
                               "lower: inline struct layout missing field "
                               field-name))))
                       (OkLowerFieldInfo (LowerFieldInfo offset field-ty))))]
-                [(ErrTcInlineAggregateLayout message)
+                [(ResultTcInlineAggregateLayout.Err message)
                   (ErrLowerFieldInfo (box (lower-diagnostic message)))])])]
         [(ErrLowerFieldInfo message) (ErrLowerFieldInfo message)])
       (lower-struct-field-info field-ctx struct-name field-name))))
@@ -12602,9 +12609,9 @@
           (if (tc-source-slash-qualified? raw-text)
             (lower-atomic-extern-symbol-for-name ctx raw-text)
             (match (lower-source-name-lookup-key ctx type-env raw-text)
-              [(OkTcString lookup-name)
+              [(ResultTcString.Ok lookup-name)
                 (lower-atomic-extern-symbol-for-name ctx lookup-name)]
-              [(ErrTcString _) ""]))))]
+              [(ResultTcString.Err _) ""]))))]
     [_ ""]))
 
 ;; The symbol table is keyed by the module key (module/name) and the bare source
@@ -12681,14 +12688,15 @@
   [lambda-expr : AstExpr]
   [maybe-ret : AstMaybeType]) : ResultTcType
   (match maybe-ret
-    [(AstSomeType ty) (OkTcType (tc-resolve-type ctx ty))]
+    [(AstSomeType ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
     [(AstNoType)
       (match (tc-expr ctx type-env lambda-expr)
-        [(OkTcType ty)
+        [(ResultTcType.Ok ty)
           (match (tc-type-strip-region ty)
-            [(AstTyFunc _ ret) (OkTcType (ty-node-get ret))]
-            [_ (ErrTcType "lower: lambda did not typecheck as a function")])]
-        [(ErrTcType message) (ErrTcType message)])]))
+            [(AstTyFunc _ ret) (ResultTcType.Ok (ty-node-get ret))]
+            [_
+              (ResultTcType.Err "lower: lambda did not typecheck as a function")])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
 (define (lower-capture-list-contains-name?
   [captures : LowerCaptureList]
@@ -13348,10 +13356,10 @@
             captures
             origin)
           (match (tc-lookup type-env name)
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerCapturePlan
                 (box (lower-diagnostic-at-expr origin message)))]
-            [(OkTcType found-ty)
+            [(ResultTcType.Ok found-ty)
               (let
                 [capture-ty : AstType
                   (tc-type-without-regions (tc-resolve-type ctx found-ty))]
@@ -13675,9 +13683,9 @@
   [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
   (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))]
-    [(OkTcType ret-ty)
+    [(ResultTcType.Ok ret-ty)
       (match (lower-state-fresh-lambda-name state)
         [(LowerLambdaName named-state lambda-name)
           (match (lower-function
@@ -13713,9 +13721,9 @@
   [origin : AstExpr]
   [expr-ty : AstType]) : ResultLowerExpr
   (match (lower-lambda-ret-type ctx type-env origin maybe-ret)
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))]
-    [(OkTcType ret-ty)
+    [(ResultTcType.Ok ret-ty)
       (match (lower-capture-plan ctx env type-env params body origin)
         [(ErrLowerCapturePlan message) (ErrLowerExpr message)]
         [(OkLowerCapturePlan plan)
@@ -13951,8 +13959,10 @@
 
 (define (lower-cleanup-name-from-expr [cleanup : AstExpr]) : ResultTcString
   (match (ast-expr-unspan cleanup)
-    [(AstExprVar name) (OkTcString (intern-str name))]
-    [_ (ErrTcString "lower: resource cleanup must be a direct function name")]))
+    [(AstExprVar name) (ResultTcString.Ok (intern-str name))]
+    [_
+      (ResultTcString.Err
+        "lower: resource cleanup must be a direct function name")]))
 
 (define (lower-emit-cleanup-call
   [state : LowerState]
@@ -14106,12 +14116,12 @@
     (begin
       (while (not done)
         (match cur-env
-          [(TcTypeNil)
+          [(TcTypeEnv.Nil)
             (begin
               (set! result (OkLowerState cur-state))
               (set! done true))]
-          [(TcTypeCache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
-          [(TcTypeBind key ty rest)
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur-env (box-get rest))]
+          [(TcTypeEnv.Bind key ty rest)
             (begin
               (if (= key cleanup-marker-id)
                 (match ty
@@ -14211,14 +14221,14 @@
   [env : SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (match type-env
-    [(TcTypeNil) (OkLowerState state)]
-    [(TcTypeCache _ _ _ _ _ _ _ rest _)
+    [(TcTypeEnv.Nil) (OkLowerState state)]
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
       (lower-emit-active-cleanups-with
         cleanup-marker-id
         state
         env
         (box-get rest))]
-    [(TcTypeBind key ty rest)
+    [(TcTypeEnv.Bind key ty rest)
       (if (= key cleanup-marker-id)
         (match ty
           [(AstTyTuple types)
@@ -14307,7 +14317,7 @@
   [value : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
   (match (tc-current-return-type type-env)
-    [(OkTcType return-ty)
+    [(ResultTcType.Ok return-ty)
       (match (lower-expr-expected ctx state env type-env value return-ty value)
         [(OkLowerExpr lowered)
           (match lowered
@@ -14330,7 +14340,7 @@
                         [(ErrLowerState message) (ErrLowerExpr message)])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(ErrTcType _)
+    [(ResultTcType.Err _)
       (ErrLowerExpr
         (box
           (lower-diagnostic-at-expr
@@ -14566,13 +14576,13 @@
       (match lowered
         [(LowerExpr result-state result-value result-ty)
           (match (tc-result-info ctx result-ty)
-            [(OkTcResultInfo operand-info)
+            [(ResultTcResultInfo.Ok operand-info)
               (match (tc-current-return-type type-env)
-                [(OkTcType return-ty)
+                [(ResultTcType.Ok return-ty)
                   (match (tc-result-info ctx return-ty)
-                    [(OkTcResultInfo return-info)
+                    [(ResultTcResultInfo.Ok return-info)
                       (match (tc-try-infos-compatible operand-info return-info)
-                        [(OkTcUnit)
+                        [(ResultTcUnit.Ok)
                           (lower-try-with-info
                             ctx
                             result-state
@@ -14582,22 +14592,22 @@
                             operand-info
                             return-info
                             origin)]
-                        [(ErrTcUnit message)
+                        [(ResultTcUnit.Err message)
                           (ErrLowerExpr
                             (box (lower-diagnostic-at-expr origin message)))])]
-                    [(ErrTcResultInfo _)
+                    [(ResultTcResultInfo.Err _)
                       (ErrLowerExpr
                         (box
                           (lower-diagnostic-at-expr
                             origin
                             "typecheck: try requires enclosing Result-like function")))])]
-                [(ErrTcType _)
+                [(ResultTcType.Err _)
                   (ErrLowerExpr
                     (box
                       (lower-diagnostic-at-expr
                         origin
                         "typecheck: try requires enclosing Result-like function")))])]
-            [(ErrTcResultInfo _)
+            [(ResultTcResultInfo.Err _)
               (ErrLowerExpr
                 (box
                   (lower-diagnostic-at-expr
@@ -15445,10 +15455,10 @@
     [(AstExprBorrow mutable _ place-box)
       (if mutable
         (match (ast-expr-unspan (ast-node-get place-box))
-          [(AstExprVar name) (TcSomeString (intern-str name))]
-          [_ TcNoString])
-        TcNoString)]
-    [_ TcNoString]))
+          [(AstExprVar name) (TcMaybeString.Some (intern-str name))]
+          [_ TcMaybeString.No])
+        TcMaybeString.No)]
+    [_ TcMaybeString.No]))
 
 (define (lower-call-arg-normal-as
   [ctx : TcContext]
@@ -15475,7 +15485,7 @@
   [arg-ty : AstType]
   [name : String]) : ResultLowerCallArg
   (match (tc-lookup type-env name)
-    [(OkTcType place-ty)
+    [(ResultTcType.Ok place-ty)
       (let
         [referent-ty : AstType (tc-borrow-referent-type place-ty)]
         [referent-ir-ty : AstType
@@ -15516,7 +15526,7 @@
                 arg
                 effective-arg
                 arg-ty)))))]
-    [(ErrTcType _)
+    [(ResultTcType.Err _)
       (lower-call-arg-normal-as ctx state env type-env arg effective-arg arg-ty)]))
 
 (define (lower-call-arg-as
@@ -15528,11 +15538,11 @@
   [expected : AstType]
   [arg-ty : AstType]) : ResultLowerCallArg
   (match (tc-call-effective-arg-expr ctx type-env arg expected)
-    [(OkTcExpr effective-arg)
+    [(ResultTcExpr.Ok effective-arg)
       (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
         [(AstTyMutRef _ _)
           (match (lower-call-explicit-mut-borrow-var-name effective-arg)
-            [(TcSomeString name)
+            [(TcMaybeString.Some name)
               (lower-call-arg-mut-borrow-var-as
                 ctx
                 state
@@ -15542,7 +15552,7 @@
                 effective-arg
                 arg-ty
                 name)]
-            [(TcNoString)
+            [(TcMaybeString.No)
               (lower-call-arg-normal-as
                 ctx
                 state
@@ -15560,7 +15570,7 @@
             arg
             effective-arg
             arg-ty)])]
-    [(ErrTcExpr message)
+    [(ResultTcExpr.Err message)
       (ErrLowerCallArg (box (lower-diagnostic-at-expr arg message)))]))
 
 (define (lower-arg-writeback-list-empty) : LowerArgWritebackList
@@ -15745,7 +15755,7 @@
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
               (match (tc-call-effective-arg-expr ctx type-env arg expected)
-                [(OkTcExpr effective-arg)
+                [(ResultTcExpr.Ok effective-arg)
                   (match (lower-expr-expected
                     ctx
                     state
@@ -15770,7 +15780,7 @@
                                 (compiler-ir-value-cons value rest-values))]
                             [(ErrLowerArgs message) (ErrLowerArgs message)])])]
                     [(ErrLowerExpr message) (ErrLowerArgs message)])]
-                [(ErrTcExpr message)
+                [(ResultTcExpr.Err message)
                   (ErrLowerArgs (box (lower-diagnostic-at-expr arg message)))]))]
           [(AstTypeNil)
             (ErrLowerArgs
@@ -15811,9 +15821,9 @@
   [fields : AstFieldDefList]
   [struct-ty : AstType]) : ResultLowerExpr
   (match (tc-inline-aggregate-layout-for ctx struct-name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
-        [(TcInlineStructLayout size _ _)
+        [(TcInlineAggregateLayout.Struct size _ _)
           ;; #2386: a register-resident struct is built directly in registers by
           ;; packing its fields with shift/or; no stack slot, no stores. A 2-word
           ;; struct packs each word and combines them with IrInstrPack.
@@ -15858,14 +15868,14 @@
                   [(OkLowerState done-state)
                     (OkLowerExpr (LowerExpr done-state base struct-ty))]
                   [(ErrLowerState message) (ErrLowerExpr message)])]))]
-        [(TcInlineEnumLayout _ _ _)
+        [(TcInlineAggregateLayout.Enum _ _ _)
           (ErrLowerExpr
             (box
               (lower-diagnostic
                 (string.string-append
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
-    [(ErrTcInlineAggregateLayout message)
+    [(ResultTcInlineAggregateLayout.Err message)
       (ErrLowerExpr (box (lower-diagnostic message)))]))
 
 (define (lower-construct-struct-inline-into-from-values
@@ -15876,18 +15886,18 @@
   [values : CompilerIrValueList]
   [fields : AstFieldDefList]) : ResultLowerState
   (match (tc-inline-aggregate-layout-for ctx struct-name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
-        [(TcInlineStructLayout _ _ _)
+        [(TcInlineAggregateLayout.Struct _ _ _)
           (lower-store-inline-struct-values ctx state dst values fields layout)]
-        [(TcInlineEnumLayout _ _ _)
+        [(TcInlineAggregateLayout.Enum _ _ _)
           (ErrLowerState
             (box
               (lower-diagnostic
                 (string.string-append
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
-    [(ErrTcInlineAggregateLayout message)
+    [(ResultTcInlineAggregateLayout.Err message)
       (ErrLowerState (box (lower-diagnostic message)))]))
 
 (define (lower-construct-enum-inline-from-values
@@ -15900,9 +15910,9 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match (tc-inline-aggregate-layout-for ctx enum-name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
-        [(TcInlineEnumLayout size _ _)
+        [(TcInlineAggregateLayout.Enum size _ _)
           ;; #2386: a 1-word register-resident enum is nullary, so its single word
           ;; is the discriminant tag. A 2-word register-group enum packs the tag
           ;; into word0 and the variant payload into word1.
@@ -15954,14 +15964,14 @@
                       [(OkLowerState done-state)
                         (OkLowerExpr (LowerExpr done-state base enum-ty))]
                       [(ErrLowerState message) (ErrLowerExpr message)]))])))]
-        [(TcInlineStructLayout _ _ _)
+        [(TcInlineAggregateLayout.Struct _ _ _)
           (ErrLowerExpr
             (box
               (lower-diagnostic
                 (string.string-append
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
-    [(ErrTcInlineAggregateLayout message)
+    [(ResultTcInlineAggregateLayout.Err message)
       (ErrLowerExpr (box (lower-diagnostic message)))]))
 
 (define (lower-construct-enum-inline-into-from-values
@@ -15974,9 +15984,9 @@
   [fields : AstTypeList]
   [enum-name : String]) : ResultLowerState
   (match (tc-inline-aggregate-layout-for ctx enum-name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
-        [(TcInlineEnumLayout _ _ _)
+        [(TcInlineAggregateLayout.Enum _ _ _)
           (let
             [layout-variant-name : String (lower-member-name-base variant-name)]
             [tag-state : LowerState
@@ -15996,14 +16006,14 @@
               layout
               layout-variant-name
               0))]
-        [(TcInlineStructLayout _ _ _)
+        [(TcInlineAggregateLayout.Struct _ _ _)
           (ErrLowerState
             (box
               (lower-diagnostic
                 (string.string-append
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
-    [(ErrTcInlineAggregateLayout message)
+    [(ResultTcInlineAggregateLayout.Err message)
       (ErrLowerState (box (lower-diagnostic message)))]))
 
 (define (lower-enum-constructor-fields-for-result
@@ -16017,26 +16027,28 @@
         ctx
         enum-name
         (box-get lifetimes))
-        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
-        [(ErrTcLifetimeSubst _) fields])]
+        [(ResultTcLifetimeSubst.Ok subst)
+          (tc-lifetime-subst-type-list subst fields)]
+        [(ResultTcLifetimeSubst.Err _) fields])]
     [(AstTyVarArgs _ lifetimes)
       (match (tc-lifetime-subst-from-nominal-args
         ctx
         enum-name
         (box-get lifetimes))
-        [(OkTcLifetimeSubst subst) (tc-lifetime-subst-type-list subst fields)]
-        [(ErrTcLifetimeSubst _) fields])]
+        [(ResultTcLifetimeSubst.Ok subst)
+          (tc-lifetime-subst-type-list subst fields)]
+        [(ResultTcLifetimeSubst.Err _) fields])]
     [_ fields]))
 
 (define (lower-variant-owner-module [ctx : TcContext] [handle : i64]) : String
   (match (tc-nominal-owner-name
     ctx
     (compiler-registry-variant-owner-handle handle))
-    [(OkTcString owner-name)
+    [(ResultTcString.Ok owner-name)
       (if (tc-name-qualified? owner-name)
         (tc-qualified-name-module owner-name)
         "")]
-    [(ErrTcString _) ""]))
+    [(ResultTcString.Err _) ""]))
 
 (define (lower-variant-payload-fields-for-handle
   [ctx : TcContext]
@@ -16292,17 +16304,17 @@
           ctx
           struct-name
           (box-get lifetimes))
-          [(OkTcLifetimeSubst subst)
+          [(ResultTcLifetimeSubst.Ok subst)
             (tc-lifetime-subst-type-list subst field-types)]
-          [(ErrTcLifetimeSubst _) field-types])]
+          [(ResultTcLifetimeSubst.Err _) field-types])]
       [(AstTyVarArgs _ lifetimes)
         (match (tc-lifetime-subst-from-nominal-args
           ctx
           struct-name
           (box-get lifetimes))
-          [(OkTcLifetimeSubst subst)
+          [(ResultTcLifetimeSubst.Ok subst)
             (tc-lifetime-subst-type-list subst field-types)]
-          [(ErrTcLifetimeSubst _) field-types])]
+          [(ResultTcLifetimeSubst.Err _) field-types])]
       [_ field-types])))
 
 (define (lower-context-with-nominal-owner-module
@@ -16318,11 +16330,11 @@
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? handle)
         (match (tc-nominal-owner-name ctx handle)
-          [(OkTcString owner-name)
+          [(ResultTcString.Ok owner-name)
             (if (tc-name-qualified? owner-name)
               (tc-context-with-module ctx (tc-qualified-name-module owner-name))
               (tc-context-with-module ctx ""))]
-          [(ErrTcString _) ctx])
+          [(ResultTcString.Err _) ctx])
         ctx))))
 
 (define (lower-construct-struct
@@ -16356,7 +16368,7 @@
                 struct-ty)
               (if (lower-struct-repr-c? ctx struct-name)
                 (match (tc-repr-c-struct-layout ctx struct-name)
-                  [(OkTcReprCLayout layout)
+                  [(ResultTcReprCLayout.Ok layout)
                     (match (lower-reserve-heap-storage
                       args-state
                       (tc-repr-c-layout-size layout)
@@ -16371,7 +16383,7 @@
                           [(OkLowerState done-state)
                             (OkLowerExpr (LowerExpr done-state base struct-ty))]
                           [(ErrLowerState message) (ErrLowerExpr message)])])]
-                  [(ErrTcReprCLayout message)
+                  [(ResultTcReprCLayout.Err message)
                     (ErrLowerExpr (box (lower-diagnostic message)))])
                 (let
                   [size : i64 (lower-type-list-storage-size ctx field-types)]
@@ -16501,7 +16513,7 @@
     [field-ctx : TcContext
       (lower-context-with-nominal-owner-module ctx enum-name)]
     (match (tc-enum-decl field-ctx enum-name)
-      [(OkTcEnumDecl decl)
+      [(ResultTcEnumDecl.Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
             (match variants
@@ -16548,7 +16560,8 @@
                               (string.string-append
                                 "lower: unknown variant "
                                 lookup-name))))))])])])]
-      [(ErrTcEnumDecl message) (ErrLowerExpr (box (lower-diagnostic message)))])))
+      [(ResultTcEnumDecl.Err message)
+        (ErrLowerExpr (box (lower-diagnostic message)))])))
 
 (define (lower-init-struct-into
   [ctx : TcContext]
@@ -16600,7 +16613,7 @@
     [field-ctx : TcContext
       (lower-context-with-nominal-owner-module ctx enum-name)]
     (match (tc-enum-decl field-ctx enum-name)
-      [(OkTcEnumDecl decl)
+      [(ResultTcEnumDecl.Ok decl)
         (match decl
           [(TcEnumDecl _ variants)
             (match variants
@@ -16648,7 +16661,8 @@
                               (string.string-append
                                 "lower: unknown variant "
                                 lookup-name))))))])])])]
-      [(ErrTcEnumDecl message) (ErrLowerState (box (lower-diagnostic message)))])))
+      [(ResultTcEnumDecl.Err message)
+        (ErrLowerState (box (lower-diagnostic message)))])))
 
 (define (lower-init-expr-into
   [ctx : TcContext]
@@ -16918,7 +16932,7 @@
       (let
         [name : String (intern-str name-id)]
         (match (lower-source-name-lookup-key ctx type-env name)
-          [(OkTcString lookup-name)
+          [(ResultTcString.Ok lookup-name)
             (lower-nullary-variant-or-function-value
               ctx
               state
@@ -16926,7 +16940,7 @@
               type-env
               lookup-name
               expr-ty)]
-          [(ErrTcString message)
+          [(ResultTcString.Err message)
             (ErrLowerExpr (box (lower-diagnostic message)))])))))
 
 (define (lower-call-result-type-fast
@@ -16941,21 +16955,23 @@
       (let
         [name-text : String (intern-str name)]
         (match (lower-lookup-type ctx type-cache env type-env name-text)
-          [(OkTcType fn-ty)
+          [(ResultTcType.Ok fn-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
               [(AstTyFunc _ ret)
-                (OkTcType
+                (ResultTcType.Ok
                   (tc-type-without-regions
                     (tc-resolve-type ctx (ty-node-get ret))))]
-              [(AstTyEnum _) (OkTcType (tc-type-without-regions fn-ty))]
-              [_ (ErrTcType "lower: call result type is not fast-pathable")])]
-          [(ErrTcType message)
+              [(AstTyEnum _) (ResultTcType.Ok (tc-type-without-regions fn-ty))]
+              [_
+                (ResultTcType.Err
+                  "lower: call result type is not fast-pathable")])]
+          [(ResultTcType.Err message)
             (if (lower-builtin-call-available? ctx env name-text)
               (cond
                 [(cbi.compiler-builtin-lower-array-length-id? name)
-                  (OkTcType (AstTyI64))]
+                  (ResultTcType.Ok (AstTyI64))]
                 [(cbi.compiler-builtin-lower-string-ref-call-id? name)
-                  (OkTcType (AstTyChar))]
+                  (ResultTcType.Ok (AstTyChar))]
                 [(cbi.compiler-builtin-lower-clone-id? name)
                   (match args
                     [(AstExprCons arg tail)
@@ -16971,12 +16987,13 @@
                               type-cache
                               arg)]
                           [_
-                            (ErrTcType
+                            (ResultTcType.Err
                               "lower: call result type is not fast-pathable")]))]
                     [_
-                      (ErrTcType "lower: call result type is not fast-pathable")])]
-                [else (ErrTcType message)])
-              (ErrTcType message))]))]
+                      (ResultTcType.Err
+                        "lower: call result type is not fast-pathable")])]
+                [else (ResultTcType.Err message)])
+              (ResultTcType.Err message))]))]
     [(AstExprLambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda params maybe-ret body-box)
@@ -16988,15 +17005,17 @@
               params
               maybe-ret
               body)
-              [(OkTcType fn-ty)
+              [(ResultTcType.Ok fn-ty)
                 (match fn-ty
                   [(AstTyFunc _ ret)
-                    (OkTcType
+                    (ResultTcType.Ok
                       (tc-type-without-regions
                         (tc-resolve-type ctx (ty-node-get ret))))]
-                  [_ (ErrTcType "lower: call result type is not fast-pathable")])]
-              [(ErrTcType message) (ErrTcType message)]))])]
-    [_ (ErrTcType "lower: call result type is not fast-pathable")]))
+                  [_
+                    (ResultTcType.Err
+                      "lower: call result type is not fast-pathable")])]
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))])]
+    [_ (ResultTcType.Err "lower: call result type is not fast-pathable")]))
 
 (define (lower-binary-result-type-fast
   [ctx : TcContext]
@@ -17005,11 +17024,12 @@
   [left : AstExpr]
   [right : AstExpr]) : ResultTcType
   (match (tc-binop-expr-types ctx type-env op left right)
-    [(OkTcBinOpTypes binop-types)
+    [(ResultTcBinOpTypes.Ok binop-types)
       (match binop-types
         [(TcBinOpTypes _ _ result-ty)
-          (OkTcType (tc-type-without-regions (tc-resolve-type ctx result-ty)))])]
-    [(ErrTcBinOpTypes message) (ErrTcType message)]))
+          (ResultTcType.Ok
+            (tc-type-without-regions (tc-resolve-type ctx result-ty)))])]
+    [(ResultTcBinOpTypes.Err message) (ResultTcType.Err message)]))
 
 (define (lower-binop-types-with-result
   [ctx : TcContext]
@@ -17025,26 +17045,26 @@
       [(AstNoType) (tc-binop-expr-types ctx type-env op left right)]
       [(AstSomeType operand-ty)
         (match (tc-expr-with-expected-or-actual ctx type-env left operand-ty)
-          [(OkTcType left-ty)
+          [(ResultTcType.Ok left-ty)
             (match (tc-expr-with-expected-or-actual
               ctx
               type-env
               right
               operand-ty)
-              [(OkTcType right-ty)
+              [(ResultTcType.Ok right-ty)
                 (match (tc-binop-type op left-ty right-ty)
-                  [(OkTcType result-ty)
+                  [(ResultTcType.Ok result-ty)
                     (if (tc-type-compatible? expr-ty result-ty)
-                      (OkTcBinOpTypes
+                      (ResultTcBinOpTypes.Ok
                         (TcBinOpTypes
                           left-ty
                           right-ty
                           (tc-contextual-result-type expr-ty result-ty)))
                       (tc-binop-expr-types ctx type-env op left right))]
-                  [(ErrTcType _)
+                  [(ResultTcType.Err _)
                     (tc-binop-expr-types ctx type-env op left right)])]
-              [(ErrTcType message) (ErrTcBinOpTypes message)])]
-          [(ErrTcType message) (ErrTcBinOpTypes message)])])))
+              [(ResultTcType.Err message) (ResultTcBinOpTypes.Err message)])]
+          [(ResultTcType.Err message) (ResultTcBinOpTypes.Err message)])])))
 
 (define (lower-unop-type-with-result
   [ctx : TcContext]
@@ -17058,21 +17078,22 @@
     (match (tc-unop-contextual-operand-type op operand-expected)
       [(AstNoType)
         (match (tc-expr ctx type-env inner)
-          [(OkTcType inner-ty) (tc-unop-type op inner-ty)]
-          [(ErrTcType message) (ErrTcType message)])]
+          [(ResultTcType.Ok inner-ty) (tc-unop-type op inner-ty)]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])]
       [(AstSomeType operand-ty)
         (match (tc-expr-with-expected-or-actual ctx type-env inner operand-ty)
-          [(OkTcType inner-ty)
+          [(ResultTcType.Ok inner-ty)
             (match (tc-unop-type op inner-ty)
-              [(OkTcType result-ty)
+              [(ResultTcType.Ok result-ty)
                 (if (tc-type-compatible? expr-ty result-ty)
-                  (OkTcType (tc-contextual-result-type expr-ty result-ty))
+                  (ResultTcType.Ok
+                    (tc-contextual-result-type expr-ty result-ty))
                   (tc-unop-type op inner-ty))]
-              [(ErrTcType _)
+              [(ResultTcType.Err _)
                 (match (tc-expr ctx type-env inner)
-                  [(OkTcType actual-ty) (tc-unop-type op actual-ty)]
-                  [(ErrTcType message) (ErrTcType message)])])]
-          [(ErrTcType message) (ErrTcType message)])])))
+                  [(ResultTcType.Ok actual-ty) (tc-unop-type op actual-ty)]
+                  [(ResultTcType.Err message) (ResultTcType.Err message)])])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
 (define (lower-if-result-type-fast
   [ctx : TcContext]
@@ -17082,16 +17103,16 @@
   [then-branch : AstExpr]
   [else-branch : AstExpr]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache then-branch)
-    [(OkTcType then-ty)
+    [(ResultTcType.Ok then-ty)
       (match (lower-expr-result-type-fast
         ctx
         env
         type-env
         type-cache
         else-branch)
-        [(OkTcType else-ty) (tc-merge-branch-type then-ty else-ty)]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(ErrTcType message) (ErrTcType message)]))
+        [(ResultTcType.Ok else-ty) (tc-merge-branch-type then-ty else-ty)]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-expr-list-result-type-fast
   [ctx : TcContext]
@@ -17100,7 +17121,7 @@
   [type-cache : LowerTypeCache]
   [exprs : AstExprList]) : ResultTcType
   (match exprs
-    [(AstExprNil) (OkTcType (AstTyUnit))]
+    [(AstExprNil) (ResultTcType.Ok (AstTyUnit))]
     [(AstExprCons expr rest)
       (let
         [expr : AstExpr (ast-node-get expr)]
@@ -17167,14 +17188,14 @@
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-bind-match-pattern ctx type-env scrut-ty pattern)
-          [(OkTcEnv arm-type-env)
+          [(ResultTcEnv.Ok arm-type-env)
             (lower-expr-result-type-fast
               ctx
               (lower-match-pattern-bind-local-names ctx env scrut-ty pattern)
               arm-type-env
               type-cache
               body)]
-          [(ErrTcEnv message) (ErrTcType message)]))]))
+          [(ResultTcEnv.Err message) (ResultTcType.Err message)]))]))
 
 (define (lower-match-rest-result-types-fast
   [ctx : TcContext]
@@ -17185,7 +17206,7 @@
   [arms : AstMatchArmList]
   [want : AstType]) : ResultTcType
   (match arms
-    [(AstMatchArmNil) (OkTcType want)]
+    [(AstMatchArmNil) (ResultTcType.Ok want)]
     [(AstMatchArmCons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -17196,9 +17217,9 @@
           type-cache
           scrut-ty
           arm)
-          [(OkTcType got)
+          [(ResultTcType.Ok got)
             (match (tc-merge-branch-type want got)
-              [(OkTcType merged)
+              [(ResultTcType.Ok merged)
                 (lower-match-rest-result-types-fast
                   ctx
                   env
@@ -17207,8 +17228,8 @@
                   scrut-ty
                   rest
                   merged)]
-              [(ErrTcType message) (ErrTcType message)])]
-          [(ErrTcType message) (ErrTcType message)]))]))
+              [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)]))]))
 
 (define (lower-match-result-type-fast
   [ctx : TcContext]
@@ -17218,10 +17239,10 @@
   [scrutinee : AstExpr]
   [arms : AstMatchArmList]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache scrutinee)
-    [(OkTcType scrut-ty)
+    [(ResultTcType.Ok scrut-ty)
       (match arms
         [(AstMatchArmNil)
-          (ErrTcType "lower: match result type is not fast-pathable")]
+          (ResultTcType.Err "lower: match result type is not fast-pathable")]
         [(AstMatchArmCons arm rest)
           (let
             [rest : AstMatchArmList (box-get rest)]
@@ -17232,7 +17253,7 @@
               type-cache
               scrut-ty
               arm)
-              [(OkTcType first-ty)
+              [(ResultTcType.Ok first-ty)
                 (lower-match-rest-result-types-fast
                   ctx
                   env
@@ -17241,8 +17262,8 @@
                   scrut-ty
                   rest
                   first-ty)]
-              [(ErrTcType message) (ErrTcType message)]))])]
-    [(ErrTcType message) (ErrTcType message)]))
+              [(ResultTcType.Err message) (ResultTcType.Err message)]))])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-let-binding-result-type-fast
   [ctx : TcContext]
@@ -17253,7 +17274,7 @@
   [init : AstExpr]) : ResultTcType
   (match maybe-ty
     [(AstSomeType ty)
-      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstNoType)
       (if (tc-ref-capturing-lambda-init? type-env init)
         (match (ast-expr-unspan init)
@@ -17278,7 +17299,7 @@
   [type-cache : LowerTypeCache]
   [bindings : AstLetBindingList]) : ResultTcEnv
   (match bindings
-    [(AstLetBindingNil) (OkTcEnv type-env)]
+    [(AstLetBindingNil) (ResultTcEnv.Ok type-env)]
     [(AstLetBindingCons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -17294,7 +17315,7 @@
                 type-cache
                 maybe-ty
                 init)
-                [(OkTcType binding-ty)
+                [(ResultTcType.Ok binding-ty)
                   (lower-let-bindings-type-env-fast
                     ctx
                     (sym-i64-bind-id env name-id 0)
@@ -17306,7 +17327,7 @@
                       init)
                     type-cache
                     rest)]
-                [(ErrTcType message) (ErrTcEnv message)]))]))]))
+                [(ResultTcType.Err message) (ResultTcEnv.Err message)]))]))]))
 
 (define (lower-let-bindings-local-env
   [env : SymI64Env]
@@ -17336,11 +17357,11 @@
   [type-cache : LowerTypeCache]
   [index : AstExpr]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache index)
-    [(OkTcType index-ty)
+    [(ResultTcType.Ok index-ty)
       (if (tc-integer-type? index-ty)
-        (OkTcType index-ty)
-        (ErrTcType "lower: index result type is not fast-pathable"))]
-    [(ErrTcType message) (ErrTcType message)]))
+        (ResultTcType.Ok index-ty)
+        (ResultTcType.Err "lower: index result type is not fast-pathable"))]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-unary-result-type-fast
   [ctx : TcContext]
@@ -17350,12 +17371,13 @@
   [op : AstUnOp]
   [inner : AstExpr]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache inner)
-    [(OkTcType inner-ty)
+    [(ResultTcType.Ok inner-ty)
       (match (tc-unop-type op inner-ty)
-        [(OkTcType result-ty)
-          (OkTcType (tc-type-without-regions (tc-resolve-type ctx result-ty)))]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(ErrTcType message) (ErrTcType message)]))
+        [(ResultTcType.Ok result-ty)
+          (ResultTcType.Ok
+            (tc-type-without-regions (tc-resolve-type ctx result-ty)))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-tuple-ref-result-type-fast
   [ctx : TcContext]
@@ -17365,15 +17387,17 @@
   [tuple-expr : AstExpr]
   [index : i64]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache tuple-expr)
-    [(OkTcType tuple-ty)
+    [(ResultTcType.Ok tuple-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(AstTyTuple elem-tys)
           (match (tc-type-list-ref (box-get elem-tys) index)
-            [(OkTcType elem-ty)
-              (OkTcType (lower-projected-result-type-fast ctx tuple-ty elem-ty))]
-            [(ErrTcType message) (ErrTcType message)])]
-        [_ (ErrTcType "lower: tuple-ref result type is not fast-pathable")])]
-    [(ErrTcType message) (ErrTcType message)]))
+            [(ResultTcType.Ok elem-ty)
+              (ResultTcType.Ok
+                (lower-projected-result-type-fast ctx tuple-ty elem-ty))]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [_
+          (ResultTcType.Err "lower: tuple-ref result type is not fast-pathable")])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-array-ref-result-type-fast
   [ctx : TcContext]
@@ -17383,30 +17407,32 @@
   [array-expr : AstExpr]
   [index : AstExpr]) : ResultTcType
   (match (lower-index-result-type-fast ctx env type-env type-cache index)
-    [(OkTcType _)
+    [(ResultTcType.Ok _)
       (match (lower-expr-result-type-fast
         ctx
         env
         type-env
         type-cache
         array-expr)
-        [(OkTcType array-ty)
+        [(ResultTcType.Ok array-ty)
           (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
             [(AstTyArray elem-ty _)
-              (OkTcType
+              (ResultTcType.Ok
                 (lower-projected-result-type-fast
                   ctx
                   array-ty
                   (ty-node-get elem-ty)))]
             [(AstTyDynArray elem-ty)
-              (OkTcType
+              (ResultTcType.Ok
                 (lower-projected-result-type-fast
                   ctx
                   array-ty
                   (ty-node-get elem-ty)))]
-            [_ (ErrTcType "lower: array-ref result type is not fast-pathable")])]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(ErrTcType message) (ErrTcType message)]))
+            [_
+              (ResultTcType.Err
+                "lower: array-ref result type is not fast-pathable")])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-string-ref-result-type-fast
   [ctx : TcContext]
@@ -17416,14 +17442,15 @@
   [str : AstExpr]
   [index : AstExpr]) : ResultTcType
   (match (lower-index-result-type-fast ctx env type-env type-cache index)
-    [(OkTcType _)
+    [(ResultTcType.Ok _)
       (match (lower-expr-result-type-fast ctx env type-env type-cache str)
-        [(OkTcType str-ty)
+        [(ResultTcType.Ok str-ty)
           (if (lower-string-handle-type? ctx str-ty)
-            (OkTcType (AstTyChar))
-            (ErrTcType "lower: string-ref result type is not fast-pathable"))]
-        [(ErrTcType message) (ErrTcType message)])]
-    [(ErrTcType message) (ErrTcType message)]))
+            (ResultTcType.Ok (AstTyChar))
+            (ResultTcType.Err
+              "lower: string-ref result type is not fast-pathable"))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-struct-get-result-type-fast
   [ctx : TcContext]
@@ -17433,26 +17460,28 @@
   [receiver : AstExpr]
   [field : String]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache receiver)
-    [(OkTcType receiver-ty)
+    [(ResultTcType.Ok receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstTyStruct struct-name)
           (match (tc-struct-field-type ctx (intern-str struct-name) field)
-            [(OkTcType field-ty)
-              (OkTcType
+            [(ResultTcType.Ok field-ty)
+              (ResultTcType.Ok
                 (lower-projected-result-type-fast ctx receiver-ty field-ty))]
-            [(ErrTcType message) (ErrTcType message)])]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
         [(AstTyStructArgs struct-name lifetimes)
           (match (tc-struct-field-type-with-args
             ctx
             (intern-str struct-name)
             (box-get lifetimes)
             field)
-            [(OkTcType field-ty)
-              (OkTcType
+            [(ResultTcType.Ok field-ty)
+              (ResultTcType.Ok
                 (lower-projected-result-type-fast ctx receiver-ty field-ty))]
-            [(ErrTcType message) (ErrTcType message)])]
-        [_ (ErrTcType "lower: struct-get result type is not fast-pathable")])]
-    [(ErrTcType message) (ErrTcType message)]))
+            [(ResultTcType.Err message) (ResultTcType.Err message)])]
+        [_
+          (ResultTcType.Err
+            "lower: struct-get result type is not fast-pathable")])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 (define (lower-box-get-result-type-fast
   [ctx : TcContext]
@@ -17461,13 +17490,13 @@
   [type-cache : LowerTypeCache]
   [box-expr : AstExpr]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache box-expr)
-    [(OkTcType box-ty)
+    [(ResultTcType.Ok box-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstTyBox inner-ty)
-          (OkTcType
+          (ResultTcType.Ok
             (lower-projected-result-type-fast ctx box-ty (ty-node-get inner-ty)))]
-        [_ (ErrTcType "lower: box-get result type is not fast-pathable")])]
-    [(ErrTcType message) (ErrTcType message)]))
+        [_ (ResultTcType.Err "lower: box-get result type is not fast-pathable")])]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
 ;; #2386 (compile-time): memoize lower-expr-result-type-fast by AST node id.
 ;; lower-expr-origin computes each expr's result type (walking the result-
@@ -17525,38 +17554,39 @@
         (if (if (= (array.array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
           (= (array.array-ref tc-rtf-id-arr slot) inner-box)
           false)
-          (OkTcType (array.array-ref tc-rtf-ty-arr slot))
+          (ResultTcType.Ok (array.array-ref tc-rtf-ty-arr slot))
           (match (lower-expr-result-type-fast
             ctx
             env
             type-env
             type-cache
             (ast-node-get inner-box))
-            [(OkTcType ty)
+            [(ResultTcType.Ok ty)
               (begin
                 (array.array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
                 (array.array-set! tc-rtf-id-arr slot inner-box)
                 (array.array-set! tc-rtf-ty-arr slot ty)
-                (OkTcType ty))]
-            [(ErrTcType message) (ErrTcType message)])))]
-    [(AstExprLiteral lit) (OkTcType (tc-literal-type lit))]
-    [(AstExprBinaryData _) (OkTcType (ast-ty-dyn-array (AstTyU8)))]
-    [(AstExprSpmdProgramIndex) (OkTcType (AstTyI64))]
-    [(AstExprSpmdProgramCount) (OkTcType (AstTyI64))]
+                (ResultTcType.Ok ty))]
+            [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+    [(AstExprLiteral lit) (ResultTcType.Ok (tc-literal-type lit))]
+    [(AstExprBinaryData _) (ResultTcType.Ok (ast-ty-dyn-array (AstTyU8)))]
+    [(AstExprSpmdProgramIndex) (ResultTcType.Ok (AstTyI64))]
+    [(AstExprSpmdProgramCount) (ResultTcType.Ok (AstTyI64))]
     [(AstExprVar name)
       (match (lower-lookup-type-id ctx type-cache env type-env name)
-        [(OkTcType expr-ty) (OkTcType (tc-type-without-regions expr-ty))]
-        [(ErrTcType message) (ErrTcType message)])]
+        [(ResultTcType.Ok expr-ty)
+          (ResultTcType.Ok (tc-type-without-regions expr-ty))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExprInit maybe-ty)
       (match maybe-ty
         [(AstSomeType ty)
-          (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+          (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
         [(AstNoType)
-          (ErrTcType "lower: contextual init requires an expected type")])]
+          (ResultTcType.Err "lower: contextual init requires an expected type")])]
     [(AstExprAnn _ ty)
-      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprCast _ ty)
-      (OkTcType (tc-type-without-regions (tc-resolve-type ctx ty)))]
+      (ResultTcType.Ok (tc-type-without-regions (tc-resolve-type ctx ty)))]
     [(AstExprUnary op inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -17613,14 +17643,14 @@
               type-env
               type-cache
               bindings)
-              [(OkTcEnv body-type-env)
+              [(ResultTcEnv.Ok body-type-env)
                 (lower-expr-result-type-fast
                   ctx
                   (lower-let-bindings-local-env env bindings)
                   body-type-env
                   type-cache
                   body)]
-              [(ErrTcEnv message) (ErrTcType message)]))])]
+              [(ResultTcEnv.Err message) (ResultTcType.Err message)]))])]
     [(AstExprTupleRef tuple-expr-box index)
       (let
         [tuple-expr : AstExpr (ast-node-get tuple-expr-box)]
@@ -17671,10 +17701,10 @@
       (let
         [box-expr : AstExpr (ast-node-get box-expr-box)]
         (lower-box-get-result-type-fast ctx env type-env type-cache box-expr))]
-    [(AstExprSet _ _) (OkTcType (AstTyUnit))]
-    [(AstExprStructSet _ _ _) (OkTcType (AstTyUnit))]
-    [(AstExprBoxSet _ _) (OkTcType (AstTyUnit))]
-    [_ (ErrTcType "lower: expression result type is not fast-pathable")]))
+    [(AstExprSet _ _) (ResultTcType.Ok (AstTyUnit))]
+    [(AstExprStructSet _ _ _) (ResultTcType.Ok (AstTyUnit))]
+    [(AstExprBoxSet _ _) (ResultTcType.Ok (AstTyUnit))]
+    [_ (ResultTcType.Err "lower: expression result type is not fast-pathable")]))
 
 (define (lower-expr-result-type-or-check
   [ctx : TcContext]
@@ -17683,8 +17713,8 @@
   [type-cache : LowerTypeCache]
   [expr : AstExpr]) : ResultTcType
   (match (lower-expr-result-type-fast ctx env type-env type-cache expr)
-    [(OkTcType expr-ty) (OkTcType expr-ty)]
-    [(ErrTcType _) (tc-expr ctx type-env expr)]))
+    [(ResultTcType.Ok expr-ty) (ResultTcType.Ok expr-ty)]
+    [(ResultTcType.Err _) (tc-expr ctx type-env expr)]))
 
 (define (lower-index-result-type-or-check
   [ctx : TcContext]
@@ -17693,14 +17723,15 @@
   [type-cache : LowerTypeCache]
   [index : AstExpr]) : ResultTcType
   (match (lower-index-result-type-fast ctx env type-env type-cache index)
-    [(OkTcType index-ty) (OkTcType index-ty)]
-    [(ErrTcType _)
+    [(ResultTcType.Ok index-ty) (ResultTcType.Ok index-ty)]
+    [(ResultTcType.Err _)
       (match (tc-expr-with-expected-or-actual ctx type-env index (AstTyI64))
-        [(OkTcType index-ty)
+        [(ResultTcType.Ok index-ty)
           (if (tc-integer-type? index-ty)
-            (OkTcType (tc-type-without-regions (tc-resolve-type ctx index-ty)))
-            (ErrTcType "lower: index result type is not fast-pathable"))]
-        [(ErrTcType message) (ErrTcType message)])]))
+            (ResultTcType.Ok
+              (tc-type-without-regions (tc-resolve-type ctx index-ty)))
+            (ResultTcType.Err "lower: index result type is not fast-pathable"))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
 (define (lower-integer-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -17711,7 +17742,7 @@
   [expected-ty : AstType]
   [non-integer-message : String]) : ResultLowerExpr
   (match (tc-expr-with-expected-or-actual ctx type-env expr expected-ty)
-    [(OkTcType expr-ty)
+    [(ResultTcType.Ok expr-ty)
       (let
         [resolved-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx expr-ty))]
@@ -17719,7 +17750,7 @@
           (lower-expr-expected ctx state env type-env expr resolved-ty expr)
           (ErrLowerExpr
             (box (lower-diagnostic-at-expr expr non-integer-message)))))]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))]))
 
 (define (lower-expr-typechecked
@@ -17730,7 +17761,7 @@
   [expr : AstExpr]
   [origin : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx type-env expr)
-    [(OkTcType expr-ty)
+    [(ResultTcType.Ok expr-ty)
       (lower-expr-with-type
         ctx
         state
@@ -17739,7 +17770,7 @@
         expr
         origin
         (tc-type-without-regions expr-ty))]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))]))
 
 (define (lower-cast-source-expr
@@ -17791,7 +17822,7 @@
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
-            [(OkTcExprId virtual-id)
+            [(ResultTcExprId.Ok virtual-id)
               (lower-expr-origin
                 ctx
                 state
@@ -17799,7 +17830,7 @@
                 type-env
                 (ast-node-get virtual-id)
                 origin)]
-            [(ErrTcExprId message)
+            [(ResultTcExprId.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])
           (match (lower-lookup-type-id
             ctx
@@ -17807,7 +17838,7 @@
             env
             type-env
             name)
-            [(OkTcType expr-ty)
+            [(ResultTcType.Ok expr-ty)
               (lower-expr-with-type
                 ctx
                 state
@@ -17816,7 +17847,7 @@
                 expr
                 origin
                 (tc-type-without-regions expr-ty))]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])))]
     [(AstExprAnn _ ty)
       (lower-expr-with-type
@@ -17841,9 +17872,9 @@
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match (lower-binary-result-type-fast ctx type-env op left right)
-          [(OkTcType expr-ty)
+          [(ResultTcType.Ok expr-ty)
             (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
-          [(ErrTcType _)
+          [(ResultTcType.Err _)
             (lower-expr-typechecked ctx state env type-env expr origin)]))]
     [(AstExprCall func-box args)
       (let
@@ -17855,9 +17886,9 @@
           (lower-state-type-cache state)
           func
           args)
-          [(OkTcType expr-ty)
+          [(ResultTcType.Ok expr-ty)
             (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
-          [(ErrTcType _)
+          [(ResultTcType.Err _)
             (lower-expr-typechecked ctx state env type-env expr origin)]))]
     [(AstExprLet let-box)
       (match (box-get let-box)
@@ -17883,7 +17914,7 @@
           (lower-state-type-cache state)
           then-branch
           else-branch)
-          [(OkTcType expr-ty)
+          [(ResultTcType.Ok expr-ty)
             (lower-if
               ctx
               state
@@ -17893,7 +17924,7 @@
               then-branch
               else-branch
               expr-ty)]
-          [(ErrTcType _)
+          [(ResultTcType.Err _)
             (lower-expr-typechecked ctx state env type-env expr origin)]))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
@@ -17907,9 +17938,9 @@
               (lower-state-type-cache state)
               scrutinee
               arms)
-              [(OkTcType expr-ty)
+              [(ResultTcType.Ok expr-ty)
                 (lower-match ctx state env type-env scrutinee arms expr-ty)]
-              [(ErrTcType _)
+              [(ResultTcType.Err _)
                 (lower-expr-typechecked ctx state env type-env expr origin)]))])]
     [_
       (match (lower-expr-result-type-fast
@@ -17918,9 +17949,9 @@
         type-env
         (lower-state-type-cache state)
         expr)
-        [(OkTcType expr-ty)
+        [(ResultTcType.Ok expr-ty)
           (lower-expr-with-type ctx state env type-env expr origin expr-ty)]
-        [(ErrTcType _)
+        [(ResultTcType.Err _)
           (lower-expr-typechecked ctx state env type-env expr origin)])]))
 
 (define (lower-expr
@@ -17971,7 +18002,7 @@
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
-            [(OkTcExprId virtual-id)
+            [(ResultTcExprId.Ok virtual-id)
               (lower-expr-with-type
                 ctx
                 state
@@ -17980,7 +18011,7 @@
                 (ast-node-get virtual-id)
                 origin
                 expr-ty)]
-            [(ErrTcExprId message)
+            [(ResultTcExprId.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])
           (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)))]
     [(AstExprAnn inner-box _)
@@ -18010,7 +18041,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (lower-unop-type-with-result ctx type-env op inner expr-ty)
-          [(OkTcType result-ty)
+          [(ResultTcType.Ok result-ty)
             (match (tc-unop-contextual-operand-type op result-ty)
               [(AstNoType)
                 (match (lower-expr ctx state env type-env inner)
@@ -18059,7 +18090,7 @@
                                 (CompilerIrValue.Var var-id)
                                 result-ty))])])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-          [(ErrTcType message)
+          [(ResultTcType.Err message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))]))]
     [(AstExprBinary op left-box right-box)
       ;; `and`/`or` short-circuit: desugar to a conditional branch so the right
@@ -18099,7 +18130,7 @@
               left
               right
               expr-ty)
-              [(OkTcBinOpTypes binop-types)
+              [(ResultTcBinOpTypes.Ok binop-types)
                 (match binop-types
                   [(TcBinOpTypes left-ty right-ty result-ty)
                     (match (lower-expr-expected
@@ -18153,7 +18184,7 @@
                                               result-ty))]))])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                       [(ErrLowerExpr message) (ErrLowerExpr message)])])]
-              [(ErrTcBinOpTypes message)
+              [(ResultTcBinOpTypes.Err message)
                 (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])]))]
     [(AstExprCall func-box args)
       (let
@@ -18210,7 +18241,7 @@
             type-env
             name-text
             value-box)
-            [(OkTcExprId virtual-id)
+            [(ResultTcExprId.Ok virtual-id)
               (lower-expr-with-type
                 ctx
                 state
@@ -18219,7 +18250,7 @@
                 (ast-node-get virtual-id)
                 origin
                 expr-ty)]
-            [(ErrTcExprId message)
+            [(ResultTcExprId.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])
           (match (lower-lookup-type-id
             ctx
@@ -18227,7 +18258,7 @@
             env
             type-env
             name-id)
-            [(OkTcType store-ty)
+            [(ResultTcType.Ok store-ty)
               (let
                 [target-ty : AstType
                   (tc-type-without-regions (tc-resolve-type ctx store-ty))]
@@ -18301,7 +18332,7 @@
                                         expr-ty))])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])))])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-            [(ErrTcType _)
+            [(ResultTcType.Err _)
               (ErrLowerExpr
                 (box
                   (lower-diagnostic-at-expr
@@ -18734,7 +18765,7 @@
                       (match (tc-mut-pointer-elem
                         (tc-resolve-type ctx ptr-ty)
                         "lower: ptr-write! requires MutPtr pointer operand")
-                        [(OkTcType elem-ty)
+                        [(ResultTcType.Ok elem-ty)
                           (match (lower-expr-expected
                             ctx
                             ptr-home-state
@@ -18758,7 +18789,7 @@
                                       CompilerIrValue.Unit
                                       expr-ty))])]
                             [(ErrLowerExpr diag) (ErrLowerExpr diag)])]
-                        [(ErrTcType message)
+                        [(ResultTcType.Err message)
                           (ErrLowerExpr
                             (box (lower-diagnostic-at-expr origin message)))]))])])]
           [(ErrLowerExpr diag) (ErrLowerExpr diag)]))]
@@ -18911,7 +18942,7 @@
   [expr : AstExpr]
   [expected-ty : AstType]) : ResultLowerExpr
   (match (tc-expr-with-expected-or-actual ctx type-env expr expected-ty)
-    [(OkTcType actual-ty)
+    [(ResultTcType.Ok actual-ty)
       (lower-expr-with-type-and-coerce
         ctx
         state
@@ -18921,7 +18952,7 @@
         expr
         (tc-type-without-regions (tc-resolve-type ctx actual-ty))
         expected-ty)]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))]))
 
 (define (lower-expr-expected
@@ -19069,7 +19100,7 @@
               env
               type-env
               (intern-str name))
-              [(OkTcType fn-ty)
+              [(ResultTcType.Ok fn-ty)
                 (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
                   [(AstTyFunc _ ret-ty)
                     (let
@@ -19104,7 +19135,7 @@
                       type-env
                       expr
                       expected-ty)])]
-              [(ErrTcType _)
+              [(ResultTcType.Err _)
                 (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
           [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))]
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
@@ -19336,7 +19367,7 @@
   [inner : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (match (tc-box-set-inner-type ctx result-ty)
-    [(OkTcType expected-inner-ty)
+    [(ResultTcType.Ok expected-inner-ty)
       (match (lower-expr-expected
         ctx
         state
@@ -19395,7 +19426,7 @@
                           base
                           result-ty))))])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr inner message)))]))
 
 ;; Lower `(box-get b)` (#1443): evaluate the box handle and load the boxed value
@@ -19447,7 +19478,7 @@
     type-env
     (lower-state-type-cache state)
     box-expr)
-    [(OkTcType box-ty)
+    [(ResultTcType.Ok box-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstTyBox _)
           (match (lower-expr ctx state env type-env box-expr)
@@ -19468,7 +19499,7 @@
               (lower-diagnostic-at-expr
                 origin
                 "lower: box-get requires Box type")))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr box-expr message)))]))
 
 ;; Locate the byte offset and resolved type of tuple element `target` within the
@@ -20153,8 +20184,8 @@
   [ctx : TcContext]
   [fields : TcInlineFieldLayoutList]) : bool
   (match fields
-    [(TcInlineFieldLayoutNil) true]
-    [(TcInlineFieldLayoutCons field rest)
+    [(TcInlineFieldLayoutList.Nil) true]
+    [(TcInlineFieldLayoutList.Cons field rest)
       (and
         (lower-c-abi-integer-field-type?
           ctx
@@ -20165,12 +20196,12 @@
   [ctx : TcContext]
   [name : String]) : bool
   (match (tc-inline-aggregate-layout-for ctx name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (match layout
-        [(TcInlineStructLayout _ _ fields)
+        [(TcInlineAggregateLayout.Struct _ _ fields)
           (lower-c-abi-inline-fields-win64-register? ctx fields)]
-        [(TcInlineEnumLayout _ _ _) false])]
-    [(ErrTcInlineAggregateLayout _) false]))
+        [(TcInlineAggregateLayout.Enum _ _ _) false])]
+    [(ResultTcInlineAggregateLayout.Err _) false]))
 
 (define (lower-c-abi-win64-register-field-type?
   [ctx : TcContext]
@@ -20188,8 +20219,8 @@
   [ctx : TcContext]
   [fields : TcInlineFieldLayoutList]) : bool
   (match fields
-    [(TcInlineFieldLayoutNil) true]
-    [(TcInlineFieldLayoutCons field rest)
+    [(TcInlineFieldLayoutList.Nil) true]
+    [(TcInlineFieldLayoutList.Cons field rest)
       (and
         (lower-c-abi-win64-register-field-type?
           ctx
@@ -20346,8 +20377,8 @@
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match fields
-    [(TcInlineFieldLayoutNil) slots]
-    [(TcInlineFieldLayoutCons field rest)
+    [(TcInlineFieldLayoutList.Nil) slots]
+    [(TcInlineFieldLayoutList.Cons field rest)
       (lower-c-abi-sysv-classify-fields
         ctx
         (box-get rest)
@@ -20364,8 +20395,8 @@
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match payloads
-    [(TcInlinePayloadLayoutNil) slots]
-    [(TcInlinePayloadLayoutCons payload rest)
+    [(TcInlinePayloadLayoutList.Nil) slots]
+    [(TcInlinePayloadLayoutList.Cons payload rest)
       (lower-c-abi-sysv-classify-payloads
         ctx
         (box-get rest)
@@ -20382,8 +20413,8 @@
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match variants
-    [(TcInlineVariantLayoutNil) slots]
-    [(TcInlineVariantLayoutCons variant rest)
+    [(TcInlineVariantLayoutList.Nil) slots]
+    [(TcInlineVariantLayoutList.Cons variant rest)
       (match variant
         [(TcInlineVariantLayout _ _ _ payloads)
           (lower-c-abi-sysv-classify-variants
@@ -20398,9 +20429,9 @@
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match layout
-    [(TcInlineStructLayout _ _ fields)
+    [(TcInlineAggregateLayout.Struct _ _ fields)
       (lower-c-abi-sysv-classify-fields ctx fields base-offset slots)]
-    [(TcInlineEnumLayout _ _ variants)
+    [(TcInlineAggregateLayout.Enum _ _ variants)
       ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
       ;; payload overlaid in the union region starting at offset 8.
       (lower-c-abi-sysv-classify-variants
@@ -20415,9 +20446,9 @@
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match (tc-inline-aggregate-layout-for ctx name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (lower-c-abi-sysv-classify-layout ctx layout base-offset slots)]
-    [(ErrTcInlineAggregateLayout _) (LowerCAbiSysvSlotsUnsupported)]))
+    [(ResultTcInlineAggregateLayout.Err _) (LowerCAbiSysvSlotsUnsupported)]))
 
 (define (lower-c-abi-sysv-classify-type
   [ctx : TcContext]
@@ -20586,7 +20617,7 @@
       size
       (lower-c-abi-sysv-classify-layout
         ctx
-        (TcInlineEnumLayout size align variants)
+        (TcInlineAggregateLayout.Enum size align variants)
         0
         (LowerCAbiSysvSlots (LowerCAbiEightbyteEmpty) (LowerCAbiEightbyteEmpty)))
       allow-return?)))
@@ -20616,7 +20647,7 @@
   [allow-sret? : bool]
   [allow-byref? : bool]) : LowerCAbiAggregate
   (match layout
-    [(TcInlineStructLayout size _ fields)
+    [(TcInlineAggregateLayout.Struct size _ fields)
       (if (lower-mode-windows-c-abi? mode)
         (lower-c-abi-win64-aggregate-class
           mode
@@ -20632,7 +20663,7 @@
           size
           fields
           allow-sret?))]
-    [(TcInlineEnumLayout size align variants)
+    [(TcInlineAggregateLayout.Enum size align variants)
       (if (lower-mode-windows-c-abi? mode)
         ;; Model the default enum layout as a synthetic C aggregate:
         ;; int64 tag at offset 0 plus the max-sized payload union at offset 8.
@@ -20663,7 +20694,7 @@
   [allow-sret? : bool]
   [allow-byref? : bool]) : LowerCAbiAggregate
   (match (tc-inline-aggregate-layout-for ctx name)
-    [(OkTcInlineAggregateLayout layout)
+    [(ResultTcInlineAggregateLayout.Ok layout)
       (lower-c-abi-aggregate-class-from-layout
         ctx
         mode
@@ -20671,7 +20702,7 @@
         layout
         allow-sret?
         allow-byref?)]
-    [(ErrTcInlineAggregateLayout message)
+    [(ResultTcInlineAggregateLayout.Err message)
       (LowerCAbiUnsupportedAggregate message)]))
 
 (define (lower-c-abi-aggregate-class-with-flags
@@ -21615,11 +21646,11 @@
   [args : AstExprList]
   [params : AstTypeList]) : ResultTcTypeList
   (match (tc-call-extern-abi-for-name ctx name)
-    [(TcSomeExternAbi abi)
+    [(TcMaybeExternAbi.Some abi)
       (if (tc-call-dynamic-c-varargs-abi? abi)
         (tc-call-extern-varargs-params ctx type-env args params abi)
-        (OkTcTypeList params))]
-    [(TcNoExternAbi) (OkTcTypeList params)]))
+        (ResultTcTypeList.Ok params))]
+    [(TcMaybeExternAbi.No) (ResultTcTypeList.Ok params)]))
 
 (define (lower-direct-call
   [ctx : TcContext]
@@ -21645,7 +21676,7 @@
       env
       type-env
       name)
-      [(OkTcType fn-ty)
+      [(ResultTcType.Ok fn-ty)
         (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
           [(AstTyFunc param-types _)
             (match (lower-direct-call-param-types
@@ -21654,7 +21685,7 @@
               name
               args
               (tc-resolve-type-list ctx (box-get param-types)))
-              [(OkTcTypeList call-param-types)
+              [(ResultTcTypeList.Ok call-param-types)
                 (if (lower-c-abi-extern-call? ctx state env name)
                   (lower-direct-c-abi-call
                     ctx
@@ -21691,7 +21722,7 @@
                       name
                       result-ty
                       origin)))]
-              [(ErrTcTypeList message)
+              [(ResultTcTypeList.Err message)
                 (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])]
           [_
             (lower-direct-call-from-args
@@ -21701,7 +21732,7 @@
               name
               result-ty
               origin)])]
-      [(ErrTcType _)
+      [(ResultTcType.Err _)
         (lower-direct-call-from-args
           ctx
           (lower-args ctx state env type-env args)
@@ -23198,7 +23229,7 @@
               params
               maybe-ret
               body)
-              [(OkTcType fn-ty)
+              [(ResultTcType.Ok fn-ty)
                 (match (lower-lambda
                   ctx
                   state
@@ -23223,7 +23254,7 @@
                           result-ty
                           origin)])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)])]
-              [(ErrTcType message)
+              [(ResultTcType.Err message)
                 (ErrLowerExpr (box (lower-diagnostic-at-expr func message)))]))])]
     [(AstExprVar raw-name)
       ;; Builtins reached from a macro expansion arrive hygiene-renamed
@@ -23274,7 +23305,7 @@
                 (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? local-id)
               (match (tc-lookup type-env (intern-str raw-name))
-                [(OkTcType fn-ty)
+                [(ResultTcType.Ok fn-ty)
                   (if (lower-function-type? fn-ty)
                     (if (tc-binding-c-abi-fnptr-id? type-env raw-name)
                       (lower-indirect-c-abi-call
@@ -23302,14 +23333,14 @@
                         (lower-diagnostic-at-expr
                           func
                           "lower: call target is not a function"))))]
-                [(ErrTcType message)
+                [(ResultTcType.Err message)
                   (ErrLowerExpr (box (lower-diagnostic-at-expr func message)))])
               (let
                 [hygiene-global : bool (tc-hygiene-global-name? raw-text)]
                 (match (if hygiene-global
-                  (OkTcString (tc-hygiene-global-call-name raw-text))
+                  (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))
                   (lower-source-name-lookup-key ctx type-env raw-text))
-                  [(OkTcString name)
+                  [(ResultTcString.Ok name)
                     ;; `array-length`/`length` on a dynamic array and private
                     ;; string intrinsics load fat-value fields directly instead of
                     ;; calling runtime symbols. Other `length` argument types keep
@@ -23547,7 +23578,7 @@
                             args
                             result-ty
                             origin)]))]
-                  [(ErrTcString message)
+                  [(ResultTcString.Err message)
                     (ErrLowerExpr
                       (box (lower-diagnostic-at-expr origin message)))]))))))]
     [_
@@ -23611,7 +23642,7 @@
               type-env
               (lower-state-type-cache state)
               arr)
-              [(OkTcType arr-ty)
+              [(ResultTcType.Ok arr-ty)
                 (lower-array-length-with-type
                   ctx
                   state
@@ -23623,9 +23654,9 @@
                   origin
                   arr
                   arr-ty)]
-              [(ErrTcType _)
+              [(ResultTcType.Err _)
                 (match (tc-expr ctx type-env arr)
-                  [(OkTcType arr-ty)
+                  [(ResultTcType.Ok arr-ty)
                     (lower-array-length-with-type
                       ctx
                       state
@@ -23637,7 +23668,7 @@
                       origin
                       arr
                       arr-ty)]
-                  [(ErrTcType _)
+                  [(ResultTcType.Err _)
                     (lower-direct-call
                       ctx
                       state
@@ -23671,8 +23702,9 @@
   [arr : AstExpr]
   [arr-ty : AstType]) : ResultLowerExpr
   (match (tc-array-length-receiver ctx arr-ty)
-    [(OkTcArrayReceiver _) (lower-array-length-load ctx state env type-env arr)]
-    [(ErrTcArrayReceiver _)
+    [(ResultTcArrayReceiver.Ok _)
+      (lower-array-length-load ctx state env type-env arr)]
+    [(ResultTcArrayReceiver.Err _)
       (if (and
         (cbi.compiler-builtin-typecheck-string-length-id? (intern name))
         (lower-length-handle-type? ctx arr-ty))
@@ -24534,9 +24566,9 @@
         [ptr : AstExpr (ast-node-get ptr-node)]
         [tail0 : AstExprList (box-get tail0)]
         (match (tc-expr ctx type-env ptr)
-          [(OkTcType ptr-ty)
+          [(ResultTcType.Ok ptr-ty)
             (match (lower-atomic-pointer-elem ctx name ptr-ty)
-              [(OkTcType elem-ty)
+              [(ResultTcType.Ok elem-ty)
                 (lower-atomic-pointer-call-with-elem
                   ctx
                   state
@@ -24549,9 +24581,9 @@
                   tail0
                   result-ty
                   origin)]
-              [(ErrTcType message)
+              [(ResultTcType.Err message)
                 (ErrLowerExpr (box (lower-diagnostic-at-expr ptr message)))])]
-          [(ErrTcType message)
+          [(ResultTcType.Err message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr ptr message)))]))]
     [(AstExprNil)
       (ErrLowerExpr
@@ -24638,7 +24670,7 @@
             type-env
             (lower-state-type-cache arr-state)
             index)
-            [(OkTcType idx-ty)
+            [(ResultTcType.Ok idx-ty)
               (match (lower-expr-expected
                 ctx
                 arr-state
@@ -24659,7 +24691,7 @@
                           idx-value-ty
                           elem-ty))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr index message)))])])]
     [(ErrLowerExpr message) (ErrLowerExpr message)]))
 
@@ -24876,7 +24908,7 @@
   [struct-name : String]
   [struct-ty : AstType]) : bool
   (match (tc-struct-decl ctx struct-name)
-    [(OkTcStructDecl decl)
+    [(ResultTcStructDecl.Ok decl)
       (match decl
         [(TcStructDecl repr cleanup fields)
           (if (ast-struct-repr-c? repr)
@@ -24893,14 +24925,14 @@
                       struct-ty
                       fields))]
                 (lower-init-default-share-safe-type-list? ctx field-types))))])]
-    [(ErrTcStructDecl _) false]))
+    [(ResultTcStructDecl.Err _) false]))
 
 (define (lower-init-default-share-safe-enum?
   [ctx : TcContext]
   [enum-name : String]
   [enum-ty : AstType]) : bool
   (match (tc-enum-decl ctx enum-name)
-    [(OkTcEnumDecl decl)
+    [(ResultTcEnumDecl.Ok decl)
       (match decl
         [(TcEnumDecl cleanup variants)
           (if (ast-enum-cleanup? cleanup)
@@ -24920,7 +24952,7 @@
                             enum-ty
                             fields))]
                       (lower-init-default-share-safe-type-list? ctx field-types))])]))])]
-    [(ErrTcEnumDecl _) false]))
+    [(ResultTcEnumDecl.Err _) false]))
 
 (define (lower-init-default-share-safe? [ctx : TcContext] [ty : AstType]) : bool
   (let
@@ -25569,9 +25601,9 @@
     type-env
     (lower-state-type-cache state)
     arr)
-    [(OkTcType arr-ty)
+    [(ResultTcType.Ok arr-ty)
       (match (tc-array-readable-receiver ctx arr-ty)
-        [(OkTcArrayReceiver receiver)
+        [(ResultTcArrayReceiver.Ok receiver)
           (match receiver
             [(TcArrayReceiver container-ty elem-ty)
               (let
@@ -25586,7 +25618,7 @@
                           type-env
                           (lower-state-type-cache arr-state)
                           index)
-                          [(OkTcType idx-ty)
+                          [(ResultTcType.Ok idx-ty)
                             (match (lower-expr-expected
                               ctx
                               arr-state
@@ -25644,13 +25676,13 @@
                                               arr
                                               "lower: array-ref requires array type")))])])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                          [(ErrTcType message)
+                          [(ResultTcType.Err message)
                             (ErrLowerExpr
                               (box (lower-diagnostic-at-expr index message)))])])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
-        [(ErrTcArrayReceiver message)
+        [(ResultTcArrayReceiver.Err message)
           (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))]))
 
 ;; `(array-set! arr index value)` -> bounds-checked typed element store.
@@ -25841,7 +25873,7 @@
     env
     type-env
     name)
-    [(OkTcType place-ty)
+    [(ResultTcType.Ok place-ty)
       (let
         [resolved : AstType
           (tc-type-strip-region (tc-resolve-type ctx place-ty))]
@@ -25869,7 +25901,7 @@
                 name
                 place-ty
                 origin))]))]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))]))
 
 (define (lower-struct-field-address-from-place
@@ -25978,9 +26010,9 @@
     type-env
     (lower-state-type-cache state)
     arr)
-    [(OkTcType arr-ty)
+    [(ResultTcType.Ok arr-ty)
       (match (tc-array-set-receiver ctx arr-ty)
-        [(OkTcArrayReceiver receiver)
+        [(ResultTcArrayReceiver.Ok receiver)
           (match receiver
             [(TcArrayReceiver container-ty elem-ty)
               (lower-borrow-array-element-address
@@ -25992,9 +26024,9 @@
                 index
                 origin
                 (tc-type-without-regions elem-ty))])]
-        [(ErrTcArrayReceiver message)
+        [(ResultTcArrayReceiver.Err message)
           (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))]))
 
 (define (lower-mutable-place-address
@@ -26010,7 +26042,7 @@
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
-            [(OkTcExprId virtual-id)
+            [(ResultTcExprId.Ok virtual-id)
               (lower-mutable-place-address
                 ctx
                 state
@@ -26018,7 +26050,7 @@
                 type-env
                 (ast-node-get virtual-id)
                 origin)]
-            [(ErrTcExprId message)
+            [(ResultTcExprId.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])
           (lower-mutable-var-address-id ctx state env type-env name origin)))]
     [(AstExprStructGet receiver-box field)
@@ -26078,9 +26110,9 @@
           type-env
           (lower-state-type-cache state)
           box-expr)
-          [(OkTcType box-ty)
+          [(ResultTcType.Ok box-ty)
             (match (tc-box-set-inner-type ctx box-ty)
-              [(OkTcType inner-ty)
+              [(ResultTcType.Ok inner-ty)
                 (lower-box-storage-address
                   ctx
                   state
@@ -26089,9 +26121,9 @@
                   box-expr
                   origin
                   (tc-type-without-regions inner-ty))]
-              [(ErrTcType message)
+              [(ResultTcType.Err message)
                 (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])]
-          [(ErrTcType message)
+          [(ResultTcType.Err message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr box-expr message)))]))]
     [_
       (ErrLowerExpr
@@ -26188,9 +26220,9 @@
     type-env
     (lower-state-type-cache state)
     box-expr)
-    [(OkTcType box-ty)
+    [(ResultTcType.Ok box-ty)
       (match (tc-box-set-inner-type ctx box-ty)
-        [(OkTcType inner-ty)
+        [(ResultTcType.Ok inner-ty)
           (let
             [inner-ir-ty : AstType (tc-type-without-regions inner-ty)]
             (match (lower-box-storage-address
@@ -26214,9 +26246,9 @@
                       inner-ir-ty
                       value)])]
               [(ErrLowerExpr message) (ErrLowerExpr message)]))]
-        [(ErrTcType message)
+        [(ResultTcType.Err message)
           (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr box-expr message)))]))
 
 (define (lower-refresh-register-resident-root-after-store
@@ -26227,13 +26259,13 @@
   [place : AstExpr]
   [origin : AstExpr]) : ResultLowerState
   (match (tc-move-root-projection-var place)
-    [(TcSomeString root)
+    [(TcMaybeString.Some root)
       (let
         [local-id : i64
           (sym-i64-lookup-or env root (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? local-id)
           (match (tc-lookup type-env root)
-            [(OkTcType root-ty)
+            [(ResultTcType.Ok root-ty)
               (let
                 [resolved : AstType
                   (tc-type-without-regions (tc-resolve-type ctx root-ty))]
@@ -26255,10 +26287,10 @@
                               (CompilerIrInstr.Mov local-id loaded resolved)
                               origin))])])
                   (OkLowerState state)))]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerState (box (lower-diagnostic-at-expr origin message)))])
           (OkLowerState state)))]
-    [(TcNoString) (OkLowerState state)]))
+    [(TcMaybeString.No) (OkLowerState state)]))
 
 (define (lower-register-resident-local-place?
   [ctx : TcContext]
@@ -26391,9 +26423,9 @@
     type-env
     (lower-state-type-cache state)
     receiver)
-    [(OkTcType receiver-ty)
+    [(ResultTcType.Ok receiver-ty)
       (match (tc-struct-set-field-type ctx receiver-ty field)
-        [(OkTcType field-ty)
+        [(ResultTcType.Ok field-ty)
           (let
             [field-ir-ty : AstType (tc-type-without-regions field-ty)]
             (if (lower-register-resident-local-place?
@@ -26462,9 +26494,9 @@
                                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                         [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])))]
-        [(ErrTcType message)
+        [(ResultTcType.Err message)
           (ErrLowerExpr (box (lower-diagnostic-at-expr origin message)))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr receiver message)))]))
 
 (define (lower-array-set
@@ -26481,9 +26513,9 @@
     type-env
     (lower-state-type-cache state)
     arr)
-    [(OkTcType arr-ty)
+    [(ResultTcType.Ok arr-ty)
       (match (tc-array-set-receiver ctx arr-ty)
-        [(OkTcArrayReceiver receiver)
+        [(ResultTcArrayReceiver.Ok receiver)
           (match receiver
             [(TcArrayReceiver container-ty elem-ty)
               (let
@@ -26498,7 +26530,7 @@
                           type-env
                           (lower-state-type-cache arr-state)
                           index)
-                          [(OkTcType idx-ty)
+                          [(ResultTcType.Ok idx-ty)
                             (match (lower-expr-expected
                               ctx
                               arr-state
@@ -26558,13 +26590,13 @@
                                           [(ErrLowerExpr message)
                                             (ErrLowerExpr message)])])])]
                               [(ErrLowerExpr message) (ErrLowerExpr message)])]
-                          [(ErrTcType message)
+                          [(ResultTcType.Err message)
                             (ErrLowerExpr
                               (box (lower-diagnostic-at-expr index message)))])])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
-        [(ErrTcArrayReceiver message)
+        [(ResultTcArrayReceiver.Err message)
           (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))]))
 
 ;; Copy old dynamic-array elements into a freshly allocated buffer. The loop is
@@ -26836,9 +26868,9 @@
     type-env
     (lower-state-type-cache state)
     arr)
-    [(OkTcType arr-ty)
+    [(ResultTcType.Ok arr-ty)
       (match (tc-array-push-receiver ctx arr-ty)
-        [(OkTcArrayReceiver receiver)
+        [(ResultTcArrayReceiver.Ok receiver)
           (match receiver
             [(TcArrayReceiver _ elem-ty)
               (let
@@ -26867,9 +26899,9 @@
                                     value-ir))])]
                           [(ErrLowerExpr message) (ErrLowerExpr message)])])]
                   [(ErrLowerExpr message) (ErrLowerExpr message)]))])]
-        [(ErrTcArrayReceiver message)
+        [(ResultTcArrayReceiver.Err message)
           (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))])]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr arr message)))]))
 
 ;; Lower each syscall operand and widen it to i64 (the kernel reads the full
@@ -27022,7 +27054,7 @@
                     params
                     lambda-ret
                     body)
-                    [(OkTcType lambda-ty)
+                    [(ResultTcType.Ok lambda-ty)
                       (lower-lambda
                         ctx
                         state
@@ -27033,7 +27065,7 @@
                         body
                         init
                         lambda-ty)]
-                    [(ErrTcType message)
+                    [(ResultTcType.Err message)
                       (ErrLowerExpr
                         (box (lower-diagnostic-at-expr init message)))]))])]
           [_ (lower-expr ctx state env type-env init)])
@@ -27107,7 +27139,7 @@
               [init : AstExpr (ast-node-get init-box)]
               [cleanup : AstExpr (ast-node-get cleanup-box)]
               (match (tc-resource-cleanup-resource-type ctx type-env cleanup)
-                [(OkTcType expected-init-ty)
+                [(ResultTcType.Ok expected-init-ty)
                   (match (lower-expr-expected
                     ctx
                     state
@@ -27120,7 +27152,7 @@
                       (match lowered
                         [(LowerExpr init-state init-value init-ty)
                           (match (lower-cleanup-name-from-expr cleanup)
-                            [(OkTcString cleanup-name)
+                            [(ResultTcString.Ok cleanup-name)
                               (let
                                 [binding-ty : AstType
                                   (tc-type-without-regions init-ty)]
@@ -27160,11 +27192,11 @@
                                           cleanups
                                           hidden-name
                                           cleanup-name)))]))]
-                            [(ErrTcString message)
+                            [(ResultTcString.Err message)
                               (ErrLowerResourceBindings
                                 (box (lower-diagnostic-at-expr cleanup message)))])])]
                     [(ErrLowerExpr message) (ErrLowerResourceBindings message)])]
-                [(ErrTcType message)
+                [(ResultTcType.Err message)
                   (ErrLowerResourceBindings
                     (box (lower-diagnostic-at-expr cleanup message)))]))]))]))
 
@@ -28109,7 +28141,7 @@
   [init : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
   (match (tc-expr ctx (tc-bind type-env index index-ty) value)
-    [(OkTcType value-ty)
+    [(ResultTcType.Ok value-ty)
       (let
         [acc-ty : AstType (tc-type-without-regions value-ty)]
         [acc-update : i64
@@ -28179,7 +28211,7 @@
             init
             acc-ty
             acc-update)))]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerExpr (box (lower-diagnostic-at-expr value message)))]))
 
 (define (spmd-scan-binop-prefix [op : AstBinOp] [value : i64]) : i64
@@ -28553,7 +28585,7 @@
           (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (match (tc-lookup type-env (intern-str name))
-            [(OkTcType ty)
+            [(ResultTcType.Ok ty)
               (match (tc-type-strip-region ty)
                 [(AstTyDynArray elem-ty)
                   (LowerSomeArrayVar
@@ -28574,7 +28606,7 @@
                         (tc-type-without-regions (ty-node-get elem-ty)))]
                     [_ LowerNoArrayVar])]
                 [_ LowerNoArrayVar])]
-            [(ErrTcType _) LowerNoArrayVar])
+            [(ResultTcType.Err _) LowerNoArrayVar])
           LowerNoArrayVar))]
     [_ LowerNoArrayVar]))
 
@@ -28622,11 +28654,11 @@
           (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (match (tc-lookup type-env (intern-str name))
-            [(OkTcType ty)
+            [(ResultTcType.Ok ty)
               (if (tc-type-eq (tc-type-without-regions ty) (AstTyI64))
                 (LowerSomeIrValue (CompilerIrValue.Var var-id))
                 LowerNoIrValue)]
-            [(ErrTcType _) LowerNoIrValue])
+            [(ResultTcType.Err _) LowerNoIrValue])
           LowerNoIrValue))]
     [_ LowerNoIrValue]))
 
@@ -31532,7 +31564,7 @@
               (sym-i64-lookup-id-or env name (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? var-id)
               (match (tc-lookup type-env lookup-name)
-                [(OkTcType ty)
+                [(ResultTcType.Ok ty)
                   (let
                     [scalar-ty : AstType (tc-type-without-regions ty)]
                     (if (and
@@ -31541,7 +31573,7 @@
                       (LowerSomeVectorMapValue
                         (LowerVectorMapUniform (CompilerIrValue.Var var-id)))
                       LowerNoVectorMapValue))]
-                [(ErrTcType _) LowerNoVectorMapValue])
+                [(ResultTcType.Err _) LowerNoVectorMapValue])
               LowerNoVectorMapValue))))]
     [(AstExprLiteral lit)
       (let
@@ -33680,13 +33712,13 @@
         (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? var-id)
         (match (tc-lookup type-env name)
-          [(OkTcType ty)
+          [(ResultTcType.Ok ty)
             (OkLowerExpr
               (LowerExpr
                 state
                 (CompilerIrValue.Var var-id)
                 (tc-type-without-regions ty)))]
-          [(ErrTcType message)
+          [(ResultTcType.Err message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])
         (lower-avx512-masked-unsupported expr "unknown lane-local binding")))
     (if (string.string-eq name index)
@@ -33696,7 +33728,7 @@
           (sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
           (match (tc-lookup type-env name)
-            [(OkTcType ty)
+            [(ResultTcType.Ok ty)
               (let
                 [lane-ty : AstType (tc-type-without-regions ty)]
                 (if (>
@@ -33711,7 +33743,7 @@
                   (lower-avx512-masked-unsupported
                     expr
                     "uniform non-lane values inside masked vector expressions")))]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])
           (lower-avx512-masked-unsupported
             expr
@@ -35096,7 +35128,7 @@
           type-env
           (lower-state-type-cache state)
           expr)
-          [(OkTcType result-ty)
+          [(ResultTcType.Ok result-ty)
             (lower-avx512-masked-if
               ctx
               state
@@ -35112,7 +35144,7 @@
               cond
               then-branch
               else-branch)]
-          [(ErrTcType message)
+          [(ResultTcType.Err message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))]))]
     [(AstExprMatch match-box)
       (match (box-get match-box)
@@ -35123,7 +35155,7 @@
             type-env
             (lower-state-type-cache state)
             expr)
-            [(OkTcType result-ty)
+            [(ResultTcType.Ok result-ty)
               (lower-avx512-masked-match
                 ctx
                 state
@@ -35138,7 +35170,7 @@
                 expr
                 (ast-node-get scrutinee-box)
                 arms)]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])])]
     [(AstExprWhile cond-box body-box)
       (lower-avx512-masked-while
@@ -36222,7 +36254,7 @@
                         arms
                         merge-label
                         expr-ty
-                        (TcNoString)
+                        (TcMaybeString.No)
                         false)]
                     [(AstTyEnumArgs _ _)
                       (lower-match-enum
@@ -36235,7 +36267,7 @@
                         arms
                         merge-label
                         expr-ty
-                        (TcNoString)
+                        (TcMaybeString.No)
                         false)]
                     [(AstTyRef borrow-lifetime referent-box)
                       (let
@@ -36254,7 +36286,7 @@
                               arms
                               merge-label
                               expr-ty
-                              (TcSomeString borrow-lifetime)
+                              (TcMaybeString.Some borrow-lifetime)
                               true)]
                           [(AstTyEnumArgs _ _)
                             (lower-match-enum
@@ -36267,7 +36299,7 @@
                               arms
                               merge-label
                               expr-ty
-                              (TcSomeString borrow-lifetime)
+                              (TcMaybeString.Some borrow-lifetime)
                               true)]
                           [_
                             (lower-match-arms
@@ -36292,7 +36324,7 @@
                         arms
                         merge-label
                         expr-ty
-                        (TcNoString)
+                        (TcMaybeString.No)
                         false)]
                     [_
                       (lower-match-arms
@@ -36363,7 +36395,7 @@
                               arms
                               merge-label
                               expr-ty
-                              (TcSomeString borrow-lifetime)
+                              (TcMaybeString.Some borrow-lifetime)
                               resident)])])])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])])]
       [(ErrLowerExpr message) (ErrLowerExpr message)])))
@@ -36383,7 +36415,7 @@
         (let
           [place : AstExpr (ast-node-get place-box)]
           (match (tc-expr ctx type-env scrutinee)
-            [(OkTcType scrut-ty)
+            [(ResultTcType.Ok scrut-ty)
               (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
                 [(AstTyRef borrow-lifetime referent-box)
                   (let
@@ -36431,7 +36463,7 @@
                     scrutinee
                     arms
                     expr-ty)])]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerExpr (box (lower-diagnostic-at-expr scrutinee message)))])))]
     [_ (lower-match-value ctx state env type-env scrutinee arms expr-ty)]))
 
@@ -36719,7 +36751,7 @@
         struct-name
         scrut-ty
         fields)
-        [(OkTcTypeList field-types)
+        [(ResultTcTypeList.Ok field-types)
           (lower-bind-struct-pattern-fields
             ctx
             state
@@ -36730,7 +36762,8 @@
             args
             fields
             field-types)]
-        [(ErrTcTypeList message) (ErrLowerEnv (box (lower-diagnostic message)))])]
+        [(ResultTcTypeList.Err message)
+          (ErrLowerEnv (box (lower-diagnostic message)))])]
     [(ErrAstFieldDefList message)
       (ErrLowerEnv (box (lower-diagnostic message)))]))
 
@@ -37559,7 +37592,7 @@
             env
             type-env
             name)
-            [(OkTcType fn-ty)
+            [(ResultTcType.Ok fn-ty)
               (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
                 [(AstTyFunc param-types callee-ret)
                   (lower-tail-call-compatible-return?
@@ -37567,7 +37600,7 @@
                     (ty-node-get callee-ret)
                     ret-ty)]
                 [_ false])]
-            [(ErrTcType _) false])
+            [(ResultTcType.Err _) false])
           false)))))
 
 (define (lower-tail-call-args-for-target
@@ -37583,7 +37616,7 @@
     env
     type-env
     name)
-    [(OkTcType fn-ty)
+    [(ResultTcType.Ok fn-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
         [(AstTyFunc param-types _)
           (lower-args-as
@@ -37594,7 +37627,7 @@
             args
             (tc-resolve-type-list ctx (box-get param-types)))]
         [_ (lower-args ctx state env type-env args)])]
-    [(ErrTcType _) (lower-args ctx state env type-env args)]))
+    [(ResultTcType.Err _) (lower-args ctx state env type-env args)]))
 
 (define (lower-tail-call-indirect-supported?
   [ctx : TcContext]
@@ -37630,7 +37663,7 @@
   [sret-var : i64]
   [origin : AstExpr]) : ResultLowerState
   (match (tc-expr ctx type-env callee)
-    [(OkTcType func-ty)
+    [(ResultTcType.Ok func-ty)
       (if (lower-tail-call-indirect-supported?
         ctx
         state
@@ -37671,7 +37704,7 @@
                   [(ErrLowerArgs message) (ErrLowerState message)])])]
           [(ErrLowerExpr message) (ErrLowerState message)])
         (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
-    [(ErrTcType message)
+    [(ResultTcType.Err message)
       (ErrLowerState (box (lower-diagnostic-at-expr callee message)))]))
 
 (define (lower-tail-let-bindings-candidate-env
@@ -38076,7 +38109,7 @@
   [type-env : TcTypeEnv]
   [arg : AstExpr]) : bool
   (match (tc-expr ctx type-env arg)
-    [(OkTcType ty)
+    [(ResultTcType.Ok ty)
       (or
         (not (lower-type-contains-inline-aggregate? ctx ty))
         (and
@@ -38084,7 +38117,7 @@
             [(AstExprCall _ _) true]
             [_ false])
           (lower-type-inline-struct-or-enum? ctx ty)))]
-    [(ErrTcType _) false]))
+    [(ResultTcType.Err _) false]))
 
 (define (lower-rvo-args-cannot-alias-sret?
   [ctx : TcContext]
@@ -38155,7 +38188,7 @@
       env
       type-env
       name)
-      [(OkTcType fn-ty)
+      [(ResultTcType.Ok fn-ty)
         (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
           [(AstTyFunc param-types fn-ret)
             (if (not
@@ -38175,7 +38208,7 @@
                 name
                 args
                 (tc-resolve-type-list ctx (box-get param-types)))
-                [(OkTcTypeList call-param-types)
+                [(ResultTcTypeList.Ok call-param-types)
                   (match (lower-call-args-as-needed
                     ctx
                     state
@@ -38215,11 +38248,11 @@
                                     (CompilerIrValue.Var sret-var)
                                     ret-ty)))))])]
                     [(ErrLowerCallArgs message) (LowerDirectStoreErr message)])]
-                [(ErrTcTypeList message)
+                [(ResultTcTypeList.Err message)
                   (LowerDirectStoreErr
                     (box (lower-diagnostic-at-expr origin message)))]))]
           [_ (LowerNoDirectStore)])]
-      [(ErrTcType _) (LowerNoDirectStore)])))
+      [(ResultTcType.Err _) (LowerNoDirectStore)])))
 
 ;; Tail-position direct-call fallback shared by the non-constructor branches of
 ;; `lower-return-call-name-to-sret`: try the call-slot RVO above, otherwise keep
@@ -38368,10 +38401,10 @@
               ret-ty
               sret-var)
             (match (if (tc-hygiene-global-name? raw-text)
-              (OkTcString
+              (ResultTcString.Ok
                 (lower-hygiene-source-name-in-context ctx type-env raw-text))
               (lower-source-name-lookup-key ctx type-env raw-text))
-              [(OkTcString name)
+              [(ResultTcString.Ok name)
                 (lower-return-call-name-to-sret
                   ctx
                   state
@@ -38382,7 +38415,7 @@
                   ret-ty
                   sret-var
                   origin)]
-              [(ErrTcString _)
+              [(ResultTcString.Err _)
                 (lower-return-expr-generic
                   ctx
                   state
@@ -38464,7 +38497,7 @@
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (match (tc-expr ctx type-env expr)
-          [(OkTcType ty)
+          [(ResultTcType.Ok ty)
             (or
               (and
                 (lower-type-contains-inline-aggregate? ctx ty)
@@ -38475,7 +38508,7 @@
                 env
                 type-env
                 rest))]
-          [(ErrTcType _)
+          [(ResultTcType.Err _)
             (lower-expr-list-contains-unsafe-inline-aggregate?
               ctx
               state
@@ -38933,7 +38966,7 @@
                   arms
                   ret-ty
                   sret-var
-                  (TcNoString)
+                  (TcMaybeString.No)
                   true)]
               [_
                 (ErrLowerState
@@ -38950,7 +38983,7 @@
           arms
           ret-ty
           sret-var
-          (TcNoString)
+          (TcMaybeString.No)
           false))
       (match (lower-load-at-offset
         state
@@ -38971,7 +39004,7 @@
                 arms
                 ret-ty
                 sret-var
-                (TcNoString)
+                (TcMaybeString.No)
                 false)]
             [_
               (ErrLowerState
@@ -39350,7 +39383,7 @@
       (if mutable
         false
         (match (tc-expr ctx type-env scrutinee)
-          [(OkTcType scrut-ty)
+          [(ResultTcType.Ok scrut-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
               [(AstTyRef _ referent-box)
                 (let
@@ -39362,7 +39395,7 @@
                     [(AstTyEnumArgs _ _) true]
                     [_ false]))]
               [_ false])]
-          [(ErrTcType _) false]))]
+          [(ResultTcType.Err _) false]))]
     [_ false]))
 
 (define (lower-tail-match
@@ -39469,11 +39502,11 @@
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (match (tc-expr ctx type-env inner)
-            [(OkTcType inner-ty)
+            [(ResultTcType.Ok inner-ty)
               (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
                 (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
                 (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
-            [(ErrTcType message)
+            [(ResultTcType.Err message)
               (ErrLowerState (box (lower-diagnostic-at-expr inner message)))]))]
       [(AstExprCall callee-box args)
         (let
@@ -39820,8 +39853,8 @@
   (match decl
     [(AstDeclDef name _ _)
       (match (tc-lookup-id env name)
-        [(OkTcType ty) (OkTcType ty)]
-        [(ErrTcType _) (tc-top-decl-type-with-env ctx env decl)])]
+        [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+        [(ResultTcType.Err _) (tc-top-decl-type-with-env ctx env decl)])]
     [_ (tc-top-decl-type-with-env ctx env decl)]))
 
 ;; Record `name -> body span` into the provenance table (#605). A function whose
@@ -40067,21 +40100,21 @@
   [ctx : TcContext]
   [struct-name : String]) : ResultTcString
   (match (tc-struct-decl ctx struct-name)
-    [(OkTcStructDecl decl)
+    [(ResultTcStructDecl.Ok decl)
       (match decl
         [(TcStructDecl _ cleanup _)
           (match cleanup
             [(AstStructCleanupFn cleanup-name)
-              (OkTcString
+              (ResultTcString.Ok
                 (lower-struct-cleanup-qualified-name
                   struct-name
                   (intern-str cleanup-name)))]
             [(AstStructNoCleanup)
-              (ErrTcString
+              (ResultTcString.Err
                 (string.string-append
                   "lower: owned cleanup field type has no cleanup function "
                   struct-name))])])]
-    [(ErrTcStructDecl message) (ErrTcString message)]))
+    [(ResultTcStructDecl.Err message) (ResultTcString.Err message)]))
 
 (define (lower-struct-cleanup-name-for-type [ctx : TcContext] [ty : AstType]) : ResultTcString
   (let
@@ -40092,7 +40125,7 @@
       [(AstTyStructArgs name _)
         (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
       [_
-        (ErrTcString
+        (ResultTcString.Err
           (string.string-append
             "lower: owned cleanup field type is not a cleanup-owning struct "
             (tc-type-render resolved)))])))
@@ -40128,7 +40161,7 @@
               acc))]
         [(AstFieldOwnedCleanup)
           (match (lower-struct-cleanup-name-for-type ctx ty)
-            [(OkTcString cleanup-name)
+            [(ResultTcString.Ok cleanup-name)
               (OkAstExprList
                 (ast-expr-cons
                   (lower-struct-cleanup-call-expr
@@ -40136,7 +40169,7 @@
                     value-name
                     (intern-str field-name))
                   acc))]
-            [(ErrTcString message) (ErrAstExprList message)])])]))
+            [(ResultTcString.Err message) (ErrAstExprList message)])])]))
 
 (define (lower-struct-cleanup-body-fields
   [ctx : TcContext]
@@ -40305,14 +40338,14 @@
   [dispatch-name : String]
   [wanted : AstDispatchIsa]) : TcMaybeString
   (match variants
-    [(AstDispatchVariantNil) (TcNoString)]
+    [(AstDispatchVariantNil) (TcMaybeString.No)]
     [(AstDispatchVariantCons variant rest)
       (let
         [rest : AstDispatchVariantList (box-get rest)]
         (match variant
           [(AstDispatchVariant isa variant-name)
             (if (tc-dispatch-isa-eq? isa wanted)
-              (TcSomeString
+              (TcMaybeString.Some
                 (lower-dispatch-variant-internal-name
                   dispatch-name
                   isa
@@ -40548,7 +40581,7 @@
         CompilerIrBlockList.Nil)]
     [with-avx2 : CompilerIrBlockList
       (match maybe-avx2
-        [(TcSomeString avx2-name)
+        [(TcMaybeString.Some avx2-name)
           (compiler-ir-block-cons
             (lower-dispatch-select-block
               "select_avx2"
@@ -40559,9 +40592,9 @@
               ret-ty
               (+ base 25))
             scalar-blocks)]
-        [(TcNoString) scalar-blocks])]
+        [(TcMaybeString.No) scalar-blocks])]
     (match maybe-avx512
-      [(TcSomeString avx512-name)
+      [(TcMaybeString.Some avx512-name)
         (compiler-ir-block-cons
           (lower-dispatch-select-block
             "select_avx512"
@@ -40572,17 +40605,17 @@
             ret-ty
             (+ base 26))
           with-avx2)]
-      [(TcNoString) with-avx2])))
+      [(TcMaybeString.No) with-avx2])))
 
 (define (lower-dispatch-resolve-label
   [maybe-avx2 : TcMaybeString]
   [maybe-avx512 : TcMaybeString]) : String
   (match maybe-avx512
-    [(TcSomeString _) "check_avx512"]
-    [(TcNoString)
+    [(TcMaybeString.Some _) "check_avx512"]
+    [(TcMaybeString.No)
       (match maybe-avx2
-        [(TcSomeString _) "check_avx2"]
-        [(TcNoString) "select_scalar"])]))
+        [(TcMaybeString.Some _) "check_avx2"]
+        [(TcMaybeString.No) "select_scalar"])]))
 
 (define (lower-dispatch-resolve-blocks
   [maybe-avx2 : TcMaybeString]
@@ -40592,7 +40625,7 @@
   (let
     [with-avx2 : CompilerIrBlockList
       (match maybe-avx2
-        [(TcSomeString _)
+        [(TcMaybeString.Some _)
           (lower-dispatch-feature-blocks
             "check_avx2"
             6
@@ -40601,20 +40634,20 @@
             "select_scalar"
             (+ base 12)
             tail)]
-        [(TcNoString) tail])]
+        [(TcMaybeString.No) tail])]
     (match maybe-avx512
-      [(TcSomeString _)
+      [(TcMaybeString.Some _)
         (lower-dispatch-feature-blocks
           "check_avx512"
           230
           1073807360
           "select_avx512"
           (match maybe-avx2
-            [(TcSomeString _) "check_avx2"]
-            [(TcNoString) "select_scalar"])
+            [(TcMaybeString.Some _) "check_avx2"]
+            [(TcMaybeString.No) "select_scalar"])
           (+ base 1)
           with-avx2)]
-      [(TcNoString) with-avx2])))
+      [(TcMaybeString.No) with-avx2])))
 
 (define (lower-dispatch-thunk-function
   [logical-name : String]
@@ -40654,7 +40687,7 @@
           names
           logical-name
           (AstDispatchScalar))
-          [(TcSomeString scalar-name)
+          [(TcMaybeString.Some scalar-name)
             (let
               [blocks : CompilerIrBlockList
                 (compiler-ir-block-cons
@@ -40692,7 +40725,7 @@
                     (compiler-ir-block-list-compact blocks))
                   CompilerIrFunctionList.Nil)
                 spans))]
-          [(TcNoString)
+          [(TcMaybeString.No)
             (ErrLowerFunction
               (box
                 (lower-diagnostic
@@ -40852,7 +40885,7 @@
     [logical-name : String
       (lower-current-decl-logical-name-cache name-cache module name)]
     (match (tc-lookup local-top-env name)
-      [(OkTcType dispatch-ty)
+      [(ResultTcType.Ok dispatch-ty)
         (let
           [fn-ty : AstType
             (tc-type-without-regions (tc-resolve-type decl-ctx dispatch-ty))]
@@ -40889,7 +40922,7 @@
                         thunk-spans)))]
                 [(ErrLowerFunction message) (ErrLowerDispatchDecl message)])]
             [(ErrLowerFunction message) (ErrLowerDispatchDecl message)]))]
-      [(ErrTcType message)
+      [(ResultTcType.Err message)
         (ErrLowerDispatchDecl (box (lower-diagnostic message)))])))
 
 (define (lower-rvo-early-return-functions-from-decls-in-module
@@ -40993,7 +41026,7 @@
         spans
         names
         (lower-name-cache-overlay (LowerNameNil))
-        (lower-type-cache-overlay (TcTypeNil))
+        (lower-type-cache-overlay (TcTypeEnv.Nil))
         dispatch-variants
         mode
         ""))))
@@ -41072,7 +41105,7 @@
                       decl-ctx
                       cur-local-top-env
                       decl)
-                      [(OkTcType ty)
+                      [(ResultTcType.Ok ty)
                         (let
                           [global-ty : AstType (tc-type-without-regions ty)]
                           [global-name : String
@@ -41136,7 +41169,7 @@
                                   (begin
                                     (set! result (ErrLowerDecls init-message))
                                     (set! done true))])]))]
-                      [(ErrTcType message)
+                      [(ResultTcType.Err message)
                         (begin
                           (set!
                             result
@@ -41513,7 +41546,7 @@
       (match (typecheck-compiler-specialized-program-with-paths-checked
         specialized
         AstDeclPathNil)
-        [(OkCompilerTypecheckChecked _ ctx top-env)
+        [(ResultCompilerTypecheckChecked.Ok _ ctx top-env)
           (let
             [alias-names : LowerNameEnv
               (match specialized
@@ -41532,7 +41565,7 @@
               specialized
               alias-names
               mode))]
-        [(ErrCompilerTypecheckChecked diag) (ErrCompilerLower diag)])]
+        [(ResultCompilerTypecheckChecked.Err diag) (ErrCompilerLower diag)])]
     [(ResultSpecProgram.Err diag) (ErrCompilerLower diag)]))
 
 (define (lower-compiler-program-unlocated-mode
@@ -41682,7 +41715,10 @@
                                   stdlib-roots
                                   cache-scope
                                   clone-pools)
-                                  [(OkCompilerTypecheckChecked _ ctx top-env)
+                                  [(ResultCompilerTypecheckChecked.Ok
+                                      _
+                                      ctx
+                                      top-env)
                                     (begin
                                       (ast-node-pool-context-install!
                                         clone-pools)
@@ -41741,7 +41777,7 @@
                                                 (lower-diagnostic-with-path
                                                   (box-get diag)
                                                   entry-path))))]))]
-                                  [(ErrCompilerTypecheckChecked diag)
+                                  [(ResultCompilerTypecheckChecked.Err diag)
                                     (begin
                                       (cfg
                                         compile-profile
@@ -53110,7 +53146,7 @@
         [(InternLookupMissing) true])]
     [env : TcTypeEnv
       (tc-bind-id
-        (tc-bind-id TcTypeNil qualified-id (AstTyI64))
+        (tc-bind-id TcTypeEnv.Nil qualified-id (AstTyI64))
         fallback-id
         (AstTyBool))]
     [cache : LowerTypeCache (lower-type-cache-from-env env)]
@@ -53127,17 +53163,17 @@
       fallback-primary-missing-before
       missing-before
       (match (lower-type-cache-lookup cache qualified-name)
-        [(OkTcType ty) (tc-type-eq ty (AstTyI64))]
-        [(ErrTcType _) false])
+        [(ResultTcType.Ok ty) (tc-type-eq ty (AstTyI64))]
+        [(ResultTcType.Err _) false])
       (match (lower-type-cache-lookup-hygiene cache qualified-hygiene)
-        [(OkTcType ty) (tc-type-eq ty (AstTyI64))]
-        [(ErrTcType _) false])
+        [(ResultTcType.Ok ty) (tc-type-eq ty (AstTyI64))]
+        [(ResultTcType.Err _) false])
       (match (lower-type-cache-lookup-hygiene cache fallback-hygiene)
-        [(OkTcType ty) (tc-type-eq ty (AstTyBool))]
-        [(ErrTcType _) false])
+        [(ResultTcType.Ok ty) (tc-type-eq ty (AstTyBool))]
+        [(ResultTcType.Err _) false])
       (match (lower-type-cache-lookup cache missing)
-        [(OkTcType _) false]
-        [(ErrTcType _) true])
+        [(ResultTcType.Ok _) false]
+        [(ResultTcType.Err _) true])
       (match (intern-lookup fallback-primary)
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])

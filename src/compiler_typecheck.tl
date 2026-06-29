@@ -106,9 +106,9 @@
                                           cache-scope
                                           pools)]
                                       [(ResultSpecProgramWithPaths.Err diag)
-                                        (ErrCompilerTypecheck diag)]))]
+                                        (ResultCompilerTypecheck.Err diag)]))]
                                 [(ResultCompilerSymbols.Err message)
-                                  (ErrCompilerTypecheck
+                                  (ResultCompilerTypecheck.Err
                                     (box (tc-diag-at-start message)))])
                               (typecheck-compiler-specialized-program-with-paths-cache-and-pools
                                 normalized
@@ -117,15 +117,17 @@
                                 cache-scope
                                 pools)))]
                         [(ResultGenProgramWithPaths.Err diag)
-                          (ErrCompilerTypecheck diag)])
+                          (ResultCompilerTypecheck.Err diag)])
                       (typecheck-compiler-specialized-program-with-paths-cache-and-pools
                         expanded
                         expanded-paths
                         stdlib-roots
                         cache-scope
                         pools)))]
-                [(ResultMacroExpand.Err diag) (ErrCompilerTypecheck diag)])]
-            [(ResultGenProgramWithPaths.Err diag) (ErrCompilerTypecheck diag)]))))))
+                [(ResultMacroExpand.Err diag)
+                  (ResultCompilerTypecheck.Err diag)])]
+            [(ResultGenProgramWithPaths.Err diag)
+              (ResultCompilerTypecheck.Err diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
@@ -209,9 +211,10 @@
                                           cache-scope
                                           pools)]
                                       [(ResultSpecProgramWithPaths.Err diag)
-                                        (ErrCompilerTypecheckChecked diag)]))]
+                                        (ResultCompilerTypecheckChecked.Err
+                                          diag)]))]
                                 [(ResultCompilerSymbols.Err message)
-                                  (ErrCompilerTypecheckChecked
+                                  (ResultCompilerTypecheckChecked.Err
                                     (box (tc-diag-at-start message)))])
                               (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
                                 normalized
@@ -220,7 +223,7 @@
                                 cache-scope
                                 pools)))]
                         [(ResultGenProgramWithPaths.Err diag)
-                          (ErrCompilerTypecheckChecked diag)])
+                          (ResultCompilerTypecheckChecked.Err diag)])
                       (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
                         expanded
                         expanded-paths
@@ -228,9 +231,9 @@
                         cache-scope
                         pools)))]
                 [(ResultMacroExpand.Err diag)
-                  (ErrCompilerTypecheckChecked diag)])]
+                  (ResultCompilerTypecheckChecked.Err diag)])]
             [(ResultGenProgramWithPaths.Err diag)
-              (ErrCompilerTypecheckChecked diag)]))))))
+              (ResultCompilerTypecheckChecked.Err diag)]))))))
 
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]
@@ -362,26 +365,26 @@
                     ""
                     (ast-node-pool-context-capture-active))]
                 (match (tc-program-source-types-policy-ok ctx program)
-                  [(OkTcUnit)
+                  [(ResultTcUnit.Ok)
                     (match (tc-source-expr-policy-ok ctx expr)
-                      [(OkTcUnit)
+                      [(ResultTcUnit.Ok)
                         (match (tc-build-top-env ctx program)
-                          [(OkTcEnv top-env)
+                          [(ResultTcEnv.Ok top-env)
                             (match (tc-check-decls
                               ctx
                               top-env
                               decls
                               (CompilerTypecheckSummary 0 0 0))
-                              [(OkCompilerTypecheck _)
+                              [(ResultCompilerTypecheck.Ok _)
                                 (tc-expr ctx top-env expr)]
-                              [(ErrCompilerTypecheck diag)
-                                (ErrTcType
+                              [(ResultCompilerTypecheck.Err diag)
+                                (ResultTcType.Err
                                   (compiler-diagnostic-message (box-get diag)))])]
-                          [(ErrTcEnv message) (ErrTcType message)])]
-                      [(ErrTcUnit message) (ErrTcType message)])]
-                  [(ErrTcUnit message) (ErrTcType message)]))]
-            [(ResultCompilerRegistries.Err message) (ErrTcType message)])]
-        [(ResultCompilerSymbols.Err message) (ErrTcType message)]))))
+                          [(ResultTcEnv.Err message) (ResultTcType.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+            [(ResultCompilerRegistries.Err message) (ResultTcType.Err message)])]
+        [(ResultCompilerSymbols.Err message) (ResultTcType.Err message)]))))
 
 (define (typecheck-compiler-source [src : String]) : ResultCompilerTypecheck
   (let
@@ -401,9 +404,9 @@
                   (ast-program decls)
                   paths)]
               [(ResultCompilerLoadWithPaths.Err diag)
-                (ErrCompilerTypecheck diag)])
+                (ResultCompilerTypecheck.Err diag)])
             (typecheck-compiler-program program))]
-        [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
+        [(ErrAstProgramDiagnostic diag) (ResultCompilerTypecheck.Err diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)
       result)))
@@ -416,7 +419,7 @@
     [result : ResultCompilerTypecheck
       (match (parse-ast-source-diagnostic-with-cfg "" src cfgs)
         [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
-        [(ErrAstProgramDiagnostic diag) (ErrCompilerTypecheck diag)])]
+        [(ErrAstProgramDiagnostic diag) (ResultCompilerTypecheck.Err diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)
       result)))
@@ -543,16 +546,16 @@
 
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-error-code-ok?
   [src : String]
   [want-code : String]
   [want-category : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (match (compiler-diagnostic-code (box-get diag))
         [(CompilerDiagnosticSomeString code)
           (if (string.string-eq code want-code)
@@ -562,7 +565,7 @@
               [CompilerDiagnosticNoString false])
             false)]
         [CompilerDiagnosticNoString false])]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-secondary-count
   [labels : CompilerDiagnosticLabelList]) : i64
@@ -583,7 +586,7 @@
   [want-col : i64]
   [want-secondary-count : i64]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (and
         (string.string-eq (compiler-diagnostic-message (box-get diag)) want)
         (= (compiler-diagnostic-line (box-get diag)) want-line)
@@ -593,15 +596,15 @@
             (compiler-diagnostic-secondary-spans (box-get diag)))
           want-secondary-count)
         (compiler-typecheck-help-present? (box-get diag)))]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-program-error-ok?
   [program : AstProgram]
   [want : String]) : bool
   (match (typecheck-compiler-program program)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 ;; #2357: with the growing ty-node pool a compile that starts with the pool at
 ;; capacity grows the backing array and succeeds rather than failing closed with
@@ -619,8 +622,8 @@
         [grew : bool (> (ty-node-pool-capacity) capacity)]
         [ok : bool
           (match result
-            [(OkCompilerTypecheck _) grew]
-            [(ErrCompilerTypecheck _) false])]
+            [(ResultCompilerTypecheck.Ok _) grew]
+            [(ResultCompilerTypecheck.Err _) false])]
         (begin
           (ty-node-pool-reset!)
           ok)))))
@@ -646,8 +649,8 @@
       (match (typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-prefix-cache-paths entry-path))
-        [(OkCompilerTypecheck _) true]
-        [(ErrCompilerTypecheck _) false])]
+        [(ResultCompilerTypecheck.Ok _) true]
+        [(ResultCompilerTypecheck.Err _) false])]
     [(ErrAstProgramDiagnostic _) false]))
 
 (define (compiler-typecheck-prefix-cache-smoke-ok?) : bool
@@ -698,19 +701,19 @@
 
 (define (compiler-typecheck-ok-score? [src : String] [want : i64]) : bool
   (match (typecheck-compiler-source src)
-    [(OkCompilerTypecheck summary)
+    [(ResultCompilerTypecheck.Ok summary)
       (= (compiler-typecheck-summary-score summary) want)]
-    [(ErrCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Err _) false]))
 
 (define (compiler-typecheck-ok? [src : String]) : bool
   (match (typecheck-compiler-source src)
-    [(OkCompilerTypecheck _) true]
-    [(ErrCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) true]
+    [(ResultCompilerTypecheck.Err _) false]))
 
 (define (compiler-typecheck-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
   (match (typecheck-compiler-source-with-cfg src cfgs)
-    [(OkCompilerTypecheck _) true]
-    [(ErrCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) true]
+    [(ResultCompilerTypecheck.Err _) false]))
 
 (define (compiler-typecheck-unbound-source) : String
   "(define (main) : i64 missing)")
@@ -1225,8 +1228,8 @@
 (define (compiler-typecheck-generated-diagnostic-ok?) : bool
   (match (typecheck-compiler-source
     (compiler-typecheck-generated-decl-bad-source))
-    [(OkCompilerTypecheck _) false]
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Ok _) false]
+    [(ResultCompilerTypecheck.Err diag)
       (let
         [message-ok : bool
           (string.string-eq
@@ -1608,9 +1611,9 @@
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
-                    [(OkTcReprCLayout packet)
+                    [(ResultTcReprCLayout.Ok packet)
                       (match (tc-repr-c-struct-layout ctx "Outer")
-                        [(OkTcReprCLayout outer)
+                        [(ResultTcReprCLayout.Ok outer)
                           (and
                             (= (tc-repr-c-layout-size packet) 24)
                             (= (tc-repr-c-layout-align packet) 8)
@@ -1641,8 +1644,8 @@
                                 (tc-repr-c-layout-fields outer)
                                 "tail")
                               12))]
-                        [(ErrTcReprCLayout _) false])]
-                    [(ErrTcReprCLayout _) false]))]
+                        [(ResultTcReprCLayout.Err _) false])]
+                    [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
@@ -1665,7 +1668,7 @@
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
-                    [(OkTcReprCLayout layout)
+                    [(ResultTcReprCLayout.Ok layout)
                       (and
                         (= (tc-repr-c-layout-size layout) 16)
                         (= (tc-repr-c-layout-align layout) 8)
@@ -1684,7 +1687,7 @@
                             (tc-repr-c-layout-fields layout)
                             "tag")
                           8))]
-                    [(ErrTcReprCLayout _) false]))]
+                    [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
@@ -1756,8 +1759,9 @@
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
-                    [(OkTcReprCLayout _) false]
-                    [(ErrTcReprCLayout message) (string.string-eq message want)]))]
+                    [(ResultTcReprCLayout.Ok _) false]
+                    [(ResultTcReprCLayout.Err message)
+                      (string.string-eq message want)]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
@@ -1780,7 +1784,7 @@
                       ""
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
-                    [(OkTcReprCLayout layout)
+                    [(ResultTcReprCLayout.Ok layout)
                       (and
                         (= (tc-repr-c-layout-size layout) 48)
                         (= (tc-repr-c-layout-align layout) 8)
@@ -1804,7 +1808,7 @@
                             (tc-repr-c-layout-fields layout)
                             "tail")
                           40))]
-                    [(ErrTcReprCLayout _) false]))]
+                    [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
       [(ErrAstProgram _) false])))
@@ -1844,14 +1848,14 @@
                     ""
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
-            [(ResultCompilerRegistries.Err message) (ErrTcUnit message)])]
-        [(ResultCompilerSymbols.Err message) (ErrTcUnit message)])]
-    [(ErrAstProgram message) (ErrTcUnit message)]))
+            [(ResultCompilerRegistries.Err message) (ResultTcUnit.Err message)])]
+        [(ResultCompilerSymbols.Err message) (ResultTcUnit.Err message)])]
+    [(ErrAstProgram message) (ResultTcUnit.Err message)]))
 
 (define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
-    [(OkTcUnit) true]
-    [(ErrTcUnit _) false]))
+    [(ResultTcUnit.Ok) true]
+    [(ResultTcUnit.Err _) false]))
 
 (define (compiler-typecheck-inline-layout-size-ok?
   [src : String]
@@ -1872,9 +1876,9 @@
                     ""
                     (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
-                  [(OkTcInlineAggregateLayout layout)
+                  [(ResultTcInlineAggregateLayout.Ok layout)
                     (= (tc-inline-aggregate-layout-size layout) want)]
-                  [(ErrTcInlineAggregateLayout _) false]))]
+                  [(ResultTcInlineAggregateLayout.Err _) false]))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
     [(ErrAstProgram _) false]))
@@ -1884,8 +1888,8 @@
   [name : String]
   [want : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
-    [(ErrTcUnit message) (string.string-eq message want)]
-    [(OkTcUnit) false]))
+    [(ResultTcUnit.Err message) (string.string-eq message want)]
+    [(ResultTcUnit.Ok) false]))
 
 (define (compiler-typecheck-inline-layout-query-source) : String
   "(defstruct InlinePacket
@@ -1923,7 +1927,7 @@
                 [ok : bool true]
                 (begin
                   (match (tc-inline-aggregate-layout-for ctx "InlinePacket")
-                    [(OkTcInlineAggregateLayout layout)
+                    [(ResultTcInlineAggregateLayout.Ok layout)
                       (begin
                         (if (= (tc-inline-aggregate-layout-size layout) 24)
                           unit
@@ -1957,9 +1961,9 @@
                           18)
                           unit
                           (set! ok false)))]
-                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-layout-for ctx "InlineChoice")
-                    [(OkTcInlineAggregateLayout layout)
+                    [(ResultTcInlineAggregateLayout.Ok layout)
                       (begin
                         (if (= (tc-inline-aggregate-layout-size layout) 24)
                           unit
@@ -2012,61 +2016,61 @@
                           8)
                           unit
                           (set! ok false)))]
-                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-layout-for ctx "ListI64")
-                    [(OkTcInlineAggregateLayout layout)
+                    [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
                         unit
                         (set! ok false))]
-                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-layout-for ctx "Tree")
-                    [(OkTcInlineAggregateLayout layout)
+                    [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
                         unit
                         (set! ok false))]
-                    [(ErrTcInlineAggregateLayout _) (set! ok false)])
+                    [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
                     (ast-ty-tuple (tc-type-list2 (AstTyU8) (AstTyI32))))
-                    [(OkTcLayoutInfo info)
+                    [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
                         (= (tc-layout-info-align info) 4))
                         unit
                         (set! ok false))]
-                    [(ErrTcLayoutInfo _) (set! ok false)])
+                    [(ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
                     (ast-ty-array
                       (ast-ty-tuple (tc-type-list2 (AstTyU8) (AstTyI32)))
                       2))
-                    [(OkTcLayoutInfo info)
+                    [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 16)
                         (= (tc-layout-info-align info) 4))
                         unit
                         (set! ok false))]
-                    [(ErrTcLayoutInfo _) (set! ok false)])
+                    [(ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
                     (ast-ty-box (AstTyStruct (intern "InlinePacket"))))
-                    [(OkTcLayoutInfo info)
+                    [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
                         (= (tc-layout-info-align info) 8))
                         unit
                         (set! ok false))]
-                    [(ErrTcLayoutInfo _) (set! ok false)])
+                    [(ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
                     (ast-ty-dyn-array (AstTyStruct (intern "InlinePacket"))))
-                    [(OkTcLayoutInfo info)
+                    [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
                         (= (tc-layout-info-align info) 8))
                         unit
                         (set! ok false))]
-                    [(ErrTcLayoutInfo _) (set! ok false)])
+                    [(ResultTcLayoutInfo.Err _) (set! ok false)])
                   ok))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
@@ -4646,7 +4650,7 @@
 
 (define (compiler-typecheck-located-source-ok? [src : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (if (= (compiler-diagnostic-line (box-get diag)) 2)
         (if (> (compiler-diagnostic-col (box-get diag)) 0)
           (string.string-eq
@@ -4654,7 +4658,7 @@
             "typecheck: unbound name missing")
           false)
         false)]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-located-ok?) : bool
   (and
@@ -4664,14 +4668,14 @@
       (compiler-typecheck-located-value-source))
     (match (typecheck-compiler-source
       (compiler-typecheck-call-arity-located-source))
-      [(ErrCompilerTypecheck diag)
+      [(ResultCompilerTypecheck.Err diag)
         (and
           (string.string-eq
             (compiler-diagnostic-message (box-get diag))
             "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
           (= (compiler-diagnostic-line (box-get diag)) 9)
           (= (compiler-diagnostic-col (box-get diag)) 7))]
-      [(OkCompilerTypecheck _) false])))
+      [(ResultCompilerTypecheck.Ok _) false])))
 
 ;; Statement and control-flow type rules (#1042): if/while conditions, the
 ;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
@@ -7834,11 +7838,11 @@
       unit
       (io.panic "typecheck: array-builtin signature tests failed"))
     (match (typecheck-compiler-source (compiler-typecheck-smoke-source))
-      [(OkCompilerTypecheck summary)
+      [(ResultCompilerTypecheck.Ok summary)
         (if (= (compiler-typecheck-summary-score summary) 121)
           unit
           (panic "typecheck: smoke score mismatch"))]
-      [(ErrCompilerTypecheck diag)
+      [(ResultCompilerTypecheck.Err diag)
         (panic (compiler-diagnostic-message (box-get diag)))])
     unit))
 
@@ -9484,7 +9488,7 @@
       (match (typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-dup-extern-paths))
-        [(ErrCompilerTypecheck diag)
+        [(ResultCompilerTypecheck.Err diag)
           (let
             [message : String (compiler-diagnostic-message (box-get diag))]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
@@ -9494,7 +9498,7 @@
               (string.string-contains (& message) (& duplicate-needle))
               (string.string-contains (& message) (& main-path))
               (string.string-contains (& message) (& assets-path))))]
-        [(OkCompilerTypecheck _) false])]
+        [(ResultCompilerTypecheck.Ok _) false])]
     [(ErrAstProgram _) false]))
 
 (define (compiler-typecheck-cross-module-mismatch-source) : String

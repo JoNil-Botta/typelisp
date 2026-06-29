@@ -461,7 +461,7 @@
     [(ResultReplDeclList.Ok decls)
       (typecheck-compiler-program (ast-program decls))]
     [(ResultReplDeclList.Err message)
-      (ErrCompilerTypecheck (box (tc-diag-at-start message)))]))
+      (ResultCompilerTypecheck.Err (box (tc-diag-at-start message)))]))
 
 (define (repl-report-run-status [status : i64]) : unit
   (if (= status 0)
@@ -515,12 +515,12 @@
   (match (repl-load-session-decls session-source)
     [(ResultReplDeclList.Ok decls)
       (match (typecheck-compiler-repl-expr decls expr)
-        [(OkTcType ty)
+        [(ResultTcType.Ok ty)
           (match (repl-scratch-source session-source expr-source ty)
             [(ResultReplString.Ok scratch-source)
               (repl-run-scratch-source scratch-source)]
             [(ResultReplString.Err message) (repl-print-error-line message)])]
-        [(ErrTcType message)
+        [(ResultTcType.Err message)
           (repl-print-error-line (string.string-append "Error: " message))])]
     [(ResultReplDeclList.Err message)
       (repl-print-error-line (string.string-append "Error: " message))]))
@@ -540,8 +540,9 @@
             (match (repl-load-session-decls session-source)
               [(ResultReplDeclList.Ok decls)
                 (match (typecheck-compiler-repl-expr decls (ast-node-get expr))
-                  [(OkTcType ty) (repl-stdout-write-line (repl-type-render ty))]
-                  [(ErrTcType message)
+                  [(ResultTcType.Ok ty)
+                    (repl-stdout-write-line (repl-type-render ty))]
+                  [(ResultTcType.Err message)
                     (repl-print-error-line
                       (string.string-append "Error: " message))])]
               [(ResultReplDeclList.Err message)
@@ -560,8 +561,8 @@
           (let
             [candidate : String (repl-session-candidate session-source input)]
             (match (repl-typecheck-session-source candidate)
-              [(OkCompilerTypecheck _) candidate]
-              [(ErrCompilerTypecheck diag)
+              [(ResultCompilerTypecheck.Ok _) candidate]
+              [(ResultCompilerTypecheck.Err diag)
                 (begin
                   (repl-report-diagnostic (box-get diag))
                   session-source)]))]

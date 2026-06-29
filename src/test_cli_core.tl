@@ -1851,8 +1851,8 @@
                   cache-scope-prefix
                   roots
                   cfgs))
-                [(OkCompilerTypecheck _) 0]
-                [(ErrCompilerTypecheck diag)
+                [(ResultCompilerTypecheck.Ok _) 0]
+                [(ResultCompilerTypecheck.Err diag)
                   (begin
                     (io.print-error
                       (compiler-diagnostic-render
@@ -2792,8 +2792,8 @@
     (tltest-paths-with-print-runtime target harness-paths)
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerTypecheck _) true]
-    [(ErrCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) true]
+    [(ResultCompilerTypecheck.Err _) false]))
 
 (define (tltest-function-base-defined?
   [funcs : CompilerIrFunctionList]
@@ -3007,14 +3007,14 @@
     (tltest-paths-with-print-runtime target paths)
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerTypecheck _)
+    [(ResultCompilerTypecheck.Ok _)
       (begin
         (io.print-string
           (string.string-append
             "TypeLisp test typecheck passed: "
             (string.string-append (string.int->string count) " test(s)\n")))
         0)]
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
@@ -3288,11 +3288,11 @@
     paths
     roots
     (tltest-typecheck-cache-scope roots target))
-    [(OkCompilerTypecheck _)
+    [(ResultCompilerTypecheck.Ok _)
       (begin
         (io.print-string "TypeLisp test typecheck passed: 0 test(s)\n")
         0)]
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))
@@ -3639,8 +3639,8 @@
         paths
         roots
         (tltest-typecheck-cache-scope roots target))
-        [(OkCompilerTypecheck _) (ResultTestPackageTotals.Ok 1 1)]
-        [(ErrCompilerTypecheck diag)
+        [(ResultCompilerTypecheck.Ok _) (ResultTestPackageTotals.Ok 1 1)]
+        [(ResultCompilerTypecheck.Err diag)
           (begin
             (io.print-error (compiler-diagnostic-render (box-get diag)))
             (ResultTestPackageTotals.Err 1))])

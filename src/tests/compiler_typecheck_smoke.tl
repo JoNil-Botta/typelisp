@@ -769,7 +769,7 @@
   [src : String]
   [want-message-fragment : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (let
         [message : String (compiler-diagnostic-message (box-get diag))]
         (and
@@ -784,7 +784,7 @@
           (compiler-typecheck-secondary-label-contains?
             (compiler-diagnostic-secondary-spans (box-get diag))
             "remains live")))]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-borrow-diagnostic-tests-ok?) : bool
   (and
@@ -886,7 +886,7 @@
   [want-message : String]
   [want-label-fragment : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (and
         (string.string-eq
           (compiler-diagnostic-message (box-get diag))
@@ -899,7 +899,7 @@
         (compiler-typecheck-secondary-label-contains?
           (compiler-diagnostic-secondary-spans (box-get diag))
           want-label-fragment))]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-labeled-cleanup-move-error-ok?
   [src : String]
@@ -907,7 +907,7 @@
   [want-move-label-fragment : String]
   [want-owner-label-fragment : String]) : bool
   (match (typecheck-compiler-source src)
-    [(ErrCompilerTypecheck diag)
+    [(ResultCompilerTypecheck.Err diag)
       (and
         (string.string-eq
           (compiler-diagnostic-message (box-get diag))
@@ -923,7 +923,7 @@
         (compiler-typecheck-secondary-label-contains?
           (compiler-diagnostic-secondary-spans (box-get diag))
           want-owner-label-fragment))]
-    [(OkCompilerTypecheck _) false]))
+    [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-move-diagnostic-tests-ok?) : bool
   (and
@@ -1830,8 +1830,8 @@
           "typecheck-prefix-smoke"
           stdlib-roots
           cfgs))
-        [(OkCompilerTypecheck _) true]
-        [(ErrCompilerTypecheck _) false])]
+        [(ResultCompilerTypecheck.Ok _) true]
+        [(ResultCompilerTypecheck.Err _) false])]
     [(ErrAstProgramDiagnostic _) false]))
 
 (define (compiler-typecheck-smoke-prefix-cache-root-isolation-ok?) : bool
@@ -1963,8 +1963,8 @@
           "typecheck-prefix-smoke"
           stdlib-roots
           cfgs))
-        [(OkCompilerTypecheck _) true]
-        [(ErrCompilerTypecheck _) false])]
+        [(ResultCompilerTypecheck.Ok _) true]
+        [(ResultCompilerTypecheck.Err _) false])]
     [(ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?) : bool
@@ -2132,13 +2132,13 @@
               "typecheck-specialized-import-path-smoke"
               roots
               cfgs))
-            [(ErrCompilerTypecheck diag)
+            [(ResultCompilerTypecheck.Err diag)
               (and
                 (string.string-eq (compiler-diagnostic-path (box-get diag)) dep)
                 (string.string-eq
                   (compiler-diagnostic-message (box-get diag))
                   "typecheck: value definition type mismatch"))]
-            [(OkCompilerTypecheck _) false])]
+            [(ResultCompilerTypecheck.Ok _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-typecheck-smoke-macro-dependency-helper-source) : String
@@ -2212,7 +2212,7 @@
               [names : TcStringList
                 (macro-collect-surface-summary-macro-names
                   (compiler-load-surface-summaries)
-                  TcStringNil)]
+                  TcStringList.Nil)]
               (and
                 (tc-string-list-contains names "hook")
                 (macro-surface-macro-in-module?
@@ -2296,7 +2296,7 @@
             (match (typecheck-compiler-program-with-paths-checked
               entry-program
               AstDeclPathNil)
-              [(OkCompilerTypecheckChecked _ _ _)
+              [(ResultCompilerTypecheckChecked.Ok _ _ _)
                 (set!
                   ok
                   (and
@@ -2304,7 +2304,7 @@
                     (if (= expected-forces 0)
                       (= (tc-lazy-import-summary-macro-force-count) 0)
                       (> (tc-lazy-import-summary-macro-force-count) 0))))]
-              [(ErrCompilerTypecheckChecked _) (set! ok false)])]
+              [(ResultCompilerTypecheckChecked.Err _) (set! ok false)])]
           [(ErrAstProgramDiagnostic _) (set! ok false)])
         (set! ok false))
       (compiler-typecheck-reset-file-state!)
@@ -2387,7 +2387,7 @@
           (match (typecheck-compiler-program-with-paths-checked
             program
             AstDeclPathNil)
-            [(OkCompilerTypecheckChecked _ ctx env)
+            [(ResultCompilerTypecheckChecked.Ok _ ctx env)
               (let
                 [entry-ctx : TcContext
                   (tc-context-with-module ctx "entry.module")]
@@ -2405,28 +2405,28 @@
                     entry-ctx
                     env
                     "helper.value")
-                    [(OkTcType _) true]
-                    [(ErrTcType _) false])
+                    [(ResultTcType.Ok _) true]
+                    [(ResultTcType.Err _) false])
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
                     "helper.get")
-                    [(OkTcType _) true]
-                    [(ErrTcType _) false])
+                    [(ResultTcType.Ok _) true]
+                    [(ResultTcType.Err _) false])
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
                     "helper.Choice.Full")
-                    [(OkTcType _) true]
-                    [(ErrTcType _) false])
+                    [(ResultTcType.Ok _) true]
+                    [(ResultTcType.Err _) false])
                   (match (tc-dotted-type-name-lookup-key
                     entry-ctx
                     "helper.Item")
-                    [(OkTcString key)
+                    [(ResultTcString.Ok key)
                       (string.string-eq key "helper.module/Item")]
-                    [(ErrTcString _) false])
+                    [(ResultTcString.Err _) false])
                   (match (tc-module-local-env entry-ctx env "entry.module")
-                    [(OkTcEnv local-env)
+                    [(ResultTcEnv.Ok local-env)
                       (and
                         (not
                           (tc-name-bound?
@@ -2436,10 +2436,10 @@
                           entry-ctx
                           local-env
                           "helper.value")
-                          [(OkTcType _) true]
-                          [(ErrTcType _) false]))]
-                    [(ErrTcEnv _) false])))]
-            [(ErrCompilerTypecheckChecked _) false])]
+                          [(ResultTcType.Ok _) true]
+                          [(ResultTcType.Err _) false]))]
+                    [(ResultTcEnv.Err _) false])))]
+            [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ErrAstProgramDiagnostic _) false])]
     (begin
       (compiler-typecheck-reset-file-state!)
@@ -2454,14 +2454,14 @@
           (match (typecheck-compiler-program-with-paths-checked
             (ast-program decls)
             paths)
-            [(OkCompilerTypecheckChecked _ _ env)
+            [(ResultCompilerTypecheckChecked.Ok _ _ env)
               (and
                 (> (tc-lazy-import-summary-backed-stub-count) 0)
                 (not
                   (tc-name-bound?
                     env
                     (compiler-symbol-module-key "vec" "I64Vec"))))]
-            [(ErrCompilerTypecheckChecked _) false])]
+            [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin
       (compiler-typecheck-reset-file-state!)

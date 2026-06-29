@@ -7296,6 +7296,66 @@
             [_ false])]
         [(CompilerRegNoLocation) false]))))
 
+;; Allocator-time free-caller-saved register query (full-LLVM-model Phase 1b).
+;; Mirrors the backend emit-time scavenge (compiler-backend-scavenge-pick-with-
+;; mask) but reads the allocator's assignment-table + interval-index: pick a
+;; caller-saved pool register that does NOT segment-conflict with `var` across its
+;; interval, PREFERRING `fallback` so the existing call-spanning %r9 pick stays
+;; byte-identical (the candidate gate already guarantees %r9 is free where this
+;; fires). Shared by the call-spanning split and (later slices) the reload-temp /
+;; Phase-5 split policies. ABI note: iterates the SysV greedy pool; the only
+;; ABI-sensitive case is a NON-fallback pick, which does not occur until a future
+;; slice threads the target ABI here. Degrades to `fallback` if none free, like
+;; the backend scavenge-pick.
+(define (compiler-reg-free-caller-saved-iter
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [pool : CompilerRegStringList]
+  [remaining : i64]
+  [var : i64]
+  [fallback : String]) : String
+  (if (<= remaining 0)
+    fallback
+    (match pool
+      [(CompilerRegStringNil) fallback]
+      [(CompilerRegStringCons reg rest)
+        (if (not
+              (compiler-reg-assignment-table-location-conflicts?
+                assignments
+                interval-index
+                var
+                (- 0 1)
+                (CompilerRegRegister reg)))
+          reg
+          (compiler-reg-free-caller-saved-iter
+            assignments
+            interval-index
+            (box-get rest)
+            (- remaining 1)
+            var
+            fallback))])))
+
+(define (compiler-reg-free-caller-saved-for-var
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [var : i64]
+  [fallback : String]) : String
+  (if (not
+        (compiler-reg-assignment-table-location-conflicts?
+          assignments
+          interval-index
+          var
+          (- 0 1)
+          (CompilerRegRegister fallback)))
+    fallback
+    (compiler-reg-free-caller-saved-iter
+      assignments
+      interval-index
+      (compiler-reg-greedy-integer-pool)
+      (compiler-reg-greedy-caller-saved-count)
+      var
+      fallback)))
+
 (define (compiler-reg-assign-caller-saved-call-spanning-candidates
   [candidates : CompilerRegIntervalList]
   [assignments : CompilerRegAssignmentTable]
@@ -7330,24 +7390,31 @@
             var
             start
             end)
-            (begin
-              (array.array-set! shadow-regs var "%r9")
-              (compiler-reg-assign-caller-saved-call-spanning-candidates
-                (box-get rest)
-                (compiler-reg-assignment-table-insert
+            (let
+              [chosen : String
+                (compiler-reg-free-caller-saved-for-var
                   assignments
+                  interval-index
                   var
-                  (CompilerRegRegister "%r9"))
-                interval-index
-                ref-counts
-                group-vars
-                boundary-vars
-                direct-call-points
-                clobber-points
-                clobber-vars
-                require-segments
-                (compiler-live-set-insert shadows var)
-                shadow-regs))
+                  "%r9")]
+              (begin
+                (array.array-set! shadow-regs var chosen)
+                (compiler-reg-assign-caller-saved-call-spanning-candidates
+                  (box-get rest)
+                  (compiler-reg-assignment-table-insert
+                    assignments
+                    var
+                    (CompilerRegRegister chosen))
+                  interval-index
+                  ref-counts
+                  group-vars
+                  boundary-vars
+                  direct-call-points
+                  clobber-points
+                  clobber-vars
+                  require-segments
+                  (compiler-live-set-insert shadows var)
+                  shadow-regs)))
             (compiler-reg-assign-caller-saved-call-spanning-candidates
               (box-get rest)
               assignments

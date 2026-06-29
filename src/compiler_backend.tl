@@ -16208,9 +16208,16 @@
     (match target
       [(BackendTargetWindows) 0]
       [(BackendTargetLinux)
-        (if (= stack-count 0)
-          0
-          (compiler-backend-round-up-16 (* stack-count 8)))])))
+        ;; #65a-i: fold non-c-abi outgoing stack-arg space into the prologue
+        ;; frame (like Windows) -> return 0 here so the per-call sub/add
+        ;; auto-noops; the frame reserves it via instr-outgoing-stack-space.
+        ;; c-abi (aggregate-return) calls still dip per-call (their +16
+        ;; base-save region is per-call) -- that is #65a-ii.
+        (if c-abi?
+          (if (= stack-count 0)
+            0
+            (compiler-backend-round-up-16 (* stack-count 8)))
+          0)])))
 
 (define (compiler-backend-closure-call-arg-space
   [target : CompilerBackendTarget]
@@ -16287,6 +16294,24 @@
   (compiler-backend-windows-words-stack-space
     (compiler-backend-windows-stack-word-count args types 0 0 0 program-index)))
 
+;; #65a-i: the ACTUAL System V outgoing stack-arg space for a named call (NOT
+;; zeroed like call-arg-space-from's folded non-c-abi dip). Used to size the
+;; prologue frame's reserved outgoing region so non-c-abi calls need no per-call
+;; %rsp dip. The closure (indirect) cases reuse windows-closure-stack-arg-space,
+;; whose `1 + 2*args` word bound is an ABI-generic upper bound.
+(define (compiler-backend-linux-stack-arg-space
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (let
+    [stack-count : i64
+      (compiler-backend-call-stack-arg-count
+        target args types false 0 0 0 0 0 program-index)]
+    (if (= stack-count 0)
+      0
+      (compiler-backend-round-up-16 (* stack-count 8)))))
+
 ;; Indirect (closure) calls carry no callee signature here, so size conservatively:
 ;; the leading environment pointer plus two stack words per argument is always an
 ;; upper bound on the real footprint.
@@ -16343,41 +16368,71 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (compiler-backend-instr-outgoing-stack-space
+  [target : CompilerBackendTarget]
   [instr : CompilerIrInstr]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (match instr
-    [(IrInstrCall _ name args _)
-      (compiler-backend-windows-stack-arg-space
-        args
-        (compiler-backend-call-param-types-index name program-index)
-        program-index)]
-    [(IrInstrCallIndirect _ _ args _)
-      (compiler-backend-windows-closure-stack-arg-space args)]
-    [(IrInstrTailCall name args _)
-      (compiler-backend-windows-stack-arg-space
-        args
-        (compiler-backend-call-param-types-index name program-index)
-        program-index)]
-    [(IrInstrCallIndirectC _ _ args _)
-      (compiler-backend-windows-closure-stack-arg-space args)]
-    [(IrInstrCallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload _ name args _)
-          (+
-            (compiler-backend-windows-stack-arg-space
-              args
-              (compiler-backend-call-param-types-index name program-index)
-              program-index)
-            16)])]
-    [(IrInstrCallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
-          (+ (compiler-backend-windows-closure-stack-arg-space args) 16)])]
-    [(IrInstrTailCallIndirect _ args _)
-      (compiler-backend-windows-closure-stack-arg-space args)]
-    [_ 0]))
+  (match target
+    [(BackendTargetWindows)
+      (match instr
+        [(IrInstrCall _ name args _)
+          (compiler-backend-windows-stack-arg-space
+            args
+            (compiler-backend-call-param-types-index name program-index)
+            program-index)]
+        [(IrInstrCallIndirect _ _ args _)
+          (compiler-backend-windows-closure-stack-arg-space args)]
+        [(IrInstrTailCall name args _)
+          (compiler-backend-windows-stack-arg-space
+            args
+            (compiler-backend-call-param-types-index name program-index)
+            program-index)]
+        [(IrInstrCallIndirectC _ _ args _)
+          (compiler-backend-windows-closure-stack-arg-space args)]
+        [(IrInstrCallCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallCAbiStoreResultPayload _ name args _)
+              (+
+                (compiler-backend-windows-stack-arg-space
+                  args
+                  (compiler-backend-call-param-types-index name program-index)
+                  program-index)
+                16)])]
+        [(IrInstrCallIndirectCAbiStoreResult payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrCallIndirectCAbiStoreResultPayload _ _ args _)
+              (+ (compiler-backend-windows-closure-stack-arg-space args) 16)])]
+        [(IrInstrTailCallIndirect _ args _)
+          (compiler-backend-windows-closure-stack-arg-space args)]
+        [_ 0])]
+    [(BackendTargetLinux)
+      ;; #65a-i: reserve the actual non-c-abi outgoing stack-arg space in the
+      ;; prologue frame so these calls need no per-call %rsp dip. c-abi
+      ;; (aggregate-return) calls still dip per-call -> 0 here (#65a-ii).
+      (match instr
+        [(IrInstrCall _ name args _)
+          (compiler-backend-linux-stack-arg-space
+            target
+            args
+            (compiler-backend-call-param-types-index name program-index)
+            program-index)]
+        [(IrInstrCallIndirect _ _ args _)
+          (compiler-backend-windows-closure-stack-arg-space args)]
+        [(IrInstrTailCall name args _)
+          (compiler-backend-linux-stack-arg-space
+            target
+            args
+            (compiler-backend-call-param-types-index name program-index)
+            program-index)]
+        [(IrInstrCallIndirectC _ _ args _)
+          (compiler-backend-windows-closure-stack-arg-space args)]
+        [(IrInstrCallCAbiStoreResult _) 0]
+        [(IrInstrCallIndirectCAbiStoreResult _) 0]
+        [(IrInstrTailCallIndirect _ args _)
+          (compiler-backend-windows-closure-stack-arg-space args)]
+        [_ 0])]))
 
 (define (compiler-backend-instr-seq-outgoing-stack-space
+  [target : CompilerBackendTarget]
   [instrs : CompilerIrInstrSeq]
   [max-space : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
@@ -16394,12 +16449,14 @@
             (compiler-reg-max
               out
               (compiler-backend-instr-outgoing-stack-space
+                target
                 (array.array-ref slots index)
                 program-index)))
           (set! index (+ index 1))))
       out)))
 
 (define (compiler-backend-blocks-outgoing-stack-space
+  [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [max-space : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
@@ -16409,14 +16466,17 @@
       (match block
         [(IrBlock _ instrs)
           (compiler-backend-blocks-outgoing-stack-space
+            target
             (box-get rest)
             (compiler-backend-instr-seq-outgoing-stack-space
+              target
               instrs
               max-space
               program-index)
             program-index)])]
     [(IrBlockArray seq)
       (compiler-backend-blocks-outgoing-stack-space
+        target
         (compiler-ir-block-seq-to-list seq)
         max-space
         program-index)]))
@@ -16432,10 +16492,22 @@
           (+
             (compiler-backend-outgoing-shadow-space target)
             (compiler-backend-blocks-outgoing-stack-space
+              target
               blocks
               0
               program-index)))]
-      [(BackendTargetLinux) (compiler-backend-outgoing-shadow-space target)])
+      ;; #65a-i: reserve the max non-c-abi outgoing stack-arg space in the frame
+      ;; so those calls need no per-call %rsp dip (mirrors Windows). c-abi
+      ;; (aggregate-return) calls still dip (they contribute 0 here).
+      [(BackendTargetLinux)
+        (compiler-backend-round-up-16
+          (+
+            (compiler-backend-outgoing-shadow-space target)
+            (compiler-backend-blocks-outgoing-stack-space
+              target
+              blocks
+              0
+              program-index)))])
     0))
 
 (define (compiler-backend-emit-scalar-stack-call-arg
@@ -30080,9 +30152,21 @@
 
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [target : CompilerBackendTarget]
-  [args : CompilerIrCallArgs]) : i64
+  [args : CompilerIrCallArgs]
+  [param-types : AstTypeList]
+  [program-index : CompilerBackendProgramIndex]) : i64
   (match target
-    [(BackendTargetLinux) 0]
+    ;; #65a-i: the adapter's forwarded call no longer dips on Linux -> reserve
+    ;; its actual outgoing space in the adapter frame.
+    [(BackendTargetLinux)
+      (compiler-backend-round-up-16
+        (+
+          (compiler-backend-outgoing-shadow-space target)
+          (compiler-backend-linux-stack-arg-space
+            target
+            args
+            param-types
+            program-index)))]
     [(BackendTargetWindows)
       ;; #2386: no callee signature here -- size conservatively at two positions
       ;; per forwarded argument so a register-group never overruns the area.
@@ -30120,7 +30204,11 @@
             vars
             CompilerRegAssignmentNil
             (compiler-backend-type-list-has-group? param-types program-index)))
-        (compiler-backend-closure-adapter-outgoing-frame-space target args))]
+        (compiler-backend-closure-adapter-outgoing-frame-space
+          target
+          args
+          param-types
+          program-index))]
     [call-space : i64
       (compiler-backend-call-arg-space
         target

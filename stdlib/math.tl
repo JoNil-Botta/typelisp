@@ -1,16 +1,17 @@
 ;# Pure scalar math helpers.
 ;#
-;# This module provides small, zero-dependency helpers for scalar integer and
-;# float values. The v1 surface is deliberately limited to operations expressible
-;# with TypeLisp's built-in arithmetic and comparisons: absolute value, min,
-;# max, clamp, and sign predicates for `i64` and `f64`.
+;# This module provides small runtime-zero-dependency helpers for scalar integer
+;# and float values. The v1 surface is deliberately limited to operations
+;# expressible with TypeLisp's built-in arithmetic and comparisons: absolute
+;# value for `i64`, `f64`, and `f32`, plus min, max, clamp, and sign predicates
+;# for `i64` and `f64`.
 ;#
 ;# Transcendental and libm-style functions such as `sqrt`, `sin`, `cos`, `tan`,
 ;# `log`, and `pow` are intentionally not part of this module yet. They need a
 ;# later freestanding soft-math implementation or an explicit platform-extern
 ;# policy so Linux and Windows stdlib behavior does not accidentally diverge.
 ;#
-;# All helpers are non-allocating and import no other stdlib modules.
+;# Runtime helpers are non-allocating and import no runtime or platform externs.
 ;#
 ;# Usage: `(import stdlib.math)`
 ;#
@@ -36,6 +37,17 @@
     (if (< value 0)
       (- 0 value)
       value)))
+
+;: Return the absolute value of an `f64` or `f32` expression.
+;:
+;: The expression is evaluated once and then checked by ordinary float
+;: arithmetic rules.
+(defmacro (abs [value : Expr]) : Expr
+  `(let
+    [__math_abs_value ,value]
+    (if (< __math_abs_value 0.0)
+      (- 0.0 __math_abs_value)
+      __math_abs_value)))
 
 ;: Return the smaller `i64` value.
 (define (math-i64-min [a : i64] [b : i64]) : i64
@@ -79,6 +91,12 @@
 (define (math-f64-abs [value : f64]) : f64
   (if (< value 0.0)
     (- 0.0 value)
+    value))
+
+;: Return the absolute value of an `f32`.
+(define (math-f32-abs [value : f32]) : f32
+  (if (< value (cast 0.0 : f32))
+    (- (cast 0.0 : f32) value)
     value))
 
 ;: Return the smaller `f64` value according to TypeLisp scalar comparison.
@@ -189,6 +207,8 @@
         (begin
           (/ 1 0)
           unit))]
+    [abs-neg : f64 -2.5]
+    [abs-want : f64 2.5]
     (begin
       (if (= (stdlib.math.math-f64-abs -2.5) 2.5)
         unit
@@ -197,6 +217,9 @@
         unit
         (fail))
       (if (= (stdlib.math.math-f64-abs 2.5) 2.5)
+        unit
+        (fail))
+      (if (= (stdlib.math.abs abs-neg) abs-want)
         unit
         (fail))
       (if (= (stdlib.math.math-f64-min -3.5 9.25) -3.5)
@@ -227,5 +250,31 @@
         unit
         (fail))
       (if (not (stdlib.math.math-f64-negative? 0.0))
+        unit
+        (fail)))))
+
+(test
+  math-f32-api
+  (let
+    [fail : (-> unit)
+      (lambda () : unit
+        (begin
+          (/ 1 0)
+          unit))]
+    [neg : f32 -2.5]
+    [zero : f32 0.0]
+    [pos : f32 2.5]
+    [want : f32 2.5]
+    (begin
+      (if (= (stdlib.math.math-f32-abs neg) want)
+        unit
+        (fail))
+      (if (= (stdlib.math.math-f32-abs zero) zero)
+        unit
+        (fail))
+      (if (= (stdlib.math.math-f32-abs pos) want)
+        unit
+        (fail))
+      (if (= (stdlib.math.abs neg) want)
         unit
         (fail)))))

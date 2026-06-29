@@ -7,7 +7,7 @@
   (begin
     (foreach
       ([i : i64 0 n])
-      (array.array-set!
+      (array-set!
         out
         i
         (try

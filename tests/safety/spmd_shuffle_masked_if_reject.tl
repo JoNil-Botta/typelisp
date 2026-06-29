@@ -6,6 +6,6 @@
 (define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (if (< (array.array-ref xs i) 0)
-      (array.array-set! out i (spmd-shuffle (array-ref xs i) 0))
-      (array.array-set! out i (array.array-ref xs i)))))
+    (if (< (array-ref xs i) 0)
+      (array-set! out i (spmd-shuffle (array-ref xs i) 0))
+      (array-set! out i (array-ref xs i)))))

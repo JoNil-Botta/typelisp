@@ -18,7 +18,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array.array-set! items i (byte-copy-u8 (+ base i)))
+        (array-set! items i (byte-copy-u8 (+ base i)))
         (set! i (+ i 1))))))
 
 (define (byte-copy-fill-constant!
@@ -29,7 +29,7 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (array.array-set! items i (byte-copy-u8 value))
+        (array-set! items i (byte-copy-u8 value))
         (set! i (+ i 1))))))
 
 (define (byte-copy-assert-at
@@ -37,7 +37,7 @@
   [index : i64]
   [expected : i64]
   [message : String]) : unit
-  (assert-i64-eq (cast (array.array-ref items index) : i64) expected message))
+  (assert-i64-eq (cast (array-ref items index) : i64) expected message))
 
 (define (byte-copy-assert-range
   [items : (Array u8)]

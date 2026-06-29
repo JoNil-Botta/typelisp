@@ -23,33 +23,31 @@
 (import (serialize.serialize toy Person) as person_ser_again)
 
 (define (serialize-address-eq? [home : Address] [zip : i64] [city : String]) : bool
-  (and
-    (= (struct-get home zip) zip)
-    (string.string-eq (struct-get home city) city)))
+  (and (= (struct-get home zip) zip) (string.eq (struct-get home city) city)))
 
 (define (serialize-address-ok? [home : Address]) : bool
   (serialize-address-eq? home 12345 "London"))
 
 (define (serialize-scores-ok? [scores : (Array i64 3)]) : bool
   (and
-    (= (array.array-ref scores 0) 4)
-    (= (array.array-ref scores 1) 5)
-    (= (array.array-ref scores 2) 6)))
+    (= (array-ref scores 0) 4)
+    (= (array-ref scores 1) 5)
+    (= (array-ref scores 2) 6)))
 
 (define (serialize-samples-ok? [samples : (Array i64)]) : bool
   (and
-    (= (array.array-length samples) 2)
-    (= (array.array-ref samples 0) 7)
-    (= (array.array-ref samples 1) 8)))
+    (= (array-length samples) 2)
+    (= (array-ref samples 0) 7)
+    (= (array-ref samples 1) 8)))
 
 (define (serialize-previous-ok? [previous : (Array Address 2)]) : bool
   (and
-    (serialize-address-eq? (array.array-ref previous 0) 111 "Oxford")
-    (serialize-address-eq? (array.array-ref previous 1) 222 "Paris")))
+    (serialize-address-eq? (array-ref previous 0) 111 "Oxford")
+    (serialize-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-person-ok? [person : Person]) : bool
   (and
-    (string.string-eq (struct-get person name) "Ada")
+    (string.eq (struct-get person name) "Ada")
     (= (struct-get person age) (cast 36 : i32))
     (struct-get person active)
     (= (struct-get person score) 9.5)
@@ -66,7 +64,7 @@
       (match (toy.field-list-get (box-get fields) "city")
         [(toy.Found city-value)
           (match city-value
-            [(toy.Text found) (string.string-eq found expected-city)]
+            [(toy.Text found) (string.eq found expected-city)]
             [_ false])]
         [(toy.Missing) false])]
     [_ false]))
@@ -135,8 +133,8 @@
   (let
     [samples : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! samples 0 7)
-      (array.array-set! samples 1 8)
+      (array-set! samples 0 7)
+      (array-set! samples 1 8)
       samples)))
 
 (define (serialize-encoded-shape-roundtrip-ok?) : bool

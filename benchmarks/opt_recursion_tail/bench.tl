@@ -8,7 +8,7 @@
 
 (define (main) : i64
   (let
-    [n : i64 (string->int (arg 1))]
+    [n : i64 (>int (arg 1))]
     (begin
       (print (sum-tail n 0))
       0)))

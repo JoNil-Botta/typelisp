@@ -19,7 +19,7 @@
 (import "compiler_load.tl")
 (import "build_run_core.tl")
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -379,19 +379,19 @@
                 (cond
                   [(= esc 'n')
                     (begin
-                      (set! out (string.string-concat3 out "\n" ""))
+                      (set! out (string.concat3 out "\n" ""))
                       (set! i (+ i 2)))]
                   [(= esc 't')
                     (begin
-                      (set! out (string.string-concat3 out "\t" ""))
+                      (set! out (string.concat3 out "\t" ""))
                       (set! i (+ i 2)))]
                   [(= esc 'r')
                     (begin
-                      (set! out (string.string-concat3 out "\r" ""))
+                      (set! out (string.concat3 out "\r" ""))
                       (set! i (+ i 2)))]
                   [(= esc '\\')
                     (begin
-                      (set! out (string.string-concat3 out "\\" ""))
+                      (set! out (string.concat3 out "\\" ""))
                       (set! i (+ i 2)))]
                   [else
                     (set!
@@ -401,9 +401,7 @@
                         (string.substring text (+ i 1) 1)
                         "`"))])))
             (begin
-              (set!
-                out
-                (string.string-concat3 out (string.substring text i 1) ""))
+              (set! out (string.concat3 out (string.substring text i 1) ""))
               (set! i (+ i 1))))))
       (if (= (string.string-length message) 0)
         (DocTestMaybeOutput.Some out)
@@ -412,7 +410,7 @@
 (define (doc-test-parse-output-spec [text : String]) : DocTestMaybeOutput
   (let
     [trimmed : String (doc-test-trim text)]
-    (if (string.string-eq trimmed "-")
+    (if (string.eq trimmed "-")
       (DocTestMaybeOutput.Some "")
       (if (doc-test-string-prefix? trimmed "literal:")
         (doc-test-decode-output-literal
@@ -542,7 +540,7 @@
         [option : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
-        (if (string.string-eq option "expect-error")
+        (if (string.eq option "expect-error")
           (match mode
             [(DocTestFenceMode.Run)
               (DocTestFenceInfo.Malformed
@@ -554,7 +552,7 @@
                 rest
                 line-number
                 (DocTestFenceMode.Check (DocTestExpectation.Error)))])
-          (if (string.string-eq option "run")
+          (if (string.eq option "run")
             (match mode
               [(DocTestFenceMode.Run)
                 (doc-test-parse-fence-options rest line-number mode)]
@@ -586,9 +584,7 @@
         [language : String (string.substring trimmed 0 end)]
         [rest : String
           (string.substring trimmed end (- (string.string-length trimmed) end))]
-        (if (or
-          (string.string-eq language "typelisp")
-          (string.string-eq language "tl"))
+        (if (or (string.eq language "typelisp") (string.eq language "tl"))
           (doc-test-parse-fence-options
             rest
             line-number
@@ -628,9 +624,7 @@
         (doc-test-collect-code-inner
           lines
           (+ index 1)
-          (string.string-append
-            code
-            (string.string-append (doc-test-line-text line) "\n"))
+          (string.append code (string.append (doc-test-line-text line) "\n"))
           (doc-test-line-list-push collected line))))))
 
 (define (doc-test-collect-code [lines : DocTestLineList] [index : i64]) : DocTestCodeCollect
@@ -1117,30 +1111,28 @@
     [(DocTestRunFailure.Failure path line index message)
       (let
         [location : String
-          (string.string-append
+          (string.append
             path
-            (string.string-append
-              ":"
-              (string.string-append (string.int->string line) ": ")))]
-        (string.string-append location message))]))
+            (string.append ":" (string.append (string.int->string line) ": ")))]
+        (string.append location message))]))
 
 (define (doc-test-unexpected-pass-message [index : i64]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
       " was expected to fail but passed")))
 
 (define (doc-test-public-diagnostic-render [diag : CompilerDiagnostic]) : String
   (match (compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code)
-      (string.string-append
+      (string.append
         "error["
-        (string.string-append
+        (string.append
           code
-          (string.string-append "]: " (compiler-diagnostic-render diag))))]
+          (string.append "]: " (compiler-diagnostic-render diag))))]
     [CompilerDiagnosticNoString
-      (string.string-append "error: " (compiler-diagnostic-render diag))]))
+      (string.append "error: " (compiler-diagnostic-render diag))]))
 
 (define (doc-test-public-diagnostic-render-smoke-ok?) : bool
   (let
@@ -1171,11 +1163,11 @@
 (define (doc-test-unexpected-error-message
   [index : i64]
   [diag : CompilerDiagnostic]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append
+      (string.append
         " was expected to pass\n"
         (doc-test-public-diagnostic-render diag)))))
 
@@ -1193,50 +1185,50 @@
 (define (doc-test-runnable-unsupported-message
   [index : i64]
   [target : CompilerBackendTarget]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append
+      (string.append
         " is a runnable doctest, but runnable doctests are unsupported on target "
         (source-tool-target-name target)))))
 
 (define (doc-test-runnable-compile-message [index : i64] [message : String]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append " runnable compile failed\n" message))))
+      (string.append " runnable compile failed\n" message))))
 
 (define (doc-test-runnable-build-message [index : i64] [message : String]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append " runnable build failed\n" message))))
+      (string.append " runnable build failed\n" message))))
 
 (define (doc-test-runnable-exec-message [index : i64] [message : String]) : String
-  (string.string-append
+  (string.append
     "doctest example "
-    (string.string-append
+    (string.append
       (string.int->string index)
-      (string.string-append " runnable execution failed: " message))))
+      (string.append " runnable execution failed: " message))))
 
 (define (doc-test-output-comparison-message
   [name : String]
   [expected : String]
   [actual : String]) : String
-  (string.string-append
+  (string.append
     "expected "
-    (string.string-append
+    (string.append
       name
-      (string.string-append
+      (string.append
         ":\n"
-        (string.string-append
+        (string.append
           expected
-          (string.string-append
+          (string.append
             "\nactual "
-            (string.string-append name (string.string-append ":\n" actual))))))))
+            (string.append name (string.append ":\n" actual))))))))
 
 (define (doc-test-normalize-windows-crlf [text : String]) : String
   (let
@@ -1250,12 +1242,10 @@
           (< (+ i 1) n)
           (= (string.string-ref text (+ i 1)) '\n'))
           (begin
-            (set! out (string.string-concat3 out "\n" ""))
+            (set! out (string.concat3 out "\n" ""))
             (set! i (+ i 2)))
           (begin
-            (set!
-              out
-              (string.string-concat3 out (string.substring text i 1) ""))
+            (set! out (string.concat3 out (string.substring text i 1) ""))
             (set! i (+ i 1)))))
       out)))
 
@@ -1284,26 +1274,26 @@
       (doc-test-normalize-output-for-target
         target
         (process.output-stderr output))]
-    (string.string-append
+    (string.append
       "doctest example "
-      (string.string-append
+      (string.append
         (string.int->string index)
-        (string.string-append
+        (string.append
           " runnable output mismatch\nexpected exit: "
-          (string.string-append
+          (string.append
             (string.int->string expected-exit)
-            (string.string-append
+            (string.append
               "\nactual exit: "
-              (string.string-append
+              (string.append
                 (string.int->string actual-exit)
-                (string.string-append
+                (string.append
                   "\n"
-                  (string.string-append
+                  (string.append
                     (doc-test-output-comparison-message
                       "stdout"
                       expected-stdout
                       actual-stdout)
-                    (string.string-append
+                    (string.append
                       "\n"
                       (doc-test-output-comparison-message
                         "stderr"
@@ -1317,12 +1307,12 @@
   (if (=
     (doc-test-expectation-run-exit expectation)
     (process.output-status output))
-    (if (string.string-eq
+    (if (string.eq
       (doc-test-expectation-run-stdout expectation)
       (doc-test-normalize-output-for-target
         target
         (process.output-stdout output)))
-      (string.string-eq
+      (string.eq
         (doc-test-expectation-run-stderr expectation)
         (doc-test-normalize-output-for-target
           target
@@ -1335,27 +1325,27 @@
   [target : CompilerBackendTarget]
   [command : process.ProcessCommand]
   [output : process.ProcessOutput]) : String
-  (string.string-append
+  (string.append
     "Error: "
-    (string.string-append
+    (string.append
       role
-      (string.string-append
+      (string.append
         " '"
-        (string.string-append
+        (string.append
           (process.command-executable command)
-          (string.string-append
+          (string.append
             "' failed for target "
-            (string.string-append
+            (string.append
               (source-tool-target-name target)
-              (string.string-append
+              (string.append
                 " with status "
-                (string.string-append
+                (string.append
                   (string.int->string (process.output-status output))
-                  (string.string-append
+                  (string.append
                     "\nstdout:\n"
-                    (string.string-append
+                    (string.append
                       (process.output-stdout output)
-                      (string.string-append
+                      (string.append
                         "\nstderr:\n"
                         (process.output-stderr output)))))))))))))
 
@@ -1371,19 +1361,19 @@
           (doc-test-command-output-message role target command output)))]
     [(process.ErrProcessOutput error)
       (SourceToolCommandStatus.Err
-        (string.string-append
+        (string.append
           "Error: failed to run "
-          (string.string-append
+          (string.append
             role
-            (string.string-append
+            (string.append
               " '"
-              (string.string-append
+              (string.append
                 (process.command-executable command)
-                (string.string-append
+                (string.append
                   "' for target "
-                  (string.string-append
+                  (string.append
                     (source-tool-target-name target)
-                    (string.string-append ": " (process.error-message error)))))))))]))
+                    (string.append ": " (process.error-message error)))))))))]))
 
 (define (doc-test-assemble-and-link-captured
   [target : CompilerBackendTarget]
@@ -1602,9 +1592,7 @@
               index
               (doc-test-runnable-build-message
                 index
-                (string.string-append
-                  "doctest: failed to create temp dir: "
-                  message))))])
+                (string.append "doctest: failed to create temp dir: " message))))])
       (DocTestMaybeFailure.Some
         (DocTestRunFailure.Failure
           path
@@ -1617,9 +1605,7 @@
 ;; relative to a sibling of `path` (the doc'd source file), so examples may
 ;; import the doc'd file without colliding with the virtual source root.
 (define (doc-test-example-virtual-path [path : String] [index : i64]) : String
-  (string.string-append
-    path
-    (string.string-append ".doctest." (string.int->string index))))
+  (string.append path (string.append ".doctest." (string.int->string index))))
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
   (doc-test-check-example-with-roots path example (vector.string-vec-new)))
@@ -1966,7 +1952,7 @@
     [normalized-root : String (compiler-load-normalize-path root)]
     (and
       (> (string.string-length normalized-root) 0)
-      (if (string.string-eq normalized-root ".")
+      (if (string.eq normalized-root ".")
         (not (compiler-load-path-escapes? normalized-path))
         (compiler-load-path-under-root? normalized-path normalized-root)))))
 
@@ -2021,7 +2007,7 @@
             (compiler-load-join-root-path manifest-dir "stdlib"))]
         [manifest-root : String (compiler-load-normalize-path manifest-dir)]
         [manifest-local : bool
-          (if (string.string-eq manifest-root ".")
+          (if (string.eq manifest-root ".")
             (and
               (not (compiler-load-absolute-path? rooted))
               (doc-test-path-under-root? rooted manifest-dir))
@@ -2037,7 +2023,7 @@
                 manifest-dir
                 (compiler-pkg-deps-list deps)))
             manifest-local)]
-        (if (and package-local (not (string.string-eq rooted last-path)))
+        (if (and package-local (not (string.eq rooted last-path)))
           (let
             [report : DocTestRunReport
               (doc-test-typecheck-package-file-text-with-roots
@@ -2104,8 +2090,8 @@
   [index : i64]) : String
   (if (>= index (doc-test-run-failure-list-count failures))
     ""
-    (string.string-append
-      (string.string-append
+    (string.append
+      (string.append
         (doc-test-run-failure-render
           (doc-test-run-failure-list-ref failures index))
         "\n")
@@ -2122,10 +2108,10 @@
   (match report
     [(DocTestRunReport.Report count failures)
       (if (= (doc-test-run-failure-list-count failures) 0)
-        (string.string-append
+        (string.append
           "Doc tests passed: "
-          (string.string-append (string.int->string count) " example(s)"))
-        (string.string-append
+          (string.append (string.int->string count) " example(s)"))
+        (string.append
           (str_cat.str-cat
             "doc tests failed: "
             (string.int->string (doc-test-run-failure-list-count failures))
@@ -2175,35 +2161,35 @@
 ")
 
 (define (doc-test-runnable-source) : String
-  (string.string-append
+  (string.append
     ";# Runnable docs\n"
-    (string.string-append
+    (string.append
       ";# ```typelisp run\n"
-      (string.string-append
+      (string.append
         ";# ;; doctest-exit: 0\n"
-        (string.string-append
+        (string.append
           ";# ;; doctest-stdout: literal:hello\\n\n"
-          (string.string-append
+          (string.append
             ";# ;; doctest-stderr: literal:error\\tline\\r\n"
-            (string.string-append
+            (string.append
               ";# (import stdlib.io)\n"
-              (string.string-append
+              (string.append
                 ";# (define (main) : i64\n"
-                (string.string-append
+                (string.append
                   ";#   (begin\n"
-                  (string.string-append
+                  (string.append
                     ";#     (let [text : String \"hello\\n\"] (io.stdout-write (& text)))\n"
-                    (string.string-append
+                    (string.append
                       ";#     (let [text : String \"error\\tline\\r\"] (io.stderr-write (& text)))\n"
-                      (string.string-append
+                      (string.append
                         ";#     0))\n"
-                        (string.string-append
+                        (string.append
                           ";# ```\n"
-                          (string.string-append
+                          (string.append
                             ";# ```tl run\n"
-                            (string.string-append
+                            (string.append
                               ";# ;; doctest-exit: 42\n"
-                              (string.string-append
+                              (string.append
                                 ";# (define (main) : i64 42)\n"
                                 ";# ```\n"))))))))))))))))
 
@@ -2261,12 +2247,8 @@
       [(DocTestExpectation.Run actual-exit actual-stdout actual-stderr)
         (begin
           (unless (= actual-exit expected-exit) (return false))
-          (unless
-            (string.string-eq actual-stdout expected-stdout)
-            (return false))
-          (unless
-            (string.string-eq actual-stderr expected-stderr)
-            (return false))
+          (unless (string.eq actual-stdout expected-stdout) (return false))
+          (unless (string.eq actual-stderr expected-stderr) (return false))
           (doc-test-string-contains?
             (doc-test-example-code example)
             code-fragment))]
@@ -2541,7 +2523,7 @@
           (unless (= (doc-test-run-failure-index failure) 1) (return false))
           (unless (= (doc-test-run-failure-line failure) 1) (return false))
           (unless
-            (string.string-eq (doc-test-run-failure-path failure) "docs/bad.tl")
+            (string.eq (doc-test-run-failure-path failure) "docs/bad.tl")
             (return false))
           (doc-test-string-contains?
             (doc-test-run-failure-message failure)
@@ -2760,7 +2742,7 @@ typecheck: return type mismatch"))]
     (begin
       (unless (= (doc-test-run-report-status pass-report) 0) (return false))
       (unless
-        (string.string-eq
+        (string.eq
           (doc-test-run-report-render pass-report)
           "Doc tests passed: 2 example(s)")
         (return false))
@@ -2812,10 +2794,10 @@ typecheck: return type mismatch"))]
           (and (doc-test-run-report-ok? report) (> hits 0)))))))
 
 (define (doc-test-package-walk-example-source [value : i64]) : String
-  (string.string-append
+  (string.append
     ";# ```typelisp
 ;# (define (main) : i64 "
-    (string.string-append (string.int->string value) ")
+    (string.append (string.int->string value) ")
 ;# ```
 ")))
 
@@ -2823,13 +2805,11 @@ typecheck: return type mismatch"))]
   [root : String]
   [prefix : String]
   [index : i64]) : String
-  (string.string-append
+  (string.append
     root
-    (string.string-append
+    (string.append
       "/"
-      (string.string-append
-        prefix
-        (string.string-append (string.int->string index) ".tl")))))
+      (string.append prefix (string.append (string.int->string index) ".tl")))))
 
 (define (doc-test-package-walk-write-empty-paths
   [root : String]

@@ -53,10 +53,10 @@
   (io.print-error text))
 
 (define (cli-eq? [left : String] [right : String]) : bool
-  (string.string-eq left right))
+  (string.eq left right))
 
 (define (cli-cat [left : String] [right : String]) : String
-  (string.string-append left right))
+  (string.append left right))
 
 ;; Keeps the shipped stage0 help surface stable while individual commands route
 ;; through selfhost entry points. The unified selfhost CLI presents the same

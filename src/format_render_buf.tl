@@ -11,7 +11,7 @@
     (begin
       (while (< i count)
         (begin
-          (set! out (string.string-concat3 out " " ""))
+          (set! out (string.concat3 out " " ""))
           (set! i (+ i 1))))
       out)))
 

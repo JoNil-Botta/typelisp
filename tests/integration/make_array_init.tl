@@ -27,12 +27,12 @@
 
 (define (bag-score [bags : (Array Bag)]) : i64
   (begin
-    (array.array-push! (struct-get (array.array-ref bags 0) items) 7)
+    (array-push! (struct-get (array-ref bags 0) items) 7)
     (score-bool
       (and
-        (= (array.array-length (struct-get (array.array-ref bags 0) items)) 1)
-        (= (array.array-ref (struct-get (array.array-ref bags 0) items) 0) 7)
-        (= (array.array-length (struct-get (array.array-ref bags 1) items)) 0)))))
+        (= (array-length (struct-get (array-ref bags 0) items)) 1)
+        (= (array-ref (struct-get (array-ref bags 0) items) 0) 7)
+        (= (array-length (struct-get (array-ref bags 1) items)) 0)))))
 
 (define (main) : i64
   (let
@@ -44,14 +44,14 @@
     [maybes : (Array Maybe) (array.make-array Maybe 2)]
     [bags : (Array Bag) (array.make-array Bag 2)]
     [empty-points : (Array Point) (array.make-array Point 0)]
-    [int-score : i64 (+ (array.array-length ints) (array.array-ref ints 2))]
-    [flag-score : i64 (score-bool (not (array.array-ref flags 0)))]
-    [char-score : i64 (score-bool (= (array.array-ref chars 0) (init : char)))]
-    [text-score : i64 (string-length (array.array-ref texts 1))]
-    [point-score-value : i64 (point-score (array.array-ref points 1))]
-    [maybe-score-value : i64 (maybe-score (array.array-ref maybes 1))]
+    [int-score : i64 (+ (array-length ints) (array-ref ints 2))]
+    [flag-score : i64 (score-bool (not (array-ref flags 0)))]
+    [char-score : i64 (score-bool (= (array-ref chars 0) (init : char)))]
+    [text-score : i64 (string-length (array-ref texts 1))]
+    [point-score-value : i64 (point-score (array-ref points 1))]
+    [maybe-score-value : i64 (maybe-score (array-ref maybes 1))]
     [bag-score-value : i64 (bag-score bags)]
-    [empty-score : i64 (array.array-length empty-points)]
+    [empty-score : i64 (array-length empty-points)]
     [score : i64
       (+
         int-score

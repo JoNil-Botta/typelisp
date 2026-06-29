@@ -1,7 +1,7 @@
 ;; stdlib_str_cat_dotted_context.tl - exported str_cat macro expansions keep
 ;; the stdlib.str_cat module's helper import context.
 (import stdlib.test)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 
 (test
   dotted-str-cat-fixed-arity-keeps-helper-context

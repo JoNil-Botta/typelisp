@@ -7,9 +7,9 @@
     [empty : String (substring text 0 0)]
     [short : String (substring text 0 4)]
     [tail : String (substring text (- n span) span)]
-    [left : String (string-append empty short)]
-    [right : String (string-append tail suffix)]
-    [joined : String (string-append left right)]
+    [left : String (append empty short)]
+    [right : String (append tail suffix)]
+    [joined : String (append left right)]
     (+ (string-length joined) (string-length tail))))
 
 (define (string-ops-repeat [text : String] [suffix : String] [rounds : i64]) : i64
@@ -28,7 +28,7 @@
   (let
     [text : String (arg 1)]
     [suffix : String (arg 2)]
-    [rounds : i64 (string->int (arg 3))]
+    [rounds : i64 (>int (arg 3))]
     (begin
       (print (string-ops-repeat text suffix rounds))
       0)))

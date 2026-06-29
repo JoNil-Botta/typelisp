@@ -18,7 +18,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (env-api-assert-true (string.string-eq actual expected) message))
+  (env-api-assert-true (string.eq actual expected) message))
 
 (define (env-api-assert-none [value : env.EnvMaybeString] [message : String]) : unit
   (match value

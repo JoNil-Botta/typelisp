@@ -12,4 +12,4 @@
       [borrowed : (& n i64) (& n)]
       (begin
         (take borrowed)
-        (array.array-set! out i n)))))
+        (array-set! out i n)))))

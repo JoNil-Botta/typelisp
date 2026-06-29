@@ -55,7 +55,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultSelfhostCheckConfig.Err
               "selfhost-check: --stdlib-root requires a value")
@@ -67,7 +67,7 @@
               manifest-path
               has-manifest
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultSelfhostCheckConfig.Err
               "selfhost-check: --manifest-path requires a value")
@@ -84,12 +84,10 @@
                 stdlib-roots)))]
         [(selfhost-check-flag? current)
           (ResultSelfhostCheckConfig.Err
-            (string.string-append "selfhost-check: unknown flag " current))]
+            (string.append "selfhost-check: unknown flag " current))]
         [has-input
           (ResultSelfhostCheckConfig.Err
-            (string.string-append
-              "selfhost-check: unexpected argument "
-              current))]
+            (string.append "selfhost-check: unexpected argument " current))]
         [else
           (selfhost-check-parse-args
             (+ idx 1)

@@ -3611,7 +3611,7 @@ specified.
     [p : Point (init)]                 ; (Point 0 0)
     [m : MaybeI64 (init : MaybeI64)]   ; first variant, None
     [xs : (Array i64) (array.make-array i64 4)]
-    (+ zero (+ (struct-get p x) (array.array-ref xs 0)))))
+    (+ zero (+ (struct-get p x) (array-ref xs 0)))))
 ```
 
 ### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
@@ -3721,7 +3721,7 @@ Initial syntax:
                     [out : (Array i64)]
                     [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 ```
 
 Semantics:
@@ -3854,8 +3854,8 @@ Lane identity forms:
                         [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (begin
-      (array.array-set! idxs i (program-index))
-      (array.array-set! counts i (program-count)))))
+      (array-set! idxs i (program-index))
+      (array-set! counts i (program-count)))))
 ```
 
 In scalar backend modes, `write-lane-ids` stores `0` in every `idxs` element and
@@ -3868,7 +3868,7 @@ stores only the active prefix of those lane indexes.
 
 (define (empty-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 0])
-    (array.array-set! out i (+ (program-index) (program-count)))))
+    (array-set! out i (+ (program-index) (program-count)))))
 ```
 
 ```lisp test=check name=spmd-program-index-tail
@@ -3876,7 +3876,7 @@ stores only the active prefix of those lane indexes.
 
 (define (write-tail-lane-ids [out : (Array i64)]) : unit
   (foreach ([i : i64 0 13])
-    (array.array-set! out i (+ (* (program-count) 100) (program-index)))))
+    (array-set! out i (+ (* (program-count) 100) (program-index)))))
 ```
 
 ```lisp test=check name=spmd-program-index-reduce
@@ -4042,9 +4042,9 @@ Explicit SPMD atomic scatter:
 
 (define (clamp-positive [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (if (< (array.array-ref xs i) 0)
-        (array.array-set! out i 0)
-        (array.array-set! out i (array.array-ref xs i)))))
+    (if (< (array-ref xs i) 0)
+        (array-set! out i 0)
+        (array-set! out i (array-ref xs i)))))
 ```
 
 ```lisp test=check name=spmd-masked-if-tail
@@ -4053,8 +4053,8 @@ Explicit SPMD atomic scatter:
 (define (copy-even-tail [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (if (= (% i 2) 0)
-        (array.array-set! out i (array.array-ref xs i))
-        (array.array-set! out i 0))))
+        (array-set! out i (array-ref xs i))
+        (array-set! out i 0))))
 ```
 
 ```lisp test=check name=spmd-masked-if-nested
@@ -4063,12 +4063,12 @@ Explicit SPMD atomic scatter:
 (define (classify [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
-      [x : i64 (array.array-ref xs i)]
+      [x : i64 (array-ref xs i)]
       (if (< x 0)
-          (array.array-set! out i -1)
+          (array-set! out i -1)
           (if (= x 0)
-              (array.array-set! out i 0)
-              (array.array-set! out i 1))))))
+              (array-set! out i 0)
+              (array-set! out i 1))))))
 ```
 
 SPMD reductions and scans:
@@ -4253,21 +4253,21 @@ compiled for one backend mode.
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 
 (define (add-arrays-avx2 [a : (Array i64)]
                          [b : (Array i64)]
                          [out : (Array i64)]
                          [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 
 (define (add-arrays-avx512 [a : (Array i64)]
                            [b : (Array i64)]
                            [out : (Array i64)]
                            [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (array.array-set! out i (+ (array.array-ref a i) (array.array-ref b i)))))
+    (array-set! out i (+ (array-ref a i) (array-ref b i)))))
 
 (defdispatch add-arrays
   (scalar add-arrays-scalar)
@@ -4354,9 +4354,9 @@ Negative examples for later parser/typechecker tests:
 
 (define (clear-prefix [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach ([i : i64 0 n])
-    (if (< (array.array-ref xs i) 0)
+    (if (< (array-ref xs i) 0)
       (while (> n 0)
-        (array.array-set! out i 0))
+        (array-set! out i 0))
       unit)))
 ```
 
@@ -4369,8 +4369,8 @@ Negative examples for later parser/typechecker tests:
                  [n : i64]) : unit
   (foreach ([i : i64 0 n])
     (let
-      [j : i64 (array.array-ref index i)]
-      (array.array-set! out j (array.array-ref xs j)))))
+      [j : i64 (array-ref index i)]
+      (array-set! out j (array-ref xs j)))))
 ```
 
 ```lisp test=ignore name=spmd-reject-mutation-reduction reason="covered by tests/safety/spmd_outer_mutation_reject.tl"
@@ -4381,7 +4381,7 @@ Negative examples for later parser/typechecker tests:
     [sum : i64 0]
     (begin
       (foreach ([i : i64 0 n])
-        (set! sum (+ sum (array.array-ref xs i))))
+        (set! sum (+ sum (array-ref xs i))))
       sum)))
 ```
 
@@ -4408,7 +4408,7 @@ Negative examples for later parser/typechecker tests:
   (let
     [f : (-> i64 i64) inc]
     (foreach ([i : i64 0 n])
-      (array.array-set! out i (f (array.array-ref xs i))))))
+      (array-set! out i (f (array-ref xs i))))))
 ```
 
 ```lisp test=ignore name=spmd-reject-program-index-outside-scope reason="covered by tests/safety/spmd_program_index_outside_reject.tl"
@@ -4465,8 +4465,8 @@ execution or document a target-specific limitation.
 
 **First-class arena escape:** `(with-escape arena-expr body ...)` is a
 separate scoped form for first-class scratch arenas. `arena-expr` must
-typecheck as `Arena` from `stdlib/arena.tl`, such as a handle created by
-`arena-make` or `arena-make-atomic`; it is not a lexical region binder and does
+typecheck as `arena.Arena` from `stdlib.arena`, such as a handle created by
+`arena.make` or `arena.make-atomic`; it is not a lexical region binder and does
 not conflict with `with-arena`. A raw `i64` does not satisfy this requirement.
 
 The body is a non-empty expression sequence evaluated with that arena as the
@@ -4496,15 +4496,15 @@ through `with-escape` for reusable first-class scratch arenas and
 
 **First-class arena target:** `(in-arena arena-expr body ...)` is the safe
 dynamic allocation-target form for first-class arena handles. `arena-expr` must
-typecheck as `Arena` from `stdlib/arena.tl`. The body is a non-empty expression
+typecheck as `arena.Arena` from `stdlib.arena`. The body is a non-empty expression
 sequence evaluated with that arena as the active allocation target; the previous
 active arena is restored on normal exit and function-local early exit. The form
 does not mark, rewind, destroy, or clone. Its result type is the body result type
 unchanged, so owned values allocated in the target arena remain owned by that
-arena. When `arena-expr` is a direct local binding initialized by `arena-make`
-or `arena-make-atomic`, owner-carrying aggregate results are checker-tagged with
-that first-class arena owner identity. Ordinary `arena-make` owners still do not
-prove thread-spanning lifetime; only `arena-make-atomic` owner tags can satisfy
+arena. When `arena-expr` is a direct local binding initialized by `arena.make`
+or `arena.make-atomic`, owner-carrying aggregate results are checker-tagged with
+that first-class arena owner identity. Ordinary `arena.make` owners still do not
+prove thread-spanning lifetime; only `arena.make-atomic` owner tags can satisfy
 the task-thread transfer/share owner proof in section 6.5.
 
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
@@ -5792,8 +5792,8 @@ reclamation between phases.
     (let
       [buf : (Array i64) (array.make-array i64 100)]
       (begin
-        (array.array-set! buf 0 42)
-        (array.array-ref buf 0)))))
+        (array-set! buf 0 42)
+        (array-ref buf 0)))))
 ```
 
 This example uses the current compatibility dynamic-buffer surface. The
@@ -5905,28 +5905,28 @@ scoped allocations restore the saved arena mark on both hosts.
 
 #### First-class scratch arena escape - `with-escape`
 
-Compiler internals and long-running tools may import `stdlib/arena.tl`, allocate
-a first-class scratch arena with `arena-make`, switch to it for transient work,
+Compiler internals and long-running tools may import `stdlib.arena`, allocate
+a first-class scratch arena with `arena.make`, switch to it for transient work,
 and then keep only a deep-cloned result. The safe source form for this pattern
 is:
 
 ```lisp test=check name=with-escape-example
-(import "stdlib/arena.tl")
-(import "stdlib/string.tl")
+(import stdlib.arena)
+(import stdlib.string)
 
 (define (build-message) : String
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     (with-escape scratch
-      (int->string 42))))
+      (string.int->string 42))))
 ```
 
 `with-escape` evaluates the arena expression in the current arena, records the
 enclosing active arena, switches to the scratch arena, marks it, evaluates the
 body, switches back to the enclosing arena, clones the body result when the type
 requires it, rewinds the scratch arena to the entry mark, and restores the
-enclosing active arena. This lowers to the same `arena-current` / `arena-set!` /
-`arena-mark` / `clone` / `arena-rewind` sequence that hand-written escape sites
+enclosing active arena. This lowers to the same `arena.current` / `arena.set!` /
+`arena.mark` / `clone` / `arena.rewind` sequence that hand-written escape sites
 used before. The form is intended for first-class scratch arenas; it is not a
 lexical lifetime binder, and lexical region cleanup remains the job of
 `with-arena`.
@@ -5958,18 +5958,18 @@ Use `(in-arena arena-expr body ...)` when a result should stay owned by a
 first-class arena rather than being cloned back to the caller's active arena:
 
 ```lisp test=check name=in-arena-example
-(import "stdlib/arena.tl")
-(import "stdlib/string.tl")
+(import stdlib.arena)
+(import stdlib.string)
 
-(define (build-in-level [level : Arena]) : String
-  (in-arena level (int->string 42)))
+(define (build-in-level [level : arena.Arena]) : String
+  (in-arena level (string.int->string 42)))
 ```
 
 `in-arena` evaluates `arena-expr` in the current arena, records the enclosing
 active arena, switches to the target, evaluates the non-empty body sequence, and
 restores the saved arena on normal completion, `(return ...)`, or recoverable
-`try` propagation. It does not call `arena-mark`, `arena-rewind`, or
-`arena-destroy`, and it does not clone the body result. The body result type is
+`try` propagation. It does not call `arena.mark`, `arena.rewind`, or
+`arena.destroy`, and it does not clone the body result. The body result type is
 returned unchanged. Nested lexical `with-arena` escape rules still apply:
 `(in-arena scratch (with-arena inner (int->string 1)))` is rejected because the
 inner scoped region would escape.
@@ -5979,22 +5979,22 @@ inner scoped region would escape.
 The source wrapper for `tl_arena_make_atomic` is:
 
 ```lisp test=check name=arena-make-atomic-specified
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 
 (define (main) : i64
   (let
-    [shared : Arena (arena-make-atomic)]
-    (arena-raw-handle shared)))
+    [shared : arena.Arena (arena.make-atomic)]
+    (arena.raw-handle shared)))
 ```
 
-`arena-make-atomic` returns a typed first-class `Arena` handle and does not make
+`arena.make-atomic` returns a typed first-class `arena.Arena` handle and does not make
 that arena current. A thread allocates into an atomic arena by making it the active
 allocation target for a dynamic extent. The safe spelling is `in-arena`: it
 evaluates `arena-expr`, saves the calling thread's current arena, installs the
 target for `body`, then restores the saved arena without marking, rewinding,
 destroying, or cloning. With #2591, "current arena" is thread-local, so selecting
 an atomic arena in one thread does not change another thread's default arena.
-The lower-level `arena-set!` helper remains an unsafe manual operation for code
+The lower-level `arena.set!` helper remains an unsafe manual operation for code
 that cannot express its dynamic allocation extent with `in-arena`; callers must
 prove that the selected arena is valid for the current thread and that later
 reset/destroy operations cannot invalidate live handles.
@@ -6004,14 +6004,14 @@ for thread-safety reasoning, even where the transitional lowerable type remains
 an ordinary aggregate handle. The checker must reject safe cross-thread transfer
 unless the atomic arena's lifetime spans every thread that can hold the value
 and the section 6.5 structural classifier accepts the type shape. The ordinary
-first-class arena returned by `arena-make` does not have this spanning-owner
+first-class arena returned by `arena.make` does not have this spanning-owner
 property and must not be used as a concurrent allocation target.
 
 Resetting or destroying an atomic arena while any worker can still allocate into
 it or hold a value owned by it is rejected by safe code. The v1 proof shape is
 "join all users before reset/destroy" unless a later checker slice provides an
-equivalent ownership proof. Until that proof is implemented, `arena-rewind` and
-`arena-destroy` on atomic arenas remain unsafe-only operations, matching the
+equivalent ownership proof. Until that proof is implemented, `arena.rewind` and
+`arena.destroy` on atomic arenas remain unsafe-only operations, matching the
 ordinary manual arena helpers. The runtime helpers have no permission to make
 use-after-reset deterministic for unsafe misuse; the no-UB guarantee is enforced
 by rejecting the safe program before lowering.
@@ -6034,29 +6034,29 @@ the section 4.6.2 checker.
 
 #### Manual arena helpers
 
-Programs that need manual control can import `stdlib/arena.tl` and use the
+Programs that need manual control can import `stdlib.arena` and use the
 first-class arena helpers:
 
 ```lisp test=check name=arena-manual-helpers
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 
 (define (main) : unit
   (let
-    [home : Arena (arena-current)]
-    [scratch : Arena (arena-make)]
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
     (unsafe
       (begin
-        (arena-set! scratch)
-        (arena-rewind (arena-mark))
-        (arena-set! home)
-        (arena-destroy scratch)))))
+        (arena.set! scratch)
+        (arena.rewind (arena.mark))
+        (arena.set! home)
+        (arena.destroy scratch)))))
 ```
 
-`Arena` and `ArenaMark` are nominal public wrappers over the raw runtime
-handles. `arena-make`, `arena-make-atomic`, and `arena-current` safely create or
-read an `Arena`; `arena-mark` safely records an `ArenaMark` for the active arena.
+`arena.Arena` and `arena.ArenaMark` are nominal public wrappers over the raw runtime
+handles. `arena.make`, `arena.make-atomic`, and `arena.current` safely create or
+read an `arena.Arena`; `arena.mark` safely records an `arena.ArenaMark` for the active arena.
 Raw `i64` values do not satisfy the public arena helper signatures, and an
-`Arena` cannot be passed where an `ArenaMark` is required.
+`arena.Arena` cannot be passed where an `arena.ArenaMark` is required.
 By themselves they do not switch the active arena, free arena chains, rewind
 allocation, or invalidate live safe handles.
 
@@ -6167,8 +6167,8 @@ not the future safe reference/borrow model (#182), not a replacement for
     (let
       [b : (Array i64) a]
       (begin
-        (array.array-set! a 0 42)
-        (array.array-ref b 0)))))
+        (array-set! a 0 42)
+        (array-ref b 0)))))
 ```
 
 ---
@@ -6336,8 +6336,8 @@ distinguish success from an error value. Matches must be exhaustive; omitted
 variants are rejected by the type checker.
 
 ```lisp test=compile name=monomorphic-option-result
-(import "stdlib/str_cat.tl")
-(import "stdlib/string.tl")
+(import stdlib.str_cat)
+(import stdlib.string)
 
 (defenum MaybeI64
   (NoneI64)
@@ -6348,14 +6348,14 @@ variants are rejected by the type checker.
   (ErrI64 String))
 
 (define (find-answer [name : String]) : MaybeI64
-  (if (string-eq name "answer")
+  (if (string.eq name "answer")
     (SomeI64 42)
     NoneI64))
 
 (define (read-small [text : String]) : ResultI64
-  (if (string-eq text "7")
+  (if (string.eq text "7")
     (OkI64 7)
-    (ErrI64 (str-cat "bad: " text))))
+    (ErrI64 (str_cat.str-cat "bad: " text))))
 
 (define (maybe-score [m : MaybeI64]) : i64
   (match m
@@ -6365,7 +6365,7 @@ variants are rejected by the type checker.
 (define (result-score [r : ResultI64]) : i64
   (match r
     [(OkI64 value) value]
-    [(ErrI64 message) (string-length message)]))
+    [(ErrI64 message) (string.string-length message)]))
 
 (define (main) : i64
   (+ (maybe-score (find-answer "answer"))
@@ -6398,16 +6398,17 @@ than generic traits or implicit conversions.
   non-exhaustive.
 
 ```lisp test=ignore name=result-try-success reason="try propagation awaits public test-mode coverage"
-(import "stdlib/str_cat.tl")
+(import stdlib.str_cat)
+(import stdlib.string)
 
 (defenum ResultI64
   (OkI64 i64)
   (ErrI64 String))
 
 (define (read-small [text : String]) : ResultI64
-  (if (string-eq text "7")
+  (if (string.eq text "7")
     (OkI64 7)
-    (ErrI64 (str-cat "bad: " text))))
+    (ErrI64 (str_cat.str-cat "bad: " text))))
 
 (define (read-plus-one [text : String]) : ResultI64
   (let ([value : i64 (try (read-small text))])
@@ -6415,7 +6416,8 @@ than generic traits or implicit conversions.
 ```
 
 ```lisp test=ignore name=result-try-incompatible-error reason="negative propagation example; should be an expect-error once SPEC examples support this form"
-(import "stdlib/str_cat.tl")
+(import stdlib.str_cat)
+(import stdlib.string)
 
 (defenum ResultI64
   (OkI64 i64)
@@ -6426,9 +6428,9 @@ than generic traits or implicit conversions.
   (ErrBool bool))
 
 (define (read-small [text : String]) : ResultI64
-  (if (string-eq text "7")
+  (if (string.eq text "7")
     (OkI64 7)
-    (ErrI64 (str-cat "bad: " text))))
+    (ErrI64 (str_cat.str-cat "bad: " text))))
 
 (define (bad-propagation [text : String]) : ResultBool
   (let ([value : i64 (try (read-small text))])
@@ -6682,9 +6684,9 @@ storage. Target C ABI call/return lowering is a separate backend contract.
   (let
     [arr : (Array i64) (array.make-array i64 5)]
     (begin
-      (array.array-set! arr 0 10)
-      (array.array-set! arr 1 20)
-      (+ (array.array-ref arr 0) (array.array-ref arr 1)))))  ; returns 30
+      (array-set! arr 0 10)
+      (array-set! arr 1 20)
+      (+ (array-ref arr 0) (array-ref arr 1)))))  ; returns 30
 ```
 
 This remains a runnable compatibility example for today's compiler. New public

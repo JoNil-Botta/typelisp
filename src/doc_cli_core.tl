@@ -45,8 +45,7 @@
   (Err String))
 
 (define (doc-print-wrote [output-path : String]) : unit
-  (io.print-string
-    (string.string-append "Wrote " (string.string-append output-path "\n"))))
+  (io.print-string (string.append "Wrote " (string.append output-path "\n"))))
 
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
@@ -137,7 +136,7 @@
   (match (package-source-discover-for "doc" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (begin
@@ -172,7 +171,7 @@
     (begin
       (if (doc-test-run-report-ok? report)
         (io.print-string
-          (string.string-append (doc-test-run-report-render report) "\n"))
+          (string.append (doc-test-run-report-render report) "\n"))
         (io.print-error (doc-test-run-report-render report)))
       (doc-test-run-report-status report))))
 
@@ -186,7 +185,7 @@
     [roots : vector.StringVec (vector.string-vec-new)]
     (begin
       (while (< i n)
-        (if (string.string-eq (io.arg i) "--stdlib-root")
+        (if (string.eq (io.arg i) "--stdlib-root")
           (if (< (+ i 1) n)
             (begin
               (set! roots (vector.string-vec-push roots (io.arg (+ i 1))))
@@ -273,7 +272,7 @@
       (ResultDocTestBatchPaths.Ok (doc-test-batch-paths-from-text text))]
     [(io.ErrIoString error)
       (ResultDocTestBatchPaths.Err
-        (string.string-append
+        (string.append
           "doc: failed to read --batch list file: "
           (io.io-error-message error)))]))
 
@@ -332,7 +331,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultDocTestCliConfig.Err "doc: --stdlib-root requires a value")
             (doc-test-parse-options
@@ -343,7 +342,7 @@
               has-manifest
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
               batch-list))]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultDocTestCliConfig.Err "doc: --manifest-path requires a value")
             (if has-manifest
@@ -356,7 +355,7 @@
                 true
                 stdlib-roots
                 batch-list)))]
-        [(string.string-eq current "--batch")
+        [(string.eq current "--batch")
           (if (>= (+ idx 1) count)
             (ResultDocTestCliConfig.Err "doc: --batch requires a value")
             (match batch-list
@@ -371,7 +370,7 @@
                   has-manifest
                   stdlib-roots
                   (DocMaybeString.Some (io.arg (+ idx 1))))]))]
-        [(string.string-eq current "--prefix-cache-stats")
+        [(string.eq current "--prefix-cache-stats")
           (begin
             (set! doc-test-prefix-cache-stats true)
             (doc-test-parse-options
@@ -384,7 +383,7 @@
               batch-list))]
         [(doc-flag? current)
           (ResultDocTestCliConfig.Err
-            (string.string-append "doc: unknown flag " current))]
+            (string.append "doc: unknown flag " current))]
         [else
           (doc-test-parse-options
             (+ idx 1)
@@ -421,9 +420,7 @@
         (begin
           (if print-headers
             (io.print-string
-              (string.string-append
-                "--- "
-                (string.string-append input-path "\n")))
+              (string.append "--- " (string.append input-path "\n")))
             unit)
           (doc-test-file input-path stdlib-roots))]
       (doc-test-files-from
@@ -454,7 +451,7 @@
       [file-status : i64
         (begin
           (io.print-string
-            (string.string-append "--- " (string.string-append input-path "\n")))
+            (string.append "--- " (string.append input-path "\n")))
           (doc-test-file input-path stdlib-roots))]
       (doc-test-package-files-from
         input-paths
@@ -477,7 +474,7 @@
   (match (package-source-discover-for "doc" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (doc-test-package-files (struct-get source-set sources) stdlib-roots 0)]))
@@ -516,12 +513,12 @@
       input-paths
       output-path
       manifest-path
-      (not (string.string-eq manifest-path ""))
+      (not (string.eq manifest-path ""))
       stdlib-roots)
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "-o")
+        [(string.eq current "-o")
           (if (>= (+ idx 1) count)
             (ResultDocDefaultCliConfig.Err "doc: -o requires a value")
             (match output-path
@@ -535,7 +532,7 @@
                   (DocMaybeString.Some (io.arg (+ idx 1)))
                   manifest-path
                   stdlib-roots)]))]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultDocDefaultCliConfig.Err
               "doc: --stdlib-root requires a value")
@@ -546,11 +543,11 @@
               output-path
               manifest-path
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultDocDefaultCliConfig.Err
               "doc: --manifest-path requires a value")
-            (if (not (string.string-eq manifest-path ""))
+            (if (not (string.eq manifest-path ""))
               (ResultDocDefaultCliConfig.Err "doc: duplicate --manifest-path")
               (doc-default-parse-options
                 (+ idx 2)
@@ -561,7 +558,7 @@
                 stdlib-roots)))]
         [(doc-flag? current)
           (ResultDocDefaultCliConfig.Err
-            (string.string-append "doc: unknown flag " current))]
+            (string.append "doc: unknown flag " current))]
         [else
           (doc-default-parse-options
             (+ idx 1)
@@ -619,17 +616,17 @@
             (doc-invalid-args))))]))
 
 (define (doc-command-kind-load [value : String]) : i64
-  (if (or (string.string-eq value "--load") (string.string-eq value "load"))
+  (if (or (string.eq value "--load") (string.eq value "load"))
     3
     0))
 
 (define (doc-command-kind-html [value : String]) : i64
-  (if (or (string.string-eq value "--html") (string.string-eq value "html"))
+  (if (or (string.eq value "--html") (string.eq value "html"))
     2
     (doc-command-kind-load value)))
 
 (define (doc-command-kind [value : String]) : i64
-  (if (or (string.string-eq value "--test") (string.string-eq value "test"))
+  (if (or (string.eq value "--test") (string.eq value "test"))
     1
     (doc-command-kind-html value)))
 

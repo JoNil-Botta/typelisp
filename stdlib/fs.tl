@@ -242,7 +242,7 @@
 ;: Return the host status code for creating a directory.
 (define (fs-mkdir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (fs-mkdir-status-owned path-text)))
 
 ;: Remove an owned path string as a file and return a host status code.
@@ -259,7 +259,7 @@
 ;: Return the host status code for removing a file.
 (define (fs-remove-file-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (fs-remove-file-status-owned path-text)))
 
 ;: Remove an owned path string as an empty directory and return a host status code.
@@ -276,7 +276,7 @@
 ;: Return the host status code for removing an empty directory.
 (define (fs-remove-dir-status [path : (& path str)]) : i64
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (fs-remove-dir-status-owned path-text)))
 
 ;: Rename owned source and destination path strings and return a host status code.
@@ -301,8 +301,8 @@
   [source : (& source str)]
   [destination : (& destination str)]) : i64
   (let
-    [source-text : String (string.string-copy source)]
-    [destination-text : String (string.string-copy destination)]
+    [source-text : String (string.copy source)]
+    [destination-text : String (string.copy destination)]
     (fs-rename-status-owned source-text destination-text)))
 
 ;: Return the host process id.
@@ -369,14 +369,14 @@
             (if (= (cast byte : i64) 0)
               (set! done true)
               (begin
-                (array.array-push! (struct-get out slots) byte)
+                (array-push! (struct-get out slots) byte)
                 (set! i (+ i 1))))))
-        (array.array-push! (struct-get out slots) (cast '\n' : u8))))))
+        (array-push! (struct-get out slots) (cast '\n' : u8))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (fs-read-dir-bytes-string [out : byte_buf_core.ByteBufBuilder]) : String
   (begin
-    (set! (struct-get out len) (array.array-length (struct-get out slots)))
+    (set! (struct-get out len) (array-length (struct-get out slots)))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
@@ -511,7 +511,7 @@
 (cfg
   windows
   (define (fs-windows-read-dir-pattern [path : String]) : String
-    (string.string-append path "\\*")))
+    (string.append path "\\*")))
 
 ;: Return a pointer to `WIN32_FIND_DATAA.cFileName`.
 (cfg
@@ -917,7 +917,7 @@
 
 ;: Return true on Windows-style hosts.
 (define (fs-windows?) : bool
-  (string.string-eq (env.env-path-list-separator) ";"))
+  (string.eq (env.env-path-list-separator) ";"))
 
 ;: Return the preferred path separator for the current host.
 (define (fs-path-separator) : String
@@ -989,7 +989,7 @@
       [next-prefix : String
         (if (= (string-length prefix) 0)
           segment
-          (string.string-append prefix (string.string-append "/" segment)))]
+          (string.append prefix (string.append "/" segment)))]
       (stdlib.fs.fs-path-segment-vec-render-from
         segments
         (+ index 1)
@@ -1005,10 +1005,9 @@
   [segments : vector.StringVec]
   [rooted : bool]) : vector.StringVec
   (cond
-    [(string.string-eq segment "") segments]
-    [(string.string-eq segment ".") segments]
-    [(not (string.string-eq segment ".."))
-      (vector.string-vec-push segments segment)]
+    [(string.eq segment "") segments]
+    [(string.eq segment ".") segments]
+    [(not (string.eq segment "..")) (vector.string-vec-push segments segment)]
     [(<= (vector.string-vec-len segments) 0)
       (if rooted
         segments
@@ -1016,7 +1015,7 @@
     [else
       (let
         [top : String (vector.string-vec-last segments "")]
-        (if (string.string-eq top "..")
+        (if (string.eq top "..")
           (vector.string-vec-push segments segment)
           (vector.string-vec-pop-rest-or
             (vector.string-vec-pop segments)
@@ -1078,16 +1077,14 @@
           [(if drive-root
               (= (string-length body) 0)
               false)
-            (string.string-append (string.substring path 0 2) "/")]
+            (string.append (string.substring path 0 2) "/")]
           [drive-root
-            (string.string-append
-              (string.substring path 0 2)
-              (string.string-append "/" body))]
+            (string.append (string.substring path 0 2) (string.append "/" body))]
           [(if rooted
               (= (string-length body) 0)
               false)
             "/"]
-          [rooted (string.string-append "/" body)]
+          [rooted (string.append "/" body)]
           [(= (string-length body) 0) "."]
           [else body])))))
 
@@ -1097,7 +1094,7 @@
     [n : i64 (string-length normalized)]
     [parent : String ".."]
     (or
-      (string.string-eq normalized (& parent))
+      (string.eq normalized (& parent))
       (and
         (> n 2)
         (string.char-eq (string-ref normalized 0) '.')
@@ -1117,7 +1114,7 @@
       false
       (let
         [normalized : String (stdlib.fs.fs-path-normalize path)]
-        (if (not (string.string-eq normalized "."))
+        (if (not (string.eq normalized "."))
           (not (stdlib.fs.fs-path-normalized-escapes? (& normalized)))
           false)))))
 
@@ -1126,22 +1123,22 @@
 ;: Empty sides are returned without allocating an extra separator.
 (define (fs-path-join [left : (& left str)] [right : (& right str)]) : String
   (cond
-    [(= (string-length left) 0) (string.string-copy right)]
-    [(= (string-length right) 0) (string.string-copy left)]
+    [(= (string-length left) 0) (string.copy right)]
+    [(= (string-length right) 0) (string.copy left)]
     [(stdlib.fs.fs-path-separator? (string-ref left (- (string-length left) 1)))
       (if (stdlib.fs.fs-path-separator? (string-ref right 0))
         (let
           [trimmed-right : String
             (string.substring right 1 (- (string-length right) 1))]
-          (string.string-append left (& trimmed-right)))
-        (string.string-append left right))]
+          (string.append left (& trimmed-right)))
+        (string.append left right))]
     [(stdlib.fs.fs-path-separator? (string-ref right 0))
-      (string.string-append left right)]
+      (string.append left right)]
     [else
       (let
         [separator : String (stdlib.fs.fs-path-separator)]
-        [left-with-separator : String (string.string-append left (& separator))]
-        (string.string-append (& left-with-separator) right))]))
+        [left-with-separator : String (string.append left (& separator))]
+        (string.append (& left-with-separator) right))]))
 
 ;: Join two owned `String` path segments by delegating to `fs-path-join`.
 ;:
@@ -1207,7 +1204,7 @@
     [n : i64 (string-length path)]
     [last : i64 (fs-last-separator-index path)]
     (if (< last 0)
-      (string.string-copy path)
+      (string.copy path)
       (string.substring path (+ last 1) (- n (+ last 1))))))
 
 ;: Extension of `path` without the leading dot (e.g. `"tl"` for `main.tl`).
@@ -1255,11 +1252,11 @@
 ;: Linux uses mode `0700`; Windows uses the CRT `_mkdir` function.
 (define (try-mkdir [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [status-path : String (string.string-copy (& path-text))]
+        [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.fs-mkdir-status-owned status-path)]
         [error : io.IoError (io.io-error-from-owned-status path-text status)]
         (if (= status io.io-status-ok)
@@ -1271,11 +1268,11 @@
 ;: A pre-existing path reported by the host as already-created is accepted.
 (define (try-mkdir-if-missing [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [status-path : String (string.string-copy (& path-text))]
+        [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.fs-mkdir-status-owned status-path)]
         [error : io.IoError (io.io-error-from-owned-status path-text status)]
         (if (or
@@ -1287,11 +1284,11 @@
 ;: Remove a file path, returning a structured status.
 (define (try-remove-file [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [status-path : String (string.string-copy (& path-text))]
+        [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.fs-remove-file-status-owned status-path)]
         [error : io.IoError (io.io-error-from-owned-status path-text status)]
         (if (= status io.io-status-ok)
@@ -1301,11 +1298,11 @@
 ;: Remove an empty directory path, returning a structured status.
 (define (try-remove-dir [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [status-path : String (string.string-copy (& path-text))]
+        [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.fs-remove-dir-status-owned status-path)]
         [error : io.IoError (io.io-error-from-owned-status path-text status)]
         (if (= status io.io-status-ok)
@@ -1320,15 +1317,15 @@
   [source : (& source str)]
   [destination : (& destination str)]) : io.ResultIoUnit
   (if (= (string-length source) 0)
-    (io.ErrIoUnit (io.IoInvalidPath (string.string-copy source)))
+    (io.ErrIoUnit (io.IoInvalidPath (string.copy source)))
     (if (= (string-length destination) 0)
-      (io.ErrIoUnit (io.IoInvalidPath (string.string-copy destination)))
+      (io.ErrIoUnit (io.IoInvalidPath (string.copy destination)))
       (let
-        [source-text : String (string.string-copy source)]
-        [destination-text : String (string.string-copy destination)]
+        [source-text : String (string.copy source)]
+        [destination-text : String (string.copy destination)]
         [arrow : String " -> "]
-        [source-arrow : String (string.string-append source (& arrow))]
-        [path : String (string.string-append (& source-arrow) destination)]
+        [source-arrow : String (string.append source (& arrow))]
+        [path : String (string.append (& source-arrow) destination)]
         [status : i64
           (stdlib.fs.fs-rename-status-owned source-text destination-text)]
         (if (= status io.io-status-ok)
@@ -1340,7 +1337,7 @@
 ;: Linux and Windows report regular files, directories, and other node kinds.
 (define (try-file-kind [path : (& path str)]) : ResultFsFileKind
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (ErrFsFileKind (io.io-invalid-path-error path))
       (stdlib.fs.fs-file-kind-status-result
@@ -1380,7 +1377,7 @@
 ;: reported as zero.
 (define (try-file-metadata [path : (& path str)]) : ResultFsMetadata
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (ErrFsMetadata (io.io-invalid-path-error path))
       (match (stdlib.fs.try-file-kind path)
@@ -1430,7 +1427,7 @@
 ;: vector storage and entry strings allocate in the active arena.
 (define (try-read-dir [path : (& path str)]) : ResultIoStringVec
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (ErrIoStringVec (io.io-invalid-path-error path))
       (let
@@ -1448,11 +1445,11 @@
 ;: Remove a file if present. Missing paths are considered already cleaned.
 (define (try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [status-path : String (string.string-copy (& path-text))]
+        [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.fs-remove-file-status-owned status-path)]
         [error : io.IoError (io.io-error-from-owned-status path-text status)]
         (if (or
@@ -1464,11 +1461,11 @@
 ;: Remove an empty directory if present. Missing paths are considered cleaned.
 (define (try-remove-dir-if-exists [path : (& path str)]) : io.ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io.io-empty-path? path)
       (io.ErrIoUnit (io.io-invalid-path-error path))
       (let
-        [status-path : String (string.string-copy (& path-text))]
+        [status-path : String (string.copy (& path-text))]
         [status : i64 (stdlib.fs.fs-remove-dir-status-owned status-path)]
         [error : io.IoError (io.io-error-from-owned-status path-text status)]
         (if (or
@@ -1511,13 +1508,11 @@
 (define (fs-temp-name [prefix : (& prefix str)] [pid : i64] [attempt : i64]) : String
   (let
     [dash : String "-"]
-    [prefix-dash : String (string.string-append prefix (& dash))]
+    [prefix-dash : String (string.append prefix (& dash))]
     [pid-text : String (string.int->string pid)]
     [attempt-text : String (string.int->string attempt)]
-    [pid-dash : String (string.string-append pid-text dash)]
-    (string.string-append
-      prefix-dash
-      (string.string-append pid-dash attempt-text))))
+    [pid-dash : String (string.append pid-text dash)]
+    (string.append prefix-dash (string.append pid-dash attempt-text))))
 
 ;: Retry temporary directory creation until an unused candidate is found.
 (define (fs-create-temp-dir-loop
@@ -1527,31 +1522,28 @@
   [attempt : i64]) : io.ResultIoString
   (if (>= attempt stdlib.fs.fs-temp-attempt-limit)
     (io.ErrIoString
-      (io.IoSystemCode
-        stdlib.fs.fs-status-already-exists
-        (string.string-copy prefix)))
+      (io.IoSystemCode stdlib.fs.fs-status-already-exists (string.copy prefix)))
     (let
       [name : String (stdlib.fs.fs-temp-name prefix pid attempt)]
       [path : String
         (cond
           [(= (string-length root) 0) name]
-          [(= (string-length name) 0) (string.string-copy root)]
+          [(= (string-length name) 0) (string.copy root)]
           [(stdlib.fs.fs-path-separator?
               (string-ref root (- (string-length root) 1)))
             (if (stdlib.fs.fs-path-separator? (string-ref name 0))
               (let
                 [trimmed-name : String
                   (string.substring (& name) 1 (- (string-length name) 1))]
-                (string.string-append root (& trimmed-name)))
-              (string.string-append root (& name)))]
+                (string.append root (& trimmed-name)))
+              (string.append root (& name)))]
           [(stdlib.fs.fs-path-separator? (string-ref name 0))
-            (string.string-append root (& name))]
+            (string.append root (& name))]
           [else
             (let
               [separator : String (stdlib.fs.fs-path-separator)]
-              [root-with-separator : String
-                (string.string-append root (& separator))]
-              (string.string-append root-with-separator name))])]
+              [root-with-separator : String (string.append root (& separator))]
+              (string.append root-with-separator name))])]
       [status : i64 (stdlib.fs.fs-mkdir-status-owned path)]
       (if (= status io.io-status-ok)
         (io.OkIoString path)
@@ -1567,7 +1559,7 @@
 ;: Linux) and an attempt counter, retrying on collision.
 (define (try-create-temp-dir [prefix : (& prefix str)]) : io.ResultIoString
   (if (= (string-length prefix) 0)
-    (io.ErrIoString (io.IoInvalidPath (string.string-copy prefix)))
+    (io.ErrIoString (io.IoInvalidPath (string.copy prefix)))
     (let
       [root : String (stdlib.fs.fs-temp-root)]
       (stdlib.fs.fs-create-temp-dir-loop
@@ -1617,7 +1609,7 @@
     [actual : (& actual str)]
     [expected : (& expected str)]
     [message : String]) : unit
-    (fs-test-assert-true (string.string-eq actual expected) message)))
+    (fs-test-assert-true (string.eq actual expected) message)))
 
 (cfg
   test
@@ -1633,11 +1625,9 @@
     [a : String]
     [b : String]
     [c : String]) : String
-    (string.string-append
-      (string.string-append
-        (string.string-append a (stdlib.fs.fs-path-separator))
-        b)
-      (string.string-append (stdlib.fs.fs-path-separator) c))))
+    (string.append
+      (string.append (string.append a (stdlib.fs.fs-path-separator)) b)
+      (string.append (stdlib.fs.fs-path-separator) c))))
 
 (cfg
   test
@@ -1646,9 +1636,9 @@
     [b : String]
     [c : String]
     [d : String]) : String
-    (string.string-append
+    (string.append
       (fs-path-join-many-api-expected3 a b c)
-      (string.string-append (stdlib.fs.fs-path-separator) d))))
+      (string.append (stdlib.fs.fs-path-separator) d))))
 
 (cfg
   test
@@ -1664,8 +1654,8 @@
         "fs-path-join-many one")
       (fs-path-join-many-api-assert
         (fs-path-join-many "left path" "right file")
-        (string.string-append
-          (string.string-append "left path" (fs-path-separator))
+        (string.append
+          (string.append "left path" (fs-path-separator))
           "right file")
         "fs-path-join-many two")
       (fs-path-join-many-api-assert
@@ -1678,9 +1668,7 @@
         "fs-path-join-many four")
       (fs-path-join-many-api-assert
         (fs-path-join-many "left/" "/right" "leaf")
-        (string.string-append
-          "left/right"
-          (string.string-append (fs-path-separator) "leaf"))
+        (string.append "left/right" (string.append (fs-path-separator) "leaf"))
         "fs-path-join-many duplicate separator")
       42)))
 
@@ -2169,7 +2157,7 @@
           "create temp dir b: ")]
       (begin
         (fs-test-assert-true
-          (not (string.string-eq dir-a dir-b))
+          (not (string.eq dir-a dir-b))
           "temp directories are unique")
         (fs-test-assert-exists dir-a true "temp dir a exists")
         (fs-test-assert-exists dir-b true "temp dir b exists")))))
@@ -2420,8 +2408,8 @@
     (let
       [joined : String (fs-api-test-fs-path-join "left path" "right file")]
       [expected-join : String
-        (string.string-append
-          (string.string-append "left path" (stdlib.fs.fs-path-separator))
+        (string.append
+          (string.append "left path" (stdlib.fs.fs-path-separator))
           "right file")]
       (begin
         (fs-test-assert-owned-string-eq
@@ -2446,27 +2434,27 @@
           "path join many two segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many3 "left" "middle" "right")
-          (string.string-append
-            (string.string-append
-              (string.string-append "left" (stdlib.fs.fs-path-separator))
+          (string.append
+            (string.append
+              (string.append "left" (stdlib.fs.fs-path-separator))
               "middle")
-            (string.string-append (stdlib.fs.fs-path-separator) "right"))
+            (string.append (stdlib.fs.fs-path-separator) "right"))
           "path join many three segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many4 "left" "middle" "right" "leaf")
-          (string.string-append
-            (string.string-append
-              (string.string-append
-                (string.string-append "left" (stdlib.fs.fs-path-separator))
+          (string.append
+            (string.append
+              (string.append
+                (string.append "left" (stdlib.fs.fs-path-separator))
                 "middle")
-              (string.string-append (stdlib.fs.fs-path-separator) "right"))
-            (string.string-append (stdlib.fs.fs-path-separator) "leaf"))
+              (string.append (stdlib.fs.fs-path-separator) "right"))
+            (string.append (stdlib.fs.fs-path-separator) "leaf"))
           "path join many four segments")
         (fs-test-assert-owned-string-eq
           (fs-api-test-fs-path-join-many3 "left/" "/right" "leaf")
-          (string.string-append
+          (string.append
             "left/right"
-            (string.string-append (stdlib.fs.fs-path-separator) "leaf"))
+            (string.append (stdlib.fs.fs-path-separator) "leaf"))
           "path join many avoids duplicate separator")
         (fs-test-assert-string-vec3
           (stdlib.fs.fs-read-dir-split-vec "first\nsecond\nthird\n")
@@ -2701,7 +2689,7 @@
             [file-b : String (fs-api-test-fs-path-join dir-b "cleanup.obj")]
             (begin
               (fs-test-assert-true
-                (not (string.string-eq dir-a dir-b))
+                (not (string.eq dir-a dir-b))
                 "temp directories are unique")
               (fs-test-assert-exists dir-a true "temp dir a exists")
               (fs-test-assert-exists dir-b true "temp dir b exists")

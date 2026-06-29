@@ -42,7 +42,6 @@
 ;; parallel pair of generated `i64` vectors - a tag vector (the Token kind, via
 ;; `token-tag`) and a value vector (the integer payload of `Token.Int`, else 0) -
 ;; so the cursor is a plain `i64` index the helpers advance.
-(import stdlib.array)
 (import "stdlib/io.tl")
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
@@ -122,7 +121,7 @@
 ;; without consuming, `advance` bumps it.
 ;; Current cursor position.
 (define (cur-pos [cur : (Array i64 1)]) : i64
-  (array.array-ref cur 0))
+  (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
 (define (current-tag [tags : (& tags i64vec.Vec)] [cur : (Array i64 1)]) : i64
@@ -134,7 +133,7 @@
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (Array i64 1)]) : unit
-  (array.array-set! cur 0 (+ (cur-pos cur) 1)))
+  (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then

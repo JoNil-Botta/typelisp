@@ -9,7 +9,7 @@
     (match (json-object-get doc (& key))
       [(JsonFound value)
         (match value
-          [(JsonString text) (string-eq text "tl")]
+          [(JsonString text) (eq text "tl")]
           [_ false])]
       [(JsonMissing) false])))
 
@@ -29,17 +29,17 @@
     (match (json-object-get doc (& key))
       [(JsonFound value)
         (match value
-          [(JsonString text) (string-eq text "a\nb")]
+          [(JsonString text) (eq text "a\nb")]
           [_ false])]
       [(JsonMissing) false])))
 
 (define (json-test-stringify [doc : Json]) : bool
-  (string-eq
+  (eq
     (json-stringify doc)
     "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"escaped\":\"a\\nb\"}"))
 
 (define (json-test-string-escapes) : bool
-  (string-eq (json-stringify (JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
+  (eq (json-stringify (JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
 
 (define (json-test-invalid) : bool
   (let
@@ -57,7 +57,7 @@
 
 (define (json-test-float-render) : bool
   (match (json-f64->number-text 0.125)
-    [(OkJsonNumberText text) (string-eq text "0.125")]
+    [(OkJsonNumberText text) (eq text "0.125")]
     [(ErrJsonNumberText _) false]))
 
 (define (json-test-i64-parse) : bool
@@ -80,7 +80,7 @@
   (let
     [buf : (Array u64) (array.make-array u64 1)]
     (begin
-      (array.array-set! buf 0 bits)
+      (array-set! buf 0 bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
 
@@ -88,7 +88,7 @@
   (let
     [buf : (Array u32) (array.make-array u32 1)]
     (begin
-      (array.array-set! buf 0 bits)
+      (array-set! buf 0 bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
 

@@ -12,7 +12,7 @@
   (form-end-line i64)
   (form-end-col i64))
 
-(vector.vector-family LspDeclEntry LspDeclList lsp-decl-list)
+(vector.family LspDeclEntry LspDeclList lsp-decl-list)
 
 (defstruct LspDocument
   (uri String)
@@ -22,4 +22,4 @@
   (decls LspDeclList)
   (decls-valid bool))
 
-(vector.vector-family LspDocument LspDocuments lsp-documents)
+(vector.family LspDocument LspDocuments lsp-documents)

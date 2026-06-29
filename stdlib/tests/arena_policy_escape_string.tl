@@ -9,4 +9,4 @@
       inner
       (let
         [s : String "  scoped  "]
-        (string.string-trim (& s))))))
+        (string.trim (& s))))))

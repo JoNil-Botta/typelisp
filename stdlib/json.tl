@@ -327,7 +327,7 @@
   (match items
     [(JsonMemberListNil) JsonMissing]
     [(JsonMemberListCons item-key value rest)
-      (if (string.string-eq (& item-key) key)
+      (if (string.eq (& item-key) key)
         (JsonFound value)
         (stdlib.json.json-member-list-get (box-get rest) key))]))
 
@@ -431,18 +431,18 @@
     [(= code 12) "\\f"]
     [(= code 13) "\\r"]
     [else
-      (string.string-append
+      (string.append
         "\\u00"
-        (string.string-append
+        (string.append
           (stdlib.json.json-hex-digit (/ code 16))
           (stdlib.json.json-hex-digit (- code (* (/ code 16) 16)))))]))
 
 ;: Return the JSON escape spelling for one string scalar code.
 (define (json-escape-char [code : i64]) : String
   (if (= code 34)
-    (string.string-append "\\" "\"")
+    (string.append "\\" "\"")
     (if (= code 92)
-      (string.string-append "\\" "\\")
+      (string.append "\\" "\\")
       (stdlib.json.json-control-escape code))))
 
 ;: Escape borrowed raw text for JSON string output.
@@ -453,7 +453,7 @@
     [n : i64 (string-length text)]
     [i : i64 0]
     [segment-start : i64 0]
-    [out : text_buf.TextBuf (text_buf.text-buf-empty)]
+    [out : text_buf.TextBuf (text_buf.empty)]
     (begin
       (while (< i n)
         (let
@@ -462,23 +462,21 @@
             (begin
               (set!
                 out
-                (text_buf.text-buf-append
+                (text_buf.append
                   out
                   (string.substring text segment-start (- i segment-start))))
               (set!
                 out
-                (text_buf.text-buf-append
-                  out
-                  (stdlib.json.json-escape-char code)))
+                (text_buf.append out (stdlib.json.json-escape-char code)))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
       (set!
         out
-        (text_buf.text-buf-append
+        (text_buf.append
           out
           (string.substring text segment-start (- n segment-start))))
-      (text_buf.text-buf-render out))))
+      (text_buf.render out))))
 
 ;: Append serialized array elements to `buf`.
 (define (json-stringify-list-into [items : JsonList] [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -487,20 +485,20 @@
     [(JsonListCons head rest)
       (let
         [with-head : text_buf.TextBuf
-          (text_buf.text-buf-append buf (stdlib.json.json-stringify head))]
+          (text_buf.append buf (stdlib.json.json-stringify head))]
         (match (box-get rest)
           [(JsonListNil) with-head]
           [(JsonListCons _ _)
             (stdlib.json.json-stringify-list-into
               (box-get rest)
-              (text_buf.text-buf-append with-head ","))]))]))
+              (text_buf.append with-head ","))]))]))
 
 ;: Serialize array `items` without the surrounding brackets.
 ;:
 ;: The returned comma-separated string is allocated in the active arena.
 (define (json-stringify-list [items : JsonList]) : String
-  (text_buf.text-buf-render
-    (stdlib.json.json-stringify-list-into items (text_buf.text-buf-empty))))
+  (text_buf.render
+    (stdlib.json.json-stringify-list-into items (text_buf.empty))))
 
 ;: Append serialized object members to `buf`.
 (define (json-stringify-members-into
@@ -512,10 +510,10 @@
       (let
         [text : String key]
         [with-item : text_buf.TextBuf
-          (text_buf.text-buf-append
-            (text_buf.text-buf-append
-              (text_buf.text-buf-append
-                (text_buf.text-buf-append buf "\"")
+          (text_buf.append
+            (text_buf.append
+              (text_buf.append
+                (text_buf.append buf "\"")
                 (stdlib.json.json-escape-string (& text)))
               "\":")
             (stdlib.json.json-stringify value))]
@@ -524,14 +522,14 @@
           [(JsonMemberListCons _ _ _)
             (stdlib.json.json-stringify-members-into
               (box-get rest)
-              (text_buf.text-buf-append with-item ","))]))]))
+              (text_buf.append with-item ","))]))]))
 
 ;: Serialize object `items` without the surrounding braces.
 ;:
 ;: The returned comma-separated member string is allocated in the active arena.
 (define (json-stringify-members [items : JsonMemberList]) : String
-  (text_buf.text-buf-render
-    (stdlib.json.json-stringify-members-into items (text_buf.text-buf-empty))))
+  (text_buf.render
+    (stdlib.json.json-stringify-members-into items (text_buf.empty))))
 
 ;: Serialize a JSON value to canonical compact JSON text.
 ;:
@@ -553,19 +551,17 @@
         "false")]
     [(JsonNumber text) text]
     [(JsonString text)
-      (string.string-append
+      (string.append
         "\""
-        (string.string-append (stdlib.json.json-escape-string (& text)) "\""))]
+        (string.append (stdlib.json.json-escape-string (& text)) "\""))]
     [(JsonArray items)
-      (string.string-append
+      (string.append
         "["
-        (string.string-append
-          (stdlib.json.json-stringify-list (box-get items))
-          "]"))]
+        (string.append (stdlib.json.json-stringify-list (box-get items)) "]"))]
     [(JsonObject members)
-      (string.string-append
+      (string.append
         "{"
-        (string.string-append
+        (string.append
           (stdlib.json.json-stringify-members (box-get members))
           "}"))]))
 
@@ -647,7 +643,7 @@
       [n : i64 (string-length text)]
       [i : i64 (+ pos 1)]
       [segment-start : i64 (+ pos 1)]
-      [out : text_buf.TextBuf (text_buf.text-buf-empty)]
+      [out : text_buf.TextBuf (text_buf.empty)]
       [ok : bool true]
       [done : bool false]
       [message : String ""]
@@ -665,7 +661,7 @@
                   (begin
                     (set!
                       out
-                      (text_buf.text-buf-append
+                      (text_buf.append
                         out
                         (string.substring
                           text
@@ -677,7 +673,7 @@
                   (begin
                     (set!
                       out
-                      (text_buf.text-buf-append
+                      (text_buf.append
                         out
                         (string.substring
                           text
@@ -686,7 +682,7 @@
                     (match (stdlib.json.json-parse-escape text (+ i 1))
                       [(OkJsonParseEscape decoded next)
                         (begin
-                          (set! out (text_buf.text-buf-append out decoded))
+                          (set! out (text_buf.append out decoded))
                           (set! i next)
                           (set! segment-start next))]
                       [(ErrJsonParseEscape err)
@@ -701,7 +697,7 @@
                     (set! message "json: control character in string"))]
                 [else (set! i (+ i 1))]))))
         (if ok
-          (OkJsonParseString (text_buf.text-buf-render out) i)
+          (OkJsonParseString (text_buf.render out) i)
           (ErrJsonParseString message))))))
 
 ;: Return the first offset at or after `pos` that is not an ASCII digit.
@@ -971,7 +967,7 @@
     (ErrJsonNumberI64 "json: expected integer number")
     (if (not (stdlib.json.json-number-i64-range? owned))
       (ErrJsonNumberI64 "json: integer outside i64 range")
-      (OkJsonNumberI64 (string.string->int owned)))))
+      (OkJsonNumberI64 (string.>int owned)))))
 
 ;: Parse borrowed JSON integer number text into an i64 with recoverable errors.
 ;:
@@ -1490,7 +1486,7 @@
   [expected : String]
   [message : String]) : unit
   (stdlib.json.json-stdlib-inline-test-assert-true
-    (string.string-eq actual expected)
+    (string.eq actual expected)
     message))
 
 ;: Assert that a lookup found the expected JSON number text.
@@ -1890,13 +1886,11 @@
   json-helpers-api
   (begin
     (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (string.string-append "a" (string.string-append "b" "c"))
+      (string.append "a" (string.append "b" "c"))
       "abc"
       "json-cat3")
     (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (string.string-append
-        "a"
-        (string.string-append "b" (string.string-append "c" "d")))
+      (string.append "a" (string.append "b" (string.append "c" "d")))
       "abcd"
       "json-cat4")
     (stdlib.json.json-stdlib-inline-test-assert-i64-eq

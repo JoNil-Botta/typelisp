@@ -5,5 +5,5 @@
   (foreach
     ([i : i64 0 n])
     (let
-      [j : i64 (array.array-ref ix i)]
-      (array.array-set! out j i))))
+      [j : i64 (array-ref ix i)]
+      (array-set! out j i))))

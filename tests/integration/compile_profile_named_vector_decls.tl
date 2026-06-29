@@ -4,13 +4,13 @@
 (defstruct ProfileVecDecl
   (id i64))
 
-(vector.vector-family ProfileVecDecl ProfileVecDeclList profile-vec-decl-list)
+(vector.family ProfileVecDecl ProfileVecDeclList profile-vec-decl-list)
 
 (defstruct ProfileVecDoc
   (uri String)
   (decls ProfileVecDeclList))
 
-(vector.vector-family ProfileVecDoc ProfileVecDocList profile-vec-doc-list)
+(vector.family ProfileVecDoc ProfileVecDocList profile-vec-doc-list)
 
 (define (profile-core-after-vector [n : i64]) : i64
   (cond [(and (> n 0) (< n 10)) 42] [else 0]))

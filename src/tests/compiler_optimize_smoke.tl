@@ -22,6 +22,7 @@
 ;; unused call-graph/SCC infrastructure for the next inliner phases; returns 42
 ;; only when every self-test passes.
 (import "../compiler_optimize.tl")
+(import stdlib.string)
 
 (define (opt-count-switch-instr-seq-from
   [instrs : CompilerIrInstrSeq]
@@ -262,7 +263,7 @@
       [(not (= (opt-switch-entry-base dense-blocks) 0)) 2]
       [(not (= (opt-switch-entry-case-count dense-blocks) 4)) 3]
       [(not
-          (string-eq (opt-switch-entry-default-label dense-blocks) "fallback"))
+          (string.eq (opt-switch-entry-default-label dense-blocks) "fallback"))
         4]
       [(opt-block-list-has-label? dense-blocks "cmp1") 5]
       [(opt-block-list-has-label? dense-blocks "cmp2") 6]

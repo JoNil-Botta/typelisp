@@ -1,6 +1,7 @@
 ;; format_rules_doc_compat.tl - Doc-algebra parity checks for formatter rules.
 (import "format_rules.tl")
 (import "format_doc.tl")
+(import stdlib.string)
 
 (define (format-rules-gap) : Doc
   (doc-append (doc-hard-line) (doc-hard-line)))
@@ -405,28 +406,28 @@
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
-      [(string-eq head-name "import")
+      [(string.eq head-name "import")
         (format-rules-inline-form-doc "import" rest)]
-      [(string-eq head-name "include-str")
+      [(string.eq head-name "include-str")
         (format-rules-inline-form-doc "include-str" rest)]
-      [(string-eq head-name "extern")
+      [(string.eq head-name "extern")
         (format-rules-inline-form-doc "extern" rest)]
-      [(string-eq head-name "define") (format-rules-define-doc rest)]
-      [(string-eq head-name "defmacro") (format-rules-defmacro-doc rest)]
-      [(string-eq head-name "defenum")
+      [(string.eq head-name "define") (format-rules-define-doc rest)]
+      [(string.eq head-name "defmacro") (format-rules-defmacro-doc rest)]
+      [(string.eq head-name "defenum")
         (format-rules-first-or-line-form-doc "defenum" rest)]
-      [(string-eq head-name "defstruct")
+      [(string.eq head-name "defstruct")
         (format-rules-first-or-line-form-doc "defstruct" rest)]
-      [(string-eq head-name "lambda") (format-rules-lambda-doc rest)]
-      [(string-eq head-name "let") (format-rules-let-doc rest)]
-      [(string-eq head-name "if")
+      [(string.eq head-name "lambda") (format-rules-lambda-doc rest)]
+      [(string.eq head-name "let") (format-rules-let-doc rest)]
+      [(string.eq head-name "if")
         (format-rules-first-or-line-form-doc "if" rest)]
-      [(string-eq head-name "while")
+      [(string.eq head-name "while")
         (format-rules-first-or-line-form-doc "while" rest)]
-      [(string-eq head-name "begin") (format-rules-line-form-doc "begin" rest)]
-      [(string-eq head-name "unsafe")
+      [(string.eq head-name "begin") (format-rules-line-form-doc "begin" rest)]
+      [(string.eq head-name "unsafe")
         (format-rules-line-form-doc "unsafe" rest)]
-      [(string-eq head-name "match")
+      [(string.eq head-name "match")
         (format-rules-first-or-line-form-doc "match" rest)]
       [else
         (format-rules-delimited-doc
@@ -440,7 +441,7 @@
       (let
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string-length name) 0)
-          (format-rules-inline-form-doc (string-append ":" name) tail)
+          (format-rules-inline-form-doc (string.append ":" name) tail)
           (format-rules-delimited-doc
             "("
             (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
@@ -499,7 +500,7 @@
 (define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
   (let
     [tree : FormatCst (parse-format-source src)]
-    (string-eq
+    (string.eq
       (format-rules-render-cst-width tree width)
       (render-doc-width (format-rules-cst-doc tree) width))))
 

@@ -307,7 +307,7 @@
     (ProcessNoString)
     (let
       [name : String (svec.get (env-vec-names env) index "")]
-      (if (string.string-eq name "")
+      (if (string.eq name "")
         (ProcessSomeString "process: environment variable name is empty")
         (if (string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
@@ -557,8 +557,8 @@
   (match result
     [(OkProcessOutput output)
       (if (= (output-status output) expected-status)
-        (if (string.string-eq (output-stdout output) expected-stdout)
-          (string.string-eq (output-stderr output) expected-stderr)
+        (if (string.eq (output-stdout output) expected-stdout)
+          (string.eq (output-stderr output) expected-stderr)
           false)
         false)]
     [(ErrProcessOutput _) false]))
@@ -652,7 +652,7 @@
   (match env
     [(ProcessEnvNil) (ProcessNoString)]
     [(ProcessEnvCons name _ rest)
-      (if (string.string-eq name "")
+      (if (string.eq name "")
         (ProcessSomeString "process: environment variable name is empty")
         (if (string-contains-char? (& name) '=')
           (ProcessSomeString "process: environment variable name contains '='")
@@ -660,11 +660,11 @@
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (command-validation-error [command : ProcessCommand]) : ProcessMaybeString
-  (if (string.string-eq (command-executable command) "")
+  (if (string.eq (command-executable command) "")
     (ProcessSomeString "process: executable path is empty")
     (match (command-cwd command)
       [(ProcessSomeString cwd)
-        (if (string.string-eq cwd "")
+        (if (string.eq cwd "")
           (ProcessSomeString "process: cwd path is empty")
           (env-validation-error (command-env command)))]
       [(ProcessNoString) (env-validation-error (command-env command))])))
@@ -836,7 +836,7 @@
 
 ;: Inline test owned string assertion.
 (define (test-assert-string-eq [actual : String] [expected : String]) : unit
-  (test-assert (string.string-eq actual expected)))
+  (test-assert (string.eq actual expected)))
 
 ;: Inline test assertion for an empty process string list.
 (define (test-assert-string-empty [items : ProcessStringList]) : unit

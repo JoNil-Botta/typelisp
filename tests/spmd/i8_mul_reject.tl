@@ -5,14 +5,14 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! a i (cast (+ i 1) : i8))
-        (array.array-set! b i (cast (+ i 2) : i8))
+        (array-set! a i (cast (+ i 1) : i8))
+        (array-set! b i (cast (+ i 2) : i8))
         (set! i (+ i 1))))))
 
 (define (fill [a : (Array i8)] [b : (Array i8)] [out : (Array i8)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set! out i (* (array.array-ref a i) (array.array-ref b i)))))
+    (array-set! out i (* (array-ref a i) (array-ref b i)))))
 
 (define (sum [out : (Array i8)] [n : i64]) : i64
   (let
@@ -21,7 +21,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (cast (array.array-ref out i) : i64)))
+          (set! acc (+ acc (cast (array-ref out i) : i64)))
           (set! i (+ i 1))))
       acc)))
 

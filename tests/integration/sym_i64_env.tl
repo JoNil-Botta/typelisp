@@ -96,7 +96,7 @@
     ; String-append-built key lookup
     (let
       [e : SymI64Env (sym-i64-bind (sym-i64-empty) "foobar" 77)]
-      [key : String (string-append "foo" "bar")]
+      [key : String (append "foo" "bar")]
       (check-true (sym-i64-contains e key) "append-key-hit"))
     ; Multi-bind chain
     (let

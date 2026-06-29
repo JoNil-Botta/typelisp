@@ -151,10 +151,10 @@
         (compiler-cfg-empty))
         [(ResultCompilerDriverBuffer.Ok buf)
           (let
-            [asm : String (text_buf.text-buf-render buf)]
+            [asm : String (text_buf.render buf)]
             [needle : String
               "_tl_lower_direct_no_main_symbols_no_main_direct_helper:"]
-            (string.string-contains (& asm) (& needle)))]
+            (string.contains (& asm) (& needle)))]
         [(ResultCompilerDriverBuffer.Err diag)
           (panic (compiler-diagnostic-message (box-get diag)))]))))
 
@@ -258,7 +258,7 @@
       (compiler-lower-error-ok?
         "(import stdlib.comptime)
 (define (main) : i64
-  (comptime.comptime-error \"runtime forbidden\"))"
+  (comptime.error \"runtime forbidden\"))"
         "lower: comptime-error is compile-time only")
       (panic "lower: comptime-error runtime diagnostic smoke mismatch"))
     (unless

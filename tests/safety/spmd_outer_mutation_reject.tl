@@ -5,5 +5,5 @@
   (let
     [sum : i64 0]
     (begin
-      (foreach ([i : i64 0 n]) (set! sum (+ sum (array.array-ref xs i))))
+      (foreach ([i : i64 0 n]) (set! sum (+ sum (array-ref xs i))))
       sum)))

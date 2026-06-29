@@ -14,7 +14,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref xs i)))
+          (set! acc (+ acc (array-ref xs i)))
           (set! i (+ i 1))))
       acc)))
 
@@ -28,8 +28,8 @@
     (begin
       (while (< i n)
         (begin
-          (if (> (array.array-ref xs i) acc)
-            (set! acc (array.array-ref xs i))
+          (if (> (array-ref xs i) acc)
+            (set! acc (array-ref xs i))
             (set! acc acc))
           (set! i (+ i 1))))
       acc)))
@@ -62,33 +62,33 @@
   (spmd-reduce any ([i : i64 0 n]) false (= (array-ref xs i) 0)))
 
 (define (fill-i64 [xs : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array.array-set! xs i (+ i 1))))
+  (foreach ([i : i64 0 n]) (array-set! xs i (+ i 1))))
 
 ; Float casts are not supported yet, so seed the f64 array with literals.
 (define (fill-f64 [fs : (Array f64)]) : unit
   (begin
-    (array.array-set! fs 0 1.0)
-    (array.array-set! fs 1 2.0)
-    (array.array-set! fs 2 3.0)
-    (array.array-set! fs 3 4.0)
-    (array.array-set! fs 4 5.0)))
+    (array-set! fs 0 1.0)
+    (array-set! fs 1 2.0)
+    (array-set! fs 2 3.0)
+    (array-set! fs 3 4.0)
+    (array-set! fs 4 5.0)))
 
 (define (fill-i32 [gs : (Array i32)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array.array-set! gs i (cast (+ i 1) : i32))))
+  (foreach ([i : i64 0 n]) (array-set! gs i (cast (+ i 1) : i32))))
 
 (define (fill-signed-i32 [hs : (Array i32)]) : unit
   (begin
-    (array.array-set! hs 0 (cast 3 : i32))
-    (array.array-set! hs 1 (cast (- 0 7) : i32))
-    (array.array-set! hs 2 (cast 12 : i32))
-    (array.array-set! hs 3 (cast (- 0 1) : i32))
-    (array.array-set! hs 4 (cast 0 : i32))
-    (array.array-set! hs 5 (cast 5 : i32))
-    (array.array-set! hs 6 (cast (- 0 9) : i32))
-    (array.array-set! hs 7 (cast 8 : i32))
-    (array.array-set! hs 8 (cast (- 0 4) : i32))
-    (array.array-set! hs 9 (cast 6 : i32))
-    (array.array-set! hs 10 (cast (- 0 20) : i32))))
+    (array-set! hs 0 (cast 3 : i32))
+    (array-set! hs 1 (cast (- 0 7) : i32))
+    (array-set! hs 2 (cast 12 : i32))
+    (array-set! hs 3 (cast (- 0 1) : i32))
+    (array-set! hs 4 (cast 0 : i32))
+    (array-set! hs 5 (cast 5 : i32))
+    (array-set! hs 6 (cast (- 0 9) : i32))
+    (array-set! hs 7 (cast 8 : i32))
+    (array-set! hs 8 (cast (- 0 4) : i32))
+    (array-set! hs 9 (cast 6 : i32))
+    (array-set! hs 10 (cast (- 0 20) : i32))))
 
 (define (main) : i64
   (let

@@ -129,7 +129,7 @@
           0)]
       (if (= ok (cast 0 : i32))
         (cast -1 : i32)
-        (array.array-ref written 0)))))
+        (array-ref written 0)))))
 
 ;: Windows `_read` replacement via ReadFile; a broken pipe (error 109) is EOF.
 (cfg
@@ -150,7 +150,7 @@
         (if (= (io-win-get-last-error) (cast 109 : i32))
           (cast 0 : i32)
           (cast -1 : i32))
-        (array.array-ref nread 0)))))
+        (array-ref nread 0)))))
 
 ;: Windows `_close` replacement: std handles (fd 0/1/2) are a no-op, else
 ;: CloseHandle. Always reports success, matching the former shim.
@@ -179,7 +179,7 @@
           whence)]
       (if (= ok (cast 0 : i32))
         -1
-        (array.array-ref newpos 0)))))
+        (array-ref newpos 0)))))
 
 ;: Windows `_open` replacement via CreateFileA, translating the POSIX-style
 ;: open flags (O_APPEND/O_RDWR/O_WRONLY, O_CREAT/O_TRUNC) into the kernel32
@@ -250,9 +250,9 @@
     (begin
       (while (< i n)
         (begin
-          (array.array-set! buf i (cast (string-ref text i) : u8))
+          (array-set! buf i (cast (string-ref text i) : u8))
           (set! i (+ i 1))))
-      (array.array-set! buf n (cast '\0' : u8))
+      (array-set! buf n (cast '\0' : u8))
       buf)))
 
 ;: Return a mutable pointer to an Array u8 backing buffer.
@@ -279,7 +279,7 @@
     (begin
       (while (< i n)
         (begin
-          (array.array-set!
+          (array-set!
             buf
             i
             (unsafe
@@ -532,7 +532,7 @@
   (let
     [buf : (Array u8) (array.make-array u8 1)]
     (begin
-      (array.array-set! buf 0 (cast ch : u8))
+      (array-set! buf 0 (cast ch : u8))
       (if (= (io-write-all-fd-status 1 (io-array-const-ptr buf) 1) 0)
         unit
         (io-platform-exit 134)))))
@@ -561,8 +561,8 @@
     [lo : u64 (bit-and x stdlib.io.ftoa-mask32)]
     [hi : u64 (shr x 32)]
     (begin
-      (array.array-set! (struct-get r limbs) 0 lo)
-      (array.array-set! (struct-get r limbs) 1 hi)
+      (array-set! (struct-get r limbs) 0 lo)
+      (array-set! (struct-get r limbs) 1 hi)
       (if (> hi (cast 0 : u64))
         (BigNum (struct-get r limbs) 2)
         (if (> lo (cast 0 : u64))
@@ -585,8 +585,8 @@
           (begin
             (while (and (not done) (>= i 0))
               (let
-                [av : u64 (array.array-ref (struct-get a limbs) i)]
-                [bv : u64 (array.array-ref (struct-get b limbs) i)]
+                [av : u64 (array-ref (struct-get a limbs) i)]
+                [bv : u64 (array-ref (struct-get b limbs) i)]
                 (begin
                   (if (> av bv)
                     (begin
@@ -605,7 +605,7 @@
   (let
     [i : i64 hint]
     (begin
-      (while (and (> i 0) (= (array.array-ref arr (- i 1)) (cast 0 : u64)))
+      (while (and (> i 0) (= (array-ref arr (- i 1)) (cast 0 : u64)))
         (set! i (- i 1)))
       i)))
 
@@ -626,21 +626,21 @@
         (let
           [av : u64
             (if (< i la)
-              (array.array-ref (struct-get a limbs) i)
+              (array-ref (struct-get a limbs) i)
               (cast 0 : u64))]
           [bv : u64
             (if (< i lb)
-              (array.array-ref (struct-get b limbs) i)
+              (array-ref (struct-get b limbs) i)
               (cast 0 : u64))]
           [s : u64 (+ (+ av bv) carry)]
           (begin
-            (array.array-set! r i (bit-and s stdlib.io.ftoa-mask32))
+            (array-set! r i (bit-and s stdlib.io.ftoa-mask32))
             (set! carry (shr s 32))
             (set! i (+ i 1)))))
       (when
         (> carry (cast 0 : u64))
         (begin
-          (array.array-set! r i carry)
+          (array-set! r i carry)
           (set! n (+ n 1))))
       (BigNum r (bn-norm-len r n)))))
 
@@ -654,14 +654,14 @@
     (begin
       (while (< i la)
         (let
-          [p : u64 (+ (* (array.array-ref (struct-get a limbs) i) m) carry)]
+          [p : u64 (+ (* (array-ref (struct-get a limbs) i) m) carry)]
           (begin
-            (array.array-set! r i (bit-and p stdlib.io.ftoa-mask32))
+            (array-set! r i (bit-and p stdlib.io.ftoa-mask32))
             (set! carry (shr p 32))
             (set! i (+ i 1)))))
       (while (> carry (cast 0 : u64))
         (begin
-          (array.array-set! r i (bit-and carry stdlib.io.ftoa-mask32))
+          (array-set! r i (bit-and carry stdlib.io.ftoa-mask32))
           (set! carry (shr carry 32))
           (set! i (+ i 1))))
       (BigNum r (bn-norm-len r i)))))
@@ -681,23 +681,20 @@
         (if (= bit-shift 0)
           (while (< i la)
             (begin
-              (array.array-set!
-                r
-                (+ i limb-shift)
-                (array.array-ref (struct-get a limbs) i))
+              (array-set! r (+ i limb-shift) (array-ref (struct-get a limbs) i))
               (set! i (+ i 1))))
           (while (< i la)
             (let
-              [v : u64 (array.array-ref (struct-get a limbs) i)]
+              [v : u64 (array-ref (struct-get a limbs) i)]
               [shifted : u64
                 (bit-or (bit-and (shl v bit-shift) stdlib.io.ftoa-mask32) carry)]
               (begin
-                (array.array-set! r (+ i limb-shift) shifted)
+                (array-set! r (+ i limb-shift) shifted)
                 (set! carry (shr v (- 32 bit-shift)))
                 (set! i (+ i 1))))))
         (when
           (and (not (= bit-shift 0)) (> carry (cast 0 : u64)))
-          (array.array-set! r (+ la limb-shift) carry))
+          (array-set! r (+ la limb-shift) carry))
         (BigNum r (bn-norm-len r (+ la (+ limb-shift 1))))))))
 
 ;: Product of BigNum a and the 64-bit value m.
@@ -930,7 +927,7 @@
         (* (- len 1) 32)
         (+
           (stdlib.io.ftoa-msb-index
-            (array.array-ref (struct-get value limbs) (- len 1)))
+            (array-ref (struct-get value limbs) (- len 1)))
           1)))))
 
 ;: Floor log2 of the positive rational `num / den`.
@@ -976,7 +973,7 @@
   (let
     [buf : (Array u64) (array.make-array u64 1)]
     (begin
-      (array.array-set! buf 0 bits)
+      (array-set! buf 0 bits)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr f64)))))))
 
@@ -985,7 +982,7 @@
   (let
     [buf : (Array f64) (array.make-array f64 1)]
     (begin
-      (array.array-set! buf 0 value)
+      (array-set! buf 0 value)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr u64)))))))
 
@@ -994,7 +991,7 @@
   (let
     [buf : (Array f32) (array.make-array f32 1)]
     (begin
-      (array.array-set! buf 0 value)
+      (array-set! buf 0 value)
       (unsafe
         (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))))
 
@@ -1112,10 +1109,10 @@
       (if (< k 0)
         "-"
         "+")]
-    (string.string-concat3
+    (string.concat3
       sign
       (if (< (string-length digits) 2)
-        (string.string-concat3 "0" digits "")
+        (string.concat3 "0" digits "")
         digits)
       "")))
 
@@ -1127,7 +1124,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! s (string.string-concat3 s "0" ""))
+          (set! s (string.concat3 s "0" ""))
           (set! i (+ i 1))))
       s)))
 
@@ -1142,30 +1139,30 @@
         [(or (< k -4) (>= k 17))
           (set!
             body
-            (string.string-concat4
+            (string.concat4
               (string.substring s 0 1)
               (if (> ndig 1)
-                (string.string-concat3 "." (string.substring s 1 (- ndig 1)) "")
+                (string.concat3 "." (string.substring s 1 (- ndig 1)) "")
                 "")
               "e"
               (stdlib.io.ftoa-pad-exp k)))]
         [(< k 0)
           (set!
             body
-            (string.string-concat3 "0." (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s))]
+            (string.concat3 "0." (stdlib.io.ftoa-zeros (- (- 0 k) 1)) s))]
         [(>= (+ k 1) ndig)
           (set!
             body
-            (string.string-concat3 s (stdlib.io.ftoa-zeros (- (+ k 1) ndig)) ""))]
+            (string.concat3 s (stdlib.io.ftoa-zeros (- (+ k 1) ndig)) ""))]
         [else
           (set!
             body
-            (string.string-concat3
+            (string.concat3
               (string.substring s 0 (+ k 1))
               "."
               (string.substring s (+ k 1) (- ndig (+ k 1)))))])
       (if neg
-        (string.string-concat3 "-" body "")
+        (string.concat3 "-" body "")
         body))))
 
 ;: Render value as a shortest round-tripping decimal string (printf %.17g style).
@@ -1173,7 +1170,7 @@
   (let
     [buf : (Array f64) (array.make-array f64 1)]
     (begin
-      (array.array-set! buf 0 value)
+      (array-set! buf 0 value)
       (let
         [bits : u64
           (unsafe
@@ -1260,7 +1257,7 @@
 
 ;: Format an f64 with `%.17g` and a trailing newline.
 (define (io-format-float [value : f64]) : String
-  (string.string-concat3 (stdlib.io.io-format-float-core value) "\n" ""))
+  (string.concat3 (stdlib.io.io-format-float-core value) "\n" ""))
 
 ;: Write a floating-point value to stdout using `%.17g` plus a newline.
 (define (print-float [value : f64]) : unit
@@ -1399,7 +1396,7 @@
 
 ;: Render the raw `write-file` panic payload with path and host status.
 (define (write-file-failure-message [path : String] [status : i64]) : String
-  (string.string-concat3
+  (string.concat3
     "tl: write-file failed: "
     (stdlib.io.io-error-message
       (stdlib.io.io-error-from-owned-status path status))
@@ -1611,16 +1608,14 @@
                 (set! io-stdin-eof-state true)
                 (set! done true))
               (let
-                [byte : u8 (array.array-ref one 0)]
+                [byte : u8 (array-ref one 0)]
                 (if (= (cast byte : i64) 10)
                   (set! done true)
                   (begin
-                    (array.array-push! (struct-get bytes slots) byte)
+                    (array-push! (struct-get bytes slots) byte)
                     (set! done false))))))))
       (begin
-        (set!
-          (struct-get bytes len)
-          (array.array-length (struct-get bytes slots)))
+        (set! (struct-get bytes len) (array-length (struct-get bytes slots)))
         (byte_buf_core.byte-buf-builder-finish-string (& bytes))))))
 
 ;: Return the sticky stdin EOF state.
@@ -1815,7 +1810,7 @@
 
 ;: Copy a borrowed path into an owned String for public diagnostics.
 (define (io-copy-path [path : (& path str)]) : String
-  (string.string-copy path))
+  (string.copy path))
 
 ;: Return true when `path` is syntactically empty.
 (define (io-empty-path? [path : (& path str)]) : bool
@@ -1824,19 +1819,14 @@
 ;: Render an I/O error into a human-readable diagnostic string.
 (define (io-error-message [error : IoError]) : String
   (match error
-    [(IoNotFound path) (string.string-append "io: not found: " path)]
-    [(IoPermissionDenied path)
-      (string.string-append "io: permission denied: " path)]
-    [(IoInvalidPath path) (string.string-append "io: invalid path: " path)]
-    [(IoUnsupported message) (string.string-append "io: unsupported: " message)]
-    [(IoInterrupted path) (string.string-append "io: interrupted: " path)]
+    [(IoNotFound path) (string.append "io: not found: " path)]
+    [(IoPermissionDenied path) (string.append "io: permission denied: " path)]
+    [(IoInvalidPath path) (string.append "io: invalid path: " path)]
+    [(IoUnsupported message) (string.append "io: unsupported: " message)]
+    [(IoInterrupted path) (string.append "io: interrupted: " path)]
     [(IoSystemCode code path)
-      (string.string-concat4
-        "io: system error "
-        (string.int->string code)
-        ": "
-        path)]
-    [(IoUnknown path) (string.string-append "io: unknown failure: " path)]))
+      (string.concat4 "io: system error " (string.int->string code) ": " path)]
+    [(IoUnknown path) (string.append "io: unknown failure: " path)]))
 
 ;: Return true when `error` is a not-found diagnostic.
 (define (io-error-not-found? [error : IoError]) : bool
@@ -1935,7 +1925,7 @@
 ;: structured `IoError` values.
 (define (file-open [path : (& path str)] [mode : OpenMode]) : ResultIoFile
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io-empty-path? path)
       (ErrIoFile (io-invalid-path-error path))
       (let
@@ -1990,7 +1980,7 @@
 ;: return `IoUnsupported`.
 (define (file-write [handle : FileHandle] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [contents-text : String (string.string-copy contents)]
+    [contents-text : String (string.copy contents)]
     [status : i64 (file-write-status (struct-get handle id) contents-text)]
     (if (= status io-status-ok)
       OkIoUnit
@@ -2016,7 +2006,7 @@
 ;: Missing paths return `IoNotFound`. Empty paths return `IoInvalidPath`.
 (define (try-read-file [path : (& path str)]) : ResultIoString
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io-empty-path? path)
       (ErrIoString (io-invalid-path-error path))
       (let
@@ -2030,8 +2020,8 @@
 ;: Empty paths return `IoInvalidPath`.
 (define (try-write-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
-    [contents-text : String (string.string-copy contents)]
+    [path-text : String (string.copy path)]
+    [contents-text : String (string.copy contents)]
     (if (io-empty-path? path)
       (ErrIoUnit (io-invalid-path-error path))
       (let
@@ -2046,7 +2036,7 @@
 ;: expected result of an existence probe. Empty paths return `IoInvalidPath`.
 (define (try-file-exists? [path : (& path str)]) : ResultIoBool
   (let
-    [path-text : String (string.string-copy path)]
+    [path-text : String (string.copy path)]
     (if (io-empty-path? path)
       (ErrIoBool (io-invalid-path-error path))
       (let
@@ -2064,8 +2054,8 @@
 ;: `IoInvalidPath`.
 (define (try-append-file [path : (& path str)] [contents : (& contents str)]) : ResultIoUnit
   (let
-    [path-text : String (string.string-copy path)]
-    [contents-text : String (string.string-copy contents)]
+    [path-text : String (string.copy path)]
+    [contents-text : String (string.copy contents)]
     (if (io-empty-path? path)
       (ErrIoUnit (io-invalid-path-error path))
       (let
@@ -2133,7 +2123,7 @@
 
 ;: Write `text` to stdout without adding a newline.
 (define (stdout-write [text : (& text str)]) : unit
-  (print-string (string.string-copy text)))
+  (print-string (string.copy text)))
 
 ;: Write `text` and a trailing newline to stdout.
 ;:
@@ -2141,7 +2131,7 @@
 (define (stdout-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-string (string.string-append text (& newline)))))
+    (print-string (string.append text (& newline)))))
 
 ;: Flush stdout.
 (define (stdout-flush) : unit
@@ -2149,7 +2139,7 @@
 
 ;: Write `text` to stderr without adding a newline.
 (define (stderr-write [text : (& text str)]) : unit
-  (print-error (string.string-copy text)))
+  (print-error (string.copy text)))
 
 ;: Write `text` and a trailing newline to stderr.
 ;:
@@ -2157,7 +2147,7 @@
 (define (stderr-write-line [text : (& text str)]) : unit
   (let
     [newline : String "\n"]
-    (print-error (string.string-append text (& newline)))))
+    (print-error (string.append text (& newline)))))
 
 (test
   io-core-macros-prelude
@@ -2210,7 +2200,7 @@
     [actual : (& actual str)]
     [expected : (& expected str)]
     [message : String]) : unit
-    (io-edges-test-assert-true (string.string-eq actual expected) message)))
+    (io-edges-test-assert-true (string.eq actual expected) message)))
 
 (cfg
   test
@@ -2268,7 +2258,7 @@
             "missing read error kind")
           (io-edges-test-assert-owned-string-eq
             (io-error-message error)
-            (string.string-append "io: not found: " path)
+            (string.append "io: not found: " path)
             "missing read error render"))])))
 
 (cfg
@@ -2315,13 +2305,13 @@
   (define (io-edges-test-missing-path [prefix : String]) : String
     (let
       [index : i64 0]
-      [candidate : String (string.string-copy (& prefix))]
+      [candidate : String (string.copy (& prefix))]
       [done : bool false]
       (begin
         (while (not done)
           (let
             [suffix : String (string.int->string index)]
-            [path : String (string.string-append (& prefix) (& suffix))]
+            [path : String (string.append (& prefix) (& suffix))]
             (match (io-edges-test-try-file-exists? path)
               [(OkIoBool exists)
                 (if exists
@@ -2473,7 +2463,7 @@
     [actual : (& actual str)]
     [expected : (& expected str)]
     [message : String]) : unit
-    (io-handle-test-assert-true (string.string-eq actual expected) message)))
+    (io-handle-test-assert-true (string.eq actual expected) message)))
 
 (cfg
   test
@@ -2512,7 +2502,7 @@
     (match result
       [(OkIoUnit) unit]
       [(ErrIoUnit error)
-        (panic (string.string-append message (io-error-message error)))])))
+        (panic (string.append message (io-error-message error)))])))
 
 (cfg
   test
@@ -2522,7 +2512,7 @@
     (match result
       [(OkIoFile handle) handle]
       [(ErrIoFile error)
-        (panic (string.string-append message (io-error-message error)))])))
+        (panic (string.append message (io-error-message error)))])))
 
 (cfg
   test
@@ -2531,7 +2521,7 @@
     [message : String]) : unit
     (match result
       [(OkIoUnit)
-        (panic (string.string-append message "close unexpectedly succeeded"))]
+        (panic (string.append message "close unexpectedly succeeded"))]
       [(ErrIoUnit error)
         (io-handle-test-assert-true (io-error-unsupported? error) message)])))
 
@@ -2544,9 +2534,9 @@
     (match result
       [(OkIoUnit)
         (panic
-          (string.string-append
+          (string.append
             message
-            (string.string-append operation " unexpectedly succeeded")))]
+            (string.append operation " unexpectedly succeeded")))]
       [(ErrIoUnit error)
         (io-handle-test-assert-true (io-error-unsupported? error) message)])))
 
@@ -2557,7 +2547,7 @@
     [message : String]) : unit
     (match result
       [(OkIoFile _)
-        (panic (string.string-append message "open unexpectedly succeeded"))]
+        (panic (string.append message "open unexpectedly succeeded"))]
       [(ErrIoFile error)
         (io-handle-test-assert-true (io-error-unsupported? error) message)])))
 
@@ -2568,7 +2558,7 @@
     [message : String]) : unit
     (match result
       [(OkIoFile _)
-        (panic (string.string-append message "open unexpectedly succeeded"))]
+        (panic (string.append message "open unexpectedly succeeded"))]
       [(ErrIoFile error)
         (io-handle-test-assert-true (io-error-invalid-path? error) message)])))
 
@@ -2579,7 +2569,7 @@
     [message : String]) : unit
     (match result
       [(OkIoFile _)
-        (panic (string.string-append message "open unexpectedly succeeded"))]
+        (panic (string.append message "open unexpectedly succeeded"))]
       [(ErrIoFile error)
         (io-handle-test-assert-true (io-error-not-found? error) message)])))
 
@@ -2596,13 +2586,13 @@
           (io-handle-test-assert-owned-string-eq
             (file-read-bytes read)
             expected-bytes
-            (string.string-append message " bytes"))
+            (string.append message " bytes"))
           (io-handle-test-assert-bool-eq
             (file-read-eof? read)
             expected-eof
-            (string.string-append message " eof")))]
+            (string.append message " eof")))]
       [(ErrIoRead error)
-        (panic (string.string-append message (io-error-message error)))])))
+        (panic (string.append message (io-error-message error)))])))
 
 (cfg
   test
@@ -2611,7 +2601,7 @@
     [message : String]) : unit
     (match result
       [(OkIoRead _)
-        (panic (string.string-append message "read unexpectedly succeeded"))]
+        (panic (string.append message "read unexpectedly succeeded"))]
       [(ErrIoRead error)
         (io-handle-test-assert-true (io-error-unsupported? error) message)])))
 
@@ -2622,7 +2612,7 @@
     [message : String]) : unit
     (match result
       [(OkIoRead _)
-        (panic (string.string-append message "read unexpectedly succeeded"))]
+        (panic (string.append message "read unexpectedly succeeded"))]
       [(ErrIoRead error)
         (io-handle-test-assert-true (io-error-invalid-path? error) message)])))
 
@@ -2641,13 +2631,13 @@
   (define (io-handle-test-missing-path [prefix : String]) : String
     (let
       [index : i64 0]
-      [candidate : String (string.string-copy (& prefix))]
+      [candidate : String (string.copy (& prefix))]
       [done : bool false]
       (begin
         (while (not done)
           (let
             [suffix : String (string.int->string index)]
-            [path : String (string.string-append (& prefix) (& suffix))]
+            [path : String (string.append (& prefix) (& suffix))]
             (match (io-handle-test-try-file-exists? path)
               [(OkIoBool exists)
                 (if exists
@@ -2683,7 +2673,7 @@
       [(OkIoString contents)
         (io-handle-test-assert-owned-string-eq contents expected message)]
       [(ErrIoString error)
-        (panic (string.string-append message (io-error-message error)))])))
+        (panic (string.append message (io-error-message error)))])))
 
 (cfg
   test
@@ -2695,7 +2685,7 @@
       [(OkIoBool exists)
         (io-handle-test-assert-bool-eq exists expected message)]
       [(ErrIoBool error)
-        (panic (string.string-append message (io-error-message error)))])))
+        (panic (string.append message (io-error-message error)))])))
 
 (cfg
   test

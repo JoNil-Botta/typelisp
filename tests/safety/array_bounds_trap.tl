@@ -5,4 +5,4 @@
 (define (main) : i64
   (let
     [a : (Array i64) (array.make-array i64 1)]
-    (array.array-ref a 1)))
+    (array-ref a 1)))

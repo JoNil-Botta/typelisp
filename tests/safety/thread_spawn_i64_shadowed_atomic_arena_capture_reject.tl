@@ -1,15 +1,15 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/thread.tl")
 (import (thread-handle i64) as thread_i64)
 (import "stdlib/string.tl")
 
 (define (main) : i64
   (let
-    [arena-make-atomic : (-> Arena)
-      (lambda () : Arena
-        (arena-make))]
-    [owner : Arena (arena-make-atomic)]
-    [text : String (in-arena owner (string-append "not" "atomic"))]
+    [arena.make-atomic : (-> arena.Arena)
+      (lambda () : arena.Arena
+        (arena.make))]
+    [owner : arena.Arena (arena.make-atomic)]
+    [text : String (in-arena owner (append "not" "atomic"))]
     (match (thread_i64.spawn
       (lambda () : i64
         (string-length text)))

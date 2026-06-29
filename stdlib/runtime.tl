@@ -23,7 +23,7 @@
 (module stdlib.runtime)
 
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
-(define (runtime-string-length [text : String]) : i64
+(define (string-length [text : String]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
     (__tl_string_length text)
@@ -131,7 +131,7 @@
     (atomic-cas! ptr expected new-value)))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
-(define (runtime-ptr-arg [ptr : (Ptr u8)]) : i64
+(define (ptr-arg [ptr : (Ptr u8)]) : i64
   (unsafe
     (cast (ptr->int ptr) : i64)))
 
@@ -151,7 +151,7 @@
 ;: Write `count` bytes from `buf` to `fd`; returns the bytes written or `-1`.
 ;: OS write primitive shared by the abort handlers (and, in later slices, the
 ;: stdlib IO layer). Linux uses the `write` syscall (1); Windows uses WriteFile.
-(define (runtime-os-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
+(define (os-write [fd : i64] [buf : (Ptr u8)] [count : i64]) : i64
   (cfg
     windows
     (cfg
@@ -184,28 +184,28 @@
               (ptr-read (ptr-cast written : (Ptr i32))))
             : i64))))
     (unsafe
-      (syscall 1 fd (runtime-ptr-arg buf) count))))
+      (syscall 1 fd (ptr-arg buf) count))))
 
 ;: Terminate the process with `code`; never returns. Linux uses the
 ;: `exit_group` syscall (231); Windows uses ExitProcess.
-(define (runtime-os-exit [code : i64]) : never
+(define (os-exit [code : i64]) : never
   (cfg
     windows
     (runtime-windows-exit-process (cast code : i32))
     (begin
       (unsafe
         (syscall 231 code))
-      (runtime-os-exit code))))
+      (os-exit code))))
 
 ;: Write a fixed diagnostic message to stderr (fd 2), ignoring partial writes.
-(define (runtime-abort-write [message : String]) : unit
+(define (abort-write [message : String]) : unit
   (let
-    [len : i64 (runtime-string-length message)]
+    [len : i64 (string-length message)]
     [data : (Ptr u8)
       (unsafe
         (string-data message))]
     (begin
-      (runtime-os-write 2 data len)
+      (os-write 2 data len)
       unit)))
 
 ;: Fault handler for an out-of-bounds index. Exported as the fixed `tl_oob_abort`
@@ -213,22 +213,22 @@
 (define (tl-runtime-oob-abort)
   (:export-symbol "tl_oob_abort") : never
   (begin
-    (runtime-abort-write "tl: array index out of bounds\n")
-    (runtime-os-exit 134)))
+    (abort-write "tl: array index out of bounds\n")
+    (os-exit 134)))
 
 ;: Fault handler for division (or remainder) by zero, exported as `tl_div_abort`.
 (define (tl-runtime-div-abort)
   (:export-symbol "tl_div_abort") : never
   (begin
-    (runtime-abort-write "tl: integer division or remainder error\n")
-    (runtime-os-exit 135)))
+    (abort-write "tl: integer division or remainder error\n")
+    (os-exit 135)))
 
 ;: Fault handler for an out-of-range shift amount, exported as `tl_shift_abort`.
 (define (tl-runtime-shift-abort)
   (:export-symbol "tl_shift_abort") : never
   (begin
-    (runtime-abort-write "tl: shift count out of range\n")
-    (runtime-os-exit 129)))
+    (abort-write "tl: shift count out of range\n")
+    (os-exit 129)))
 
 ;: General panic abort: write the supplied message to stderr and exit 134.
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
@@ -237,8 +237,8 @@
 (define (tl-runtime-abort-string [message : String])
   (:export-symbol "tl_abort_string") : never
   (begin
-    (runtime-abort-write message)
-    (runtime-os-exit 134)))
+    (abort-write message)
+    (os-exit 134)))
 
 ;: Render an integer into a fresh active-arena decimal string.
 (define (tl-runtime-int-to-string [value : i64]) : String
@@ -300,7 +300,7 @@
   0)
 
 ;: Return the borrowed-view arena, creating it on first use.
-(define (runtime-str-view-arena-get) : i64
+(define (str-view-arena-get) : i64
   (if (= runtime-str-view-arena 0)
     (begin
       (set! runtime-str-view-arena (runtime-arena-make-atomic))
@@ -316,7 +316,7 @@
       (unsafe
         (ptr-offset (string-data text) start))]
     [home : i64 (runtime-arena-current)]
-    [view-arena : i64 (runtime-str-view-arena-get)]
+    [view-arena : i64 (str-view-arena-get)]
     (begin
       (unsafe
         (runtime-arena-set view-arena))
@@ -480,18 +480,18 @@
 (define (tl-runtime-region-abort)
   (:export-symbol "tl_region_abort") : never
   (begin
-    (runtime-abort-write "tl: invalid region mark\n")
-    (runtime-os-exit 134)))
+    (abort-write "tl: invalid region mark\n")
+    (os-exit 134)))
 
 ;: Out-of-memory abort, exported as `tl_oom_abort` (#2221). Reached from the
 ;: allocator (`tl_alloc`) when it cannot obtain more memory, so it MUST NOT
-;: allocate: `runtime-abort-write` only takes the address/length of a static
+;: allocate: `abort-write` only takes the address/length of a static
 ;: string literal, and current Windows builds use `ptr-addr-of` so
-;: `runtime-os-write` passes WriteFile a stack-backed byte-count cell.
+;: `os-write` passes WriteFile a stack-backed byte-count cell.
 ;: Replaces the former hand-written `.L_tl_alloc_abort` asm (and its Windows
 ;: `.L_tl_win_write_abort` helper) on both targets.
 (define (tl-runtime-oom-abort)
   (:export-symbol "tl_oom_abort") : never
   (begin
-    (runtime-abort-write "tl: allocation failed\n")
-    (runtime-os-exit 134)))
+    (abort-write "tl: allocation failed\n")
+    (os-exit 134)))

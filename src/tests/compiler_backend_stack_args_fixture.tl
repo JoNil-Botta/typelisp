@@ -6,9 +6,9 @@
 (import "../compiler_backend_tests.tl")
 
 (define (compiler-backend-stack-args-fixture-for-name [target-name : String]) : ResultCompilerBackend
-  (if (string.string-eq target-name "linux-x86_64")
+  (if (string.eq target-name "linux-x86_64")
     (compiler-backend-stack-args-fixture-emit (CompilerBackendTarget.Linux))
-    (if (string.string-eq target-name "windows-x86_64")
+    (if (string.eq target-name "windows-x86_64")
       (compiler-backend-stack-args-fixture-emit (CompilerBackendTarget.Windows))
       (ResultCompilerBackend.Err
         (box

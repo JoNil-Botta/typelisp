@@ -18,7 +18,7 @@
 (define (read-result-score [result : ResultIoString]) : i64
   (match result
     [(OkIoString value)
-      (if (string-eq value "alpha")
+      (if (eq value "alpha")
         1
         100)]
     [(ErrIoString error)
@@ -83,14 +83,10 @@
     (unless
       (= (bool-result-score (test-try-file-exists? io-absent-path)) 7)
       (return 55))
-    (unless
-      (string-eq (test-read-file-or io-smoke-path "MISS") "alpha")
-      (return 50))
-    (unless
-      (string-eq (test-read-file-or io-absent-path "MISS") "MISS")
-      (return 40))
+    (unless (eq (test-read-file-or io-smoke-path "MISS") "alpha") (return 50))
+    (unless (eq (test-read-file-or io-absent-path "MISS") "MISS") (return 40))
     (test-append-file io-smoke-path "-beta")
-    (unless (string-eq (read-file io-smoke-path) "alpha-beta") (return 30))
+    (unless (eq (read-file io-smoke-path) "alpha-beta") (return 30))
     (unless (test-file-nonempty? io-smoke-path) (return 20))
     (when (test-file-nonempty? io-absent-path) (return 10))
     42))

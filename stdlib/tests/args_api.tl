@@ -29,7 +29,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (args-api-assert-true (string.string-eq actual expected) message))
+  (args-api-assert-true (string.eq actual expected) message))
 
 (define (args-api-array0) : (Array String)
   (array.make-array String 0))
@@ -38,7 +38,7 @@
   (let
     [items : (Array String) (array.make-array String 1)]
     (begin
-      (array.array-set! items 0 a)
+      (array-set! items 0 a)
       items)))
 
 (define (args-api-array3 [a : String] [b : String] [c : String]) : (Array
@@ -46,9 +46,9 @@
   (let
     [items : (Array String) (array.make-array String 3)]
     (begin
-      (array.array-set! items 0 a)
-      (array.array-set! items 1 b)
-      (array.array-set! items 2 c)
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
       items)))
 
 (define (args-api-array5
@@ -60,11 +60,11 @@
   (let
     [items : (Array String) (array.make-array String 5)]
     (begin
-      (array.array-set! items 0 a)
-      (array.array-set! items 1 b)
-      (array.array-set! items 2 c)
-      (array.array-set! items 3 d)
-      (array.array-set! items 4 e)
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      (array-set! items 3 d)
+      (array-set! items 4 e)
       items)))
 
 (define (args-api-array6
@@ -77,12 +77,12 @@
   (let
     [items : (Array String) (array.make-array String 6)]
     (begin
-      (array.array-set! items 0 a)
-      (array.array-set! items 1 b)
-      (array.array-set! items 2 c)
-      (array.array-set! items 3 d)
-      (array.array-set! items 4 e)
-      (array.array-set! items 5 f)
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      (array-set! items 3 d)
+      (array-set! items 4 e)
+      (array-set! items 5 f)
       items)))
 
 (define (args-api-expect-ok [result : args.ResultArgsParsed] [message : String]) : args.ArgsParsed
@@ -110,9 +110,9 @@
   (let
     [values : (Array String) (svec.to-array items)]
     (begin
-      (args-api-assert-i64-eq (array.array-length values) 2 message)
-      (args-api-assert-string-eq (array.array-ref values 0) first message)
-      (args-api-assert-string-eq (array.array-ref values 1) second message))))
+      (args-api-assert-i64-eq (array-length values) 2 message)
+      (args-api-assert-string-eq (array-ref values 0) first message)
+      (args-api-assert-string-eq (array-ref values 1) second message))))
 
 (define (args-api-assert-vec3
   [items : (& items svec.Vec)]
@@ -123,10 +123,10 @@
   (let
     [values : (Array String) (svec.to-array items)]
     (begin
-      (args-api-assert-i64-eq (array.array-length values) 3 message)
-      (args-api-assert-string-eq (array.array-ref values 0) first message)
-      (args-api-assert-string-eq (array.array-ref values 1) second message)
-      (args-api-assert-string-eq (array.array-ref values 2) third message))))
+      (args-api-assert-i64-eq (array-length values) 3 message)
+      (args-api-assert-string-eq (array-ref values 0) first message)
+      (args-api-assert-string-eq (array-ref values 1) second message)
+      (args-api-assert-string-eq (array-ref values 2) third message))))
 
 (test
   args-api-empty-argv

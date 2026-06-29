@@ -386,8 +386,13 @@
 (define (int->string [_value : i64]) : String
   "")
 
-;: Abort macro CTFE with a source-located diagnostic.
+;: Compiler-recognized compatibility entry for macro CTFE diagnostics.
+;; lint-allow: redundant-function-name
 (define (comptime-error [message : String]) : never
+  (comptime-error message))
+
+;: Abort macro CTFE with a source-located diagnostic.
+(define (error [message : String]) : never
   (comptime-error message))
 
 ;: Mark an expression for unquote-splicing during macro CTFE.

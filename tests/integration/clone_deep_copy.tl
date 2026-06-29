@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/string.tl")
 
 (defstruct Bundle
@@ -25,62 +25,58 @@
 
 (define (bundle-score [bundle : Bundle]) : i64
   (+
-    (score-bool (string-eq (struct-get bundle name) "name"))
+    (score-bool (eq (struct-get bundle name) "name"))
     (+
-      (score-bool (string-eq (tuple-ref (struct-get bundle pair) 0) "t0"))
+      (score-bool (eq (tuple-ref (struct-get bundle pair) 0) "t0"))
       (+
-        (score-bool (string-eq (tuple-ref (struct-get bundle pair) 1) "t1"))
+        (score-bool (eq (tuple-ref (struct-get bundle pair) 1) "t1"))
         (+
-          (score-bool
-            (string-eq (array.array-ref (struct-get bundle fixed) 0) "f0"))
+          (score-bool (eq (array-ref (struct-get bundle fixed) 0) "f0"))
           (+
-            (score-bool
-              (string-eq (array.array-ref (struct-get bundle fixed) 1) "f1"))
+            (score-bool (eq (array-ref (struct-get bundle fixed) 1) "f1"))
             (+
-              (score-bool
-                (string-eq (array.array-ref (struct-get bundle items) 0) "d0"))
-              (score-bool
-                (string-eq (array.array-ref (struct-get bundle items) 1) "d1")))))))))
+              (score-bool (eq (array-ref (struct-get bundle items) 0) "d0"))
+              (score-bool (eq (array-ref (struct-get bundle items) 1) "d1")))))))))
 
 (define (make-bundle [items : (Array String)]) : Bundle
   (Bundle
-    (string-append "na" "me")
-    (tuple (string-append "t" "0") (string-append "t" "1"))
-    (array (string-append "f" "0") (string-append "f" "1"))
+    (append "na" "me")
+    (tuple (append "t" "0") (append "t" "1"))
+    (array (append "f" "0") (append "f" "1"))
     items))
 
 (define (make-list) : StringList
   (StringList.Cons
-    (string-append "a" "a")
-    (box (StringList.Cons (string-append "b" "bb") (box StringList.Nil)))))
+    (append "a" "a")
+    (box (StringList.Cons (append "b" "bb") (box StringList.Nil)))))
 
-(define (copy-from-scratch [home : Arena] [scratch : Arena]) : i64
+(define (copy-from-scratch [home : arena.Arena] [scratch : arena.Arena]) : i64
   (begin
     (unsafe
-      (arena-set! scratch))
+      (arena.set! scratch))
     (let
       [items : (Array String) (array.make-array String 2)]
       (begin
-        (array.array-set! items 0 (string-append "d" "0"))
-        (array.array-set! items 1 (string-append "d" "1"))
+        (array-set! items 0 (append "d" "0"))
+        (array-set! items 1 (append "d" "1"))
         (let
           [bundle : Bundle (make-bundle items)]
           [list : StringList (make-list)]
           (begin
             (unsafe
-              (arena-set! home))
+              (arena.set! home))
             (let
               [bundle-copy : Bundle (clone bundle)]
               [list-copy : StringList (clone list)]
               (begin
                 (unsafe
-                  (arena-destroy scratch))
+                  (arena.destroy scratch))
                 (+ (bundle-score bundle-copy) (list-score list-copy))))))))))
 
 (define (main) : i64
   (let
-    [home : Arena (arena-current)]
-    [scratch : Arena (arena-make)]
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
     (if (= (copy-from-scratch home scratch) 12)
       42
       1)))

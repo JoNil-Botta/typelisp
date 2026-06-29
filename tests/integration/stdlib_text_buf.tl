@@ -9,9 +9,7 @@
       (text-buf-append-char (text-buf-append (text-buf-empty) "left") '-')]
     [right : TextBuf
       (text-buf-append-int (text-buf-append (text-buf-empty) "right") 7)]
-    (string-eq
-      (text-buf-render (text-buf-append-buffer left right))
-      "left-right7")))
+    (eq (text-buf-render (text-buf-append-buffer left right)) "left-right7")))
 
 (define (text-buf-borrowed-integration-render [seed : String] [tail : String]) : String
   (let
@@ -27,7 +25,7 @@
   (let
     [seed : String "xy"]
     [tail : String "z"]
-    (string-eq (text-buf-borrowed-integration-render seed tail) "xyxy-z")))
+    (eq (text-buf-borrowed-integration-render seed tail) "xyxy-z")))
 
 (define (main) : i64
   (if (text-buf-integration-ok?)

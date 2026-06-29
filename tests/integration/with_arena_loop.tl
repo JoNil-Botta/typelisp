@@ -16,7 +16,7 @@
         (with-arena
           r
           (let
-            [s : String (string-append "ab" "cd")]
+            [s : String (append "ab" "cd")]
             (string-length s)))))))
 
 ; Nested regions: the inner region resets before the outer one. Both bodies
@@ -25,13 +25,13 @@
   (with-arena
     outer
     (let
-      [a : String (string-append "x" "y")]
+      [a : String (append "x" "y")]
       (+
         (string-length a)
         (with-arena
           inner
           (let
-            [b : String (string-append "p" "q")]
+            [b : String (append "p" "q")]
             (string-length b)))))))
 
 (define (main) : i64

@@ -40,7 +40,7 @@
 
 ;: Number of bytes the backing array can hold without growing.
 (define (byte-buf-builder-capacity [buf : (& buf ByteBufBuilder)]) : i64
-  (array.array-length (struct-get buf slots)))
+  (array-length (struct-get buf slots)))
 
 ;: True when `buf` has no live bytes.
 (define (byte-buf-builder-empty? [buf : (& buf ByteBufBuilder)]) : bool
@@ -67,17 +67,17 @@
   [src-start : i64]
   [count : i64]) : unit
   (begin
-    (byte-buf-builder-check-range (array.array-length dst) dst-start count)
-    (byte-buf-builder-check-range (array.array-length src) src-start count)
+    (byte-buf-builder-check-range (array-length dst) dst-start count)
+    (byte-buf-builder-check-range (array-length src) src-start count)
     (let
       [index : i64 0]
       (begin
         (while (< index count)
           (begin
-            (array.array-set!
+            (array-set!
               dst
               (+ dst-start index)
-              (array.array-ref src (+ src-start index)))
+              (array-ref src (+ src-start index)))
             (set! index (+ index 1))))
         unit))))
 
@@ -85,10 +85,10 @@
 (define (byte-buf-builder-grow-to
   [buf : (&mut buf ByteBufBuilder)]
   [min-capacity : i64]) : unit
-  (if (<= min-capacity (array.array-length (struct-get buf slots)))
+  (if (<= min-capacity (array-length (struct-get buf slots)))
     unit
     (let
-      [old-capacity : i64 (array.array-length (struct-get buf slots))]
+      [old-capacity : i64 (array-length (struct-get buf slots))]
       [old-len : i64 (struct-get buf len)]
       [doubled : i64
         (if (< old-capacity 1)
@@ -112,9 +112,9 @@
 (define (byte-buf-builder-grow [buf : (&mut buf ByteBufBuilder)]) : unit
   (byte-buf-builder-grow-to
     buf
-    (if (< (array.array-length (struct-get buf slots)) 1)
+    (if (< (array-length (struct-get buf slots)) 1)
       1
-      (* (array.array-length (struct-get buf slots)) 2))))
+      (* (array-length (struct-get buf slots)) 2))))
 
 ;: Reserve space for `additional` more bytes without changing `len`.
 (define (byte-buf-builder-reserve
@@ -131,7 +131,7 @@
     (let
       [index : i64 (struct-get buf len)]
       (begin
-        (array.array-set! (struct-get buf slots) index value)
+        (array-set! (struct-get buf slots) index value)
         (set! (struct-get buf len) (+ index 1))))))
 
 ;: Append `count` bytes from `src` starting at `start`.
@@ -141,7 +141,7 @@
   [start : i64]
   [count : i64]) : unit
   (begin
-    (byte-buf-builder-check-range (array.array-length src) start count)
+    (byte-buf-builder-check-range (array-length src) start count)
     (byte-buf-builder-reserve buf count)
     (let
       [old-len : i64 (struct-get buf len)]
@@ -158,7 +158,7 @@
 (define (byte-buf-builder-append-array
   [buf : (&mut buf ByteBufBuilder)]
   [src : (& src (Array u8))]) : unit
-  (byte-buf-builder-append-array-range buf src 0 (array.array-length src)))
+  (byte-buf-builder-append-array-range buf src 0 (array-length src)))
 
 ;: Append `count` bytes from `src` starting at `start`.
 (define (byte-buf-builder-append-string-range
@@ -178,7 +178,7 @@
       (begin
         (while (< index count)
           (begin
-            (array.array-set!
+            (array-set!
               (struct-get buf slots)
               (+ old-len index)
               (unsafe

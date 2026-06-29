@@ -29,9 +29,9 @@
   (let
     [a : (Array i64) (array.make-array i64 3)]
     (begin
-      (array.array-set! a 0 42)
+      (array-set! a 0 42)
       (lambda () : i64
-        (array.array-ref a 0)))))
+        (array-ref a 0)))))
 
 (define (case-dynarray-returned) : bool
   (= ((make-arr)) 42))
@@ -41,10 +41,10 @@
   (let
     [a : (Array i64) (array.make-array i64 4)]
     (begin
-      (array.array-set! a 2 9)
+      (array-set! a 2 9)
       (=
         ((lambda () : i64
-            (array.array-ref a 2)))
+            (array-ref a 2)))
         9))))
 
 ; Mixed capture: a scalar and a String captured together.

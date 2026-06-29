@@ -1,4 +1,4 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/thread.tl")
 (import (thread-handle i64) as thread_i64)
 

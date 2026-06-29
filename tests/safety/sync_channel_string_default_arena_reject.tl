@@ -6,7 +6,7 @@
     [(ChannelStringCreateErr _) 1]
     [(ChannelStringCreateOk channel)
       (let
-        [message : String (string-append "not-" "transferable")]
+        [message : String (append "not-" "transferable")]
         (match (channel-string-send channel message)
           [(ChannelStringSendOk) 42]
           [(ChannelStringSendErr _) 2]))]))

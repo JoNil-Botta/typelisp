@@ -147,16 +147,16 @@
 
 ;: Return true when `spec` has the long spelling `name`.
 (define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
-  (if (not (string.string-eq (args-option-spec-long spec) ""))
-    (string.string-eq (args-option-spec-long spec) name)
+  (if (not (string.eq (args-option-spec-long spec) ""))
+    (string.eq (args-option-spec-long spec) name)
     false))
 
 ;: Return true when `spec` has the short spelling `name`.
 (define (args-option-spec-matches-short?
   [spec : ArgsOptionSpec]
   [name : String]) : bool
-  (if (not (string.string-eq (args-option-spec-short spec) ""))
-    (string.string-eq (args-option-spec-short spec) name)
+  (if (not (string.eq (args-option-spec-short spec) ""))
+    (string.eq (args-option-spec-short spec) name)
     false))
 
 ;: Return an empty parsed option list.
@@ -200,7 +200,7 @@
     [(ArgsOptionNil) 0]
     [(ArgsOptionCons head rest)
       (+
-        (if (string.string-eq (args-option-name head) name)
+        (if (string.eq (args-option-name head) name)
           1
           0)
         (args-option-list-count (box-get rest) name))]))
@@ -221,7 +221,7 @@
       (args-option-list-value-or
         (box-get rest)
         name
-        (if (if (string.string-eq (args-option-name head) name)
+        (if (if (string.eq (args-option-name head) name)
           (args-option-has-value? head)
           false)
           (args-option-value head)
@@ -255,10 +255,9 @@
 ;: Render a parse error as a diagnostic message.
 (define (args-error-message [error : ArgsError]) : String
   (match error
-    [(ArgsUnknownOption option)
-      (string.string-append "args: unknown option " option)]
+    [(ArgsUnknownOption option) (string.append "args: unknown option " option)]
     [(ArgsMissingValue option)
-      (string.string-append "args: missing value for " option)]))
+      (string.append "args: missing value for " option)]))
 
 ;: Return true for unknown-option errors.
 (define (args-error-unknown-option? [error : ArgsError]) : bool
@@ -280,7 +279,7 @@
 
 ;: Return true when `token` is exactly `--`.
 (define (args-end-of-options-token? [token : String]) : bool
-  (string.string-eq token "--"))
+  (string.eq token "--"))
 
 ;: Return true when `token` looks like an option token rather than a positional.
 (define (args-option-looking-token? [token : String]) : bool
@@ -479,11 +478,11 @@
   (if (>= index end)
     (OkArgsParsed (args-parse-finish-fields options positionals))
     (let
-      [current : String (array.array-ref argv index)]
+      [current : String (array-ref argv index)]
       [has-next : bool (< (+ index 1) end)]
       [next-value : String
         (if has-next
-          (array.array-ref argv (+ index 1))
+          (array-ref argv (+ index 1))
           "")]
       (cond
         [stop-options
@@ -576,7 +575,7 @@
   [start : i64]
   [end : i64]) : ResultArgsParsed
   (let
-    [limit : i64 (array.array-length argv)]
+    [limit : i64 (array-length argv)]
     [i : i64 (stdlib.args.args-clamp-start start)]
     [last : i64 (stdlib.args.args-clamp-end end limit)]
     [options : ArgsOptionList (stdlib.args.ArgsOptionNil)]
@@ -587,11 +586,11 @@
     (begin
       (while (and (< i last) (not failed))
         (let
-          [current : String (array.array-ref argv i)]
+          [current : String (array-ref argv i)]
           [has-next : bool (< (+ i 1) last)]
           [next-value : String
             (if has-next
-              (array.array-ref argv (+ i 1))
+              (array-ref argv (+ i 1))
               "")]
           (cond
             [stop-options
@@ -646,7 +645,7 @@
 
 ;: Parse the full argv array.
 (define (args-parse-array [specs : ArgsOptionSpecList] [argv : (Array String)]) : ResultArgsParsed
-  (args-parse-array-range specs argv 0 (array.array-length argv)))
+  (args-parse-array-range specs argv 0 (array-length argv)))
 
 ;: Parse process argv range `[index, end)` with `state`.
 (define (args-parse-argv-loop-fields
@@ -838,7 +837,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (args-test-assert-true (string.string-eq actual expected) message))
+  (args-test-assert-true (string.eq actual expected) message))
 
 ;: Build the option specs used by argv parser inline tests.
 (define (args-test-specs) : ArgsOptionSpecList
@@ -859,7 +858,7 @@
   (let
     [items : (Array String) (array.make-array String 1)]
     (begin
-      (array.array-set! items 0 a)
+      (array-set! items 0 a)
       items)))
 
 ;: Build a three-item argv array for inline tests.
@@ -868,9 +867,9 @@
   (let
     [items : (Array String) (array.make-array String 3)]
     (begin
-      (array.array-set! items 0 a)
-      (array.array-set! items 1 b)
-      (array.array-set! items 2 c)
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
       items)))
 
 ;: Build a five-item argv array for inline tests.
@@ -883,11 +882,11 @@
   (let
     [items : (Array String) (array.make-array String 5)]
     (begin
-      (array.array-set! items 0 a)
-      (array.array-set! items 1 b)
-      (array.array-set! items 2 c)
-      (array.array-set! items 3 d)
-      (array.array-set! items 4 e)
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      (array-set! items 3 d)
+      (array-set! items 4 e)
       items)))
 
 ;: Build a six-item argv array for inline tests.
@@ -901,12 +900,12 @@
   (let
     [items : (Array String) (array.make-array String 6)]
     (begin
-      (array.array-set! items 0 a)
-      (array.array-set! items 1 b)
-      (array.array-set! items 2 c)
-      (array.array-set! items 3 d)
-      (array.array-set! items 4 e)
-      (array.array-set! items 5 f)
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      (array-set! items 3 d)
+      (array-set! items 4 e)
+      (array-set! items 5 f)
       items)))
 
 ;: Unwrap a successful argv parse result for inline tests.
@@ -937,17 +936,17 @@
     [values : (Array String) (svec.to-array items)]
     (begin
       (args-test-assert-i64-eq
-        (array.array-length values)
+        (array-length values)
         2
-        (string.string-append message " count"))
+        (string.append message " count"))
       (args-test-assert-owned-string-eq
-        (array.array-ref values 0)
+        (array-ref values 0)
         first
-        (string.string-append message " first"))
+        (string.append message " first"))
       (args-test-assert-owned-string-eq
-        (array.array-ref values 1)
+        (array-ref values 1)
         second
-        (string.string-append message " second")))))
+        (string.append message " second")))))
 
 ;: Assert that a string vector contains exactly three strings.
 (define (args-test-assert-string-vec3
@@ -960,21 +959,21 @@
     [values : (Array String) (svec.to-array items)]
     (begin
       (args-test-assert-i64-eq
-        (array.array-length values)
+        (array-length values)
         3
-        (string.string-append message " count"))
+        (string.append message " count"))
       (args-test-assert-owned-string-eq
-        (array.array-ref values 0)
+        (array-ref values 0)
         first
-        (string.string-append message " first"))
+        (string.append message " first"))
       (args-test-assert-owned-string-eq
-        (array.array-ref values 1)
+        (array-ref values 1)
         second
-        (string.string-append message " second"))
+        (string.append message " second"))
       (args-test-assert-owned-string-eq
-        (array.array-ref values 2)
+        (array-ref values 2)
         third
-        (string.string-append message " third")))))
+        (string.append message " third")))))
 
 ;: Exercise an empty argv sequence.
 (define (args-test-empty-argv) : unit
@@ -1000,7 +999,7 @@
       (args-test-expect-ok
         (begin
           (args-test-assert-i64-eq
-            (array.array-length argv)
+            (array-length argv)
             3
             "args-test-array3 length")
           (args-parse-array (args-test-specs) argv))

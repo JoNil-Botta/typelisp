@@ -443,7 +443,7 @@
         (match (compiler-object-symbol-list-ref symbols slot)
           [(CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
-              (if (string.string-eq found name)
+              (if (string.eq found name)
                 (begin
                   (set! result cur-index)
                   (set! done true))
@@ -469,7 +469,7 @@
           [(CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (set! slot (+ slot 1))
-              (if (string.string-eq found name)
+              (if (string.eq found name)
                 (begin
                   (set! result cur-index)
                   (set! done true))
@@ -508,7 +508,7 @@
             (compiler-object-data-record-list-ref records index)]
           (match record
             [(CompilerObjectDataRecord.Label found)
-              (if (string.string-eq found label)
+              (if (string.eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -538,7 +538,7 @@
             (compiler-object-instr-list-ref instrs index)]
           (match instr
             [(CompilerObjectX64Instr.Label found)
-              (if (string.string-eq found label)
+              (if (string.eq found label)
                 (begin
                   (set! result cur-offset)
                   (set! done true))
@@ -1461,7 +1461,7 @@
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
           [(CompilerObjectSymbol.Symbol found _ _ _)
-            (if (string.string-eq found name)
+            (if (string.eq found name)
               (begin
                 (set! result cur-offset)
                 (set! done true))

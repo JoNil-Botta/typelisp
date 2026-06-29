@@ -6,14 +6,14 @@
 (import (option i64) as option_i64)
 
 (define (find-answer [name : String]) : option_i64.Option
-  (if (string-eq name "answer")
+  (if (eq name "answer")
     (option_i64.Some 42)
     option_i64.None))
 
 (define (read-small [text : String]) : result_i64_string.Result
-  (if (string-eq text "7")
+  (if (eq text "7")
     (result_i64_string.ok 7)
-    (result_i64_string.err (string-append "bad:" text))))
+    (result_i64_string.err (append "bad:" text))))
 
 (define (maybe-score [m : option_i64.Option] [fallback : i64]) : i64
   (match m

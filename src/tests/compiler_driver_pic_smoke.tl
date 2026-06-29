@@ -9,7 +9,7 @@
     "../stdlib"))
 
 (define (compiler-driver-pic-smoke-contains? [text : String] [needle : String]) : bool
-  (string.string-contains (& text) (& needle)))
+  (string.contains (& text) (& needle)))
 
 (define (compiler-driver-pic-smoke-paths-contain?
   [paths : AstDeclPathList]

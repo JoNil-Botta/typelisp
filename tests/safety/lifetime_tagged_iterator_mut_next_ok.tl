@@ -17,7 +17,7 @@
     (if (>= index (struct-get iter len))
       (Done)
       (let
-        [value : i64 (array.array-ref (struct-get iter slots) index)]
+        [value : i64 (array-ref (struct-get iter slots) index)]
         (begin
           (set! (struct-get iter index) (+ index 1))
           (Item value))))))
@@ -36,8 +36,8 @@
   (let
     [items : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! items 0 19)
-      (array.array-set! items 1 23)
+      (array-set! items 0 19)
+      (array-set! items 1 23)
       (let
         [iter : (Iter items) (Iter (& items) 2 0)]
         [step1 : Next (next (&mut iter))]

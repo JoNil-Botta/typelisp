@@ -9,13 +9,13 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! xs i (cast (+ i 1) : u32))
+        (array-set! xs i (cast (+ i 1) : u32))
         (set! i (+ i 1))))))
 
 (define (fill [xs : (Array u32)] [out : (Array u32)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set! out i (spmd-broadcast (array-ref xs i) 1))))
+    (array-set! out i (spmd-broadcast (array-ref xs i) 1))))
 
 (define (checksum [out : (Array u32)] [n : i64]) : i64
   (let
@@ -24,7 +24,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (cast (array.array-ref out i) : i64)))
+          (set! acc (+ acc (cast (array-ref out i) : i64)))
           (set! i (+ i 1))))
       acc)))
 

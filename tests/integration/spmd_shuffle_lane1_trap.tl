@@ -9,8 +9,8 @@
     [xs : (Array i64) (array.make-array i64 1)]
     [out : (Array i64) (array.make-array i64 1)]
     (begin
-      (array.array-set! xs 0 7)
+      (array-set! xs 0 7)
       (foreach
         ([i : i64 0 1])
-        (array.array-set! out i (spmd-shuffle (array-ref xs i) 1)))
+        (array-set! out i (spmd-shuffle (array-ref xs i) 1)))
       0)))

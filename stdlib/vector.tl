@@ -5,7 +5,7 @@
 ;# length; `push` doubles the backing array when it is full, copying the live
 ;# prefix into the larger array. `I64Vec` keeps the original monomorphic API as
 ;# the compatibility template, and the generated declarations in this module use
-;# stable `vector-family` metadata keyed by element type.
+;# stable `family` metadata keyed by element type.
 ;#
 ;# Mutating operations thread the vector forward (like `stdlib/hashmap.tl`):
 ;# `set!` mutates the backing array in place and returns the same vector, while
@@ -14,8 +14,8 @@
 ;# panicking, so the module typechecks on every stage0 regardless of the
 ;# never-type.
 ;#
-;# Generated vector-family metadata is type-agnostic. Struct and enum element
-;# instantiations use the same `(Array T)` storage and `array.array-ref`/`array.array-set!`
+;# Generated family metadata is type-agnostic. Struct and enum element
+;# instantiations use the same `(Array T)` storage and `array-ref`/`array-set!`
 ;# move pattern as scalar and `String` families: `push`/`set!` move the element
 ;# into a live slot, `pop` moves the last live element out with the shrunk
 ;# vector, and copying/growth/snapshot helpers move the live prefix into fresh
@@ -135,9 +135,9 @@
         ["string"
           `(cfg
             feature-compiler-private-string-intrinsics
-            (__tl_string_eq (array_ops.array-ref (slots v) index) (& x))
+            (__tl_string_eq (array-ref (slots v) index) (& x))
             (let
-              [n : i64 (string-length (array_ops.array-ref (slots v) index))]
+              [n : i64 (string-length (array-ref (slots v) index))]
               [i : i64 0]
               [same : bool (= n (string-length (& x)))]
               (begin
@@ -146,28 +146,27 @@
                   false)
                   (begin
                     (if (=
-                      (string-ref (array_ops.array-ref (slots v) index) i)
+                      (string-ref (array-ref (slots v) index) i)
                       (string-ref (& x) i))
                       unit
                       (set! same false))
                     (set! i (+ i 1))))
                 same)))]
-        ["i64" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["i32" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["i16" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["i8" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["u64" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["u32" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["u16" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["u8" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["bool" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["char" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["f64" `(value-eq? (array_ops.array-ref (slots v) index) x)]
-        ["f32" `(value-eq? (array_ops.array-ref (slots v) index) x)]
+        ["i64" `(value-eq? (array-ref (slots v) index) x)]
+        ["i32" `(value-eq? (array-ref (slots v) index) x)]
+        ["i16" `(value-eq? (array-ref (slots v) index) x)]
+        ["i8" `(value-eq? (array-ref (slots v) index) x)]
+        ["u64" `(value-eq? (array-ref (slots v) index) x)]
+        ["u32" `(value-eq? (array-ref (slots v) index) x)]
+        ["u16" `(value-eq? (array-ref (slots v) index) x)]
+        ["u8" `(value-eq? (array-ref (slots v) index) x)]
+        ["bool" `(value-eq? (array-ref (slots v) index) x)]
+        ["char" `(value-eq? (array-ref (slots v) index) x)]
+        ["f64" `(value-eq? (array-ref (slots v) index) x)]
+        ["f32" `(value-eq? (array-ref (slots v) index) x)]
         [_ `false])]
     `(begin
       (module ,module-name)
-      (import stdlib.array as array_ops)
       (cfg
         feature-compiler-private-dynamic-buffer
         (defstruct ,vec-name
@@ -190,7 +189,7 @@
       (define (len-mut [v : (&mut v ,vec-name)]) : i64
         (struct-get v len))
       (define (capacity [v : (& v ,vec-name)]) : i64
-        (array_ops.array-length (slots v)))
+        (array-length (slots v)))
       (define (is-empty? [v : (& v ,vec-name)]) : bool
         (<= (len v) 0))
       (define (with-capacity [capacity : i64]) : ,vec-name
@@ -199,14 +198,14 @@
             (if (< capacity 1)
               1
               capacity)]
-          (,vec-name (array_ops.make-array ,T cap) 0)))
+          (,vec-name (make-array ,T cap) 0)))
       (define (new) : ,vec-name
         (with-capacity 4))
       (define (get [v : (& v ,vec-name)] [index : i64] [fallback : ,T]) : ,T
         (if (if (>= index 0)
           (< index (len v))
           false)
-          (array_ops.array-ref (slots v) index)
+          (array-ref (slots v) index)
           fallback))
       (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
         (get v (- (len v) 1) fallback))
@@ -214,7 +213,7 @@
         (if (if (>= index 0)
           (< index (struct-get v len))
           false)
-          (array_ops.array-set! (struct-get v slots) index value)
+          (array-set! (struct-get v slots) index value)
           unit))
       (define (copy-range!
         [dst : (&mut dst (Array ,T))]
@@ -224,39 +223,36 @@
         (if (>= index count)
           unit
           (begin
-            (array_ops.array-set! dst index (array_ops.array-ref src index))
+            (array-set! dst index (array-ref src index))
             (copy-range! dst src (+ index 1) count))))
       (define (grow [v : (&mut v ,vec-name)]) : unit
         (let
           [n : i64 (struct-get v len)]
-          [old-cap : i64 (array_ops.array-length (struct-get v slots))]
+          [old-cap : i64 (array-length (struct-get v slots))]
           [new-cap : i64
             (if (< old-cap 1)
               1
               (* old-cap 2))]
-          [bigger : (Array ,T) (array_ops.make-array ,T new-cap)]
+          [bigger : (Array ,T) (make-array ,T new-cap)]
           (begin
             (copy-range! (&mut bigger) (& (struct-get v slots)) 0 n)
             (set! (struct-get v slots) bigger))))
       (define (push [v : (&mut v ,vec-name)] [value : ,T]) : unit
         (begin
-          (if (<
-            (struct-get v len)
-            (array_ops.array-length (struct-get v slots)))
+          (if (< (struct-get v len) (array-length (struct-get v slots)))
             unit
             (grow v))
           (let
             [index : i64 (struct-get v len)]
             (begin
-              (array_ops.array-set! (struct-get v slots) index value)
+              (array-set! (struct-get v slots) index value)
               (set! (struct-get v len) (+ index 1))))))
       (define (pop [v : (&mut v ,vec-name)]) : ,pop-name
         (if (<= (struct-get v len) 0)
           (,pop-empty-name)
           (let
             [last-index : i64 (- (struct-get v len) 1)]
-            [value : ,T
-              (clone (array_ops.array-ref (struct-get v slots) last-index))]
+            [value : ,T (clone (array-ref (struct-get v slots) last-index))]
             (begin
               (set! (struct-get v len) last-index)
               (,pop-ok-name value)))))
@@ -267,7 +263,7 @@
               0
               count)]
           [items : (Array ,T)
-            (array_ops.make-array
+            (make-array
               ,T
               (if (< n 1)
                 1
@@ -278,7 +274,7 @@
       (define (to-array [v : (& v ,vec-name)]) : (Array ,T)
         (let
           [n : i64 (len v)]
-          [out : (Array ,T) (array_ops.make-array ,T n)]
+          [out : (Array ,T) (make-array ,T n)]
           (begin
             (copy-range! (&mut out) (slots v) 0 n)
             out)))
@@ -290,7 +286,7 @@
         (if (>= index count)
           unit
           (begin
-            (push v (array_ops.array-ref src index))
+            (push v (array-ref src index))
             (extend-from v src (+ index 1) count))))
       (define (extend
         [v : (&mut v ,vec-name)]
@@ -304,10 +300,10 @@
         (if (>= lo hi)
           unit
           (let
-            [tmp : ,T (array_ops.array-ref items lo)]
+            [tmp : ,T (array-ref items lo)]
             (begin
-              (array_ops.array-set! items lo (array_ops.array-ref items hi))
-              (array_ops.array-set! items hi tmp)
+              (array-set! items lo (array-ref items hi))
+              (array-set! items hi tmp)
               (reverse-range! items (+ lo 1) (- hi 1))))))
       (define (reverse! [v : (&mut v ,vec-name)]) : unit
         (let
@@ -320,11 +316,7 @@
         [step : (-> ,T ,T ,T)]) : ,T
         (if (>= index (len v))
           acc
-          (fold-from
-            v
-            (+ index 1)
-            (step acc (array_ops.array-ref (slots v) index))
-            step)))
+          (fold-from v (+ index 1) (step acc (array-ref (slots v) index)) step)))
       (define (fold [v : (& v ,vec-name)] [acc : ,T] [step : (-> ,T ,T ,T)]) : ,T
         (fold-from v 0 acc step))
       (define (map-build-from
@@ -335,7 +327,7 @@
         (if (>= index (len v))
           unit
           (begin
-            (push out (mapper (array_ops.array-ref (slots v) index)))
+            (push out (mapper (array-ref (slots v) index)))
             (map-build-from v (+ index 1) out mapper))))
       (define (map-from
         [v : (& v ,vec-name)]
@@ -361,13 +353,13 @@
 
 ;: Emit a named growable vector family for element type `T`.
 ;:
-;: `(vector-family Point PointVec point-vec)` defines `PointVec` plus
+;: `(family Point PointVec point-vec)` defines `PointVec` plus
 ;: `point-vec-new`, `point-vec-with-capacity`, `point-vec-push`,
 ;: `point-vec-len`, `point-vec-capacity`, `point-vec-get`,
 ;: `point-vec-set!`, and private copy/grow helpers. Reads take `&` and mutators
 ;: take `&mut`. Unlike `(vector T)`, this compatibility surface does not emit
 ;: `pop`, so it can store aggregate values that are not cloneable.
-(defmacro (vector-family [T : type] [vec-name : Expr] [prefix : Expr]) : Decls
+(defmacro (family [T : type] [vec-name : Expr] [prefix : Expr]) : Decls
   (match prefix
     [(comptime.ExprVar base)
       (match vec-name
@@ -402,14 +394,14 @@
               (define (,len-name [v : (& v ,vec-name)]) : i64
                 (struct-get v len))
               (define (,capacity-name [v : (& v ,vec-name)]) : i64
-                (stdlib.array.array-length (,slots-name v)))
+                (array-length (,slots-name v)))
               (define (,with-capacity-name [capacity : i64]) : ,vec-name
                 (let
                   [cap : i64
                     (if (< capacity 1)
                       1
                       capacity)]
-                  (,vec-name (stdlib.array.make-array ,T cap) 0)))
+                  (,vec-name (make-array ,T cap) 0)))
               (define (,new-name) : ,vec-name
                 (,with-capacity-name 4))
               (define (,get-name
@@ -419,7 +411,7 @@
                 (if (if (>= index 0)
                   (< index (,len-name v))
                   false)
-                  (stdlib.array.array-ref (,slots-name v) index)
+                  (array-ref (,slots-name v) index)
                   fallback))
               (define (,set-name
                 [v : (&mut v ,vec-name)]
@@ -428,7 +420,7 @@
                 (if (if (>= index 0)
                   (< index (struct-get v len))
                   false)
-                  (stdlib.array.array-set! (struct-get v slots) index value)
+                  (array-set! (struct-get v slots) index value)
                   unit))
               (define (,copy-range-name
                 [dst : (&mut dst (Array ,T))]
@@ -438,21 +430,17 @@
                 (if (>= index count)
                   unit
                   (begin
-                    (stdlib.array.array-set!
-                      dst
-                      index
-                      (stdlib.array.array-ref src index))
+                    (array-set! dst index (array-ref src index))
                     (,copy-range-name dst src (+ index 1) count))))
               (define (,grow-name [v : (&mut v ,vec-name)]) : unit
                 (let
                   [n : i64 (struct-get v len)]
-                  [old-cap : i64
-                    (stdlib.array.array-length (struct-get v slots))]
+                  [old-cap : i64 (array-length (struct-get v slots))]
                   [new-cap : i64
                     (if (< old-cap 1)
                       1
                       (* old-cap 2))]
-                  [bigger : (Array ,T) (stdlib.array.make-array ,T new-cap)]
+                  [bigger : (Array ,T) (make-array ,T new-cap)]
                   (begin
                     (,copy-range-name
                       (&mut bigger)
@@ -462,25 +450,23 @@
                     (set! (struct-get v slots) bigger))))
               (define (,push-name [v : (&mut v ,vec-name)] [value : ,T]) : unit
                 (begin
-                  (if (<
-                    (struct-get v len)
-                    (stdlib.array.array-length (struct-get v slots)))
+                  (if (< (struct-get v len) (array-length (struct-get v slots)))
                     unit
                     (,grow-name v))
                   (let
                     [index : i64 (struct-get v len)]
                     (begin
-                      (stdlib.array.array-set! (struct-get v slots) index value)
+                      (array-set! (struct-get v slots) index value)
                       (set! (struct-get v len) (+ index 1))))))))]
         [_ `(begin)])]
     [_ `(begin)]))
 
 ;: A growable `i64` sequence: the backing array and the number of live
-;: elements stored in its prefix `[0, len)`. Capacity is `(array.array-length slots)`.
+;: elements stored in its prefix `[0, len)`. Capacity is `(array-length slots)`.
 (cfg
   feature-compiler-private-dynamic-buffer
   (comptime-decl
-    (:generated vector-family I64Vec "i64")
+    (:generated family I64Vec "i64")
     (defstruct I64Vec
       (slots (__tl_dyn-array i64))
       (len i64))))
@@ -488,7 +474,7 @@
 (cfg
   (not feature-compiler-private-dynamic-buffer)
   (comptime-decl
-    (:generated vector-family I64Vec "i64")
+    (:generated family I64Vec "i64")
     (defstruct I64Vec
       (slots (Array i64))
       (len i64))))
@@ -496,39 +482,39 @@
 ;: Result of `i64-vec-pop`: the removed last element together with the shrunk
 ;: vector, or `Empty` when the vector had no elements.
 (comptime-decl
-  (:generated vector-family I64VecPop "i64")
+  (:generated family I64VecPop "i64")
   (defenum I64VecPop
     (I64VecPopEmpty)
     (I64VecPopOk i64 I64Vec)))
 
 ;: The vector's backing array. Only the prefix `[0, len)` holds live elements.
 (comptime-decl
-  (:generated vector-family i64-vec-slots "i64")
+  (:generated family i64-vec-slots "i64")
   (define (i64-vec-slots [v : I64Vec]) : (Array i64)
     (struct-get v slots)))
 
 ;: Number of live elements.
 (comptime-decl
-  (:generated vector-family i64-vec-len "i64")
+  (:generated family i64-vec-len "i64")
   (define (i64-vec-len [v : I64Vec]) : i64
     (struct-get v len)))
 
 ;: Number of slots in the backing array (the current capacity).
 (comptime-decl
-  (:generated vector-family i64-vec-capacity "i64")
+  (:generated family i64-vec-capacity "i64")
   (define (i64-vec-capacity [v : I64Vec]) : i64
-    (array.array-length (struct-get v slots))))
+    (array-length (struct-get v slots))))
 
 ;: True when the vector holds no live elements.
 (comptime-decl
-  (:generated vector-family i64-vec-is-empty? "i64")
+  (:generated family i64-vec-is-empty? "i64")
   (define (i64-vec-is-empty? [v : I64Vec]) : bool
     (<= (i64-vec-len v) 0)))
 
 ;: Create an empty vector with backing capacity `capacity`. A non-positive
 ;: capacity is clamped to 1 so the backing array can always grow by doubling.
 (comptime-decl
-  (:generated vector-family i64-vec-with-capacity "i64")
+  (:generated family i64-vec-with-capacity "i64")
   (define (i64-vec-with-capacity [capacity : i64]) : I64Vec
     (let
       [cap : i64
@@ -539,43 +525,43 @@
 
 ;: Create an empty vector with a small default capacity.
 (comptime-decl
-  (:generated vector-family i64-vec-new "i64")
+  (:generated family i64-vec-new "i64")
   (define (i64-vec-new) : I64Vec
     (i64-vec-with-capacity 4)))
 
 ;: Read element `index`, returning `fallback` when `index` is out of the live
 ;: range `[0, len)`.
 (comptime-decl
-  (:generated vector-family i64-vec-get "i64")
+  (:generated family i64-vec-get "i64")
   (define (i64-vec-get [v : I64Vec] [index : i64] [fallback : i64]) : i64
     (if (if (>= index 0)
       (< index (i64-vec-len v))
       false)
-      (array.array-ref (i64-vec-slots v) index)
+      (array-ref (i64-vec-slots v) index)
       fallback)))
 
 ;: Read the last live element, or `fallback` when the vector is empty.
 (comptime-decl
-  (:generated vector-family i64-vec-last "i64")
+  (:generated family i64-vec-last "i64")
   (define (i64-vec-last [v : I64Vec] [fallback : i64]) : i64
     (i64-vec-get v (- (i64-vec-len v) 1) fallback)))
 
 ;: Overwrite element `index` in place when it is within `[0, len)`; otherwise
 ;: leave the vector unchanged. Returns the same vector either way.
 (comptime-decl
-  (:generated vector-family i64-vec-set! "i64")
+  (:generated family i64-vec-set! "i64")
   (define (i64-vec-set! [v : I64Vec] [index : i64] [value : i64]) : I64Vec
     (begin
       (if (if (>= index 0)
         (< index (i64-vec-len v))
         false)
-        (array.array-set! (i64-vec-slots v) index value)
+        (array-set! (i64-vec-slots v) index value)
         unit)
       v)))
 
 ;: Copy elements `[index, count)` from `src` into `dst`.
 (comptime-decl
-  (:generated vector-family i64-vec-copy-range "i64")
+  (:generated family i64-vec-copy-range "i64")
   (define (i64-vec-copy-range
     [dst : (Array i64)]
     [src : (Array i64)]
@@ -584,14 +570,14 @@
     (if (>= index count)
       unit
       (begin
-        (array.array-set! dst index (array.array-ref src index))
+        (array-set! dst index (array-ref src index))
         (i64-vec-copy-range dst src (+ index 1) count)))))
 
 ;: Grow `v` to a backing array twice as large, preserving the live prefix.
 ;: Capacity is always positive (see `i64-vec-with-capacity`), so doubling
 ;: strictly grows the array.
 (comptime-decl
-  (:generated vector-family i64-vec-grow "i64")
+  (:generated family i64-vec-grow "i64")
   (define (i64-vec-grow [v : I64Vec]) : I64Vec
     (let
       [n : i64 (i64-vec-len v)]
@@ -605,14 +591,14 @@
 ;: Returns the updated vector, which callers must thread forward because a push
 ;: that grows reallocates the backing array.
 (comptime-decl
-  (:generated vector-family i64-vec-push "i64")
+  (:generated family i64-vec-push "i64")
   (define (i64-vec-push [v : I64Vec] [value : i64]) : I64Vec
     (if (< (i64-vec-len v) (i64-vec-capacity v))
       (let
         [slots : (Array i64) (i64-vec-slots v)]
         [index : i64 (i64-vec-len v)]
         (begin
-          (array.array-set! slots index value)
+          (array-set! slots index value)
           (set! (struct-get v len) (+ index 1))
           v))
       (i64-vec-push (i64-vec-grow v) value))))
@@ -621,13 +607,13 @@
 ;: `Empty` when the vector has no elements. The backing array is shared with the
 ;: input vector (only `len` shrinks), so do not keep using the popped vector.
 (comptime-decl
-  (:generated vector-family i64-vec-pop "i64")
+  (:generated family i64-vec-pop "i64")
   (define (i64-vec-pop [v : I64Vec]) : I64VecPop
     (if (<= (i64-vec-len v) 0)
       (I64VecPopEmpty)
       (let
         [last-index : i64 (- (i64-vec-len v) 1)]
-        [value : i64 (array.array-ref (i64-vec-slots v) last-index)]
+        [value : i64 (array-ref (i64-vec-slots v) last-index)]
         (begin
           (set! (struct-get v len) last-index)
           (I64VecPopOk value v))))))
@@ -636,7 +622,7 @@
 ;: fresh backing array. A non-positive `count` yields an empty vector; the
 ;: backing capacity is at least 1 so the result can still grow by pushing.
 (comptime-decl
-  (:generated vector-family i64-vec-from-array "i64")
+  (:generated family i64-vec-from-array "i64")
   (define (i64-vec-from-array [src : (Array i64)] [count : i64]) : I64Vec
     (let
       [n : i64
@@ -656,7 +642,7 @@
 ;: Return a fresh `(Array i64)` holding exactly the `len` live elements — a
 ;: caller-owned snapshot independent of the vector's backing array.
 (comptime-decl
-  (:generated vector-family i64-vec-to-array "i64")
+  (:generated family i64-vec-to-array "i64")
   (define (i64-vec-to-array [v : I64Vec]) : (Array i64)
     (let
       [n : i64 (i64-vec-len v)]
@@ -667,7 +653,7 @@
 
 ;: Push the first `count` elements of `src`, starting at `index`, onto `v`.
 (comptime-decl
-  (:generated vector-family i64-vec-extend-from "i64")
+  (:generated family i64-vec-extend-from "i64")
   (define (i64-vec-extend-from
     [v : I64Vec]
     [src : (Array i64)]
@@ -676,7 +662,7 @@
     (if (>= index count)
       v
       (i64-vec-extend-from
-        (i64-vec-push v (array.array-ref src index))
+        (i64-vec-push v (array-ref src index))
         src
         (+ index 1)
         count))))
@@ -684,26 +670,26 @@
 ;: Append the first `count` elements of `src` to `v` (growing as needed) and
 ;: return the threaded vector.
 (comptime-decl
-  (:generated vector-family i64-vec-extend "i64")
+  (:generated family i64-vec-extend "i64")
   (define (i64-vec-extend [v : I64Vec] [src : (Array i64)] [count : i64]) : I64Vec
     (i64-vec-extend-from v src 0 count)))
 
 ;: Swap-reverse the slot range `[lo, hi]` in place.
 (comptime-decl
-  (:generated vector-family i64-vec-reverse-range! "i64")
+  (:generated family i64-vec-reverse-range! "i64")
   (define (i64-vec-reverse-range! [slots : (Array i64)] [lo : i64] [hi : i64]) : unit
     (if (>= lo hi)
       unit
       (let
-        [tmp : i64 (array.array-ref slots lo)]
+        [tmp : i64 (array-ref slots lo)]
         (begin
-          (array.array-set! slots lo (array.array-ref slots hi))
-          (array.array-set! slots hi tmp)
+          (array-set! slots lo (array-ref slots hi))
+          (array-set! slots hi tmp)
           (i64-vec-reverse-range! slots (+ lo 1) (- hi 1)))))))
 
 ;: Reverse the live prefix `[0, len)` in place; return the same vector.
 (comptime-decl
-  (:generated vector-family i64-vec-reverse! "i64")
+  (:generated family i64-vec-reverse! "i64")
   (define (i64-vec-reverse! [v : I64Vec]) : I64Vec
     (begin
       (i64-vec-reverse-range! (i64-vec-slots v) 0 (- (i64-vec-len v) 1))
@@ -712,7 +698,7 @@
 ;: Fold live elements at or after `index`, passing the accumulator and current
 ;: element to `step` and threading the returned accumulator forward.
 (comptime-decl
-  (:generated vector-family i64-vec-fold-from "i64")
+  (:generated family i64-vec-fold-from "i64")
   (define (i64-vec-fold-from
     [v : I64Vec]
     [index : i64]
@@ -723,19 +709,19 @@
       (i64-vec-fold-from
         v
         (+ index 1)
-        (step acc (array.array-ref (i64-vec-slots v) index))
+        (step acc (array-ref (i64-vec-slots v) index))
         step))))
 
 ;: Fold all live elements from left to right.
 (comptime-decl
-  (:generated vector-family i64-vec-fold "i64")
+  (:generated family i64-vec-fold "i64")
   (define (i64-vec-fold [v : I64Vec] [acc : i64] [step : (-> i64 i64 i64)]) : i64
     (i64-vec-fold-from v 0 acc step)))
 
 ;: Build a mapped vector by pushing mapped elements from `index` onward onto
 ;: `out`. Kept separate so public map helpers reuse the normal growth path.
 (comptime-decl
-  (:generated vector-family i64-vec-map-build-from "i64")
+  (:generated family i64-vec-map-build-from "i64")
   (define (i64-vec-map-build-from
     [v : I64Vec]
     [index : i64]
@@ -746,52 +732,52 @@
       (i64-vec-map-build-from
         v
         (+ index 1)
-        (i64-vec-push out (mapper (array.array-ref (i64-vec-slots v) index)))
+        (i64-vec-push out (mapper (array-ref (i64-vec-slots v) index)))
         mapper))))
 
 ;: Map live elements at or after `index` into a fresh vector, preserving order.
 (comptime-decl
-  (:generated vector-family i64-vec-map-from "i64")
+  (:generated family i64-vec-map-from "i64")
   (define (i64-vec-map-from [v : I64Vec] [index : i64] [mapper : (-> i64 i64)]) : I64Vec
     (i64-vec-map-build-from v index (i64-vec-new) mapper)))
 
 ;: Map all live elements into a fresh vector, preserving order.
 (comptime-decl
-  (:generated vector-family i64-vec-map "i64")
+  (:generated family i64-vec-map "i64")
   (define (i64-vec-map [v : I64Vec] [mapper : (-> i64 i64)]) : I64Vec
     (i64-vec-map-from v 0 mapper)))
 
 ;: Sum of the live elements, accumulated from `index`.
 (comptime-decl
-  (:generated vector-family i64-vec-sum-from "i64")
+  (:generated family i64-vec-sum-from "i64")
   (define (i64-vec-sum-from [v : I64Vec] [index : i64] [acc : i64]) : i64
     (if (>= index (i64-vec-len v))
       acc
       (i64-vec-sum-from
         v
         (+ index 1)
-        (+ acc (array.array-ref (i64-vec-slots v) index))))))
+        (+ acc (array-ref (i64-vec-slots v) index))))))
 
 ;: Sum of the live elements (0 for an empty vector). A concrete monomorphic
 ;: convenience reduction retained alongside the higher-order fold helpers.
 (comptime-decl
-  (:generated vector-family i64-vec-sum "i64")
+  (:generated family i64-vec-sum "i64")
   (define (i64-vec-sum [v : I64Vec]) : i64
     (i64-vec-sum-from v 0 0)))
 
 ;: True when `x` is among the live elements at or after `index`.
 (comptime-decl
-  (:generated vector-family i64-vec-contains-from? "i64")
+  (:generated family i64-vec-contains-from? "i64")
   (define (i64-vec-contains-from? [v : I64Vec] [x : i64] [index : i64]) : bool
     (if (>= index (i64-vec-len v))
       false
-      (if (= (array.array-ref (i64-vec-slots v) index) x)
+      (if (= (array-ref (i64-vec-slots v) index) x)
         true
         (i64-vec-contains-from? v x (+ index 1))))))
 
 ;: True when `x` is among the live elements.
 (comptime-decl
-  (:generated vector-family i64-vec-contains? "i64")
+  (:generated family i64-vec-contains? "i64")
   (define (i64-vec-contains? [v : I64Vec] [x : i64]) : bool
     (i64-vec-contains-from? v x 0)))
 
@@ -800,7 +786,7 @@
 (cfg
   feature-compiler-private-dynamic-buffer
   (comptime-decl
-    (:generated vector-family StringVec "String")
+    (:generated family StringVec "String")
     (defstruct StringVec
       (slots (__tl_dyn-array String))
       (len i64))))
@@ -808,7 +794,7 @@
 (cfg
   (not feature-compiler-private-dynamic-buffer)
   (comptime-decl
-    (:generated vector-family StringVec "String")
+    (:generated family StringVec "String")
     (defstruct StringVec
       (slots (Array String))
       (len i64))))
@@ -816,38 +802,38 @@
 ;: Result of `string-vec-pop`: the removed last string together with the shrunk
 ;: vector, or `Empty` when the vector had no elements.
 (comptime-decl
-  (:generated vector-family StringVecPop "String")
+  (:generated family StringVecPop "String")
   (defenum StringVecPop
     (StringVecPopEmpty)
     (StringVecPopOk String StringVec)))
 
 ;: The vector's backing array. Only the prefix `[0, len)` holds live strings.
 (comptime-decl
-  (:generated vector-family string-vec-slots "String")
+  (:generated family string-vec-slots "String")
   (define (string-vec-slots [v : StringVec]) : (Array String)
     (struct-get v slots)))
 
 ;: Number of live strings.
 (comptime-decl
-  (:generated vector-family string-vec-len "String")
+  (:generated family string-vec-len "String")
   (define (string-vec-len [v : StringVec]) : i64
     (struct-get v len)))
 
 ;: Number of slots in the backing array (the current capacity).
 (comptime-decl
-  (:generated vector-family string-vec-capacity "String")
+  (:generated family string-vec-capacity "String")
   (define (string-vec-capacity [v : StringVec]) : i64
-    (array.array-length (struct-get v slots))))
+    (array-length (struct-get v slots))))
 
 ;: True when the vector holds no live strings.
 (comptime-decl
-  (:generated vector-family string-vec-is-empty? "String")
+  (:generated family string-vec-is-empty? "String")
   (define (string-vec-is-empty? [v : StringVec]) : bool
     (<= (string-vec-len v) 0)))
 
 ;: Create an empty string vector with backing capacity `capacity`.
 (comptime-decl
-  (:generated vector-family string-vec-with-capacity "String")
+  (:generated family string-vec-with-capacity "String")
   (define (string-vec-with-capacity [capacity : i64]) : StringVec
     (let
       [cap : i64
@@ -858,41 +844,41 @@
 
 ;: Create an empty string vector with a small default capacity.
 (comptime-decl
-  (:generated vector-family string-vec-new "String")
+  (:generated family string-vec-new "String")
   (define (string-vec-new) : StringVec
     (string-vec-with-capacity 4)))
 
 ;: Read element `index`, returning `fallback` when `index` is out of range.
 (comptime-decl
-  (:generated vector-family string-vec-get "String")
+  (:generated family string-vec-get "String")
   (define (string-vec-get [v : StringVec] [index : i64] [fallback : String]) : String
     (if (if (>= index 0)
       (< index (string-vec-len v))
       false)
-      (array.array-ref (string-vec-slots v) index)
+      (array-ref (string-vec-slots v) index)
       fallback)))
 
 ;: Read the last live string, or `fallback` when the vector is empty.
 (comptime-decl
-  (:generated vector-family string-vec-last "String")
+  (:generated family string-vec-last "String")
   (define (string-vec-last [v : StringVec] [fallback : String]) : String
     (string-vec-get v (- (string-vec-len v) 1) fallback)))
 
 ;: Overwrite element `index` in place when it is within `[0, len)`.
 (comptime-decl
-  (:generated vector-family string-vec-set! "String")
+  (:generated family string-vec-set! "String")
   (define (string-vec-set! [v : StringVec] [index : i64] [value : String]) : StringVec
     (begin
       (if (if (>= index 0)
         (< index (string-vec-len v))
         false)
-        (array.array-set! (string-vec-slots v) index value)
+        (array-set! (string-vec-slots v) index value)
         unit)
       v)))
 
 ;: Copy elements `[index, count)` from `src` into `dst`.
 (comptime-decl
-  (:generated vector-family string-vec-copy-range "String")
+  (:generated family string-vec-copy-range "String")
   (define (string-vec-copy-range
     [dst : (Array String)]
     [src : (Array String)]
@@ -901,12 +887,12 @@
     (if (>= index count)
       unit
       (begin
-        (array.array-set! dst index (array.array-ref src index))
+        (array-set! dst index (array-ref src index))
         (string-vec-copy-range dst src (+ index 1) count)))))
 
 ;: Grow `v` to a backing array twice as large.
 (comptime-decl
-  (:generated vector-family string-vec-grow "String")
+  (:generated family string-vec-grow "String")
   (define (string-vec-grow [v : StringVec]) : StringVec
     (let
       [n : i64 (string-vec-len v)]
@@ -919,27 +905,27 @@
 
 ;: Append `value` to the end, growing the backing array first when it is full.
 (comptime-decl
-  (:generated vector-family string-vec-push "String")
+  (:generated family string-vec-push "String")
   (define (string-vec-push [v : StringVec] [value : String]) : StringVec
     (if (< (string-vec-len v) (string-vec-capacity v))
       (let
         [slots : (Array String) (string-vec-slots v)]
         [index : i64 (string-vec-len v)]
         (begin
-          (array.array-set! slots index value)
+          (array-set! slots index value)
           (set! (struct-get v len) (+ index 1))
           v))
       (string-vec-push (string-vec-grow v) value))))
 
 ;: Remove and return the last string together with the shrunk vector.
 (comptime-decl
-  (:generated vector-family string-vec-pop "String")
+  (:generated family string-vec-pop "String")
   (define (string-vec-pop [v : StringVec]) : StringVecPop
     (if (<= (string-vec-len v) 0)
       (StringVecPopEmpty)
       (let
         [last-index : i64 (- (string-vec-len v) 1)]
-        [value : String (array.array-ref (string-vec-slots v) last-index)]
+        [value : String (array-ref (string-vec-slots v) last-index)]
         (begin
           (set! (struct-get v len) last-index)
           (StringVecPopOk value v))))))
@@ -947,7 +933,7 @@
 ;: Return the rest vector from a `string-vec-pop` result, or `fallback` when the
 ;: pop was empty.
 (comptime-decl
-  (:generated vector-family string-vec-pop-rest-or "String")
+  (:generated family string-vec-pop-rest-or "String")
   (define (string-vec-pop-rest-or [p : StringVecPop] [fallback : StringVec]) : StringVec
     (match p
       [(StringVecPopOk _ rest) rest]
@@ -955,7 +941,7 @@
 
 ;: Build a string vector from the live prefix `[0, count)` of `src`.
 (comptime-decl
-  (:generated vector-family string-vec-from-array "String")
+  (:generated family string-vec-from-array "String")
   (define (string-vec-from-array [src : (Array String)] [count : i64]) : StringVec
     (let
       [n : i64
@@ -974,7 +960,7 @@
 
 ;: Return a fresh `(Array String)` snapshot of the live prefix.
 (comptime-decl
-  (:generated vector-family string-vec-to-array "String")
+  (:generated family string-vec-to-array "String")
   (define (string-vec-to-array [v : StringVec]) : (Array String)
     (let
       [n : i64 (string-vec-len v)]
@@ -985,7 +971,7 @@
 
 ;: Push the first `count` elements of `src`, starting at `index`, onto `v`.
 (comptime-decl
-  (:generated vector-family string-vec-extend-from "String")
+  (:generated family string-vec-extend-from "String")
   (define (string-vec-extend-from
     [v : StringVec]
     [src : (Array String)]
@@ -994,14 +980,14 @@
     (if (>= index count)
       v
       (string-vec-extend-from
-        (string-vec-push v (array.array-ref src index))
+        (string-vec-push v (array-ref src index))
         src
         (+ index 1)
         count))))
 
 ;: Append the first `count` elements of `src` to `v`.
 (comptime-decl
-  (:generated vector-family string-vec-extend "String")
+  (:generated family string-vec-extend "String")
   (define (string-vec-extend
     [v : StringVec]
     [src : (Array String)]
@@ -1010,7 +996,7 @@
 
 ;: Swap-reverse the slot range `[lo, hi]` in place.
 (comptime-decl
-  (:generated vector-family string-vec-reverse-range! "String")
+  (:generated family string-vec-reverse-range! "String")
   (define (string-vec-reverse-range!
     [slots : (Array String)]
     [lo : i64]
@@ -1018,15 +1004,15 @@
     (if (>= lo hi)
       unit
       (let
-        [tmp : String (array.array-ref slots lo)]
+        [tmp : String (array-ref slots lo)]
         (begin
-          (array.array-set! slots lo (array.array-ref slots hi))
-          (array.array-set! slots hi tmp)
+          (array-set! slots lo (array-ref slots hi))
+          (array-set! slots hi tmp)
           (string-vec-reverse-range! slots (+ lo 1) (- hi 1)))))))
 
 ;: Reverse the live prefix `[0, len)` in place; return the same vector.
 (comptime-decl
-  (:generated vector-family string-vec-reverse! "String")
+  (:generated family string-vec-reverse! "String")
   (define (string-vec-reverse! [v : StringVec]) : StringVec
     (begin
       (string-vec-reverse-range!
@@ -1037,15 +1023,15 @@
 
 ;: True when `x` is among the live strings at or after `index`.
 (comptime-decl
-  (:generated vector-family string-vec-contains-from? "String")
+  (:generated family string-vec-contains-from? "String")
   (define (string-vec-contains-from? [v : StringVec] [x : String] [index : i64]) : bool
     (if (>= index (string-vec-len v))
       false
       (if (cfg
         feature-compiler-private-string-intrinsics
-        (__tl_string_eq (array.array-ref (string-vec-slots v) index) x)
+        (__tl_string_eq (array-ref (string-vec-slots v) index) x)
         (let
-          [candidate : String (array.array-ref (string-vec-slots v) index)]
+          [candidate : String (array-ref (string-vec-slots v) index)]
           [n : i64 (string-length candidate)]
           [i : i64 0]
           [same : bool (= n (string-length x))]
@@ -1064,7 +1050,7 @@
 
 ;: True when `x` is among the live strings.
 (comptime-decl
-  (:generated vector-family string-vec-contains? "String")
+  (:generated family string-vec-contains? "String")
   (define (string-vec-contains? [v : StringVec] [x : String]) : bool
     (string-vec-contains-from? v x 0)))
 
@@ -1162,7 +1148,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family VecApiPointVec "VecApiPoint")
+    (:generated family VecApiPointVec "VecApiPoint")
     (defstruct VecApiPointVec
       (slots (Array VecApiPoint))
       (len i64))))
@@ -1170,7 +1156,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family VecApiPointVecPop "VecApiPoint")
+    (:generated family VecApiPointVecPop "VecApiPoint")
     (defenum VecApiPointVecPop
       (VecApiPointVecPopEmpty)
       (VecApiPointVecPopOk VecApiPoint VecApiPointVec))))
@@ -1178,28 +1164,28 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-slots "VecApiPoint")
+    (:generated family vec-api-point-vec-slots "VecApiPoint")
     (define (vec-api-point-vec-slots [v : VecApiPointVec]) : (Array VecApiPoint)
       (struct-get v slots))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-len "VecApiPoint")
+    (:generated family vec-api-point-vec-len "VecApiPoint")
     (define (vec-api-point-vec-len [v : VecApiPointVec]) : i64
       (struct-get v len))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-capacity "VecApiPoint")
+    (:generated family vec-api-point-vec-capacity "VecApiPoint")
     (define (vec-api-point-vec-capacity [v : VecApiPointVec]) : i64
-      (array.array-length (struct-get v slots)))))
+      (array-length (struct-get v slots)))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-with-capacity "VecApiPoint")
+    (:generated family vec-api-point-vec-with-capacity "VecApiPoint")
     (define (vec-api-point-vec-with-capacity [capacity : i64]) : VecApiPointVec
       (let
         [cap : i64
@@ -1211,7 +1197,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-get "VecApiPoint")
+    (:generated family vec-api-point-vec-get "VecApiPoint")
     (define (vec-api-point-vec-get
       [v : VecApiPointVec]
       [index : i64]
@@ -1219,13 +1205,13 @@
       (if (if (>= index 0)
         (< index (vec-api-point-vec-len v))
         false)
-        (array.array-ref (vec-api-point-vec-slots v) index)
+        (array-ref (vec-api-point-vec-slots v) index)
         fallback))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-set! "VecApiPoint")
+    (:generated family vec-api-point-vec-set! "VecApiPoint")
     (define (vec-api-point-vec-set!
       [v : VecApiPointVec]
       [index : i64]
@@ -1234,14 +1220,14 @@
         (if (if (>= index 0)
           (< index (vec-api-point-vec-len v))
           false)
-          (array.array-set! (vec-api-point-vec-slots v) index value)
+          (array-set! (vec-api-point-vec-slots v) index value)
           unit)
         v))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-copy-range "VecApiPoint")
+    (:generated family vec-api-point-vec-copy-range "VecApiPoint")
     (define (vec-api-point-vec-copy-range
       [dst : (Array VecApiPoint)]
       [src : (Array VecApiPoint)]
@@ -1250,13 +1236,13 @@
       (if (>= index count)
         unit
         (begin
-          (array.array-set! dst index (array.array-ref src index))
+          (array-set! dst index (array-ref src index))
           (vec-api-point-vec-copy-range dst src (+ index 1) count))))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-grow "VecApiPoint")
+    (:generated family vec-api-point-vec-grow "VecApiPoint")
     (define (vec-api-point-vec-grow [v : VecApiPointVec]) : VecApiPointVec
       (let
         [n : i64 (vec-api-point-vec-len v)]
@@ -1270,14 +1256,14 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-push "VecApiPoint")
+    (:generated family vec-api-point-vec-push "VecApiPoint")
     (define (vec-api-point-vec-push [v : VecApiPointVec] [value : VecApiPoint]) : VecApiPointVec
       (if (< (vec-api-point-vec-len v) (vec-api-point-vec-capacity v))
         (let
           [slots : (Array VecApiPoint) (vec-api-point-vec-slots v)]
           [index : i64 (vec-api-point-vec-len v)]
           (begin
-            (array.array-set! slots index value)
+            (array-set! slots index value)
             (set! (struct-get v len) (+ index 1))
             v))
         (vec-api-point-vec-push (vec-api-point-vec-grow v) value)))))
@@ -1285,14 +1271,14 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-pop "VecApiPoint")
+    (:generated family vec-api-point-vec-pop "VecApiPoint")
     (define (vec-api-point-vec-pop [v : VecApiPointVec]) : VecApiPointVecPop
       (if (<= (vec-api-point-vec-len v) 0)
         (VecApiPointVecPopEmpty)
         (let
           [last-index : i64 (- (vec-api-point-vec-len v) 1)]
           [value : VecApiPoint
-            (array.array-ref (vec-api-point-vec-slots v) last-index)]
+            (array-ref (vec-api-point-vec-slots v) last-index)]
           (begin
             (set! (struct-get v len) last-index)
             (VecApiPointVecPopOk value v)))))))
@@ -1300,7 +1286,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-to-array "VecApiPoint")
+    (:generated family vec-api-point-vec-to-array "VecApiPoint")
     (define (vec-api-point-vec-to-array [v : VecApiPointVec]) : (Array
         VecApiPoint)
       (let
@@ -1313,7 +1299,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-score-from "VecApiPoint")
+    (:generated family vec-api-point-vec-score-from "VecApiPoint")
     (define (vec-api-point-vec-score-from
       [v : VecApiPointVec]
       [index : i64]
@@ -1327,20 +1313,20 @@
             acc
             (let
               [point : VecApiPoint
-                (array.array-ref (vec-api-point-vec-slots v) index)]
+                (array-ref (vec-api-point-vec-slots v) index)]
               (+ (struct-get point x) (* (struct-get point y) 10)))))))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-point-vec-score "VecApiPoint")
+    (:generated family vec-api-point-vec-score "VecApiPoint")
     (define (vec-api-point-vec-score [v : VecApiPointVec]) : i64
       (vec-api-point-vec-score-from v 0 0))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family VecApiTagVec "VecApiTag")
+    (:generated family VecApiTagVec "VecApiTag")
     (defstruct VecApiTagVec
       (slots (Array VecApiTag))
       (len i64))))
@@ -1348,7 +1334,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family VecApiTagVecPop "VecApiTag")
+    (:generated family VecApiTagVecPop "VecApiTag")
     (defenum VecApiTagVecPop
       (VecApiTagVecPopEmpty)
       (VecApiTagVecPopOk VecApiTag VecApiTagVec))))
@@ -1356,28 +1342,28 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-slots "VecApiTag")
+    (:generated family vec-api-tag-vec-slots "VecApiTag")
     (define (vec-api-tag-vec-slots [v : VecApiTagVec]) : (Array VecApiTag)
       (struct-get v slots))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-len "VecApiTag")
+    (:generated family vec-api-tag-vec-len "VecApiTag")
     (define (vec-api-tag-vec-len [v : VecApiTagVec]) : i64
       (struct-get v len))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-capacity "VecApiTag")
+    (:generated family vec-api-tag-vec-capacity "VecApiTag")
     (define (vec-api-tag-vec-capacity [v : VecApiTagVec]) : i64
-      (array.array-length (struct-get v slots)))))
+      (array-length (struct-get v slots)))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-with-capacity "VecApiTag")
+    (:generated family vec-api-tag-vec-with-capacity "VecApiTag")
     (define (vec-api-tag-vec-with-capacity [capacity : i64]) : VecApiTagVec
       (let
         [cap : i64
@@ -1389,7 +1375,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-get "VecApiTag")
+    (:generated family vec-api-tag-vec-get "VecApiTag")
     (define (vec-api-tag-vec-get
       [v : VecApiTagVec]
       [index : i64]
@@ -1397,13 +1383,13 @@
       (if (if (>= index 0)
         (< index (vec-api-tag-vec-len v))
         false)
-        (array.array-ref (vec-api-tag-vec-slots v) index)
+        (array-ref (vec-api-tag-vec-slots v) index)
         fallback))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-set! "VecApiTag")
+    (:generated family vec-api-tag-vec-set! "VecApiTag")
     (define (vec-api-tag-vec-set!
       [v : VecApiTagVec]
       [index : i64]
@@ -1412,14 +1398,14 @@
         (if (if (>= index 0)
           (< index (vec-api-tag-vec-len v))
           false)
-          (array.array-set! (vec-api-tag-vec-slots v) index value)
+          (array-set! (vec-api-tag-vec-slots v) index value)
           unit)
         v))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-copy-range "VecApiTag")
+    (:generated family vec-api-tag-vec-copy-range "VecApiTag")
     (define (vec-api-tag-vec-copy-range
       [dst : (Array VecApiTag)]
       [src : (Array VecApiTag)]
@@ -1428,13 +1414,13 @@
       (if (>= index count)
         unit
         (begin
-          (array.array-set! dst index (array.array-ref src index))
+          (array-set! dst index (array-ref src index))
           (vec-api-tag-vec-copy-range dst src (+ index 1) count))))))
 
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-grow "VecApiTag")
+    (:generated family vec-api-tag-vec-grow "VecApiTag")
     (define (vec-api-tag-vec-grow [v : VecApiTagVec]) : VecApiTagVec
       (let
         [n : i64 (vec-api-tag-vec-len v)]
@@ -1448,14 +1434,14 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-push "VecApiTag")
+    (:generated family vec-api-tag-vec-push "VecApiTag")
     (define (vec-api-tag-vec-push [v : VecApiTagVec] [value : VecApiTag]) : VecApiTagVec
       (if (< (vec-api-tag-vec-len v) (vec-api-tag-vec-capacity v))
         (let
           [slots : (Array VecApiTag) (vec-api-tag-vec-slots v)]
           [index : i64 (vec-api-tag-vec-len v)]
           (begin
-            (array.array-set! slots index value)
+            (array-set! slots index value)
             (set! (struct-get v len) (+ index 1))
             v))
         (vec-api-tag-vec-push (vec-api-tag-vec-grow v) value)))))
@@ -1463,14 +1449,13 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-pop "VecApiTag")
+    (:generated family vec-api-tag-vec-pop "VecApiTag")
     (define (vec-api-tag-vec-pop [v : VecApiTagVec]) : VecApiTagVecPop
       (if (<= (vec-api-tag-vec-len v) 0)
         (VecApiTagVecPopEmpty)
         (let
           [last-index : i64 (- (vec-api-tag-vec-len v) 1)]
-          [value : VecApiTag
-            (array.array-ref (vec-api-tag-vec-slots v) last-index)]
+          [value : VecApiTag (array-ref (vec-api-tag-vec-slots v) last-index)]
           (begin
             (set! (struct-get v len) last-index)
             (VecApiTagVecPopOk value v)))))))
@@ -1478,7 +1463,7 @@
 (cfg
   test
   (comptime-decl
-    (:generated vector-family vec-api-tag-vec-to-array "VecApiTag")
+    (:generated family vec-api-tag-vec-to-array "VecApiTag")
     (define (vec-api-tag-vec-to-array [v : VecApiTagVec]) : (Array VecApiTag)
       (let
         [n : i64 (vec-api-tag-vec-len v)]
@@ -1673,9 +1658,9 @@
       (let
         [src : (Array i64) (array.make-array i64 3)]
         (begin
-          (array.array-set! src 0 5)
-          (array.array-set! src 1 6)
-          (array.array-set! src 2 7)
+          (array-set! src 0 5)
+          (array-set! src 1 6)
+          (array-set! src 2 7)
           ;; from-array copies the live prefix [0, count)
           (let
             [fv : I64Vec (i64-vec-from-array src 3)]
@@ -1694,15 +1679,12 @@
                 [snap : (Array i64) (i64-vec-to-array fv)]
                 (begin
                   (test.assert-i64-eq
-                    (array.array-length snap)
+                    (array-length snap)
                     3
                     "to-array length = len")
-                  (test.assert-i64-eq
-                    (array.array-ref snap 1)
-                    6
-                    "to-array[1] = 6")
+                  (test.assert-i64-eq (array-ref snap 1) 6 "to-array[1] = 6")
                   ;; mutating the snapshot does not affect the vector
-                  (array.array-set! snap 1 0)
+                  (array-set! snap 1 0)
                   (test.assert-i64-eq
                     (i64-vec-get fv 1 -1)
                     6
@@ -1734,11 +1716,11 @@
       (let
         [src : (Array i64) (array.make-array i64 5)]
         (begin
-          (array.array-set! src 0 1)
-          (array.array-set! src 1 2)
-          (array.array-set! src 2 3)
-          (array.array-set! src 3 4)
-          (array.array-set! src 4 5)
+          (array-set! src 0 1)
+          (array-set! src 1 2)
+          (array-set! src 2 3)
+          (array-set! src 3 4)
+          (array-set! src 4 5)
           (let
             [hv : I64Vec (i64-vec-from-array src 5)]
             (begin
@@ -1875,14 +1857,14 @@
                             [snap : (Array String) (string-vec-to-array rest)]
                             (begin
                               (test.assert-i64-eq
-                                (array.array-length snap)
+                                (array-length snap)
                                 2
                                 "string snapshot length")
                               (vector-test-assert-owned-string-eq
-                                (array.array-ref snap 1)
+                                (array-ref snap 1)
                                 "BETA"
                                 "string snapshot value")
-                              (array.array-set! snap 1 "changed")
+                              (array-set! snap 1 "changed")
                               (vector-test-assert-owned-string-eq
                                 (string-vec-get rest 1 "missing")
                                 "BETA"
@@ -1943,14 +1925,14 @@
                           (vec-api-tag-vec-to-array rest)]
                         (begin
                           (test.assert-i64-eq
-                            (array.array-length snap)
+                            (array-length snap)
                             1
                             "tag snapshot length")
                           (test.assert-i64-eq
-                            (vec-api-tag-score (array.array-ref snap 0))
+                            (vec-api-tag-score (array-ref snap 0))
                             107
                             "tag snapshot value")
-                          (array.array-set! snap 0 (VecApiTagA 99))
+                          (array-set! snap 0 (VecApiTagA 99))
                           (test.assert-i64-eq
                             (vec-api-tag-score
                               (vec-api-tag-vec-get rest 0 (VecApiTagA 0)))
@@ -2023,14 +2005,14 @@
                               (vec-api-point-vec-to-array rest)]
                             (begin
                               (test.assert-i64-eq
-                                (array.array-length snap)
+                                (array-length snap)
                                 1
                                 "point snapshot length")
                               (test.assert-i64-eq
-                                (vec-api-point-score (array.array-ref snap 0))
+                                (vec-api-point-score (array-ref snap 0))
                                 65
                                 "point snapshot value")
-                              (array.array-set! snap 0 (VecApiPoint 9 9))
+                              (array-set! snap 0 (VecApiPoint 9 9))
                               (test.assert-i64-eq
                                 (vec-api-point-score
                                   (vec-api-point-vec-get

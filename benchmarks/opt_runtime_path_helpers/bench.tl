@@ -18,10 +18,10 @@
     [(= (string-length right) 0) left]
     [(path-ends-separator? left)
       (if (path-starts-separator? right)
-        (string-append left (substring right 1 (- (string-length right) 1)))
-        (string-append left right))]
-    [(path-starts-separator? right) (string-append left right)]
-    [else (string-append (string-append left "/") right)]))
+        (append left (substring right 1 (- (string-length right) 1)))
+        (append left right))]
+    [(path-starts-separator? right) (append left right)]
+    [else (append (append left "/") right)]))
 
 (define (last-separator-index [path : String]) : i64
   (let
@@ -77,7 +77,7 @@
     [dir : String (dirname joined)]
     [base : String (basename joined)]
     [ext : String (extension joined)]
-    [copy-name : String (string-append "copy-" base)]
+    [copy-name : String (append "copy-" base)]
     [copy-path : String (path-join dir copy-name)]
     (+
       (string-length joined)
@@ -102,7 +102,7 @@
   (let
     [root : String (arg 1)]
     [leaf : String (arg 2)]
-    [rounds : i64 (string->int (arg 3))]
+    [rounds : i64 (>int (arg 3))]
     (begin
       (print (path-helper-repeat root leaf rounds))
       0)))

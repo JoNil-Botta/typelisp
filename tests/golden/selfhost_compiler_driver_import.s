@@ -59,8 +59,8 @@ tl_current_arena:
 
 .text
 .globl _tl_start
-.globl _tl_stdlib_runtime_stdlib_runtime_runtime_string_length
-_tl_stdlib_runtime_stdlib_runtime_runtime_string_length:
+.globl _tl_stdlib_runtime_stdlib_runtime_string_length
+_tl_stdlib_runtime_stdlib_runtime_string_length:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
@@ -72,8 +72,8 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_string_length:
     leave
     ret
 
-.globl _tl_stdlib_runtime_stdlib_runtime_runtime_ptr_arg
-_tl_stdlib_runtime_stdlib_runtime_runtime_ptr_arg:
+.globl _tl_stdlib_runtime_stdlib_runtime_ptr_arg
+_tl_stdlib_runtime_stdlib_runtime_ptr_arg:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
@@ -84,8 +84,8 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_ptr_arg:
     leave
     ret
 
-.globl _tl_stdlib_runtime_stdlib_runtime_runtime_os_write
-_tl_stdlib_runtime_stdlib_runtime_runtime_os_write:
+.globl _tl_stdlib_runtime_stdlib_runtime_os_write
+_tl_stdlib_runtime_stdlib_runtime_os_write:
     pushq %rbp
     movq %rsp, %rbp
     subq $64, %rsp
@@ -94,7 +94,7 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_os_write:
     movq %rdx, -24(%rbp)
 .Lf2_entry:
     movq -16(%rbp), %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_ptr_arg
+    call _tl_stdlib_runtime_stdlib_runtime_ptr_arg
     movq %rax, -48(%rbp)
     movl $1, %eax
     movq -8(%rbp), %rdi
@@ -105,8 +105,8 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_os_write:
     leave
     ret
 
-.globl _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
-_tl_stdlib_runtime_stdlib_runtime_runtime_os_exit:
+.globl _tl_stdlib_runtime_stdlib_runtime_os_exit
+_tl_stdlib_runtime_stdlib_runtime_os_exit:
     pushq %rbp
     movq %rsp, %rbp
     subq $32, %rsp
@@ -118,17 +118,17 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit:
     movq %rax, -32(%rbp)
     movq -8(%rbp), %rdi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
-.globl _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
-_tl_stdlib_runtime_stdlib_runtime_runtime_abort_write:
+.globl _tl_stdlib_runtime_stdlib_runtime_abort_write
+_tl_stdlib_runtime_stdlib_runtime_abort_write:
     pushq %rbp
     movq %rsp, %rbp
     subq $80, %rsp
     movq %rdi, -8(%rbp)
 .Lf4_entry:
     movq -8(%rbp), %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_string_length
+    call _tl_stdlib_runtime_stdlib_runtime_string_length
     movq %rax, -16(%rbp)
     movq -8(%rbp), %r10
     movq (%r10), %rax
@@ -136,7 +136,7 @@ _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write:
     movl $2, %edi
     movq -40(%rbp), %rsi
     movq -16(%rbp), %rdx
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_os_write
+    call _tl_stdlib_runtime_stdlib_runtime_os_write
     movq %rax, -64(%rbp)
     leave
     ret
@@ -150,11 +150,11 @@ tl_oob_abort:
     leaq .L_tl_str_l30_684964583_949472601(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl tl_div_abort
 tl_div_abort:
@@ -165,11 +165,11 @@ tl_div_abort:
     leaq .L_tl_str_l40_150886025_1314050685(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $135, %edi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl tl_shift_abort
 tl_shift_abort:
@@ -180,11 +180,11 @@ tl_shift_abort:
     leaq .L_tl_str_l29_1993323280_919009571(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $129, %edi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl tl_abort_string
 tl_abort_string:
@@ -194,11 +194,11 @@ tl_abort_string:
     movq %rdi, -8(%rbp)
 .Lf8_entry:
     movq -8(%rbp), %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl tl_array_fill8
 tl_array_fill8:
@@ -296,11 +296,11 @@ tl_region_abort:
     leaq .L_tl_str_l24_1300740986_1050262163(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl tl_oom_abort
 tl_oom_abort:
@@ -311,11 +311,11 @@ tl_oom_abort:
     leaq .L_tl_str_l22_1063972566_1775948496(%rip), %rax
     movq %rax, -8(%rbp)
     movq %rax, %rdi
-    call _tl_stdlib_runtime_stdlib_runtime_runtime_abort_write
+    call _tl_stdlib_runtime_stdlib_runtime_abort_write
     movq %rax, -16(%rbp)
     movl $134, %edi
     leave
-    jmp _tl_stdlib_runtime_stdlib_runtime_runtime_os_exit
+    jmp _tl_stdlib_runtime_stdlib_runtime_os_exit
 
 .globl _tl_helper_helper
 _tl_helper_helper:

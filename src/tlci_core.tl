@@ -5,7 +5,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.io)
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 (import "read.tl")
 
 (define (tlci-string-length [text : String]) : i64
@@ -556,10 +556,10 @@
         [(not has-version)
           (ResultTlciMetadata.Err
             "tlci metadata: package missing required field `version`")]
-        [(string.string-eq name "")
+        [(string.eq name "")
           (ResultTlciMetadata.Err
             "tlci metadata: package name must not be empty")]
-        [(string.string-eq version "")
+        [(string.eq version "")
           (ResultTlciMetadata.Err
             "tlci metadata: package version must not be empty")]
         [else
@@ -570,7 +570,7 @@
         [(Sexpr.Cons fhead ftail)
           (match (box-get fhead)
             [(Sexpr.Sym fname)
-              (if (string.string-eq fname "name")
+              (if (string.eq fname "name")
                 (if has-name
                   (ResultTlciMetadata.Err
                     "tlci metadata: duplicate package field `name`")
@@ -584,7 +584,7 @@
                         true
                         version
                         has-version)]))
-                (if (string.string-eq fname "version")
+                (if (string.eq fname "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate package field `version`")
@@ -626,7 +626,7 @@
         [(not has-version)
           (ResultTlciMetadata.Err
             "tlci metadata: missing required field `version`")]
-        [(not (string.string-eq version tlci-metadata-version))
+        [(not (string.eq version tlci-metadata-version))
           (ResultTlciMetadata.Err
             (str_cat.str-cat "tlci metadata: unsupported version `" version "`"))]
         [(not has-package)
@@ -641,7 +641,7 @@
           (match (box-get fhead)
             [(Sexpr.Sym fname)
               (cond
-                [(string.string-eq fname "version")
+                [(string.eq fname "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `version`")
@@ -656,7 +656,7 @@
                           package-name
                           package-version
                           has-package)]))]
-                [(string.string-eq fname "package")
+                [(string.eq fname "package")
                   (if has-package
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `package`")
@@ -685,7 +685,7 @@
     [(Sexpr.Cons head rest)
       (match (box-get head)
         [(Sexpr.Sym name)
-          (if (string.string-eq name "typelisp-tlci-metadata")
+          (if (string.eq name "typelisp-tlci-metadata")
             (tlci-metadata-fields (box-get rest) "" false "" "" false)
             (ResultTlciMetadata.Err
               (str_cat.str-cat
@@ -702,7 +702,7 @@
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
   (match (read-result (lex source))
     [(ResultSexpr.Err message)
-      (ResultTlciMetadata.Err (string.string-append "tlci metadata: " message))]
+      (ResultTlciMetadata.Err (string.append "tlci metadata: " message))]
     [(ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
 
 (define (tlci-quote-text) : String
@@ -767,7 +767,7 @@
 
 (define (tlci-emit-image [image : TlciImage]) : ResultTlciBytes
   (cond
-    [(string.string-eq (struct-get image compiler-build-hash) "")
+    [(string.eq (struct-get image compiler-build-hash) "")
       (ResultTlciBytes.Err "tlci: compiler build hash must not be empty")]
     [(not
         (=
@@ -1140,13 +1140,13 @@
   [result : ResultTlciHostAbi]
   [expected : String]) : bool
   (match result
-    [(ResultTlciHostAbi.Err message) (string.string-eq message expected)]
+    [(ResultTlciHostAbi.Err message) (string.eq message expected)]
     [(ResultTlciHostAbi.Ok) false]))
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
     (= tlci-host-abi-version tlci-callback-abi-version)
-    (string.string-eq tlci-image-entry-symbol "tlci_image_entry")
+    (string.eq tlci-image-entry-symbol "tlci_image_entry")
     (= tlci-image-entry-param-count 2)
     (= tlci-image-entry-success 0)
     (= tlci-host-callback-table-header-size 48)
@@ -1381,23 +1381,23 @@
       [(ResultTlciMetadata.Err _) false]
       [(ResultTlciMetadata.Ok parsed)
         (and
-          (string.string-eq (struct-get parsed version) "v1")
-          (string.string-eq (struct-get parsed package-name) "demo")
-          (string.string-eq (struct-get parsed package-version) "0.1.0"))])))
+          (string.eq (struct-get parsed version) "v1")
+          (string.eq (struct-get parsed package-name) "demo")
+          (string.eq (struct-get parsed package-version) "0.1.0"))])))
 
 (define (tlci-test-metadata-rejects? [source : String] [expected : String]) : bool
   (match (tlci-metadata-parse source)
-    [(ResultTlciMetadata.Err message) (string.string-eq message expected)]
+    [(ResultTlciMetadata.Err message) (string.eq message expected)]
     [(ResultTlciMetadata.Ok _) false]))
 
 (define (tlci-test-parse-rejects? [bytes : (Array u8)] [expected : String]) : bool
   (match (tlci-parse-image bytes)
-    [(ResultTlciImage.Err message) (string.string-eq message expected)]
+    [(ResultTlciImage.Err message) (string.eq message expected)]
     [(ResultTlciImage.Ok _) false]))
 
 (define (tlci-test-emit-rejects? [image : TlciImage] [expected : String]) : bool
   (match (tlci-emit-image image)
-    [(ResultTlciBytes.Err message) (string.string-eq message expected)]
+    [(ResultTlciBytes.Err message) (string.eq message expected)]
     [(ResultTlciBytes.Ok _) false]))
 
 (define (tlci-test-corrupt-byte

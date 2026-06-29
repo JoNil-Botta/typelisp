@@ -25,7 +25,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! xs i (+ (* i 2654435761) 1013904223))
+        (array-set! xs i (+ (* i 2654435761) 1013904223))
         (set! i (+ i 1))))))
 
 (define (main) : i64
@@ -43,8 +43,8 @@
             [i : i64 0]
             (while (< i n)
               (begin
-                (set! acc (+ acc (array.array-ref xs i)))
+                (set! acc (+ acc (array-ref xs i)))
                 (set! i (+ i 1)))))
-          (array.array-set! xs r acc)
+          (array-set! xs r acc)
           (set! r (+ r 1))))
       (bit-and acc 255))))

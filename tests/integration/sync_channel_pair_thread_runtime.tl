@@ -96,8 +96,8 @@
   [count : i64]) : unit
   (begin
     (channel-i64-pair-store-raw! channel ctx 0)
-    (array.array-set! ctx channel-i64-pair-raw-field-count base)
-    (array.array-set! ctx (+ channel-i64-pair-raw-field-count 1) count)))
+    (array-set! ctx channel-i64-pair-raw-field-count base)
+    (array-set! ctx (+ channel-i64-pair-raw-field-count 1) count)))
 
 (define (sync-pair-integration-receive-sum
   [channel : ChannelI64PairChannel]

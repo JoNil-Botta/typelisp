@@ -6,17 +6,17 @@
 
 (define (main) : i64
   (begin
-    (print-bool (string-eq "" ""))
-    (print-bool (string-eq "a" "a"))
-    (print-bool (string-eq "hello" "hello"))
+    (print-bool (eq "" ""))
+    (print-bool (eq "a" "a"))
+    (print-bool (eq "hello" "hello"))
     (print-bool (string=? "hello" "world"))
-    (print-bool (string-eq "hi" "high"))
+    (print-bool (eq "hi" "high"))
     (print-bool
-      (string-eq
+      (eq
         "0123456789abcdefghijklmnopqrstuvwxyz"
         "0123456789abcdefghijklmnopqrstuvwxyz"))
     (print-bool
-      (string-eq
+      (eq
         "0123456789abcdefghijklmnopqrstuvwxyz"
         "0123456789abcdefghijklmnopqrstuvwxyZ"))
     0))

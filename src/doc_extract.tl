@@ -201,7 +201,7 @@
   [has-current : bool]
   [line : String]) : String
   (if has-current
-    (string.string-append current (string.string-append "\n" line))
+    (string.append current (string.append "\n" line))
     line))
 
 (define (doc-comment-body
@@ -366,10 +366,10 @@
           [name-idx : i64 (doc-next-code-token-index stream (+ first 1))]
           (and
             (doc-token-symbol? stream name-idx)
-            (string.string-eq (doc-symbol-text stream name-idx) "generated")))
+            (string.eq (doc-symbol-text stream name-idx) "generated")))
         (and
           (doc-token-symbol? stream first)
-          (string.string-eq (doc-symbol-text stream first) ":generated"))))
+          (string.eq (doc-symbol-text stream first) ":generated"))))
     false))
 
 (define (doc-info-after-name
@@ -412,17 +412,17 @@
           [head : String (doc-symbol-text stream head-idx)]
           [after-head : i64 (+ head-idx 1)]
           (cond
-            [(string.string-eq head "define")
+            [(string.eq head "define")
               (doc-info-after-define stream after-head)]
-            [(string.string-eq head "extern")
+            [(string.eq head "extern")
               (doc-info-after-extern stream after-head)]
-            [(string.string-eq head "defenum")
+            [(string.eq head "defenum")
               (doc-info-after-name (DocItemKind.DefEnum) stream after-head)]
-            [(string.string-eq head "defstruct")
+            [(string.eq head "defstruct")
               (doc-info-after-name (DocItemKind.DefStruct) stream after-head)]
-            [(string.string-eq head "defmacro")
+            [(string.eq head "defmacro")
               (doc-info-after-defmacro stream after-head)]
-            [(string.string-eq head "comptime-decl")
+            [(string.eq head "comptime-decl")
               (doc-info-after-comptime-decl stream after-head)]
             [else (DocMaybeDeclInfo.No)]))
         (DocMaybeDeclInfo.No)))
@@ -585,8 +585,8 @@
     [(DocItem.Item kind item-name item-doc signature)
       (begin
         (unless (= (doc-kind-tag kind) kind-tag) (return false))
-        (unless (string.string-eq item-name name) (return false))
-        (unless (string.string-eq item-doc doc-text) (return false))
+        (unless (string.eq item-name name) (return false))
+        (unless (string.eq item-doc doc-text) (return false))
         (doc-string-contains? signature signature-fragment))]))
 
 (define (doc-extract-smoke-items-ok? [items : DocItemList]) : bool
@@ -690,7 +690,7 @@
     [(DocExtraction.Extraction module-doc items)
       (begin
         (unless
-          (string.string-eq
+          (string.eq
             module-doc
             "Module title\nsecond module line\nlater module")
           (return (io.panic "doc-extract: module doc smoke mismatch")))
@@ -707,7 +707,7 @@
           [(DocExtraction.Extraction legacy-module legacy-items)
             (begin
               (unless
-                (string.string-eq legacy-module "Legacy module")
+                (string.eq legacy-module "Legacy module")
                 (return (io.panic "doc-extract: legacy module doc mismatch")))
               (unless
                 (= (doc-item-list-count legacy-items) 1)

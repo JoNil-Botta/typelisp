@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/string.tl")
 
 (extern (tl_arena_poison_enable) : unit)
@@ -8,12 +8,12 @@
   (begin
     (tl_arena_poison_enable)
     (let
-      [seed : String (string-append "seed" "arena")]
+      [seed : String (append "seed" "arena")]
       [base : i64 (string-length seed)]
-      [mark : ArenaMark (arena-mark)]
+      [mark : arena.ArenaMark (arena.mark)]
       [items : (Array i64) (array.make-array i64 1)]
       (begin
-        (array.array-set! items 0 (+ base 33))
+        (array-set! items 0 (+ base 33))
         (unsafe
-          (arena-rewind mark))
-        (array.array-ref items 0)))))
+          (arena.rewind mark))
+        (array-ref items 0)))))

@@ -209,7 +209,7 @@ struct/enum fields, and (optionally) `let` bindings.
 (let ([n : i64 (init)]
       [text : String (init : String)]
       [items : (Array i64 4) (init : (Array i64 4))])
-  (+ n (array.array-ref items 0)))
+  (+ n (array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,

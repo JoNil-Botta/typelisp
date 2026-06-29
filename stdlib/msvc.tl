@@ -119,13 +119,13 @@
 
 ;: Return true when the host path-list separator identifies Windows.
 (define (msvc-host-windows?) : bool
-  (string.string-eq (env.env-path-list-separator) ";"))
+  (string.eq (env.env-path-list-separator) ";"))
 
 ;: Return true when `target` is a v1-supported MSVC target triple.
 (define (msvc-supported-target? [target : (& target str)]) : bool
   (let
     [supported : String "x86_64-pc-windows-msvc"]
-    (string.string-eq target (& supported))))
+    (string.eq target (& supported))))
 
 ;: Return true when `c` is an ASCII decimal digit.
 (define (msvc-digit? [c : char]) : bool
@@ -207,8 +207,8 @@
 ;: Return true when `left` is a newer dotted numeric version than `right`.
 (define (msvc-version-greater? [left : (& left str)] [right : (& right str)]) : bool
   (let
-    [left-text : String (string.string-copy left)]
-    [right-text : String (string.string-copy right)]
+    [left-text : String (string.copy left)]
+    [right-text : String (string.copy right)]
     (msvc-version-greater-owned? left-text right-text)))
 
 ;: Return true when `path` exists, mapping probe errors to false.
@@ -281,13 +281,13 @@
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-vec [dirs : vector.StringVec] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [tool-text : String (string.string-copy tool)]
+    [tool-text : String (string.copy tool)]
     (msvc-search-dirs-vec-owned dirs tool-text)))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs [dirs : env.EnvStringList] [tool : (& tool str)]) : MsvcMaybeString
   (let
-    [tool-text : String (string.string-copy tool)]
+    [tool-text : String (string.copy tool)]
     (msvc-search-dirs-owned dirs tool-text)))
 
 ;: Locate `tool` on the PATH environment variable.
@@ -312,36 +312,32 @@
 (define (msvc-env-or-default-owned [name : String] [fallback : String]) : String
   (let
     [value : String (msvc-env-or-empty-owned name)]
-    (if (string.string-eq value "")
+    (if (string.eq value "")
       fallback
       value)))
 
 ;: Join owned `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend-owned [head : String] [tail : String]) : String
-  (if (string.string-eq tail "")
+  (if (string.eq tail "")
     head
-    (string.string-append
-      (string.string-append head (env.env-path-list-separator))
-      tail)))
+    (string.append (string.append head (env.env-path-list-separator)) tail)))
 
 ;: Join `head` before an optional PATH-style suffix.
 (define (msvc-path-list-prepend [head : (& head str)] [tail : (& tail str)]) : String
   (let
-    [head-text : String (string.string-copy head)]
-    [tail-text : String (string.string-copy tail)]
+    [head-text : String (string.copy head)]
+    [tail-text : String (string.copy tail)]
     (msvc-path-list-prepend-owned head-text tail-text)))
 
 ;: Join two owned required PATH-style entries.
 (define (msvc-path-list-join2-owned [a : String] [b : String]) : String
-  (string.string-append
-    (string.string-append a (env.env-path-list-separator))
-    b))
+  (string.append (string.append a (env.env-path-list-separator)) b))
 
 ;: Join two required PATH-style entries.
 (define (msvc-path-list-join2 [a : (& a str)] [b : (& b str)]) : String
   (let
-    [a-text : String (string.string-copy a)]
-    [b-text : String (string.string-copy b)]
+    [a-text : String (string.copy a)]
+    [b-text : String (string.copy b)]
     (msvc-path-list-join2-owned a-text b-text)))
 
 ;: Join three owned required PATH-style entries.
@@ -351,9 +347,9 @@
 ;: Join three required PATH-style entries.
 (define (msvc-path-list-join3 [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
   (let
-    [a-text : String (string.string-copy a)]
-    [b-text : String (string.string-copy b)]
-    [c-text : String (string.string-copy c)]
+    [a-text : String (string.copy a)]
+    [b-text : String (string.copy b)]
+    [c-text : String (string.copy c)]
     (msvc-path-list-join3-owned a-text b-text c-text)))
 
 ;: Join four owned required PATH-style entries.
@@ -371,10 +367,10 @@
   [c : (& c str)]
   [d : (& d str)]) : String
   (let
-    [a-text : String (string.string-copy a)]
-    [b-text : String (string.string-copy b)]
-    [c-text : String (string.string-copy c)]
-    [d-text : String (string.string-copy d)]
+    [a-text : String (string.copy a)]
+    [b-text : String (string.copy b)]
+    [c-text : String (string.copy c)]
+    [d-text : String (string.copy d)]
     (msvc-path-list-join4-owned a-text b-text c-text d-text)))
 
 ;: Join an optional inherited path list after required entries.
@@ -392,10 +388,10 @@
   [c : (& c str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string.string-copy a)]
-    [b-text : String (string.string-copy b)]
-    [c-text : String (string.string-copy c)]
-    [tail-text : String (string.string-copy tail)]
+    [a-text : String (string.copy a)]
+    [b-text : String (string.copy b)]
+    [c-text : String (string.copy c)]
+    [tail-text : String (string.copy tail)]
     (msvc-path-list-join3-with-tail-owned a-text b-text c-text tail-text)))
 
 ;: Join an optional inherited path list after two required entries.
@@ -411,9 +407,9 @@
   [b : (& b str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string.string-copy a)]
-    [b-text : String (string.string-copy b)]
-    [tail-text : String (string.string-copy tail)]
+    [a-text : String (string.copy a)]
+    [b-text : String (string.copy b)]
+    [tail-text : String (string.copy tail)]
     (msvc-path-list-join2-with-tail-owned a-text b-text tail-text)))
 
 ;: Join an optional inherited path list after four required entries.
@@ -433,11 +429,11 @@
   [d : (& d str)]
   [tail : (& tail str)]) : String
   (let
-    [a-text : String (string.string-copy a)]
-    [b-text : String (string.string-copy b)]
-    [c-text : String (string.string-copy c)]
-    [d-text : String (string.string-copy d)]
-    [tail-text : String (string.string-copy tail)]
+    [a-text : String (string.copy a)]
+    [b-text : String (string.copy b)]
+    [c-text : String (string.copy c)]
+    [d-text : String (string.copy d)]
+    [tail-text : String (string.copy tail)]
     (msvc-path-list-join4-with-tail-owned a-text b-text c-text d-text tail-text)))
 
 ;: Build a configured tool result once the executable path is known.
@@ -471,11 +467,11 @@
     [(MsvcSomeString executable) (msvc-configured-result executable)]
     [(MsvcNoString)
       (let
-        [tool-text : String (string.string-copy tool)]
+        [tool-text : String (string.copy tool)]
         (ErrMsvcTool
           (MsvcToolNotFound
-            (string.string-append
-              (string.string-append "msvc: could not find " tool-text)
+            (string.append
+              (string.append "msvc: could not find " tool-text)
               " on PATH; run from a Developer Command Prompt or install Visual Studio Build Tools"))))]))
 
 ;: Program Files root used by ordinary Visual Studio SKUs.
@@ -674,7 +670,7 @@
     [pf : String (msvc-program-files)]
     [items : vector.StringVec (vector.string-vec-with-capacity 3)]
     (begin
-      (if (string.string-eq env-root "")
+      (if (string.eq env-root "")
         unit
         (set! items (vector.string-vec-push items env-root)))
       (set!
@@ -849,13 +845,13 @@
 ;: Discover a Visual Studio toolset and Windows SDK from standard locations.
 (define (msvc-find-tool-auto [tool : (& tool str)]) : ResultMsvcTool
   (let
-    [tool-text : String (string.string-copy tool)]
+    [tool-text : String (string.copy tool)]
     (match (msvc-find-toolset tool-text)
       [(MsvcNoToolset)
         (ErrMsvcTool
           (MsvcToolNotFound
-            (string.string-append
-              (string.string-append "msvc: could not discover " tool-text)
+            (string.append
+              (string.append "msvc: could not discover " tool-text)
               " under standard Visual Studio Build Tools locations")))]
       [(MsvcSomeToolset toolset)
         (match (msvc-find-sdk)
@@ -878,9 +874,9 @@
     (if (not (msvc-supported-target? target))
       (ErrMsvcTool
         (let
-          [target-text : String (string.string-copy target)]
+          [target-text : String (string.copy target)]
           (MsvcUnsupported
-            (string.string-append "msvc: unsupported target " target-text))))
+            (string.append "msvc: unsupported target " target-text))))
       (match (msvc-find-tool-configured tool)
         [(OkMsvcTool resolved) (OkMsvcTool resolved)]
         [(ErrMsvcTool _) (msvc-find-tool-auto tool)]))))
@@ -903,7 +899,7 @@
 
 ;: Inline test owned string assertion.
 (define (msvc-test-assert-string-eq [actual : String] [expected : String]) : unit
-  (msvc-test-assert (string.string-eq actual expected)))
+  (msvc-test-assert (string.eq actual expected)))
 
 ;: Inline test helper to unwrap `ResultIoString`.
 (define (msvc-test-expect-ok-string [result : io.ResultIoString]) : String
@@ -965,7 +961,7 @@
         (begin
           (msvc-test-assert-string-eq (struct-get toolset version) "14.20.0")
           (msvc-test-assert-string-eq (struct-get toolset root) new-root)
-          (msvc-test-assert (not (string.string-eq old-root new-root))))]
+          (msvc-test-assert (not (string.eq old-root new-root))))]
       [(MsvcNoToolset) (msvc-test-fail)])))
 
 ;: Inline test helper to create fake SDK directory roots.
@@ -1081,7 +1077,7 @@
                 (struct-get toolset version)
                 "14.20.0")
               (msvc-test-assert-string-eq (struct-get toolset root) new-root)
-              (msvc-test-assert (not (string.string-eq old-root new-root))))]
+              (msvc-test-assert (not (string.eq old-root new-root))))]
           [(MsvcNoToolset) (msvc-test-fail)])))))
 
 ;: Inline test: read back fake toolset directory entries.
@@ -1138,7 +1134,7 @@
                   (msvc-test-assert-string-eq
                     (struct-get toolset root)
                     new-root)
-                  (msvc-test-assert (not (string.string-eq old-root new-root))))]
+                  (msvc-test-assert (not (string.eq old-root new-root))))]
               [(MsvcNoToolset) (msvc-test-fail)])]
           [(fs.ErrIoStringVec _) (msvc-test-fail)])))))
 

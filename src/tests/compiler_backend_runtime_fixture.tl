@@ -5,14 +5,14 @@
 
 (define (compiler-backend-runtime-fixture-emit [target-name : String]) : ResultCompilerBackend
   (cond
-    [(string.string-eq target-name "linux-x86_64")
+    [(string.eq target-name "linux-x86_64")
       (compiler-backend-emit-program-linux
         (compiler-backend-runtime-helper-program))]
-    [(string.string-eq target-name "windows-x86_64")
+    [(string.eq target-name "windows-x86_64")
       (compiler-backend-emit-program-for-target
         (compiler-backend-runtime-helper-program)
         (CompilerBackendTarget.Windows))]
-    [(string.string-eq target-name "windows-driver-primitives")
+    [(string.eq target-name "windows-driver-primitives")
       (compiler-backend-emit-source-for-target
         (compiler-backend-windows-driver-runtime-source)
         (CompilerBackendTarget.Windows))]
@@ -35,7 +35,7 @@
           (io.arg 2))]
       ;; Keep the driver source emit direct in main; this is the compile-heavy
       ;; fixture path and avoids an extra helper wrapper in the native smoke.
-      (if (string.string-eq target-name "windows-driver-primitives")
+      (if (string.eq target-name "windows-driver-primitives")
         (match (compiler-backend-emit-source-for-target
           (compiler-backend-windows-driver-runtime-source)
           (CompilerBackendTarget.Windows))

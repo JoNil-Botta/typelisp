@@ -9,7 +9,7 @@
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import stdlib.vector)
 (import "host_plan.tl")
@@ -294,9 +294,9 @@
     (io.panic "build package profile opt-level smoke failed")))
 
 (define (build-parse-profile [value : String]) : ResultBuildProfile
-  (if (string.string-eq value "dev")
+  (if (string.eq value "dev")
     (ResultBuildProfile.Ok (BuildProfile.Dev))
-    (if (string.string-eq value "release")
+    (if (string.eq value "release")
       (ResultBuildProfile.Ok (BuildProfile.Release))
       (ResultBuildProfile.Err (build-unknown-profile value)))))
 
@@ -331,21 +331,19 @@
   (str_cat.str-cat stdlib-lines (host-plan-netline "stdlib-root" root)))
 
 (define (build-parse-target [value : String]) : ResultBuildTarget
-  (if (or
-    (string.string-eq value "linux-x86_64")
-    (string.string-eq value "linux_x86_64"))
+  (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
     (ResultBuildTarget.Ok (CompilerBackendTarget.Linux))
     (if (or
-      (string.string-eq value "windows-x86_64")
-      (string.string-eq value "windows_x86_64"))
+      (string.eq value "windows-x86_64")
+      (string.eq value "windows_x86_64"))
       (ResultBuildTarget.Ok (CompilerBackendTarget.Windows))
       (ResultBuildTarget.Err (build-unknown-target value)))))
 
 (define (build-parse-opt-level [value : String]) : i64
   (cond
-    [(string.string-eq value "0") 0]
-    [(string.string-eq value "1") 1]
-    [(string.string-eq value "2") 2]
+    [(string.eq value "0") 0]
+    [(string.eq value "1") 1]
+    [(string.eq value "2") 2]
     [else -1]))
 
 (define (build-parse-options
@@ -409,7 +407,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "-o")
+        [(string.eq current "-o")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: -o requires a value")
             (if has-output
@@ -433,7 +431,7 @@
                 lock-policy
                 stdlib-lines
                 stdlib-roots)))]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: --manifest-path requires a value")
             (if has-manifest
@@ -458,7 +456,7 @@
                 lock-policy
                 stdlib-lines
                 stdlib-roots)))]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: --stdlib-root requires a value")
             (build-parse-options
@@ -480,7 +478,7 @@
               lock-policy
               (build-append-stdlib stdlib-lines (io.arg (+ idx 1)))
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))))]
-        [(string.string-eq current "--target")
+        [(string.eq current "--target")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: --target requires a value")
             (let
@@ -506,7 +504,7 @@
                   stdlib-lines
                   stdlib-roots)
                 (ResultBuildConfig.Err (build-unknown-target value)))))]
-        [(string.string-eq current "--backend-mode")
+        [(string.eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: --backend-mode requires a value")
             (let
@@ -532,7 +530,7 @@
                   stdlib-lines
                   stdlib-roots)
                 (ResultBuildConfig.Err (build-unknown-mode value)))))]
-        [(string.string-eq current "--profile")
+        [(string.eq current "--profile")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: --profile requires a value")
             (if has-profile
@@ -561,7 +559,7 @@
                     lock-policy
                     stdlib-lines
                     stdlib-roots)])))]
-        [(string.string-eq current "--release")
+        [(string.eq current "--release")
           (if has-profile
             (ResultBuildConfig.Err "build: profile was provided more than once")
             (build-parse-options
@@ -583,7 +581,7 @@
               lock-policy
               stdlib-lines
               stdlib-roots))]
-        [(string.string-eq current "--opt-level")
+        [(string.eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ResultBuildConfig.Err "build: --opt-level requires a value")
             (if has-opt-level
@@ -613,7 +611,7 @@
                     lock-policy
                     stdlib-lines
                     stdlib-roots)))))]
-        [(string.string-eq current "--locked")
+        [(string.eq current "--locked")
           (if (build-package-lock-policy-provided? lock-policy)
             (ResultBuildConfig.Err (build-package-lock-policy-option-error))
             (build-parse-options
@@ -635,7 +633,7 @@
               (BuildPackageLockPolicy.Locked)
               stdlib-lines
               stdlib-roots))]
-        [(string.string-eq current "--update-lock")
+        [(string.eq current "--update-lock")
           (if (build-package-lock-policy-provided? lock-policy)
             (ResultBuildConfig.Err (build-package-lock-policy-option-error))
             (build-parse-options
@@ -738,7 +736,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --manifest-path requires a value")
@@ -755,7 +753,7 @@
               lock-policy
               stdlib-roots
               resolved-deps))]
-        [(string.string-eq current "--target")
+        [(string.eq current "--target")
           (if (>= (+ idx 1) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --target requires a value")
@@ -779,7 +777,7 @@
                 [(ResultSourceToolTarget.Err _)
                   (ResultBuildPackageWorkerConfig.Err
                     (build-cli-unknown-target value))])))]
-        [(string.string-eq current "--backend-mode")
+        [(string.eq current "--backend-mode")
           (if (>= (+ idx 1) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --backend-mode requires a value")
@@ -802,7 +800,7 @@
                     resolved-deps)]
                 [(ResultSourceToolBackendMode.Err message)
                   (ResultBuildPackageWorkerConfig.Err message)])))]
-        [(string.string-eq current "--profile")
+        [(string.eq current "--profile")
           (if (>= (+ idx 1) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --profile requires a value")
@@ -828,7 +826,7 @@
                     lock-policy
                     stdlib-roots
                     resolved-deps))]))]
-        [(string.string-eq current "--release")
+        [(string.eq current "--release")
           (build-package-worker-parse-options
             (+ idx 1)
             count
@@ -844,7 +842,7 @@
             lock-policy
             stdlib-roots
             resolved-deps)]
-        [(string.string-eq current "--opt-level")
+        [(string.eq current "--opt-level")
           (if (>= (+ idx 1) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --opt-level requires a value")
@@ -859,14 +857,14 @@
                   target
                   mode
                   profile
-                  (string.string->int value)
+                  (string.>int value)
                   true
                   lock-policy
                   stdlib-roots
                   resolved-deps)
                 (ResultBuildPackageWorkerConfig.Err
                   (build-unknown-opt-level value)))))]
-        [(string.string-eq current "--locked")
+        [(string.eq current "--locked")
           (if (build-package-lock-policy-provided? lock-policy)
             (ResultBuildPackageWorkerConfig.Err
               (build-package-lock-policy-option-error))
@@ -883,7 +881,7 @@
               (BuildPackageLockPolicy.Locked)
               stdlib-roots
               resolved-deps))]
-        [(string.string-eq current "--update-lock")
+        [(string.eq current "--update-lock")
           (if (build-package-lock-policy-provided? lock-policy)
             (ResultBuildPackageWorkerConfig.Err
               (build-package-lock-policy-option-error))
@@ -900,7 +898,7 @@
               (BuildPackageLockPolicy.Update)
               stdlib-roots
               resolved-deps))]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --stdlib-root requires a value")
@@ -917,7 +915,7 @@
               lock-policy
               (vector.string-vec-push stdlib-roots (io.arg (+ idx 1)))
               resolved-deps))]
-        [(string.string-eq current "--resolved-dep")
+        [(string.eq current "--resolved-dep")
           (if (>= (+ idx 2) count)
             (ResultBuildPackageWorkerConfig.Err
               "build: --resolved-dep requires alias and path")
@@ -980,7 +978,7 @@
           "")
         (host-plan-word-line "target" target)
         (host-plan-word-line "backend-mode" mode)
-        (if (string.string-eq opt-level "")
+        (if (string.eq opt-level "")
           ""
           (host-plan-word-line "opt-level" opt-level))
         stdlib-lines
@@ -1146,30 +1144,30 @@
 
 (define (build-package-path-layout-smoke-ok?) : bool
   (and
-    (string.string-eq
+    (string.eq
       (build-package-output-dir-profile "root/app" "pkg" (BuildProfile.Release))
       "root/app/target/release")
-    (string.string-eq
+    (string.eq
       (build-package-asm-path-profile "root/app" "pkg" (BuildProfile.Dev))
       "root/app/target/dev/pkg.s")
-    (string.string-eq
+    (string.eq
       (build-package-bin-path-profile
         "root/app"
         "pkg"
         (BuildProfile.Release)
         (CompilerBackendTarget.Windows))
       "root/app/target/release/pkg.exe")
-    (string.string-eq
+    (string.eq
       (build-package-lib-path-profile
         "root/app"
         "pkg"
         (BuildProfile.Release)
         (CompilerBackendTarget.Linux))
       "root/app/target/release/libpkg.a")
-    (string.string-eq
+    (string.eq
       (build-package-tlci-path-profile "root/app" "pkg" (BuildProfile.Dev))
       "root/app/target/dev/pkg.tlci")
-    (string.string-eq
+    (string.eq
       (build-package-host-tlci-artifact-path
         (build-package-artifact-paths
           "root/app"
@@ -1232,7 +1230,7 @@
       (build-package-artifact-state-dirty? (BuildPackageArtifactState.Missing))
       (build-package-artifact-state-dirty?
         (BuildPackageArtifactState.Stale "metadata changed"))
-      (string.string-eq
+      (string.eq
         (build-package-artifact-state-render
           (BuildPackageArtifactState.Stale "metadata changed"))
         "metadata changed"))))
@@ -1286,7 +1284,7 @@
   [i : i64]
   [n : i64]) : i64
   (let
-    [pos : i64 (string-index-of-byte s i (cast needle : u8))]
+    [pos : i64 (string.index-of-byte s i (cast needle : u8))]
     (if (and (>= pos 0) (< pos n))
       pos
       -1)))
@@ -1334,7 +1332,7 @@
             [kind : String (string.substring (& pin) 0 eq)]
             [value : String
               (string.substring (& pin) (+ eq 1) (- pin-len (+ eq 1)))]
-            [kind-for-check : String (string.string-copy (& kind))]
+            [kind-for-check : String (string.copy (& kind))]
             (if (= (string.string-length value) 0)
               (ResultBuildGitDependency.Err
                 (build-git-dep-error alias "has empty pin"))
@@ -1348,13 +1346,13 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultPackageCachePinKind
   (let
-    [kind : String (string.string-copy (& (struct-get dep pin-kind)))]
+    [kind : String (string.copy (& (struct-get dep pin-kind)))]
     (cond
-      [(string.string-eq kind "rev")
+      [(string.eq kind "rev")
         (ResultPackageCachePinKind.Ok (PackageCachePinKind.Rev))]
-      [(string.string-eq kind "tag")
+      [(string.eq kind "tag")
         (ResultPackageCachePinKind.Ok (PackageCachePinKind.Tag))]
-      [(string.string-eq kind "branch")
+      [(string.eq kind "branch")
         (ResultPackageCachePinKind.Ok (PackageCachePinKind.Branch))]
       [else
         (ResultPackageCachePinKind.Err
@@ -1415,12 +1413,10 @@
     [(ResultPackageCachePinKind.Err _) false]
     [(ResultPackageCachePinKind.Ok kind)
       (and
-        (string.string-eq (& (struct-get entry alias)) alias)
-        (string.string-eq
-          (& (struct-get entry url))
-          (& (struct-get dep remote)))
+        (string.eq (& (struct-get entry alias)) alias)
+        (string.eq (& (struct-get entry url)) (& (struct-get dep remote)))
         (package-cache-pin-kind-eq? (struct-get entry pin-kind) kind)
-        (string.string-eq
+        (string.eq
           (& (struct-get entry pin-value))
           (& (struct-get dep pin-value))))]))
 
@@ -1469,27 +1465,22 @@
       (ResultPackageLockEntry.Ok
         (PackageLockEntry
           alias
-          (string.string-copy (& (struct-get dep remote)))
+          (string.copy (& (struct-get dep remote)))
           kind
-          (string.string-copy (& (struct-get dep pin-value)))
+          (string.copy (& (struct-get dep pin-value)))
           commit))]))
 
 (define (build-git-dependency-at-commit
   [dep : (& dep BuildGitDependency)]
   [commit : String]) : BuildGitDependency
-  (BuildGitDependency
-    (string.string-copy (& (struct-get dep remote)))
-    "rev"
-    commit))
+  (BuildGitDependency (string.copy (& (struct-get dep remote))) "rev" commit))
 
 (define (build-git-checkout-ref [dep : (& dep BuildGitDependency)]) : String
   (let
-    [kind : String (string.string-copy (& (struct-get dep pin-kind)))]
-    (if (string.string-eq kind "branch")
-      (str_cat.str-cat
-        "origin/"
-        (string.string-copy (& (struct-get dep pin-value))))
-      (string.string-copy (& (struct-get dep pin-value))))))
+    [kind : String (string.copy (& (struct-get dep pin-kind)))]
+    (if (string.eq kind "branch")
+      (str_cat.str-cat "origin/" (string.copy (& (struct-get dep pin-value))))
+      (string.copy (& (struct-get dep pin-value))))))
 
 (define (build-git-executable) : String
   (source-tool-git-executable))
@@ -1531,7 +1522,7 @@
   (source-tool-git-rev-parse-command root))
 
 (define (build-trim-command-output [output : String]) : String
-  (string.string-trim (& output)))
+  (string.trim (& output)))
 
 (define (build-resolve-git-head [alias : String] [root : String]) : ResultBuildString
   (match (build-run-captured
@@ -1555,23 +1546,21 @@
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String
-      (compiler-load-join-root-path (string.string-copy manifest-dir) "target")]
+      (compiler-load-join-root-path (string.copy manifest-dir) "target")]
     [typelisp-dir : String
-      (compiler-load-join-root-path (string.string-copy target-dir) "typelisp")]
+      (compiler-load-join-root-path (string.copy target-dir) "typelisp")]
     [deps-dir : String
-      (compiler-load-join-root-path
-        (string.string-copy typelisp-dir)
-        "git-deps")]
+      (compiler-load-join-root-path (string.copy typelisp-dir) "git-deps")]
     (cond
-      [(not (build-mkdir-ok-owned? (string.string-copy target-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy target-dir)))
         (ResultBuildString.Err
           (build-git-dep-error alias "could not create target directory"))]
-      [(not (build-mkdir-ok-owned? (string.string-copy typelisp-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy typelisp-dir)))
         (ResultBuildString.Err
           (build-git-dep-error
             alias
             "could not create target/typelisp directory"))]
-      [(not (build-mkdir-ok-owned? (string.string-copy deps-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy deps-dir)))
         (ResultBuildString.Err
           (build-git-dep-error
             alias
@@ -1589,52 +1578,52 @@
     (not
       (io.file-exists?
         (build-github-dep-cache-manifest-path
-          (string.string-copy manifest-dir)
-          (string.string-copy alias))))
+          (string.copy manifest-dir)
+          (string.copy alias))))
     (io.file-exists? (build-github-cache-git-dir manifest-dir alias))))
 
 (define (build-git-dep-rev? [dep : (& dep BuildGitDependency)]) : bool
-  (string.string-eq (& (struct-get dep pin-kind)) "rev"))
+  (string.eq (& (struct-get dep pin-kind)) "rev"))
 
 (define (build-package-cache-relative-root) : String
   "target/typelisp/cache/packages/v1")
 
 (define (build-package-cache-manifest-path [entry-path : (& entry-path str)]) : String
-  (string.string-append entry-path "/typelisp.pkg"))
+  (string.append entry-path "/typelisp.pkg"))
 
 (define (build-ensure-package-cache-root
   [manifest-dir : String]
   [alias : String]) : ResultBuildString
   (let
     [target-dir : String
-      (compiler-load-join-root-path (string.string-copy manifest-dir) "target")]
+      (compiler-load-join-root-path (string.copy manifest-dir) "target")]
     [typelisp-dir : String
-      (compiler-load-join-root-path (string.string-copy target-dir) "typelisp")]
+      (compiler-load-join-root-path (string.copy target-dir) "typelisp")]
     [cache-dir : String
-      (compiler-load-join-root-path (string.string-copy typelisp-dir) "cache")]
+      (compiler-load-join-root-path (string.copy typelisp-dir) "cache")]
     [packages-dir : String
-      (compiler-load-join-root-path (string.string-copy cache-dir) "packages")]
+      (compiler-load-join-root-path (string.copy cache-dir) "packages")]
     [root : String (package-cache-default-root manifest-dir)]
     (cond
-      [(not (build-mkdir-ok-owned? (string.string-copy target-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy target-dir)))
         (ResultBuildString.Err
           (build-git-dep-error alias "could not create target directory"))]
-      [(not (build-mkdir-ok-owned? (string.string-copy typelisp-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy typelisp-dir)))
         (ResultBuildString.Err
           (build-git-dep-error
             alias
             "could not create target/typelisp directory"))]
-      [(not (build-mkdir-ok-owned? (string.string-copy cache-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy cache-dir)))
         (ResultBuildString.Err
           (build-git-dep-error
             alias
             "could not create target/typelisp/cache directory"))]
-      [(not (build-mkdir-ok-owned? (string.string-copy packages-dir)))
+      [(not (build-mkdir-ok-owned? (string.copy packages-dir)))
         (ResultBuildString.Err
           (build-git-dep-error
             alias
             "could not create target/typelisp/cache/packages directory"))]
-      [(not (build-mkdir-ok-owned? (string.string-copy root)))
+      [(not (build-mkdir-ok-owned? (string.copy root)))
         (ResultBuildString.Err
           (build-git-dep-error
             alias
@@ -1768,7 +1757,7 @@
           (match (build-run-captured
             (build-git-dep-error alias "git clone")
             (build-git-clone-command
-              (string.string-copy (& (struct-get dep remote)))
+              (string.copy (& (struct-get dep remote)))
               staged-path))
             [(ResultBuildString.Err message) (ResultBuildString.Err message)]
             [(ResultBuildString.Ok _)
@@ -1827,8 +1816,8 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : ResultBuildString
   (let
-    [remote : String (string.string-copy (& (struct-get dep remote)))]
-    [pin-value : String (string.string-copy (& (struct-get dep pin-value)))]
+    [remote : String (string.copy (& (struct-get dep remote)))]
+    [pin-value : String (string.copy (& (struct-get dep pin-value)))]
     [key : PackageCacheKey (PackageCacheKey remote pin-value)]
     [root : String (package-cache-default-root manifest-dir)]
     [entry-path : String (package-cache-entry-path root (& key))]
@@ -1887,9 +1876,7 @@
     (ResultBuildString.Ok root)
     (build-run-captured
       (build-git-dep-error alias "git clone")
-      (build-git-clone-command
-        (string.string-copy (& (struct-get dep remote)))
-        root))))
+      (build-git-clone-command (string.copy (& (struct-get dep remote))) root))))
 
 (define (build-fetch-github-dependency-legacy
   [manifest-dir : String]
@@ -1967,8 +1954,7 @@
       (let
         [commit-result : ResultBuildString
           (if (build-git-dep-rev? (& dep))
-            (ResultBuildString.Ok
-              (string.string-copy (& (struct-get dep pin-value))))
+            (ResultBuildString.Ok (string.copy (& (struct-get dep pin-value))))
             (build-resolve-git-head
               alias
               (build-absolute-dep-root manifest-dir dep-root)))]
@@ -2023,12 +2009,12 @@
   (let
     [path : String (struct-get dep path)]
     [alias : String (struct-get dep alias)]
-    [path-for-kind : String (string.string-copy (& path))]
+    [path-for-kind : String (string.copy (& path))]
     (if (compiler-load-github-dependency-path? path-for-kind)
       (let
         [parse-alias : String
           (string.substring alias 0 (string.string-length alias))]
-        [parse-path : String (string.string-copy (& path))]
+        [parse-path : String (string.copy (& path))]
         (match (build-parse-git-dependency parse-alias parse-path)
           [(ResultBuildGitDependency.Err message)
             (ResultBuildResolvedPkgDep.Err message)]
@@ -2480,7 +2466,7 @@
     [target-dir : String (compiler-load-join-root-path manifest-dir "target")]
     [profile-dir : String
       (compiler-load-join-root-path
-        (string.string-copy target-dir)
+        (string.copy target-dir)
         (build-profile-name profile))]
     (and (build-mkdir-ok? target-dir) (build-mkdir-ok? profile-dir))))
 
@@ -2937,7 +2923,7 @@
           (CompilerBackendTarget.Windows)))]
     (and
       (= (build-package-graph-node-vec-len nodes) 3)
-      (string.string-eq
+      (string.eq
         (struct-get (build-package-graph-node-vec-at nodes 0) manifest-path)
         "root/first/typelisp.pkg")
       (source-tool-string-list-eq? libs expected)
@@ -2971,16 +2957,16 @@
           (BuildProfile.Release)
           (CompilerBackendTarget.Linux))]
       (and
-        (string.string-eq
+        (string.eq
           (build-package-runtime-artifact-path bin-artifacts)
           "root/app/target/dev/app.exe")
-        (string.string-eq
+        (string.eq
           (build-package-host-tlci-artifact-path bin-artifacts)
           "root/app/target/dev/app.tlci")
-        (string.string-eq
+        (string.eq
           (build-package-runtime-artifact-path dep-artifacts)
           "root/dep/target/release/libdep.a")
-        (string.string-eq
+        (string.eq
           (build-package-host-tlci-artifact-path dep-artifacts)
           "root/dep/target/release/dep.tlci")))))
 
@@ -3043,7 +3029,7 @@
       [prefix-len : i64 (string.string-length prefix)]
       (and
         (>= (string.string-length path) prefix-len)
-        (string.string-eq (string.substring path 0 prefix-len) prefix)))))
+        (string.eq (string.substring path 0 prefix-len) prefix)))))
 
 (define (build-package-tlci-stdlib-path? [owner : String] [path : String]) : bool
   (or
@@ -3117,7 +3103,7 @@
         [note : String (source-tool-noexecstack-note)]
         (if (and
           (compiler-backend-target-linux? target)
-          (not (string.string-contains (& haystack) (& needle))))
+          (not (string.contains (& haystack) (& needle))))
           (match (io.try-append-file (& path) (& note))
             [(io.OkIoUnit) SourceToolCommandStatus.Ok]
             [(io.ErrIoUnit error)
@@ -3497,7 +3483,7 @@
           inline-test-status)))))
 
 (define (build-package-worker-unified-cli?) : bool
-  (and (> (arg-count) 1) (string.string-eq (io.arg 1) "build")))
+  (and (> (arg-count) 1) (string.eq (io.arg 1) "build")))
 
 (define (build-package-worker-command-prefix [args : process.ProcessStringList]) : process.ProcessStringList
   (if (build-package-worker-unified-cli?)
@@ -3884,7 +3870,7 @@
                       (build-package-kind-entry? kind)))]))]))]))
 
 (define (build-package-async-process-supported?) : bool
-  (not (string.string-eq (env.env-path-list-separator) ";")))
+  (not (string.eq (env.env-path-list-separator) ";")))
 
 (define (build-package-deps-built?
   [manifest-dir : String]
@@ -4556,7 +4542,7 @@
 (define (build-args-contain-manifest? [idx : i64] [count : i64]) : bool
   (if (>= idx count)
     false
-    (if (string.string-eq (io.arg idx) "--manifest-path")
+    (if (string.eq (io.arg idx) "--manifest-path")
       true
       (build-args-contain-manifest? (+ idx 1) count))))
 
@@ -4584,54 +4570,54 @@
 
 (define (build-cli-option-rest6 [current : String]) : BuildCliOption
   (cond
-    [(string.string-eq current "--link-arg") (BuildCliOption.LinkArg)]
-    [(string.string-eq current "--manifest-path") (BuildCliOption.ManifestPath)]
-    [(string.string-eq current "--locked") (BuildCliOption.Locked)]
-    [(string.string-eq current "--update-lock") (BuildCliOption.UpdateLock)]
+    [(string.eq current "--link-arg") (BuildCliOption.LinkArg)]
+    [(string.eq current "--manifest-path") (BuildCliOption.ManifestPath)]
+    [(string.eq current "--locked") (BuildCliOption.Locked)]
+    [(string.eq current "--update-lock") (BuildCliOption.UpdateLock)]
     [else (BuildCliOption.Other)]))
 
 (define (build-cli-option-rest5 [current : String]) : BuildCliOption
-  (if (string.string-eq current "--link-search")
+  (if (string.eq current "--link-search")
     (BuildCliOption.LinkSearch)
     (build-cli-option-rest6 current)))
 
 (define (build-cli-option-rest4 [current : String]) : BuildCliOption
-  (if (string.string-eq current "--link-lib")
+  (if (string.eq current "--link-lib")
     (BuildCliOption.LinkLib)
     (build-cli-option-rest5 current)))
 
 (define (build-cli-option-rest3 [current : String]) : BuildCliOption
-  (if (string.string-eq current "--release")
+  (if (string.eq current "--release")
     (BuildCliOption.Release)
     (build-cli-option-rest4 current)))
 
 (define (build-cli-option-rest-profile [current : String]) : BuildCliOption
-  (if (string.string-eq current "--profile")
+  (if (string.eq current "--profile")
     (BuildCliOption.Profile)
     (build-cli-option-rest3 current)))
 
 (define (build-cli-option-rest-opt [current : String]) : BuildCliOption
-  (if (string.string-eq current "--opt-level")
+  (if (string.eq current "--opt-level")
     (BuildCliOption.OptLevel)
     (build-cli-option-rest-profile current)))
 
 (define (build-cli-option-rest2 [current : String]) : BuildCliOption
-  (if (string.string-eq current "--backend-mode")
+  (if (string.eq current "--backend-mode")
     (BuildCliOption.BackendMode)
     (build-cli-option-rest-opt current)))
 
 (define (build-cli-option-rest1 [current : String]) : BuildCliOption
-  (if (string.string-eq current "--target")
+  (if (string.eq current "--target")
     (BuildCliOption.Target)
     (build-cli-option-rest2 current)))
 
 (define (build-cli-option-rest0 [current : String]) : BuildCliOption
-  (if (string.string-eq current "--stdlib-root")
+  (if (string.eq current "--stdlib-root")
     (BuildCliOption.StdlibRoot)
     (build-cli-option-rest1 current)))
 
 (define (build-cli-option [current : String]) : BuildCliOption
-  (if (string.string-eq current "-o")
+  (if (string.eq current "-o")
     (BuildCliOption.Output)
     (build-cli-option-rest0 current)))
 
@@ -4771,7 +4757,7 @@
                   target
                   mode
                   stdlib-roots
-                  (string.string->int value)
+                  (string.>int value)
                   link-inputs)
                 (ResultBuildCliConfig.Err (build-cli-unknown-opt-level value)))))]
         [(BuildCliOption.Profile)
@@ -4946,12 +4932,10 @@
 ;; compatibility no-op; the bare form also builds in-process.
 (define (build-run-from [start : i64] [count : i64]) : i64
   (cond
-    [(and (> count start) (string.string-eq (io.arg start) "--package-worker"))
+    [(and (> count start) (string.eq (io.arg start) "--package-worker"))
       (build-package-worker-run-from (+ start 1) count)]
-    [(and
-        (> count start)
-        (string.string-eq (io.arg start) "--package-doctest-worker"))
+    [(and (> count start) (string.eq (io.arg start) "--package-doctest-worker"))
       (build-package-doctest-worker-run-from (+ start 1) count)]
-    [(and (> count start) (string.string-eq (io.arg start) "--direct"))
+    [(and (> count start) (string.eq (io.arg start) "--direct"))
       (build-direct-from (+ start 1) count)]
     [else (build-direct-from start count)]))

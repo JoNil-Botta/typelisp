@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/sync.tl")
 (import "stdlib/thread.tl")
 (import "stdlib/string.tl")
@@ -45,7 +45,7 @@
     [(ChannelStringRecvErr _) fallback]))
 
 (define (sync-string-integration-message [index : i64]) : String
-  (string-append "message:" (int->string index)))
+  (append "message:" (int->string index)))
 
 (define (sync-string-integration-expected-sum [count : i64]) : i64
   (let
@@ -76,7 +76,7 @@
               (channel-string-recv channel)
               "missing")]
           [expected : String (sync-string-integration-message i)]
-          (if (string-eq value expected)
+          (if (eq value expected)
             (begin
               (set! sum (+ sum (string-length value)))
               (set! i (+ i 1)))
@@ -96,11 +96,11 @@
   [count : i64]) : unit
   (begin
     (channel-string-store-raw! channel ctx 0)
-    (array.array-set! ctx channel-string-raw-field-count count)))
+    (array-set! ctx channel-string-raw-field-count count)))
 
 (define (sync-string-integration-run [channel : ChannelString]) : i64
   (let
-    [owner : Arena (arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [ctx : (Array i64)
       (array.make-array i64 (+ channel-string-raw-field-count 1))]
     [expected : i64

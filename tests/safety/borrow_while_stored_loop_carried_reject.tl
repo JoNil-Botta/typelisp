@@ -11,7 +11,7 @@
     (begin
       (while (< i limit)
         (begin
-          (array.array-push! items (& n))
+          (array-push! items (& n))
           (set! n 2)
           (set! i (+ i 1))))
       (read-items items))))

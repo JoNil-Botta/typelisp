@@ -621,17 +621,17 @@ verify_compiler_driver_stdlib_string_runtime() {
     _src="$_dir/input.tl"
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
   (let
-    [joined : String (string-append "foo" "bar")]
-    [extended : String (string-concat joined "!")]
-    [borrowed : String (string-append (& extended) (& joined))]
-    [digits : String (int->string -42)]
+    [joined : String (string.append "foo" "bar")]
+    [extended : String (string.concat joined "!")]
+    [borrowed : String (string.append (& extended) (& joined))]
+    [digits : String (string.int->string -42)]
     (if (and
-      (string-eq borrowed "foobar!foobar")
-      (string-eq digits "-42"))
+      (string.eq borrowed "foobar!foobar")
+      (string.eq digits "-42"))
       42
       1)))
 EOF
@@ -659,14 +659,14 @@ verify_compiler_driver_stdlib_json() {
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
 (import "stdlib/json.tl")
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : i64
   (let
     [text : String "{\"ok\":true,\"values\":[1,2,null]}"]
     (match (json-parse (& text))
       [(OkJson value)
-        (if (string-eq
+        (if (string.eq
           (json-stringify value)
           "{\"ok\":true,\"values\":[1,2,null]}")
           42

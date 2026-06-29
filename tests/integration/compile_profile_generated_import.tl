@@ -5,7 +5,7 @@
     (module generated.profile_generated_import)
     (import "stdlib/string.tl")
     (define (answer) : i64
-      (if (string-eq "ok" "ok")
+      (if (eq "ok" "ok")
         42
         1))))
 

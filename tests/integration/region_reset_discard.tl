@@ -6,9 +6,9 @@
 
 (define (main) : i64
   (let
-    [before : String (string-append "a" "b")]
+    [before : String (append "a" "b")]
     [m : u64 (tl_region_mark)]
     (begin
       (tl_alloc (cast 67108864 : u64))
       (tl_region_reset m)
-      (string-length (string-append before "c")))))
+      (string-length (append before "c")))))

@@ -601,7 +601,7 @@
         (match (compiler-object-symbol-list-ref symbols index)
           [(CompilerObjectSymbol.Symbol found-name found-binding found-kind _)
             (if (and
-              (string.string-eq found-name name)
+              (string.eq found-name name)
               (compiler-object-symbol-binding-eq? found-binding binding)
               (compiler-object-symbol-kind-eq? found-kind kind))
               (set! found true)
@@ -622,7 +622,7 @@
           [(CompilerObjectRelocation.Relocation _ _ found-kind found-target)
             (if (and
               (compiler-object-relocation-kind-eq? found-kind kind)
-              (string.string-eq found-target target))
+              (string.eq found-target target))
               (set! found true)
               (set! index (+ index 1)))]))
       found)))
@@ -638,7 +638,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(CompilerObjectDataRecord.String value)
-            (if (string.string-eq value text)
+            (if (string.eq value text)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -689,7 +689,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(CompilerObjectDataRecord.Label value)
-            (if (string.string-eq value label)
+            (if (string.eq value label)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -742,7 +742,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-data-record-list-ref records index)
           [(CompilerObjectDataRecord.Label value)
-            (if (and (string.string-eq value label) (< (+ index 2) count))
+            (if (and (string.eq value label) (< (+ index 2) count))
               (match (compiler-object-data-record-list-ref records (+ index 1))
                 [(CompilerObjectDataRecord.I64 first-found)
                   (if (= first-found first)
@@ -833,7 +833,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
           [(CompilerObjectX64Instr.Call value)
-            (if (string.string-eq value target)
+            (if (string.eq value target)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))
@@ -914,7 +914,7 @@
       (while (and (not found) (< index count))
         (match (compiler-object-instr-list-ref instrs index)
           [(CompilerObjectX64Instr.XorpdRip value)
-            (if (string.string-eq value target)
+            (if (string.eq value target)
               (set! found true)
               (set! index (+ index 1)))]
           [_ (set! index (+ index 1))]))

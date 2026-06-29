@@ -3,7 +3,7 @@
 ;; render each finding as `path:line:col: message`. Kept main-less so both the
 ;; CLI driver (`lint.tl`) and the runnable smoke (`lint_driver_smoke.tl`) can
 ;; import it. Warn-only by default; callers can pass `--check` after the input
-;; path to exit non-zero when findings remain. The deprecated string.string-concat rule
+;; path to exit non-zero when findings remain. The deprecated string.concat rule
 ;; and staged migration rules are opt-in until their in-tree migrations land.
 (import stdlib.io)
 (import stdlib.vector)
@@ -77,7 +77,7 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--check")
+        [(string.eq current "--check")
           (selfhost-lint-parse-options
             (+ idx 1)
             count
@@ -88,7 +88,7 @@
             true
             deprecated-string-concat
             redundant-function-name)]
-        [(string.string-eq current "--deprecated-string-concat")
+        [(string.eq current "--deprecated-string-concat")
           (selfhost-lint-parse-options
             (+ idx 1)
             count
@@ -99,7 +99,7 @@
             enforcing
             true
             redundant-function-name)]
-        [(string.string-eq current "--redundant-function-name")
+        [(string.eq current "--redundant-function-name")
           (selfhost-lint-parse-options
             (+ idx 1)
             count
@@ -110,7 +110,7 @@
             enforcing
             deprecated-string-concat
             true)]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
               "selfhost-lint: --stdlib-root requires a value")
@@ -124,7 +124,7 @@
               enforcing
               deprecated-string-concat
               redundant-function-name))]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
               "selfhost-lint: --manifest-path requires a value")
@@ -143,7 +143,7 @@
                 redundant-function-name)))]
         [(selfhost-lint-flag? current)
           (ResultSelfhostLintConfig.Err
-            (string.string-append "selfhost-lint: unknown flag " current))]
+            (string.append "selfhost-lint: unknown flag " current))]
         [else
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -174,17 +174,17 @@
 (define (selfhost-lint-render-finding [path : String] [finding : LintFinding]) : String
   (let
     [fspan : AstSourceSpan (struct-get finding span)]
-    (string.string-append
+    (string.append
       path
-      (string.string-append
+      (string.append
         ":"
-        (string.string-append
+        (string.append
           (string.int->string (struct-get fspan start-line))
-          (string.string-append
+          (string.append
             ":"
-            (string.string-append
+            (string.append
               (string.int->string (struct-get fspan start-col))
-              (string.string-append ": " (struct-get finding message)))))))))
+              (string.append ": " (struct-get finding message)))))))))
 
 ;; Print every finding (one per line) to stdout; returns the number printed.
 ;; Findings are stored in discovery order, so render backward to preserve the
@@ -198,7 +198,7 @@
     printed
     (begin
       (io.print-string
-        (string.string-append
+        (string.append
           (selfhost-lint-render-finding path (lint-findings-ref items index))
           "\n"))
       (selfhost-lint-print-findings-from path items (- index 1) (+ printed 1)))))
@@ -443,7 +443,7 @@
   [line : i64]
   [rule-id : String]) : bool
   (let
-    [needle : String (string.string-append "lint-allow: " rule-id)]
+    [needle : String (string.append "lint-allow: " rule-id)]
     [source-len : i64 (string.string-length source)]
     [line-start : i64 (selfhost-lint-line-start-index source line)]
     [found : bool false]
@@ -482,7 +482,7 @@
     (if (or (<= line 0) (<= col 0))
       false
       (let
-        [needle : String (string.string-append "(" form-name)]
+        [needle : String (string.append "(" form-name)]
         [line-start : i64 (selfhost-lint-line-start-index source line)]
         [idx : i64 (+ line-start (- col 1))]
         (and
@@ -503,7 +503,7 @@
   [source : String]
   [finding : LintFinding]) : bool
   (and
-    (string.string-eq (struct-get finding rule-id) (lint-rule-single-begin-id))
+    (string.eq (struct-get finding rule-id) (lint-rule-single-begin-id))
     (>
       (selfhost-lint-begin-source-form-count source (struct-get finding span))
       1)))
@@ -594,7 +594,7 @@
       [next : LintFindings
         (if (and
           (not (tc-unused-unsafe-block-used? index))
-          (string.string-eq (tc-unused-unsafe-block-path index) path))
+          (string.eq (tc-unused-unsafe-block-path index) path))
           (lint-findings-add
             (lint-unused-unsafe-finding (tc-unused-unsafe-block-span index))
             out)
@@ -1272,7 +1272,7 @@
   [name : String]
   [body-span : AstSourceSpan]) : AstSourceSpan
   (let
-    [fn-needle : String (string.string-append "(define (" name)]
+    [fn-needle : String (string.append "(define (" name)]
     [fn-idx : i64 (selfhost-lint-dead-find-prefix-from source fn-needle 0)]
     (if (>= fn-idx 0)
       (selfhost-lint-dead-index-span source fn-idx body-span)
@@ -1280,7 +1280,7 @@
         source
         (selfhost-lint-dead-find-prefix-from
           source
-          (string.string-append "(define " name)
+          (string.append "(define " name)
           0)
         body-span))))
 
@@ -1688,7 +1688,7 @@
   [index : i64]) : i64
   (if (>= index (selfhost-lint-dead-decls-count items))
     (- 0 1)
-    (if (string.string-eq
+    (if (string.eq
       (struct-get (selfhost-lint-dead-decls-ref items index) name)
       name)
       index
@@ -1817,7 +1817,7 @@
       [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
       [next-count : i64
         (if (and
-          (string.string-eq (struct-get decl path) path)
+          (string.eq (struct-get decl path) path)
           (selfhost-lint-package-dead-finding-active? source decl))
           (+ count 1)
           count)]
@@ -1846,11 +1846,11 @@
       [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
       [next-printed : i64
         (if (and
-          (string.string-eq (struct-get decl path) path)
+          (string.eq (struct-get decl path) path)
           (selfhost-lint-package-dead-finding-active? source decl))
           (begin
             (io.print-string
-              (string.string-append
+              (string.append
                 (selfhost-lint-render-finding
                   path
                   (lint-dead-code-finding
@@ -1904,9 +1904,9 @@
           (begin
             (selfhost-lint-print-findings input-path findings)
             (io.print-string
-              (string.string-append
+              (string.append
                 "lint: "
-                (string.string-append
+                (string.append
                   (string.int->string (lint-findings-count findings))
                   " finding(s)\n")))
             (selfhost-lint-enforce-exit
@@ -1947,11 +1947,9 @@
           [total-count : i64 (+ ordinary-count dead-count)]
           (begin
             (io.print-string
-              (string.string-append
+              (string.append
                 "lint: "
-                (string.string-append
-                  (string.int->string total-count)
-                  " finding(s)\n")))
+                (string.append (string.int->string total-count) " finding(s)\n")))
             (selfhost-lint-enforce-exit enforcing total-count)))]
       [(ResultAstProgramDiagnostic.Err diag)
         (begin
@@ -1975,9 +1973,7 @@
         (begin
           (if print-headers
             (io.print-string
-              (string.string-append
-                "--- "
-                (string.string-append input-path "\n")))
+              (string.append "--- " (string.append input-path "\n")))
             unit)
           (selfhost-lint-file
             input-path
@@ -2033,9 +2029,7 @@
         (begin
           (if print-headers
             (io.print-string
-              (string.string-append
-                "--- "
-                (string.string-append input-path "\n")))
+              (string.append "--- " (string.append input-path "\n")))
             unit)
           (selfhost-lint-file-with-package-dead
             input-path
@@ -2087,7 +2081,7 @@
   (match (package-source-discover-for "lint" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (let
@@ -2140,7 +2134,7 @@
             redundant-function-name)])]
     [(ResultSelfhostLintConfig.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         2)]))
 
 ;; ---- self-test (driven by lint_driver_smoke.tl) ----
@@ -2342,11 +2336,11 @@
 (define (suppressed-visible-helper) : i64 2)")
 
 (define (selfhost-lint-package-dead-source-b) : String
-  (string.string-append
+  (string.append
     "(define (cross-file-helper [x : i64]) : i64 (+ x 1))
 (define (test-only-helper) : i64 3)
 "
-    (string.string-append "(te" "st \"test-only\" (test-only-helper))")))
+    (string.append "(te" "st \"test-only\" (test-only-helper))")))
 
 (define (selfhost-lint-unused-assignment-init-source) : String
   "(define (main) : i64
@@ -2521,7 +2515,7 @@
           findings
           rule-id
           (+ index 1)
-          (if (string.string-eq (struct-get finding rule-id) rule-id)
+          (if (string.eq (struct-get finding rule-id) rule-id)
             (+ count 1)
             count))]
       [(LintMaybeFinding.No)
@@ -2552,9 +2546,7 @@
         (and
           (= (lint-findings-count findings) 1)
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
-            (struct-get finding rule-id)
-            (lint-rule-unused-import-id))))]
+          (string.eq (struct-get finding rule-id) (lint-rule-unused-import-id))))]
     [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-unused-imports-self-test) : i64
@@ -2709,12 +2701,12 @@
       [(not (= lib-count-a 0)) 52]
       [(not (= lib-count-b 0)) 53]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-message (lint-rule-dead-code-id))
             (lint-rule-dead-code-message)))
         54]
-      [(string-contains (& finding-message) (& private-needle)) 55]
-      [(string-contains (& dead-suggestion) (& export-needle)) 56]
+      [(string.contains (& finding-message) (& private-needle)) 55]
+      [(string.contains (& dead-suggestion) (& export-needle)) 56]
       [else 42])))
 
 (define (selfhost-lint-unused-assignment-self-test) : i64
@@ -2764,7 +2756,7 @@
             0))
         55]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-message rule)
             (lint-rule-unused-assignment-message)))
         56]
@@ -2779,7 +2771,7 @@
         (and
           (= (struct-get finding depth) 5)
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
+          (string.eq
             (struct-get finding rule-id)
             (lint-rule-nested-if-ladder-id))))]
     [(LintMaybeFinding.No) false]))
@@ -2791,9 +2783,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
-            (struct-get finding rule-id)
-            (lint-rule-nested-let-id))))]
+          (string.eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
     [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-return-path-finding-ok? [findings : LintFindings]) : bool
@@ -2804,7 +2794,7 @@
         (and
           (= (struct-get finding depth) 3)
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
+          (string.eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))))]
     [(LintMaybeFinding.No) false]))
@@ -2817,9 +2807,7 @@
         (and
           (= (struct-get finding depth) 1)
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
-            (struct-get finding rule-id)
-            (lint-rule-unit-if-guard-id))))]
+          (string.eq (struct-get finding rule-id) (lint-rule-unit-if-guard-id))))]
     [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-cascading-and-or-finding-ok?
@@ -2832,10 +2820,10 @@
         (and
           (= (struct-get finding depth) 3)
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
+          (string.eq
             (struct-get finding rule-id)
             (lint-rule-cascading-and-or-id))
-          (string.string-eq (struct-get finding message) message)))]
+          (string.eq (struct-get finding message) message)))]
     [(LintMaybeFinding.No) false]))
 
 (define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool

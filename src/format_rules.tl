@@ -19,7 +19,7 @@
   (match node
     [(FormatCst.Atom tok)
       (match tok
-        [(FormatToken.Symbol name) (string.string-eq name wanted)]
+        [(FormatToken.Symbol name) (string.eq name wanted)]
         [_ false])]
     [_ false]))
 
@@ -71,15 +71,14 @@
       (let
         [head-name : String (format-rules-node-symbol-name head)]
         (cond
-          [(string.string-eq head-name "import") "import"]
-          [(string.string-eq head-name "extern") "extern"]
-          [(string.string-eq head-name "include-str") "include-str"]
-          [(string.string-eq head-name "define")
+          [(string.eq head-name "import") "import"]
+          [(string.eq head-name "extern") "extern"]
+          [(string.eq head-name "include-str") "include-str"]
+          [(string.eq head-name "define")
             (if (format-rules-define-value-rest? rest)
               "define"
               "")]
-          [(string.string-eq head-name "cfg")
-            (format-rules-cfg-top-form-family rest)]
+          [(string.eq head-name "cfg") (format-rules-cfg-top-form-family rest)]
           [else ""]))]
     [_ ""]))
 
@@ -96,7 +95,7 @@
     [node-family : String (format-rules-top-form-family node)]
     (and
       (> (string.string-length previous-family) 0)
-      (string.string-eq previous-family node-family))))
+      (string.eq previous-family node-family))))
 
 (define (format-rules-list-append
   [left : FormatCstList]
@@ -2291,7 +2290,7 @@
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
-      [(string.string-eq head-name "import")
+      [(string.eq head-name "import")
         (format-rules-layout-inline-form
           "import"
           rest
@@ -2302,7 +2301,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "include-str")
+      [(string.eq head-name "include-str")
         (format-rules-layout-inline-form
           "include-str"
           rest
@@ -2313,7 +2312,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "extern")
+      [(string.eq head-name "extern")
         (format-rules-layout-inline-form
           "extern"
           rest
@@ -2324,11 +2323,11 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "define")
+      [(string.eq head-name "define")
         (format-rules-layout-define rest emit width indent col flat limit buf)]
-      [(string.string-eq head-name "defmacro")
+      [(string.eq head-name "defmacro")
         (format-rules-layout-defmacro rest emit width indent col flat limit buf)]
-      [(string.string-eq head-name "defenum")
+      [(string.eq head-name "defenum")
         (format-rules-layout-first-or-line-form
           "defenum"
           rest
@@ -2339,7 +2338,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "defstruct")
+      [(string.eq head-name "defstruct")
         (format-rules-layout-first-or-line-form
           "defstruct"
           rest
@@ -2350,11 +2349,11 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "lambda")
+      [(string.eq head-name "lambda")
         (format-rules-layout-lambda rest emit width indent col flat limit buf)]
-      [(string.string-eq head-name "let")
+      [(string.eq head-name "let")
         (format-rules-layout-let rest emit width indent col flat limit buf)]
-      [(string.string-eq head-name "if")
+      [(string.eq head-name "if")
         (format-rules-layout-first-or-line-form
           "if"
           rest
@@ -2365,7 +2364,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "while")
+      [(string.eq head-name "while")
         (format-rules-layout-first-or-line-form
           "while"
           rest
@@ -2376,7 +2375,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "begin")
+      [(string.eq head-name "begin")
         (format-rules-layout-line-form
           "begin"
           rest
@@ -2387,7 +2386,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "unsafe")
+      [(string.eq head-name "unsafe")
         (format-rules-layout-line-form
           "unsafe"
           rest
@@ -2398,7 +2397,7 @@
           flat
           limit
           buf)]
-      [(string.string-eq head-name "match")
+      [(string.eq head-name "match")
         (format-rules-layout-first-or-line-form
           "match"
           rest
@@ -2437,7 +2436,7 @@
         [name : String (format-rules-node-symbol-name key)]
         (if (> (string.string-length name) 0)
           (format-rules-layout-inline-form
-            (string.string-append ":" name)
+            (string.append ":" name)
             tail
             emit
             width
@@ -2588,7 +2587,7 @@
       [node-family : String (format-rules-top-form-family node)]
       (if (and
         (> (string.string-length previous-family) 0)
-        (string.string-eq previous-family node-family))
+        (string.eq previous-family node-family))
         (format-rules-layout-hard-line emit width indent col flat limit buf)
         (format-rules-layout-hard-line
           emit
@@ -2721,7 +2720,7 @@
       [node-family : String (format-rules-top-form-family node)]
       (if (and
         (> (string.string-length previous-family) 0)
-        (string.string-eq previous-family node-family))
+        (string.eq previous-family node-family))
         (format-rules-render-hard-line-into indent buf)
         (format-rules-render-gap-into indent buf)))))
 
@@ -2976,8 +2975,8 @@
                       (box (FormatCstList.Dense tail-slots 0 1)))))))
             80)]
         (and
-          (string.string-eq dense-render "(x : i64)")
-          (string.string-eq overlay-render dense-render))))))
+          (string.eq dense-render "(x : i64)")
+          (string.eq overlay-render dense-render))))))
 
 (define (format-rules-self-test) : i64
   (let
@@ -3002,25 +3001,19 @@
     [variadic : String
       (format-rules-render-source-width (format-rules-variadic-macro-source) 80)]
     (begin
-      (unless (string.string-eq decls (format-rules-decls-expected)) (return 1))
-      (unless (string.string-eq flow (format-rules-flow-expected)) (return 2))
+      (unless (string.eq decls (format-rules-decls-expected)) (return 1))
+      (unless (string.eq flow (format-rules-flow-expected)) (return 2))
+      (unless (string.eq comments (format-rules-comments-expected)) (return 3))
+      (unless (string.eq quote (format-rules-quote-expected)) (return 4))
+      (unless (string.eq unsafe (format-rules-unsafe-expected)) (return 5))
       (unless
-        (string.string-eq comments (format-rules-comments-expected))
-        (return 3))
-      (unless (string.string-eq quote (format-rules-quote-expected)) (return 4))
-      (unless
-        (string.string-eq unsafe (format-rules-unsafe-expected))
-        (return 5))
-      (unless
-        (string.string-eq metadata (format-rules-define-metadata-expected))
+        (string.eq metadata (format-rules-define-metadata-expected))
         (return 6))
       (unless
-        (string.string-eq
-          metadata-long
-          (format-rules-define-metadata-long-expected))
+        (string.eq metadata-long (format-rules-define-metadata-long-expected))
         (return 7))
       (unless
-        (string.string-eq variadic (format-rules-variadic-macro-expected))
+        (string.eq variadic (format-rules-variadic-macro-expected))
         (return 8))
       (unless (format-rules-overlay-dense-tail-preserved?) (return 9))
       42)))

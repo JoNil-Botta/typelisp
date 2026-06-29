@@ -31,17 +31,15 @@
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.
 (define (scaffold-manifest [name : String] [kind : String] [entry : String]) : String
-  (string.string-append
+  (string.append
     "(package (name \""
-    (string.string-append
+    (string.append
       name
-      (string.string-append
+      (string.append
         "\") (version \"0.1.0\") (kind \""
-        (string.string-append
+        (string.append
           kind
-          (string.string-append
-            "\") (entry \""
-            (string.string-append entry "\"))\n")))))))
+          (string.append "\") (entry \"" (string.append entry "\"))\n")))))))
 
 (define (scaffold-bin-source) : String
   "(define (main) : i64\n  0)\n")
@@ -70,18 +68,18 @@
   (if (io.file-exists? path)
     (begin
       (io.print-error
-        (string.string-append
+        (string.append
           "scaffold: refusing to overwrite existing file: "
-          (string.string-append path "\n")))
+          (string.append path "\n")))
       1)
     (match (scaffold-try-write-file path contents)
       [(io.OkIoUnit) 0]
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
-            (string.string-append
+            (string.append
               "scaffold: could not write "
-              (string.string-append path "\n")))
+              (string.append path "\n")))
           1)])))
 
 ;; Create `root/src/`, then write the manifest and entry source.
@@ -95,10 +93,9 @@
       (if is-lib
         "src/lib.tl"
         "src/main.tl")]
-    [src-dir : String (string.string-append root "/src")]
-    [pkg-path : String (string.string-append root "/typelisp.pkg")]
-    [src-path : String
-      (string.string-append root (string.string-append "/" entry))]
+    [src-dir : String (string.append root "/src")]
+    [pkg-path : String (string.append root "/typelisp.pkg")]
+    [src-path : String (string.append root (string.append "/" entry))]
     [source : String
       (if is-lib
         (scaffold-lib-source)
@@ -107,9 +104,9 @@
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
-            (string.string-append
+            (string.append
               "scaffold: could not create directory "
-              (string.string-append src-dir "\n")))
+              (string.append src-dir "\n")))
           1)]
       [(io.OkIoUnit)
         (let
@@ -121,13 +118,11 @@
               (if (= src-code 0)
                 (begin
                   (io.print-string
-                    (string.string-append
+                    (string.append
                       "scaffold: created "
-                      (string.string-append
+                      (string.append
                         kind
-                        (string.string-append
-                          " package "
-                          (string.string-append name "\n")))))
+                        (string.append " package " (string.append name "\n")))))
                   0)
                 src-code))
             pkg-code))])))
@@ -136,17 +131,17 @@
   (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
-        (string.string-append
+        (string.append
           "scaffold: invalid package name: "
-          (string.string-append name "\n")))
+          (string.append name "\n")))
       2)
     (match (scaffold-ensure-dir name)
       [(io.ErrIoUnit _)
         (begin
           (io.print-error
-            (string.string-append
+            (string.append
               "scaffold: could not create directory "
-              (string.string-append name "\n")))
+              (string.append name "\n")))
           1)]
       [(io.OkIoUnit) (scaffold-emit name name is-lib)])))
 
@@ -154,9 +149,9 @@
   (if (not (scaffold-name-ok? name))
     (begin
       (io.print-error
-        (string.string-append
+        (string.append
           "scaffold: invalid package name: "
-          (string.string-append name "\n")))
+          (string.append name "\n")))
       2)
     (scaffold-emit "." name is-lib)))
 
@@ -176,7 +171,7 @@
     (scaffold-usage)
     (let
       [current : String (io.arg idx)]
-      (if (string.string-eq current "--lib")
+      (if (string.eq current "--lib")
         (scaffold-dispatch-from is-init (+ idx 1) count true)
         (if (= (+ idx 1) count)
           (if is-init
@@ -195,8 +190,8 @@
     (scaffold-usage)
     (let
       [command : String (io.arg command-idx)]
-      (if (string.string-eq command "new")
+      (if (string.eq command "new")
         (scaffold-new-run-from (+ command-idx 1) count)
-        (if (string.string-eq command "init")
+        (if (string.eq command "init")
           (scaffold-init-run-from (+ command-idx 1) count)
           (scaffold-usage))))))

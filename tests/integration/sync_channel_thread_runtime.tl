@@ -28,7 +28,7 @@
     (begin
       (while (< i (channel_i64.raw-field-count))
         (begin
-          (array.array-set! raw i (sync-integration-read-i64 ctx (+ offset i)))
+          (array-set! raw i (sync-integration-read-i64 ctx (+ offset i)))
           (set! i (+ i 1))))
       (channel_i64.load-raw raw 0))))
 
@@ -89,8 +89,8 @@
   [count : i64]) : unit
   (begin
     (channel_i64.store-raw! channel ctx 0)
-    (array.array-set! ctx (channel_i64.raw-field-count) base)
-    (array.array-set! ctx (+ (channel_i64.raw-field-count) 1) count)))
+    (array-set! ctx (channel_i64.raw-field-count) base)
+    (array-set! ctx (+ (channel_i64.raw-field-count) 1) count)))
 
 (define (sync-integration-receive-sum
   [channel : channel_i64.Channel]

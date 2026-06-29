@@ -20,7 +20,7 @@
       0)))
 
 (define (contextual-make-array-len [n : i64]) : i64
-  (array.array-length
+  (array-length
     (array.make-array
       i64
       (if (< n 1)

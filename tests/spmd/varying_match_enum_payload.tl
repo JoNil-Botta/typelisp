@@ -20,15 +20,15 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! items i (choice-at i))
+        (array-set! items i (choice-at i))
         (set! i (+ i 1))))))
 
 (define (fill-match [items : (Array Choice)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
     (let
-      [choice : Choice (array.array-ref items i)]
-      (array.array-set!
+      [choice : Choice (array-ref items i)]
+      (array-set!
         out
         i
         (match choice
@@ -50,8 +50,8 @@
     (while (< i n)
       (begin
         (let
-          [choice : Choice (array.array-ref items i)]
-          (array.array-set!
+          [choice : Choice (array-ref items i)]
+          (array-set!
             out
             i
             (match choice
@@ -75,7 +75,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))

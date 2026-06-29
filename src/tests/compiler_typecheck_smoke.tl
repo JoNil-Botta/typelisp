@@ -52,7 +52,7 @@
   [limit : i64]
   [out : String]) : String
   (if (>= index limit)
-    (string.string-append
+    (string.append
       out
       "(define (main) : unit
   (let
@@ -62,15 +62,15 @@
     (compiler-typecheck-lambda-large-global-env-source-from
       (+ index 1)
       limit
-      (string.string-append
+      (string.append
         out
-        (string.string-append
+        (string.append
           "(define (lambda-global-"
-          (string.string-append
+          (string.append
             (string.int->string index)
-            (string.string-append
+            (string.append
               ") : i64 "
-              (string.string-append (string.int->string index) ")\n"))))))))
+              (string.append (string.int->string index) ")\n"))))))))
 
 (define (compiler-typecheck-lambda-large-global-env-source) : String
   (compiler-typecheck-lambda-large-global-env-source-from 0 192 ""))
@@ -751,7 +751,7 @@
     [(CompilerDiagnosticLabelCons entry rest)
       (match (struct-get entry label)
         [(CompilerDiagnosticSomeString text)
-          (if (string.string-contains (& text) (& needle))
+          (if (string.contains (& text) (& needle))
             true
             (compiler-typecheck-secondary-label-contains? (box-get rest) needle))]
         [CompilerDiagnosticNoString
@@ -761,8 +761,7 @@
   [diag : CompilerDiagnostic]
   [needle : String]) : bool
   (match (compiler-diagnostic-help diag)
-    [(CompilerDiagnosticSomeString text)
-      (string.string-contains (& text) (& needle))]
+    [(CompilerDiagnosticSomeString text) (string.contains (& text) (& needle))]
     [CompilerDiagnosticNoString false]))
 
 (define (compiler-typecheck-labeled-borrow-error-ok?
@@ -773,7 +772,7 @@
       (let
         [message : String (compiler-diagnostic-message (box-get diag))]
         (and
-          (string-contains (& message) (& want-message-fragment))
+          (string.contains (& message) (& want-message-fragment))
           (compiler-typecheck-help-contains?
             (box-get diag)
             "narrower lexical scope")
@@ -888,9 +887,7 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (and
-        (string.string-eq
-          (compiler-diagnostic-message (box-get diag))
-          want-message)
+        (string.eq (compiler-diagnostic-message (box-get diag)) want-message)
         (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
@@ -909,9 +906,7 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (and
-        (string.string-eq
-          (compiler-diagnostic-message (box-get diag))
-          want-message)
+        (string.eq (compiler-diagnostic-message (box-get diag)) want-message)
         (compiler-typecheck-help-contains? (box-get diag) "clone the owner")
         (=
           (compiler-typecheck-secondary-count
@@ -1474,21 +1469,21 @@
 (define (compiler-typecheck-smoke-comptime-error-expression-source) : String
   "(import stdlib.comptime)
 (defmacro (badexpr [x : Expr]) : i64
-  (comptime.comptime-error \"custom expression macro failure\"))
+  (comptime.error \"custom expression macro failure\"))
 (define (main) : i64
   (badexpr 42))")
 
 (define (compiler-typecheck-smoke-comptime-error-module-source) : String
   "(import stdlib.comptime)
 (defmacro (badmod [key : String]) : Module
-  (comptime.comptime-error \"custom module macro failure\"))
+  (comptime.error \"custom module macro failure\"))
 (import (badmod \"x\") as bad)
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-smoke-comptime-error-decls-source) : String
   "(import stdlib.comptime)
 (defmacro (baddecls) : Decls
-  (comptime.comptime-error \"custom decl macro failure\"))
+  (comptime.error \"custom decl macro failure\"))
 (baddecls)
 (define (main) : i64 0)")
 
@@ -1607,7 +1602,7 @@
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
-;; struct-get, array.make-array, array.array-ref/array.array-set!, let, while,
+;; struct-get, array.make-array, array.array-ref/array.set!, let, while,
 ;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with
 ;; "module macro output contains syntax that cannot be parsed as a declaration".
@@ -1629,21 +1624,21 @@
         (begin
           (while (< i (struct-get s len))
             (begin
-              (array.array-set! bigger i (array.array-ref (struct-get s slots) i))
+              (array-set! bigger i (array-ref (struct-get s slots) i))
               (set! i (+ i 1))))
           (Stack bigger (struct-get s len) new-cap))))
     (define (stack-push [s : Stack] [value : i64]) : Stack
       (if (< (struct-get s len) (struct-get s cap))
         (begin
-          (array.array-set! (struct-get s slots) (struct-get s len) value)
+          (array-set! (struct-get s slots) (struct-get s len) value)
           (Stack (struct-get s slots) (+ (struct-get s len) 1) (struct-get s cap)))
         (stack-push (stack-grow s) value)))
     (define (stack-top [s : Stack]) : i64
-      (array.array-ref (struct-get s slots) (- (struct-get s len) 1)))
+      (array-ref (struct-get s slots) (- (struct-get s len) 1)))
     (define (stack-fixed-array-probe) : i64
       (let
         [items : (Array i64 3) (array 11 22 33)]
-        (array.array-ref items 1)))
+        (array-ref items 1)))
     (define (stack-never-probe [x : i64]) : i64
       (ann (return x) : never))))
 (int-stack)
@@ -1711,7 +1706,7 @@
     (define (typed-array [v : ,T]) : (Array ,T)
       (let [items : (Array ,T) (array.make-array ,T 1)]
         (begin
-          (array.array-set! items 0 v)
+          (array-set! items 0 v)
           items)))))
 (defmacro (emit-cast [T : type]) : Decls
   `(define (typed-cast [v : i64]) : ,T (cast v : ,T)))
@@ -2155,8 +2150,8 @@
               cfgs))
             [(ResultCompilerTypecheck.Err diag)
               (and
-                (string.string-eq (compiler-diagnostic-path (box-get diag)) dep)
-                (string.string-eq
+                (string.eq (compiler-diagnostic-path (box-get diag)) dep)
+                (string.eq
                   (compiler-diagnostic-message (box-get diag))
                   "typecheck: value definition type mismatch"))]
             [(ResultCompilerTypecheck.Ok _) false])]
@@ -2378,15 +2373,15 @@
     [items : (Array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 3 4)]
     (begin
-      (array.array-set! items 0 (array.array-ref fixed 1))
+      (array-set! items 0 (array-ref fixed 1))
       (let
         [borrow-score : i64
           (let
-            [borrowed : (& items i64) (& (array.array-ref items 0))]
+            [borrowed : (& items i64) (& (array-ref items 0))]
             (take-array-ref borrowed))]
         (begin
-          (array.array-push! items 9)
-          (+ borrow-score (+ (array.array-length items) (array.array-ref items 0))))))))")
+          (array-push! items 9)
+          (+ borrow-score (+ (array-length items) (array-ref items 0))))))))")
 
 (define (compiler-typecheck-smoke-qualified-array-ok?) : bool
   (compiler-typecheck-ok? (compiler-typecheck-smoke-qualified-array-source)))
@@ -2467,7 +2462,7 @@
                     entry-ctx
                     "helper.Item")
                     [(ResultTcString.Ok key)
-                      (string.string-eq key "helper.module/Item")]
+                      (string.eq key "helper.module/Item")]
                     [(ResultTcString.Err _) false])
                   (match (tc-module-local-env entry-ctx env "entry.module")
                     [(ResultTcEnv.Ok local-env)

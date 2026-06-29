@@ -11,8 +11,8 @@
   (let
     [items : (Array PtrOffsetTriple) (array.make-array PtrOffsetTriple 2)]
     (begin
-      (array.array-set! items 0 (PtrOffsetTriple 1 2 3))
-      (array.array-set! items 1 (PtrOffsetTriple 13 17 19))
+      (array-set! items 0 (PtrOffsetTriple 1 2 3))
+      (array-set! items 1 (PtrOffsetTriple 13 17 19))
       (let
         [second : PtrOffsetTriple
           (unsafe

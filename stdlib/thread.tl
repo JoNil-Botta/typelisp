@@ -410,13 +410,13 @@
 ;: Copy a dynamic `i64` array into fresh active-arena storage.
 (define (thread-array-i64-copy [src : (Array i64)]) : (Array i64)
   (let
-    [n : i64 (array.array-length src)]
+    [n : i64 (array-length src)]
     [out : (Array i64) (array.make-array i64 n)]
     [i : i64 0]
     (begin
       (while (< i n)
         (begin
-          (array.array-set! out i (array.array-ref src i))
+          (array-set! out i (array-ref src i))
           (set! i (+ i 1))))
       out)))
 
@@ -477,7 +477,7 @@
     [stack-top : i64
       (bit-and (+ (thread-array-u8-addr stack) thread-default-stack-size) -16)]
     (begin
-      (array.array-set! clear-cell 0 (cast 1 : i32))
+      (array-set! clear-cell 0 (cast 1 : i32))
       (let
         [tid : i64
           (unsafe
@@ -511,14 +511,14 @@
       [started-addr : i64 (thread-array-i32-addr started-cell)]
       [result-addr : i64 (thread-array-i64-addr result-cell)]
       (begin
-        (array.array-set!
+        (array-set!
           context
           0
           (unsafe
             (cast entry : u64)))
-        (array.array-set! context 1 (cast arg : u64))
-        (array.array-set! context 2 (cast result-addr : u64))
-        (array.array-set! context 3 (cast started-addr : u64))
+        (array-set! context 1 (cast arg : u64))
+        (array-set! context 2 (cast result-addr : u64))
+        (array-set! context 3 (cast started-addr : u64))
         (let
           [handle : i64
             (thread-windows-create-thread
@@ -571,14 +571,14 @@
 ;: worker and the joining thread. The handle must be joined exactly once.
 (define (thread-spawn-string [task : (-> String)]) : ThreadStringSpawnResult
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [result : (Array String) (in-arena owner (array.make-array String 1))]
     [result-addr : i64 (thread-array-string-addr result)]
     (match (thread-spawn
       (lambda ([_ignored : i64]) : i64
         (let
           [value : String (in-arena owner (task))]
-          [copied : String (in-arena owner (string.string-copy (& value)))]
+          [copied : String (in-arena owner (string.copy (& value)))]
           (begin
             (thread-write-string! result-addr copied)
             0)))
@@ -593,7 +593,7 @@
 ;: joiner. The handle must be joined exactly once.
 (define (thread-spawn-array-i64 [task : (-> (Array i64))]) : ThreadArrayI64SpawnResult
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [result : (Array (Array i64))
       (in-arena owner (array.make-array (Array i64) 1))]
     [result-addr : i64 (thread-array-array-i64-addr result)]
@@ -617,7 +617,7 @@
 ;: fresh box in that same spanning owner. The handle must be joined exactly once.
 (define (thread-spawn-box-i64 [task : (-> (Box i64))]) : ThreadBoxI64SpawnResult
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [result : (Array i64) (in-arena owner (array.make-array i64 1))]
     [result-addr : i64 (thread-array-i64-addr result)]
     (match (thread-spawn
@@ -705,13 +705,11 @@
     [i : i64 0]
     [count : i64 0]
     (begin
-      (while (< i (array.array-length mask))
+      (while (< i (array-length mask))
         (begin
           (set!
             count
-            (+
-              count
-              (thread-count-byte-bits (cast (array.array-ref mask i) : i64))))
+            (+ count (thread-count-byte-bits (cast (array-ref mask i) : i64))))
           (set! i (+ i 1))))
       count)))
 
@@ -830,7 +828,7 @@
     (let
       [buf : (Array u64) (array.make-array u64 1)]
       (begin
-        (array.array-set! buf 0 (cast 1 : u64))
+        (array-set! buf 0 (cast 1 : u64))
         (=
           (unsafe
             (syscall 1 (struct-get sem handle) (thread-array-u64-addr buf) 8))
@@ -872,10 +870,10 @@
   (let
     [mask : (Array u8) (array.make-array u8 4)]
     (begin
-      (array.array-set! mask 0 (cast 0 : u8))
-      (array.array-set! mask 1 (cast 1 : u8))
-      (array.array-set! mask 2 (cast 3 : u8))
-      (array.array-set! mask 3 (cast 255 : u8))
+      (array-set! mask 0 (cast 0 : u8))
+      (array-set! mask 1 (cast 1 : u8))
+      (array-set! mask 2 (cast 3 : u8))
+      (array-set! mask 3 (cast 255 : u8))
       (thread-test-assert (>= (thread-default-worker-count) 1))
       (thread-test-assert-i64-eq (thread-count-byte-bits 0) 0)
       (thread-test-assert-i64-eq (thread-count-byte-bits 1) 1)

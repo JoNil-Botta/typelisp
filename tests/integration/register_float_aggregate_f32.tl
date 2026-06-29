@@ -76,10 +76,10 @@
   (let
     [items : (Array Vec2) (array.make-array Vec2 2)]
     (begin
-      (array.array-set! items 0 (Vec2 3.0 4.0))
-      (array.array-set! items 1 (Vec2 5.0 6.0))
-      (if (= (vec-sum (array.array-ref items 0)) 7.0)
-        (= (struct-get (array.array-ref items 1) y) 6.0)
+      (array-set! items 0 (Vec2 3.0 4.0))
+      (array-set! items 1 (Vec2 5.0 6.0))
+      (if (= (vec-sum (array-ref items 0)) 7.0)
+        (= (struct-get (array-ref items 1) y) 6.0)
         false))))
 
 (define (case-capture) : bool

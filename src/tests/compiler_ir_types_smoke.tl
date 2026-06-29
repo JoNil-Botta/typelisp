@@ -8,8 +8,7 @@
   (match (compiler-ir-function-list-force-cons functions)
     [(CompilerIrFunctionList.Cons func _)
       (match func
-        [(CompilerIrFunction.Function name _ _ _ _)
-          (string.string-eq name want)])]
+        [(CompilerIrFunction.Function name _ _ _ _) (string.eq name want)])]
     [(CompilerIrFunctionList.Nil) false]
     [(CompilerIrFunctionList.Array _) false]))
 
@@ -89,15 +88,15 @@
         instr
         span)]
     (and
-      (string.string-eq
+      (string.eq
         (compiler-ir-instr-render instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) : varying i64")
-      (string.string-eq
+      (string.eq
         (compiler-ir-instr-describe instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
       (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)
       (= (compiler-ir-instr-call-arg-count instr) 2)
-      (string.string-eq
+      (string.eq
         (compiler-ir-instr-render (compiler-ir-clone-instr instr))
         (compiler-ir-instr-render instr))
       (match (compiler-source-spans-lookup-instr spans "func" instr)

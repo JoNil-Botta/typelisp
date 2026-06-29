@@ -1130,7 +1130,7 @@
     [start-live : i64]) : unit
     (let
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
-      (if (< index 0)
+      (if (or (< index 0) (>= index compiler-tc-reinfer-profile-site-count))
         unit
         (begin
           (array.array-set!
@@ -1581,6 +1581,18 @@
 
 (cfg
   compile-profile
+  (define (tc-lp-index-valid? [index : i64]) : bool
+    (and (>= index 0) (< index 15))))
+
+(cfg
+  compile-profile
+  (define (tc-lp-count [index : i64]) : i64
+    (if (tc-lp-index-valid? index)
+      (array.array-ref tc-lp-counts index)
+      0)))
+
+(cfg
+  compile-profile
   (define (tc-lp-reset [index : i64]) : unit
     (if (< index 15)
       (begin
@@ -1591,10 +1603,9 @@
 (cfg
   compile-profile
   (define (tc-lp-note [index : i64]) : unit
-    (array.array-set!
-      tc-lp-counts
-      index
-      (+ (array.array-ref tc-lp-counts index) 1))))
+    (if (tc-lp-index-valid? index)
+      (array.array-set! tc-lp-counts index (+ (tc-lp-count index) 1))
+      unit)))
 
 (cfg
   compile-profile
@@ -1944,7 +1955,7 @@
         (string.string-append
           phase
           (string.string-append
-            (compiler-tc-profile-field (array.array-ref tc-lp-counts index))
+            (compiler-tc-profile-field (tc-lp-count index))
             "|0|0|0\n"))))))
 
 (cfg
@@ -2966,14 +2977,15 @@
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [count : i64 (tc-env-cache-count env)]
-      [values : (Array AstType) (array.make-array AstType count)]
-      [unsafe-flags : (Array i64) (array.make-array i64 count)]
-      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 count)]
-      [shadow-flags : (Array i64) (array.make-array i64 count)]
+      [capacity : i64 (tc-env-cache-capacity count)]
+      [values : (Array AstType) (array.make-array AstType capacity)]
+      [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
+      [shadow-flags : (Array i64) (array.make-array i64 capacity)]
       [ids : hashmap.I64I64Map
         (tc-env-cache-fill
           env
-          (hashmap.i64-i64-map-with-capacity (tc-env-cache-capacity count))
+          (hashmap.i64-i64-map-with-capacity capacity)
           values
           unsafe-flags
           c-abi-fnptr-flags
@@ -2995,15 +3007,16 @@
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [count : i64 (tc-env-cache-count-prefix env (tc-local-cache-threshold))]
-      [values : (Array AstType) (array.make-array AstType count)]
-      [unsafe-flags : (Array i64) (array.make-array i64 count)]
-      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 count)]
-      [shadow-flags : (Array i64) (array.make-array i64 count)]
+      [capacity : i64 (tc-env-cache-capacity count)]
+      [values : (Array AstType) (array.make-array AstType capacity)]
+      [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
+      [shadow-flags : (Array i64) (array.make-array i64 capacity)]
       [ids : hashmap.I64I64Map
         (tc-env-cache-fill-prefix
           env
           (tc-local-cache-threshold)
-          (hashmap.i64-i64-map-with-capacity (tc-env-cache-capacity count))
+          (hashmap.i64-i64-map-with-capacity capacity)
           values
           unsafe-flags
           c-abi-fnptr-flags

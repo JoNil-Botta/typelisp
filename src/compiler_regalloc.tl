@@ -5020,9 +5020,28 @@
 ;; keeps them in registers. caller-clobber-instr? stays true for bounds checks so
 ;; remat-use-site-ok? remains conservative (the bounds-check cmp's scavenged
 ;; scratch could clobber a single-instruction remat home).
+;;
+;; IrInstrPack is ALSO not a clobber point (#122-class generalization). A Pack
+;; (the 16-byte register-resident aggregate build for Maybe/Pair/tuple) never
+;; clobbers a caller-saved register holding another live value:
+;; compiler-backend-emit-pack-words takes a pure register-move fast path into the
+;; Pack's OWN group-home registers (compiler-backend-emit-pack-words-direct-
+;; registers -- only dst0/dst1, which the allocator gave the Pack's result, never
+;; a live-across value's home), and for memory words it loads through a SCAVENGED
+;; scratch (compiler-backend-scavenge-reg-here / -xmm-reg, default %r8/%r9/%xmm2/
+;; %xmm3) chosen via the interval-aware occupied-mask -- scavenge-candidate-ok?
+;; rejects any register free-bit not clear in the occupancy mask, so it can never
+;; pick a register homing a live value, and even the default fallback is emergency
+;; push/pop-wrapped when occupied. So a value live across a Pack is never actually
+;; clobbered; treating it as call-spanning wrongly bans it from all 9 caller-saved
+;; regs and excludes its loop-carried phi from same-value coalescing (forcing
+;; spills/static reloads where the value could stay register-resident). The emit-
+;; time scavenge freeness self-check is the soundness net. caller-clobber-instr?
+;; stays true for Pack (remat conservatism), same split as bounds checks.
 (define (compiler-reg-backend-clobber-point-instr? [instr : CompilerIrInstr]) : bool
   (match instr
     [(IrInstrBoundsCheck _ _ _) false]
+    [(IrInstrPack _ _ _) false]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
 ;; Param-pin gate predicate: like a caller-clobber scan EXCEPT bounds checks do not

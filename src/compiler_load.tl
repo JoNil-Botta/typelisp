@@ -3910,26 +3910,28 @@
   [key : String]
   [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
   (match result
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (begin
         (if (compiler-load-program-cache-store key program)
           (compiler-load-session-note-persistent!)
           unit)
-        (OkAstProgramDiagnostic program))]
-    [(ErrAstProgramDiagnostic diag) (ErrAstProgramDiagnostic diag)]))
+        (ResultAstProgramDiagnostic.Ok program))]
+    [(ResultAstProgramDiagnostic.Err diag)
+      (ResultAstProgramDiagnostic.Err diag)]))
 
 (define (compiler-load-cache-program-result-with-pools
   [key : String]
   [result : ResultAstProgramDiagnostic]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (match result
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (begin
         (if (compiler-load-program-cache-store key program)
           (compiler-load-session-note-persistent-with-pools! pools)
           unit)
-        (OkAstProgramDiagnostic program))]
-    [(ErrAstProgramDiagnostic diag) (ErrAstProgramDiagnostic diag)]))
+        (ResultAstProgramDiagnostic.Ok program))]
+    [(ResultAstProgramDiagnostic.Err diag)
+      (ResultAstProgramDiagnostic.Err diag)]))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss
   [key : String]
@@ -3985,8 +3987,8 @@
 (define (compiler-load-ast-program-result-ok?
   [result : ResultAstProgramDiagnostic]) : bool
   (match result
-    [(OkAstProgramDiagnostic _) true]
-    [(ErrAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Ok _) true]
+    [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-load-parse-file-diagnostic-cache-miss-local
   [key : String]
@@ -4039,11 +4041,11 @@
       (compiler-load-parse-file-diagnostic-escaping path cfgs)]
     (begin
       (match parsed
-        [(OkAstProgramDiagnostic _)
+        [(ResultAstProgramDiagnostic.Ok _)
           (if (compiler-load-program-admission-record-persistent key)
             unit
             unit)]
-        [(ErrAstProgramDiagnostic _) unit])
+        [(ResultAstProgramDiagnostic.Err _) unit])
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-admit-only-with-pools
@@ -4056,11 +4058,11 @@
       (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)]
     (begin
       (match parsed
-        [(OkAstProgramDiagnostic _)
+        [(ResultAstProgramDiagnostic.Ok _)
           (if (compiler-load-program-admission-record-persistent key)
             unit
             unit)]
-        [(ErrAstProgramDiagnostic _) unit])
+        [(ResultAstProgramDiagnostic.Err _) unit])
       parsed)))
 
 (define (compiler-load-parse-file-diagnostic-session
@@ -4077,7 +4079,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-program-cache-note-hit!)
-            (OkAstProgramDiagnostic program))]
+            (ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-program-cache-note-miss!)
@@ -4110,7 +4112,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-program-cache-note-hit!)
-            (OkAstProgramDiagnostic program))]
+            (ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-program-cache-note-miss!)
@@ -4208,7 +4210,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-program-cache-note-hit!)
-            (OkAstProgramDiagnostic program))]
+            (ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-program-cache-note-miss!)
@@ -4233,7 +4235,7 @@
         [(CompilerLoadProgramCacheHit program)
           (begin
             (compiler-load-program-cache-note-hit!)
-            (OkAstProgramDiagnostic program))]
+            (ResultAstProgramDiagnostic.Ok program))]
         [(CompilerLoadProgramCacheMiss)
           (begin
             (compiler-load-program-cache-note-miss!)
@@ -4257,7 +4259,7 @@
   [expected-module : AstMaybeModuleName]
   [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (compiler-load-program-with-paths-and-roots-expect-cfg
         path
         program
@@ -4265,7 +4267,8 @@
         stdlib-roots
         expected-module
         cfgs)]
-    [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)]))
+    [(ResultAstProgramDiagnostic.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
   [path : String]
@@ -4280,7 +4283,7 @@
     source
     cfgs
     pools)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
         path
         program
@@ -4289,7 +4292,8 @@
         expected-module
         cfgs
         pools)]
-    [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)]))
+    [(ResultAstProgramDiagnostic.Err diag)
+      (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-source
   [path : String]
@@ -4501,7 +4505,7 @@
               stdlib-roots
               parse-cfgs)
             (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
-            [(OkAstProgramDiagnostic program)
+            [(ResultAstProgramDiagnostic.Ok program)
               (compiler-load-bind-path-dedup
                 (compiler-load-program-with-paths-and-roots-expect-cfg-root
                   path
@@ -4513,7 +4517,7 @@
                   parse-cfgs)
                 path-dedup
                 path-key)]
-            [(ErrAstProgramDiagnostic diag)
+            [(ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])
           (match (compiler-load-embedded-stdlib-source-for-path path)
             [(CompilerEmbeddedStdlibSomeSource source)
@@ -4526,7 +4530,7 @@
                   path
                   source
                   parse-cfgs))
-                [(OkAstProgramDiagnostic program)
+                [(ResultAstProgramDiagnostic.Ok program)
                   (compiler-load-bind-path-dedup
                     (compiler-load-program-with-paths-and-roots-expect-cfg-root
                       path
@@ -4538,7 +4542,7 @@
                       parse-cfgs)
                     path-dedup
                     path-key)]
-                [(ErrAstProgramDiagnostic diag)
+                [(ResultAstProgramDiagnostic.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])]
             [(CompilerEmbeddedStdlibNoSource)
               (ResultCompilerLoadWithPaths.Err
@@ -4609,7 +4613,7 @@
               path
               parse-cfgs
               pools))
-            [(OkAstProgramDiagnostic program)
+            [(ResultAstProgramDiagnostic.Ok program)
               (compiler-load-bind-path-dedup
                 (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                   path
@@ -4624,7 +4628,7 @@
                   source-module-fallback)
                 path-dedup
                 path-key)]
-            [(ErrAstProgramDiagnostic diag)
+            [(ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])
           (match (compiler-load-embedded-stdlib-source-for-path path)
             [(CompilerEmbeddedStdlibSomeSource source)
@@ -4639,7 +4643,7 @@
                   source
                   parse-cfgs
                   pools))
-                [(OkAstProgramDiagnostic program)
+                [(ResultAstProgramDiagnostic.Ok program)
                   (compiler-load-bind-path-dedup
                     (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                       path
@@ -4654,7 +4658,7 @@
                       source-module-fallback)
                     path-dedup
                     path-key)]
-                [(ErrAstProgramDiagnostic diag)
+                [(ResultAstProgramDiagnostic.Err diag)
                   (ResultCompilerLoadWithPaths.Err diag)])]
             [(CompilerEmbeddedStdlibNoSource)
               (ResultCompilerLoadWithPaths.Err
@@ -5766,7 +5770,7 @@
           stdlib-roots
           parse-cfgs)
         (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
-        [(OkAstProgramDiagnostic program)
+        [(ResultAstProgramDiagnostic.Ok program)
           (compiler-load-package-program-with-paths-and-roots-expect-fallback
             path
             program
@@ -5778,7 +5782,8 @@
             parse-cfgs
             module-id-fallback
             source-module-fallback)]
-        [(ErrAstProgramDiagnostic diag) (ResultCompilerLoadWithPaths.Err diag)])
+        [(ResultAstProgramDiagnostic.Err diag)
+          (ResultCompilerLoadWithPaths.Err diag)])
       (match (compiler-load-embedded-stdlib-source-for-path path)
         [(CompilerEmbeddedStdlibSomeSource source)
           (match (if cache-current
@@ -5790,7 +5795,7 @@
               path
               source
               parse-cfgs))
-            [(OkAstProgramDiagnostic program)
+            [(ResultAstProgramDiagnostic.Ok program)
               (compiler-load-package-program-with-paths-and-roots-expect-fallback
                 path
                 program
@@ -5802,7 +5807,7 @@
                 parse-cfgs
                 module-id-fallback
                 source-module-fallback)]
-            [(ErrAstProgramDiagnostic diag)
+            [(ResultAstProgramDiagnostic.Err diag)
               (ResultCompilerLoadWithPaths.Err diag)])]
         [(CompilerEmbeddedStdlibNoSource)
           (ResultCompilerLoadWithPaths.Err
@@ -6444,7 +6449,7 @@
       "src\\summary.tl"
       (compiler-load-surface-summary-smoke-source)
       cfgs)
-      [(OkAstProgramDiagnostic program)
+      [(ResultAstProgramDiagnostic.Ok program)
         (match (compiler-load-surface-summary-build
           "src\\summary.tl"
           "src\\..\\src"
@@ -6453,7 +6458,7 @@
           [(ResultCompilerLoadSurfaceSummary.Ok summary)
             (compiler-load-surface-summary-shape-ok? summary)]
           [(ResultCompilerLoadSurfaceSummary.Err _) false])]
-      [(ErrAstProgramDiagnostic _) false])))
+      [(ResultAstProgramDiagnostic.Err _) false])))
 
 (define (compiler-load-normalize-ok?) : bool
   (and

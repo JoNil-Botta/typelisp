@@ -2588,9 +2588,9 @@
                     (set! done true)))]
               [(ResultSpannedSexpr.Ok sexpr)
                 (match (parse-ast-decl-maybe dispatch sexpr)
-                  [(ErrAstMaybeDecl msg)
+                  [(ResultAstMaybeDecl.Err msg)
                     (match (parse-ast-expr dispatch sexpr)
-                      [(ErrAstExpr _)
+                      [(ResultAstExpr.Err _)
                         (let
                           [span : SourceSpan (spanned-sexpr-span sexpr)]
                           [line : i64 (span-start-line span)]
@@ -2604,10 +2604,10 @@
                                 msg
                                 (lsp-line-at text line)))
                             (set! done true)))]
-                      [(OkAstExpr _) unit])]
-                  [(OkAstNoDecl)
+                      [(ResultAstExpr.Ok _) unit])]
+                  [(ResultAstMaybeDecl.NoDecl)
                     (match (parse-ast-expr dispatch sexpr)
-                      [(ErrAstExpr msg)
+                      [(ResultAstExpr.Err msg)
                         (let
                           [span : SourceSpan (spanned-sexpr-span sexpr)]
                           [line : i64 (span-start-line span)]
@@ -2621,9 +2621,9 @@
                                 msg
                                 (lsp-line-at text line)))
                             (set! done true)))]
-                      [(OkAstExpr _) unit])]
-                  [(OkAstSomeDecl _) unit]
-                  [(OkAstDecls _) unit])]))
+                      [(ResultAstExpr.Ok _) unit])]
+                  [(ResultAstMaybeDecl.SomeDecl _) unit]
+                  [(ResultAstMaybeDecl.Decls _) unit])]))
           result))]))
 
 ;; Find the byte offset where the body of a define/defmacro begins,

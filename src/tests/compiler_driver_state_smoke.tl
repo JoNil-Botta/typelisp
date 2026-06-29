@@ -337,7 +337,7 @@
             "(define (main) : (Ptr u8) (ptr-null : (Ptr u8)))"
             (compiler-cfg-empty)
             pools-a)
-            [(OkAstProgramDiagnostic program)
+            [(ResultAstProgramDiagnostic.Ok program)
               (unless
                 (compiler-driver-state-smoke-note-main-ptr-u8!
                   pools-a
@@ -345,14 +345,14 @@
                   body-cell
                   type-cell)
                 (set! ok false))]
-            [(ErrAstProgramDiagnostic _) (set! ok false)])
+            [(ResultAstProgramDiagnostic.Err _) (set! ok false)])
           (match (parse-ast-source-diagnostic-with-cfg-and-pools
             "state-b.tl"
             "(define (main) : (Ptr i64) (ptr-null : (Ptr i64)))"
             (compiler-cfg-empty)
             pools-b)
-            [(OkAstProgramDiagnostic _) unit]
-            [(ErrAstProgramDiagnostic _) (set! ok false)])
+            [(ResultAstProgramDiagnostic.Ok _) unit]
+            [(ResultAstProgramDiagnostic.Err _) (set! ok false)])
           (compiler-driver-state-reset-file-state! state-b)
           (unless (>= (array.array-ref body-cell 0) 0) (set! ok false))
           (unless (>= (array.array-ref type-cell 0) 0) (set! ok false))
@@ -528,13 +528,13 @@
           (compiler-driver-state-smoke-specialize-source 7)
           (compiler-cfg-empty)
           pools-a)
-          [(OkAstProgramDiagnostic program-a)
+          [(ResultAstProgramDiagnostic.Ok program-a)
             (match (parse-ast-source-diagnostic-with-cfg-and-pools
               "spec-b.tl"
               (compiler-driver-state-smoke-specialize-source 11)
               (compiler-cfg-empty)
               pools-b)
-              [(OkAstProgramDiagnostic _)
+              [(ResultAstProgramDiagnostic.Ok _)
                 (begin
                   (compiler-driver-state-install-pools! state-b)
                   (match (compiler-specialize-program-with-pools
@@ -553,8 +553,8 @@
                           (set! ok false))
                         ok)]
                     [(ResultSpecProgram.Err _) false]))]
-              [(ErrAstProgramDiagnostic _) false])]
-          [(ErrAstProgramDiagnostic _) false])))))
+              [(ResultAstProgramDiagnostic.Err _) false])]
+          [(ResultAstProgramDiagnostic.Err _) false])))))
 
 (define (compiler-driver-state-smoke-active-pools-isolated?) : bool
   (let
@@ -701,7 +701,7 @@
     source
     (compiler-cfg-empty)
     pools)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (if (compiler-driver-state-smoke-note-main-ptr-u8!
         pools
         program
@@ -727,7 +727,7 @@
                 true)]
             [(ResultCompilerTypecheck.Err _) false]))
         false)]
-    [(ErrAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-driver-state-smoke-typecheck-macro-pools-isolated?) : bool
   (let

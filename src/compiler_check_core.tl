@@ -277,7 +277,7 @@
           path
           source
           (compiler-check-language-cfgs))
-          [(OkAstProgramDiagnostic program)
+          [(ResultAstProgramDiagnostic.Ok program)
             (compiler-check-loaded-with-prelude-cache
               path
               prelude-decls
@@ -296,7 +296,7 @@
                 "typecheck-prefix-check"
                 stdlib-roots
                 (compiler-check-language-cfgs)))]
-          [(ErrAstProgramDiagnostic diag)
+          [(ResultAstProgramDiagnostic.Err diag)
             (begin
               (cfg compile-profile (compiler-check-profile-finish "load"))
               (ResultCompilerCheck.Err diag))])]
@@ -432,7 +432,7 @@
       path
       source
       (compiler-check-language-cfgs))
-      [(OkAstProgramDiagnostic program)
+      [(ResultAstProgramDiagnostic.Ok program)
         (match program
           [(AstProgram decls-box)
             (compiler-check-program-with-paths-cache
@@ -444,7 +444,7 @@
                 "typecheck-prefix-check"
                 (vector.string-vec-new)
                 (compiler-check-language-cfgs)))])]
-      [(ErrAstProgramDiagnostic diag) (ResultCompilerCheck.Err diag)])))
+      [(ResultAstProgramDiagnostic.Err diag) (ResultCompilerCheck.Err diag)])))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)

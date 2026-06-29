@@ -4940,7 +4940,7 @@
 
 (define (compiler-specialize-type-param-ok?) : bool
   (match (parse-ast-source (compiler-specialize-type-param-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
@@ -4953,27 +4953,27 @@
                     decls
                     "__tl_specialized_alloc_type_i64_none")))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-runtime-type-use-rejected?) : bool
   (match (parse-ast-source (compiler-specialize-runtime-type-use-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err _) true])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-template-shadow-ok?) : bool
   (match (parse-ast-source (compiler-specialize-template-shadow-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) true]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-template-shadow-sibling-ok?) : bool
   (match (parse-ast-source (compiler-specialize-template-shadow-sibling-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
@@ -4988,11 +4988,11 @@
                     "__tl_specialized_scale_i64_2_none")]
                 (and (not original) generated))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-type-shadow-ok?) : bool
   (match (parse-ast-source (compiler-specialize-type-shadow-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
@@ -5003,7 +5003,7 @@
                   decls
                   "__tl_specialized_pick_type_i64_none"))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
@@ -5135,7 +5135,7 @@
 ;: `alloc` template is removed.
 (define (compiler-specialize-reuse-ok?) : bool
   (match (parse-ast-source (compiler-specialize-reuse-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
@@ -5150,7 +5150,7 @@
                       "__tl_specialized_alloc_type_i64_none")
                     1)))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 ;: Type substitution (#1043, mirrors src/specialize.rs substitution coverage):
 ;: `spec-substitute-type` replaces a mapped type variable with its bound type,
@@ -5298,7 +5298,7 @@
 
 (define (compiler-specialize-reflection-string-param-ok?) : bool
   (match (parse-ast-source (compiler-specialize-reflection-string-param-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok specialized)
           (match specialized
@@ -5309,7 +5309,7 @@
                   decls
                   "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-reuse-source) : String
   "(comptime-decl (:generated sample-family Box_String \"String\")
@@ -5371,7 +5371,7 @@
   [source : String]
   [name : String]) : i64
   (match (parse-ast-source source)
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
@@ -5380,11 +5380,11 @@
                 (box-get decls-box)
                 name)])]
         [(ResultSpecProgram.Err _) -1])]
-    [(ErrAstProgram _) -1]))
+    [(ResultAstProgram.Err _) -1]))
 
 (define (compiler-generated-decl-reuse-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (and
         (compiler-specialize-needed? program)
         (match (compiler-specialize-program program)
@@ -5399,11 +5399,11 @@
                       "Box_String")
                     1))])]
           [(ResultSpecProgram.Err _) false]))]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-function-reuse-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-function-reuse-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
@@ -5416,19 +5416,19 @@
                     "make-box-string")
                   1))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-incompatible-rejected?) : bool
   (match (parse-ast-source (compiler-generated-decl-incompatible-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err _) true])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-incompatible-note-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-incompatible-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err diag)
@@ -5440,27 +5440,27 @@
                   "generated identity: "
                   (compiler-generated-decl-expected-string-key)))]
             [(CompilerDiagnosticNoteNil) false])])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-item-mismatch-rejected?) : bool
   (match (parse-ast-source (compiler-generated-decl-item-mismatch-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err _) true])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-non-string-key-rejected?) : bool
   (match (parse-ast-source (compiler-generated-decl-non-string-key-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err _) true])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-duplicate-visible-left-for-symbols?) : bool
   (match (parse-ast-source (compiler-generated-decl-duplicate-visible-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
@@ -5473,7 +5473,7 @@
                     "Box_String")
                   2))])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-cross-module-reuse-ok?) : bool
   (=
@@ -5491,7 +5491,7 @@
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (parse-ast-source (compiler-generated-decl-reuse-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok normalized)
           (match normalized
@@ -5517,7 +5517,7 @@
                     [_ false])]
                 [(AstDeclNil) false])])]
         [(ResultSpecProgram.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-registry-map-ok?) : bool
   (let

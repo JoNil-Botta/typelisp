@@ -393,7 +393,7 @@
     [_reset-before : unit (compiler-typecheck-reset-file-state!)]
     [result : ResultCompilerTypecheck
       (match (parse-ast-source-diagnostic "" src)
-        [(OkAstProgramDiagnostic program)
+        [(ResultAstProgramDiagnostic.Ok program)
           ;; Keep synthetic in-memory fixtures on the historical direct path,
           ;; but route real stdlib imports through the loader so macro imports
           ;; see loaded stdlib macro definitions and alias markers.
@@ -406,7 +406,8 @@
               [(ResultCompilerLoadWithPaths.Err diag)
                 (ResultCompilerTypecheck.Err diag)])
             (typecheck-compiler-program program))]
-        [(ErrAstProgramDiagnostic diag) (ResultCompilerTypecheck.Err diag)])]
+        [(ResultAstProgramDiagnostic.Err diag)
+          (ResultCompilerTypecheck.Err diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)
       result)))
@@ -418,8 +419,10 @@
     [_reset-before : unit (compiler-typecheck-reset-file-state!)]
     [result : ResultCompilerTypecheck
       (match (parse-ast-source-diagnostic-with-cfg "" src cfgs)
-        [(OkAstProgramDiagnostic program) (typecheck-compiler-program program)]
-        [(ErrAstProgramDiagnostic diag) (ResultCompilerTypecheck.Err diag)])]
+        [(ResultAstProgramDiagnostic.Ok program)
+          (typecheck-compiler-program program)]
+        [(ResultAstProgramDiagnostic.Err diag)
+          (ResultCompilerTypecheck.Err diag)])]
     (begin
       (compiler-typecheck-reset-file-state!)
       result)))
@@ -645,13 +648,13 @@
   [src : String]
   [entry-path : String]) : bool
   (match (parse-ast-source-diagnostic entry-path src)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (match (typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-prefix-cache-paths entry-path))
         [(ResultCompilerTypecheck.Ok _) true]
         [(ResultCompilerTypecheck.Err _) false])]
-    [(ErrAstProgramDiagnostic _) false]))
+    [(ResultAstProgramDiagnostic.Err _) false]))
 
 (define (compiler-typecheck-prefix-cache-smoke-ok?) : bool
   (let
@@ -1597,7 +1600,7 @@
   (begin
     (tc-agg-caches-reset!)
     (match (parse-ast-source (compiler-typecheck-repr-c-layout-source))
-      [(OkAstProgram program)
+      [(ResultAstProgram.Ok program)
         (match (build-compiler-symbols program)
           [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
@@ -1648,13 +1651,13 @@
                     [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
-      [(ErrAstProgram _) false])))
+      [(ResultAstProgram.Err _) false])))
 
 (define (compiler-typecheck-repr-c-f32-layout-ok?) : bool
   (begin
     (tc-agg-caches-reset!)
     (match (parse-ast-source (compiler-typecheck-repr-c-f32-source))
-      [(OkAstProgram program)
+      [(ResultAstProgram.Ok program)
         (match (build-compiler-symbols program)
           [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
@@ -1690,7 +1693,7 @@
                     [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
-      [(ErrAstProgram _) false])))
+      [(ResultAstProgram.Err _) false])))
 
 (define (compiler-typecheck-repr-c-string-source) : String
   "(defstruct Bad
@@ -1745,7 +1748,7 @@
   (begin
     (tc-agg-caches-reset!)
     (match (parse-ast-source src)
-      [(OkAstProgram program)
+      [(ResultAstProgram.Ok program)
         (match (build-compiler-symbols program)
           [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
@@ -1764,13 +1767,13 @@
                       (string.string-eq message want)]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
-      [(ErrAstProgram _) false])))
+      [(ResultAstProgram.Err _) false])))
 
 (define (compiler-typecheck-repr-c-mixed-layout-ok?) : bool
   (begin
     (tc-agg-caches-reset!)
     (match (parse-ast-source (compiler-typecheck-repr-c-mixed-layout-source))
-      [(OkAstProgram program)
+      [(ResultAstProgram.Ok program)
         (match (build-compiler-symbols program)
           [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries program)
@@ -1811,7 +1814,7 @@
                     [(ResultTcReprCLayout.Err _) false]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
-      [(ErrAstProgram _) false])))
+      [(ResultAstProgram.Err _) false])))
 
 (define (compiler-typecheck-repr-c-tests-ok?) : bool
   (and
@@ -1834,7 +1837,7 @@
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : ResultTcUnit
   (match (parse-ast-source src)
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -1850,7 +1853,7 @@
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
             [(ResultCompilerRegistries.Err message) (ResultTcUnit.Err message)])]
         [(ResultCompilerSymbols.Err message) (ResultTcUnit.Err message)])]
-    [(ErrAstProgram message) (ResultTcUnit.Err message)]))
+    [(ResultAstProgram.Err message) (ResultTcUnit.Err message)]))
 
 (define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
@@ -1862,7 +1865,7 @@
   [name : String]
   [want : i64]) : bool
   (match (parse-ast-source src)
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -1881,7 +1884,7 @@
                   [(ResultTcInlineAggregateLayout.Err _) false]))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-typecheck-inline-layout-error-ok?
   [src : String]
@@ -1911,7 +1914,7 @@
 
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
@@ -2074,7 +2077,7 @@
                   ok))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-typecheck-inline-boxed-list-source) : String
   "(defenum ListI64
@@ -9535,7 +9538,7 @@
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-dup-extern-source))
-    [(OkAstProgram program)
+    [(ResultAstProgram.Ok program)
       (match (typecheck-compiler-program-with-paths
         program
         (compiler-typecheck-dup-extern-paths))
@@ -9550,7 +9553,7 @@
               (string.string-contains (& message) (& main-path))
               (string.string-contains (& message) (& assets-path))))]
         [(ResultCompilerTypecheck.Ok _) false])]
-    [(ErrAstProgram _) false]))
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)

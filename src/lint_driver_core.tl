@@ -650,7 +650,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (selfhost-lint-program-and-typed-findings
         path
         source
@@ -658,7 +658,7 @@
         stdlib-roots
         deprecated-string-concat
         redundant-function-name)]
-    [(ErrAstProgramDiagnostic _) (lint-findings-empty)]))
+    [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)]))
 
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]
@@ -1646,7 +1646,7 @@
   [visible-root : bool]
   [reportable : bool]) : SelfhostLintDeadScan
   (match (parse-ast-source-diagnostic path source)
-    [(OkAstProgramDiagnostic program)
+    [(ResultAstProgramDiagnostic.Ok program)
       (match program
         [(AstProgram decls-box)
           (selfhost-lint-dead-scan-decls
@@ -1656,7 +1656,7 @@
             visible-root
             reportable
             (box-get decls-box))])]
-    [(ErrAstProgramDiagnostic _) scan]))
+    [(ResultAstProgramDiagnostic.Err _) scan]))
 
 (define (selfhost-lint-package-dead-scan-files
   [sources : vector.StringVec]
@@ -1889,7 +1889,7 @@
   (let
     [source : String (io.read-file input-path)]
     (match (parse-ast-source-diagnostic input-path source)
-      [(OkAstProgramDiagnostic program)
+      [(ResultAstProgramDiagnostic.Ok program)
         (let
           [findings : LintFindings
             (selfhost-lint-program-and-typed-findings
@@ -1910,7 +1910,7 @@
             (selfhost-lint-enforce-exit
               enforcing
               (lint-findings-count findings))))]
-      [(ErrAstProgramDiagnostic diag)
+      [(ResultAstProgramDiagnostic.Err diag)
         (begin
           (io.print-error (compiler-diagnostic-render (box-get diag)))
           1)])))
@@ -1925,7 +1925,7 @@
   (let
     [source : String (io.read-file input-path)]
     (match (parse-ast-source-diagnostic input-path source)
-      [(OkAstProgramDiagnostic program)
+      [(ResultAstProgramDiagnostic.Ok program)
         (let
           [findings : LintFindings
             (selfhost-lint-program-and-typed-findings
@@ -1951,7 +1951,7 @@
                   (string.int->string total-count)
                   " finding(s)\n")))
             (selfhost-lint-enforce-exit enforcing total-count)))]
-      [(ErrAstProgramDiagnostic diag)
+      [(ResultAstProgramDiagnostic.Err diag)
         (begin
           (io.print-error (compiler-diagnostic-render (box-get diag)))
           1)])))

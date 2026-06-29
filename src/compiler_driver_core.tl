@@ -57,7 +57,7 @@
     (begin
       (array.array-set! expr-cell 0 expr-pool)
       (array.array-set! type-cell 0 type-pool)
-      (array.array-set! builtin-cell 0 (cbi.compiler-builtin-ids-state-new))
+      (array.array-set! builtin-cell 0 (cbi.state-new))
       (array.array-set! lower-cell 0 (compiler-lower-arena-state-new))
       (array.array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
@@ -87,7 +87,7 @@
         (ast-type-node-pool-state-init 262144 pool-arena)
         pool-arena)]
     (begin
-      (cbi.compiler-builtin-ids-state-capture-from-globals!
+      (cbi.state-capture-from-globals!
         (array.array-ref (struct-get state builtin-ids) 0))
       (compiler-lower-arena-state-capture-from-globals!
         (array.array-ref (struct-get state lower-arenas) 0))
@@ -178,8 +178,7 @@
     (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (cbi.compiler-builtin-ids-state-install!
-    (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-install! (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
@@ -200,17 +199,15 @@
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
-  (cbi.compiler-builtin-ids-state-capture-from-globals!
+  (cbi.state-capture-from-globals!
     (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-builtin-generation [state : CompilerDriverState]) : i64
-  (cbi.compiler-builtin-ids-state-generation
-    (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-generation (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-builtin-ids-data-addr
   [state : CompilerDriverState]) : i64
-  (cbi.compiler-builtin-ids-state-ids-data-addr
-    (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-ids-data-addr (array.array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-builtin-reset!) : unit
   (cbi.compiler-builtin-reset!))

@@ -15074,7 +15074,15 @@
   [maybe-ty : AstMaybeType]
   [init-id : i64]) : AstType
   (match maybe-ty
-    [(AstSomeType t) (tc-resolve-type ctx t)]
+    [(AstSomeType t)
+      (let
+        [resolved : AstType (tc-resolve-type ctx t)]
+        (match (tc-expr-with-expected-or-actual-id ctx env init-id resolved)
+          [(ResultTcType.Ok init-ty)
+            (if (tc-type-contains-any-region init-ty)
+              init-ty
+              resolved)]
+          [(ResultTcType.Err _) resolved]))]
     [(AstNoType)
       (match (tc-body-type-fact-expr-id site ctx env init-id)
         [(ResultTcType.Ok t) t]
@@ -18880,6 +18888,12 @@
                 (tc-atomic-pointer-name? name)
                 (not (tc-name-bound? env name)))
               (tc-atomic-pointer-call ctx env name args)]
+            [(tc-arena-safe-call-name? ctx env name "arena-phase")
+              (tc-arena-phase-call ctx env args)]
+            [(tc-arena-safe-call-name? ctx env name "arena-rewind-safe!")
+              (tc-arena-rewind-safe-call ctx env args)]
+            [(tc-arena-safe-call-name? ctx env name "arena-destroy-safe!")
+              (tc-arena-destroy-safe-call ctx env args)]
             [(and
                 (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
                 (not (tc-name-bound? env name)))

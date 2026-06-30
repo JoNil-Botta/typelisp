@@ -5164,21 +5164,61 @@
     [(IrBinSafeMod) true]
     [_ false]))
 
-(define (compiler-reg-clobber-binop-shift? [op : CompilerIrBinOp]) : bool
+;; A shift binop clobbers %rcx ONLY when its count is emitted through the %cl
+;; register path. The backend emits a CONSTANT, in-range count as an immediate
+;; `shlq $imm, reg` (compiler-backend-binop-immediate-shift-asm) that never reads
+;; or writes %rcx/%cl; a VARIABLE count -- or a constant the immediate path
+;; rejects as out-of-range (count<0 or count>=type-width) -- is instead moved
+;; into %rcx and shifted by %cl (compiler-backend-binop-shift-asm). So a value
+;; live across a constant in-range shift is NEVER actually clobbered in %rcx;
+;; the old op-only test treated every shift as an %rcx clobber point and
+;; needlessly banned such values from %rcx (compiler-reg-greedy-forbidden-regs
+;; via spans-shift). This rhs/type-aware test mirrors the backend's own
+;; emission predicate compiler-backend-binop-valid-immediate-shift?; the shift
+;; width is replicated locally (integer byte-size * 8) because regalloc must not
+;; depend on the backend (cf. compiler-reg-sysv-arg-reg). scavcheck
+;; SELFCHECK_CLEAN is the soundness net: a misclassified count that actually uses
+;; %cl would surface as a %rcx clobber of a live value.
+(define (compiler-reg-clobber-shift-width [ty : AstType]) : i64
+  (match ty
+    [(AstTyI64) 64]
+    [(AstTyU64) 64]
+    [(AstTyI32) 32]
+    [(AstTyU32) 32]
+    [(AstTyI16) 16]
+    [(AstTyU16) 16]
+    [(AstTyI8) 8]
+    [(AstTyU8) 8]
+    [_ 0]))
+
+;; True when rhs is a constant shift count the backend emits as an immediate
+;; `$imm` (no %rcx use). Mirrors compiler-backend-immediate-operand restricted to
+;; an integer constant + compiler-backend-shift-count-valid? (0 <= count <
+;; width). Any other rhs (a variable, or an out-of-range constant) is left to the
+;; %cl register path, so it stays a clobber point (conservative).
+(define (compiler-reg-shift-const-in-range? [rhs : CompilerIrValue] [ty : AstType]) : bool
+  (match rhs
+    [(IrValueI64 n) (and (>= n 0) (< n (compiler-reg-clobber-shift-width ty)))]
+    [_ false]))
+
+(define (compiler-reg-clobber-binop-shift?
+  [op : CompilerIrBinOp]
+  [rhs : CompilerIrValue]
+  [ty : AstType]) : bool
   (match op
-    [(IrBinShl) true]
-    [(IrBinShr) true]
+    [(IrBinShl) (not (compiler-reg-shift-const-in-range? rhs ty))]
+    [(IrBinShr) (not (compiler-reg-shift-const-in-range? rhs ty))]
     [_ false]))
 
 (define (compiler-reg-clobber-instr-kind?
   [instr : CompilerIrInstr]
   [kind : i64]) : bool
   (match instr
-    [(IrInstrBinOp _ op _ _ _)
+    [(IrInstrBinOp _ op _ rhs ty)
       (if (= kind 1)
         (compiler-reg-clobber-binop-div? op)
         (if (= kind 2)
-          (compiler-reg-clobber-binop-shift? op)
+          (compiler-reg-clobber-binop-shift? op rhs ty)
           false))]
     [_
       (if (= kind 0)

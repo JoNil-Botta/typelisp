@@ -4507,6 +4507,20 @@ that first-class arena owner identity. Ordinary `arena.make` owners still do not
 prove thread-spanning lifetime; only `arena.make-atomic` owner tags can satisfy
 the task-thread transfer/share owner proof in section 6.5.
 
+**Ordinary arena phase tokens:** `stdlib.arena` exposes `arena.ArenaPhase`,
+`arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` as the safe
+non-lexical invalidation surface for ordinary first-class arenas. The checker
+recognizes these calls only for direct local owners initialized by `arena.make`;
+atomic owners remain separate. `arena.phase` records the runtime mark and
+advances the checker's generation for later `(in-arena owner ...)` allocations.
+`arena.rewind-safe!` consumes a direct local phase token and is accepted only
+when no live value, reference, borrow, closure capture, or container slot can
+reach an allocation from the token's generation. `arena.destroy-safe!` consumes
+the direct local ordinary owner and is accepted only when no live value can
+reach any generation owned by that arena. Both calls are rejected while executing
+inside the same owner through `in-arena`, because the active allocation target
+would be invalidated by the operation.
+
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
 Type reflection is the compile-time-only surface that lets generators inspect
@@ -5521,8 +5535,8 @@ reachable heap allocation:
 | Static data and program-lifetime owner | May be transferred or shared when the type classifier accepts the value. This includes read-only string literal storage and values explicitly allocated in a program-lifetime allocation home. |
 | Per-thread default arena | Does not cross thread boundaries. A worker may freely use values allocated in its own default arena, but it may not return, send, or share those values with another thread unless an accepted API first clones or moves them into a spanning owner. |
 | Lexical `with-arena` scoped region | Does not cross task-thread boundaries in v1. Its reset is tied to the creating lexical scope, and the existing region checker only proves same-thread escape safety. A later scoped-task API may add a join-before-reset proof, but ordinary safe spawn/channel/mutex APIs reject scoped-region values. |
-| Ordinary first-class arena from `arena-make` | Does not by itself prove cross-thread lifetime or concurrent allocation safety. Safe code may use it for single-thread scratch workflows such as `with-escape`, but it is not a spanning owner for task-thread transfer/share. |
-| Atomic first-class arena from `arena-make-atomic` | May be a spanning owner when the arena handle outlives every thread that can hold its values. Multiple threads may allocate into it through the section 7.3 allocation-target rules. Reset or destroy still requires a proof that all users have joined or otherwise released the values. |
+| Ordinary first-class arena from `arena.make` | Does not by itself prove cross-thread lifetime or concurrent allocation safety. Safe code may use it for single-thread scratch workflows such as `with-escape`, but it is not a spanning owner for task-thread transfer/share. |
+| Atomic first-class arena from `arena.make-atomic` | May be a spanning owner when the arena handle outlives every thread that can hold its values. Multiple threads may allocate into it through the section 7.3 allocation-target rules. Reset or destroy still requires a proof that all users have joined or otherwise released the values. |
 | Raw pointers, raw integer addresses, and foreign handles | Do not establish ownership or lifetime. Safe code does not become transferable/shareable by carrying an address in `i64`, `Ptr`, `MutPtr`, or an opaque host handle. Crossing those values is allowed only by an explicitly unsafe API or by a safe wrapper with its own synchronization contract. |
 
 The current process-lifetime implementation detail of the allocator is not a
@@ -5749,7 +5763,7 @@ The standard scratch workflows are:
   allocation and return only scalars or values allocated outside the scoped
   arena. This is the default safe choice.
 - **Clone one result out:** allocate a reusable first-class scratch arena with
-  `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
+  `arena.make`, then wrap each transient build in `(with-escape scratch ...)`.
   The result is cloned into the enclosing active arena before the scratch arena
   is rewound.
 - **One-shot clone-out:** use `(with-scratch body ...)` when a supported result
@@ -5759,8 +5773,13 @@ The standard scratch workflows are:
 - **Keep results in a first-class arena:** allocate or receive an arena handle
   and wrap the build in `(in-arena arena ...)`. The saved active arena is
   restored afterward, and the returned owned value remains in the target arena.
-- **Manual unsafe arena:** use `arena-set!`, `arena-rewind`, or
-  `arena-destroy` only inside `(unsafe ...)` when the caller can prove all
+- **Safe ordinary arena invalidation:** for a direct local `arena.make` owner,
+  record a phase token with `arena.phase`, allocate phase-local values through
+  `(in-arena owner ...)`, then call `arena.rewind-safe!` when the checker can
+  prove every value from that phase is dead. Call `arena.destroy-safe!` only
+  when all values from the ordinary owner are dead.
+- **Manual unsafe arena:** use `arena.set!`, `arena.rewind`, or
+  `arena.destroy` only inside `(unsafe ...)` when the caller can prove all
   invalidated heap handles are dead. This is for compiler/tool internals that
   cannot express the workflow with the two safe forms.
 
@@ -5831,13 +5850,13 @@ not as an independently quantified region. The specified owner classes are:
   the default program-lifetime arena; borrow inference uses the reserved
   lifetime name `program` for that storage, but there is no source binder to
   introduce.
-- **Ordinary first-class arena owners:** handles returned by `arena-make`
+- **Ordinary first-class arena owners:** handles returned by `arena.make`
   name single-thread allocation homes. They are not lexical binders and v1
   source code cannot write a lifetime name for them directly. Safe code may use
   them through `with-escape` and `in-arena`, but concurrent allocation into one
   ordinary arena is not defined.
 - **Atomic first-class arena owners:** handles returned by the
-  `arena-make-atomic` wrapper over `tl_arena_make_atomic` name allocation homes
+  `arena.make-atomic` wrapper over `tl_arena_make_atomic` name allocation homes
   whose lifetime may span multiple threads. Multiple threads may make the same
   atomic arena current and allocate into it concurrently, subject to the source
   selection and lifetime rules below.
@@ -5891,8 +5910,8 @@ use lowerable owned `String`/aggregate signatures. Except for the explicit
 `stdlib/arena.tl` manual-control surface, no
 current stdlib function manually resets arenas; safe scoped cleanup is owned by
 `with-arena`. Source code that needs manual arena control imports
-`stdlib/arena.tl` and uses the first-class arena helpers, with `arena-set!`,
-`arena-destroy`, and `arena-rewind` gated by `(unsafe ...)`.
+`stdlib/arena.tl` and uses the first-class arena helpers, with `arena.set!`,
+`arena.destroy`, and `arena.rewind` gated by `(unsafe ...)`.
 
 Nested `with-arena` forms create independent subregions whose values do not
 mix. Inner-region values cannot escape to the outer region; outer-region values
@@ -5974,11 +5993,49 @@ returned unchanged. Nested lexical `with-arena` escape rules still apply:
 `(in-arena scratch (with-arena inner (int->string 1)))` is rejected because the
 inner scoped region would escape.
 
+#### Ordinary arena phase tokens
+
+Use `arena.phase` and `arena.rewind-safe!` when a reusable ordinary arena needs
+safe non-lexical reclamation:
+
+```lisp test=check name=arena-phase-safe-example
+(import stdlib.arena)
+(import stdlib.string)
+
+(define (main) : i64
+  (let
+    [scratch : arena.Arena (arena.make)]
+    [kept : String (in-arena scratch (string.append "kept" ""))]
+    [phase : arena.ArenaPhase (arena.phase scratch)]
+    [temp : String (in-arena scratch (string.append "temp" ""))]
+    [n : i64 (string.string-length temp)]
+    (begin
+      (arena.rewind-safe! phase)
+      (+ n (string.string-length kept)))))
+```
+
+The recognized safe surface is deliberately narrow: the owner argument to
+`arena.phase` and `arena.destroy-safe!` must be a direct local binding
+initialized by `arena.make`, and the argument to `arena.rewind-safe!` must be a
+direct local `arena.ArenaPhase` returned by `arena.phase`. Creating a phase token
+stores the current runtime mark and records a checker generation for subsequent
+`in-arena` allocations through that owner. Rewinding consumes the token and
+causes values allocated in that phase generation to be treated as moved. Using
+the token again, using a phase value after rewind, using the owner after safe
+destroy, or using any value owned by a destroyed arena is rejected.
+
+The safe phase-token proof is for ordinary single-thread arenas only. It does
+not make an ordinary arena a spanning task-thread owner, and it does not cover
+atomic arena reset/destroy. `arena.rewind-safe!` and `arena.destroy-safe!` are
+also rejected while the same owner is the active allocation target through
+`in-arena`; a program must leave the dynamic allocation extent before
+invalidating it.
+
 #### Atomic arena allocation target
 
 The source wrapper for `tl_arena_make_atomic` is:
 
-```lisp test=check name=arena-make-atomic-specified
+```lisp test=check name=arena_make_atomic_specified
 (import stdlib.arena)
 
 (define (main) : i64
@@ -6052,13 +6109,16 @@ first-class arena helpers:
         (arena.destroy scratch)))))
 ```
 
-`arena.Arena` and `arena.ArenaMark` are nominal public wrappers over the raw runtime
-handles. `arena.make`, `arena.make-atomic`, and `arena.current` safely create or
-read an `arena.Arena`; `arena.mark` safely records an `arena.ArenaMark` for the active arena.
-Raw `i64` values do not satisfy the public arena helper signatures, and an
-`arena.Arena` cannot be passed where an `arena.ArenaMark` is required.
-By themselves they do not switch the active arena, free arena chains, rewind
-allocation, or invalidate live safe handles.
+`arena.Arena`, `arena.ArenaMark`, and `arena.ArenaPhase` are nominal public
+wrappers over the raw runtime handles. `arena.make`, `arena.make-atomic`, and
+`arena.current` safely create or read an `arena.Arena`; `arena.mark` safely
+records an `arena.ArenaMark` for the active arena; `arena.phase`,
+`arena.rewind-safe!`, and `arena.destroy-safe!` are safe only under the
+ordinary direct-owner checker proof above. Raw `i64` values do not satisfy the
+public arena helper signatures, and an `arena.Arena` cannot be passed where an
+`arena.ArenaMark` or `arena.ArenaPhase` is required. By themselves,
+`arena.Arena` and `arena.ArenaMark` values do not switch the active arena, free
+arena chains, rewind allocation, or invalidate live safe handles.
 
 Linux runtime tests may opt into poison-on-reclaim mode with:
 
@@ -6202,12 +6262,15 @@ not the future safe reference/borrow model (#182), not a replacement for
   `print-string`/`print-str`, `print-char`, `print-float`, `print-error`,
   `panic`/`error`, and related recoverable wrappers. These are imported stdlib
   definitions, not implicit compiler builtins.
-- First-class arena helpers in `stdlib/arena.tl`: `arena-make`,
-  `arena-current`, `arena-mark`, `arena-set!`, `arena-destroy`, and
-  `arena-rewind`; invalidating helpers require `(unsafe ...)`. The safe
+- First-class arena helpers in `stdlib.arena`: `arena.make`,
+  `arena.make-atomic`, `arena.current`, `arena.mark`, `arena.phase`,
+  `arena.rewind-safe!`, `arena.destroy-safe!`, `arena.set!`, `arena.destroy`,
+  and `arena.rewind`.
+  Raw invalidating helpers require `(unsafe ...)`; the safe phase-token helpers
+  are accepted only for checker-proven ordinary direct owners. The safe
   `in-arena` form switches to a first-class arena for one body without exposing
-  `arena-set!` to safe code, and `with-scratch` performs one-shot scratch
-  clone-out without exposing arena destruction to safe code.
+  `set!` to safe code, and `with-scratch` performs one-shot scratch
+  clone-out without exposing raw arena destruction to safe code.
 - `extern` declarations, including unsafe declaration metadata for externs and
   top-level functions.
 - Multi-file modules via `import`.
@@ -6235,6 +6298,7 @@ not the future safe reference/borrow model (#182), not a replacement for
 | Move-only aggregate handle checking | Implemented: the selfhost checker enforces move-only aggregates with use-after-move, path-move, and move-while-borrowed diagnostics (#805/#1048/#1049/#1050) |
 | `(with ...)` scoped non-memory resource cleanup | Implemented (#907): parser/typechecker/lowering with LIFO cleanup order |
 | `(in-arena ...)` first-class arena target | Implemented (#2625): safe dynamic active-arena switch with restoration on normal and early exits, no mark/rewind/destroy/clone |
+| Ordinary arena phase tokens | Implemented: `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` consume direct ordinary owner-generation tokens and reject live invalidated values |
 | Cleanup-owning aggregate declarations | Implemented for structs (#907); cleanup-owning enums remain reserved |
 | SPMD / SIMD `foreach`, `spmd-reduce`, and `spmd-scan` | Scalar reference lowering implemented; AVX2/AVX-512 support a first contiguous `foreach` map/zip subset over `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, and `f64`, including public `(program-index)`/`(program-count)` lane identity forms for map values; AVX-512 also supports bool compatibility dynamic-buffer copies and bool-valued map results through private mask conversion; scalar gather-only compatibility dynamic-buffer reads are implemented with ordinary bounds checks while explicit SIMD modes reject non-contiguous gather shapes; eligible `spmd-reduce` folds, scalar inclusive `spmd-scan`, direct array-value `spmd-broadcast` maps, scalar `spmd-shuffle`, explicit `stdlib/atomic.tl` i32/i64 element helpers, and the current scalar/AVX-512 masked varying `if`, scalar-lane varying `match`, and enum tag/payload varying `match` subset are implemented, including value-producing scalar lane selects |
 | Public cross-lane/source SPMD gaps beyond implemented `spmd-reduce`/`spmd-scan`/`spmd-broadcast`/`spmd-shuffle`, lane identities, masked-if/match subset, and explicit atomic helpers | Vectorized/floating-point scans, vectorized shuffles, remaining control-flow forms beyond masked scalar-lane `if`/`match`, vectorized enum payload gather/match lowering beyond the scalar reference path, and implementation of the specified v1 private out-of-line SPMD call ABI remain deferred; public vector/mask/varying source type deferral is pinned (#2903), with live work split across #2767, #2852, and #2884 |

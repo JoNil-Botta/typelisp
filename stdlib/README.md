@@ -17,11 +17,12 @@ use.
 
 ## Current Modules
 
-- `arena.tl`: typed first-class `Arena` and `ArenaMark` helper declarations for
-  manual allocation control. `arena-make`, `arena-make-atomic`,
-  `arena-current`, and `arena-mark` are safe; switching, destroying, and
-  rewinding arenas require `(unsafe ...)`. Import it with
-  `(import "stdlib/arena.tl")`.
+- `arena.tl`: typed first-class `Arena`, `ArenaMark`, and `ArenaPhase` helper
+  declarations for manual allocation control. `arena.make`,
+  `arena.make-atomic`, `arena.current`, `arena.mark`, `arena.phase`,
+  `arena.rewind-safe!`, and `arena.destroy-safe!` are safe under their checker
+  proofs; raw switching, destroying, and rewinding helpers require
+  `(unsafe ...)`. Import it with `(import stdlib.arena)`.
 - `atomic.tl`: explicit sequentially consistent atomic integer operations on
   one dynamic-array element. The first surface supports `i32` and `i64`
   load/store/add/fetch-add helpers and is the only safe overlap-tolerant SPMD
@@ -425,7 +426,7 @@ Use four standard scratch patterns:
   and return only scalars or values allocated outside the scoped arena. This is
   the preferred safe path and uses no `stdlib/arena.tl` unsafe helpers.
 - **Clone one result out:** allocate a reusable first-class arena with
-  `arena-make`, then wrap each transient build in `(with-escape scratch ...)`.
+  `arena.make`, then wrap each transient build in `(with-escape scratch ...)`.
   Supported body results are cloned into the enclosing active arena before the
   scratch arena is rewound.
 - **One-shot clone-out:** use `(with-scratch body ...)` when a supported result
@@ -434,8 +435,13 @@ Use four standard scratch patterns:
 - **Keep results in a first-class arena:** allocate or receive a typed `Arena`
   and wrap the build in `(in-arena arena ...)`. The result remains owned by that
   first-class arena.
-- **Manual unsafe arena:** import `stdlib/arena.tl` and call `arena-set!`,
-  `arena-rewind`, or `arena-destroy` only inside `(unsafe ...)` when the caller
+- **Safe ordinary arena invalidation:** import `stdlib.arena`, record a phase
+  token with `arena.phase`, allocate phase-local values through
+  `(in-arena owner ...)`, then call `arena.rewind-safe!` when the checker can
+  prove every value from that phase is dead. Use `arena.destroy-safe!` only when
+  all values from the ordinary owner are dead.
+- **Manual unsafe arena:** import `stdlib.arena` and call `arena.set!`,
+  `arena.rewind`, or `arena.destroy` only inside `(unsafe ...)` when the caller
   can prove every invalidated heap handle is dead. Prefer the safe patterns
   above for normal tool code.
 
@@ -493,7 +499,7 @@ owned stdlib imports keep the compatibility wrappers.
 | `(slice T)` generated helpers in `vector_slice.tl` | `Slice` and `MutSlice` constructors, `get`, `set`, `len`/`mut-len`, `is-empty?`/`mut-is-empty?`, and sub-slicing are non-allocating views tied to a source owner borrow; invalid ranges/counts produce an empty view. `iterator` snapshots the borrowed backing array/start/len, `next` returns an `IterNext` value carrying either the copied item plus next iterator state or the exhausted state, and exhausted iterators remain exhausted when threaded again. `to-array` and `to-vec` are explicit owned-copy boundaries that allocate active-arena storage. |
 | `byte-buf-*` and `bytes-*` helpers in `byte_buf.tl` | `ByteBuf` construction, copy-in, reserve, growth, and copy-out allocate in the active arena. `byte-buf-ref`, `byte-buf-get`, length/capacity inspection, clear, and in-place set are non-allocating. `byte-buf-as-bytes`, `byte-buf-as-mut-bytes`, `str-as-bytes`, `bytes-slice-view`, and `bytes-mut-slice-view` return fixed-length borrowed views; mutable views are exclusive and can update existing bytes without growing the owner. `bytes-to-array`, `bytes-to-string`, and the `byte-buf-from/append-bytes*` helpers are explicit copy boundaries. |
 | `byte-buf-builder-*` helpers in `byte_buf_core.tl` | `ByteBufBuilder` construction, reserve, growth, append from arrays or strings, and finish/copy boundaries allocate in the active arena. Length/capacity inspection is non-allocating, and `byte-buf-builder-push` mutates the existing builder through `&mut` unless growth replaces its backing array. The module intentionally omits borrowed `bytes` views and in-place indexed mutation for hot append-only import sites. |
-| `arena-*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` wrappers around raw runtime handles. `arena-make` creates an independent ordinary arena, `arena-make-atomic` creates an independent atomic arena, `arena-current` observes the active arena, and `arena-mark` observes the current bump mark. `arena-set!`, `arena-destroy`, and `arena-rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
+| `arena.*` helpers in `arena.tl` | First-class arena control returns typed `Arena` / `ArenaMark` / `ArenaPhase` wrappers around raw runtime handles. `arena.make` creates an independent ordinary arena, `arena.make-atomic` creates an independent atomic arena, `arena.current` observes the active arena, and `arena.mark` observes the current bump mark. `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` are accepted only under checker-proven ordinary direct-owner rules. `arena.set!`, `arena.destroy`, and `arena.rewind` can invalidate live heap handles and require `(unsafe ...)`; raw `i64` values do not satisfy those public helper signatures. |
 | `args-*` helpers in `args.tl` | Option specs, parse results, occurrence lists, positional `StringVec` storage, diagnostic payloads, and helper substrings allocate in the active arena. Token classification, option lookup, count/presence checks, and value accessors are non-allocating aside from caller-provided owned strings and existing result storage. |
 | `json-*` helpers | Parser, lookup, escaping, and JSON number parsing helpers borrow source text or keys. Object lookup compares borrowed keys without allocating. Parsed JSON aggregates, decoded strings, escaped strings, stringified output, float number text, validation copies, vector-builder backing arrays, and final list/member spines allocate owned results in the active arena. Array/object parsing accumulates elements in JSON-local vector builders and converts once to the public list model, preserving source order and first-match duplicate-key lookup. Float conversion is deterministic, finite-only, host-locale independent, and currently accepts up to 300 non-zero significant decimal digits; longer non-zero number text is rejected rather than rounded through an unbounded scratch representation. |
 | `(serialize format T)` generated modules in `serialize.tl` | The generic derive macro itself allocates no runtime storage; it emits calls to the selected format module's hook macros. Generated `encode` allocation behavior is therefore format-owned, while generated `decode` initializes one output aggregate and mutates its fields in place before returning `Result.Ok` or `Result.Err`. Fixed-array fields initialize inline output storage; dynamic-array fields allocate the decoded output array at the decoded length. Nested struct derives reuse generated serializer modules and do not copy collection storage beyond decoded array storage and whatever the strategy hooks explicitly allocate. |
@@ -515,8 +521,8 @@ reference-typed aggregate results; the runnable stdlib compatibility wrappers
 still expose owned `String`/aggregate APIs. No stdlib function mutates a
 caller-provided buffer in place. Except for the explicit `stdlib/arena.tl`
 manual-control surface, stdlib APIs do not manually reset arenas and should
-prefer `with-arena` for scoped reclamation. Source-level `arena-set!`,
-`arena-destroy`, and `arena-rewind` require `(unsafe ...)`. `str` is specified as
+prefer `with-arena` for scoped reclamation. Source-level `arena.set!`,
+`arena.destroy`, and `arena.rewind` require `(unsafe ...)`. `str` is specified as
 an immutable borrowed text referent, not a mutable buffer type; those policies
 should remain explicit when borrowed strings and mutable buffers are added.
 

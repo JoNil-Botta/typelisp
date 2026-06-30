@@ -198,7 +198,7 @@
     (process.args-empty)))
 
 (define (main) : i64
-  (if (string.eq (env.env-path-list-separator) ";")
+  (if (string.eq (env.path-list-separator) ";")
     (begin
       (assert-process-ok
         (process.output (process-runtime-windows-command))

@@ -997,9 +997,9 @@
       [(and nonzero (< adjusted-exp -324))
         (ErrJsonNumberF64 "json: number underflows f64")]
       [else
-        (match (io.io-float-parse-f64 owned)
+        (match (io.float-parse-f64 owned)
           [(io.IoFloatSomeF64 value)
-            (if (and nonzero (io.io-float-f64-zero-magnitude? value))
+            (if (and nonzero (io.float-f64-zero-magnitude? value))
               (ErrJsonNumberF64 "json: number underflows f64")
               (OkJsonNumberF64 value))]
           [(io.IoFloatNoF64)
@@ -1028,11 +1028,11 @@
     [(OkJsonNumberF64 wide)
       (let
         [narrow : f32 (cast wide : f32)]
-        (if (not (io.io-float-f32-finite? narrow))
+        (if (not (io.float-f32-finite? narrow))
           (ErrJsonNumberF32 "json: number outside finite f32 range")
           (if (and
-            (io.io-float-f32-zero-magnitude? narrow)
-            (not (io.io-float-f64-zero-magnitude? wide)))
+            (io.float-f32-zero-magnitude? narrow)
+            (not (io.float-f64-zero-magnitude? wide)))
             (ErrJsonNumberF32 "json: number underflows f32")
             (OkJsonNumberF32 narrow))))]
     [(ErrJsonNumberF64 message) (ErrJsonNumberF32 message)]))
@@ -1041,16 +1041,16 @@
 ;:
 ;: NaN and infinity are rejected; negative zero renders as `-0`.
 (define (json-f64->number-text [value : f64]) : JsonNumberTextResult
-  (if (io.io-float-f64-finite? value)
-    (OkJsonNumberText (io.io-format-float-core value))
+  (if (io.float-f64-finite? value)
+    (OkJsonNumberText (io.format-float-core value))
     (ErrJsonNumberText "json: non-finite f64 cannot be rendered as a number")))
 
 ;: Render a finite f32 as deterministic JSON number text.
 ;:
 ;: Widens to f64 so the binary32-rounded value is formatted deterministically.
 (define (json-f32->number-text [value : f32]) : JsonNumberTextResult
-  (if (io.io-float-f32-finite? value)
-    (OkJsonNumberText (io.io-format-float-core (cast value : f64)))
+  (if (io.float-f32-finite? value)
+    (OkJsonNumberText (io.format-float-core (cast value : f64)))
     (ErrJsonNumberText "json: non-finite f32 cannot be rendered as a number")))
 
 ;: Convert a JSON number rendering result into a JSON value, panicking only for

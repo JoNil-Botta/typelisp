@@ -762,7 +762,7 @@ pre {
     (begin
       (while (< i n)
         (begin
-          (if (fs-path-separator? (string-ref source i))
+          (if (path-separator? (string-ref source i))
             (begin
               (set! start (+ i 1))
               (set! end n))
@@ -1016,7 +1016,7 @@ pre {
           (append "doc-site: could not create output directory: " path))])))
 
 (define (doc-site-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (path-join (& left) (& right)))
 
 (define (doc-site-write-module-page
   [output-dir : String]

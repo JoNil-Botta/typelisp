@@ -504,18 +504,18 @@
   "(import stdlib.env)
 (import stdlib.string)
 (define (main [name : String]) : i64
-  (+ (if (env.env-var-exists? name) 1 0)
-     (+ (string.string-length (env.env-var-value name))
-        (string.string-length (env.env-path-separator)))))")
+  (+ (if (env.var-exists? name) 1 0)
+     (+ (string.string-length (env.var-value name))
+        (string.string-length (env.path-separator)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-fs-source) : String
   "(import stdlib.fs)
 (import stdlib.string)
 (define (main [path : String]) : i64
-  (+ (fs.fs-process-id)
-     (+ (fs.fs-current-dir-status)
-        (+ (string.string-length (fs.fs-current-dir))
-           (fs.fs-file-size-status path)))))")
+  (+ (fs.process-id)
+     (+ (fs.current-dir-status)
+        (+ (string.string-length (fs.current-dir))
+           (fs.file-size-status path)))))")
 
 (define (compiler-check-runtime-stdlib-boundary-profile-source) : String
   "(import stdlib.profile)
@@ -646,14 +646,14 @@
         (set! ok false))
       (if (compiler-check-source-error-ok?
         "tests/runtime_boundary_no_env.tl"
-        "(define (main [name : String]) : String (env-var-value name))"
-        "typecheck: unbound name env-var-value")
+        "(define (main [name : String]) : String (var-value name))"
+        "typecheck: unbound name var-value")
         unit
         (set! ok false))
       (if (compiler-check-source-error-ok?
         "tests/runtime_boundary_no_fs.tl"
-        "(define (main) : String (fs-current-dir))"
-        "typecheck: unbound name fs-current-dir")
+        "(define (main) : String (current-dir))"
+        "typecheck: unbound name current-dir")
         unit
         (set! ok false))
       (if (compiler-check-source-error-ok?

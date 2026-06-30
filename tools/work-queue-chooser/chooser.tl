@@ -347,11 +347,9 @@
 ;: index maps back to the candidate at the same position.
 (define (cand-weights [cands : CandList]) : RandomWeightList
   (match cands
-    [(CandList.Nil) (random-weight-list-empty)]
+    [(CandList.Nil) (weight-list-empty)]
     [(CandList.Cons head rest)
-      (random-weight-list-cons
-        (struct-get head weight)
-        (cand-weights (box-get rest)))]))
+      (weight-list-cons (struct-get head weight) (cand-weights (box-get rest)))]))
 
 ;: Return the candidate at zero-based `index`, or a sentinel triage candidate
 ;: when out of range (should not happen for a valid weighted index).
@@ -618,15 +616,15 @@
           [cands : CandList (build-candidates root)]
           (if (= (cand-count cands) 0)
             (ChooserResult.Err "Error: no eligible candidates were provided")
-            (match (random-system-seed)
+            (match (system-seed)
               [(ErrSystemSeed err)
                 (ChooserResult.Err
                   (match err
                     [(RandomSystemSeedUnavailable message)
                       (append "Error: " message)]))]
               [(OkSystemSeed seed)
-                (match (random-weighted-index
-                  (random-seed seed)
+                (match (weighted-index
+                  (stdlib.random.seed seed)
                   (cand-weights cands))
                   [(ErrRandomWeightedIndex message)
                     (ChooserResult.Err (append "Error: " message))]

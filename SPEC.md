@@ -5406,7 +5406,7 @@ A combined read/write mode is explicitly deferred past v1.
 
 | Helper | Signature | Behavior |
 |--------|-----------|----------|
-| `file-open` | `String OpenMode → ResultIoFile` | `OkIoFile FileHandle` on success; `ErrIoFile IoError` for empty paths (`IoInvalidPath`), missing files in read mode (`IoNotFound`), permission failures (`IoPermissionDenied`), and other host status codes mapped through `io-error-from-status`. |
+| `file-open` | `String OpenMode → ResultIoFile` | `OkIoFile FileHandle` on success; `ErrIoFile IoError` for empty paths (`IoInvalidPath`), missing files in read mode (`IoNotFound`), permission failures (`IoPermissionDenied`), and other host status codes mapped through `error-from-status`. |
 | `file-close` | `FileHandle → ResultIoUnit` | `OkIoUnit` on the first close. Closing an already-closed handle returns `ErrIoUnit (IoUnsupported ...)` rather than panicking. |
 
 `ResultIoFile` is a new monomorphic result enum mirroring the existing pattern:
@@ -5451,7 +5451,7 @@ payload plus a sticky `eof` flag):
   `ErrIoRead (IoUnsupported ...)`.
 - Reading a closed or otherwise invalid handle returns
   `ErrIoRead (IoUnsupported ...)`.
-- Interrupted host reads map through `io-error-from-status` to `IoInterrupted`;
+- Interrupted host reads map through `error-from-status` to `IoInterrupted`;
   other host failures map to their `IoError` variant or `IoSystemCode`.
 
 `ResultIoRead` is a new monomorphic result enum: `(OkIoRead FileRead)` /
@@ -5476,13 +5476,13 @@ the same as `read-file` and `StdinRead`.
 
 - `file-write` on an empty string succeeds without issuing a host write.
 - The runtime retries host short writes until all bytes are accepted. A host
-  error maps through `io-error-from-status`; a zero-byte host write before all
+  error maps through `error-from-status`; a zero-byte host write before all
   bytes are written maps to `IoSystemCode 5` / the common I/O error status.
 - Writing to an `OpenRead` handle returns `ErrIoUnit (IoUnsupported ...)`.
 - Writing or flushing a closed, invalid, or unsupported handle returns
   `ErrIoUnit (IoUnsupported ...)`.
 - `file-flush` on an `OpenRead` handle returns `ErrIoUnit (IoUnsupported ...)`;
-  host flush failures map through `io-error-from-status`.
+  host flush failures map through `error-from-status`.
 - `OpenWriteTruncate` starts from an empty file and writes advance the handle's
   file offset. `OpenWriteAppend` defines append semantics: create-if-missing,
   never truncate, and — where the host supports an append open mode (Linux

@@ -67,7 +67,7 @@ of imitating transitional patterns still present in the tree:
   #2454, #2492). The legacy `(import "path/file.tl")` spelling is being
   removed.
 - **Stdlib names**: module-name prefixes on stdlib functions
-  (`string-append`, `fs-read-dir`, ...) are flat-namespace fossils; the
+  (`string-append`, `read-dir`, ...) are flat-namespace fossils; the
   end-state is qualified short names such as `str.append` (#2582, #2583).
 - **Core macros**: bare prelude spellings (`when`, `unless`, `and`, `or`,
   `cond`) are canonical; qualified `core.` calls are transitional (#2581).

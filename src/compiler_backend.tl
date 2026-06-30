@@ -25201,24 +25201,22 @@
   [read-bytes : bool]
   [stdin-eof : bool]
   [flush-stdout : bool]
-  [random-system-seed : bool]
+  [system-seed : bool]
   [env-var-exists : bool]
-  [env-var-value : bool]
-  [env-path-separator : bool]) : bool
+  [var-value : bool]
+  [path-separator : bool]) : bool
   (let
     [_read-bytes : bool read-bytes]
     [_stdin-eof : bool stdin-eof]
     [_flush-stdout : bool flush-stdout]
-    [_random-system-seed : bool random-system-seed]
+    [_random-system-seed : bool system-seed]
     (or
       (and
         env-var-exists
         (cbi.compiler-builtin-backend-env-var-exists-id? name-id))
+      (and var-value (cbi.compiler-builtin-backend-env-var-value-id? name-id))
       (and
-        env-var-value
-        (cbi.compiler-builtin-backend-env-var-value-id? name-id))
-      (and
-        env-path-separator
+        path-separator
         (cbi.compiler-builtin-backend-env-path-separator-id? name-id)))))
 
 ;; The first-class arena runtime helpers (#1633) and arena poison debug toggle
@@ -25410,7 +25408,7 @@
     [defines-env-var-value : bool
       (compiler-backend-runtime-index-defines? index "tl_env_var_value")]
     [defines-env-path-separator : bool
-      (compiler-backend-runtime-index-defines? index "env-path-separator")]
+      (compiler-backend-runtime-index-defines? index "path-separator")]
     [defines-profile-alloc-total : bool
       (compiler-backend-runtime-index-defines? index "tl_profile_alloc_total")]
     [defines-profile-alloc-live : bool
@@ -25532,7 +25530,7 @@
     [_extern-env-var-value : bool
       (compiler-backend-runtime-index-extern? index "tl_env_var_value")]
     [_extern-env-path-separator : bool
-      (compiler-backend-runtime-index-extern? index "env-path-separator")]
+      (compiler-backend-runtime-index-extern? index "path-separator")]
     [extern-profile-alloc-total : bool
       (compiler-backend-runtime-index-extern? index "tl_profile_alloc_total")]
     [extern-profile-alloc-live : bool
@@ -25641,7 +25639,7 @@
     [calls-env-var-value : bool
       (compiler-backend-runtime-index-calls? index "tl_env_var_value")]
     [calls-env-path-separator : bool
-      (compiler-backend-runtime-index-calls? index "env-path-separator")]
+      (compiler-backend-runtime-index-calls? index "path-separator")]
     [calls-profile-alloc-total : bool
       (compiler-backend-runtime-index-calls? index "tl_profile_alloc_total")]
     [calls-profile-alloc-live : bool
@@ -26031,7 +26029,7 @@ tl_profile_alloc_peak_bytes:
         region-reset
         _
         env-var-exists
-        env-var-value
+        var-value
         _
         div-abort
         shift-abort
@@ -26050,9 +26048,7 @@ tl_profile_alloc_peak_bytes:
           (compiler-backend-runtime-region-reset-data)
           "")
         (compiler-backend-runtime-argv-data)
-        (compiler-backend-runtime-env-data
-          target
-          (or env-var-exists env-var-value)))]))
+        (compiler-backend-runtime-env-data target (or env-var-exists var-value)))]))
 
 (define (compiler-backend-runtime-profile-alloc-account
   [size-reg : String]
@@ -27902,8 +27898,8 @@ tl_memchr:
         region-reset
         _
         env-var-exists
-        env-var-value
-        env-path-separator
+        var-value
+        path-separator
         div-abort
         shift-abort
         tail-plan)
@@ -28017,13 +28013,13 @@ tl_memchr:
               (compiler-backend-runtime-env-var-exists-functions))
             "")]
         [env-var-value-asm : String
-          (if env-var-value
+          (if var-value
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-env-var-value-functions)
               (compiler-backend-runtime-env-var-value-functions))
             "")]
         [env-path-separator-asm : String
-          (if env-path-separator
+          (if path-separator
             (if (compiler-backend-target-windows? target)
               (compiler-backend-runtime-windows-env-path-separator-functions)
               (compiler-backend-runtime-env-path-separator-functions))
@@ -28241,8 +28237,8 @@ tl_memchr:
         region-reset
         _
         env-var-exists
-        env-var-value
-        env-path-separator
+        var-value
+        path-separator
         div-abort
         shift-abort
         tail-plan)
@@ -28284,12 +28280,12 @@ tl_memchr:
             region-reset
             false
             env-var-exists
-            env-var-value
+            var-value
             false
             false)]
         [extra-runtime : bool
           (backend-or4
-            env-path-separator
+            path-separator
             div-abort
             shift-abort
             (or

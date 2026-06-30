@@ -217,7 +217,7 @@
   (process.command "/definitely-missing-typelisp" (process.args-empty)))
 
 (define (main) : i64
-  (if (eq (env-path-separator) ";")
+  (if (eq (path-separator) ";")
     (begin
       (assert-process-output-result
         (process.output (windows-process-command))

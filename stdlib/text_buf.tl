@@ -388,16 +388,16 @@
     [len : i64 (struct-get buf len)]
     [open-result : io.ResultIoFile
       (io.file-open (& path) (io.OpenWriteTruncate))]
-    (if (io.io-result-file-ok? open-result)
+    (if (io.result-file-ok? open-result)
       (let
         [handle : io.FileHandle
-          (io.io-result-file-value-or open-result (io.FileHandle -1))]
+          (io.result-file-value-or open-result (io.FileHandle -1))]
         [write-status : i64
           (if (> len (stdlib.text_buf.batched-write-threshold))
             (stdlib.text_buf.write-chunks-batched (struct-get handle id) chunks)
             (stdlib.text_buf.write-chunks-rev (struct-get handle id) chunks))]
         [close-result : io.ResultIoUnit (io.file-close handle)]
-        (if (io.io-result-unit-ok? close-result)
+        (if (io.result-unit-ok? close-result)
           write-status
           1))
       1)))

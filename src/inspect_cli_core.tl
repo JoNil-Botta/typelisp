@@ -122,7 +122,7 @@ Summary:
         [(io.ErrIoString error)
           (begin
             (io.print-error
-              (str_cat.str-cat "inspect: " (io.io-error-message error) "\n"))
+              (str_cat.str-cat "inspect: " (io.error-message error) "\n"))
             1)]
         [(io.OkIoString contents)
           (let

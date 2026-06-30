@@ -124,7 +124,7 @@
                 "clean: failed to remove file "
                 path
                 ": "
-                (io.io-error-message error)))
+                (io.error-message error)))
             1)]))
     0))
 
@@ -146,7 +146,7 @@
                 "clean: failed to remove directory "
                 path
                 ": "
-                (io.io-error-message error)))
+                (io.error-message error)))
             1)]))
     0))
 

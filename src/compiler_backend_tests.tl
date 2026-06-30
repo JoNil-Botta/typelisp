@@ -8369,9 +8369,7 @@
     (compiler-backend-runtime-helper-inventory-compat-alias-ok?
       plan
       "tl_env_var_value")
-    (compiler-backend-runtime-helper-inventory-compat-alias-ok?
-      plan
-      "env-path-separator")
+    (compiler-backend-plan-provides? plan "path-separator")
     true))
 
 (define (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
@@ -8535,7 +8533,7 @@
       [stdlib-id : i64 (compiler-backend-runtime-name-id "tl_string_concat")]
       [atomic-id : i64
         (compiler-backend-runtime-name-id "tl_atomic_i64_cas_ptr")]
-      [compat-id : i64 (compiler-backend-runtime-name-id "env-path-separator")]
+      [compat-id : i64 (compiler-backend-runtime-name-id "path-separator")]
       [retired-id : i64 (compiler-backend-runtime-name-id "tl_oob_abort")]
       (and
         (backend-and4
@@ -8566,7 +8564,7 @@
           (compiler-backend-intern-missing? unknown)
           (compiler-backend-plan-provides? plan "tl_alloc")
           (compiler-backend-plan-provides? plan "tl_profile_alloc_total")
-          (compiler-backend-plan-provides? plan "env-path-separator")
+          (compiler-backend-plan-provides? plan "path-separator")
           (not (compiler-backend-runtime-helper-known? unknown))
           (match (compiler-backend-runtime-helper-owner unknown)
             [(CompilerBackendRuntimeHelperOwner.Unknown) true]
@@ -9816,13 +9814,13 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-env-runtime-source) : String
-  "(extern (env-var-exists? [arg0 : String]) : bool (:symbol \"tl_env_var_exists\"))
-(extern (env-var-value [arg0 : String]) : String (:symbol \"tl_env_var_value\"))
-(extern (env-path-separator) : String)
+  "(extern (var-exists? [arg0 : String]) : bool (:symbol \"tl_env_var_exists\"))
+(extern (var-value [arg0 : String]) : String (:symbol \"tl_env_var_value\"))
+(extern (path-separator) : String)
 (define (main) : i64
-  (if (env-var-exists? \"TYPELISP_TEST_ENV\")
-    (__tl_string_length (env-var-value \"TYPELISP_TEST_ENV\"))
-    (__tl_string_length (env-path-separator))))")
+  (if (var-exists? \"TYPELISP_TEST_ENV\")
+    (__tl_string_length (var-value \"TYPELISP_TEST_ENV\"))
+    (__tl_string_length (path-separator))))")
 
 ;; Environment helpers are no longer emitted as backend asm — `stdlib/env.tl`
 ;; implements them in TypeLisp (#2142 follow-up). A program that externs the
@@ -9856,24 +9854,24 @@
   "(module stdlib.env.test)
 (unsafe (extern (env-ffi-getenv [arg0 : (Ptr u8)]) : (Ptr u8) (:symbol \"getenv\")))
 (unsafe (extern (env-ffi-strlen [arg0 : (Ptr u8)]) : i64 (:symbol \"strlen\")))
-(define (env-var-exists? [name : String]) : bool
+(define (var-exists? [name : String]) : bool
   (let
     [_ : String name]
     (not (ptr-null? (unsafe (env-ffi-getenv (ptr-null : (Ptr u8))))))))
-(define (env-var-value [name : String]) : String
+(define (var-value [name : String]) : String
   (let
     [_ : String name]
     (let
       [_ : i64 (unsafe (env-ffi-strlen (ptr-null : (Ptr u8))))]
       \"\")))
-(define (env-path-separator) : String
+(define (path-separator) : String
   (cfg windows \";\" \":\"))
 (define (main) : i64
   (let
     [name : String \"TYPELISP_TEST_ENV\"]
-    (if (env-var-exists? name)
-      (__tl_string_length (env-var-value name))
-      (__tl_string_length (env-path-separator)))))")
+    (if (var-exists? name)
+      (__tl_string_length (var-value name))
+      (__tl_string_length (path-separator)))))")
 
 (define (compiler-backend-stdlib-env-runtime-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -10144,22 +10142,22 @@
       true)))
 
 (define (compiler-backend-fs-runtime-source) : String
-  "(extern (fs-process-id) : i64 (:symbol \"tl_fs_process_id\"))
-(extern (fs-mkdir-status [arg0 : String]) : i64 (:symbol \"tl_fs_mkdir_status\"))
-(extern (fs-remove-file-status [arg0 : String]) : i64 (:symbol \"tl_fs_remove_file_status\"))
-(extern (fs-remove-dir-status [arg0 : String]) : i64 (:symbol \"tl_fs_remove_dir_status\"))
-(extern (fs-rename-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_fs_rename_status\"))
+  "(extern (process-id) : i64 (:symbol \"tl_fs_process_id\"))
+(extern (mkdir-status [arg0 : String]) : i64 (:symbol \"tl_fs_mkdir_status\"))
+(extern (remove-file-status [arg0 : String]) : i64 (:symbol \"tl_fs_remove_file_status\"))
+(extern (remove-dir-status [arg0 : String]) : i64 (:symbol \"tl_fs_remove_dir_status\"))
+(extern (rename-status [arg0 : String] [arg1 : String]) : i64 (:symbol \"tl_fs_rename_status\"))
 (define (main) : i64
   (let
     [dir : String \"target/typelisp-fs\"]
     [artifact : String \"target/typelisp-fs/artifact.o\"]
     [from : String \"target/typelisp-fs/from name\"]
     [to : String \"target/typelisp-fs/to name\"]
-    (+ (fs-process-id)
-      (+ (fs-mkdir-status dir)
-        (+ (fs-remove-file-status artifact)
-          (+ (fs-remove-dir-status dir)
-            (fs-rename-status from to)))))))")
+    (+ (process-id)
+      (+ (mkdir-status dir)
+        (+ (remove-file-status artifact)
+          (+ (remove-dir-status dir)
+            (rename-status from to)))))))")
 
 (define (compiler-backend-fs-runtime-ok?) : bool
   (match (compiler-backend-emit-source (compiler-backend-fs-runtime-source))
@@ -10204,12 +10202,12 @@
 (define (compiler-backend-fs-current-dir-source) : String
   "(extern (tl_fs_current_dir_status) : i64)
 (extern (tl_fs_current_dir) : String)
-(define (fs-current-dir-status) : i64
+(define (current-dir-status) : i64
   (tl_fs_current_dir_status))
-(define (fs-current-dir) : String
+(define (current-dir) : String
   (tl_fs_current_dir))
 (define (main) : i64
-  (+ (fs-current-dir-status) (__tl_string_length (fs-current-dir))))")
+  (+ (current-dir-status) (__tl_string_length (current-dir))))")
 
 (define (compiler-backend-fs-current-dir-extern-source) : String
   "(extern (tl_fs_current_dir_status) : i64)

@@ -628,7 +628,7 @@
                   (unsafe
                     (cast
                       (ptr->int
-                        (io.io-array-const-ptr
+                        (io.array-const-ptr
                           (stdlib.process_runtime.env-cstring name value)))
                       : u64)))
                 (set! cur rest)))
@@ -642,7 +642,7 @@
       (stdlib.process_runtime.maybe-string-info value)]
     (if (stdlib.process_runtime.maybe-string-info-present? info)
       (stdlib.process_runtime.process-array-u8-addr
-        (io.io-c-string (stdlib.process_runtime.maybe-string-info-value info)))
+        (io.c-string (stdlib.process_runtime.maybe-string-info-value info)))
       0)))
 
 ;: Return true when an optional stdin value provides input.
@@ -736,7 +736,7 @@
                   w
                   (unsafe
                     (cast
-                      (ptr->int (io.io-array-const-ptr (io.io-c-string text)))
+                      (ptr->int (io.array-const-ptr (io.c-string text)))
                       : u64)))
                 (set! w (+ w 1))
                 (set! cur rest)))
@@ -921,7 +921,7 @@
     (let
       [exec-addr : i64
         (stdlib.process_runtime.process-array-u8-addr
-          (io.io-c-string (stdlib.process_runtime.command-executable command)))]
+          (io.c-string (stdlib.process_runtime.command-executable command)))]
       [argv-addr : i64
         (stdlib.process_runtime.process-linux-build-argv
           exec-addr
@@ -933,7 +933,7 @@
         (stdlib.process_runtime.maybe-cstring-addr
           (stdlib.process_runtime.command-cwd command))]
       [marker-addr : i64
-        (stdlib.process_runtime.process-array-u8-addr (io.io-c-string "exec"))]
+        (stdlib.process_runtime.process-array-u8-addr (io.c-string "exec"))]
       [has-stdin : bool
         (stdlib.process_runtime.maybe-present?
           (stdlib.process_runtime.command-stdin command))]
@@ -973,7 +973,7 @@
                 (syscall
                   319
                   (stdlib.process_runtime.process-array-u8-addr
-                    (io.io-c-string "typelisp-process-stdout"))
+                    (io.c-string "typelisp-process-stdout"))
                   0))]
             (if (< fd 0)
               (set! failed true)
@@ -986,7 +986,7 @@
                 (syscall
                   319
                   (stdlib.process_runtime.process-array-u8-addr
-                    (io.io-c-string "typelisp-process-stderr"))
+                    (io.c-string "typelisp-process-stderr"))
                   0))]
             (if (< fd 0)
               (set! failed true)
@@ -1171,9 +1171,9 @@
                   (stdlib.process_runtime.process-spawn-error))
                 (let
                   [stdout-text : String
-                    (io.io-read-fd-to-string (struct-get spawn stdout-fd))]
+                    (io.read-fd-to-string (struct-get spawn stdout-fd))]
                   [stderr-text : String
-                    (io.io-read-fd-to-string (struct-get spawn stderr-fd))]
+                    (io.read-fd-to-string (struct-get spawn stderr-fd))]
                   [status : i64
                     (stdlib.process_runtime.process-decode-status
                       (array-ref statusbuf 0))]
@@ -1318,11 +1318,11 @@
           (stdlib.process_runtime.process-linux-close-if stderr-fd)
           (stdlib.process_runtime.process-wait-error))
         (let
-          [stdout-text : String (io.io-read-fd-to-string stdout-fd)]
+          [stdout-text : String (io.read-fd-to-string stdout-fd)]
           (begin
             (stdlib.process_runtime.process-linux-close-if stdout-fd)
             (let
-              [stderr-text : String (io.io-read-fd-to-string stderr-fd)]
+              [stderr-text : String (io.read-fd-to-string stderr-fd)]
               (begin
                 (stdlib.process_runtime.process-linux-close-if stderr-fd)
                 (stdlib.process_runtime.output-ok
@@ -1475,7 +1475,7 @@
     (let
       [pathbuf : (Array u8) (array.make-array u8 320)]
       [namebuf : (Array u8) (array.make-array u8 320)]
-      [prefix : (Array u8) (io.io-c-string "tlp")]
+      [prefix : (Array u8) (io.c-string "tlp")]
       [path-len : i32
         (stdlib.process_runtime.process-win-get-temp-path
           (cast 320 : i32)
@@ -1486,8 +1486,8 @@
         (let
           [name-result : i32
             (stdlib.process_runtime.process-win-get-temp-file-name
-              (io.io-array-const-ptr pathbuf)
-              (io.io-array-const-ptr prefix)
+              (io.array-const-ptr pathbuf)
+              (io.array-const-ptr prefix)
               (cast 0 : i32)
               (unsafe
                 (array-data namebuf)))]
@@ -1502,7 +1502,7 @@
                 (let
                   [handle : i64
                     (stdlib.process_runtime.process-win-create-file
-                      (io.io-array-const-ptr namebuf)
+                      (io.array-const-ptr namebuf)
                       0xc0000000
                       0x3
                       (stdlib.process_runtime.process-array-u64-addr security)
@@ -1636,7 +1636,7 @@
                     (stdlib.process_runtime.process-win-read-file
                       handle
                       (unsafe
-                        (ptr-offset (stdlib.io.io-array-ptr buf) offset))
+                        (ptr-offset (stdlib.io.array-ptr buf) offset))
                       chunk
                       (unsafe
                         (ptr-cast (array-data readbuf) : (MutPtr i32)))
@@ -1648,7 +1648,7 @@
                       (set! done true)
                       (set! offset (+ offset read-count))))))
               (unsafe
-                (string-from-bytes (stdlib.io.io-array-const-ptr buf) offset)))))))))
+                (string-from-bytes (stdlib.io.array-const-ptr buf) offset)))))))))
 
 ;: Non-Windows stub for the module-qualified helper name.
 (cfg
@@ -1664,11 +1664,10 @@
     (let
       [appname-addr : i64
         (stdlib.process_runtime.process-array-u8-addr
-          (io.io-c-string (stdlib.process_runtime.command-executable command)))]
+          (io.c-string (stdlib.process_runtime.command-executable command)))]
       [cmdline-addr : i64
         (stdlib.process_runtime.process-array-u8-addr
-          (io.io-c-string
-            (stdlib.process_runtime.process-windows-cmdline command)))]
+          (io.c-string (stdlib.process_runtime.process-windows-cmdline command)))]
       [env-addr : i64 0]
       [cwd-addr : i64
         (stdlib.process_runtime.maybe-cstring-addr

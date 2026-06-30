@@ -6,7 +6,6 @@
 ;; explicit future work.
 (import stdlib.io)
 (import stdlib.arena)
-(import stdlib.array)
 (import stdlib.vector)
 (import "compiler_typecheck.tl")
 (import compiler_builtin_ids as cbi)
@@ -17,7 +16,7 @@
 (import "compiler_float.tl")
 (import stdlib.hashmap)
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 (cfg compile-profile (import stdlib.profile))
 (import sym_i64_env)
 
@@ -53,7 +52,7 @@
 (define lower-active-global-name-cache : LowerNameCache
   (LowerNameCache
     (hashmap.i64-i64-map-with-capacity 8)
-    (array.make-array String 0)
+    (make-array String 0)
     (LowerNameParentNone)))
 
 ;; #3759: a LowerSomeTypeCache carries a `parent` marker. `LowerTypeParentNone`
@@ -480,7 +479,7 @@
 (cfg
   compile-profile
   (define (compiler-lower-profile-field [value : i64]) : String
-    (string.string-append "|" (string.int->string value))))
+    (string.append "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -501,22 +500,20 @@
       [peak-delta : i64
         (- (profile.alloc-peak) compiler-lower-profile-start-live)]
       (io.print-error
-        (string.string-append
+        (string.append
           "compile-profile|lower."
-          (string.string-append
+          (string.append
             phase
-            (string.string-append
+            (string.append
               (compiler-lower-profile-field
                 (- end-ms compiler-lower-profile-start-ms))
-              (string.string-append
+              (string.append
                 (compiler-lower-profile-field
                   (- end-total compiler-lower-profile-start-total))
-                (string.string-append
+                (string.append
                   (compiler-lower-profile-field
                     (- end-live compiler-lower-profile-start-live))
-                  (string.string-append
-                    (compiler-lower-profile-field peak-delta)
-                    "\n"))))))))))
+                  (string.append (compiler-lower-profile-field peak-delta) "\n"))))))))))
 
 (cfg
   compile-profile
@@ -533,15 +530,15 @@
         (- (profile.now-ms) compiler-lower-profile-detail-start-ms)]
       (if (>= elapsed 1)
         (io.print-error
-          (string.string-append
+          (string.append
             "compile-profile-detail|lower."
-            (string.string-append
+            (string.append
               phase
-              (string.string-append
+              (string.append
                 "|"
-                (string.string-append
+                (string.append
                   (string.int->string elapsed)
-                  (string.string-append "|" (string.string-append name "\n")))))))
+                  (string.append "|" (string.append name "\n")))))))
         unit))))
 
 (cfg
@@ -550,13 +547,13 @@
   ;; extraction preserves them; the counter value lives in the live-delta slot.
   (define (compiler-lower-profile-counter [name : String] [value : i64]) : unit
     (io.print-error
-      (string.string-append
+      (string.append
         "compile-profile|lower."
-        (string.string-append
+        (string.append
           name
-          (string.string-append
+          (string.append
             "|0|0"
-            (string.string-append (compiler-lower-profile-field value) "|0\n")))))))
+            (string.append (compiler-lower-profile-field value) "|0\n")))))))
 
 (cfg
   compile-profile
@@ -565,24 +562,16 @@
     [pools : AstNodePoolContext]) : unit
     (begin
       (compiler-lower-profile-counter
-        (string.string-append
-          "ast_expr_pool."
-          (string.string-append point ".len"))
+        (string.append "ast_expr_pool." (string.append point ".len"))
         (ast-node-pool-context-expr-len pools))
       (compiler-lower-profile-counter
-        (string.string-append
-          "ast_expr_pool."
-          (string.string-append point ".capacity"))
+        (string.append "ast_expr_pool." (string.append point ".capacity"))
         (ast-node-pool-context-expr-capacity pools))
       (compiler-lower-profile-counter
-        (string.string-append
-          "ast_type_pool."
-          (string.string-append point ".len"))
+        (string.append "ast_type_pool." (string.append point ".len"))
         (ast-node-pool-context-type-len pools))
       (compiler-lower-profile-counter
-        (string.string-append
-          "ast_type_pool."
-          (string.string-append point ".capacity"))
+        (string.append "ast_type_pool." (string.append point ".capacity"))
         (ast-node-pool-context-type-capacity pools)))))
 
 (cfg
@@ -606,14 +595,12 @@
           [decls : AstDeclList (box-get decls-box)]
           (begin
             (compiler-lower-profile-counter
-              (string.string-append
-                "checked_program."
-                (string.string-append point ".decls"))
+              (string.append "checked_program." (string.append point ".decls"))
               (compiler-lower-profile-decl-list-count decls))
             (compiler-lower-profile-counter
-              (string.string-append
+              (string.append
                 "checked_program."
-                (string.string-append point ".functions"))
+                (string.append point ".functions"))
               (lower-function-decl-count decls))))])))
 
 (cfg
@@ -625,24 +612,20 @@
       [(CompilerIrProgram.Program _ functions _)
         (begin
           (compiler-lower-profile-counter
-            (string.string-append
-              "ir."
-              (string.string-append point ".functions"))
+            (string.append "ir." (string.append point ".functions"))
             (compiler-ir-function-list-count functions))
           (compiler-lower-profile-counter
-            (string.string-append "ir." (string.string-append point ".blocks"))
+            (string.append "ir." (string.append point ".blocks"))
             (compiler-ir-function-list-block-count functions))
           (compiler-lower-profile-counter
-            (string.string-append
-              "ir."
-              (string.string-append point ".instructions"))
+            (string.append "ir." (string.append point ".instructions"))
             (compiler-ir-function-list-instruction-count functions)))])))
 
 (cfg
   compile-profile
   (define (compiler-lower-profile-ir-arena [point : String]) : unit
     (compiler-lower-profile-counter
-      (string.string-append "ir_arena." (string.string-append point ".active"))
+      (string.append "ir_arena." (string.append point ".active"))
       (if (= lower-ir-arena 0)
         0
         1))))
@@ -678,11 +661,11 @@
         (tc-qualified-name-base name)
         name)]
     (or
-      (string.string-eq base "tl_bytes_view_from_str_parts")
-      (string.string-eq base "tl_bytes_view_from_buf_parts")
-      (string.string-eq base "tl_bytes_mut_view_from_buf_parts")
-      (string.string-eq base "tl_bytes_view_from_bytes_parts")
-      (string.string-eq base "tl_bytes_mut_view_from_bytes_parts"))))
+      (string.eq base "tl_bytes_view_from_str_parts")
+      (string.eq base "tl_bytes_view_from_buf_parts")
+      (string.eq base "tl_bytes_mut_view_from_buf_parts")
+      (string.eq base "tl_bytes_view_from_bytes_parts")
+      (string.eq base "tl_bytes_mut_view_from_bytes_parts"))))
 
 (define (lower-supported-reference-extern?
   [ctx : TcContext]
@@ -693,7 +676,7 @@
     [_ty : AstType ty]
     (or
       (cbi.compiler-builtin-backend-tl-str-view-id? name)
-      (string.string-eq (intern-str name) "tl_str_view")
+      (string.eq (intern-str name) "tl_str_view")
       (lower-bytes-view-from-parts-name? (intern-str name)))))
 
 (define (lower-instr-list-fill-array-reversed
@@ -704,13 +687,13 @@
     [(CompilerIrInstrList.Nil) unit]
     [(CompilerIrInstrList.Cons head rest)
       (begin
-        (array.array-set! slots index head)
+        (array-set! slots index head)
         (lower-instr-list-fill-array-reversed (box-get rest) slots (- index 1)))]))
 
 (define (lower-instr-seq-from-reversed-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
   (let
     [count : i64 (compiler-ir-instr-list-count instrs)]
-    [slots : (Array CompilerIrInstr) (array.make-array CompilerIrInstr count)]
+    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr count)]
     (begin
       (lower-instr-list-fill-array-reversed instrs slots (- count 1))
       (CompilerIrInstrSeq slots count))))
@@ -799,7 +782,7 @@
         (match cur
           [(LowerNameNil) unit]
           [(LowerNameBind source _ logical rest)
-            (if (string.string-eq source source-name)
+            (if (string.eq source source-name)
               (begin
                 (set! result (TcMaybeString.Some logical))
                 (set! done true))
@@ -913,7 +896,7 @@
           (let
             [next : i64 (hashmap.i64-i64-map-len ids)]
             (begin
-              (array.array-set! values next logical-name)
+              (array-set! values next logical-name)
               (LowerNameCache
                 (hashmap.i64-i64-map-put ids source-id next)
                 values
@@ -953,7 +936,7 @@
       names
       (LowerNameCache
         (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
-        (array.make-array String count)
+        (make-array String count)
         (LowerNameParentNone)))))
 
 ;; #3759: build a small overlay name cache from `names` (the module-local names
@@ -966,13 +949,13 @@
       names
       (LowerNameCache
         (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
-        (array.make-array String count)
+        (make-array String count)
         (LowerNameParentGlobal)))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
   (match (hashmap.i64-i64-map-get (struct-get cache ids) source-id)
     [(hashmap.I64I64MapFound index)
-      (TcMaybeString.Some (array.array-ref (struct-get cache values) index))]
+      (TcMaybeString.Some (array-ref (struct-get cache values) index))]
     [(hashmap.I64I64MapMissing)
       (match (struct-get cache parent)
         [(LowerNameParentNone) (TcMaybeString.No)]
@@ -1020,7 +1003,7 @@
                         (compiler-symbol-module-key-id-by-id module-id base-id))
                         [(TcMaybeString.Some resolved)
                           (begin
-                            (set! out (string.string-copy resolved))
+                            (set! out (string.copy resolved))
                             (set! done true))]
                         [(TcMaybeString.No) unit])]
                     [(InternLookupMissing) unit])]
@@ -1036,9 +1019,9 @@
   [source-name : String]) : String
   (let
     [resolved : String (lower-name-cache-resolve cache source-name)]
-    (if (string.string-eq resolved source-name)
+    (if (string.eq resolved source-name)
       (lower-name-cache-resolve-dotted cache source-name)
-      (string.string-copy resolved))))
+      (string.copy resolved))))
 
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match env
@@ -1073,7 +1056,7 @@
         [(hashmap.I64I64MapFound _) cache]
         [(hashmap.I64I64MapMissing)
           (begin
-            (array.array-set! values next ty)
+            (array-set! values next ty)
             (LowerSomeTypeCache
               (hashmap.i64-i64-map-put ids name-id next)
               values
@@ -1099,7 +1082,7 @@
       env
       (LowerSomeTypeCache
         (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
-        (array.make-array AstType count)
+        (make-array AstType count)
         0
         (LowerTypeParentNone)))))
 
@@ -1113,7 +1096,7 @@
       env
       (LowerSomeTypeCache
         (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
-        (array.make-array AstType count)
+        (make-array AstType count)
         0
         (LowerTypeParentGlobal)))))
 
@@ -1123,17 +1106,16 @@
   [display-name : String]) : ResultTcType
   (match cache
     [(LowerNoTypeCache)
-      (ResultTcType.Err
-        (string.string-append "typecheck: unbound name " display-name))]
+      (ResultTcType.Err (string.append "typecheck: unbound name " display-name))]
     [(LowerSomeTypeCache ids values _ parent)
       (match (hashmap.i64-i64-map-get ids name-id)
         [(hashmap.I64I64MapFound index)
-          (ResultTcType.Ok (array.array-ref values index))]
+          (ResultTcType.Ok (array-ref values index))]
         [(hashmap.I64I64MapMissing)
           (match parent
             [(LowerTypeParentNone)
               (ResultTcType.Err
-                (string.string-append "typecheck: unbound name " display-name))]
+                (string.append "typecheck: unbound name " display-name))]
             [(LowerTypeParentGlobal)
               (lower-type-cache-lookup-id
                 lower-decls-global-type-cache
@@ -1145,7 +1127,7 @@
     [(InternLookupFound name-id)
       (lower-type-cache-lookup-id cache name-id name)]
     [(InternLookupMissing)
-      (ResultTcType.Err (string.string-append "typecheck: unbound name " name))]))
+      (ResultTcType.Err (string.append "typecheck: unbound name " name))]))
 
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
@@ -1217,7 +1199,7 @@
   (let
     [primary : String (lower-hygiene-source-name source-name)]
     [resolved : String (lower-name-cache-resolve-source cache primary)]
-    (if (string.string-eq resolved primary)
+    (if (string.eq resolved primary)
       (match (lower-hygiene-fallback-source-name source-name)
         [(TcMaybeString.Some fallback)
           (lower-name-cache-resolve-source cache fallback)]
@@ -1368,7 +1350,7 @@
   [alias : String]
   [source-name : String]
   [logical-name : String]) : LowerNameEnv
-  (if (string.string-eq alias "")
+  (if (string.eq alias "")
     (lower-name-env-add-alias-if-free names source-name logical-name)
     (lower-name-env-bind source-name logical-name names)))
 
@@ -1378,7 +1360,7 @@
   [source-name : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
-  (if (string.string-eq alias "")
+  (if (string.eq alias "")
     (lower-name-env-add-alias-if-free-id
       names
       source-name
@@ -1404,7 +1386,7 @@
   [module : String]
   [source-name : String]
   [logical-name : String]) : LowerNameEnv
-  (if (string.string-eq module "")
+  (if (string.eq module "")
     (lower-name-env-bind source-name logical-name names)
     (let
       [source-id : i64
@@ -1485,7 +1467,7 @@
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
   (if (>= (string.string-length name) 6)
-    (string.string-eq (string.substring name 0 6) "clone$")
+    (string.eq (string.substring name 0 6) "clone$")
     false))
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
@@ -1534,7 +1516,7 @@
       [next-prefix : String
         (if (= (string.string-length prefix) 0)
           segment
-          (string.string-append prefix (string.string-append "/" segment)))]
+          (string.append prefix (string.append "/" segment)))]
       (lower-path-segment-vec-render-from segments (+ index 1) next-prefix))))
 
 (define (lower-path-segment-vec-render [segments : vector.StringVec]) : String
@@ -1545,10 +1527,9 @@
   [segments : vector.StringVec]
   [rooted : bool]) : vector.StringVec
   (cond
-    [(string.string-eq segment "") segments]
-    [(string.string-eq segment ".") segments]
-    [(not (string.string-eq segment ".."))
-      (vector.string-vec-push segments segment)]
+    [(string.eq segment "") segments]
+    [(string.eq segment ".") segments]
+    [(not (string.eq segment "..")) (vector.string-vec-push segments segment)]
     [(<= (vector.string-vec-len segments) 0)
       (if rooted
         segments
@@ -1556,7 +1537,7 @@
     [else
       (let
         [top : String (vector.string-vec-last segments "")]
-        (if (string.string-eq top "..")
+        (if (string.eq top "..")
           (vector.string-vec-push segments segment)
           (vector.string-vec-pop-rest-or
             (vector.string-vec-pop segments)
@@ -1611,16 +1592,14 @@
           [(if drive-root
               (= (string.string-length body) 0)
               false)
-            (string.string-append (string.substring path 0 2) "/")]
+            (string.append (string.substring path 0 2) "/")]
           [drive-root
-            (string.string-append
-              (string.substring path 0 2)
-              (string.string-append "/" body))]
+            (string.append (string.substring path 0 2) (string.append "/" body))]
           [(if rooted
               (= (string.string-length body) 0)
               false)
             "/"]
-          [rooted (string.string-append "/" body)]
+          [rooted (string.append "/" body)]
           [(= (string.string-length body) 0) "."]
           [else body])))))
 
@@ -1665,13 +1644,13 @@
   [decl-path : String]
   [source-name : String]) : String
   (if (and
-    (string.string-eq
+    (string.eq
       (lower-normalize-path decl-path)
       (lower-normalize-path entry-path))
-    (string.string-eq source-name "main"))
+    (string.eq source-name "main"))
     "main"
-    (string.string-append
-      (string.string-append (lower-module-id entry-path decl-path) "::")
+    (string.append
+      (string.append (lower-module-id entry-path decl-path) "::")
       source-name)))
 
 (define lower-entry-main-module-active : bool
@@ -1681,8 +1660,8 @@
 
 (define (lower-entry-main-module-match? [module : String]) : bool
   (if lower-entry-main-module-active
-    (string.string-eq module lower-entry-main-module)
-    (or (string.string-eq module "") (string.string-eq module "main"))))
+    (string.eq module lower-entry-main-module)
+    (or (string.eq module "") (string.eq module "main"))))
 
 (define (lower-decl-entry-main?
   [entry-path : String]
@@ -1690,10 +1669,10 @@
   [module : String]
   [source-name : String]) : bool
   (and
-    (string.string-eq
+    (string.eq
       (lower-normalize-path decl-path)
       (lower-normalize-path entry-path))
-    (string.string-eq source-name "main")
+    (string.eq source-name "main")
     (lower-entry-main-module-match? module)))
 
 (define (lower-entry-main-decl? [decl : AstDecl]) : bool
@@ -1719,11 +1698,11 @@
   (match scan
     [(LowerEntryMainScan fallback-count fallback-module preferred)
       (if (and
-        (string.string-eq
+        (string.eq
           (lower-normalize-path decl-path)
           (lower-normalize-path entry-path))
         (lower-entry-main-decl? decl))
-        (if (or (string.string-eq module "") (string.string-eq module "main"))
+        (if (or (string.eq module "") (string.eq module "main"))
           (LowerEntryMainScan fallback-count fallback-module true)
           (LowerEntryMainScan (+ fallback-count 1) module preferred))
         scan)]))
@@ -1815,7 +1794,7 @@
   [source-name : String]) : String
   (if (lower-decl-entry-main? entry-path decl-path module source-name)
     "main"
-    (if (string.string-eq module "")
+    (if (string.eq module "")
       (lower-module-logical-name entry-path decl-path source-name)
       (lower-module-logical-name
         entry-path
@@ -1838,9 +1817,9 @@
         names
         (compiler-symbol-module-key module source-name))]
     (if (and
-      (string.string-eq module "main")
-      (string.string-eq source-name "main")
-      (string.string-eq resolved key))
+      (string.eq module "main")
+      (string.eq source-name "main")
+      (string.eq resolved key))
       "main"
       resolved)))
 
@@ -1852,9 +1831,9 @@
     [key : String (compiler-symbol-module-key module source-name)]
     [resolved : String (lower-name-cache-resolve names key)]
     (if (and
-      (string.string-eq module "main")
-      (string.string-eq source-name "main")
-      (string.string-eq resolved key))
+      (string.eq module "main")
+      (string.eq source-name "main")
+      (string.eq resolved key))
       "main"
       resolved)))
 
@@ -2117,7 +2096,7 @@
     (compiler-symbol-module-key module source-name)))
 
 (define (lower-import-alias-key [importer-module : String] [alias : String]) : String
-  (if (string.string-eq alias "")
+  (if (string.eq alias "")
     importer-module
     alias))
 
@@ -3006,7 +2985,7 @@
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
-  (if (string.string-eq module "")
+  (if (string.eq module "")
     (OkLowerModuleLocalEnv top-env names (TcTypeEnv.Nil) (LowerNameNil))
     (match (tc-context-program ctx)
       [(AstProgram.Program decls-box)
@@ -3045,7 +3024,7 @@
   (match items
     [(LowerStringNil) false]
     [(LowerStringCons item rest)
-      (if (string.string-eq item name)
+      (if (string.eq item name)
         true
         (lower-string-set-contains? (box-get rest) name))]))
 
@@ -3092,7 +3071,7 @@
   (match subs
     [(LowerSpmdInlineSubstNil) (LowerNoAstExpr)]
     [(LowerSpmdInlineSubstCons key value rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (LowerSomeAstExpr value)
         (lower-spmd-inline-subst-lookup (box-get rest) name))]))
 
@@ -3102,7 +3081,7 @@
   (match subs
     [(LowerSpmdInlineSubstNil) LowerSpmdInlineSubstNil]
     [(LowerSpmdInlineSubstCons key value rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (lower-spmd-inline-subst-remove (box-get rest) name)
         (LowerSpmdInlineSubstCons
           key
@@ -3157,7 +3136,7 @@
   [func : AstExpr]) : ResultLowerSpmdInlineHelper
   (match (lower-spmd-inline-helper-name ctx env type-env shadowed func)
     [(ResultTcString.Ok name)
-      (if (string.string-eq name "")
+      (if (string.eq name "")
         (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
         (if (lower-string-set-contains? lower-spmd-inline-helper-stack name)
           (ErrLowerSpmdInlineHelper
@@ -3182,7 +3161,7 @@
                 (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper)))
               (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))))))]
     [(ResultTcString.Err message)
-      (if (string.string-eq message "")
+      (if (string.eq message "")
         (OkLowerSpmdInlineHelper (LowerNoSpmdInlineHelper))
         (ErrLowerSpmdInlineHelper (box (lower-diagnostic-at-expr func message))))]))
 
@@ -3921,7 +3900,7 @@
               name
               (intern-str next-module))]
           [(AstDecl.DefEnum decl-name _ variants)
-            (if (string.string-eq
+            (if (string.eq
               (clone-type-name-canonical module (intern-str decl-name))
               name)
               (lower-clone-root-add-variant-list
@@ -3939,7 +3918,7 @@
                 name
                 module))]
           [(AstDecl.DefStruct decl-name _ _ fields)
-            (if (string.string-eq
+            (if (string.eq
               (clone-type-name-canonical module (intern-str decl-name))
               name)
               (lower-clone-root-add-field-list
@@ -4061,42 +4040,39 @@
   (let
     [base : String (tc-qualified-name-base source-name)]
     (cond
-      [(string.string-eq base "tl_int_to_string") "tl-runtime-int-to-string"]
-      [(string.string-eq base "tl_substring") "tl-runtime-substring"]
-      [(string.string-eq base "tl_str_view") "tl-runtime-str-view"]
-      [(string.string-eq base "tl_bytes_view_from_str_parts")
+      [(string.eq base "tl_int_to_string") "tl-runtime-int-to-string"]
+      [(string.eq base "tl_substring") "tl-runtime-substring"]
+      [(string.eq base "tl_str_view") "tl-runtime-str-view"]
+      [(string.eq base "tl_bytes_view_from_str_parts") "tl-runtime-str-view"]
+      [(string.eq base "tl_bytes_view_from_buf_parts") "tl-runtime-str-view"]
+      [(string.eq base "tl_bytes_mut_view_from_buf_parts")
         "tl-runtime-str-view"]
-      [(string.string-eq base "tl_bytes_view_from_buf_parts")
+      [(string.eq base "tl_bytes_view_from_bytes_parts") "tl-runtime-str-view"]
+      [(string.eq base "tl_bytes_mut_view_from_bytes_parts")
         "tl-runtime-str-view"]
-      [(string.string-eq base "tl_bytes_mut_view_from_buf_parts")
-        "tl-runtime-str-view"]
-      [(string.string-eq base "tl_bytes_view_from_bytes_parts")
-        "tl-runtime-str-view"]
-      [(string.string-eq base "tl_bytes_mut_view_from_bytes_parts")
-        "tl-runtime-str-view"]
-      [(string.string-eq base "tl_string_concat") "tl-runtime-string-concat"]
-      [(string.string-eq base "tl_string_concat3") "tl-runtime-string-concat3"]
-      [(string.string-eq base "tl_string_concat4") "tl-runtime-string-concat4"]
-      [(string.string-eq base "tl_string_concat5") "tl-runtime-string-concat5"]
-      [(string.string-eq base "tl_atomic_i64_load_ptr")
+      [(string.eq base "tl_string_concat") "tl-runtime-string-concat"]
+      [(string.eq base "tl_string_concat3") "tl-runtime-string-concat3"]
+      [(string.eq base "tl_string_concat4") "tl-runtime-string-concat4"]
+      [(string.eq base "tl_string_concat5") "tl-runtime-string-concat5"]
+      [(string.eq base "tl_atomic_i64_load_ptr")
         "tl-runtime-atomic-i64-load-ptr"]
-      [(string.string-eq base "tl_atomic_i64_store_ptr")
+      [(string.eq base "tl_atomic_i64_store_ptr")
         "tl-runtime-atomic-i64-store-ptr!"]
-      [(string.string-eq base "tl_atomic_i64_add_ptr")
+      [(string.eq base "tl_atomic_i64_add_ptr")
         "tl-runtime-atomic-i64-add-ptr!"]
-      [(string.string-eq base "tl_atomic_i64_fetch_add_ptr")
+      [(string.eq base "tl_atomic_i64_fetch_add_ptr")
         "tl-runtime-atomic-i64-fetch-add-ptr!"]
-      [(string.string-eq base "tl_atomic_i64_cas_ptr")
+      [(string.eq base "tl_atomic_i64_cas_ptr")
         "tl-runtime-atomic-i64-cas-ptr!"]
-      [(string.string-eq base "tl_atomic_i32_load_ptr")
+      [(string.eq base "tl_atomic_i32_load_ptr")
         "tl-runtime-atomic-i32-load-ptr"]
-      [(string.string-eq base "tl_atomic_i32_store_ptr")
+      [(string.eq base "tl_atomic_i32_store_ptr")
         "tl-runtime-atomic-i32-store-ptr!"]
-      [(string.string-eq base "tl_atomic_i32_add_ptr")
+      [(string.eq base "tl_atomic_i32_add_ptr")
         "tl-runtime-atomic-i32-add-ptr!"]
-      [(string.string-eq base "tl_atomic_i32_fetch_add_ptr")
+      [(string.eq base "tl_atomic_i32_fetch_add_ptr")
         "tl-runtime-atomic-i32-fetch-add-ptr!"]
-      [(string.string-eq base "tl_atomic_i32_cas_ptr")
+      [(string.eq base "tl_atomic_i32_cas_ptr")
         "tl-runtime-atomic-i32-cas-ptr!"]
       [else ""])))
 
@@ -4106,7 +4082,7 @@
   [source-name : String]) : LowerReachState
   (let
     [helper : String (lower-runtime-prelude-string-helper-name source-name)]
-    (if (string.string-eq helper "")
+    (if (string.eq helper "")
       state
       (let
         [module-helper : String
@@ -4120,10 +4096,10 @@
               (lower-reach-add-logical
                 all-functions
                 state
-                (string.string-append "stdlib/runtime.tl::" helper))
-              (string.string-append "stdlib\\runtime.tl::" helper))
-            (string.string-append "stdlib/runtime.tl::" module-helper))
-          (string.string-append "stdlib\\runtime.tl::" module-helper))))))
+                (string.append "stdlib/runtime.tl::" helper))
+              (string.append "stdlib\\runtime.tl::" helper))
+            (string.append "stdlib/runtime.tl::" module-helper))
+          (string.append "stdlib\\runtime.tl::" module-helper))))))
 
 (define (lower-reach-add-string-snapshot-runtime
   [all-functions : hashmap.StringI64Map]
@@ -4146,7 +4122,7 @@
   [source-name : String]) : LowerReachState
   (let
     [helper : String (lower-runtime-prelude-string-helper-name source-name)]
-    (if (string.string-eq helper "")
+    (if (string.eq helper "")
       state
       (let
         [seeded : LowerReachState
@@ -4168,8 +4144,8 @@
     [lookup-id : i64 (intern name)]
     (or
       (cbi.compiler-builtin-lower-clone-id? lookup-id)
-      (string.string-eq name "substring")
-      (string.string-eq name "string-slice"))))
+      (string.eq name "substring")
+      (string.eq name "string-slice"))))
 
 (define (lower-reach-add-source
   [all-functions : hashmap.StringI64Map]
@@ -4177,7 +4153,7 @@
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
   ;; References introduced by macro expansion carry the hygiene-global prefix
-  ;; (e.g. `__tl_macro_global$string.string-append`); strip it before resolving so the
+  ;; (e.g. `__tl_macro_global$string.append`); strip it before resolving so the
   ;; underlying function counts as reachable. Otherwise a function called only
   ;; from a macro expansion is pruned, then fails to resolve during lowering.
   (let
@@ -4197,12 +4173,12 @@
 
 (define (lower-stdlib-string-public-helper-name? [base : String]) : bool
   (or
-    (string.string-eq base "string-length")
-    (string.string-eq base "string-ref")
-    (string.string-eq base "char-at")
-    (string.string-eq base "string-eq")
-    (string.string-eq base "string=?")
-    (string.string-eq base "string->int")))
+    (string.eq base "string-length")
+    (string.eq base "string-ref")
+    (string.eq base "char-at")
+    (string.eq base "string-eq")
+    (string.eq base "string=?")
+    (string.eq base "string->int")))
 
 (define (lower-reach-add-stdlib-string-public-helper
   [all-functions : hashmap.StringI64Map]
@@ -5224,7 +5200,7 @@
     [(ErrLowerCloneRoots diag)
       (let
         [message : String (compiler-diagnostic-message (box-get diag))]
-        (ErrLowerCloneRoots (box (lower-diagnostic (string-copy (& message))))))]))
+        (ErrLowerCloneRoots (box (lower-diagnostic (string.copy (& message))))))]))
 
 (define (lower-reachable-clone-roots
   [pools : AstNodePoolContext]
@@ -5972,7 +5948,7 @@
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
     (hashmap.string-i64-map-with-capacity 8192)
-    (array.make-array LowerMaybeFunctionBody count)
+    (make-array LowerMaybeFunctionBody count)
     0))
 
 ;; #3786: accumulate a module's local decl names onto `base-names` while
@@ -6030,7 +6006,7 @@
   [base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
   [module : String]) : LowerNameCache
-  (if (string.string-eq module "")
+  (if (string.eq module "")
     base-cache
     (let
       [module-base-names : LowerNameEnv
@@ -6085,10 +6061,7 @@
     [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
-      (array.array-set!
-        bodies
-        next
-        (LowerSomeFunctionBody body names decl-path))
+      (array-set! bodies next (LowerSomeFunctionBody body names decl-path))
       (LowerFunctionBodyIndex
         (hashmap.string-i64-map-put ids logical-name next)
         bodies
@@ -6099,7 +6072,7 @@
   [target : String]) : LowerMaybeFunctionBody
   (match (hashmap.string-i64-map-get (struct-get index ids) target)
     [(hashmap.StringI64MapFound body-index)
-      (array.array-ref (struct-get index bodies) body-index)]
+      (array-ref (struct-get index bodies) body-index)]
     [(hashmap.StringI64MapMissing) (LowerNoFunctionBody)]))
 
 (define (lower-function-body-index-from-decls-in-module
@@ -6549,7 +6522,7 @@
     (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
       (let
         [leaf : String (lower-used-type-name-leaf source)]
-        (if (string.string-eq leaf source)
+        (if (string.eq leaf source)
           with-source
           (hashmap.i64-i64-map-put with-source (intern leaf) 1)))
       with-source)))
@@ -6565,7 +6538,7 @@
       (if (or (tc-name-qualified? source) (>= (tc-name-first-dot source) 0))
         (let
           [leaf : String (lower-used-type-name-leaf source)]
-          (if (string.string-eq leaf source)
+          (if (string.eq leaf source)
             false
             (hashmap.i64-i64-map-contains? used (intern leaf))))
         false))))
@@ -7310,8 +7283,8 @@
   ;; `in-arena` and allocation lowering use the arena mark support type even
   ;; when source signatures only mention the public Arena wrapper.
   (if (and
-    (string.string-eq module "stdlib.arena")
-    (string.string-eq (intern-str name) "Arena"))
+    (string.eq module "stdlib.arena")
+    (string.eq (intern-str name) "Arena"))
     (lower-used-type-name-add used module (intern "ArenaMark"))
     used))
 
@@ -7388,7 +7361,7 @@
       current)))
 
 (define (lower-comptime-runtime-skip-module? [module : String]) : bool
-  (string.string-eq module "stdlib.comptime"))
+  (string.eq module "stdlib.comptime"))
 
 (define (lower-no-main-entry-prune-active?) : bool
   lower-no-main-entry-prune-active)
@@ -7404,6 +7377,10 @@
   0)
 (define lower-comptime-error-comptime-slash-id : i64
   0)
+(define lower-comptime-error-comptime-error-dot-id : i64
+  0)
+(define lower-comptime-error-comptime-error-slash-id : i64
+  0)
 (define lower-comptime-error-stdlib-dot-dot-id : i64
   0)
 (define lower-comptime-error-stdlib-dot-slash-id : i64
@@ -7411,6 +7388,14 @@
 (define lower-comptime-error-stdlib-slash-dot-id : i64
   0)
 (define lower-comptime-error-stdlib-slash-slash-id : i64
+  0)
+(define lower-comptime-error-stdlib-error-dot-dot-id : i64
+  0)
+(define lower-comptime-error-stdlib-error-dot-slash-id : i64
+  0)
+(define lower-comptime-error-stdlib-error-slash-dot-id : i64
+  0)
+(define lower-comptime-error-stdlib-error-slash-slash-id : i64
   0)
 
 (define (lower-comptime-error-ids-ensure!) : unit
@@ -7425,6 +7410,12 @@
         lower-comptime-error-comptime-slash-id
         (intern "comptime/comptime-error"))
       (set!
+        lower-comptime-error-comptime-error-dot-id
+        (intern "comptime.error"))
+      (set!
+        lower-comptime-error-comptime-error-slash-id
+        (intern "comptime/error"))
+      (set!
         lower-comptime-error-stdlib-dot-dot-id
         (intern "stdlib.comptime.comptime-error"))
       (set!
@@ -7436,6 +7427,18 @@
       (set!
         lower-comptime-error-stdlib-slash-slash-id
         (intern "stdlib/comptime/comptime-error"))
+      (set!
+        lower-comptime-error-stdlib-error-dot-dot-id
+        (intern "stdlib.comptime.error"))
+      (set!
+        lower-comptime-error-stdlib-error-dot-slash-id
+        (intern "stdlib.comptime/error"))
+      (set!
+        lower-comptime-error-stdlib-error-slash-dot-id
+        (intern "stdlib/comptime.error"))
+      (set!
+        lower-comptime-error-stdlib-error-slash-slash-id
+        (intern "stdlib/comptime/error"))
       (set! lower-comptime-error-id-generation (intern-generation)))))
 
 (define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
@@ -7443,10 +7446,16 @@
     (= id lower-comptime-error-id)
     (= id lower-comptime-error-comptime-dot-id)
     (= id lower-comptime-error-comptime-slash-id)
+    (= id lower-comptime-error-comptime-error-dot-id)
+    (= id lower-comptime-error-comptime-error-slash-id)
     (= id lower-comptime-error-stdlib-dot-dot-id)
     (= id lower-comptime-error-stdlib-dot-slash-id)
     (= id lower-comptime-error-stdlib-slash-dot-id)
-    (= id lower-comptime-error-stdlib-slash-slash-id)))
+    (= id lower-comptime-error-stdlib-slash-slash-id)
+    (= id lower-comptime-error-stdlib-error-dot-dot-id)
+    (= id lower-comptime-error-stdlib-error-dot-slash-id)
+    (= id lower-comptime-error-stdlib-error-slash-dot-id)
+    (= id lower-comptime-error-stdlib-error-slash-slash-id)))
 
 (define (lower-comptime-error-call-id? [id : i64]) : bool
   (begin
@@ -7462,11 +7471,17 @@
       (= source-id lower-comptime-error-id)
       (= source-id lower-comptime-error-comptime-dot-id)
       (= source-id lower-comptime-error-comptime-slash-id)
+      (= source-id lower-comptime-error-comptime-error-dot-id)
+      (= source-id lower-comptime-error-comptime-error-slash-id)
       (= source-id lower-comptime-error-stdlib-dot-dot-id)
       (= source-id lower-comptime-error-stdlib-dot-slash-id)
       (= source-id lower-comptime-error-stdlib-slash-dot-id)
       (= source-id lower-comptime-error-stdlib-slash-slash-id)
-      (= lookup-id lower-comptime-error-stdlib-slash-slash-id))))
+      (= source-id lower-comptime-error-stdlib-error-dot-dot-id)
+      (= source-id lower-comptime-error-stdlib-error-dot-slash-id)
+      (= source-id lower-comptime-error-stdlib-error-slash-dot-id)
+      (= source-id lower-comptime-error-stdlib-error-slash-slash-id)
+      (lower-comptime-error-call-id-with-cache? lookup-id))))
 
 (define (lower-decl-kept-by-reach-or-dispatch?
   [entry-path : String]
@@ -8032,8 +8047,8 @@
           mode
           tail-param-start
           tail-param-end)
-        (string.string-append
-          (string.string-append prefix ".")
+        (string.append
+          (string.append prefix ".")
           (string.int->string next-label)))]))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
@@ -8069,10 +8084,8 @@
           mode
           tail-param-start
           tail-param-end)
-        (string.string-append
-          (string.string-append
-            (string.string-append "__tl_lambda_" function)
-            "_")
+        (string.append
+          (string.append (string.append "__tl_lambda_" function) "_")
           (string.int->string next-lambda)))]))
 
 (define (lower-state-emit [state : LowerState] [instr : CompilerIrInstr]) : LowerState
@@ -8482,9 +8495,9 @@
 (define (lower-nullary-variant-object-name
   [enum-name : String]
   [variant-name : String]) : String
-  (string.string-append
+  (string.append
     "__enum_obj_"
-    (string.string-append enum-name (string.string-append "_" variant-name))))
+    (string.append enum-name (string.append "_" variant-name))))
 
 (define (lower-nullary-variant-globals
   [enum-name : String]
@@ -8566,9 +8579,9 @@
                       "lower: struct symbol owner is not a struct")])]
               [(ResultAstDecl.Err message) (ResultAstFieldDefList.Err message)])
             (ResultAstFieldDefList.Err
-              (string.string-append "lower: unknown struct " struct-name)))
+              (string.append "lower: unknown struct " struct-name)))
           (ResultAstFieldDefList.Err
-            (string.string-append "lower: unknown struct " struct-name))))]))
+            (string.append "lower: unknown struct " struct-name))))]))
 
 (define (lower-struct-repr-c? [ctx : TcContext] [struct-name : String]) : bool
   (match (tc-struct-decl ctx struct-name)
@@ -9179,7 +9192,7 @@
                     (ErrLowerExpr
                       (box
                         (lower-diagnostic
-                          (string.string-append
+                          (string.append
                             "lower: inline struct layout missing field "
                             name-str))))
                     (match (lower-pack-word-field
@@ -9446,7 +9459,7 @@
                     (ErrLowerExpr
                       (box
                         (lower-diagnostic
-                          (string.string-append
+                          (string.append
                             "lower: inline struct layout missing field "
                             name-str))))
                     (if (= (/ offset 8) word-index)
@@ -9900,9 +9913,7 @@
   (or (lower-string-handle-type? ctx ty) (lower-bytes-handle-type? ctx ty)))
 
 (define (lower-string-concat-builtin-name? [name : String]) : bool
-  (or
-    (string.string-eq name "string-append")
-    (string.string-eq name "string-concat")))
+  (or (string.eq name "string-append") (string.eq name "string-concat")))
 
 (define (lower-string-concat-call-parts
   [ctx : TcContext]
@@ -11071,7 +11082,7 @@
                     (ErrLowerState
                       (box
                         (lower-diagnostic
-                          (string.string-append
+                          (string.append
                             "lower: inline struct layout missing field "
                             name-str))))
                     (match (tc-inline-aggregate-type-layout ctx resolved)
@@ -11133,7 +11144,7 @@
               (ErrLowerState
                 (box
                   (lower-diagnostic
-                    (string.string-append
+                    (string.append
                       "lower: inline enum layout missing payload for "
                       variant-name))))
               (match (tc-inline-aggregate-type-layout ctx resolved)
@@ -11320,7 +11331,7 @@
               (AstType.Bool)))])]))
 
 (define (lower-box-pattern-name? [name : i64]) : bool
-  (string.string-eq (intern-str name) "box"))
+  (string.eq (intern-str name) "box"))
 
 (define (lower-bind-irrefutable-box-value
   [ctx : TcContext]
@@ -11583,7 +11594,7 @@
                 (ErrLowerEnv
                   (box
                     (lower-diagnostic
-                      (string.string-append
+                      (string.append
                         "lower: inline enum layout missing payload for "
                         variant-name))))
                 (match pattern
@@ -11756,7 +11767,7 @@
                                   (ErrLowerEnv
                                     (box
                                       (lower-diagnostic
-                                        (string.string-append
+                                        (string.append
                                           "lower: unknown nested variant "
                                           nested-name-str))))
                                   (match (compiler-registries-variant-fields-indexed
@@ -11943,7 +11954,7 @@
                 (ErrLowerEnv
                   (box
                     (lower-diagnostic
-                      (string.string-append
+                      (string.append
                         "lower: inline enum layout missing payload for "
                         variant-name))))
                 (match pattern
@@ -12059,7 +12070,7 @@
                               (ErrLowerEnv
                                 (box
                                   (lower-diagnostic
-                                    (string.string-append
+                                    (string.append
                                       "lower: unknown nested variant "
                                       nested-name-str))))
                               (match (compiler-registries-variant-fields-indexed
@@ -12294,7 +12305,7 @@
       (ErrLowerFieldInfo
         (box
           (lower-diagnostic
-            (string.string-append "lower: unknown struct field " field-name))))]
+            (string.append "lower: unknown struct field " field-name))))]
     [(AstFieldDefList.Cons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
@@ -12304,7 +12315,7 @@
               [resolved : AstType (tc-resolve-type ctx ty)]
               [offset : i64
                 (lower-align-up cursor (lower-type-align ctx resolved))]
-              (if (string.string-eq (intern-str name) field-name)
+              (if (string.eq (intern-str name) field-name)
                 (OkLowerFieldInfo (LowerFieldInfo offset resolved))
                 (lower-field-info-from-list
                   ctx
@@ -12320,11 +12331,11 @@
       (ErrLowerFieldInfo
         (box
           (lower-diagnostic
-            (string.string-append "lower: unknown struct field " field-name))))]
+            (string.append "lower: unknown struct field " field-name))))]
     [(TcReprCFieldLayoutList.Cons field rest)
       (match field
         [(TcReprCFieldLayout.Field name ty offset)
-          (if (string.string-eq name field-name)
+          (if (string.eq name field-name)
             (OkLowerFieldInfo (LowerFieldInfo offset ty))
             (lower-field-info-from-repr-c-list (box-get rest) field-name))])]))
 
@@ -12373,7 +12384,7 @@
                       (ErrLowerFieldInfo
                         (box
                           (lower-diagnostic
-                            (string.string-append
+                            (string.append
                               "lower: inline struct layout missing field "
                               field-name))))
                       (OkLowerFieldInfo (LowerFieldInfo offset field-ty))))]
@@ -12465,25 +12476,25 @@
 
 (define (lower-atomic-public-symbol? [symbol : String]) : bool
   (or
-    (string.string-eq symbol "tl_atomic_i64_load")
-    (string.string-eq symbol "tl_atomic_i64_store")
-    (string.string-eq symbol "tl_atomic_i64_add")
-    (string.string-eq symbol "tl_atomic_i64_fetch_add")
-    (string.string-eq symbol "tl_atomic_i32_load")
-    (string.string-eq symbol "tl_atomic_i32_store")
-    (string.string-eq symbol "tl_atomic_i32_add")
-    (string.string-eq symbol "tl_atomic_i32_fetch_add")))
+    (string.eq symbol "tl_atomic_i64_load")
+    (string.eq symbol "tl_atomic_i64_store")
+    (string.eq symbol "tl_atomic_i64_add")
+    (string.eq symbol "tl_atomic_i64_fetch_add")
+    (string.eq symbol "tl_atomic_i32_load")
+    (string.eq symbol "tl_atomic_i32_store")
+    (string.eq symbol "tl_atomic_i32_add")
+    (string.eq symbol "tl_atomic_i32_fetch_add")))
 
 (define (lower-atomic-public-name? [name : String]) : bool
   (or
-    (string.string-eq name "atomic-i64-load")
-    (string.string-eq name "atomic-i64-store!")
-    (string.string-eq name "atomic-i64-add!")
-    (string.string-eq name "atomic-i64-fetch-add!")
-    (string.string-eq name "atomic-i32-load")
-    (string.string-eq name "atomic-i32-store!")
-    (string.string-eq name "atomic-i32-add!")
-    (string.string-eq name "atomic-i32-fetch-add!")))
+    (string.eq name "atomic-i64-load")
+    (string.eq name "atomic-i64-store!")
+    (string.eq name "atomic-i64-add!")
+    (string.eq name "atomic-i64-fetch-add!")
+    (string.eq name "atomic-i32-load")
+    (string.eq name "atomic-i32-store!")
+    (string.eq name "atomic-i32-add!")
+    (string.eq name "atomic-i32-fetch-add!")))
 
 (define (lower-atomic-name-candidate? [name : String]) : bool
   (or
@@ -12495,20 +12506,18 @@
 
 (define (lower-atomic-symbol-for-name [name : String]) : String
   (cond
-    [(string.string-eq name "atomic-i64-load") "tl_atomic_i64_load"]
-    [(string.string-eq name "atomic-i64-store!") "tl_atomic_i64_store"]
-    [(string.string-eq name "atomic-i64-add!") "tl_atomic_i64_add"]
-    [(string.string-eq name "atomic-i64-fetch-add!") "tl_atomic_i64_fetch_add"]
-    [(string.string-eq name "atomic-i32-load") "tl_atomic_i32_load"]
-    [(string.string-eq name "atomic-i32-store!") "tl_atomic_i32_store"]
-    [(string.string-eq name "atomic-i32-add!") "tl_atomic_i32_add"]
-    [(string.string-eq name "atomic-i32-fetch-add!") "tl_atomic_i32_fetch_add"]
+    [(string.eq name "atomic-i64-load") "tl_atomic_i64_load"]
+    [(string.eq name "atomic-i64-store!") "tl_atomic_i64_store"]
+    [(string.eq name "atomic-i64-add!") "tl_atomic_i64_add"]
+    [(string.eq name "atomic-i64-fetch-add!") "tl_atomic_i64_fetch_add"]
+    [(string.eq name "atomic-i32-load") "tl_atomic_i32_load"]
+    [(string.eq name "atomic-i32-store!") "tl_atomic_i32_store"]
+    [(string.eq name "atomic-i32-add!") "tl_atomic_i32_add"]
+    [(string.eq name "atomic-i32-fetch-add!") "tl_atomic_i32_fetch_add"]
     [else ""]))
 
 (define (lower-atomic-import-path? [path : String]) : bool
-  (or
-    (string.string-eq path "stdlib/atomic.tl")
-    (string.string-eq path "atomic.tl")))
+  (or (string.eq path "stdlib/atomic.tl") (string.eq path "atomic.tl")))
 
 (define (lower-program-imports-atomic? [decls : AstDeclList]) : bool
   (match decls
@@ -12587,7 +12596,7 @@
         direct
         (if (or
           (> (string.string-length found) 0)
-          (string.string-eq lookup-name source-name))
+          (string.eq lookup-name source-name))
           (if (> (string.string-length found) 0)
             found
             (lower-atomic-imported-symbol-for-name ctx source-name))
@@ -12707,9 +12716,9 @@
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (array.array-ref items index)
+        (match (array-ref items index)
           [(LowerCapture capture-name _ _ _)
-            (if (string.string-eq capture-name name)
+            (if (string.eq capture-name name)
               (set! found true)
               (set! index (+ index 1)))]))
       found)))
@@ -12718,7 +12727,7 @@
   (struct-get captures count))
 
 (define (lower-capture-list-empty) : LowerCaptureList
-  (LowerCaptureList (array.make-array LowerCapture 0) 0))
+  (LowerCaptureList (make-array LowerCapture 0) 0))
 
 (define (lower-capture-list-add-front
   [captures : LowerCaptureList]
@@ -12727,7 +12736,7 @@
     [items : (Array LowerCapture) (struct-get captures items)]
     [count : i64 (struct-get captures count)]
     (begin
-      (array.array-push! items capture)
+      (array-push! items capture)
       (LowerCaptureList items (+ count 1)))))
 
 (define (lower-capture-list-storage-entry?
@@ -12738,10 +12747,10 @@
   [offset : i64]) : bool
   (if (or (< index 0) (>= index (struct-get captures count)))
     false
-    (match (array.array-ref (struct-get captures items) index)
+    (match (array-ref (struct-get captures items) index)
       [(LowerCapture capture-name capture-var-id _ capture-offset)
         (and
-          (string.string-eq capture-name name)
+          (string.eq capture-name name)
           (= capture-var-id var-id)
           (= capture-offset offset))])))
 
@@ -13423,7 +13432,7 @@
   (if (< index 0)
     (OkLowerState state)
     (let
-      [capture : LowerCapture (array.array-ref items index)]
+      [capture : LowerCapture (array-ref items index)]
       (match capture
         [(LowerCapture _ var-id capture-ty offset)
           (match (lower-capture-snapshot-value
@@ -13538,7 +13547,7 @@
   (if (< index 0)
     (OkLowerEnv state env type-env)
     (let
-      [capture : LowerCapture (array.array-ref items index)]
+      [capture : LowerCapture (array-ref items index)]
       (match capture
         [(LowerCapture name _ capture-ty offset)
           (match (if (lower-type-register-group? ctx capture-ty)
@@ -13882,20 +13891,14 @@
 
 (define (lower-name-id [name : String]) : i64
   (cond
-    [(string.string-eq name (lower-spmd-reduce-acc-name))
-      (lower-spmd-reduce-acc-id)]
-    [(string.string-eq name (lower-spmd-reduce-end-name))
-      (lower-spmd-reduce-end-id)]
-    [(string.string-eq name (lower-spmd-reduce-val-name))
-      (lower-spmd-reduce-val-id)]
-    [(string.string-eq name (lower-spmd-reduce-current-name))
+    [(string.eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
+    [(string.eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
+    [(string.eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
+    [(string.eq name (lower-spmd-reduce-current-name))
       (lower-spmd-reduce-current-id)]
-    [(string.string-eq name (lower-spmd-scan-acc-name))
-      (lower-spmd-scan-acc-id)]
-    [(string.string-eq name (lower-spmd-scan-end-name))
-      (lower-spmd-scan-end-id)]
-    [(string.string-eq name (lower-spmd-scan-val-name))
-      (lower-spmd-scan-val-id)]
+    [(string.eq name (lower-spmd-scan-acc-name)) (lower-spmd-scan-acc-id)]
+    [(string.eq name (lower-spmd-scan-end-name)) (lower-spmd-scan-end-id)]
+    [(string.eq name (lower-spmd-scan-val-name)) (lower-spmd-scan-val-id)]
     [else (intern name)]))
 
 (define (lower-refresh-marker-ids!) : unit
@@ -13915,13 +13918,13 @@
     (set! lower-spmd-scan-val-id-cache (intern (lower-spmd-scan-val-name)))))
 
 (define (lower-cleanup-hidden-name [var-id : i64]) : String
-  (string.string-append "__tl_cleanup_resource." (string.int->string var-id)))
+  (string.append "__tl_cleanup_resource." (string.int->string var-id)))
 
 (define (lower-region-hidden-name [var-id : i64]) : String
-  (string.string-append "__tl_region_mark." (string.int->string var-id)))
+  (string.append "__tl_region_mark." (string.int->string var-id)))
 
 (define (lower-arena-restore-hidden-name [var-id : i64]) : String
-  (string.string-append "__tl_arena_restore." (string.int->string var-id)))
+  (string.append "__tl_arena_restore." (string.int->string var-id)))
 
 (define (lower-cleanup-metadata-type
   [hidden-name : String]
@@ -14044,7 +14047,7 @@
         (box (lower-diagnostic "lower: missing arena restore binding"))))))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
-  (LowerCleanupStack (array.make-array String 0) (array.make-array String 0) 0))
+  (LowerCleanupStack (make-array String 0) (make-array String 0) 0))
 
 (define (lower-cleanup-stack-push
   [cleanups : LowerCleanupStack]
@@ -14055,8 +14058,8 @@
     [cleanup-names : (Array String) (struct-get cleanups cleanup-names)]
     [count : i64 (struct-get cleanups count)]
     (begin
-      (array.array-push! hidden-names hidden-name)
-      (array.array-push! cleanup-names cleanup-name)
+      (array-push! hidden-names hidden-name)
+      (array-push! cleanup-names cleanup-name)
       (LowerCleanupStack hidden-names cleanup-names (+ count 1)))))
 
 (define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
@@ -14070,11 +14073,11 @@
   (if (or (< index 0) (>= index (struct-get cleanups count)))
     false
     (and
-      (string.string-eq
-        (array.array-ref (struct-get cleanups hidden-names) index)
+      (string.eq
+        (array-ref (struct-get cleanups hidden-names) index)
         hidden-name)
-      (string.string-eq
-        (array.array-ref (struct-get cleanups cleanup-names) index)
+      (string.eq
+        (array-ref (struct-get cleanups cleanup-names) index)
         cleanup-name))))
 
 (define (lower-emit-cleanup-stack-at
@@ -14088,8 +14091,8 @@
     (match (lower-emit-cleanup-call
       state
       env
-      (array.array-ref hidden-names index)
-      (array.array-ref cleanup-names index))
+      (array-ref hidden-names index)
+      (array-ref cleanup-names index))
       [(OkLowerState next-state)
         (lower-emit-cleanup-stack-at
           next-state
@@ -14454,7 +14457,7 @@
           (ErrLowerState
             (box
               (lower-diagnostic
-                (string.string-append "lower: unknown variant " err-name))))))]))
+                (string.append "lower: unknown variant " err-name))))))]))
 
 ;; #2386: the try tag/payload reads below address the operand as MEMORY. A
 ;; register-resident Result/Option (e.g. 16-byte (Ok i64)/(Err i64)) is carried
@@ -14575,7 +14578,7 @@
             (box
               (lower-diagnostic-at-expr
                 origin
-                (string.string-append "lower: unknown variant " ok-name))))))]))
+                (string.append "lower: unknown variant " ok-name))))))]))
 
 (define (lower-try
   [ctx : TcContext]
@@ -15448,7 +15451,7 @@
           (ErrLowerExpr
             (box
               (lower-diagnostic
-                (string.string-append
+                (string.append
                   "lower: clone unsupported type "
                   (tc-type-render clone-ty))))))])))
 
@@ -15592,7 +15595,7 @@
       (ErrLowerCallArg (box (lower-diagnostic-at-expr arg message)))]))
 
 (define (lower-arg-writeback-list-empty) : LowerArgWritebackList
-  (LowerArgWritebackList (array.make-array LowerArgWriteback 0) 0))
+  (LowerArgWritebackList (make-array LowerArgWriteback 0) 0))
 
 (define (lower-arg-writeback-list-count [writebacks : LowerArgWritebackList]) : i64
   (struct-get writebacks count))
@@ -15600,7 +15603,7 @@
 (define (lower-arg-writeback-list-ref
   [writebacks : LowerArgWritebackList]
   [index : i64]) : LowerArgWriteback
-  (array.array-ref (struct-get writebacks items) index))
+  (array-ref (struct-get writebacks items) index))
 
 (define (lower-arg-writeback-list-add
   [writebacks : LowerArgWritebackList]
@@ -15608,15 +15611,14 @@
   (let
     [items : (Array LowerArgWriteback) (struct-get writebacks items)]
     [count : i64 (struct-get writebacks count)]
-    [out : (Array LowerArgWriteback)
-      (array.make-array LowerArgWriteback (+ count 1))]
+    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (array.array-set! out index (array.array-ref items index))
+          (array-set! out index (array-ref items index))
           (set! index (+ index 1))))
-      (array.array-set! out count writeback)
+      (array-set! out count writeback)
       (LowerArgWritebackList out (+ count 1)))))
 
 (define (lower-arg-writeback-list-add-front
@@ -15625,14 +15627,13 @@
   (let
     [items : (Array LowerArgWriteback) (struct-get writebacks items)]
     [count : i64 (struct-get writebacks count)]
-    [out : (Array LowerArgWriteback)
-      (array.make-array LowerArgWriteback (+ count 1))]
+    [out : (Array LowerArgWriteback) (make-array LowerArgWriteback (+ count 1))]
     [index : i64 0]
     (begin
-      (array.array-set! out 0 writeback)
+      (array-set! out 0 writeback)
       (while (< index count)
         (begin
-          (array.array-set! out (+ index 1) (array.array-ref items index))
+          (array-set! out (+ index 1) (array-ref items index))
           (set! index (+ index 1))))
       (LowerArgWritebackList out (+ count 1)))))
 
@@ -15890,7 +15891,7 @@
           (ErrLowerExpr
             (box
               (lower-diagnostic
-                (string.string-append
+                (string.append
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
     [(ResultTcInlineAggregateLayout.Err message)
@@ -15912,7 +15913,7 @@
           (ErrLowerState
             (box
               (lower-diagnostic
-                (string.string-append
+                (string.append
                   "lower: inline layout for struct is enum "
                   struct-name))))])]
     [(ResultTcInlineAggregateLayout.Err message)
@@ -15986,7 +15987,7 @@
           (ErrLowerExpr
             (box
               (lower-diagnostic
-                (string.string-append
+                (string.append
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
     [(ResultTcInlineAggregateLayout.Err message)
@@ -16028,7 +16029,7 @@
           (ErrLowerState
             (box
               (lower-diagnostic
-                (string.string-append
+                (string.append
                   "lower: inline layout for enum is struct "
                   enum-name))))])]
     [(ResultTcInlineAggregateLayout.Err message)
@@ -16210,7 +16211,7 @@
         (ErrLowerExpr
           (box
             (lower-diagnostic
-              (string.string-append
+              (string.append
                 "lower: enum constructor result is not enum: "
                 variant-name))))])))
 
@@ -16305,7 +16306,7 @@
         (ErrLowerState
           (box
             (lower-diagnostic
-              (string.string-append
+              (string.append
                 "lower: enum constructor result is not enum: "
                 variant-name))))])))
 
@@ -16575,7 +16576,7 @@
                         (ErrLowerExpr
                           (box
                             (lower-diagnostic
-                              (string.string-append
+                              (string.append
                                 "lower: unknown variant "
                                 lookup-name))))))])])])]
       [(ResultTcEnumDecl.Err message)
@@ -16676,7 +16677,7 @@
                         (ErrLowerState
                           (box
                             (lower-diagnostic
-                              (string.string-append
+                              (string.append
                                 "lower: unknown variant "
                                 lookup-name))))))])])])]
       [(ResultTcEnumDecl.Err message)
@@ -16734,7 +16735,7 @@
           (box
             (lower-diagnostic-at-expr
               origin
-              (string.string-append
+              (string.append
                 "lower: init unsupported type "
                 (tc-type-render resolved)))))])))
 
@@ -16840,7 +16841,7 @@
             (box
               (lower-diagnostic-at-expr
                 origin
-                (string.string-append
+                (string.append
                   "lower: init unsupported type "
                   (tc-type-render resolved)))))]))))
 
@@ -17535,11 +17536,11 @@
 (define tc-rtf-cap : i64
   1048576)
 (define tc-rtf-gen-arr : (Array i64)
-  (array.make-array i64 1048576))
+  (make-array i64 1048576))
 (define tc-rtf-id-arr : (Array i64)
-  (array.make-array i64 1048576))
+  (make-array i64 1048576))
 (define tc-rtf-ty-arr : (Array AstType)
-  (array.make-array AstType 1048576))
+  (make-array AstType 1048576))
 (define tc-rtf-current-gen : i64
   0)
 (define tc-rtf-filled : bool
@@ -17553,7 +17554,7 @@
       (begin
         (while (< i tc-rtf-cap)
           (begin
-            (array.array-set! tc-rtf-gen-arr i 0)
+            (array-set! tc-rtf-gen-arr i 0)
             (set! i (+ i 1))))
         (set! tc-rtf-filled true)))))
 
@@ -17572,10 +17573,10 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [slot : i64 (% inner-box tc-rtf-cap)]
-        (if (if (= (array.array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
-          (= (array.array-ref tc-rtf-id-arr slot) inner-box)
+        (if (if (= (array-ref tc-rtf-gen-arr slot) tc-rtf-current-gen)
+          (= (array-ref tc-rtf-id-arr slot) inner-box)
           false)
-          (ResultTcType.Ok (array.array-ref tc-rtf-ty-arr slot))
+          (ResultTcType.Ok (array-ref tc-rtf-ty-arr slot))
           (match (lower-expr-result-type-fast
             ctx
             env
@@ -17584,9 +17585,9 @@
             (ast-node-get inner-box))
             [(ResultTcType.Ok ty)
               (begin
-                (array.array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
-                (array.array-set! tc-rtf-id-arr slot inner-box)
-                (array.array-set! tc-rtf-ty-arr slot ty)
+                (array-set! tc-rtf-gen-arr slot tc-rtf-current-gen)
+                (array-set! tc-rtf-id-arr slot inner-box)
+                (array-set! tc-rtf-ty-arr slot ty)
                 (ResultTcType.Ok ty))]
             [(ResultTcType.Err message) (ResultTcType.Err message)])))]
     [(AstExpr.Literal lit) (ResultTcType.Ok (tc-literal-type lit))]
@@ -18358,7 +18359,7 @@
                 (box
                   (lower-diagnostic-at-expr
                     origin
-                    (string.string-append
+                    (string.append
                       "lower: assignment to unknown local "
                       name-text))))])))]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
@@ -18578,9 +18579,9 @@
                   (box
                     (lower-diagnostic-at-expr
                       origin
-                      (string.string-append
+                      (string.append
                         "type value "
-                        (string.string-append
+                        (string.append
                           (tc-type-render (tc-resolve-type ctx ty))
                           " is compile-time only")))))]
               [(CompilerCtfeValue.String _)
@@ -18736,9 +18737,9 @@
         (box
           (lower-diagnostic-at-expr
             origin
-            (string.string-append
+            (string.append
               "type value "
-              (string.string-append
+              (string.append
                 (tc-type-render (tc-resolve-type ctx ty))
                 " is compile-time only")))))]
     ;; `(ptr-null : T)` is a pointer-sized zero (pointer ABI size is 8);
@@ -20330,20 +20331,20 @@
 (define (lower-c-abi-unsupported-message
   [mode : CompilerLowerMode]
   [ty : AstType]) : String
-  (string.string-append
-    (string.string-append "lower: unsupported " (lower-c-abi-target-name mode))
-    (string.string-append
+  (string.append
+    (string.append "lower: unsupported " (lower-c-abi-target-name mode))
+    (string.append
       " C aggregate ABI for "
-      (string.string-append
+      (string.append
         (tc-type-render ty)
-        (string.string-append
+        (string.append
           "; this slice supports "
           (lower-c-abi-aggregate-size-message mode))))))
 
 (define (lower-c-abi-two-register-return-message [ty : AstType]) : String
-  (string.string-append
+  (string.append
     "lower: unsupported linux-x86_64 C two-register aggregate return ABI for "
-    (string.string-append (tc-type-render ty) "; see #1995")))
+    (string.append (tc-type-render ty) "; see #1995")))
 
 (define (lower-c-abi-sysv-slot-size [size : i64] [slot-index : i64]) : i64
   (if (= slot-index 0)
@@ -20586,23 +20587,23 @@
   (struct-get slots count))
 
 (define (lower-c-abi-slot-list-ref [slots : LowerCAbiSlotList] [index : i64]) : LowerCAbiSlot
-  (array.array-ref (struct-get slots items) index))
+  (array-ref (struct-get slots items) index))
 
 (define (lower-c-abi-slot-list-single [slot : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (Array LowerCAbiSlot) (array.make-array LowerCAbiSlot 1)]
+    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 1)]
     (begin
-      (array.array-set! items 0 slot)
+      (array-set! items 0 slot)
       (LowerCAbiSlotList items 1))))
 
 (define (lower-c-abi-slot-list-pair
   [first : LowerCAbiSlot]
   [second : LowerCAbiSlot]) : LowerCAbiSlotList
   (let
-    [items : (Array LowerCAbiSlot) (array.make-array LowerCAbiSlot 2)]
+    [items : (Array LowerCAbiSlot) (make-array LowerCAbiSlot 2)]
     (begin
-      (array.array-set! items 0 first)
-      (array.array-set! items 1 second)
+      (array-set! items 0 first)
+      (array-set! items 1 second)
       (LowerCAbiSlotList items 2))))
 
 (define (lower-c-abi-sysv-register-aggregate-from-slots
@@ -22081,9 +22082,7 @@
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (or
-    (string.string-eq name "substring")
-    (string.string-eq name "string-slice"))
+  (if (or (string.eq name "substring") (string.eq name "string-slice"))
     (lower-substring-call ctx state env type-env name args result-ty origin)
     (lower-string-concat-call ctx state env type-env name args result-ty origin)))
 
@@ -22934,12 +22933,12 @@
   [name : String]
   [nominal-name : String]) : bool
   (if (tc-name-qualified? name)
-    (string.string-eq name nominal-name)
+    (string.eq name nominal-name)
     (and
-      (string.string-eq
+      (string.eq
         (tc-qualified-name-module nominal-name)
         (tc-context-module ctx))
-      (string.string-eq name (tc-qualified-name-base nominal-name)))))
+      (string.eq name (tc-qualified-name-base nominal-name)))))
 
 (define (lower-variant-constructor-lookup-name
   [ctx : TcContext]
@@ -22951,7 +22950,7 @@
         [enum-name-str : String (intern-str enum-name)]
         (if (or
           (tc-name-qualified? name)
-          (string.string-eq
+          (string.eq
             (tc-qualified-name-module enum-name-str)
             (tc-context-module ctx)))
           (tc-source-variant-name-for-enum ctx enum-name-str name)
@@ -22961,7 +22960,7 @@
         [enum-name-str : String (intern-str enum-name)]
         (if (or
           (tc-name-qualified? name)
-          (string.string-eq
+          (string.eq
             (tc-qualified-name-module enum-name-str)
             (tc-context-module ctx)))
           (tc-source-variant-name-for-enum ctx enum-name-str name)
@@ -23479,9 +23478,9 @@
                             (box
                               (lower-diagnostic-at-expr
                                 origin
-                                (string.string-append
+                                (string.append
                                   "lower: "
-                                  (string.string-append
+                                  (string.append
                                     name
                                     " is compile-time only; wrap it in (comptime ...)")))))]
                         [(tc-string-ref-helper-call-id?
@@ -24317,32 +24316,31 @@
 
 (define (lower-atomic-elem-type [symbol : String]) : AstType
   (if (or
-    (string.string-eq symbol "tl_atomic_i32_load")
-    (string.string-eq symbol "tl_atomic_i32_store")
-    (string.string-eq symbol "tl_atomic_i32_add")
-    (string.string-eq symbol "tl_atomic_i32_fetch_add"))
+    (string.eq symbol "tl_atomic_i32_load")
+    (string.eq symbol "tl_atomic_i32_store")
+    (string.eq symbol "tl_atomic_i32_add")
+    (string.eq symbol "tl_atomic_i32_fetch_add"))
     (AstType.I32)
     (AstType.I64)))
 
 (define (lower-atomic-raw-symbol [symbol : String]) : String
   (cond
-    [(string.string-eq symbol "tl_atomic_i64_load") "tl_atomic_i64_load_ptr"]
-    [(string.string-eq symbol "tl_atomic_i64_store") "tl_atomic_i64_store_ptr"]
-    [(string.string-eq symbol "tl_atomic_i64_add") "tl_atomic_i64_add_ptr"]
-    [(string.string-eq symbol "tl_atomic_i64_fetch_add")
-      "tl_atomic_i64_fetch_add_ptr"]
-    [(string.string-eq symbol "tl_atomic_i32_load") "tl_atomic_i32_load_ptr"]
-    [(string.string-eq symbol "tl_atomic_i32_store") "tl_atomic_i32_store_ptr"]
-    [(string.string-eq symbol "tl_atomic_i32_add") "tl_atomic_i32_add_ptr"]
+    [(string.eq symbol "tl_atomic_i64_load") "tl_atomic_i64_load_ptr"]
+    [(string.eq symbol "tl_atomic_i64_store") "tl_atomic_i64_store_ptr"]
+    [(string.eq symbol "tl_atomic_i64_add") "tl_atomic_i64_add_ptr"]
+    [(string.eq symbol "tl_atomic_i64_fetch_add") "tl_atomic_i64_fetch_add_ptr"]
+    [(string.eq symbol "tl_atomic_i32_load") "tl_atomic_i32_load_ptr"]
+    [(string.eq symbol "tl_atomic_i32_store") "tl_atomic_i32_store_ptr"]
+    [(string.eq symbol "tl_atomic_i32_add") "tl_atomic_i32_add_ptr"]
     [else "tl_atomic_i32_fetch_add_ptr"]))
 
 (define (lower-atomic-pointer-name? [name : String]) : bool
   (or
-    (string.string-eq name "atomic-load")
-    (string.string-eq name "atomic-store!")
-    (string.string-eq name "atomic-add!")
-    (string.string-eq name "atomic-fetch-add!")
-    (string.string-eq name "atomic-cas!")))
+    (string.eq name "atomic-load")
+    (string.eq name "atomic-store!")
+    (string.eq name "atomic-add!")
+    (string.eq name "atomic-fetch-add!")
+    (string.eq name "atomic-cas!")))
 
 (define (lower-atomic-pointer-func? [type-env : TcTypeEnv] [func : AstExpr]) : bool
   (match (ast-expr-unspan func)
@@ -24359,10 +24357,10 @@
     [_ false]))
 
 (define (lower-atomic-pointer-load-name? [name : String]) : bool
-  (string.string-eq name "atomic-load"))
+  (string.eq name "atomic-load"))
 
 (define (lower-atomic-pointer-cas-name? [name : String]) : bool
-  (string.string-eq name "atomic-cas!"))
+  (string.eq name "atomic-cas!"))
 
 (define (lower-atomic-pointer-width-prefix [elem-ty : AstType]) : String
   (match (tc-type-strip-region elem-ty)
@@ -24372,10 +24370,10 @@
 
 (define (lower-atomic-pointer-op-suffix [name : String]) : String
   (cond
-    [(string.string-eq name "atomic-load") "load_ptr"]
-    [(string.string-eq name "atomic-store!") "store_ptr"]
-    [(string.string-eq name "atomic-add!") "add_ptr"]
-    [(string.string-eq name "atomic-fetch-add!") "fetch_add_ptr"]
+    [(string.eq name "atomic-load") "load_ptr"]
+    [(string.eq name "atomic-store!") "store_ptr"]
+    [(string.eq name "atomic-add!") "add_ptr"]
+    [(string.eq name "atomic-fetch-add!") "fetch_add_ptr"]
     [else "cas_ptr"]))
 
 (define (lower-atomic-pointer-raw-symbol [name : String] [elem-ty : AstType]) : String
@@ -24690,8 +24688,8 @@
 
 (define (lower-atomic-load-symbol? [symbol : String]) : bool
   (or
-    (string.string-eq symbol "tl_atomic_i64_load")
-    (string.string-eq symbol "tl_atomic_i32_load")))
+    (string.eq symbol "tl_atomic_i64_load")
+    (string.eq symbol "tl_atomic_i32_load")))
 
 (define (lower-atomic-emit-load
   [ctx : TcContext]
@@ -28676,7 +28674,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-expr-is-var? inner name))]
-    [(AstExpr.Var found) (string.string-eq (intern-str found) name)]
+    [(AstExpr.Var found) (string.eq (intern-str found) name)]
     [_ false]))
 
 (define (lower-dynamic-array-var
@@ -28782,7 +28780,7 @@
     [_ LowerNoIrValue]))
 
 (define (lower-array-var-set-empty) : LowerArrayVarSet
-  (LowerArrayVarSet (array.make-array i64 0) (array.make-array i64 0) 0))
+  (LowerArrayVarSet (make-array i64 0) (make-array i64 0) 0))
 
 (define (lower-array-var-set-add
   [set : LowerArrayVarSet]
@@ -28796,18 +28794,18 @@
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (if (= (array.array-ref vars index) var)
+        (if (= (array-ref vars index) var)
           (begin
-            (if (> offset (array.array-ref offsets index))
-              (array.array-set! offsets index offset)
+            (if (> offset (array-ref offsets index))
+              (array-set! offsets index offset)
               unit)
             (set! found true))
           (set! index (+ index 1))))
       (if found
         (LowerArrayVarSet vars offsets count)
         (begin
-          (array.array-push! vars var)
-          (array.array-push! offsets offset)
+          (array-push! vars var)
+          (array-push! offsets offset)
           (LowerArrayVarSet vars offsets (+ count 1)))))))
 
 (define (lower-array-var-set-merge
@@ -28826,8 +28824,8 @@
             out
             (lower-array-var-set-add
               out
-              (array.array-ref vars index)
-              (array.array-ref offsets index)))
+              (array-ref vars index)
+              (array-ref offsets index)))
           (set! index (+ index 1))))
       out)))
 
@@ -28840,7 +28838,7 @@
     (begin
       (while (< index count)
         (let
-          [offset : i64 (array.array-ref offsets index)]
+          [offset : i64 (array-ref offsets index)]
           (begin
             (if (> offset max-offset)
               (set! max-offset offset)
@@ -28868,14 +28866,14 @@
     [offsets : (Array i64) (struct-get merged offsets)]
     (and
       (= (struct-get merged count) 3)
-      (= (array.array-length vars) 3)
-      (= (array.array-length offsets) 3)
-      (= (array.array-ref vars 0) 10)
-      (= (array.array-ref offsets 0) 4)
-      (= (array.array-ref vars 1) 20)
-      (= (array.array-ref offsets 1) 2)
-      (= (array.array-ref vars 2) 30)
-      (= (array.array-ref offsets 2) 3)
+      (= (array-length vars) 3)
+      (= (array-length offsets) 3)
+      (= (array-ref vars 0) 10)
+      (= (array-ref offsets 0) 4)
+      (= (array-ref vars 1) 20)
+      (= (array-ref offsets 1) 2)
+      (= (array-ref vars 2) 30)
+      (= (array-ref offsets 2) 3)
       (= (lower-array-var-set-max-offset merged) 4))))
 
 (define (lower-masked-vector-index-literal-offset [expr : AstExpr]) : i64
@@ -28935,7 +28933,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-index-offset index inner))]
     [(AstExpr.Var name)
-      (if (string.string-eq (intern-str name) index)
+      (if (string.eq (intern-str name) index)
         0
         -1)]
     [(AstExpr.Binary op left-box right-box)
@@ -29216,7 +29214,7 @@
         (match (hashmap.string-i64-map-get lane-locals name-text)
           [(hashmap.StringI64MapFound lanes) lanes]
           [(hashmap.StringI64MapMissing)
-            (if (string.string-eq name-text index)
+            (if (string.eq name-text index)
               (lower-simd-lanes-for-elem mode (AstType.I64))
               0)]))]
     [(AstExpr.Unary op inner-box)
@@ -31676,7 +31674,7 @@
     [(AstExpr.Var name)
       (let
         [lookup-name : String (intern-str name)]
-        (if (string.string-eq lookup-name index)
+        (if (string.eq lookup-name index)
           LowerNoVectorMapValue
           (let
             [var-id : i64
@@ -33600,8 +33598,8 @@
     (begin
       (while (< index count)
         (let
-          [array-var : i64 (array.array-ref (struct-get arrays vars) index)]
-          [offset : i64 (array.array-ref (struct-get arrays offsets) index)]
+          [array-var : i64 (array-ref (struct-get arrays vars) index)]
+          [offset : i64 (array-ref (struct-get arrays offsets) index)]
           (begin
             (match (lower-avx512-index-plus-offset s next-index offset)
               [(LowerExpr index-state limit-index _)
@@ -33642,8 +33640,8 @@
     (begin
       (while (< index count)
         (let
-          [array-var : i64 (array.array-ref (struct-get arrays vars) index)]
-          [offset : i64 (array.array-ref (struct-get arrays offsets) index)]
+          [array-var : i64 (array-ref (struct-get arrays vars) index)]
+          [offset : i64 (array-ref (struct-get arrays offsets) index)]
           (begin
             (match (lower-avx512-index-plus-offset s end-value offset)
               [(LowerExpr index-state limit-index _)
@@ -33788,7 +33786,7 @@
     (box
       (lower-diagnostic-at-expr
         expr
-        (string.string-append "lower: SPMD masked if does not support " detail)))))
+        (string.append "lower: SPMD masked if does not support " detail)))))
 
 (define (lower-avx512-masked-index-value
   [state : LowerState]
@@ -33850,7 +33848,7 @@
           [(ResultTcType.Err message)
             (ErrLowerExpr (box (lower-diagnostic-at-expr expr message)))])
         (lower-avx512-masked-unsupported expr "unknown lane-local binding")))
-    (if (string.string-eq name index)
+    (if (string.eq name index)
       (OkLowerExpr (lower-emit-foreach-index-vector state index-var lanes))
       (let
         [var-id : i64
@@ -37300,7 +37298,7 @@
           (ErrLowerExpr
             (box
               (lower-diagnostic
-                (string.string-append "lower: unknown variant " variant-name))))))]))
+                (string.append "lower: unknown variant " variant-name))))))]))
 
 (define (lower-match-variant-body
   [ctx : TcContext]
@@ -37474,7 +37472,7 @@
           (ErrLowerExpr
             (box
               (lower-diagnostic
-                (string.string-append "lower: unknown variant " variant-name))))))]))
+                (string.append "lower: unknown variant " variant-name))))))]))
 
 (define (lower-match-literal-arm
   [ctx : TcContext]
@@ -37682,7 +37680,7 @@
   true)
 
 (define (lower-tail-call-self-target? [state : LowerState] [name : i64]) : bool
-  (string.string-eq
+  (string.eq
     (lower-resolve-name state (intern-str name))
     (lower-state-current-function state)))
 
@@ -39376,7 +39374,7 @@
           (ErrLowerState
             (box
               (lower-diagnostic
-                (string.string-append "lower: unknown variant " variant-name))))))]))
+                (string.append "lower: unknown variant " variant-name))))))]))
 
 (define (lower-tail-match-variant-body
   [ctx : TcContext]
@@ -39531,7 +39529,7 @@
           (ErrLowerState
             (box
               (lower-diagnostic
-                (string.string-append "lower: unknown variant " variant-name))))))]))
+                (string.append "lower: unknown variant " variant-name))))))]))
 
 (define (lower-borrowed-enum-match-scrutinee?
   [ctx : TcContext]
@@ -39884,7 +39882,7 @@
     [suffix-len : i64 (string.string-length suffix)]
     (and
       (>= name-len suffix-len)
-      (string.string-eq
+      (string.eq
         (string.substring logical-name (- name-len suffix-len) suffix-len)
         suffix))))
 
@@ -39896,7 +39894,7 @@
     [prefix-len : i64 (string.string-length prefix)]
     (and
       (>= name-len prefix-len)
-      (string.string-eq (string.substring logical-name 0 prefix-len) prefix))))
+      (string.eq (string.substring logical-name 0 prefix-len) prefix))))
 
 ;; #1867 sret ABI: a `__global_init_<name>` initializer's result is stored into
 ;; a forever-lived global by the backend's startup sequence (not a normal call
@@ -40016,7 +40014,7 @@
         (box (lower-diagnostic "lower: unsupported global initializer")))]))
 
 (define (lower-global-init-function-name [global-name : String]) : String
-  (string.string-append "__global_init_" global-name))
+  (string.append "__global_init_" global-name))
 
 (define (lower-top-decl-type-or-check
   [ctx : TcContext]
@@ -40125,27 +40123,27 @@
 
 (define (compiler-lower-arena-state-new) : CompilerLowerArenaState
   (let
-    [scratch : (Array i64) (array.make-array i64 1)]
-    [ir : (Array i64) (array.make-array i64 1)]
+    [scratch : (Array i64) (make-array i64 1)]
+    [ir : (Array i64) (make-array i64 1)]
     (begin
-      (array.array-set! scratch 0 0)
-      (array.array-set! ir 0 0)
+      (array-set! scratch 0 0)
+      (array-set! ir 0 0)
       (CompilerLowerArenaState scratch ir))))
 
 (define (compiler-lower-arena-state-scratch-arena
   [state : CompilerLowerArenaState]) : i64
-  (array.array-ref (struct-get state scratch-arena) 0))
+  (array-ref (struct-get state scratch-arena) 0))
 
 (define (compiler-lower-arena-state-ir-arena [state : CompilerLowerArenaState]) : i64
-  (array.array-ref (struct-get state ir-arena) 0))
+  (array-ref (struct-get state ir-arena) 0))
 
 (define (compiler-lower-arena-state-set!
   [state : CompilerLowerArenaState]
   [scratch : i64]
   [ir : i64]) : unit
   (begin
-    (array.array-set! (struct-get state scratch-arena) 0 scratch)
-    (array.array-set! (struct-get state ir-arena) 0 ir)))
+    (array-set! (struct-get state scratch-arena) 0 scratch)
+    (array-set! (struct-get state ir-arena) 0 ir)))
 
 (define (compiler-lower-arena-state-capture-from-globals!
   [state : CompilerLowerArenaState]) : unit
@@ -40283,7 +40281,7 @@
                   (intern-str cleanup-name)))]
             [(AstStructCleanup.No)
               (ResultTcString.Err
-                (string.string-append
+                (string.append
                   "lower: owned cleanup field type has no cleanup function "
                   struct-name))])])]
     [(ResultTcStructDecl.Err message) (ResultTcString.Err message)]))
@@ -40298,7 +40296,7 @@
         (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
       [_
         (ResultTcString.Err
-          (string.string-append
+          (string.append
             "lower: owned cleanup field type is not a cleanup-owning struct "
             (tc-type-render resolved)))])))
 
@@ -40425,7 +40423,7 @@
         mode)]))
 
 (define (lower-dispatch-cache-name [logical-name : String]) : String
-  (string.string-append "__tl_dispatch_cache_" logical-name))
+  (string.append "__tl_dispatch_cache_" logical-name))
 
 (define (lower-dispatch-variant-prefix [isa : AstDispatchIsa]) : String
   (match isa
@@ -40437,11 +40435,9 @@
   [dispatch-name : String]
   [isa : AstDispatchIsa]
   [variant-name : String]) : String
-  (string.string-append
+  (string.append
     (lower-dispatch-variant-prefix isa)
-    (string.string-append
-      dispatch-name
-      (string.string-append "__" variant-name))))
+    (string.append dispatch-name (string.append "__" variant-name))))
 
 (define (lower-dispatch-lower-mode
   [isa : AstDispatchIsa]
@@ -40494,7 +40490,7 @@
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (CompilerIrParam.Param
-            (string.string-append "arg" (string.int->string idx))
+            (string.append "arg" (string.int->string idx))
             (tc-type-without-regions ty)
             idx)
           (lower-dispatch-param-list-from-types rest (+ idx 1))))]))
@@ -40615,9 +40611,9 @@
   [tail : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [check-label : String (clone prefix)]
-    [osxsave-label : String (string.string-append (clone prefix) "_osxsave")]
-    [xcr0-label : String (string.string-append (clone prefix) "_xcr0")]
-    [leaf7-label : String (string.string-append prefix "_leaf7")]
+    [osxsave-label : String (string.append (clone prefix) "_osxsave")]
+    [xcr0-label : String (string.append (clone prefix) "_xcr0")]
+    [leaf7-label : String (string.append prefix "_leaf7")]
     [max-leaf-var : i64 base]
     [max-ok-var : i64 (+ base 1)]
     [leaf1-ecx-var : i64 (+ base 2)]
@@ -41003,7 +40999,7 @@
           (ErrLowerFunction
             (box
               (lower-diagnostic
-                (string.string-append
+                (string.append
                   "lower: unknown defdispatch variant "
                   variant-name))))))]))
 
@@ -42191,7 +42187,7 @@
     [(AstDeclList.Cons decl rest)
       (match decl
         [(AstDecl.Module name)
-          (if (string.string-eq (intern-str name) module)
+          (if (string.eq (intern-str name) module)
             true
             (lower-source-decls-define-module? (box-get rest) module))]
         [_ (lower-source-decls-define-module? (box-get rest) module)])]))
@@ -42899,7 +42895,7 @@
 (define (compiler-lower-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source src)
     [(ErrCompilerLower diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerLower _ _) false]))
 
 (define (compiler-lower-mode-error-ok?
@@ -42908,25 +42904,25 @@
   [want : String]) : bool
   (match (lower-compiler-source-with-mode src mode)
     [(ErrCompilerLower diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerLower _ _) false]))
 
 (define (compiler-lower-inline-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerInlineAggregates))
     [(ErrCompilerLower diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerLower _ _) false]))
 
 (define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerLinuxScalar))
     [(ErrCompilerLower diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerLower _ _) false]))
 
 (define (compiler-lower-windows-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerWindowsScalar))
     [(ErrCompilerLower diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(OkCompilerLower _ _) false]))
 
 (define (compiler-lower-entry-moduled-main-ok?) : bool
@@ -43091,7 +43087,7 @@
 
 (define (compiler-lower-qualified-array-length-source) : String
   "(import stdlib.array)
-(define (dyn-len [a : (Array i64)]) : i64 (array.array-length a))
+(define (dyn-len [a : (Array i64)]) : i64 (array-length a))
 (define (main) : i64 0)")
 
 (define (compiler-lower-private-array-access-source) : String
@@ -43101,8 +43097,8 @@
 
 (define (compiler-lower-qualified-array-access-source) : String
   "(import stdlib.array)
-(define (get [a : (Array i64)] [i : i64]) : i64 (array.array-ref a i))
-(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array.array-set! a i v))
+(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
 (define (compiler-lower-private-fixed-array-access-source) : String
@@ -43112,8 +43108,8 @@
 
 (define (compiler-lower-qualified-fixed-array-access-source) : String
   "(import stdlib.array)
-(define (get [a : (Array i64 3)] [i : i64]) : i64 (array.array-ref a i))
-(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array.array-set! a i v))
+(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
+(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
 (define (compiler-lower-private-mut-ref-array-access-source) : String
@@ -43127,12 +43123,12 @@
 
 (define (compiler-lower-qualified-mut-ref-array-access-source) : String
   "(import stdlib.array)
-(define (len [a : (& a (Array i64))]) : i64 (array.array-length a))
-(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array.array-ref a i))
+(define (len [a : (& a (Array i64))]) : i64 (array-length a))
+(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
 (define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
-  (array.array-set! a i v))
+  (array-set! a i v))
 (define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
-  (array.array-push! a v))
+  (array-push! a v))
 (define (main) : i64 0)")
 
 (define (compiler-lower-private-array-push-source) : String
@@ -43141,7 +43137,7 @@
 
 (define (compiler-lower-qualified-array-push-source) : String
   "(import stdlib.array)
-(define (grow [a : (Array i64)] [v : i64]) : unit (array.array-push! a v))
+(define (grow [a : (Array i64)] [v : i64]) : unit (array-push! a v))
 (define (main) : i64 0)")
 
 (define (compiler-lower-private-make-array-source) : String
@@ -43157,11 +43153,11 @@
   "(import stdlib.array)
 (define (main [n : i64]) : i64
   (let
-    [a : (Array i64) (array.make-array i64 n)]
+    [a : (Array i64) (make-array i64 n)]
     (begin
-      (array.array-set! a 0 40)
-      (array.array-set! a 1 2)
-      (+ (array.array-length a) (+ (array.array-ref a 0) (array.array-ref a 1))))))")
+      (array-set! a 0 40)
+      (array-set! a 1 2)
+      (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
 
 (define (compiler-lower-private-make-array-init-source) : String
   "(define (main [n : i64]) : i64
@@ -43173,8 +43169,8 @@
   "(import stdlib.array)
 (define (main [n : i64]) : i64
   (let
-    [items : (Array String) (array.make-array String n)]
-    (array.array-length items)))")
+    [items : (Array String) (make-array String n)]
+    (array-length items)))")
 
 (define (compiler-lower-make-array-register-resident-fill8-source) : String
   "(defstruct OneWord (value i64))
@@ -43252,22 +43248,22 @@
   unit)
 (define (io.print-str [text : String]) : unit
   (io.print-string text))
-(define (string.string-append [left : (& left str)] [right : (& right str)]) : String
+(define (string.append [left : (& left str)] [right : (& right str)]) : String
   \"joined\")
 (define (string.substring [text : (& text str)] [start : i64] [len : i64]) : String
   (let
     [probe : char (__tl_string_ref text start)]
     \"slice\"))
-(define (string.string-concat [left : (& left str)] [right : (& right str)]) : String
-  (string.string-append left right))
+(define (string.concat [left : (& left str)] [right : (& right str)]) : String
+  (string.append left right))
 (define (main) : i64
   (let
     [left : String \"foo\"]
     [right : String \"bar\"]
-    [joined : String (string.string-append (& left) (& right))]
+    [joined : String (string.append (& left) (& right))]
     [mid : String (string.substring (& joined) 2 3)]
     [bang : String \"!\"]
-    [extended : String (string.string-concat (& mid) (& bang))]
+    [extended : String (string.concat (& mid) (& bang))]
     [spaced : String \" x\"]
     [digits : String \"7\"]
     (begin
@@ -43280,17 +43276,17 @@
               (cast (__tl_string_ref (& spaced) 0) : i64))))))))")
 
 (define (compiler-lower-string-concat-fusion-source) : String
-  "(define (string.string-append [left : String] [right : String]) : String
+  "(define (string.append [left : String] [right : String]) : String
   left)
 (define (main) : i64
   (let
-    [three : String (string.string-append \"a\" (string.string-append \"b\" \"c\"))]
+    [three : String (string.append \"a\" (string.append \"b\" \"c\"))]
     [four : String
-      (string.string-append \"a\" (string.string-append \"b\" (string.string-append \"c\" \"d\")))]
+      (string.append \"a\" (string.append \"b\" (string.append \"c\" \"d\")))]
     [five : String
-      (string.string-append
+      (string.append
         \"a\"
-        (string.string-append \"b\" (string.string-append \"c\" (string.string-append \"d\" \"e\"))))]
+        (string.append \"b\" (string.append \"c\" (string.append \"d\" \"e\"))))]
     (+ (__tl_string_length three)
       (+ (__tl_string_length four) (__tl_string_length five)))))")
 
@@ -43342,12 +43338,12 @@
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string.string-length [s : String]) : i64 40)
-(define (string.string-append [a : i64] [b : i64]) : i64 (+ a b))
+(define (string.append [a : i64] [b : i64]) : i64 (+ a b))
 (define (string.string-ref [a : i64] [b : i64]) : i64 (+ a b))
 (define (string.char-at [a : i64] [b : i64]) : i64 (* a b))
 (define (main) : i64
   (+ (string.string-length \"abc\")
-    (+ (string.string-append 1 1)
+    (+ (string.append 1 1)
       (+ (string.string-ref 10 7) (string.char-at 3 4)))))")
 
 (define (compiler-lower-stdio-source) : String
@@ -44639,13 +44635,13 @@
 (define (lower-test-instr-call-count [instr : CompilerIrInstr] [name : String]) : i64
   (match instr
     [(CompilerIrInstr.Call _ call-name _ _)
-      (if (string.string-eq call-name name)
+      (if (string.eq call-name name)
         1
         0)]
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ call-name _ _)
-          (if (string.string-eq call-name name)
+          (if (string.eq call-name name)
             1
             0)])]
     [_ 0]))
@@ -44692,7 +44688,7 @@
   [name : String]) : i64
   (match value
     [(CompilerIrValue.Function found)
-      (if (string.string-eq found name)
+      (if (string.eq found name)
         1
         0)]
     [_ 0]))
@@ -44725,10 +44721,10 @@
   [values : (Array CompilerIrValue)]
   [name : String]
   [index : i64]) : i64
-  (if (>= index (array.array-length values))
+  (if (>= index (array-length values))
     0
     (+
-      (lower-test-value-function-count (array.array-ref values index) name)
+      (lower-test-value-function-count (array-ref values index) name)
       (lower-test-call-args-array-function-count values name (+ index 1)))))
 
 (define (lower-test-instr-return-function-count
@@ -44758,7 +44754,7 @@
   [function-name : String]) : i64
   (match instr
     [(CompilerIrInstr.Call _ found args _)
-      (if (string.string-eq found call-name)
+      (if (string.eq found call-name)
         (lower-test-call-args-function-count args function-name)
         0)]
     [_ 0]))
@@ -44768,7 +44764,7 @@
   [name : String]) : i64
   (match instr
     [(CompilerIrInstr.TailCall call-name _ _)
-      (if (string.string-eq call-name name)
+      (if (string.eq call-name name)
         1
         0)]
     [_ 0]))
@@ -45040,7 +45036,7 @@
   [name : String]) : i64
   (match instr
     [(CompilerIrInstr.Store store-name _ _)
-      (if (string.string-eq store-name name)
+      (if (string.eq store-name name)
         1
         0)]
     [_ 0]))
@@ -45097,8 +45093,8 @@
 
 (define (lower-test-instr-call-name? [instr : CompilerIrInstr] [name : String]) : bool
   (match instr
-    [(CompilerIrInstr.Call _ call-name _ _) (string.string-eq call-name name)]
-    [(CompilerIrInstr.TailCall call-name _ _) (string.string-eq call-name name)]
+    [(CompilerIrInstr.Call _ call-name _ _) (string.eq call-name name)]
+    [(CompilerIrInstr.TailCall call-name _ _) (string.eq call-name name)]
     [_ false]))
 
 (define (lower-test-instrs-call-before?
@@ -45369,7 +45365,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-phi-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-phi-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45384,7 +45380,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-load-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-load-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45399,9 +45395,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-branch-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-branch-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45416,9 +45410,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-bounds-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-bounds-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45433,9 +45425,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-return-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-return-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45452,9 +45442,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-call-count (array.array-ref slots index) name)))
+            (+ acc (lower-test-instr-call-count (array-ref slots index) name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -45472,7 +45460,7 @@
     (begin
       (while (and (< index count) (not done))
         (let
-          [instr : CompilerIrInstr (array.array-ref slots index)]
+          [instr : CompilerIrInstr (array-ref slots index)]
           (begin
             (if (lower-test-instr-call-name? instr second)
               (begin
@@ -45495,7 +45483,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-cpuid-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-cpuid-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45510,9 +45498,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-xgetbv-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-xgetbv-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45529,8 +45515,7 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-call-count
-                (array.array-ref slots index))))
+              (lower-test-instr-indirect-call-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45549,7 +45534,7 @@
             (+
               acc
               (lower-test-instr-indirect-tail-call-count
-                (array.array-ref slots index))))
+                (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45567,8 +45552,7 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-c-call-count
-                (array.array-ref slots index))))
+              (lower-test-instr-indirect-c-call-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45585,8 +45569,7 @@
             acc
             (+
               acc
-              (lower-test-instr-indirect-unit-count
-                (array.array-ref slots index))))
+              (lower-test-instr-indirect-unit-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45606,7 +45589,7 @@
             (+
               acc
               (lower-test-instr-return-function-count
-                (array.array-ref slots index)
+                (array-ref slots index)
                 function-name)))
           (set! index (+ index 1))))
       acc)))
@@ -45627,7 +45610,7 @@
             (+
               acc
               (lower-test-instr-indirect-callee-function-count
-                (array.array-ref slots index)
+                (array-ref slots index)
                 function-name)))
           (set! index (+ index 1))))
       acc)))
@@ -45649,7 +45632,7 @@
             (+
               acc
               (lower-test-instr-call-arg-function-count
-                (array.array-ref slots index)
+                (array-ref slots index)
                 call-name
                 function-name)))
           (set! index (+ index 1))))
@@ -45670,9 +45653,7 @@
             acc
             (+
               acc
-              (lower-test-instr-tail-call-count
-                (array.array-ref slots index)
-                name)))
+              (lower-test-instr-tail-call-count (array-ref slots index) name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -45687,9 +45668,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-store-ptr-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-store-ptr-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45704,9 +45683,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-copy-bytes-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-copy-bytes-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45721,7 +45698,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-alloc-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-alloc-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45736,9 +45713,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-addr-of-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-addr-of-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45753,9 +45728,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-vector-load-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-vector-load-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45772,8 +45745,7 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-binop-count
-                (array.array-ref slots index))))
+              (lower-test-instr-vector-binop-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45790,8 +45762,7 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-reduce-count
-                (array.array-ref slots index))))
+              (lower-test-instr-vector-reduce-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45808,8 +45779,7 @@
             acc
             (+
               acc
-              (lower-test-instr-vector-store-count
-                (array.array-ref slots index))))
+              (lower-test-instr-vector-store-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45827,8 +45797,7 @@
             acc
             (+
               acc
-              (lower-test-instr-predicated-load-count
-                (array.array-ref slots index))))
+              (lower-test-instr-predicated-load-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45846,8 +45815,7 @@
             acc
             (+
               acc
-              (lower-test-instr-predicated-store-count
-                (array.array-ref slots index))))
+              (lower-test-instr-predicated-store-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45862,9 +45830,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-select-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-select-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45879,9 +45845,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-tail-mask-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-tail-mask-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45902,7 +45866,7 @@
             (+
               acc
               (lower-test-instr-vector-shape-count
-                (array.array-ref slots index)
+                (array-ref slots index)
                 lanes
                 elem-ty)))
           (set! index (+ index 1))))
@@ -45919,9 +45883,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-u64-mov-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-u64-mov-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45938,9 +45900,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-binop-op-count (array.array-ref slots index) op)))
+            (+ acc (lower-test-instr-binop-op-count (array-ref slots index) op)))
           (set! index (+ index 1))))
       acc)))
 
@@ -45955,7 +45915,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-cast-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-cast-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45970,9 +45930,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (lower-test-instr-bitcast-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-bitcast-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -45991,9 +45949,7 @@
             acc
             (+
               acc
-              (lower-test-instr-store-global-count
-                (array.array-ref slots index)
-                name)))
+              (lower-test-instr-store-global-count (array-ref slots index) name)))
           (set! index (+ index 1))))
       acc)))
 
@@ -46486,7 +46442,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ _)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             true
             (lower-test-function-defined? (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46500,7 +46456,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-phi-count blocks)
             (lower-test-function-phi-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46516,7 +46472,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ _)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (compiler-ir-function-instruction-count func)
             (lower-test-function-instruction-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46532,7 +46488,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-load-count blocks)
             (lower-test-function-load-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46548,7 +46504,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-branch-count blocks)
             (lower-test-function-branch-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46564,7 +46520,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-bounds-count blocks)
             (lower-test-function-bounds-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46580,7 +46536,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-return-count blocks)
             (lower-test-function-return-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46684,7 +46640,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-call-count blocks call-name)
             (lower-test-function-call-count (box-get rest) name call-name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46703,7 +46659,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-call-before? blocks first second)
             (lower-test-function-call-before? (box-get rest) name first second))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46721,7 +46677,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-indirect-call-count blocks)
             (lower-test-function-indirect-call-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46737,7 +46693,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-indirect-tail-call-count blocks)
             (lower-test-function-indirect-tail-call-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46753,7 +46709,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-indirect-c-call-count blocks)
             (lower-test-function-indirect-c-call-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46769,7 +46725,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-indirect-unit-count blocks)
             (lower-test-function-indirect-unit-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46786,7 +46742,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-return-function-count blocks function-name)
             (lower-test-function-return-function-count
               (box-get rest)
@@ -46807,7 +46763,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-indirect-callee-function-count
               blocks
               function-name)
@@ -46831,7 +46787,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-call-arg-function-count
               blocks
               call-name
@@ -46857,7 +46813,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-tail-call-count blocks call-name)
             (lower-test-function-tail-call-count (box-get rest) name call-name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46882,7 +46838,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-store-ptr-count blocks)
             (lower-test-function-store-ptr-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46898,7 +46854,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-copy-bytes-count blocks)
             (lower-test-function-copy-bytes-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46914,7 +46870,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-alloc-count blocks)
             (lower-test-function-alloc-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46930,7 +46886,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-addr-of-count blocks)
             (lower-test-function-addr-of-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46946,7 +46902,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-vector-load-count blocks)
             (lower-test-function-vector-load-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46962,7 +46918,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-vector-binop-count blocks)
             (lower-test-function-vector-binop-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46978,7 +46934,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-vector-reduce-count blocks)
             (lower-test-function-vector-reduce-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -46994,7 +46950,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-vector-store-count blocks)
             (lower-test-function-vector-store-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47010,7 +46966,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-predicated-load-count blocks)
             (lower-test-function-predicated-load-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47026,7 +46982,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-predicated-store-count blocks)
             (lower-test-function-predicated-store-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47042,7 +46998,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-select-count blocks)
             (lower-test-function-select-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47058,7 +47014,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-tail-mask-count blocks)
             (lower-test-function-tail-mask-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47076,7 +47032,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-vector-shape-count blocks lanes elem-ty)
             (lower-test-function-vector-shape-count
               (box-get rest)
@@ -47098,7 +47054,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-u64-mov-count blocks)
             (lower-test-function-u64-mov-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47115,7 +47071,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-binop-op-count blocks op)
             (lower-test-function-binop-op-count (box-get rest) name op))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47132,7 +47088,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-cast-count blocks)
             (lower-test-function-cast-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47148,7 +47104,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-bitcast-count blocks)
             (lower-test-function-bitcast-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -47165,7 +47121,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-store-global-count blocks global-name)
             (lower-test-function-store-global-count
               (box-get rest)
@@ -47185,7 +47141,7 @@
     [(CompilerIrGlobalList.Cons global rest)
       (match global
         [(CompilerIrGlobal.Global global-name _ _)
-          (if (string.string-eq global-name name)
+          (if (string.eq global-name name)
             true
             (lower-test-global-list-has-name? (box-get rest) name))])]))
 
@@ -47536,15 +47492,15 @@
 
 (define (compiler-lower-dotted-import-string-call-source) : String
   "(module pkg.string)
-(define (string-eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
+(define (eq [left : String] [right : String]) : bool (= (__tl_string_length left) (__tl_string_length right)))
 (module pkg.args)
 (import pkg.string)
 (defstruct ArgsOptionSpec (long String))
 (define (args-option-spec-long [spec : ArgsOptionSpec]) : String
   (struct-get spec long))
 (define (args-option-spec-matches-long? [spec : ArgsOptionSpec] [name : String]) : bool
-  (if (not (string.string-eq (args-option-spec-long spec) \"\"))
-    (string.string-eq (args-option-spec-long spec) name)
+  (if (not (string.eq (args-option-spec-long spec) \"\"))
+    (string.eq (args-option-spec-long spec) name)
     false))")
 
 (define (compiler-lower-dotted-import-string-call-ok?) : bool
@@ -47553,9 +47509,7 @@
     [(OkCompilerLower lowered _)
       (match lowered
         [(CompilerIrProgram.Program _ functions _)
-          (>
-            (lower-test-functions-call-count functions "pkg.string/string-eq")
-            0)])]
+          (> (lower-test-functions-call-count functions "pkg.string/eq") 0)])]
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-module-function-returning-struct-source) : String
@@ -47881,9 +47835,9 @@
                     (match rest2
                       [(AstExternLinkInputList.Nil)
                         (and
-                          (string.string-eq lib "ffi")
-                          (string.string-eq dir "native")
-                          (string.string-eq arg-value "-Wl,--as-needed"))]
+                          (string.eq lib "ffi")
+                          (string.eq dir "native")
+                          (string.eq arg-value "-Wl,--as-needed"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
@@ -47899,8 +47853,8 @@
                 (CompilerIrExtern.Extern name _ abi symbol link-inputs _)
                 CompilerIrExternList.Nil)
               (and
-                (string.string-eq name "ffi-add")
-                (string.string-eq symbol "ffi_add")
+                (string.eq name "ffi-add")
+                (string.eq symbol "ffi_add")
                 (ast-extern-abi-c? abi)
                 (compiler-lower-extern-link-inputs-ok? link-inputs))]
             [_ false])])]
@@ -48595,9 +48549,7 @@
             acc
             (+
               acc
-              (lower-test-instr-i64-mov-count
-                (array.array-ref slots index)
-                want)))
+              (lower-test-instr-i64-mov-count (array-ref slots index) want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -48616,9 +48568,7 @@
             acc
             (+
               acc
-              (lower-test-instr-f64-mov-count
-                (array.array-ref slots index)
-                want)))
+              (lower-test-instr-f64-mov-count (array-ref slots index) want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -48633,7 +48583,7 @@
         (begin
           (set!
             acc
-            (+ acc (lower-test-instr-binop-count (array.array-ref slots index))))
+            (+ acc (lower-test-instr-binop-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -48652,9 +48602,7 @@
             acc
             (+
               acc
-              (lower-test-instr-gep-offset-count
-                (array.array-ref slots index)
-                want)))
+              (lower-test-instr-gep-offset-count (array-ref slots index) want)))
           (set! index (+ index 1))))
       acc)))
 
@@ -48723,7 +48671,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-i64-mov-count blocks want)
             (lower-test-function-i64-mov-count (box-get rest) name want))])]
     [(CompilerIrFunctionList.Array seq)
@@ -48747,7 +48695,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-f64-mov-count blocks want)
             (lower-test-function-f64-mov-count-bits (box-get rest) name want))])]
     [(CompilerIrFunctionList.Array seq)
@@ -48764,7 +48712,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-binop-count blocks)
             (lower-test-function-binop-count (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -48781,7 +48729,7 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname _ _ _ blocks)
-          (if (string.string-eq fname name)
+          (if (string.eq fname name)
             (lower-test-blocks-gep-offset-count blocks want)
             (lower-test-function-gep-offset-count (box-get rest) name want))])]
     [(CompilerIrFunctionList.Array seq)
@@ -49303,14 +49251,14 @@
               (if (>
                 (lower-test-functions-direct-call-count
                   functions
-                  "string.string-append")
+                  "string.append")
                 0)
                 unit
                 (set! ok false))
               (if (>
                 (lower-test-functions-direct-call-count
                   functions
-                  "string.string-concat")
+                  "string.concat")
                 0)
                 unit
                 (set! ok false))
@@ -49374,7 +49322,7 @@
               (if (>
                 (lower-test-functions-direct-call-count
                   functions
-                  "string.string-append")
+                  "string.append")
                 0)
                 unit
                 (set! ok false))
@@ -49565,9 +49513,7 @@
             (>
               (lower-test-functions-call-count functions "string.string-length")
               0)
-            (>
-              (lower-test-functions-call-count functions "string.string-append")
-              0)
+            (> (lower-test-functions-call-count functions "string.append") 0)
             (>
               (lower-test-functions-call-count functions "string.string-ref")
               0)
@@ -50182,7 +50128,7 @@
     [(ErrCompilerLower _) false]))
 
 (define (compiler-lower-with-arena-source [src : String]) : String
-  (string.string-append
+  (string.append
     "(module stdlib.arena)
 (extern (tl_arena_make) : i64)
 (extern (tl_arena_current) : i64)
@@ -50357,7 +50303,7 @@
   (with-scratch (string.int->string 42)))"))
 
 (define (compiler-lower-runtime-substring-scratch-source) : String
-  (string.string-append
+  (string.append
     "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 "
@@ -50367,7 +50313,7 @@
   (ast-decl-path-cons "stdlib/runtime.tl" AstDeclPathList.Nil))
 
 (define (compiler-lower-runtime-substring-call-source) : String
-  (string.string-append
+  (string.append
     "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 (unsafe
@@ -50379,7 +50325,7 @@
     (unsafe (tl_substring (string-data s) 1 2))))"))
 
 (define (compiler-lower-runtime-substring-capturing-lambda-source) : String
-  (string.string-append
+  (string.append
     "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 "
@@ -52540,23 +52486,23 @@
         [rest : AstDeclList (box-get rest)]
         (match decl
           [(AstDecl.DefFn found _ _ _ _)
-            (if (string.string-eq (intern-str found) name)
+            (if (string.eq (intern-str found) name)
               true
               (lower-test-decl-list-defines? rest name))]
           [(AstDecl.DefEnum found _ _)
-            (if (string.string-eq (intern-str found) name)
+            (if (string.eq (intern-str found) name)
               true
               (lower-test-decl-list-defines? rest name))]
           [(AstDecl.DefEnumLifetimes found _ _ _)
-            (if (string.string-eq (intern-str found) name)
+            (if (string.eq (intern-str found) name)
               true
               (lower-test-decl-list-defines? rest name))]
           [(AstDecl.DefStruct found _ _ _)
-            (if (string.string-eq (intern-str found) name)
+            (if (string.eq (intern-str found) name)
               true
               (lower-test-decl-list-defines? rest name))]
           [(AstDecl.DefStructLifetimes found _ _ _ _)
-            (if (string.string-eq (intern-str found) name)
+            (if (string.eq (intern-str found) name)
               true
               (lower-test-decl-list-defines? rest name))]
           [(AstDecl.ComptimeDecl _ inner-box)
@@ -53341,7 +53287,7 @@
         (LowerCAbiSlot.Slot (AstType.F64) 8))]
     (and
       (= (lower-name-env-count names) 2)
-      (string.string-eq (lower-name-env-resolve names "source-b") "logical-b")
+      (string.eq (lower-name-env-resolve names "source-b") "logical-b")
       (lower-string-set-contains? strings "helper-a")
       (lower-string-set-contains? strings "helper-b")
       (= (lower-capture-list-count captures) 2)
@@ -53410,22 +53356,18 @@
       (match (intern-lookup split-source)
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])
-      (string.string-eq (lower-name-cache-resolve cache source) logical)
-      (string.string-eq
-        (lower-name-cache-resolve-source cache "alias.value")
-        logical)
-      (string.string-eq
-        (lower-name-cache-resolve cache split-source)
-        split-logical)
-      (string.string-eq
+      (string.eq (lower-name-cache-resolve cache source) logical)
+      (string.eq (lower-name-cache-resolve-source cache "alias.value") logical)
+      (string.eq (lower-name-cache-resolve cache split-source) split-logical)
+      (string.eq
         (lower-name-cache-resolve-source
           cache
           "name_cache_split_alias_3940.name_cache_split_value_3940")
         split-logical)
-      (string.string-eq
+      (string.eq
         (lower-name-cache-resolve-source cache "alias.missing")
         "alias.missing")
-      (string.string-eq
+      (string.eq
         (lower-name-cache-resolve-source cache "unknown.value")
         "unknown.value"))))
 
@@ -53459,7 +53401,7 @@
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
     (and
-      (string.string-eq (intern-str qualified-id) qualified-name)
+      (string.eq (intern-str qualified-id) qualified-name)
       fallback-primary-missing-before
       missing-before
       (match (lower-type-cache-lookup cache qualified-name)

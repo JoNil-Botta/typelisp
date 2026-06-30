@@ -22,7 +22,6 @@
     `(begin
       (module ,module-name)
       (import (vector ,T) as vec)
-      (import stdlib.array as array_ops)
       (defenum Source
         (:lifetimes source)
         (FromVec (& source ,vec-type-name))
@@ -55,13 +54,13 @@
       (define (live-count-valid? [items : (& source (Array ,T))] [count : i64]) : bool
         (if (< count 0)
           false
-          (<= count (array_ops.array-length items))))
+          (<= count (array-length items))))
       (define (live-count-valid-mut?
         [items : (&mut source (Array ,T))]
         [count : i64]) : bool
         (if (< count 0)
           false
-          (<= count (array_ops.array-length items))))
+          (<= count (array-length items))))
       (define (all-vec [v : (& source ,vec-type-name)]) : (Slice source)
         (Slice (vec.slots v) 0 (vec.len v)))
       (define (from-vec
@@ -113,7 +112,7 @@
         (if (if (>= index 0)
           (< index (len slice))
           false)
-          (array_ops.array-ref
+          (array-ref
             (struct-get slice slots)
             (+ (struct-get slice start) index))
           fallback))
@@ -121,7 +120,7 @@
         (if (if (>= index 0)
           (< index (mut-len slice))
           false)
-          (array_ops.array-set!
+          (array-set!
             (struct-get slice slots)
             (+ (struct-get slice start) index)
             value)
@@ -154,7 +153,7 @@
                 index))
             (let
               [value : ,T
-                (array_ops.array-ref
+                (array-ref
                   (struct-get iter slots)
                   (+ (struct-get iter start) index))]
               (begin
@@ -189,15 +188,15 @@
       (define (to-array [slice : (Slice source)]) : (Array ,T)
         (let
           [n : i64 (len slice)]
-          [out : (Array ,T) (array_ops.make-array ,T n)]
+          [out : (Array ,T) (make-array ,T n)]
           [i : i64 0]
           (begin
             (while (< i n)
               (begin
-                (array_ops.array-set!
+                (array-set!
                   out
                   i
-                  (array_ops.array-ref
+                  (array-ref
                     (struct-get slice slots)
                     (+ (struct-get slice start) i)))
                 (set! i (+ i 1))))
@@ -219,9 +218,9 @@
     (let
       [src : (Array i64) (array.make-array i64 3)]
       (begin
-        (array.array-set! src 0 5)
-        (array.array-set! src 1 6)
-        (array.array-set! src 2 7)
+        (array-set! src 0 5)
+        (array-set! src 1 6)
+        (array-set! src 2 7)
         (let
           [fv : i64v.Vec (i64v.from-array (& src) 3)]
           [full : (i64s.Slice fv) (i64s.all-vec (& fv))]
@@ -269,9 +268,9 @@
     (let
       [src : (Array i64) (array.make-array i64 3)]
       (begin
-        (array.array-set! src 0 5)
-        (array.array-set! src 1 6)
-        (array.array-set! src 2 7)
+        (array-set! src 0 5)
+        (array-set! src 1 6)
+        (array-set! src 2 7)
         (let
           [fv : i64v.Vec (i64v.from-array (& src) 3)]
           [middle : (i64s.Slice fv) (i64s.from-vec (& fv) 1 2)]
@@ -297,14 +296,14 @@
               [slice-vec : i64v.Vec (i64s.to-vec middle)]
               (begin
                 (test.assert-i64-eq
-                  (array.array-length slice-copy)
+                  (array-length slice-copy)
                   2
                   "slice copy array length")
                 (test.assert-i64-eq
-                  (array.array-ref slice-copy 0)
+                  (array-ref slice-copy 0)
                   6
                   "slice copy array first")
-                (array.array-set! slice-copy 0 0)
+                (array-set! slice-copy 0 0)
                 (test.assert-i64-eq
                   (i64s.get middle 0 -1)
                   6
@@ -324,9 +323,9 @@
     (let
       [src : (Array i64) (array.make-array i64 3)]
       (begin
-        (array.array-set! src 0 5)
-        (array.array-set! src 1 6)
-        (array.array-set! src 2 7)
+        (array-set! src 0 5)
+        (array-set! src 1 6)
+        (array-set! src 2 7)
         (let
           [fv : i64v.Vec (i64v.from-array (& src) 3)]
           [middle : (i64s.Slice fv) (i64s.from-vec (& fv) 1 2)]
@@ -381,7 +380,7 @@
               (i64s.mut-is-empty? full-mut)
               "full mutable slice not empty")
             (i64s.set full-mut 1 44)
-            (array.array-set!
+            (array-set!
               (struct-get full-mut slots)
               (struct-get full-mut start)
               33)))

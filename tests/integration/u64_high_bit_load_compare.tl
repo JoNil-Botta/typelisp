@@ -8,8 +8,8 @@
     ;; lint-allow: single-element-array-cell
     [items : (Array u64) (array.make-array u64 1)]
     (begin
-      (array.array-set! items 0 (cast 0x6666666666666667 : u64))
-      (if (>= (array.array-ref items 0) (threshold))
+      (array-set! items 0 (cast 0x6666666666666667 : u64))
+      (if (>= (array-ref items 0) (threshold))
         1
         42))))
 
@@ -17,7 +17,7 @@
   (let
     ;; lint-allow: single-element-array-cell
     [items : (Array u64 1) (array (cast 0x6666666666666667 : u64))]
-    (if (>= (array.array-ref items 0) (threshold))
+    (if (>= (array-ref items 0) (threshold))
       2
       42)))
 
@@ -26,8 +26,8 @@
     ;; lint-allow: single-element-array-cell
     [items : (Array u64) (array.make-array u64 1)]
     (begin
-      (array.array-set! items 0 (threshold))
-      (if (>= (array.array-ref items 0) (threshold))
+      (array-set! items 0 (threshold))
+      (if (>= (array-ref items 0) (threshold))
         42
         3))))
 
@@ -35,7 +35,7 @@
   (let
     ;; lint-allow: single-element-array-cell
     [items : (Array u64 1) (array (threshold))]
-    (if (>= (array.array-ref items 0) (threshold))
+    (if (>= (array-ref items 0) (threshold))
       42
       4)))
 

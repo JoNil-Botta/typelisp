@@ -5,7 +5,6 @@
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")
 (import stdlib.string)
-(import stdlib.str_cat)
 (import sym_i64_env)
 
 (define (compiler-typecheck-prefix-cache-scope
@@ -431,7 +430,7 @@
       result)))
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
-  (string.string-append
+  (string.append
     "(extern (io.print [arg0 : i64]) : unit)
 (extern (io.print-bool [arg0 : bool]) : unit)
 (extern (io.print-float [arg0 : f64]) : unit)
@@ -466,24 +465,24 @@
     src))
 
 (define (compiler-typecheck-with-alloc-string-helper-source [src : String]) : String
-  (string.string-append
+  (string.append
     "(define (string.int->string [value : i64]) : String
   (if (= value 0) \"0\" \"1\"))
 (define (string.substring [text : String] [start : i64] [len : i64]) : String
   text)
-(define (string.string-slice [text : String] [start : i64] [len : i64]) : String
+(define (string.slice [text : String] [start : i64] [len : i64]) : String
   (string.substring text start len))
-(define (string.string-append [left : String] [right : String]) : String
+(define (string.append [left : String] [right : String]) : String
   left)
-(define (string.string-concat [left : String] [right : String]) : String
-  (string.string-append left right))
+(define (string.concat [left : String] [right : String]) : String
+  (string.append left right))
 "
     src))
 
 (define (compiler-typecheck-with-fs-source [src : String]) : String
   (compiler-typecheck-with-io-source
     (compiler-typecheck-with-alloc-string-helper-source
-      (string.string-append
+      (string.append
         "(extern (mkdir-status [arg0 : String]) : i64)
 (extern (remove-file-status [arg0 : String]) : i64)
 (extern (remove-dir-status [arg0 : String]) : i64)
@@ -500,10 +499,10 @@
         src))))
 
 (define (compiler-typecheck-with-cpu-source [src : String]) : String
-  (string.string-append "(import \"stdlib/cpu.tl\")\n" src))
+  (string.append "(import \"stdlib/cpu.tl\")\n" src))
 
 (define (compiler-typecheck-with-env-source [src : String]) : String
-  (string.string-append
+  (string.append
     "(define (var-exists? [name : String]) : bool true)
 (define (var-value [name : String]) : String name)
 (define (path-separator) : String \":\")
@@ -511,7 +510,7 @@
     src))
 
 (define (compiler-typecheck-with-arena-source [src : String]) : String
-  (string.string-append
+  (string.append
     "(module stdlib.arena)
 (extern (tl_arena_make) : i64)
 (extern (tl_arena_make_atomic) : i64)
@@ -553,7 +552,7 @@
 (define (compiler-typecheck-error-ok? [src : String] [want : String]) : bool
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
 (define (compiler-typecheck-error-code-ok?
@@ -564,10 +563,10 @@
     [(ResultCompilerTypecheck.Err diag)
       (match (compiler-diagnostic-code (box-get diag))
         [(CompilerDiagnosticSomeString code)
-          (if (string.string-eq code want-code)
+          (if (string.eq code want-code)
             (match (compiler-diagnostic-category (box-get diag))
               [(CompilerDiagnosticSomeString category)
-                (string.string-eq category want-category)]
+                (string.eq category want-category)]
               [CompilerDiagnosticNoString false])
             false)]
         [CompilerDiagnosticNoString false])]
@@ -594,7 +593,7 @@
   (match (typecheck-compiler-source src)
     [(ResultCompilerTypecheck.Err diag)
       (and
-        (string.string-eq (compiler-diagnostic-message (box-get diag)) want)
+        (string.eq (compiler-diagnostic-message (box-get diag)) want)
         (= (compiler-diagnostic-line (box-get diag)) want-line)
         (= (compiler-diagnostic-col (box-get diag)) want-col)
         (=
@@ -609,7 +608,7 @@
   [want : String]) : bool
   (match (typecheck-compiler-program program)
     [(ResultCompilerTypecheck.Err diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
 ;; #2357: with the growing ty-node pool a compile that starts with the pool at
@@ -698,10 +697,10 @@
       (begin
         (tc-prefix-snapshot-cache-stats-reset!)
         (and
-          (string.string-eq
+          (string.eq
             line
             "typecheck-prefix-cache|smoke|hits=1|misses=1|stores=1|lookups=2|hit-rate-per-mille=500")
-          (string.string-eq
+          (string.eq
             (tc-prefix-snapshot-cache-stats-line "reset")
             "typecheck-prefix-cache|reset|hits=0|misses=0|stores=0|lookups=0|hit-rate-per-mille=0"))))))
 
@@ -829,8 +828,8 @@
     (process-id)
     (current-dir-status)
     (__tl_string_length (current-dir))
-    (string.string-append (read-dir s)
-      (string.string-append (string.substring s 0 (__tl_string_length s))
+    (string.append (read-dir s)
+      (string.append (string.substring s 0 (__tl_string_length s))
                     (string.int->string (__tl_string_to_int \"7\"))))))"))
 
 (define (compiler-typecheck-stdio-source) : String
@@ -1211,11 +1210,7 @@
   [generator : String]
   [item : String]
   [arg : String]) : String
-  (gen-full-key
-    ""
-    generator
-    item
-    (string.string-append (spec-string-key arg) "_none")))
+  (gen-full-key "" generator item (string.append (spec-string-key arg) "_none")))
 
 (define (compiler-typecheck-generated-notes-ok?
   [notes : CompilerDiagnosticNoteList]
@@ -1224,12 +1219,12 @@
   (match notes
     [(CompilerDiagnosticNoteCons identity-note rest)
       (and
-        (string.string-eq
+        (string.eq
           identity-note
-          (string.string-append "generated identity: " want-key))
+          (string.append "generated identity: " want-key))
         (match (box-get rest)
           [(CompilerDiagnosticNoteCons context-note _)
-            (string.string-eq context-note want-context)]
+            (string.eq context-note want-context)]
           [(CompilerDiagnosticNoteNil) false]))]
     [(CompilerDiagnosticNoteNil) false]))
 
@@ -1240,11 +1235,11 @@
     [(ResultCompilerTypecheck.Err diag)
       (let
         [message-ok : bool
-          (string.string-eq
+          (string.eq
             (compiler-diagnostic-message (box-get diag))
             "typecheck: return type mismatch")]
         [path-ok : bool
-          (string.string-eq (compiler-diagnostic-path (box-get diag)) "")]
+          (string.eq (compiler-diagnostic-path (box-get diag)) "")]
         [line-ok : bool (= (compiler-diagnostic-line (box-get diag)) 2)]
         [col-ok : bool (= (compiler-diagnostic-col (box-get diag)) 33)]
         [notes-ok : bool
@@ -1275,10 +1270,10 @@
           AstFieldDefList.Nil))]
     [diag : CompilerDiagnostic (tc-decl-diag decl "typecheck: policy fallback")]
     [message-ok : bool
-      (string.string-eq
+      (string.eq
         (compiler-diagnostic-message diag)
         "typecheck: policy fallback")]
-    [path-ok : bool (string.string-eq (compiler-diagnostic-path diag) "")]
+    [path-ok : bool (string.eq (compiler-diagnostic-path diag) "")]
     [line-ok : bool (= (compiler-diagnostic-line diag) 1)]
     [col-ok : bool (= (compiler-diagnostic-col diag) 1)]
     [notes-ok : bool
@@ -1768,8 +1763,7 @@
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
                     [(ResultTcReprCLayout.Ok _) false]
-                    [(ResultTcReprCLayout.Err message)
-                      (string.string-eq message want)]))]
+                    [(ResultTcReprCLayout.Err message) (string.eq message want)]))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])]
       [(ResultAstProgram.Err _) false])))
@@ -1896,7 +1890,7 @@
   [name : String]
   [want : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
-    [(ResultTcUnit.Err message) (string.string-eq message want)]
+    [(ResultTcUnit.Err message) (string.eq message want)]
     [(ResultTcUnit.Ok) false]))
 
 (define (compiler-typecheck-inline-layout-query-source) : String
@@ -2278,7 +2272,7 @@
     [ok : bool true]
     (begin
       (if (compiler-typecheck-error-ok?
-        (str_cat.str-cat
+        (string.concat3
           (compiler-typecheck-inline-unboxed-list-source)
           "\n"
           "(define (main [x : BadList]) : i64 0)")
@@ -2378,9 +2372,9 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-generated-decl-duplicate-visible-source)
-        (string.string-append
+        (string.append
           "symbols: duplicate type declaration Point (generated identity: "
-          (string.string-append
+          (string.append
             (compiler-typecheck-generated-key "point-family" "Point" "right")
             ")")))
         unit
@@ -2831,7 +2825,7 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string.string-eq (tc-type-render (ast-ty-box (AstType.I64))) "(Box i64)")
+    (string.eq (tc-type-render (ast-ty-box (AstType.I64))) "(Box i64)")
     (tc-type-eq
       (ast-ty-box (ast-ty-region "r" (AstType.I64)))
       (ast-ty-box (AstType.I64)))
@@ -3508,8 +3502,8 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
-    (string.string-eq (tc-type-render (ast-ty-ptr (AstType.I64))) "(Ptr i64)")
-    (string.string-eq
+    (string.eq (tc-type-render (ast-ty-ptr (AstType.I64))) "(Ptr i64)")
+    (string.eq
       (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstType.U8))))
       "(MutPtr (Ptr u8))")
     (tc-type-eq (ast-ty-ptr (AstType.I64)) (ast-ty-ptr (AstType.I64)))
@@ -4160,7 +4154,7 @@
   (let
     [owner : Arena (arena-make-atomic)]
     [channel : ChannelString (ChannelString 0)]
-    [message (in-arena owner (string.string-append \"atom\" \"ic\"))]
+    [message (in-arena owner (string.append \"atom\" \"ic\"))]
     (match (channel-string-send channel message)
       [(ChannelStringSendOk) 42]
       [(ChannelStringSendErr _) 2])))"))
@@ -4179,7 +4173,7 @@
   (let
     [owner : Arena (arena-make-atomic)]
     [channel : ChannelString (ChannelString 0)]
-    [message (in-arena owner (string.string-append \"atom\" \"ic\"))]
+    [message (in-arena owner (string.append \"atom\" \"ic\"))]
     [sent : ChannelStringSendResult (channel-string-send channel message)]
     (match sent
       [(ChannelStringSendOk) 42]
@@ -4199,7 +4193,7 @@
   (let
     [owner : Arena (arena-make)]
     [channel : ChannelString (ChannelString 0)]
-    [message (in-arena owner (string.string-append \"ordinary\" \"arena\"))]
+    [message (in-arena owner (string.append \"ordinary\" \"arena\"))]
     [sent : ChannelStringSendResult (channel-string-send channel message)]
     42))"))
 
@@ -4228,28 +4222,26 @@
 (define (compiler-typecheck-reference-render-ok?) : bool
   (let
     [string-ref-render-ok : bool
-      (string.string-eq
+      (string.eq
         (tc-type-render (ast-ty-ref "r" (AstType.String)))
         "(& r String)")]
     [str-ref-render-ok : bool
-      (string.string-eq
-        (tc-type-render (ast-ty-ref "r" (AstType.Str)))
-        "(& r str)")]
+      (string.eq (tc-type-render (ast-ty-ref "r" (AstType.Str))) "(& r str)")]
     [bytes-ref-render-ok : bool
-      (string.string-eq
+      (string.eq
         (tc-type-render (ast-ty-ref "r" (AstType.Bytes)))
         "(& r bytes)")]
     [bytes-mut-ref-render-ok : bool
-      (string.string-eq
+      (string.eq
         (tc-type-render (ast-ty-mut-ref "r" (AstType.Bytes)))
         "(&mut r bytes)")]
     [mut-ref-render-ok : bool
-      (string.string-eq
+      (string.eq
         (tc-type-render
           (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstType.I64))))
         "(&mut phase (Array i64))")]
     [nominal-lifetime-render-ok : bool
-      (string.string-eq
+      (string.eq
         (tc-type-render
           (ast-ty-struct-args
             (intern "RefBox")
@@ -4675,7 +4667,7 @@
     [(ResultCompilerTypecheck.Err diag)
       (if (= (compiler-diagnostic-line (box-get diag)) 2)
         (if (> (compiler-diagnostic-col (box-get diag)) 0)
-          (string.string-eq
+          (string.eq
             (compiler-diagnostic-message (box-get diag))
             "typecheck: unbound name missing")
           false)
@@ -4692,7 +4684,7 @@
       (compiler-typecheck-call-arity-located-source))
       [(ResultCompilerTypecheck.Err diag)
         (and
-          (string.string-eq
+          (string.eq
             (compiler-diagnostic-message (box-get diag))
             "typecheck: call arity mismatch: need3 expected 3 arguments, got 2 arguments")
           (= (compiler-diagnostic-line (box-get diag)) 9)
@@ -5696,8 +5688,8 @@
 (define (compiler-typecheck-string-helper-source-defined-source) : String
   (compiler-typecheck-with-alloc-string-helper-source
     "(define (f [s : String]) : String
-  (string.string-concat
-    (string.string-append (string.substring s 0 1) (string.string-slice s 1 1))
+  (string.concat
+    (string.append (string.substring s 0 1) (string.slice s 1 1))
     (string.int->string (__tl_string_to_int \"7\"))))"))
 
 (define (compiler-typecheck-string-builtin-borrowed-source) : String
@@ -5712,23 +5704,23 @@
   "(define (main) : String (string.int->string 1))")
 
 (define (compiler-typecheck-string-builtin-no-default-append-source) : String
-  "(define (main) : String (string.string-append \"a\" \"b\"))")
+  "(define (main) : String (string.append \"a\" \"b\"))")
 
 (define (compiler-typecheck-string-builtin-no-default-substring-source) : String
   "(define (main) : String (string.substring \"abc\" 0 1))")
 
 (define (compiler-typecheck-string-builtin-no-default-slice-source) : String
-  "(define (main) : String (string.string-slice \"abc\" 0 1))")
+  "(define (main) : String (string.slice \"abc\" 0 1))")
 
 (define (compiler-typecheck-string-builtin-no-default-concat-source) : String
-  "(define (main) : String (string.string-concat \"a\" \"b\"))")
+  "(define (main) : String (string.concat \"a\" \"b\"))")
 
 (define (compiler-typecheck-string-builtin-borrowed-alloc-source) : String
   "(define (main [left : String] [right : String]) : String
   (let
-    [joined : String (string.string-append (& left) (& right))]
+    [joined : String (string.append (& left) (& right))]
     [slice : String (string.substring (& joined) 0 1)]
-    (string.string-concat (& slice) (string.string-slice (& right) 0 1))))")
+    (string.concat (& slice) (string.slice (& right) 0 1))))")
 
 (define (compiler-typecheck-string-builtin-bad-arg-source) : String
   "(define (main) : i64 (__tl_string_length 5))")
@@ -5763,7 +5755,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-append-source)
-        "typecheck: unknown qualified name string.string-append; import the module or use a visible dotted module alias")
+        "typecheck: unknown qualified name string.append; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -5773,17 +5765,17 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-slice-source)
-        "typecheck: unknown qualified name string.string-slice; import the module or use a visible dotted module alias")
+        "typecheck: unknown qualified name string.slice; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-no-default-concat-source)
-        "typecheck: unknown qualified name string.string-concat; import the module or use a visible dotted module alias")
+        "typecheck: unknown qualified name string.concat; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-string-builtin-borrowed-alloc-source)
-        "typecheck: unknown qualified name string.string-append; import the module or use a visible dotted module alias")
+        "typecheck: unknown qualified name string.append; import the module or use a visible dotted module alias")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6147,9 +6139,9 @@
 ;; stay rejected, and type-valued comptime parameters specialize through
 ;; reflection when called with a type literal.
 (define (compiler-typecheck-unknown-type-policy-message [name : String]) : String
-  (string.string-append
+  (string.append
     "typecheck: unknown type "
-    (string.string-append
+    (string.append
       name
       "; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead (#893/#913/#970/#902)")))
 
@@ -6221,7 +6213,7 @@
   (ExprInt i64))")
 
 (define (compiler-typecheck-stdlib-comptime-bad-expr-list-source) : String
-  (str_cat.str-cat
+  (string.concat3
     "(module stdlib.comptime)\n"
     (compiler-typecheck-stdlib-comptime-expr-decl-source)
     "\n(defenum ExprList
@@ -7524,7 +7516,7 @@
 ")
 
 (define (compiler-typecheck-macro-prelude-and-or-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [x : bool] [y : bool]) : i64
   (if (and x y)
@@ -7532,17 +7524,17 @@
     (if (or x y) 7 0)))"))
 
 (define (compiler-typecheck-macro-prelude-and-bad-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (and a 1))"))
 
 (define (compiler-typecheck-macro-prelude-or-bad-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main [a : bool]) : bool (or 1 a))"))
 
 (define (compiler-typecheck-macro-forward-prelude-shadow-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-macro-prelude-module-source)
     "(define (main) : i64 (and 1 41))
 (defmacro (and [lhs : i64] [rhs : i64]) : i64
@@ -8064,7 +8056,7 @@
 ")
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-one-shot-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-owner-payload-one-shot [m : MaybeHandle]) : unit
   (match m
@@ -8073,7 +8065,7 @@
     [(None) unit]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-owner-payload-repeat-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (bad-cleanup-enum-owner-payload-repeat [m : MaybeHandle]) : unit
   (match m
@@ -8082,7 +8074,7 @@
     [(None) unit]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-payload-copyable-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-copyable [m : MaybeHandle]) : i64
   (match m
@@ -8091,7 +8083,7 @@
     [(None) 0]))"))
 
 (define (compiler-typecheck-move-cleanup-enum-payload-shadow-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-move-cleanup-enum-payload-prefix)
     "(define (cleanup-enum-payload-shadow
   [h : FileHandle]
@@ -8749,7 +8741,7 @@
 ")
 
 (define (compiler-typecheck-live-borrow-holder-prefix) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(defstruct Holder
   (:cleanup cleanup-holder)
@@ -8768,7 +8760,7 @@
     n))")
 
 (define (compiler-typecheck-live-borrow-owner-post-scope-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (main [h : FileHandle]) : unit
   (begin
@@ -8784,7 +8776,7 @@
         n))))")
 
 (define (compiler-typecheck-live-borrow-whole-move-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [h : FileHandle]) : unit
   (let [r : (& h FileHandle) (& h)]
@@ -8801,7 +8793,7 @@
       (read-i64-ref r))))")
 
 (define (compiler-typecheck-live-borrow-aggregate-root-move-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p FileHandle) (& (struct-get p handle))]
@@ -8810,7 +8802,7 @@
       (read-handle-ref r))))"))
 
 (define (compiler-typecheck-live-borrow-aggregate-child-move-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-live-borrow-holder-prefix)
     "(define (bad [p : Holder]) : unit
   (let [r : (& p Holder) (& p)]
@@ -8861,7 +8853,7 @@
         (read-i64-ref borrowed)))))")
 
 (define (compiler-typecheck-live-borrow-resource-conflict-source) : String
-  (string.string-append
+  (string.append
     (compiler-typecheck-live-borrow-owner-prefix)
     "(define (bad [fd : i64]) : i64
   (with ([h (FileHandle fd) cleanup-file-handle])
@@ -9070,7 +9062,7 @@
     [origin-whole-id : i64
       (match (tc-moved-conflict origin-whole "origin-root")
         [(TcSomeMoveConflict key origin-id)
-          (if (string.string-eq key "origin-root")
+          (if (string.eq key "origin-root")
             origin-id
             (tc-moved-no-origin-id))]
         [TcNoMoveConflict (tc-moved-no-origin-id)])]
@@ -9093,7 +9085,7 @@
       (match (tc-moved-path-conflict partial "items.#array.0")
         [(TcSomeMoveConflict key origin-id)
           (and
-            (string.string-eq key (tc-moved-path-key "items.#array.0"))
+            (string.eq key (tc-moved-path-key "items.#array.0"))
             (not (= origin-id (tc-moved-no-origin-id))))]
         [TcNoMoveConflict false])]
     [partial-parent-conflict : bool
@@ -9625,9 +9617,9 @@
             [main-path : String "src/main.tl"]
             [assets-path : String "src/assets.tl"]
             (and
-              (string.string-contains (& message) (& duplicate-needle))
-              (string.string-contains (& message) (& main-path))
-              (string.string-contains (& message) (& assets-path))))]
+              (string.contains (& message) (& duplicate-needle))
+              (string.contains (& message) (& main-path))
+              (string.contains (& message) (& assets-path))))]
         [(ResultCompilerTypecheck.Ok _) false])]
     [(ResultAstProgram.Err _) false]))
 

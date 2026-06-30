@@ -8,7 +8,7 @@
     (let
       [prefix : String "scratch:"]
       [seed-text : String (string.int->string seed)]
-      [text : String (string.string-append (& prefix) (& seed-text))]
+      [text : String (string.append (& prefix) (& seed-text))]
       (string-length (& text)))))
 
 (define (scratch-clone-message [scratch : arena.Arena] [seed : i64]) : String
@@ -17,18 +17,18 @@
     (let
       [prefix : String "kept:"]
       [seed-text : String (string.int->string seed)]
-      (string.string-append (& prefix) (& seed-text)))))
+      (string.append (& prefix) (& seed-text)))))
 
 (define (scratch-one-shot-message [seed : i64]) : String
   (with-scratch
     (let
       [prefix : String "oneshot:"]
       [seed-text : String (string.int->string seed)]
-      (string.string-append (& prefix) (& seed-text)))))
+      (string.append (& prefix) (& seed-text)))))
 
 (define (main) : i64
   (let
-    [scratch : arena.Arena (arena.arena-make)]
+    [scratch : arena.Arena (arena.make)]
     [score : i64 (scratch-temporary-score 1234)]
     [kept : String (scratch-clone-message scratch 7)]
     [noise : String (scratch-clone-message scratch 99)]
@@ -38,13 +38,11 @@
     [expected-one-shot : String "oneshot:11"]
     (begin
       (test.assert-i64-eq score 12 "scratch-only score")
+      (test.assert-true (string.eq kept expected-kept) "clone-out kept result")
       (test.assert-true
-        (string.string-eq kept expected-kept)
-        "clone-out kept result")
-      (test.assert-true
-        (string.string-eq noise expected-noise)
+        (string.eq noise expected-noise)
         "clone-out reused scratch")
       (test.assert-true
-        (string.string-eq one-shot expected-one-shot)
+        (string.eq one-shot expected-one-shot)
         "one-shot clone-out result")
       42)))

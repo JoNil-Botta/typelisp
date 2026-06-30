@@ -8,13 +8,11 @@
     (let
       [items : (Array i64) (array.make-array i64 1048576)]
       (begin
-        (array.array-set! items 0 i)
-        (array.array-set! items 1 (+ i 1))
-        (array.array-set! items 2 (+ i 2))
-        (array.array-set! items 3 (+ i 3))
-        (arena-atomic-worker-loop
-          (+ i 1)
-          (+ sum (array.array-ref items (% i 4))))))))
+        (array-set! items 0 i)
+        (array-set! items 1 (+ i 1))
+        (array-set! items 2 (+ i 2))
+        (array-set! items 3 (+ i 3))
+        (arena-atomic-worker-loop (+ i 1) (+ sum (array-ref items (% i 4))))))))
 
 (define (arena-atomic-worker [owner : i64]) : i64
   (let
@@ -64,9 +62,9 @@
 
 (define (main) : i64
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
-    [result : i64 (arena-atomic-run (arena.arena-raw-handle owner))]
+    [owner : arena.Arena (arena.make-atomic)]
+    [result : i64 (arena-atomic-run (arena.raw-handle owner))]
     (begin
       (unsafe
-        (arena.arena-destroy owner))
+        (arena.destroy owner))
       result)))

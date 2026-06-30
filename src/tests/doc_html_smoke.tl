@@ -1,6 +1,6 @@
 ;; doc_html_smoke.tl - Runnable golden smoke for doc_html.tl.
 (import "../doc_html.tl")
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 
 (define (doc-html-smoke-source) : String
   ";# Module docs with `code`, [links], <tag>, & amp.

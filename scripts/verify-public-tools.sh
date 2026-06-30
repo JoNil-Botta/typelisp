@@ -914,6 +914,7 @@ EOF
     assert_contains "$target_dir/main.s" '    sub $32, %rsp'
     runtime_write_body="$(awk '
       $0 == "_tl_stdlib_runtime_runtime_os_write:" ||
+      $0 == "_tl_stdlib_runtime_stdlib_runtime_os_write:" ||
       $0 == "_tl_stdlib_runtime_stdlib_runtime_runtime_os_write:" {
         found = 1
         next
@@ -1016,14 +1017,14 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
 fi
 
 cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (define (main) : String
   (with-arena outer
     (with-arena inner
       (let
         [s : String "  scoped  "]
-        (string-trim (& s))))))
+        (string.trim (& s))))))
 EOF
 run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
@@ -1035,12 +1036,12 @@ if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 0 ]; then
 fi
 
 cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
-(import "stdlib/text_buf.tl")
+(import stdlib.text_buf)
 
 (define (main) : i64
-  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+  (let ([buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")])
     (with-arena inner
-      (string-length (text-buf-render buf)))))
+      (string-length (text_buf.render buf)))))
 EOF
 run_cmd check-text-buf-region-scalar "$COMPILER" check "$CLI_MATRIX/text-buf-region-scalar.tl" --stdlib-root "$ROOT/stdlib"
 assert_success
@@ -1048,13 +1049,13 @@ assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
 cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
-(import "stdlib/text_buf.tl")
+(import stdlib.text_buf)
 
 (define (main) : String
-  (let ([buf : TextBuf (text-buf-append (text-buf-empty) "scoped")])
+  (let ([buf : text_buf.TextBuf (text_buf.append (text_buf.empty) "scoped")])
     (with-arena outer
       (with-arena inner
-        (text-buf-render buf)))))
+        (text_buf.render buf)))))
 EOF
 run_cmd check-text-buf-region-escape "$COMPILER" check "$CLI_MATRIX/text-buf-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
@@ -1400,11 +1401,11 @@ EOF
 
     CTOR_SOURCE="$SELFHOST_PLANNER_DIR/with space/ctor file.tl"
     cat > "$CTOR_SOURCE" <<'EOF'
-(import "stdlib/string.tl")
+(import stdlib.string)
 
 (extern (ffi_ctor_value) : i64)
 (define (main) : i64
-  (if (string-eq (int->string (ffi_ctor_value)) "42")
+  (if (string.eq (string.int->string (ffi_ctor_value)) "42")
     (ffi_ctor_value)
     1))
 EOF
@@ -1526,7 +1527,7 @@ EOF
 (define (main) : i64
   (begin
     (fixture-stdout-write (fixture-arg 1))
-    (if (string.string-eq (fixture-arg 2) "colon:arg") 13 2)))
+    (if (string.eq (fixture-arg 2) "colon:arg") 13 2)))
 EOF
     fi
     if [ "$HOST_OS" = windows ]; then
@@ -2746,6 +2747,7 @@ else
     assert_contains "$PKG_ASM" "_tl_math_src_lib_add_one"
     assert_contains_any "$PKG_ASM" \
         "_tl_stdlib_runtime_runtime_os_write" \
+        "_tl_stdlib_runtime_stdlib_runtime_os_write" \
         "_tl_stdlib_runtime_stdlib_runtime_runtime_os_write"
     assert_not_contains "$PKG_ASM" "_tl_public_tool_pkg_vendor_math"
 fi

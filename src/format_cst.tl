@@ -377,11 +377,9 @@
     (and
       (= (format-token-tag-count stream (fmt-tag-int)) 2)
       (= (format-token-tag (format-token-at stream 1)) (fmt-tag-int))
-      (string.string-eq (format-token-text (format-token-at stream 1)) "0x2a")
+      (string.eq (format-token-text (format-token-at stream 1)) "0x2a")
       (= (format-token-tag (format-token-at stream 2)) (fmt-tag-int))
-      (string.string-eq
-        (format-token-text (format-token-at stream 2))
-        "-0b101010")
+      (string.eq (format-token-text (format-token-at stream 2)) "-0b101010")
       (= (format-token-tag (format-token-at stream 4)) (fmt-tag-end)))))
 
 (define (format-cst-apostrophe-char-ok?) : bool
@@ -396,7 +394,7 @@
     [(ResultFormatCst.Ok _) false]
     [(ResultFormatCst.Err err)
       (and
-        (string.string-eq
+        (string.eq
           (format-source-error-message err)
           "format cst: unexpected closing delimiter")
         (format-source-span-eq? (format-source-error-span err) 2 3 2 3))]))
@@ -406,13 +404,13 @@
     (match (parse-format-source-result "#x'")
       [(ResultFormatCst.Ok _) false]
       [(ResultFormatCst.Err err)
-        (string.string-eq
+        (string.eq
           (format-source-error-message err)
           "format lexer: unexpected character")])
     (match (parse-format-source-result "#\\space'")
       [(ResultFormatCst.Ok _) false]
       [(ResultFormatCst.Err err)
-        (string.string-eq
+        (string.eq
           (format-source-error-message err)
           "format lexer: unexpected character")])))
 

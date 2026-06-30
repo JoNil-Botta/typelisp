@@ -1,12 +1,12 @@
-(import "stdlib/arena.tl")
-(import "stdlib/string.tl")
+(import stdlib.arena)
+(import stdlib.string)
 
 (define (main) : i64
   (let
-    [owner : Arena (arena-make)]
-    [text : String (in-arena owner (string-append "owned" "-text"))]
+    [owner : arena.Arena (arena.make)]
+    [text : String (in-arena owner (string.append "owned" "-text"))]
     (begin
-      (string-length text)
-      (arena-destroy-safe! owner)
-      (in-arena owner (string-append "after" "-destroy"))
+      (length text)
+      (arena.destroy-safe! owner)
+      (in-arena owner (string.append "after" "-destroy"))
       42)))

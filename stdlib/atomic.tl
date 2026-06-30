@@ -3,7 +3,7 @@
 ;# This module exposes the first safe overlap-tolerant SPMD write surface:
 ;# atomic operations on one dynamic-array element. Helpers are limited to `i32`
 ;# and `i64`, have sequentially consistent ordering, and synchronize only the
-;# exact addressed element. Ordinary `array.array-set!` remains non-atomic.
+;# exact addressed element. Ordinary `array-set!` remains non-atomic.
 ;#
 ;# Usage: `(import stdlib.atomic)`
 ;#
@@ -14,7 +14,7 @@
 ;# (define (add-counts [ix : (Array i64)] [out : (Array i64)] [n : i64]) : unit
 ;#   (foreach
 ;#     ([i : i64 0 n])
-;#     (atomic.atomic-i64-add! out (array.array-ref ix i) 1)))
+;#     (atomic.atomic-i64-add! out (array-ref ix i) 1)))
 ;# ```
 (module stdlib.atomic)
 

@@ -479,7 +479,7 @@
   (match set
     [(CompilerLiveLabelSet.Nil) false]
     [(CompilerLiveLabelSet.Cons head rest)
-      (if (string.string-eq head value)
+      (if (string.eq head value)
         true
         (compiler-live-label-set-contains? (box-get rest) value))]))
 
@@ -866,7 +866,7 @@
     [(CompilerLiveBlockList.Cons block rest)
       (match block
         [(CompilerLiveBlock.Block block-label _ _ _ _ _ _)
-          (if (string.string-eq block-label label)
+          (if (string.eq block-label label)
             (CompilerLiveMaybeBlock.Some block)
             (compiler-live-find-block (box-get rest) label))])]))
 

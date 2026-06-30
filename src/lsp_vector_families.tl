@@ -41,7 +41,7 @@
   (if (if (>= index 0)
     (< index (struct-get decls len))
     false)
-    (array_ops.array-ref (struct-get decls slots) index)
+    (array_ops.ref (struct-get decls slots) index)
     fallback))
 
 (define (lsp-decl-list-set!
@@ -51,7 +51,7 @@
   (if (if (>= index 0)
     (< index (struct-get decls len))
     false)
-    (array_ops.array-set! (struct-get decls slots) index value)
+    (array-set! (struct-get decls slots) index value)
     unit))
 
 (define (lsp-decl-list-push
@@ -59,7 +59,7 @@
   [value : LspDeclEntry]) : unit
   (let
     [len : i64 (struct-get decls len)]
-    [capacity : i64 (array_ops.array-length (struct-get decls slots))]
+    [capacity : i64 (array_ops.length (struct-get decls slots))]
     (begin
       (if (< len capacity)
         unit
@@ -79,7 +79,7 @@
       (let
         [index : i64 (struct-get decls len)]
         (begin
-          (array_ops.array-set! (struct-get decls slots) index value)
+          (array-set! (struct-get decls slots) index value)
           (set! (struct-get decls len) (+ index 1)))))))
 
 (defstruct LspDocument
@@ -116,7 +116,7 @@
   (if (if (>= index 0)
     (< index (struct-get docs len))
     false)
-    (array_ops.array-ref (struct-get docs slots) index)
+    (array_ops.ref (struct-get docs slots) index)
     fallback))
 
 (define (lsp-documents-set!
@@ -126,7 +126,7 @@
   (if (if (>= index 0)
     (< index (struct-get docs len))
     false)
-    (array_ops.array-set! (struct-get docs slots) index value)
+    (array-set! (struct-get docs slots) index value)
     unit))
 
 (define (lsp-documents-push
@@ -134,7 +134,7 @@
   [value : LspDocument]) : unit
   (let
     [len : i64 (struct-get docs len)]
-    [capacity : i64 (array_ops.array-length (struct-get docs slots))]
+    [capacity : i64 (array_ops.length (struct-get docs slots))]
     (begin
       (if (< len capacity)
         unit
@@ -154,7 +154,7 @@
       (let
         [index : i64 (struct-get docs len)]
         (begin
-          (array_ops.array-set! (struct-get docs slots) index value)
+          (array-set! (struct-get docs slots) index value)
           (set! (struct-get docs len) (+ index 1)))))))
 
 (define (lsp-documents-drop-last! [docs : (&mut docs LspDocuments)]) : unit

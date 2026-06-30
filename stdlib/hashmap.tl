@@ -54,15 +54,15 @@
 (import stdlib.string)
 
 ;: Stable descriptor identity for generated `String`-key hashmap families.
-(define (hashmap-string-key-descriptor-key) : String
+(define (string-key-descriptor-key) : String
   "stdlib/hashmap/string-key-v1")
 
 ;: Stable descriptor identity for generated `i64`-key hashmap families.
-(define (hashmap-i64-key-descriptor-key) : String
+(define (i64-key-descriptor-key) : String
   "stdlib/hashmap/i64-key-v1")
 
 ;: Stable descriptor identity for generated nominal aggregate-key hashmap families.
-(define (hashmap-aggregate-key-descriptor-key) : String
+(define (aggregate-key-descriptor-key) : String
   "stdlib/hashmap/aggregate-key-v1")
 
 ;: Emit the module-shaped hashmap surface for supported key/value pairs.
@@ -115,8 +115,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array_ops.array-length
-                  (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -289,8 +288,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array_ops.array-length
-                  (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -605,8 +603,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array_ops.array-length
-                  (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -749,8 +746,7 @@
               (define (len [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) len))
               (define (capacity [map : (& map Map)]) : i64
-                (array_ops.array-length
-                  (struct-get (struct-get map inner) slots)))
+                (array_ops.length (struct-get (struct-get map inner) slots)))
               (define (deleted [map : (& map Map)]) : i64
                 (struct-get (struct-get map inner) deleted))
               (define (inner-mut [map : (&mut map Map)]) : (&mut
@@ -1449,7 +1445,7 @@
 
 ;: Number of slots in the backing table.
 (define (string-i64-map-capacity [map : StringI64Map]) : i64
-  (array.array-length (struct-get map slots)))
+  (array-length (struct-get map slots)))
 
 ;: Number of tombstone (deleted) slots awaiting reuse. Live entries plus
 ;: tombstones never exceed the capacity; this count feeds resize thresholds
@@ -1467,7 +1463,7 @@
     (begin
       (while (< i count)
         (begin
-          (array.array-set! slots i (StringI64MapEmpty))
+          (array-set! slots i (StringI64MapEmpty))
           (set! i (+ i 1))))
       unit)))
 
@@ -1496,7 +1492,7 @@
 (define (string-i64-map-get-borrowed [map : StringI64Map] [key : (& key str)]) : StringI64MapLookup
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       (StringI64MapMissing)
       (let
@@ -1543,7 +1539,7 @@
   [map : (& map StringI64Map)]
   [key : (& key str)]) : StringI64MapLookup
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     (if (<= capacity 0)
       (StringI64MapMissing)
       (let
@@ -1553,7 +1549,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref (struct-get map slots) cursor)
+            (match (array-ref (struct-get map slots) cursor)
               [(StringI64MapEmpty) (return (StringI64MapMissing))]
               [(StringI64MapTombstone)
                 (let
@@ -1588,7 +1584,7 @@
   (let
     [slots : (&mut map (Array StringI64MapSlot))
       (stdlib.hashmap.string-i64-map-slots-mut map)]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       (StringI64MapMissing)
       (let
@@ -1598,7 +1594,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref slots cursor)
+            (match (array-ref slots cursor)
               [(StringI64MapEmpty) (return (StringI64MapMissing))]
               [(StringI64MapTombstone)
                 (let
@@ -1648,7 +1644,7 @@
   [map : (& map StringI64Map)]
   [key : (& key str)]) : (StringI64MapBorrowedValueLookup map)
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     (if (<= capacity 0)
       (stdlib.hashmap.string-i64-map-borrowed-value-missing map)
       (let
@@ -1658,7 +1654,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref (struct-get map slots) cursor)
+            (match (array-ref (struct-get map slots) cursor)
               [(StringI64MapEmpty)
                 (return
                   (stdlib.hashmap.string-i64-map-borrowed-value-missing map))]
@@ -1676,7 +1672,7 @@
                 (if (if (= slot-hash hash)
                   (hash_mod.key-string-eq? (& slot-key) key)
                   false)
-                  (match (& (array.array-ref (struct-get map slots) cursor))
+                  (match (& (array-ref (struct-get map slots) cursor))
                     [(StringI64MapOccupied _ value _)
                       (return
                         (stdlib.hashmap.string-i64-map-borrowed-value-found
@@ -1706,7 +1702,7 @@
   [key : (& key str)]) : bool
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       false
       (let
@@ -1765,7 +1761,7 @@
   [value : i64]) : StringI64MapInsertResult
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     [hash : i64 (hash_mod.string-key (& key))]
     (if (<= capacity 0)
       (StringI64MapInsertFull map)
@@ -1786,7 +1782,7 @@
                   [reused-tombstone : bool (>= first 0)]
                   [deleted : i64 (stdlib.hashmap.string-i64-map-deleted map)]
                   (begin
-                    (array.array-set!
+                    (array-set!
                       slots
                       index
                       (StringI64MapOccupied key value hash))
@@ -1815,7 +1811,7 @@
                   (hash_mod.key-string-eq? (& slot-key) (& key))
                   false)
                   (begin
-                    (array.array-set!
+                    (array-set!
                       slots
                       cursor
                       (StringI64MapOccupied key value hash))
@@ -1833,10 +1829,7 @@
             (let
               [deleted : i64 (stdlib.hashmap.string-i64-map-deleted map)]
               (begin
-                (array.array-set!
-                  slots
-                  first
-                  (StringI64MapOccupied key value hash))
+                (array-set! slots first (StringI64MapOccupied key value hash))
                 (set!
                   (struct-get map len)
                   (+ (stdlib.hashmap.string-i64-map-len map) 1))
@@ -1855,7 +1848,7 @@
   [key : (& key str)]) : StringI64MapRemoveResult
   (let
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       (StringI64MapRemoveMissing map)
       (let
@@ -1882,7 +1875,7 @@
                   (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (begin
-                    (array.array-set! slots cursor (StringI64MapTombstone))
+                    (array-set! slots cursor (StringI64MapTombstone))
                     (set!
                       (struct-get map len)
                       (- (stdlib.hashmap.string-i64-map-len map) 1))
@@ -1920,10 +1913,10 @@
       key
       hash)
       [(StringI64MapProbeFound index)
-        (match (array.array-ref slots index)
+        (match (array-ref slots index)
           [(StringI64MapOccupied slot-key _ slot-hash)
             (begin
-              (array.array-set!
+              (array-set!
                 slots
                 index
                 (StringI64MapOccupied slot-key value slot-hash))
@@ -1947,7 +1940,7 @@
   (let
     [slots : (&mut map (Array StringI64MapSlot))
       (stdlib.hashmap.string-i64-map-slots-mut map)]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       false
       (let
@@ -1957,7 +1950,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref slots cursor)
+            (match (array-ref slots cursor)
               [(StringI64MapEmpty) (return false)]
               [(StringI64MapTombstone)
                 (let
@@ -1974,7 +1967,7 @@
                   (hash_mod.key-string-eq? (& slot-key) key)
                   false)
                   (begin
-                    (array.array-set! slots cursor (StringI64MapTombstone))
+                    (array-set! slots cursor (StringI64MapTombstone))
                     (set! (struct-get map len) (- (struct-get map len) 1))
                     (set!
                       (struct-get map deleted)
@@ -2014,10 +2007,7 @@
           (match (stdlib.hashmap.string-i64-map-slot-at slots cursor)
             [(StringI64MapEmpty)
               (begin
-                (array.array-set!
-                  slots
-                  cursor
-                  (StringI64MapOccupied key value hash))
+                (array-set! slots cursor (StringI64MapOccupied key value hash))
                 (set! done true))]
             [_
               (begin
@@ -2065,7 +2055,7 @@
     (begin
       (while (< i count)
         (begin
-          (match (array.array-ref src i)
+          (match (array-ref src i)
             [(StringI64MapOccupied key value hash)
               (stdlib.hashmap.string-i64-map-insert-into-empty
                 dst
@@ -2084,7 +2074,7 @@
 (define (string-i64-map-resized [map : StringI64Map] [new-capacity : i64]) : StringI64Map
   (let
     [src : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
-    [old-capacity : i64 (array.array-length src)]
+    [old-capacity : i64 (array-length src)]
     [requested-capacity : i64
       (if (> (stdlib.hashmap.string-i64-map-len map) new-capacity)
         (stdlib.hashmap.string-i64-map-len map)
@@ -2118,15 +2108,14 @@
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     (stdlib.hashmap.string-i64-map-resized
       map
-      (stdlib.hashmap.string-i64-map-grow-capacity (array.array-length slots)))))
+      (stdlib.hashmap.string-i64-map-grow-capacity (array-length slots)))))
 
 ;: True when the table has reached the 3/4 load threshold, counting both live
 ;: entries and tombstones (both consume probe positions). A non-positive
 ;: capacity always needs to grow before it can hold anything.
 (define (string-i64-map-needs-grow? [map : StringI64Map]) : bool
   (let
-    [capacity : i64
-      (array.array-length (stdlib.hashmap.string-i64-map-slots map))]
+    [capacity : i64 (array-length (stdlib.hashmap.string-i64-map-slots map))]
     [used : i64
       (+
         (stdlib.hashmap.string-i64-map-len map)
@@ -2138,7 +2127,7 @@
 ;: Mutable-reference variant of `string-i64-map-needs-grow?`.
 (define (string-i64-map-needs-grow-mut? [map : (&mut map StringI64Map)]) : bool
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     [used : i64 (+ (struct-get map len) (struct-get map deleted))]
     (if (<= capacity 0)
       true
@@ -2171,7 +2160,7 @@
   [map : (&mut map StringI64Map)]
   [new-capacity : i64]) : unit
   (let
-    [old-capacity : i64 (array.array-length (struct-get map slots))]
+    [old-capacity : i64 (array-length (struct-get map slots))]
     [requested-capacity : i64
       (if (> (struct-get map len) new-capacity)
         (struct-get map len)
@@ -2196,7 +2185,7 @@
   (stdlib.hashmap.string-i64-map-resize!
     map
     (stdlib.hashmap.string-i64-map-grow-capacity
-      (array.array-length (struct-get map slots)))))
+      (array-length (struct-get map slots)))))
 
 ;: Insert or update through a mutable map reference.
 (define (string-i64-map-put!
@@ -2210,7 +2199,7 @@
     (let
       [slots : (&mut map (Array StringI64MapSlot))
         (stdlib.hashmap.string-i64-map-slots-mut map)]
-      [capacity : i64 (array.array-length slots)]
+      [capacity : i64 (array-length slots)]
       [hash : i64 (hash_mod.string-key (& key))]
       (if (<= capacity 0)
         unit
@@ -2223,7 +2212,7 @@
           [first : i64 -1]
           (begin
             (while (< walked capacity)
-              (match (array.array-ref slots cursor)
+              (match (array-ref slots cursor)
                 [(StringI64MapEmpty)
                   (let
                     [index : i64
@@ -2232,7 +2221,7 @@
                         cursor)]
                     [reused-tombstone : bool (>= first 0)]
                     (begin
-                      (array.array-set!
+                      (array-set!
                         slots
                         index
                         (StringI64MapOccupied key value hash))
@@ -2261,7 +2250,7 @@
                     (hash_mod.key-string-eq? (& slot-key) (& key))
                     false)
                     (begin
-                      (array.array-set! slots cursor (StringI64MapTombstone))
+                      (array-set! slots cursor (StringI64MapTombstone))
                       (set! (struct-get map len) (- (struct-get map len) 1))
                       (set!
                         (struct-get map deleted)
@@ -2279,10 +2268,7 @@
                         (set! walked (+ walked 1)))))]))
             (if (>= first 0)
               (begin
-                (array.array-set!
-                  slots
-                  first
-                  (StringI64MapOccupied key value hash))
+                (array-set! slots first (StringI64MapOccupied key value hash))
                 (set! (struct-get map len) (+ (struct-get map len) 1))
                 (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
               unit)))))))
@@ -2309,7 +2295,7 @@
       (& key)
       hash)
       [(StringI64MapProbeFound index)
-        (match (array.array-ref slots index)
+        (match (array-ref slots index)
           [(StringI64MapOccupied _ value _)
             (StringI64MapEntryOrInsertFound map value)]
           [(StringI64MapEmpty)
@@ -2395,7 +2381,7 @@
       [done : bool false]
       (begin
         (while (and (< walked capacity) (not done))
-          (match (array.array-ref slots cursor)
+          (match (array-ref slots cursor)
             [(StringI64MapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
                 (hash_mod.key-string-eq? (& slot-key) key)
@@ -2441,7 +2427,7 @@
   `(string-i64-map-mut-entry-from-info
     (string-i64-map-mut-entry-info
       (struct-get ,map slots)
-      (stdlib.array.array-length (struct-get ,map slots))
+      (array-length (struct-get ,map slots))
       ,key)
     (&mut (struct-get ,map slots))))
 
@@ -2455,7 +2441,7 @@
     (stdlib.hashmap.string-i64-map-mut-entry-from-info
       (stdlib.hashmap.string-i64-map-mut-entry-info-mut
         slots
-        (array.array-length slots)
+        (array-length slots)
         key)
       slots)))
 
@@ -2468,7 +2454,7 @@
   [entry : (StringI64MapMutEntry map)]
   [fallback : i64]) : i64
   (if (stdlib.hashmap.string-i64-map-mut-entry-present? entry)
-    (match (array.array-ref (struct-get entry borrow) (struct-get entry index))
+    (match (array-ref (struct-get entry borrow) (struct-get entry index))
       [(StringI64MapOccupied _ value _) value]
       [(StringI64MapEmpty) fallback]
       [(StringI64MapTombstone) fallback])
@@ -2479,7 +2465,7 @@
   [entry : (StringI64MapMutEntry map)]
   [value : i64]) : unit
   (if (stdlib.hashmap.string-i64-map-mut-entry-present? entry)
-    (array.array-set!
+    (array-set!
       (struct-get entry borrow)
       (struct-get entry index)
       (StringI64MapOccupied
@@ -2545,7 +2531,7 @@
       (if (< from 0)
         0
         from)
-      (array.array-length slots))))
+      (array-length slots))))
 
 ;: The live entry at `index`, or `None` for an empty slot, a tombstone, or an
 ;: index outside `[0, capacity)`. Pair with `string-i64-map-next-occupied` to
@@ -2556,7 +2542,7 @@
     [slots : (Array StringI64MapSlot) (stdlib.hashmap.string-i64-map-slots map)]
     (if (if (< index 0)
       true
-      (>= index (array.array-length slots)))
+      (>= index (array-length slots)))
       (StringI64MapEntryNone)
       (match (stdlib.hashmap.string-i64-map-slot-at slots index)
         [(StringI64MapOccupied key value _) (StringI64MapEntrySome key value)]
@@ -2568,14 +2554,14 @@
   [map : (& map StringI64Map)]
   [from : i64]) : i64
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     [index : i64
       (if (< from 0)
         0
         from)]
     (begin
       (while (< index capacity)
-        (match (array.array-ref (struct-get map slots) index)
+        (match (array-ref (struct-get map slots) index)
           [(StringI64MapOccupied _ _ _) (return index)]
           [(StringI64MapEmpty) (set! index (+ index 1))]
           [(StringI64MapTombstone) (set! index (+ index 1))]))
@@ -2585,11 +2571,11 @@
 (define (string-i64-map-entry-at-ref [map : (& map StringI64Map)] [index : i64]) : StringI64MapEntry
   (if (if (< index 0)
     true
-    (>= index (array.array-length (struct-get map slots))))
+    (>= index (array-length (struct-get map slots))))
     (StringI64MapEntryNone)
-    (match (array.array-ref (struct-get map slots) index)
+    (match (array-ref (struct-get map slots) index)
       [(StringI64MapOccupied key value _)
-        (StringI64MapEntrySome (string.string-copy (& key)) value)]
+        (StringI64MapEntrySome (string.copy (& key)) value)]
       [(StringI64MapEmpty) (StringI64MapEntryNone)]
       [(StringI64MapTombstone) (StringI64MapEntryNone)])))
 
@@ -4659,7 +4645,7 @@
   [map : (& map StringStringMap)]
   [key : (& key str)]) : StringStringMapLookup
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     (if (<= capacity 0)
       (StringStringMapMissing)
       (let
@@ -4668,7 +4654,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref (struct-get map slots) cursor)
+            (match (array-ref (struct-get map slots) cursor)
               [(StringStringMapEmpty) (return (StringStringMapMissing))]
               [(StringStringMapTombstone)
                 (let
@@ -4684,7 +4670,7 @@
                 (if (if (= slot-hash hash)
                   (string-string-map-key-eq? (& slot-key) key)
                   false)
-                  (return (StringStringMapFound (string.string-copy (& value))))
+                  (return (StringStringMapFound (string.copy (& value))))
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -4706,13 +4692,13 @@
   (if (>= index count)
     unit
     (begin
-      (match (array.array-ref src index)
+      (match (array-ref src index)
         [(StringStringMapOccupied key value hash)
           (string-string-map-insert-into-empty
             dst
             dst-capacity
-            (string.string-copy (& key))
-            (string.string-copy (& value))
+            (string.copy (& key))
+            (string.copy (& value))
             hash)]
         [(StringStringMapEmpty) unit]
         [(StringStringMapTombstone) unit])
@@ -4723,7 +4709,7 @@
   [map : (&mut map StringStringMap)]
   [new-capacity : i64]) : unit
   (let
-    [old-capacity : i64 (array.array-length (struct-get map slots))]
+    [old-capacity : i64 (array-length (struct-get map slots))]
     [requested-capacity : i64
       (if (> (struct-get map len) new-capacity)
         (struct-get map len)
@@ -4749,7 +4735,7 @@
   [key : String]
   [value : String]) : unit
   (let
-    [capacity-before : i64 (array.array-length (struct-get map slots))]
+    [capacity-before : i64 (array-length (struct-get map slots))]
     [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
     (begin
       (if (if (<= capacity-before 0)
@@ -4762,7 +4748,7 @@
       (let
         [slots : (&mut map (Array StringStringMapSlot))
           (&mut (struct-get map slots))]
-        [capacity : i64 (array.array-length slots)]
+        [capacity : i64 (array-length slots)]
         [hash : i64 (string-string-map-hash-key (& key))]
         (if (<= capacity 0)
           unit
@@ -4773,7 +4759,7 @@
             [first : i64 -1]
             (begin
               (while (< walked capacity)
-                (match (array.array-ref slots cursor)
+                (match (array-ref slots cursor)
                   [(StringStringMapEmpty)
                     (let
                       [index : i64
@@ -4782,7 +4768,7 @@
                           cursor)]
                       [reused-tombstone : bool (>= first 0)]
                       (begin
-                        (array.array-set!
+                        (array-set!
                           slots
                           index
                           (StringStringMapOccupied key value hash))
@@ -4811,7 +4797,7 @@
                       (string-string-map-key-eq? (& slot-key) (& key))
                       false)
                       (begin
-                        (array.array-set!
+                        (array-set!
                           slots
                           cursor
                           (StringStringMapOccupied key value hash))
@@ -4827,7 +4813,7 @@
                           (set! walked (+ walked 1)))))]))
               (if (>= first 0)
                 (begin
-                  (array.array-set!
+                  (array-set!
                     slots
                     first
                     (StringStringMapOccupied key value hash))
@@ -4842,7 +4828,7 @@
   (let
     [slots : (&mut map (Array StringStringMapSlot))
       (&mut (struct-get map slots))]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       false
       (let
@@ -4851,7 +4837,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref slots cursor)
+            (match (array-ref slots cursor)
               [(StringStringMapEmpty) (return false)]
               [(StringStringMapTombstone)
                 (let
@@ -4868,7 +4854,7 @@
                   (string-string-map-key-eq? (& slot-key) key)
                   false)
                   (begin
-                    (array.array-set! slots cursor (StringStringMapTombstone))
+                    (array-set! slots cursor (StringStringMapTombstone))
                     (set! (struct-get map len) (- (struct-get map len) 1))
                     (set!
                       (struct-get map deleted)
@@ -4890,14 +4876,14 @@
   [map : (& map StringStringMap)]
   [from : i64]) : i64
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     [index : i64
       (if (< from 0)
         0
         from)]
     (begin
       (while (< index capacity)
-        (match (array.array-ref (struct-get map slots) index)
+        (match (array-ref (struct-get map slots) index)
           [(StringStringMapOccupied _ _ _) (return index)]
           [(StringStringMapEmpty) (set! index (+ index 1))]
           [(StringStringMapTombstone) (set! index (+ index 1))]))
@@ -4909,13 +4895,11 @@
   [index : i64]) : StringStringMapEntry
   (if (if (< index 0)
     true
-    (>= index (array.array-length (struct-get map slots))))
+    (>= index (array-length (struct-get map slots))))
     (StringStringMapEntryNone)
-    (match (array.array-ref (struct-get map slots) index)
+    (match (array-ref (struct-get map slots) index)
       [(StringStringMapOccupied key value _)
-        (StringStringMapEntrySome
-          (string.string-copy (& key))
-          (string.string-copy (& value)))]
+        (StringStringMapEntrySome (string.copy (& key)) (string.copy (& value)))]
       [(StringStringMapEmpty) (StringStringMapEntryNone)]
       [(StringStringMapTombstone) (StringStringMapEntryNone)])))
 
@@ -4939,7 +4923,7 @@
         (while (if (< walked capacity)
           (not done)
           false)
-          (match (array.array-ref slots cursor)
+          (match (array-ref slots cursor)
             [(StringStringMapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
                 (string-string-map-key-eq? (& slot-key) key)
@@ -4968,10 +4952,7 @@
     [slots : (&mut map (Array StringStringMapSlot))
       (&mut (struct-get map slots))]
     [info : StringStringMapMutEntryInfo
-      (string-string-map-mut-entry-info-mut
-        slots
-        (array.array-length slots)
-        key)]
+      (string-string-map-mut-entry-info-mut slots (array-length slots) key)]
     (StringStringMapMutEntryRef
       slots
       (struct-get info index)
@@ -4989,8 +4970,8 @@
   [entry : (StringStringMapMutEntryRef map)]
   [fallback : String]) : String
   (if (string-string-map-mut-entry-ref-present? entry)
-    (match (array.array-ref (struct-get entry borrow) (struct-get entry index))
-      [(StringStringMapOccupied _ value _) (string.string-copy (& value))]
+    (match (array-ref (struct-get entry borrow) (struct-get entry index))
+      [(StringStringMapOccupied _ value _) (string.copy (& value))]
       [(StringStringMapEmpty) fallback]
       [(StringStringMapTombstone) fallback])
     fallback))
@@ -5000,7 +4981,7 @@
   [entry : (StringStringMapMutEntryRef map)]
   [value : String]) : unit
   (if (string-string-map-mut-entry-ref-present? entry)
-    (array.array-set!
+    (array-set!
       (struct-get entry borrow)
       (struct-get entry index)
       (StringStringMapOccupied
@@ -5012,7 +4993,7 @@
 ;: Lookup through an immutable generated i64 -> i64 map reference.
 (define (i64-i64-map-get-ref [map : (& map I64I64Map)] [key : i64]) : I64I64MapLookup
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     (if (<= capacity 0)
       (I64I64MapMissing)
       (let
@@ -5021,7 +5002,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref (struct-get map slots) cursor)
+            (match (array-ref (struct-get map slots) cursor)
               [(I64I64MapEmpty) (return (I64I64MapMissing))]
               [(I64I64MapTombstone)
                 (let
@@ -5061,7 +5042,7 @@
     (begin
       (while (< i count)
         (begin
-          (match (array.array-ref src i)
+          (match (array-ref src i)
             [(I64I64MapOccupied key value hash)
               (i64-i64-map-insert-into-empty dst dst-capacity key value hash)]
             [(I64I64MapEmpty) unit]
@@ -5072,7 +5053,7 @@
 ;: Resize a generated i64 -> i64 map in place.
 (define (i64-i64-map-resize! [map : (&mut map I64I64Map)] [new-capacity : i64]) : unit
   (let
-    [old-capacity : i64 (array.array-length (struct-get map slots))]
+    [old-capacity : i64 (array-length (struct-get map slots))]
     [requested-capacity : i64
       (if (> (struct-get map len) new-capacity)
         (struct-get map len)
@@ -5097,7 +5078,7 @@
   [key : i64]
   [value : i64]) : unit
   (let
-    [capacity-before : i64 (array.array-length (struct-get map slots))]
+    [capacity-before : i64 (array-length (struct-get map slots))]
     [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
     (begin
       (if (if (<= capacity-before 0)
@@ -5107,7 +5088,7 @@
         unit)
       (let
         [slots : (&mut map (Array I64I64MapSlot)) (&mut (struct-get map slots))]
-        [capacity : i64 (array.array-length slots)]
+        [capacity : i64 (array-length slots)]
         [hash : i64 (i64-i64-map-hash-key key)]
         (if (<= capacity 0)
           unit
@@ -5117,7 +5098,7 @@
             [first : i64 -1]
             (begin
               (while (< walked capacity)
-                (match (array.array-ref slots cursor)
+                (match (array-ref slots cursor)
                   [(I64I64MapEmpty)
                     (let
                       [index : i64
@@ -5126,7 +5107,7 @@
                           cursor)]
                       [reused-tombstone : bool (>= first 0)]
                       (begin
-                        (array.array-set!
+                        (array-set!
                           slots
                           index
                           (I64I64MapOccupied key value hash))
@@ -5155,7 +5136,7 @@
                       (= slot-key key)
                       false)
                       (begin
-                        (array.array-set!
+                        (array-set!
                           slots
                           cursor
                           (I64I64MapOccupied key value hash))
@@ -5171,10 +5152,7 @@
                           (set! walked (+ walked 1)))))]))
               (if (>= first 0)
                 (begin
-                  (array.array-set!
-                    slots
-                    first
-                    (I64I64MapOccupied key value hash))
+                  (array-set! slots first (I64I64MapOccupied key value hash))
                   (set! (struct-get map len) (+ (struct-get map len) 1))
                   (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
                 unit))))))))
@@ -5183,7 +5161,7 @@
 (define (i64-i64-map-remove! [map : (&mut map I64I64Map)] [key : i64]) : bool
   (let
     [slots : (&mut map (Array I64I64MapSlot)) (&mut (struct-get map slots))]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       false
       (let
@@ -5192,7 +5170,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref slots cursor)
+            (match (array-ref slots cursor)
               [(I64I64MapEmpty) (return false)]
               [(I64I64MapTombstone)
                 (let
@@ -5209,7 +5187,7 @@
                   (= slot-key key)
                   false)
                   (begin
-                    (array.array-set! slots cursor (I64I64MapTombstone))
+                    (array-set! slots cursor (I64I64MapTombstone))
                     (set! (struct-get map len) (- (struct-get map len) 1))
                     (set!
                       (struct-get map deleted)
@@ -5229,14 +5207,14 @@
 ;: Reference variant of `i64-i64-map-next-occupied`.
 (define (i64-i64-map-next-occupied-ref [map : (& map I64I64Map)] [from : i64]) : i64
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     [index : i64
       (if (< from 0)
         0
         from)]
     (begin
       (while (< index capacity)
-        (match (array.array-ref (struct-get map slots) index)
+        (match (array-ref (struct-get map slots) index)
           [(I64I64MapOccupied _ _ _) (return index)]
           [(I64I64MapEmpty) (set! index (+ index 1))]
           [(I64I64MapTombstone) (set! index (+ index 1))]))
@@ -5246,9 +5224,9 @@
 (define (i64-i64-map-entry-at-ref [map : (& map I64I64Map)] [index : i64]) : I64I64MapEntry
   (if (if (< index 0)
     true
-    (>= index (array.array-length (struct-get map slots))))
+    (>= index (array-length (struct-get map slots))))
     (I64I64MapEntryNone)
-    (match (array.array-ref (struct-get map slots) index)
+    (match (array-ref (struct-get map slots) index)
       [(I64I64MapOccupied key value _) (I64I64MapEntrySome key value)]
       [(I64I64MapEmpty) (I64I64MapEntryNone)]
       [(I64I64MapTombstone) (I64I64MapEntryNone)])))
@@ -5273,7 +5251,7 @@
         (while (if (< walked capacity)
           (not done)
           false)
-          (match (array.array-ref slots cursor)
+          (match (array-ref slots cursor)
             [(I64I64MapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
                 (= slot-key key)
@@ -5300,7 +5278,7 @@
   (let
     [slots : (&mut map (Array I64I64MapSlot)) (&mut (struct-get map slots))]
     [info : I64I64MapMutEntryInfo
-      (i64-i64-map-mut-entry-info-mut slots (array.array-length slots) key)]
+      (i64-i64-map-mut-entry-info-mut slots (array-length slots) key)]
     (I64I64MapMutEntryRef
       slots
       (struct-get info index)
@@ -5318,7 +5296,7 @@
   [entry : (I64I64MapMutEntryRef map)]
   [fallback : i64]) : i64
   (if (i64-i64-map-mut-entry-ref-present? entry)
-    (match (array.array-ref (struct-get entry borrow) (struct-get entry index))
+    (match (array-ref (struct-get entry borrow) (struct-get entry index))
       [(I64I64MapOccupied _ value _) value]
       [(I64I64MapEmpty) fallback]
       [(I64I64MapTombstone) fallback])
@@ -5329,7 +5307,7 @@
   [entry : (I64I64MapMutEntryRef map)]
   [value : i64]) : unit
   (if (i64-i64-map-mut-entry-ref-present? entry)
-    (array.array-set!
+    (array-set!
       (struct-get entry borrow)
       (struct-get entry index)
       (I64I64MapOccupied (struct-get entry key) value (struct-get entry hash)))
@@ -5338,7 +5316,7 @@
 ;: Lookup through an immutable generated i64 -> String map reference.
 (define (i64-string-map-get-ref [map : (& map I64StringMap)] [key : i64]) : I64StringMapLookup
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     (if (<= capacity 0)
       (I64StringMapMissing)
       (let
@@ -5347,7 +5325,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref (struct-get map slots) cursor)
+            (match (array-ref (struct-get map slots) cursor)
               [(I64StringMapEmpty) (return (I64StringMapMissing))]
               [(I64StringMapTombstone)
                 (let
@@ -5363,7 +5341,7 @@
                 (if (if (= slot-hash hash)
                   (= slot-key key)
                   false)
-                  (return (I64StringMapFound (string.string-copy (& value))))
+                  (return (I64StringMapFound (string.copy (& value))))
                   (let
                     [next : i64 (+ cursor 1)]
                     (begin
@@ -5385,13 +5363,13 @@
   (if (>= index count)
     unit
     (begin
-      (match (array.array-ref src index)
+      (match (array-ref src index)
         [(I64StringMapOccupied key value hash)
           (i64-string-map-insert-into-empty
             dst
             dst-capacity
             key
-            (string.string-copy (& value))
+            (string.copy (& value))
             hash)]
         [(I64StringMapEmpty) unit]
         [(I64StringMapTombstone) unit])
@@ -5402,7 +5380,7 @@
   [map : (&mut map I64StringMap)]
   [new-capacity : i64]) : unit
   (let
-    [old-capacity : i64 (array.array-length (struct-get map slots))]
+    [old-capacity : i64 (array-length (struct-get map slots))]
     [requested-capacity : i64
       (if (> (struct-get map len) new-capacity)
         (struct-get map len)
@@ -5427,7 +5405,7 @@
   [key : i64]
   [value : String]) : unit
   (let
-    [capacity-before : i64 (array.array-length (struct-get map slots))]
+    [capacity-before : i64 (array-length (struct-get map slots))]
     [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
     (begin
       (if (if (<= capacity-before 0)
@@ -5440,7 +5418,7 @@
       (let
         [slots : (&mut map (Array I64StringMapSlot))
           (&mut (struct-get map slots))]
-        [capacity : i64 (array.array-length slots)]
+        [capacity : i64 (array-length slots)]
         [hash : i64 (i64-string-map-hash-key key)]
         (if (<= capacity 0)
           unit
@@ -5451,7 +5429,7 @@
             [first : i64 -1]
             (begin
               (while (< walked capacity)
-                (match (array.array-ref slots cursor)
+                (match (array-ref slots cursor)
                   [(I64StringMapEmpty)
                     (let
                       [index : i64
@@ -5460,7 +5438,7 @@
                           cursor)]
                       [reused-tombstone : bool (>= first 0)]
                       (begin
-                        (array.array-set!
+                        (array-set!
                           slots
                           index
                           (I64StringMapOccupied key value hash))
@@ -5489,7 +5467,7 @@
                       (= slot-key key)
                       false)
                       (begin
-                        (array.array-set!
+                        (array-set!
                           slots
                           cursor
                           (I64StringMapOccupied key value hash))
@@ -5505,10 +5483,7 @@
                           (set! walked (+ walked 1)))))]))
               (if (>= first 0)
                 (begin
-                  (array.array-set!
-                    slots
-                    first
-                    (I64StringMapOccupied key value hash))
+                  (array-set! slots first (I64StringMapOccupied key value hash))
                   (set! (struct-get map len) (+ (struct-get map len) 1))
                   (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
                 unit))))))))
@@ -5517,7 +5492,7 @@
 (define (i64-string-map-remove! [map : (&mut map I64StringMap)] [key : i64]) : bool
   (let
     [slots : (&mut map (Array I64StringMapSlot)) (&mut (struct-get map slots))]
-    [capacity : i64 (array.array-length slots)]
+    [capacity : i64 (array-length slots)]
     (if (<= capacity 0)
       false
       (let
@@ -5526,7 +5501,7 @@
         [walked : i64 0]
         (begin
           (while (< walked capacity)
-            (match (array.array-ref slots cursor)
+            (match (array-ref slots cursor)
               [(I64StringMapEmpty) (return false)]
               [(I64StringMapTombstone)
                 (let
@@ -5543,7 +5518,7 @@
                   (= slot-key key)
                   false)
                   (begin
-                    (array.array-set! slots cursor (I64StringMapTombstone))
+                    (array-set! slots cursor (I64StringMapTombstone))
                     (set! (struct-get map len) (- (struct-get map len) 1))
                     (set!
                       (struct-get map deleted)
@@ -5565,14 +5540,14 @@
   [map : (& map I64StringMap)]
   [from : i64]) : i64
   (let
-    [capacity : i64 (array.array-length (struct-get map slots))]
+    [capacity : i64 (array-length (struct-get map slots))]
     [index : i64
       (if (< from 0)
         0
         from)]
     (begin
       (while (< index capacity)
-        (match (array.array-ref (struct-get map slots) index)
+        (match (array-ref (struct-get map slots) index)
           [(I64StringMapOccupied _ _ _) (return index)]
           [(I64StringMapEmpty) (set! index (+ index 1))]
           [(I64StringMapTombstone) (set! index (+ index 1))]))
@@ -5582,11 +5557,11 @@
 (define (i64-string-map-entry-at-ref [map : (& map I64StringMap)] [index : i64]) : I64StringMapEntry
   (if (if (< index 0)
     true
-    (>= index (array.array-length (struct-get map slots))))
+    (>= index (array-length (struct-get map slots))))
     (I64StringMapEntryNone)
-    (match (array.array-ref (struct-get map slots) index)
+    (match (array-ref (struct-get map slots) index)
       [(I64StringMapOccupied key value _)
-        (I64StringMapEntrySome key (string.string-copy (& value)))]
+        (I64StringMapEntrySome key (string.copy (& value)))]
       [(I64StringMapEmpty) (I64StringMapEntryNone)]
       [(I64StringMapTombstone) (I64StringMapEntryNone)])))
 
@@ -5610,7 +5585,7 @@
         (while (if (< walked capacity)
           (not done)
           false)
-          (match (array.array-ref slots cursor)
+          (match (array-ref slots cursor)
             [(I64StringMapOccupied slot-key _ slot-hash)
               (if (if (= slot-hash hash)
                 (= slot-key key)
@@ -5638,7 +5613,7 @@
   (let
     [slots : (&mut map (Array I64StringMapSlot)) (&mut (struct-get map slots))]
     [info : I64StringMapMutEntryInfo
-      (i64-string-map-mut-entry-info-mut slots (array.array-length slots) key)]
+      (i64-string-map-mut-entry-info-mut slots (array-length slots) key)]
     (I64StringMapMutEntryRef
       slots
       (struct-get info index)
@@ -5656,8 +5631,8 @@
   [entry : (I64StringMapMutEntryRef map)]
   [fallback : String]) : String
   (if (i64-string-map-mut-entry-ref-present? entry)
-    (match (array.array-ref (struct-get entry borrow) (struct-get entry index))
-      [(I64StringMapOccupied _ value _) (string.string-copy (& value))]
+    (match (array-ref (struct-get entry borrow) (struct-get entry index))
+      [(I64StringMapOccupied _ value _) (string.copy (& value))]
       [(I64StringMapEmpty) fallback]
       [(I64StringMapTombstone) fallback])
     fallback))
@@ -5667,7 +5642,7 @@
   [entry : (I64StringMapMutEntryRef map)]
   [value : String]) : unit
   (if (i64-string-map-mut-entry-ref-present? entry)
-    (array.array-set!
+    (array-set!
       (struct-get entry borrow)
       (struct-get entry index)
       (I64StringMapOccupied
@@ -6369,7 +6344,7 @@
             (string-hash-payload-map-insert-into-empty
               dst
               dst-capacity
-              (string.string-copy (& key))
+              (string.copy (& key))
               (clone value)
               hash)]
           [(StringHashPayloadMapEmpty) unit]
@@ -9125,7 +9100,7 @@
       (begin
         (while (< i n)
           (begin
-            (array.array-set! slots i (StringI64MapEmpty))
+            (array-set! slots i (StringI64MapEmpty))
             (set! i (+ i 1))))
         slots))))
 
@@ -9849,15 +9824,15 @@
     (begin
       ;; --- hashmap key descriptor contract (#2056) ---
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
-        (hashmap-string-key-descriptor-key)
+        (string-key-descriptor-key)
         "stdlib/hashmap/string-key-v1"
         "String key descriptor identity")
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
-        (hashmap-i64-key-descriptor-key)
+        (i64-key-descriptor-key)
         "stdlib/hashmap/i64-key-v1"
         "i64 key descriptor identity")
       (stdlib.hashmap.hashmap-test-assert-owned-string-eq
-        (hashmap-aggregate-key-descriptor-key)
+        (aggregate-key-descriptor-key)
         "stdlib/hashmap/aggregate-key-v1"
         "aggregate key descriptor identity")
       unit)))
@@ -10419,7 +10394,7 @@
       (let
         [found : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 4)]
         (begin
-          (array.array-set! found 1 (StringI64MapOccupied "k" 7 5))
+          (array-set! found 1 (StringI64MapOccupied "k" 7 5))
           (test.assert-true
             (stdlib.hashmap.probe-found?
               (stdlib.hashmap.string-i64-map-probe found 4 "k" 5))
@@ -10441,7 +10416,7 @@
       (let
         [collide : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 4)]
         (begin
-          (array.array-set! collide 1 (StringI64MapOccupied "other" 9 5))
+          (array-set! collide 1 (StringI64MapOccupied "other" 9 5))
           (test.assert-true
             (stdlib.hashmap.probe-absent?
               (stdlib.hashmap.string-i64-map-probe collide 4 "k" 5))
@@ -10463,7 +10438,7 @@
       (let
         [wrap : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 4)]
         (begin
-          (array.array-set! wrap 3 (StringI64MapOccupied "o" 9 3))
+          (array-set! wrap 3 (StringI64MapOccupied "o" 9 3))
           (test.assert-i64-eq
             (stdlib.hashmap.probe-index-or
               (stdlib.hashmap.string-i64-map-probe wrap 4 "k" 3)
@@ -10481,7 +10456,7 @@
       (let
         [tomb : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 4)]
         (begin
-          (array.array-set! tomb 1 (StringI64MapTombstone))
+          (array-set! tomb 1 (StringI64MapTombstone))
           (test.assert-true
             (stdlib.hashmap.probe-absent?
               (stdlib.hashmap.string-i64-map-probe tomb 4 "k" 5))
@@ -10503,8 +10478,8 @@
       (let
         [tf : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 4)]
         (begin
-          (array.array-set! tf 1 (StringI64MapTombstone))
-          (array.array-set! tf 2 (StringI64MapOccupied "k" 7 5))
+          (array-set! tf 1 (StringI64MapTombstone))
+          (array-set! tf 2 (StringI64MapOccupied "k" 7 5))
           (test.assert-true
             (stdlib.hashmap.probe-found?
               (stdlib.hashmap.string-i64-map-probe tf 4 "k" 5))
@@ -10526,8 +10501,8 @@
       (let
         [full : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 2)]
         (begin
-          (array.array-set! full 0 (StringI64MapOccupied "a" 1 10))
-          (array.array-set! full 1 (StringI64MapOccupied "b" 2 11))
+          (array-set! full 0 (StringI64MapOccupied "a" 1 10))
+          (array-set! full 1 (StringI64MapOccupied "b" 2 11))
           (test.assert-true
             (stdlib.hashmap.probe-full?
               (stdlib.hashmap.string-i64-map-probe full 2 "k" 4))
@@ -10543,8 +10518,8 @@
       (let
         [fulltomb : (Array StringI64MapSlot) (stdlib.hashmap.new-slots 2)]
         (begin
-          (array.array-set! fulltomb 0 (StringI64MapOccupied "a" 1 10))
-          (array.array-set! fulltomb 1 (StringI64MapTombstone))
+          (array-set! fulltomb 0 (StringI64MapOccupied "a" 1 10))
+          (array-set! fulltomb 1 (StringI64MapTombstone))
           (test.assert-true
             (stdlib.hashmap.probe-absent?
               (stdlib.hashmap.string-i64-map-probe fulltomb 2 "k" 4))

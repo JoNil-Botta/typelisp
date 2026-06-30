@@ -85,7 +85,7 @@ byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|ptr-read requires unsafe context
 safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|syscall requires unsafe context
-manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena-rewind requires unsafe context
+manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
 with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch result type is not clone-supported
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
@@ -194,7 +194,7 @@ thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_
 thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_ordinary_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_capture_reject.tl|-|cannot capture ordinary arena handle `owner`
 thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|lambda cannot capture region-tagged value
-thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|tests/safety/thread_spawn_i64_shadowed_atomic_arena_lib.tl|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_dynarray_capture_reject|check-fail|tests/safety/thread_spawn_i64_dynarray_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_box_capture_reject|check-fail|tests/safety/thread_spawn_i64_box_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
 thread_spawn_i64_borrowed_str_capture_reject|check-fail|tests/safety/thread_spawn_i64_borrowed_str_capture_reject.tl|-|lambda cannot capture immutable reference
@@ -218,8 +218,8 @@ arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_u
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
 arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
 arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
-arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena-phase requires a direct ordinary arena owner
-arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena-phase requires a direct ordinary arena owner
-arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena-rewind-safe! cannot run inside the arena it rewinds
-arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena-destroy-safe! cannot run inside the arena it destroys
+arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena.phase requires a direct ordinary arena owner
+arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena.phase requires a direct ordinary arena owner
+arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena.rewind-safe! cannot run inside the arena it rewinds
+arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
 arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`

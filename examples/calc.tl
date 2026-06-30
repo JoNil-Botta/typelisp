@@ -38,8 +38,8 @@
 ;; The shared token model: the `Token` enum, the `token-tag` / `token-int`
 ;; accessors, and the tag constants. Resolved relative to this file, so it finds
 ;; the co-located `token.tl`.
-(import stdlib.array)
 (import "stdlib/io.tl")
+(import stdlib.string)
 (import stdlib.vector)
 (import "token.tl")
 (import (vector.vector Token) as tokvec)
@@ -86,7 +86,7 @@
     (begin
       (while keep
         (if (< j n)
-          (if (is-digit (string-ref src j))
+          (if (is-digit (string.string-ref src j))
             (set! j (+ j 1))
             (set! keep false))
           (set! keep false)))
@@ -115,12 +115,12 @@
 (define (lex [src : String] [toks : (&mut toks tokvec.Vec)]) : i64
   (let
     [i : i64 0]
-    [n : i64 (string-length src)]
+    [n : i64 (string.string-length src)]
     [count : i64 0]
     (begin
       (while (< i n)
         (let
-          [c : char (string-ref src i)]
+          [c : char (string.string-ref src i)]
           (if (is-space c)
             (set! i (+ i 1))
             (if (is-digit c)
@@ -131,7 +131,9 @@
                 (begin
                   (while (< i end)
                     (begin
-                      (set! acc (+ (* acc 10) (digit-value (string-ref src i))))
+                      (set!
+                        acc
+                        (+ (* acc 10) (digit-value (string.string-ref src i))))
                       (set! i (+ i 1))))
                   (tokvec.push toks (Token.Int acc))
                   (set! count (+ count 1))))
@@ -159,7 +161,7 @@
 ;; Current cursor position.
 (define (cur-pos [cur : (Array i64 1)]) : i64
   ;; lint-allow: single-element-array-cell
-  (array.array-ref cur 0))
+  (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.
 (define (current-tag [toks : (& toks tokvec.Vec)] [cur : (Array i64 1)]) : i64
@@ -171,7 +173,7 @@
 
 ;; Consume the current token: advance the cursor by one.
 (define (advance [cur : (Array i64 1)]) : unit
-  (array.array-set! cur 0 (+ (cur-pos cur) 1)))
+  (array-set! cur 0 (+ (cur-pos cur) 1)))
 
 ;; `expect`: assert the cursor is on `want`, aborting via `panic` (#45) on a
 ;; grammar violation - exactly how a real parser reports a syntax error - then

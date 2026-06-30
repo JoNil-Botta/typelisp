@@ -1,4 +1,4 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/thread.tl")
 (import "stdlib/string.tl")
 
@@ -7,7 +7,7 @@
     [(ThreadStringJoinOk text)
       (let
         [expected : String "worker:42"]
-        (string-eq text expected))]
+        (eq text expected))]
     [(ThreadStringJoinErr _) false]))
 
 (define (thread-safe-string-run) : i64
@@ -15,7 +15,7 @@
     [base : i64 40]
     (match (thread-spawn-string
       (lambda () : String
-        (string-append "worker:" (int->string (+ base 2)))))
+        (append "worker:" (int->string (+ base 2)))))
       [(ThreadStringSpawnErr _) 1]
       [(ThreadStringSpawnOk worker)
         (if (thread-safe-string-join-ok? worker)
@@ -24,10 +24,10 @@
 
 (define (thread-safe-string-copy-boundary-run) : i64
   (let
-    [owner : Arena (arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     (match (thread-spawn-string
       (lambda () : String
-        (in-arena owner (string-append "worker:" (int->string 42)))))
+        (in-arena owner (append "worker:" (int->string 42)))))
       [(ThreadStringSpawnErr _) 3]
       [(ThreadStringSpawnOk worker)
         (if (thread-safe-string-join-ok? worker)

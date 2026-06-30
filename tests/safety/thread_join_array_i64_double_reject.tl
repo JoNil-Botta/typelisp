@@ -10,5 +10,5 @@
       (begin
         (thread-join-array-i64 worker)
         (match (thread-join-array-i64 worker)
-          [(ThreadArrayI64JoinOk items) (array.array-length items)]
+          [(ThreadArrayI64JoinOk items) (array-length items)]
           [(ThreadArrayI64JoinErr _) 2]))]))

@@ -1,4 +1,4 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/thread.tl")
 (import (thread-handle i64) as thread_i64)
 (import "stdlib/string.tl")
@@ -15,11 +15,11 @@
 
 (define (main) : i64
   (let
-    [owner : Arena (arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [message : AtomicThreadMessage
       (in-arena
         owner
-        (AtomicThreadMessageText (AtomicThreadText (string-append "atom" "ic"))))]
+        (AtomicThreadMessageText (AtomicThreadText (append "atom" "ic"))))]
     [spawn : thread_i64.SpawnResult
       (thread_i64.spawn
         (lambda () : i64

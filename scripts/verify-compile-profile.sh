@@ -245,9 +245,10 @@ assert_contains_in \
     "compile-profile-detail|typecheck.macro_expand|" \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
-assert_contains_in \
+assert_line_count_in \
     "$VECTOR_STDERR" \
-    "stdlib.vector/vector-family arity=3 calls=2" \
+    "stdlib.vector/family arity=3 calls=1" \
+    2 \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
 

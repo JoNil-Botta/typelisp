@@ -1,4 +1,4 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 
 (define (main) : unit
-  (arena-rewind (arena-mark)))
+  (arena.rewind (arena.mark)))

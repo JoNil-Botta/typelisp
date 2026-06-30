@@ -45,7 +45,7 @@
         (process.child-info-stdout-handle info)
         (process.child-info-stderr-handle info))
       (io.panic
-        (string.string-append
+        (string.append
           message
           (process.child-result-error-message-or result ""))))))
 
@@ -135,9 +135,7 @@
 (define (process-runtime-large-stdin-from [text : String] [i : i64]) : String
   (if (>= i 17)
     text
-    (process-runtime-large-stdin-from
-      (string.string-append (& text) (& text))
-      (+ i 1))))
+    (process-runtime-large-stdin-from (string.append (& text) (& text)) (+ i 1))))
 
 (define (process-runtime-large-stdin) : String
   (process-runtime-large-stdin-from "a" 0))
@@ -200,7 +198,7 @@
     (process.args-empty)))
 
 (define (main) : i64
-  (if (string.string-eq (env.path-list-separator) ";")
+  (if (string.eq (env.path-list-separator) ";")
     (begin
       (assert-process-ok
         (process.output (process-runtime-windows-command))

@@ -70,7 +70,7 @@
 (define (ctfe-untyped-expr-type? [ty : AstType]) : bool
   (match ty
     [(AstType.Var name)
-      (string.string-eq (intern-str name) (ctfe-untyped-expr-type-name))]
+      (string.eq (intern-str name) (ctfe-untyped-expr-type-name))]
     [_ false]))
 
 (define (ctfe-captured-expr-type-name) : String
@@ -88,8 +88,7 @@
 
 (define (ctfe-captured-expr-type? [ty : AstType]) : bool
   (match ty
-    [(AstType.Region name _)
-      (string.string-eq name (ctfe-captured-expr-type-name))]
+    [(AstType.Region name _) (string.eq name (ctfe-captured-expr-type-name))]
     [_ false]))
 
 (define (ctfe-captured-expr-type-inner-with-pools
@@ -97,7 +96,7 @@
   [ty : AstType]) : AstType
   (match ty
     [(AstType.Region name inner)
-      (if (string.string-eq name (ctfe-captured-expr-type-name))
+      (if (string.eq name (ctfe-captured-expr-type-name))
         (ast-node-pool-context-type-get pools inner)
         ty)]
     [_ ty]))
@@ -108,7 +107,7 @@
     ty))
 
 (define (ctfe-stdlib-comptime-type-key [name : String]) : String
-  (string.string-append "stdlib.comptime/" name))
+  (string.append "stdlib.comptime/" name))
 
 (define (ctfe-stdlib-comptime-type [name : String]) : AstType
   (AstType.Var (intern (ctfe-stdlib-comptime-type-key name))))
@@ -265,7 +264,7 @@
   (ctfe-layout-field-list-with-capacity 0))
 
 (define (ctfe-layout-field-list-ref [items : CtfeLayoutFieldList] [index : i64]) : CtfeLayoutField
-  (array.array-ref (struct-get items slots) index))
+  (array.ref (struct-get items slots) index))
 
 (define (ctfe-layout-field-list-push
   [items : CtfeLayoutFieldList]
@@ -274,7 +273,7 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeLayoutField) (struct-get items slots)]
     (begin
-      (array.array-set! slots n value)
+      (array-set! slots n value)
       (CtfeLayoutFieldList slots (+ n 1)))))
 
 (define (ctfe-layout-info-list-with-capacity [capacity : i64]) : CtfeLayoutInfoList
@@ -284,7 +283,7 @@
   (ctfe-layout-info-list-with-capacity 0))
 
 (define (ctfe-layout-info-list-ref [items : CtfeLayoutInfoList] [index : i64]) : CtfeLayoutInfo
-  (array.array-ref (struct-get items slots) index))
+  (array.ref (struct-get items slots) index))
 
 (define (ctfe-layout-info-list-push
   [items : CtfeLayoutInfoList]
@@ -293,7 +292,7 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeLayoutInfo) (struct-get items slots)]
     (begin
-      (array.array-set! slots n value)
+      (array-set! slots n value)
       (CtfeLayoutInfoList slots (+ n 1)))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
@@ -305,7 +304,7 @@
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
   [index : i64]) : CtfeReflectField
-  (array.array-ref (struct-get items slots) index))
+  (array.ref (struct-get items slots) index))
 
 (define (ctfe-reflect-field-list-push
   [items : CtfeReflectFieldList]
@@ -314,7 +313,7 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeReflectField) (struct-get items slots)]
     (begin
-      (array.array-set! slots n value)
+      (array-set! slots n value)
       (CtfeReflectFieldList slots (+ n 1)))))
 
 (define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
@@ -326,7 +325,7 @@
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
   [index : i64]) : CtfeReflectVariant
-  (array.array-ref (struct-get items slots) index))
+  (array.ref (struct-get items slots) index))
 
 (define (ctfe-reflect-variant-list-push
   [items : CtfeReflectVariantList]
@@ -335,7 +334,7 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeReflectVariant) (struct-get items slots)]
     (begin
-      (array.array-set! slots n value)
+      (array-set! slots n value)
       (CtfeReflectVariantList slots (+ n 1)))))
 
 (define (ctfe-reflect-info-list-with-capacity [capacity : i64]) : CtfeReflectInfoList
@@ -345,7 +344,7 @@
   (ctfe-reflect-info-list-with-capacity 0))
 
 (define (ctfe-reflect-info-list-ref [items : CtfeReflectInfoList] [index : i64]) : CtfeReflectInfo
-  (array.array-ref (struct-get items slots) index))
+  (array.ref (struct-get items slots) index))
 
 (define (ctfe-reflect-info-list-push
   [items : CtfeReflectInfoList]
@@ -354,7 +353,7 @@
     [n : i64 (struct-get items len)]
     [slots : (Array CtfeReflectInfo) (struct-get items slots)]
     (begin
-      (array.array-set! slots n value)
+      (array-set! slots n value)
       (CtfeReflectInfoList slots (+ n 1)))))
 
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
@@ -396,7 +395,7 @@
     (CtfeMaybeLayoutInfo.None)
     (let
       [info : CtfeLayoutInfo (ctfe-layout-info-list-ref layouts index)]
-      (if (string.string-eq (ctfe-layout-info-name info) name)
+      (if (string.eq (ctfe-layout-info-name info) name)
         (CtfeMaybeLayoutInfo.Some info)
         (ctfe-layout-info-lookup-from layouts name (- index 1))))))
 
@@ -413,7 +412,7 @@
       [field : CtfeLayoutField (ctfe-layout-field-list-ref fields index)]
       (match field
         [(CtfeLayoutField.Field field-name offset)
-          (if (string.string-eq field-name name)
+          (if (string.eq field-name name)
             offset
             (ctfe-layout-field-offset-from fields name (+ index 1)))]))))
 
@@ -475,7 +474,7 @@
   (match env
     [(CtfeEnv.Nil _ _ _) (CtfeMaybeValue.None)]
     [(CtfeEnv.Cons key value _ rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (CtfeMaybeValue.Some value)
         (ctfe-env-lookup (box-get rest) name))]))
 
@@ -483,7 +482,7 @@
   (match env
     [(CtfeEnv.Nil _ _ _) (AstMaybeType.No)]
     [(CtfeEnv.Cons key _ ty rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (AstMaybeType.Some ty)
         (ctfe-env-lookup-type (box-get rest) name))]))
 
@@ -585,8 +584,8 @@
 (define (ctfe-string-helper-candidate-name? [name : String]) : bool
   (or
     (ctfe-string-contains-string-token? name)
-    (string.string-eq name "char-at")
-    (string.string-eq name "length")))
+    (string.eq name "char-at")
+    (string.eq name "length")))
 
 (define (ctfe-hygiene-enabled-name) : String
   "__tl_macro_hygiene_enabled")
@@ -608,7 +607,7 @@
 (define (ctfe-hygiene-template-name [name : String]) : String
   (if (ctfe-string-prefix? name (ctfe-hygiene-template-prefix))
     name
-    (string.string-append (ctfe-hygiene-template-prefix) name)))
+    (string.append (ctfe-hygiene-template-prefix) name)))
 
 (define (ctfe-quote-name [env : CtfeEnv] [name : String]) : String
   (if (ctfe-hygiene-enabled? env)
@@ -659,10 +658,10 @@
 (define (ctfe-symbol-module-key [module : String] [name : String]) : String
   (if (= (ctfe-private-string-length module) 0)
     name
-    (string.string-append module (string.string-append "/" name))))
+    (string.append module (string.append "/" name))))
 
 (define (ctfe-hygiene-global-symbol-name [module : String] [name : String]) : String
-  (string.string-append
+  (string.append
     (ctfe-hygiene-global-prefix)
     (ctfe-symbol-module-key module name)))
 
@@ -670,7 +669,7 @@
   (hashmap.string-i64-map-with-capacity 1))
 
 (define (ctfe-module-macro-export-key [module : String] [name : String]) : String
-  (string.string-append module (string.string-append "|" name)))
+  (string.append module (string.append "|" name)))
 
 (define (ctfe-module-macro-export-reset!) : unit
   (set!
@@ -710,7 +709,7 @@
     (CtfeMaybeReflectInfo.None)
     (let
       [info : CtfeReflectInfo (ctfe-reflect-info-list-ref infos index)]
-      (if (string.string-eq (ctfe-reflect-info-key info) key)
+      (if (string.eq (ctfe-reflect-info-key info) key)
         (CtfeMaybeReflectInfo.Some info)
         (ctfe-reflect-info-lookup-from infos key (- index 1))))))
 
@@ -817,9 +816,7 @@
               [key : String
                 (if (= (string.string-length module) 0)
                   name-str
-                  (string.string-append
-                    module
-                    (string.string-append "/" name-str)))]
+                  (string.append module (string.append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectInfo.Struct
                   key
@@ -836,9 +833,7 @@
               [key : String
                 (if (= (string.string-length module) 0)
                   name-str
-                  (string.string-append
-                    module
-                    (string.string-append "/" name-str)))]
+                  (string.append module (string.append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectInfo.Struct
                   key
@@ -855,9 +850,7 @@
               [key : String
                 (if (= (string.string-length module) 0)
                   name-str
-                  (string.string-append
-                    module
-                    (string.string-append "/" name-str)))]
+                  (string.append module (string.append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectInfo.Enum
                   key
@@ -874,9 +867,7 @@
               [key : String
                 (if (= (string.string-length module) 0)
                   name-str
-                  (string.string-append
-                    module
-                    (string.string-append "/" name-str)))]
+                  (string.append module (string.append "/" name-str)))]
               [info : CtfeReflectInfo
                 (CtfeReflectInfo.Enum
                   key
@@ -897,9 +888,7 @@
                     [key : String
                       (if (= (string.string-length module) 0)
                         name-str
-                        (string.string-append
-                          module
-                          (string.string-append "/" name-str)))]
+                        (string.append module (string.append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectInfo.Struct
                         key
@@ -916,9 +905,7 @@
                     [key : String
                       (if (= (string.string-length module) 0)
                         name-str
-                        (string.string-append
-                          module
-                          (string.string-append "/" name-str)))]
+                        (string.append module (string.append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectInfo.Struct
                         key
@@ -935,9 +922,7 @@
                     [key : String
                       (if (= (string.string-length module) 0)
                         name-str
-                        (string.string-append
-                          module
-                          (string.string-append "/" name-str)))]
+                        (string.append module (string.append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectInfo.Enum
                         key
@@ -954,9 +939,7 @@
                     [key : String
                       (if (= (string.string-length module) 0)
                         name-str
-                        (string.string-append
-                          module
-                          (string.string-append "/" name-str)))]
+                        (string.append module (string.append "/" name-str)))]
                     [info : CtfeReflectInfo
                       (CtfeReflectInfo.Enum
                         key
@@ -1409,9 +1392,9 @@
   [fuel : i64]) : ResultCtfe
   (match op
     [(AstBinOp.Eq)
-      (ResultCtfe.Ok (CompilerCtfeValue.Bool (string.string-eq a b)) fuel)]
+      (ResultCtfe.Ok (CompilerCtfeValue.Bool (string.eq a b)) fuel)]
     [(AstBinOp.Ne)
-      (ResultCtfe.Ok (CompilerCtfeValue.Bool (not (string.string-eq a b))) fuel)]
+      (ResultCtfe.Ok (CompilerCtfeValue.Bool (not (string.eq a b))) fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -1459,9 +1442,9 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.string-append
+        (string.append
           "this operation is not supported on "
-          (string.string-append label " in compile-time evaluation"))))))
+          (string.append label " in compile-time evaluation"))))))
 
 ;; Dispatch a binary op over two already-evaluated operands.
 (define (ctfe-apply-binop
@@ -2090,7 +2073,7 @@
 
 (define (ctfe-int-key [n : i64]) : String
   (if (< n 0)
-    (string.string-append "m" (string.int->string (- 0 n)))
+    (string.append "m" (string.int->string (- 0 n)))
     (string.int->string n)))
 
 (define (ctfe-type-list-key-with-pools
@@ -2103,11 +2086,9 @@
       (let
         [head : AstType (ast-node-pool-context-type-get pools head)]
         [rest : AstTypeList (box-get rest)]
-        (string.string-append
+        (string.append
           (ctfe-type-key-with-reflections-and-pools pools infos head)
-          (string.string-append
-            "_"
-            (ctfe-type-list-key-with-pools pools infos rest))))]))
+          (string.append "_" (ctfe-type-list-key-with-pools pools infos rest))))]))
 
 (define (ctfe-type-list-key [infos : CtfeReflectInfoList] [types : AstTypeList]) : String
   (ctfe-type-list-key-with-pools
@@ -2121,9 +2102,7 @@
     [(AstLifetimeList.Cons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string.string-append
-          head
-          (string.string-append "_" (ctfe-lifetime-list-key rest))))]))
+        (string.append head (string.append "_" (ctfe-lifetime-list-key rest))))]))
 
 (define (ctfe-lifetime-list-eq [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a
@@ -2139,7 +2118,7 @@
             (let
               [b-rest : AstLifetimeList (box-get b-rest)]
               (and
-                (string.string-eq a-head b-head)
+                (string.eq a-head b-head)
                 (ctfe-lifetime-list-eq a-rest b-rest)))]
           [_ false]))]))
 
@@ -2168,117 +2147,111 @@
     [(AstType.Unit) "unit"]
     [(AstType.Never) "never"]
     [(AstType.Func args ret)
-      (string.string-append
+      (string.append
         "fn_"
-        (string.string-append
+        (string.append
           (ctfe-type-list-key-with-pools pools infos (box-get args))
-          (string.string-append
+          (string.append
             "_to_"
             (ctfe-type-key-with-reflections-and-pools
               pools
               infos
               (ast-node-pool-context-type-get pools ret)))))]
     [(AstType.Tuple elems)
-      (string.string-append
+      (string.append
         "tuple_"
         (ctfe-type-list-key-with-pools pools infos (box-get elems)))]
     [(AstType.Array elem count)
-      (string.string-append
+      (string.append
         "array_"
-        (string.string-append
+        (string.append
           (ctfe-type-key-with-reflections-and-pools
             pools
             infos
             (ast-node-pool-context-type-get pools elem))
-          (string.string-append "_" (ctfe-int-key count))))]
+          (string.append "_" (ctfe-int-key count))))]
     [(AstType.DynArray elem)
-      (string.string-append
+      (string.append
         "dynarray_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast-node-pool-context-type-get pools elem)))]
     [(AstType.Box elem)
-      (string.string-append
+      (string.append
         "box_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast-node-pool-context-type-get pools elem)))]
     [(AstType.Ptr elem)
-      (string.string-append
+      (string.append
         "ptr_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast-node-pool-context-type-get pools elem)))]
     [(AstType.MutPtr elem)
-      (string.string-append
+      (string.append
         "mutptr_"
         (ctfe-type-key-with-reflections-and-pools
           pools
           infos
           (ast-node-pool-context-type-get pools elem)))]
     [(AstType.Ref region inner)
-      (string.string-append
+      (string.append
         "ref_"
-        (string.string-append
+        (string.append
           region
-          (string.string-append
+          (string.append
             "_"
             (ctfe-type-key-with-reflections-and-pools
               pools
               infos
               (ast-node-pool-context-type-get pools inner)))))]
     [(AstType.MutRef region inner)
-      (string.string-append
+      (string.append
         "mutref_"
-        (string.string-append
+        (string.append
           region
-          (string.string-append
+          (string.append
             "_"
             (ctfe-type-key-with-reflections-and-pools
               pools
               infos
               (ast-node-pool-context-type-get pools inner)))))]
     [(AstType.Region region inner)
-      (string.string-append
+      (string.append
         "region_"
-        (string.string-append
+        (string.append
           region
-          (string.string-append
+          (string.append
             "_"
             (ctfe-type-key-with-reflections-and-pools
               pools
               infos
               (ast-node-pool-context-type-get pools inner)))))]
-    [(AstType.Enum name) (string.string-append "enum_" (intern-str name))]
+    [(AstType.Enum name) (string.append "enum_" (intern-str name))]
     [(AstType.EnumArgs name lifetimes)
-      (string.string-append
+      (string.append
         "enumargs_"
-        (string.string-append
+        (string.append
           (intern-str name)
-          (string.string-append
-            "_"
-            (ctfe-lifetime-list-key (box-get lifetimes)))))]
-    [(AstType.Struct name) (string.string-append "struct_" (intern-str name))]
+          (string.append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]
+    [(AstType.Struct name) (string.append "struct_" (intern-str name))]
     [(AstType.StructArgs name lifetimes)
-      (string.string-append
+      (string.append
         "structargs_"
-        (string.string-append
+        (string.append
           (intern-str name)
-          (string.string-append
-            "_"
-            (ctfe-lifetime-list-key (box-get lifetimes)))))]
-    [(AstType.Var name) (string.string-append "var_" (intern-str name))]
+          (string.append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]
+    [(AstType.Var name) (string.append "var_" (intern-str name))]
     [(AstType.VarArgs name lifetimes)
-      (string.string-append
+      (string.append
         "varargs_"
-        (string.string-append
+        (string.append
           (intern-str name)
-          (string.string-append
-            "_"
-            (ctfe-lifetime-list-key (box-get lifetimes)))))]))
+          (string.append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]))
 
 (define (ctfe-type-key-with-reflections
   [infos : CtfeReflectInfoList]
@@ -2362,7 +2335,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.string-append name " expects a type argument"))))])]))
+                (string.append name " expects a type argument"))))])]))
 
 (define (ctfe-eval-i64-arg
   [arg : AstExpr]
@@ -2380,7 +2353,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.string-append name " expects an i64 index"))))])]))
+                (string.append name " expects an i64 index"))))])]))
 
 (define (ctfe-eval-string-arg
   [arg : AstExpr]
@@ -2398,7 +2371,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.string-append name " expects a String argument"))))])]))
+                (string.append name " expects a String argument"))))])]))
 
 (define (ctfe-reflect-field-list-count [fields : CtfeReflectFieldList]) : i64
   (struct-get fields len))
@@ -2489,21 +2462,21 @@
 
 (define (ctfe-type-info-builtin-kind? [kind : String]) : bool
   (cond
-    [(string.string-eq kind "i64") true]
-    [(string.string-eq kind "i32") true]
-    [(string.string-eq kind "i16") true]
-    [(string.string-eq kind "i8") true]
-    [(string.string-eq kind "u64") true]
-    [(string.string-eq kind "u32") true]
-    [(string.string-eq kind "u16") true]
-    [(string.string-eq kind "u8") true]
-    [(string.string-eq kind "f64") true]
-    [(string.string-eq kind "f32") true]
-    [(string.string-eq kind "bool") true]
-    [(string.string-eq kind "char") true]
-    [(string.string-eq kind "string") true]
-    [(string.string-eq kind "unit") true]
-    [else (string.string-eq kind "never")]))
+    [(string.eq kind "i64") true]
+    [(string.eq kind "i32") true]
+    [(string.eq kind "i16") true]
+    [(string.eq kind "i8") true]
+    [(string.eq kind "u64") true]
+    [(string.eq kind "u32") true]
+    [(string.eq kind "u16") true]
+    [(string.eq kind "u8") true]
+    [(string.eq kind "f64") true]
+    [(string.eq kind "f32") true]
+    [(string.eq kind "bool") true]
+    [(string.eq kind "char") true]
+    [(string.eq kind "string") true]
+    [(string.eq kind "unit") true]
+    [else (string.eq kind "never")]))
 
 (define (ctfe-type-info-key-in-env [env : CtfeEnv] [ty : AstType]) : String
   (ctfe-type-key-with-reflections-and-pools
@@ -2749,9 +2722,9 @@
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append
+            (string.append
               "'"
-              (string.string-append
+              (string.append
                 (ctfe-describe-expr expr)
                 "' is not supported in compile-time evaluation")))))]))
 
@@ -2913,7 +2886,7 @@
   [name : String]
   [layouts : CtfeLayoutInfoList]
   [ty : AstType]) : i64
-  (if (string.string-eq name "size-of")
+  (if (string.eq name "size-of")
     (ctfe-type-size-with-pools pools layouts ty)
     (ctfe-type-align-with-pools pools layouts ty)))
 
@@ -2958,7 +2931,7 @@
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
-                              (string.string-append
+                              (string.append
                                 name
                                 " expects a known type argument"))))
                         (ResultCtfe.Ok (CompilerCtfeValue.I64 answer) arg-fuel)))]
@@ -2967,21 +2940,19 @@
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string.string-append name " expects a type argument"))))])])]
+                          (string.append name " expects a type argument"))))])])]
           [_
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.string-append
-                    name
-                    " expects exactly one type argument"))))]))]
+                  (string.append name " expects exactly one type argument"))))]))]
     [_
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append name " expects exactly one type argument"))))]))
+            (string.append name " expects exactly one type argument"))))]))
 
 (define (ctfe-offset-field-name [expr : AstExpr] [env : CtfeEnv]) : CtfeMaybeFieldName
   (match expr
@@ -3037,7 +3008,7 @@
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.string-append "offset-of unknown field " field-name))))
+                  (string.append "offset-of unknown field " field-name))))
             (ResultCtfe.Ok (CompilerCtfeValue.I64 offset) fuel)))
         (ResultCtfe.Err
           (box
@@ -3131,34 +3102,34 @@
         (cond
           [(string.char-eq first 'a')
             (or
-              (string.string-eq name "array-element-type")
-              (string.string-eq name "array-length")
-              (string.string-eq name "array-dynamic?"))]
+              (string.eq name "array-element-type")
+              (string.eq name "array-length")
+              (string.eq name "array-dynamic?"))]
           [(string.char-eq first 'e')
             (or
-              (string.string-eq name "enum-variant-count")
-              (string.string-eq name "enum-variant-name")
-              (string.string-eq name "enum-variant-payload-count")
-              (string.string-eq name "enum-variant-payload-type"))]
+              (string.eq name "enum-variant-count")
+              (string.eq name "enum-variant-name")
+              (string.eq name "enum-variant-payload-count")
+              (string.eq name "enum-variant-payload-type"))]
           [(string.char-eq first 'f')
             (or
-              (string.string-eq name "function-param-count")
-              (string.string-eq name "function-param-type")
-              (string.string-eq name "function-return-type"))]
+              (string.eq name "function-param-count")
+              (string.eq name "function-param-type")
+              (string.eq name "function-return-type"))]
           [(string.char-eq first 's')
             (or
-              (string.string-eq name "struct-field-count")
-              (string.string-eq name "struct-field-name")
-              (string.string-eq name "struct-field-type"))]
+              (string.eq name "struct-field-count")
+              (string.eq name "struct-field-name")
+              (string.eq name "struct-field-type"))]
           [(string.char-eq first 't')
             (or
-              (string.string-eq name "type-info")
-              (string.string-eq name "type-kind")
-              (string.string-eq name "type-key")
-              (string.string-eq name "type-nominal-module")
-              (string.string-eq name "type-nominal-name")
-              (string.string-eq name "tuple-element-count")
-              (string.string-eq name "tuple-element-type"))]
+              (string.eq name "type-info")
+              (string.eq name "type-kind")
+              (string.eq name "type-key")
+              (string.eq name "type-nominal-module")
+              (string.eq name "type-nominal-name")
+              (string.eq name "tuple-element-count")
+              (string.eq name "tuple-element-type"))]
           [else false])))))
 
 (define (ctfe-eval-one-type-reflection
@@ -3180,7 +3151,7 @@
                 (let
                   [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
                   (cond
-                    [(string.string-eq name "type-info")
+                    [(string.eq name "type-info")
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.TypeInfo
                           (ctfe-reflect-resolve-type-with-pools
@@ -3188,7 +3159,7 @@
                             infos
                             ty))
                         arg-fuel)]
-                    [(string.string-eq name "type-kind")
+                    [(string.eq name "type-kind")
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.String
                           (ctfe-type-kind-with-reflections-and-pools
@@ -3196,7 +3167,7 @@
                             infos
                             ty))
                         arg-fuel)]
-                    [(string.string-eq name "type-key")
+                    [(string.eq name "type-key")
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.String
                           (ctfe-type-key-with-reflections-and-pools
@@ -3204,7 +3175,7 @@
                             infos
                             ty))
                         arg-fuel)]
-                    [(string.string-eq name "type-nominal-module")
+                    [(string.eq name "type-nominal-module")
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
@@ -3224,7 +3195,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "type-nominal-module requires struct or enum type")))])]
-                    [(string.string-eq name "type-nominal-name")
+                    [(string.eq name "type-nominal-name")
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
@@ -3244,7 +3215,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "type-nominal-name requires struct or enum type")))])]
-                    [(string.string-eq name "struct-field-count")
+                    [(string.eq name "struct-field-count")
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
@@ -3267,7 +3238,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "struct-field-count requires struct type")))])]
-                    [(string.string-eq name "enum-variant-count")
+                    [(string.eq name "enum-variant-count")
                       (match (ctfe-reflect-info-lookup
                         infos
                         (ctfe-type-nominal-key ty))
@@ -3290,7 +3261,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "enum-variant-count requires enum type")))])]
-                    [(string.string-eq name "array-element-type")
+                    [(string.eq name "array-element-type")
                       (match ty
                         [(AstType.Array elem _)
                           (ResultCtfe.Ok
@@ -3306,7 +3277,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "array-element-type requires array type")))])]
-                    [(string.string-eq name "array-length")
+                    [(string.eq name "array-length")
                       (match ty
                         [(AstType.Array _ count)
                           (ResultCtfe.Ok (CompilerCtfeValue.I64 count) arg-fuel)]
@@ -3316,7 +3287,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "array-length requires fixed array type")))])]
-                    [(string.string-eq name "array-dynamic?")
+                    [(string.eq name "array-dynamic?")
                       (match ty
                         [(AstType.Array _ _)
                           (ResultCtfe.Ok
@@ -3330,7 +3301,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "array-dynamic? requires array type")))])]
-                    [(string.string-eq name "tuple-element-count")
+                    [(string.eq name "tuple-element-count")
                       (match (ctfe-reflect-resolve-type-with-pools
                         (ctfe-env-pools env)
                         infos
@@ -3346,7 +3317,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "tuple-element-count requires tuple type")))])]
-                    [(string.string-eq name "function-param-count")
+                    [(string.eq name "function-param-count")
                       (match ty
                         [(AstType.Func params _)
                           (ResultCtfe.Ok
@@ -3359,7 +3330,7 @@
                               (ctfe-diagnostic-at-expr
                                 expr
                                 "function-param-count requires function type")))])]
-                    [(string.string-eq name "function-return-type")
+                    [(string.eq name "function-return-type")
                       (match ty
                         [(AstType.Func _ ret)
                           (ResultCtfe.Ok
@@ -3377,15 +3348,13 @@
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.string-append
-                    name
-                    " expects exactly one type argument"))))]))]
+                  (string.append name " expects exactly one type argument"))))]))]
     [_
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append name " expects exactly one type argument"))))]))
+            (string.append name " expects exactly one type argument"))))]))
 
 (define (ctfe-type-nominal-key [ty : AstType]) : String
   (match ty
@@ -3402,16 +3371,14 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.string-append
-          name
-          " expects exactly one type argument and one index")))))
+        (string.append name " expects exactly one type argument and one index")))))
 
 (define (ctfe-struct-field-kind-error [name : String] [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.string-append name " requires struct type")))))
+        (string.append name " requires struct type")))))
 
 (define (ctfe-eval-struct-field-from-fields
   [name : String]
@@ -3421,7 +3388,7 @@
   [index : i64]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (if (string.string-eq name "struct-field-name")
+  (if (string.eq name "struct-field-name")
     (match (ctfe-reflect-field-name-at fields index)
       [(ResultCtfeStringLookup.Ok field-name)
         (ResultCtfe.Ok (CompilerCtfeValue.String field-name) fuel)]
@@ -3430,7 +3397,7 @@
           (box
             (ctfe-diagnostic-at-expr
               expr
-              (string.string-append name (string.string-append " " message)))))])
+              (string.append name (string.append " " message)))))])
     (match (ctfe-reflect-field-type-at fields pools infos index)
       [(ResultCtfeTypeLookup.Ok field-ty)
         (ResultCtfe.Ok (CompilerCtfeValue.Type field-ty) fuel)]
@@ -3439,7 +3406,7 @@
           (box
             (ctfe-diagnostic-at-expr
               expr
-              (string.string-append name (string.string-append " " message)))))])))
+              (string.append name (string.append " " message)))))])))
 
 (define (ctfe-eval-struct-field-from-type
   [name : String]
@@ -3510,16 +3477,12 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.string-append
-          name
-          " expects exactly one type argument and one index")))))
+        (string.append name " expects exactly one type argument and one index")))))
 
 (define (ctfe-enum-variant-kind-error [name : String] [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
-      (ctfe-diagnostic-at-expr
-        expr
-        (string.string-append name " requires enum type")))))
+      (ctfe-diagnostic-at-expr expr (string.append name " requires enum type")))))
 
 (define (ctfe-eval-enum-variant-from-variants
   [name : String]
@@ -3527,7 +3490,7 @@
   [index : i64]
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
-  (if (string.string-eq name "enum-variant-name")
+  (if (string.eq name "enum-variant-name")
     (match (ctfe-reflect-variant-name-at variants index)
       [(ResultCtfeStringLookup.Ok variant-name)
         (ResultCtfe.Ok (CompilerCtfeValue.String variant-name) fuel)]
@@ -3536,7 +3499,7 @@
           (box
             (ctfe-diagnostic-at-expr
               expr
-              (string.string-append name (string.string-append " " message)))))])
+              (string.append name (string.append " " message)))))])
     (match (ctfe-reflect-variant-payloads-at variants index)
       [(ResultCtfeTypeListLookup.Ok payloads)
         (ResultCtfe.Ok
@@ -3547,7 +3510,7 @@
           (box
             (ctfe-diagnostic-at-expr
               expr
-              (string.string-append name (string.string-append " " message)))))])))
+              (string.append name (string.append " " message)))))])))
 
 (define (ctfe-eval-enum-variant-from-type
   [name : String]
@@ -3638,13 +3601,13 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.string-append "enum-variant-payload-type " message))))])]
+                (string.append "enum-variant-payload-type " message))))])]
     [(ResultCtfeTypeListLookup.Err message)
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append "enum-variant-payload-type " message))))]))
+            (string.append "enum-variant-payload-type " message))))]))
 
 (define (ctfe-eval-enum-payload-type-from-type
   [ty : AstType]
@@ -3779,7 +3742,7 @@
                                     (box
                                       (ctfe-diagnostic-at-expr
                                         expr
-                                        (string.string-append
+                                        (string.append
                                           "function-param-type "
                                           message))))])]
                             [_
@@ -3842,7 +3805,7 @@
             (box
               (ctfe-diagnostic-at-expr
                 expr
-                (string.string-append "tuple-element-type " message))))])]
+                (string.append "tuple-element-type " message))))])]
     [_ (ctfe-tuple-element-type-kind-error expr)]))
 
 (define (ctfe-eval-tuple-element-type-reflection
@@ -3896,33 +3859,33 @@
   [fuel : i64]) : ResultCtfe
   (cond
     [(or
-        (string.string-eq name "type-info")
-        (string.string-eq name "type-kind")
-        (string.string-eq name "type-key")
-        (string.string-eq name "type-nominal-module")
-        (string.string-eq name "type-nominal-name")
-        (string.string-eq name "struct-field-count")
-        (string.string-eq name "enum-variant-count")
-        (string.string-eq name "array-element-type")
-        (string.string-eq name "array-length")
-        (string.string-eq name "array-dynamic?")
-        (string.string-eq name "tuple-element-count")
-        (string.string-eq name "function-param-count")
-        (string.string-eq name "function-return-type"))
+        (string.eq name "type-info")
+        (string.eq name "type-kind")
+        (string.eq name "type-key")
+        (string.eq name "type-nominal-module")
+        (string.eq name "type-nominal-name")
+        (string.eq name "struct-field-count")
+        (string.eq name "enum-variant-count")
+        (string.eq name "array-element-type")
+        (string.eq name "array-length")
+        (string.eq name "array-dynamic?")
+        (string.eq name "tuple-element-count")
+        (string.eq name "function-param-count")
+        (string.eq name "function-return-type"))
       (ctfe-eval-one-type-reflection name args expr env fuel)]
     [(or
-        (string.string-eq name "struct-field-name")
-        (string.string-eq name "struct-field-type"))
+        (string.eq name "struct-field-name")
+        (string.eq name "struct-field-type"))
       (ctfe-eval-struct-field-reflection name args expr env fuel)]
     [(or
-        (string.string-eq name "enum-variant-name")
-        (string.string-eq name "enum-variant-payload-count"))
+        (string.eq name "enum-variant-name")
+        (string.eq name "enum-variant-payload-count"))
       (ctfe-eval-enum-variant-reflection name args expr env fuel)]
-    [(string.string-eq name "enum-variant-payload-type")
+    [(string.eq name "enum-variant-payload-type")
       (ctfe-eval-enum-payload-type-reflection args expr env fuel)]
-    [(string.string-eq name "tuple-element-type")
+    [(string.eq name "tuple-element-type")
       (ctfe-eval-tuple-element-type-reflection args expr env fuel)]
-    [(string.string-eq name "function-param-type")
+    [(string.eq name "function-param-type")
       (ctfe-eval-function-param-type-reflection args expr env fuel)]
     [else (ctfe-unsupported-form expr)]))
 
@@ -3956,7 +3919,7 @@
                         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
                         [(ResultCtfeStringArg.Ok r right-fuel)
                           (ResultCtfe.Ok
-                            (CompilerCtfeValue.Bool (string.string-eq l r))
+                            (CompilerCtfeValue.Bool (string.eq l r))
                             right-fuel)])])]
                 [_
                   (ResultCtfe.Err
@@ -4002,8 +3965,7 @@
                         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
                         [(ResultCtfeStringArg.Ok r right-fuel)
                           (ResultCtfe.Ok
-                            (CompilerCtfeValue.String
-                              (string.string-append l r))
+                            (CompilerCtfeValue.String (string.append l r))
                             right-fuel)])])]
                 [_
                   (ResultCtfe.Err
@@ -4130,7 +4092,7 @@
               [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
               [(ResultCtfeStringArg.Ok text arg-fuel)
                 (ResultCtfe.Ok
-                  (CompilerCtfeValue.I64 (string.string->int text))
+                  (CompilerCtfeValue.I64 (string.>int text))
                   arg-fuel)])]
           [_
             (ResultCtfe.Err
@@ -4214,175 +4176,182 @@
       (ctfe-comptime-helper-base-after-prefix name "stdlib/comptime/")]
     [else name]))
 
+(define (ctfe-comptime-error-helper-name? [name : String]) : bool
+  (and
+    (ctfe-string-has-module-separator? name)
+    (string.eq (ctfe-comptime-helper-lookup-name name) "error")))
+
 (define (ctfe-string-eq-helper-name? [name : String]) : bool
   (or
-    (string.string-eq name "__tl_string_eq")
-    (string.string-eq name "string-eq")
-    (string.string-eq name "string=?")
+    (string.eq name "__tl_string_eq")
+    (string.eq name "string-eq")
+    (string.eq name "string=?")
+    (ctfe-stdlib-string-helper-name? name "eq")
     (ctfe-stdlib-string-helper-name? name "string-eq")
     (ctfe-stdlib-string-helper-name? name "string=?")))
 
 (define (ctfe-string-length-helper-name? [name : String]) : bool
   (or
-    (string.string-eq name "__tl_string_length")
-    (string.string-eq name "string-length")
+    (string.eq name "__tl_string_length")
+    (string.eq name "string-length")
     (ctfe-stdlib-string-helper-name? name "string-length")
-    (string.string-eq name "length")))
+    (string.eq name "length")))
 
 (define (ctfe-string-ref-helper-name? [name : String]) : bool
   (or
-    (string.string-eq name "__tl_string_ref")
-    (string.string-eq name "string-ref")
-    (string.string-eq name "char-at")
+    (string.eq name "__tl_string_ref")
+    (string.eq name "string-ref")
+    (string.eq name "char-at")
     (ctfe-stdlib-string-helper-name? name "string-ref")
     (ctfe-stdlib-string-helper-name? name "char-at")))
 
 (define (ctfe-string-to-int-helper-name? [name : String]) : bool
   (or
-    (string.string-eq name "__tl_string_to_int")
-    (string.string-eq name "string->int")
+    (string.eq name "__tl_string_to_int")
+    (string.eq name "string->int")
+    (ctfe-stdlib-string-helper-name? name ">int")
     (ctfe-stdlib-string-helper-name? name "string->int")))
 
 (define (ctfe-comptime-source-helper-call-name [name : String]) : String
   (let
     [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
     (cond
-      [(string.string-eq lookup-name "expr-bool?") "expr-bool?"]
-      [(string.string-eq lookup-name "expr-bool-value") "expr-bool-value"]
-      [(string.string-eq lookup-name "expr-if?") "expr-if?"]
-      [(string.string-eq lookup-name "expr-if-cond") "expr-if-cond"]
-      [(string.string-eq lookup-name "expr-if-then") "expr-if-then"]
-      [(string.string-eq lookup-name "expr-if-else") "expr-if-else"]
-      [(string.string-eq lookup-name "expr-clause-first") "expr-clause-first"]
-      [(string.string-eq lookup-name "expr-clause-second") "expr-clause-second"]
-      [(string.string-eq lookup-name "expr-list-empty?") "expr-list-empty?"]
-      [(string.string-eq lookup-name "expr-list-length") "expr-list-length"]
-      [(string.string-eq lookup-name "expr-list-head") "expr-list-head"]
-      [(string.string-eq lookup-name "expr-list-nth") "expr-list-nth"]
-      [(string.string-eq lookup-name "expr-clause-list-empty?")
+      [(string.eq lookup-name "expr-bool?") "expr-bool?"]
+      [(string.eq lookup-name "expr-bool-value") "expr-bool-value"]
+      [(string.eq lookup-name "expr-if?") "expr-if?"]
+      [(string.eq lookup-name "expr-if-cond") "expr-if-cond"]
+      [(string.eq lookup-name "expr-if-then") "expr-if-then"]
+      [(string.eq lookup-name "expr-if-else") "expr-if-else"]
+      [(string.eq lookup-name "expr-clause-first") "expr-clause-first"]
+      [(string.eq lookup-name "expr-clause-second") "expr-clause-second"]
+      [(string.eq lookup-name "expr-list-empty?") "expr-list-empty?"]
+      [(string.eq lookup-name "expr-list-length") "expr-list-length"]
+      [(string.eq lookup-name "expr-list-head") "expr-list-head"]
+      [(string.eq lookup-name "expr-list-nth") "expr-list-nth"]
+      [(string.eq lookup-name "expr-clause-list-empty?")
         "expr-clause-list-empty?"]
-      [(string.string-eq lookup-name "expr-clause-list-length")
+      [(string.eq lookup-name "expr-clause-list-length")
         "expr-clause-list-length"]
-      [(string.string-eq lookup-name "expr-clause-list-head")
-        "expr-clause-list-head"]
-      [(string.string-eq lookup-name "expr-clause-list-nth")
-        "expr-clause-list-nth"]
-      [(string.string-eq lookup-name "expr-binding-clause-name")
+      [(string.eq lookup-name "expr-clause-list-head") "expr-clause-list-head"]
+      [(string.eq lookup-name "expr-clause-list-nth") "expr-clause-list-nth"]
+      [(string.eq lookup-name "expr-binding-clause-name")
         "expr-binding-clause-name"]
-      [(string.string-eq lookup-name "expr-binding-clause-has-type?")
+      [(string.eq lookup-name "expr-binding-clause-has-type?")
         "expr-binding-clause-has-type?"]
-      [(string.string-eq lookup-name "expr-binding-clause-type")
+      [(string.eq lookup-name "expr-binding-clause-type")
         "expr-binding-clause-type"]
-      [(string.string-eq lookup-name "expr-binding-clause-init")
+      [(string.eq lookup-name "expr-binding-clause-init")
         "expr-binding-clause-init"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-empty?")
+      [(string.eq lookup-name "expr-binding-clause-list-empty?")
         "expr-binding-clause-list-empty?"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-length")
+      [(string.eq lookup-name "expr-binding-clause-list-length")
         "expr-binding-clause-list-length"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-head")
+      [(string.eq lookup-name "expr-binding-clause-list-head")
         "expr-binding-clause-list-head"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-nth")
+      [(string.eq lookup-name "expr-binding-clause-list-nth")
         "expr-binding-clause-list-nth"]
       [else name])))
 
 (define (ctfe-comptime-source-helper-name? [name : String]) : bool
   (or
-    (string.string-eq name "expr-bool?")
-    (string.string-eq name "expr-bool-value")
-    (string.string-eq name "expr-if?")
-    (string.string-eq name "expr-if-cond")
-    (string.string-eq name "expr-if-then")
-    (string.string-eq name "expr-if-else")
-    (string.string-eq name "expr-clause-first")
-    (string.string-eq name "expr-clause-second")
-    (string.string-eq name "expr-list-empty?")
-    (string.string-eq name "expr-list-length")
-    (string.string-eq name "expr-list-head")
-    (string.string-eq name "expr-list-nth")
-    (string.string-eq name "expr-clause-list-empty?")
-    (string.string-eq name "expr-clause-list-length")
-    (string.string-eq name "expr-clause-list-head")
-    (string.string-eq name "expr-clause-list-nth")
-    (string.string-eq name "expr-binding-clause-name")
-    (string.string-eq name "expr-binding-clause-has-type?")
-    (string.string-eq name "expr-binding-clause-type")
-    (string.string-eq name "expr-binding-clause-init")
-    (string.string-eq name "expr-binding-clause-list-empty?")
-    (string.string-eq name "expr-binding-clause-list-length")
-    (string.string-eq name "expr-binding-clause-list-head")
-    (string.string-eq name "expr-binding-clause-list-nth")))
+    (string.eq name "expr-bool?")
+    (string.eq name "expr-bool-value")
+    (string.eq name "expr-if?")
+    (string.eq name "expr-if-cond")
+    (string.eq name "expr-if-then")
+    (string.eq name "expr-if-else")
+    (string.eq name "expr-clause-first")
+    (string.eq name "expr-clause-second")
+    (string.eq name "expr-list-empty?")
+    (string.eq name "expr-list-length")
+    (string.eq name "expr-list-head")
+    (string.eq name "expr-list-nth")
+    (string.eq name "expr-clause-list-empty?")
+    (string.eq name "expr-clause-list-length")
+    (string.eq name "expr-clause-list-head")
+    (string.eq name "expr-clause-list-nth")
+    (string.eq name "expr-binding-clause-name")
+    (string.eq name "expr-binding-clause-has-type?")
+    (string.eq name "expr-binding-clause-type")
+    (string.eq name "expr-binding-clause-init")
+    (string.eq name "expr-binding-clause-list-empty?")
+    (string.eq name "expr-binding-clause-list-length")
+    (string.eq name "expr-binding-clause-list-head")
+    (string.eq name "expr-binding-clause-list-nth")))
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (let
     [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
     (cond
-      [(string.string-eq lookup-name "expr-bool") "expr-bool"]
-      [(string.string-eq lookup-name "expr-int") "expr-int"]
-      [(string.string-eq lookup-name "expr-string") "expr-string"]
-      [(string.string-eq lookup-name "expr-var") "expr-var"]
-      [(string.string-eq lookup-name "expr-struct-get") "expr-struct-get"]
-      [(string.string-eq lookup-name "expr-tuple-ref") "expr-tuple-ref"]
-      [(string.string-eq lookup-name "expr-struct-set") "expr-struct-set"]
-      [(string.string-eq lookup-name "expr-splice") "expr-splice"]
-      [(string.string-eq lookup-name "expr-if") "expr-if"]
-      [(string.string-eq lookup-name "pattern-wildcard") "pattern-wildcard"]
-      [(string.string-eq lookup-name "pattern-binding") "pattern-binding"]
-      [(string.string-eq lookup-name "pattern-variant") "pattern-variant"]
-      [(string.string-eq lookup-name "pattern-list-empty") "pattern-list-empty"]
-      [(string.string-eq lookup-name "pattern-list-cons") "pattern-list-cons"]
-      [(string.string-eq lookup-name "match-arm") "match-arm"]
-      [(string.string-eq lookup-name "match-arm-list-empty")
-        "match-arm-list-empty"]
-      [(string.string-eq lookup-name "match-arm-list-cons")
-        "match-arm-list-cons"]
-      [(string.string-eq lookup-name "expr-match") "expr-match"]
-      [(string.string-eq lookup-name "expr-type") "expr-type"]
-      [(string.string-eq lookup-name "type-info") "type-info"]
-      [(string.string-eq lookup-name "module-name") "module-name"]
-      [(string.string-eq lookup-name "module-export-macro?")
-        "module-export-macro?"]
-      [(string.string-eq lookup-name "module-hook") "module-hook"]
-      [(string.string-eq lookup-name "expr-list-empty?") "expr-list-empty?"]
-      [(string.string-eq lookup-name "expr-list-length") "expr-list-length"]
-      [(string.string-eq lookup-name "expr-list-head") "expr-list-head"]
-      [(string.string-eq lookup-name "expr-list-tail") "expr-list-tail"]
-      [(string.string-eq lookup-name "expr-list-nth") "expr-list-nth"]
-      [(string.string-eq lookup-name "expr-clause-list-empty?")
+      [(string.eq lookup-name "expr-bool") "expr-bool"]
+      [(string.eq lookup-name "expr-int") "expr-int"]
+      [(string.eq lookup-name "expr-string") "expr-string"]
+      [(string.eq lookup-name "expr-var") "expr-var"]
+      [(string.eq lookup-name "expr-struct-get") "expr-struct-get"]
+      [(string.eq lookup-name "expr-tuple-ref") "expr-tuple-ref"]
+      [(string.eq lookup-name "expr-struct-set") "expr-struct-set"]
+      [(string.eq lookup-name "expr-splice") "expr-splice"]
+      [(string.eq lookup-name "expr-if") "expr-if"]
+      [(string.eq lookup-name "pattern-wildcard") "pattern-wildcard"]
+      [(string.eq lookup-name "pattern-binding") "pattern-binding"]
+      [(string.eq lookup-name "pattern-variant") "pattern-variant"]
+      [(string.eq lookup-name "pattern-list-empty") "pattern-list-empty"]
+      [(string.eq lookup-name "pattern-list-cons") "pattern-list-cons"]
+      [(string.eq lookup-name "match-arm") "match-arm"]
+      [(string.eq lookup-name "match-arm-list-empty") "match-arm-list-empty"]
+      [(string.eq lookup-name "match-arm-list-cons") "match-arm-list-cons"]
+      [(string.eq lookup-name "expr-match") "expr-match"]
+      [(string.eq lookup-name "expr-type") "expr-type"]
+      [(string.eq lookup-name "type-info") "type-info"]
+      [(string.eq lookup-name "module-name") "module-name"]
+      [(string.eq lookup-name "module-export-macro?") "module-export-macro?"]
+      [(string.eq lookup-name "module-hook") "module-hook"]
+      [(string.eq lookup-name "expr-list-empty?") "expr-list-empty?"]
+      [(string.eq lookup-name "expr-list-length") "expr-list-length"]
+      [(string.eq lookup-name "expr-list-head") "expr-list-head"]
+      [(string.eq lookup-name "expr-list-tail") "expr-list-tail"]
+      [(string.eq lookup-name "expr-list-nth") "expr-list-nth"]
+      [(string.eq lookup-name "expr-clause-list-empty?")
         "expr-clause-list-empty?"]
-      [(string.string-eq lookup-name "expr-clause-list-length")
+      [(string.eq lookup-name "expr-clause-list-length")
         "expr-clause-list-length"]
-      [(string.string-eq lookup-name "expr-clause-list-head")
-        "expr-clause-list-head"]
-      [(string.string-eq lookup-name "expr-clause-list-tail")
-        "expr-clause-list-tail"]
-      [(string.string-eq lookup-name "expr-clause-list-nth")
-        "expr-clause-list-nth"]
-      [(string.string-eq lookup-name "expr-clause-list->expr-list")
+      [(string.eq lookup-name "expr-clause-list-head") "expr-clause-list-head"]
+      [(string.eq lookup-name "expr-clause-list-tail") "expr-clause-list-tail"]
+      [(string.eq lookup-name "expr-clause-list-nth") "expr-clause-list-nth"]
+      [(string.eq lookup-name "expr-clause-list->expr-list")
         "expr-clause-list->expr-list"]
-      [(string.string-eq lookup-name "expr-binding-clause-name")
+      [(string.eq lookup-name "expr-binding-clause-name")
         "expr-binding-clause-name"]
-      [(string.string-eq lookup-name "expr-binding-clause-has-type?")
+      [(string.eq lookup-name "expr-binding-clause-has-type?")
         "expr-binding-clause-has-type?"]
-      [(string.string-eq lookup-name "expr-binding-clause-type")
+      [(string.eq lookup-name "expr-binding-clause-type")
         "expr-binding-clause-type"]
-      [(string.string-eq lookup-name "expr-binding-clause-init")
+      [(string.eq lookup-name "expr-binding-clause-init")
         "expr-binding-clause-init"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-empty?")
+      [(string.eq lookup-name "expr-binding-clause-list-empty?")
         "expr-binding-clause-list-empty?"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-length")
+      [(string.eq lookup-name "expr-binding-clause-list-length")
         "expr-binding-clause-list-length"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-head")
+      [(string.eq lookup-name "expr-binding-clause-list-head")
         "expr-binding-clause-list-head"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-tail")
+      [(string.eq lookup-name "expr-binding-clause-list-tail")
         "expr-binding-clause-list-tail"]
-      [(string.string-eq lookup-name "expr-binding-clause-list-nth")
+      [(string.eq lookup-name "expr-binding-clause-list-nth")
         "expr-binding-clause-list-nth"]
-      [(string.string-eq lookup-name "expr-binding-clause-list->expr-list")
+      [(string.eq lookup-name "expr-binding-clause-list->expr-list")
         "expr-binding-clause-list->expr-list"]
-      [(string.string-eq lookup-name "string-append") "string-append"]
-      [(string.string-eq lookup-name "string-concat") "string-concat"]
-      [(string.string-eq lookup-name "int->string") "int->string"]
-      [(string.string-eq lookup-name "comptime-error") "comptime-error"]
+      [(string.eq lookup-name "string-append") "string-append"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "append") "string-append"]
+      [(string.eq lookup-name "string-concat") "string-concat"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "concat") "string-concat"]
+      [(string.eq lookup-name "int->string") "int->string"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "int->string")
+        "int->string"]
+      [(ctfe-stdlib-string-helper-name? lookup-name ">int") "string->int"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "string->int")
+        "string->int"]
+      [(ctfe-comptime-error-helper-name? name) "comptime-error"]
+      [(string.eq lookup-name "comptime-error") "comptime-error"]
       [else name])))
 
 (define (ctfe-eval-comptime-error-call
@@ -4671,7 +4640,7 @@
                           (ResultCtfe.Ok
                             (CompilerCtfeValue.Bool
                               (or
-                                (string.string-eq module "")
+                                (string.eq module "")
                                 (ctfe-module-macro-export? module name)))
                             name-fuel)]
                         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
@@ -4727,7 +4696,7 @@
                         "module-hook")
                         [(ResultCtfeStringArg.Ok name name-fuel)
                           (if (or
-                            (string.string-eq module "")
+                            (string.eq module "")
                             (ctfe-module-macro-export? module name))
                             (ResultCtfe.Ok
                               (CompilerCtfeValue.Expr
@@ -4744,11 +4713,11 @@
                               (box
                                 (ctfe-diagnostic-at-expr
                                   expr
-                                  (string.string-append
+                                  (string.append
                                     "typecheck: strategy module "
-                                    (string.string-append
+                                    (string.append
                                       module
-                                      (string.string-append
+                                      (string.append
                                         " does not export hook "
                                         name)))))))]
                         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
@@ -5057,17 +5026,17 @@
         (box (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg")))]))
 
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
-  (string.string-eq name "expr-list-tail"))
+  (string.eq name "expr-list-tail"))
 
 (define (ctfe-expr-clause-list-inspector-name? [name : String]) : bool
   (or
-    (string.string-eq name "expr-clause-list-tail")
-    (string.string-eq name "expr-clause-list->expr-list")))
+    (string.eq name "expr-clause-list-tail")
+    (string.eq name "expr-clause-list->expr-list")))
 
 (define (ctfe-expr-binding-clause-list-inspector-name? [name : String]) : bool
   (or
-    (string.string-eq name "expr-binding-clause-list-tail")
-    (string.string-eq name "expr-binding-clause-list->expr-list")))
+    (string.eq name "expr-binding-clause-list-tail")
+    (string.eq name "expr-binding-clause-list->expr-list")))
 
 (define (ctfe-eval-expr-list-inspector-call
   [name : String]
@@ -5091,9 +5060,7 @@
                         (box
                           (ctfe-diagnostic-at-expr
                             expr
-                            (string.string-append
-                              name
-                              " expects non-empty ExprList"))))
+                            (string.append name " expects non-empty ExprList"))))
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.ExprList (ctfe-expr-list-tail nodes))
                         arg-fuel))]
@@ -5102,20 +5069,20 @@
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string.string-append name " expects ExprList"))))])]
+                          (string.append name " expects ExprList"))))])]
               [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.string-append name " expects exactly one arg"))))]))]
+                  (string.append name " expects exactly one arg"))))]))]
     [_
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append name " expects exactly one arg"))))]))
+            (string.append name " expects exactly one arg"))))]))
 
 (define (ctfe-eval-expr-clause-list-inspector-call
   [name : String]
@@ -5134,7 +5101,7 @@
               [(ResultCtfe.Ok value arg-fuel)
                 (match value
                   [(CompilerCtfeValue.ExprClauseList clauses)
-                    (if (string.string-eq name "expr-clause-list->expr-list")
+                    (if (string.eq name "expr-clause-list->expr-list")
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.ExprList
                           (ctfe-expr-clause-list->expr-list-in-env env clauses))
@@ -5144,7 +5111,7 @@
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
-                              (string.string-append
+                              (string.append
                                 name
                                 " expects non-empty ExprClauseList"))))
                         (ResultCtfe.Ok
@@ -5156,20 +5123,20 @@
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string.string-append name " expects ExprClauseList"))))])]
+                          (string.append name " expects ExprClauseList"))))])]
               [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.string-append name " expects exactly one arg"))))]))]
+                  (string.append name " expects exactly one arg"))))]))]
     [_
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append name " expects exactly one arg"))))]))
+            (string.append name " expects exactly one arg"))))]))
 
 (define (ctfe-eval-expr-binding-clause-list-inspector-call
   [name : String]
@@ -5188,9 +5155,7 @@
               [(ResultCtfe.Ok value arg-fuel)
                 (match value
                   [(CompilerCtfeValue.ExprBindingClauseList clauses)
-                    (if (string.string-eq
-                      name
-                      "expr-binding-clause-list->expr-list")
+                    (if (string.eq name "expr-binding-clause-list->expr-list")
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.ExprList
                           (ctfe-expr-binding-clause-list->expr-list-in-env
@@ -5202,7 +5167,7 @@
                           (box
                             (ctfe-diagnostic-at-expr
                               expr
-                              (string.string-append
+                              (string.append
                                 name
                                 " expects non-empty ExprBindingClauseList"))))
                         (ResultCtfe.Ok
@@ -5214,22 +5179,20 @@
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string.string-append
-                            name
-                            " expects ExprBindingClauseList"))))])]
+                          (string.append name " expects ExprBindingClauseList"))))])]
               [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr
                   expr
-                  (string.string-append name " expects exactly one arg"))))]))]
+                  (string.append name " expects exactly one arg"))))]))]
     [_
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append name " expects exactly one arg"))))]))
+            (string.append name " expects exactly one arg"))))]))
 
 (define (ctfe-eval-expr-if-call
   [args : AstExprList]
@@ -5893,9 +5856,9 @@
 
 (define (ctfe-comptime-source-helper-nth-name? [name : String]) : bool
   (or
-    (string.string-eq name "expr-list-nth")
-    (string.string-eq name "expr-clause-list-nth")
-    (string.string-eq name "expr-binding-clause-list-nth")))
+    (string.eq name "expr-list-nth")
+    (string.eq name "expr-clause-list-nth")
+    (string.eq name "expr-binding-clause-list-nth")))
 
 (define (ctfe-comptime-source-helper-arity [name : String]) : i64
   (if (ctfe-comptime-source-helper-nth-name? name)
@@ -5905,26 +5868,26 @@
 (define (ctfe-comptime-source-helper-param-name [name : String]) : String
   (cond
     [(or
-        (string.string-eq name "expr-clause-first")
-        (string.string-eq name "expr-clause-second")
-        (string.string-eq name "expr-binding-clause-name")
-        (string.string-eq name "expr-binding-clause-has-type?")
-        (string.string-eq name "expr-binding-clause-type")
-        (string.string-eq name "expr-binding-clause-init"))
+        (string.eq name "expr-clause-first")
+        (string.eq name "expr-clause-second")
+        (string.eq name "expr-binding-clause-name")
+        (string.eq name "expr-binding-clause-has-type?")
+        (string.eq name "expr-binding-clause-type")
+        (string.eq name "expr-binding-clause-init"))
       "clause"]
     [(or
-        (string.string-eq name "expr-list-empty?")
-        (string.string-eq name "expr-list-length")
-        (string.string-eq name "expr-list-head")
-        (string.string-eq name "expr-list-nth")
-        (string.string-eq name "expr-clause-list-empty?")
-        (string.string-eq name "expr-clause-list-length")
-        (string.string-eq name "expr-clause-list-head")
-        (string.string-eq name "expr-clause-list-nth")
-        (string.string-eq name "expr-binding-clause-list-empty?")
-        (string.string-eq name "expr-binding-clause-list-length")
-        (string.string-eq name "expr-binding-clause-list-head")
-        (string.string-eq name "expr-binding-clause-list-nth"))
+        (string.eq name "expr-list-empty?")
+        (string.eq name "expr-list-length")
+        (string.eq name "expr-list-head")
+        (string.eq name "expr-list-nth")
+        (string.eq name "expr-clause-list-empty?")
+        (string.eq name "expr-clause-list-length")
+        (string.eq name "expr-clause-list-head")
+        (string.eq name "expr-clause-list-nth")
+        (string.eq name "expr-binding-clause-list-empty?")
+        (string.eq name "expr-binding-clause-list-length")
+        (string.eq name "expr-binding-clause-list-head")
+        (string.eq name "expr-binding-clause-list-nth"))
       "items"]
     [else "value"]))
 
@@ -5933,21 +5896,21 @@
     [param : String (ctfe-comptime-source-helper-param-name name)]
     [scrutinee : i64 (ctfe-source-helper-var env param)]
     (cond
-      [(string.string-eq name "expr-bool?")
+      [(string.eq name "expr-bool?")
         (ctfe-source-helper-match-with-fallback
           env
           scrutinee
           (ctfe-source-helper-expr-bool-pattern AstPattern.Wildcard)
           (ctfe-source-helper-bool env true)
           (ctfe-source-helper-bool env false))]
-      [(string.string-eq name "expr-bool-value")
+      [(string.eq name "expr-bool-value")
         (ctfe-source-helper-match-with-fallback
           env
           scrutinee
           (ctfe-source-helper-expr-bool-pattern (ast-pat-binding "found"))
           (ctfe-source-helper-var env "found")
           (ctfe-source-helper-bool env false))]
-      [(string.string-eq name "expr-if?")
+      [(string.eq name "expr-if?")
         (ctfe-source-helper-match-with-fallback
           env
           scrutinee
@@ -5957,7 +5920,7 @@
             AstPattern.Wildcard)
           (ctfe-source-helper-bool env true)
           (ctfe-source-helper-bool env false))]
-      [(string.string-eq name "expr-if-cond")
+      [(string.eq name "expr-if-cond")
         (ctfe-source-helper-match-with-fallback
           env
           scrutinee
@@ -5967,7 +5930,7 @@
             AstPattern.Wildcard)
           (ctfe-source-helper-var env "cond")
           scrutinee)]
-      [(string.string-eq name "expr-if-then")
+      [(string.eq name "expr-if-then")
         (ctfe-source-helper-match-with-fallback
           env
           scrutinee
@@ -5977,7 +5940,7 @@
             AstPattern.Wildcard)
           (ctfe-source-helper-var env "then-expr")
           scrutinee)]
-      [(string.string-eq name "expr-if-else")
+      [(string.eq name "expr-if-else")
         (ctfe-source-helper-match-with-fallback
           env
           scrutinee
@@ -5987,7 +5950,7 @@
             (ast-pat-binding "else-expr"))
           (ctfe-source-helper-var env "else-expr")
           scrutinee)]
-      [(string.string-eq name "expr-clause-first")
+      [(string.eq name "expr-clause-first")
         (ctfe-source-helper-match-single
           env
           scrutinee
@@ -5995,7 +5958,7 @@
             (ast-pat-binding "first")
             AstPattern.Wildcard)
           (ctfe-source-helper-var env "first"))]
-      [(string.string-eq name "expr-clause-second")
+      [(string.eq name "expr-clause-second")
         (ctfe-source-helper-match-single
           env
           scrutinee
@@ -6003,54 +5966,54 @@
             AstPattern.Wildcard
             (ast-pat-binding "second"))
           (ctfe-source-helper-var env "second"))]
-      [(string.string-eq name "expr-list-empty?")
+      [(string.eq name "expr-list-empty?")
         (ctfe-source-helper-sequence-empty? env scrutinee)]
-      [(string.string-eq name "expr-list-length")
+      [(string.eq name "expr-list-length")
         (ctfe-source-helper-sequence-len env scrutinee)]
-      [(string.string-eq name "expr-list-head")
+      [(string.eq name "expr-list-head")
         (ctfe-source-helper-sequence-head
           env
           scrutinee
           "expr-list-head expects non-empty ExprList")]
-      [(string.string-eq name "expr-list-nth")
+      [(string.eq name "expr-list-nth")
         (ctfe-source-helper-sequence-nth
           env
           scrutinee
           (ctfe-source-helper-var env "index")
           "expr-list-nth index out of range")]
-      [(string.string-eq name "expr-clause-list-empty?")
+      [(string.eq name "expr-clause-list-empty?")
         (ctfe-source-helper-sequence-empty? env scrutinee)]
-      [(string.string-eq name "expr-clause-list-length")
+      [(string.eq name "expr-clause-list-length")
         (ctfe-source-helper-sequence-len env scrutinee)]
-      [(string.string-eq name "expr-clause-list-head")
+      [(string.eq name "expr-clause-list-head")
         (ctfe-source-helper-sequence-head
           env
           scrutinee
           "expr-clause-list-head expects non-empty ExprClauseList")]
-      [(string.string-eq name "expr-clause-list-nth")
+      [(string.eq name "expr-clause-list-nth")
         (ctfe-source-helper-sequence-nth
           env
           scrutinee
           (ctfe-source-helper-var env "index")
           "expr-clause-list-nth index out of range")]
-      [(string.string-eq name "expr-binding-clause-name")
+      [(string.eq name "expr-binding-clause-name")
         (ctfe-source-helper-struct-get env scrutinee "name")]
-      [(string.string-eq name "expr-binding-clause-has-type?")
+      [(string.eq name "expr-binding-clause-has-type?")
         (ctfe-source-helper-struct-get env scrutinee "has-type")]
-      [(string.string-eq name "expr-binding-clause-type")
+      [(string.eq name "expr-binding-clause-type")
         (ctfe-source-helper-struct-get env scrutinee "ty")]
-      [(string.string-eq name "expr-binding-clause-init")
+      [(string.eq name "expr-binding-clause-init")
         (ctfe-source-helper-struct-get env scrutinee "init")]
-      [(string.string-eq name "expr-binding-clause-list-empty?")
+      [(string.eq name "expr-binding-clause-list-empty?")
         (ctfe-source-helper-sequence-empty? env scrutinee)]
-      [(string.string-eq name "expr-binding-clause-list-length")
+      [(string.eq name "expr-binding-clause-list-length")
         (ctfe-source-helper-sequence-len env scrutinee)]
-      [(string.string-eq name "expr-binding-clause-list-head")
+      [(string.eq name "expr-binding-clause-list-head")
         (ctfe-source-helper-sequence-head
           env
           scrutinee
           "expr-binding-clause-list-head expects non-empty ExprBindingClauseList")]
-      [(string.string-eq name "expr-binding-clause-list-nth")
+      [(string.eq name "expr-binding-clause-list-nth")
         (ctfe-source-helper-sequence-nth
           env
           scrutinee
@@ -6060,8 +6023,8 @@
 
 (define (ctfe-comptime-source-helper-arity-message [name : String]) : String
   (if (= (ctfe-comptime-source-helper-arity name) 1)
-    (string.string-append name " expects exactly one arg")
-    (string.string-append name " expects exactly two args")))
+    (string.append name " expects exactly one arg")
+    (string.append name " expects exactly two args")))
 
 (define (ctfe-comptime-source-helper-arity-error
   [name : String]
@@ -6170,10 +6133,10 @@
           (ctfe-string-helper-candidate-name? lookup-name)]
         (cond
           [(or
-              (string.string-eq lookup-name "size-of")
-              (string.string-eq lookup-name "align-of"))
+              (string.eq lookup-name "size-of")
+              (string.eq lookup-name "align-of"))
             (ctfe-eval-size-align-query lookup-name args expr env fuel)]
-          [(string.string-eq lookup-name "offset-of")
+          [(string.eq lookup-name "offset-of")
             (ctfe-eval-offset-query args expr env fuel)]
           [(ctfe-reflection-query-name? call-name)
             (ctfe-eval-reflection-query call-name args expr env fuel)]
@@ -6182,8 +6145,8 @@
               (ctfe-string-eq-helper-name? lookup-name))
             (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
           [(or
-              (string.string-eq call-name "string-append")
-              (string.string-eq call-name "string-concat"))
+              (string.eq call-name "string-append")
+              (string.eq call-name "string-concat"))
             (ctfe-eval-string-append-call call-name args expr env fuel)]
           [(and
               string-helper-candidate
@@ -6197,51 +6160,51 @@
               string-helper-candidate
               (ctfe-string-to-int-helper-name? lookup-name))
             (ctfe-eval-string-to-int-call lookup-name args expr env fuel)]
-          [(string.string-eq call-name "int->string")
+          [(string.eq call-name "int->string")
             (ctfe-eval-int-to-string-call args expr env fuel)]
-          [(string.string-eq call-name "expr-bool")
+          [(string.eq call-name "expr-bool")
             (ctfe-eval-expr-bool-call args expr env fuel)]
-          [(string.string-eq call-name "expr-int")
+          [(string.eq call-name "expr-int")
             (ctfe-eval-expr-int-call args expr env fuel)]
-          [(string.string-eq call-name "expr-string")
+          [(string.eq call-name "expr-string")
             (ctfe-eval-expr-string-call args expr env fuel)]
-          [(string.string-eq call-name "expr-var")
+          [(string.eq call-name "expr-var")
             (ctfe-eval-expr-var-call args expr env fuel)]
-          [(string.string-eq call-name "expr-struct-get")
+          [(string.eq call-name "expr-struct-get")
             (ctfe-eval-expr-struct-get-call args expr env fuel)]
-          [(string.string-eq call-name "expr-tuple-ref")
+          [(string.eq call-name "expr-tuple-ref")
             (ctfe-eval-expr-tuple-ref-call args expr env fuel)]
-          [(string.string-eq call-name "expr-struct-set")
+          [(string.eq call-name "expr-struct-set")
             (ctfe-eval-expr-struct-set-call args expr env fuel)]
-          [(string.string-eq call-name "expr-splice")
+          [(string.eq call-name "expr-splice")
             (ctfe-eval-expr-splice-call args expr env fuel)]
-          [(string.string-eq call-name "expr-if")
+          [(string.eq call-name "expr-if")
             (ctfe-eval-expr-if-call args expr env fuel)]
-          [(string.string-eq call-name "pattern-wildcard")
+          [(string.eq call-name "pattern-wildcard")
             (ctfe-eval-pattern-wildcard-call args expr fuel)]
-          [(string.string-eq call-name "pattern-binding")
+          [(string.eq call-name "pattern-binding")
             (ctfe-eval-pattern-binding-call args expr env fuel)]
-          [(string.string-eq call-name "pattern-variant")
+          [(string.eq call-name "pattern-variant")
             (ctfe-eval-pattern-variant-call args expr env fuel)]
-          [(string.string-eq call-name "pattern-list-empty")
+          [(string.eq call-name "pattern-list-empty")
             (ctfe-eval-pattern-list-empty-call args expr fuel)]
-          [(string.string-eq call-name "pattern-list-cons")
+          [(string.eq call-name "pattern-list-cons")
             (ctfe-eval-pattern-list-cons-call args expr env fuel)]
-          [(string.string-eq call-name "match-arm")
+          [(string.eq call-name "match-arm")
             (ctfe-eval-match-arm-call args expr env fuel)]
-          [(string.string-eq call-name "match-arm-list-empty")
+          [(string.eq call-name "match-arm-list-empty")
             (ctfe-eval-match-arm-list-empty-call args expr fuel)]
-          [(string.string-eq call-name "match-arm-list-cons")
+          [(string.eq call-name "match-arm-list-cons")
             (ctfe-eval-match-arm-list-cons-call args expr env fuel)]
-          [(string.string-eq call-name "expr-match")
+          [(string.eq call-name "expr-match")
             (ctfe-eval-expr-match-call args expr env fuel)]
-          [(string.string-eq call-name "expr-type")
+          [(string.eq call-name "expr-type")
             (ctfe-eval-expr-type-call args expr env fuel)]
-          [(string.string-eq call-name "module-name")
+          [(string.eq call-name "module-name")
             (ctfe-eval-module-name-call args expr env fuel)]
-          [(string.string-eq call-name "module-export-macro?")
+          [(string.eq call-name "module-export-macro?")
             (ctfe-eval-module-export-macro-call args expr env fuel)]
-          [(string.string-eq call-name "module-hook")
+          [(string.eq call-name "module-hook")
             (ctfe-eval-module-hook-call args expr env fuel)]
           [(ctfe-comptime-source-helper-name? source-call-name)
             (ctfe-eval-comptime-source-helper-call
@@ -6266,7 +6229,7 @@
               expr
               env
               fuel)]
-          [(string.string-eq call-name "comptime-error")
+          [(string.eq call-name "comptime-error")
             (ctfe-eval-comptime-error-call args expr env fuel)]
           [else (ctfe-unsupported-form expr)]))]
     [_ (ctfe-unsupported-form expr)]))
@@ -6277,9 +6240,9 @@
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.string-append
+        (string.append
           "'"
-          (string.string-append
+          (string.append
             (ctfe-describe-expr expr)
             "' is not supported in compile-time evaluation"))))))
 
@@ -6295,9 +6258,9 @@
         (box
           (ctfe-diagnostic-at-expr
             expr
-            (string.string-append
+            (string.append
               "compile-time evaluation cannot reference runtime variable '"
-              (string.string-append name "'")))))]))
+              (string.append name "'")))))]))
 
 (define (ctfe-eval-box-get-value
   [value : CompilerCtfeValue]
@@ -6324,16 +6287,16 @@
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
 (define (ctfe-comptime-field-name? [field : i64] [want : String]) : bool
-  (string.string-eq (intern-str field) want))
+  (string.eq (intern-str field) want))
 
 (define (ctfe-comptime-field-error [field : i64] [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
     (box
       (ctfe-diagnostic-at-expr
         expr
-        (string.string-append
+        (string.append
           "unsupported stdlib.comptime field '"
-          (string.string-append (intern-str field) "'"))))))
+          (string.append (intern-str field) "'"))))))
 
 (define (ctfe-comptime-struct-get-type-error [expr : AstExpr]) : ResultCtfe
   (ResultCtfe.Err
@@ -6784,7 +6747,7 @@
     [suffix-len : i64 (string.string-length suffix)]
     (if (< text-len suffix-len)
       false
-      (string.string-eq
+      (string.eq
         (string.substring text (- text-len suffix-len) suffix-len)
         suffix))))
 
@@ -6792,9 +6755,9 @@
   (let
     [actual : String (intern-str name)]
     (or
-      (string.string-eq actual expected)
-      (ctfe-string-suffix? actual (string.string-append "." expected))
-      (ctfe-string-suffix? actual (string.string-append "/" expected)))))
+      (string.eq actual expected)
+      (ctfe-string-suffix? actual (string.append "." expected))
+      (ctfe-string-suffix? actual (string.append "/" expected)))))
 
 (define (ctfe-literal-matches-value?
   [lit : AstLiteral]
@@ -6826,7 +6789,7 @@
         [(CompilerFloatNoF64) false])]
     [(AstLiteral.String text)
       (match value
-        [(CompilerCtfeValue.String actual) (string.string-eq actual text)]
+        [(CompilerCtfeValue.String actual) (string.eq actual text)]
         [_ false])]))
 
 (define (ctfe-match-pattern-list
@@ -7105,25 +7068,25 @@
 
 (define (ctfe-type-name-to-type [name : String]) : AstType
   (cond
-    [(string.string-eq name "i64") (AstType.I64)]
-    [(string.string-eq name "i32") (AstType.I32)]
-    [(string.string-eq name "i16") (AstType.I16)]
-    [(string.string-eq name "i8") (AstType.I8)]
-    [(string.string-eq name "u64") (AstType.U64)]
-    [(string.string-eq name "u32") (AstType.U32)]
-    [(string.string-eq name "u16") (AstType.U16)]
-    [(string.string-eq name "u8") (AstType.U8)]
-    [(string.string-eq name "f64") (AstType.F64)]
-    [(string.string-eq name "f32") (AstType.F32)]
-    [(string.string-eq name "bool") (AstType.Bool)]
-    [(string.string-eq name "char") (AstType.Char)]
-    [(string.string-eq name "String") (AstType.String)]
-    [(string.string-eq name "str") (AstType.Str)]
-    [(string.string-eq name "bytes") (AstType.Bytes)]
-    [(string.string-eq name "unit") (AstType.Unit)]
-    [(string.string-eq name "never") (AstType.Never)]
-    [(string.string-eq name "Expr") (AstType.Expr)]
-    [(string.string-eq name "ExprList") (AstType.ExprList)]
+    [(string.eq name "i64") (AstType.I64)]
+    [(string.eq name "i32") (AstType.I32)]
+    [(string.eq name "i16") (AstType.I16)]
+    [(string.eq name "i8") (AstType.I8)]
+    [(string.eq name "u64") (AstType.U64)]
+    [(string.eq name "u32") (AstType.U32)]
+    [(string.eq name "u16") (AstType.U16)]
+    [(string.eq name "u8") (AstType.U8)]
+    [(string.eq name "f64") (AstType.F64)]
+    [(string.eq name "f32") (AstType.F32)]
+    [(string.eq name "bool") (AstType.Bool)]
+    [(string.eq name "char") (AstType.Char)]
+    [(string.eq name "String") (AstType.String)]
+    [(string.eq name "str") (AstType.Str)]
+    [(string.eq name "bytes") (AstType.Bytes)]
+    [(string.eq name "unit") (AstType.Unit)]
+    [(string.eq name "never") (AstType.Never)]
+    [(string.eq name "Expr") (AstType.Expr)]
+    [(string.eq name "ExprList") (AstType.ExprList)]
     [else (AstType.Var (intern name))]))
 
 (define (ctfe-internal-resolved-struct-type-marker) : String
@@ -7359,13 +7322,13 @@
               [(ResultCtfeQuoteType.Ok elem-ty next-fuel)
                 (ResultCtfeQuoteType.Ok
                   (cond
-                    [(string.string-eq name "Array")
+                    [(string.eq name "Array")
                       (ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)]
-                    [(string.string-eq name "Box")
+                    [(string.eq name "Box")
                       (ast-ty-box-with-pools (ctfe-env-pools env) elem-ty)]
-                    [(string.string-eq name "Ptr")
+                    [(string.eq name "Ptr")
                       (ast-ty-ptr-with-pools (ctfe-env-pools env) elem-ty)]
-                    [(string.string-eq name "MutPtr")
+                    [(string.eq name "MutPtr")
                       (ast-ty-mut-ptr-with-pools (ctfe-env-pools env) elem-ty)]
                     [else elem-ty])
                   next-fuel)]
@@ -7598,30 +7561,26 @@
             (let
               [head : String (intern-str name)]
               (cond
-                [(string.string-eq
-                    head
-                    (ctfe-internal-resolved-struct-type-marker))
+                [(string.eq head (ctfe-internal-resolved-struct-type-marker))
                   (ctfe-expr-resolved-nominal-type args origin env fuel true)]
-                [(string.string-eq
-                    head
-                    (ctfe-internal-resolved-enum-type-marker))
+                [(string.eq head (ctfe-internal-resolved-enum-type-marker))
                   (ctfe-expr-resolved-nominal-type args origin env fuel false)]
-                [(string.string-eq head "->")
+                [(string.eq head "->")
                   (ctfe-expr-func-type args origin env fuel)]
-                [(string.string-eq head "Array")
+                [(string.eq head "Array")
                   (ctfe-expr-array-type args origin env fuel)]
                 [(or
-                    (string.string-eq head "Box")
-                    (string.string-eq head "Ptr")
-                    (string.string-eq head "MutPtr"))
+                    (string.eq head "Box")
+                    (string.eq head "Ptr")
+                    (string.eq head "MutPtr"))
                   (ctfe-expr-unary-type head args origin env fuel)]
-                [(string.string-eq head "&")
+                [(string.eq head "&")
                   (ctfe-expr-reference-type args origin env fuel false)]
-                [(string.string-eq head "&mut")
+                [(string.eq head "&mut")
                   (ctfe-expr-reference-type args origin env fuel true)]
-                [(string.string-eq head "in")
+                [(string.eq head "in")
                   (ctfe-expr-region-type args origin env fuel)]
-                [(string.string-eq head "Tuple")
+                [(string.eq head "Tuple")
                   (match (ctfe-expr-list-to-type-list args origin env fuel)
                     [(ResultCtfeQuoteTypeList.Ok elems next-fuel)
                       (ResultCtfeQuoteType.Ok (ast-ty-tuple elems) next-fuel)]
@@ -9103,11 +9062,11 @@
         [_ false])]
     [(AstLiteral.Float a-text)
       (match b
-        [(AstLiteral.Float b-text) (string.string-eq a-text b-text)]
+        [(AstLiteral.Float b-text) (string.eq a-text b-text)]
         [_ false])]
     [(AstLiteral.String a-text)
       (match b
-        [(AstLiteral.String b-text) (string.string-eq a-text b-text)]
+        [(AstLiteral.String b-text) (string.eq a-text b-text)]
         [_ false])]
     [(AstLiteral.Unit)
       (match b
@@ -9125,7 +9084,7 @@
         [_ false])]
     [(AstBorrowLifetime.Named a-name)
       (match b
-        [(AstBorrowLifetime.Named b-name) (string.string-eq a-name b-name)]
+        [(AstBorrowLifetime.Named b-name) (string.eq a-name b-name)]
         [_ false])]))
 
 (define (ctfe-maybe-type-eq-in-env
@@ -9385,7 +9344,7 @@
     [(AstExpr.Var a-name)
       (match b
         [(AstExpr.Var b-name)
-          (string.string-eq (intern-str a-name) (intern-str b-name))]
+          (string.eq (intern-str a-name) (intern-str b-name))]
         [_ false])]
     [(AstExpr.Binary a-op a-l-box a-r-box)
       (let
@@ -9820,7 +9779,7 @@
       (match b
         [(AstExpr.WithRegion b-name b-body)
           (and
-            (string.string-eq a-name b-name)
+            (string.eq a-name b-name)
             (ctfe-expr-list-eq-in-env env a-body b-body))]
         [_ false])]
     [(AstExpr.WithEscape a-escape-box a-body)
@@ -10091,7 +10050,7 @@
           [_ false]))]
     [(AstExpr.BinaryData a-bytes)
       (match b
-        [(AstExpr.BinaryData b-bytes) (string.string-eq a-bytes b-bytes)]
+        [(AstExpr.BinaryData b-bytes) (string.eq a-bytes b-bytes)]
         [_ false])]
     [(AstExpr.ProgramArgc)
       (match b
@@ -10958,7 +10917,7 @@
       (match b
         [(AstType.Ref b-region b-inner)
           (and
-            (string.string-eq a-region b-region)
+            (string.eq a-region b-region)
             (ctfe-type-eq-in-env
               env
               (ctfe-ty-get env a-inner)
@@ -10968,7 +10927,7 @@
       (match b
         [(AstType.MutRef b-region b-inner)
           (and
-            (string.string-eq a-region b-region)
+            (string.eq a-region b-region)
             (ctfe-type-eq-in-env
               env
               (ctfe-ty-get env a-inner)
@@ -10978,7 +10937,7 @@
       (match b
         [(AstType.Region b-region b-inner)
           (and
-            (string.string-eq a-region b-region)
+            (string.eq a-region b-region)
             (ctfe-type-eq-in-env
               env
               (ctfe-ty-get env a-inner)
@@ -11036,7 +10995,7 @@
           [(CompilerCtfeValue.Type actual)
             (and
               (ctfe-type-eq actual want)
-              (string.string-eq (ctfe-value-type-name value) "type"))]
+              (string.eq (ctfe-value-type-name value) "type"))]
           [_ false])]
       [(ResultCtfe.Err _) false])))
 
@@ -11179,7 +11138,7 @@
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
     [(ResultCtfe.Ok value _)
       (match value
-        [(CompilerCtfeValue.String actual) (string.string-eq actual want)]
+        [(CompilerCtfeValue.String actual) (string.eq actual want)]
         [_ false])]
     [(ResultCtfe.Err _) false]))
 
@@ -11200,7 +11159,7 @@
   [want : String]) : bool
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
     [(ResultCtfe.Err diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCtfe.Ok _ _) false]))
 
 (define (compiler-ctfe-f64-ok?) : bool
@@ -11733,7 +11692,7 @@
   (match (ctfe-env-lookup env name)
     [(CtfeMaybeValue.Some value)
       (match value
-        [(CompilerCtfeValue.String actual) (string.string-eq actual want)]
+        [(CompilerCtfeValue.String actual) (string.eq actual want)]
         [_ false])]
     [(CtfeMaybeValue.None) false]))
 
@@ -11813,7 +11772,7 @@
       (match field-value
         [(CompilerCtfeValue.TypeField name ty)
           (and
-            (string.string-eq name "id")
+            (string.eq name "id")
             (compiler-ctfe-type-info-builtin-kind? env ty "i64"))]
         [_ false])]
     [(ResultCtfe.Err _) false]))
@@ -11831,7 +11790,7 @@
       (match variant-value
         [(CompilerCtfeValue.TypeVariant name payloads)
           (and
-            (string.string-eq name "Failed")
+            (string.eq name "Failed")
             (compiler-ctfe-type-info-list-ref-builtin-kind?
               env
               (CompilerCtfeValue.TypeVariantPayloadList payloads)

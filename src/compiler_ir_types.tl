@@ -6,7 +6,7 @@
 (import stdlib.string)
 (import stdlib.array)
 (import "compiler_ast_types.tl")
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 
 (defenum CompilerIrBinOp
   (Add)
@@ -438,7 +438,7 @@
     [(CompilerIrInstrList.Nil) unit]
     [(CompilerIrInstrList.Cons instr rest)
       (begin
-        (array.array-set! slots index instr)
+        (array-set! slots index instr)
         (compiler-ir-instr-list-fill-array (box-get rest) slots (+ index 1)))]))
 
 (define (compiler-ir-instr-seq-from-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
@@ -461,7 +461,7 @@
         (begin
           (set!
             out
-            (CompilerIrInstrList.Cons (array.array-ref slots cursor) (box out)))
+            (CompilerIrInstrList.Cons (array-ref slots cursor) (box out)))
           (set! cursor (- cursor 1))))
       out)))
 
@@ -482,13 +482,13 @@
 ;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
 ;; garbage; the array macro lowers with the correct element size.
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
-  (array.array-ref (struct-get instrs slots) index))
+  (array-ref (struct-get instrs slots) index))
 
 (define (compiler-ir-instr-seq-set!
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [instr : CompilerIrInstr]) : unit
-  (array.array-set! (struct-get instrs slots) index instr))
+  (array-set! (struct-get instrs slots) index instr))
 
 (define (compiler-ir-instr-seq-rewrite!
   [instrs : CompilerIrInstrSeq]
@@ -550,7 +550,7 @@
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
       (begin
-        (array.array-set! slots index block)
+        (array-set! slots index block)
         (compiler-ir-block-list-fill-array (box-get rest) slots (+ index 1)))]
     [(CompilerIrBlockList.Array seq)
       (let
@@ -558,10 +558,7 @@
         [n : i64 (struct-get seq len)]
         (while (< i n)
           (begin
-            (array.array-set!
-              slots
-              (+ index i)
-              (array.array-ref (struct-get seq slots) i))
+            (array-set! slots (+ index i) (array-ref (struct-get seq slots) i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-block-seq-from-list [blocks : CompilerIrBlockList]) : CompilerIrBlockSeq
@@ -582,7 +579,7 @@
     (begin
       (while (>= cursor 0)
         (begin
-          (set! out (compiler-ir-block-cons (array.array-ref slots cursor) out))
+          (set! out (compiler-ir-block-cons (array-ref slots cursor) out))
           (set! cursor (- cursor 1))))
       out)))
 
@@ -597,7 +594,7 @@
 
 ;; #2357: MUST stay on the checked array-ref path (see compiler-ir-instr-seq-ref above).
 (define (compiler-ir-block-seq-ref [blocks : CompilerIrBlockSeq] [index : i64]) : CompilerIrBlock
-  (array.array-ref (struct-get blocks slots) index))
+  (array-ref (struct-get blocks slots) index))
 
 (define (compiler-ir-block-list-force-cons [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
@@ -650,7 +647,7 @@
     [(CompilerIrFunctionList.Nil) unit]
     [(CompilerIrFunctionList.Cons func rest)
       (begin
-        (array.array-set! slots index func)
+        (array-set! slots index func)
         (compiler-ir-function-list-fill-array (box-get rest) slots (+ index 1)))]
     [(CompilerIrFunctionList.Array seq)
       (let
@@ -659,7 +656,7 @@
         [src : (Array CompilerIrFunction) (struct-get seq slots)]
         (while (< i n)
           (begin
-            (array.array-set! slots (+ index i) (array.array-ref src i))
+            (array-set! slots (+ index i) (array-ref src i))
             (set! i (+ i 1)))))]))
 
 (define (compiler-ir-function-seq-from-list
@@ -682,9 +679,7 @@
     (begin
       (while (>= cursor 0)
         (begin
-          (set!
-            out
-            (compiler-ir-function-cons (array.array-ref slots cursor) out))
+          (set! out (compiler-ir-function-cons (array-ref slots cursor) out))
           (set! cursor (- cursor 1))))
       out)))
 
@@ -702,7 +697,7 @@
 (define (compiler-ir-function-seq-ref
   [functions : CompilerIrFunctionSeq]
   [index : i64]) : CompilerIrFunction
-  (array.array-ref (struct-get functions slots) index))
+  (array-ref (struct-get functions slots) index))
 
 (define (compiler-ir-function-list-force-cons
   [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
@@ -1295,10 +1290,7 @@
   (if (>= index count)
     unit
     (begin
-      (array.array-set!
-        dst
-        index
-        (compiler-ir-clone-instr (array.array-ref src index)))
+      (array-set! dst index (compiler-ir-clone-instr (array-ref src index)))
       (compiler-ir-clone-instr-seq-fill src dst (+ index 1) count))))
 
 (define (compiler-ir-clone-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
@@ -1634,11 +1626,10 @@
 
 (define (compiler-ir-value-render [value : CompilerIrValue]) : String
   (match value
-    [(CompilerIrValue.Var id)
-      (string.string-append "%" (string.int->string id))]
-    [(CompilerIrValue.Global name) (string.string-append "@" name)]
-    [(CompilerIrValue.GlobalAddr name) (string.string-append "&@" name)]
-    [(CompilerIrValue.Function name) (string.string-append "fn@" name)]
+    [(CompilerIrValue.Var id) (string.append "%" (string.int->string id))]
+    [(CompilerIrValue.Global name) (string.append "@" name)]
+    [(CompilerIrValue.GlobalAddr name) (string.append "&@" name)]
+    [(CompilerIrValue.Function name) (string.append "fn@" name)]
     [(CompilerIrValue.I64 value) (string.int->string value)]
     [(CompilerIrValue.F64 value)
       (str_cat.str-cat "float-bits:" (compiler-ir-u64-payload-render value))]
@@ -1699,7 +1690,7 @@
     [(IrValueNil) unit]
     [(IrValueCons value rest)
       (begin
-        (array.array-set! out index value)
+        (array-set! out index value)
         (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]))
 
 (define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
@@ -1724,11 +1715,11 @@
 (define (compiler-ir-call-args-array-render
   [values : (Array CompilerIrValue)]
   [index : i64]) : String
-  (if (>= index (array.array-length values))
+  (if (>= index (array-length values))
     ""
     (str_cat.str-cat
-      (compiler-ir-value-render (array.array-ref values index))
-      (if (= (+ index 1) (array.array-length values))
+      (compiler-ir-value-render (array-ref values index))
+      (if (= (+ index 1) (array-length values))
         ""
         (str_cat.str-cat
           ", "
@@ -1751,7 +1742,7 @@
     [(CompilerIrCallArgs.Nil) 0]
     [(CompilerIrCallArgs.One _) 1]
     [(CompilerIrCallArgs.Two _ _) 2]
-    [(CompilerIrCallArgs.Array values) (array.array-length values)]))
+    [(CompilerIrCallArgs.Array values) (array-length values)]))
 
 (define (compiler-ir-spmd-backend-render [backend : CompilerIrSpmdBackend]) : String
   (match backend
@@ -1931,30 +1922,28 @@
     [_ true]))
 
 (define (compiler-ir-runtime-memory-read? [name : String]) : bool
-  (or
-    (string.string-eq name "tl_region_mark")
-    (string.string-eq name ".L_tl_stdin_eof")))
+  (or (string.eq name "tl_region_mark") (string.eq name ".L_tl_stdin_eof")))
 
 (define (compiler-ir-runtime-memory-write? [name : String]) : bool
   (or
-    (string.string-eq name "tl_alloc")
-    (string.string-eq name "tl_int_to_string")
-    (string.string-eq name "tl_substring")
-    (string.string-eq name "tl_string_concat")
-    (string.string-eq name "tl_string_concat3")
-    (string.string-eq name "tl_string_concat4")
-    (string.string-eq name "tl_string_concat5")
-    (string.string-eq name "tl_region_reset")
-    (string.string-eq name "tl_array_fill8")
-    (string.string-eq name "tl_array_zero")
-    (string.string-eq name ".L_tl_flush_stdout")))
+    (string.eq name "tl_alloc")
+    (string.eq name "tl_int_to_string")
+    (string.eq name "tl_substring")
+    (string.eq name "tl_string_concat")
+    (string.eq name "tl_string_concat3")
+    (string.eq name "tl_string_concat4")
+    (string.eq name "tl_string_concat5")
+    (string.eq name "tl_region_reset")
+    (string.eq name "tl_array_fill8")
+    (string.eq name "tl_array_zero")
+    (string.eq name ".L_tl_flush_stdout")))
 
 (define (compiler-ir-runtime-control-flow? [name : String]) : bool
   (or
-    (string.string-eq name ".L_tl_abort")
-    (string.string-eq name "tl_oob_abort")
-    (string.string-eq name "tl_div_abort")
-    (string.string-eq name "tl_shift_abort")))
+    (string.eq name ".L_tl_abort")
+    (string.eq name "tl_oob_abort")
+    (string.eq name "tl_div_abort")
+    (string.eq name "tl_shift_abort")))
 
 (define (compiler-ir-direct-call-effect [name : String]) : CompilerIrEffect
   (cond
@@ -2122,7 +2111,7 @@
         [rest : CompilerSourceSpansEntryList (box-get rest)]
         (match entry
           [(CompilerSourceSpansEntry.Entry entry-name span)
-            (if (string.string-eq entry-name name)
+            (if (string.eq entry-name name)
               (CompilerMaybeSourceSpan.Some span)
               (compiler-source-spans-entry-list-lookup rest name))]))]))
 
@@ -2700,7 +2689,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (compiler-ir-instr-call-arg-count (array.array-ref slots index))))))
+      (+ acc (compiler-ir-instr-call-arg-count (array-ref slots index))))))
 
 (define (compiler-ir-instr-seq-call-arg-count [instrs : CompilerIrInstrSeq]) : i64
   (compiler-ir-instr-seq-call-arg-count-from
@@ -2728,7 +2717,7 @@
       slots
       (+ index 1)
       count
-      (+ acc (compiler-ir-instr-phi-input-count (array.array-ref slots index))))))
+      (+ acc (compiler-ir-instr-phi-input-count (array-ref slots index))))))
 
 (define (compiler-ir-instr-seq-phi-input-count [instrs : CompilerIrInstrSeq]) : i64
   (compiler-ir-instr-seq-phi-input-count-from
@@ -2864,9 +2853,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (compiler-ir-function-block-count (array.array-ref slots index))))
+            (+ acc (compiler-ir-function-block-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2884,8 +2871,7 @@
             acc
             (+
               acc
-              (compiler-ir-function-instruction-count
-                (array.array-ref slots index))))
+              (compiler-ir-function-instruction-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2903,8 +2889,7 @@
             acc
             (+
               acc
-              (compiler-ir-function-empty-block-count
-                (array.array-ref slots index))))
+              (compiler-ir-function-empty-block-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2923,7 +2908,7 @@
             (compiler-ir-max-i64
               acc
               (compiler-ir-function-max-instruction-count
-                (array.array-ref slots index))))
+                (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2942,7 +2927,7 @@
             (compiler-ir-max-i64
               acc
               (compiler-ir-function-max-block-instruction-count
-                (array.array-ref slots index))))
+                (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2960,8 +2945,7 @@
             acc
             (+
               acc
-              (compiler-ir-function-call-arg-count
-                (array.array-ref slots index))))
+              (compiler-ir-function-call-arg-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2979,8 +2963,7 @@
             acc
             (+
               acc
-              (compiler-ir-function-phi-input-count
-                (array.array-ref slots index))))
+              (compiler-ir-function-phi-input-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -2995,9 +2978,7 @@
         (begin
           (set!
             acc
-            (+
-              acc
-              (compiler-ir-function-var-count (array.array-ref slots index))))
+            (+ acc (compiler-ir-function-var-count (array-ref slots index))))
           (set! index (+ index 1))))
       acc)))
 
@@ -3269,11 +3250,11 @@
 (define (compiler-ir-call-args-array-describe
   [values : (Array CompilerIrValue)]
   [index : i64]) : String
-  (if (>= index (array.array-length values))
+  (if (>= index (array-length values))
     ""
     (str_cat.str-cat
-      (compiler-ir-value-describe (array.array-ref values index))
-      (if (= (+ index 1) (array.array-length values))
+      (compiler-ir-value-describe (array-ref values index))
+      (if (= (+ index 1) (array-length values))
         ""
         (str_cat.str-cat
           ", "
@@ -3865,51 +3846,45 @@
 
 (define (compiler-ir-display-type-names-ok?) : bool
   (and
-    (string.string-eq
-      (compiler-ir-vector-type-name (AstType.I32) 8)
-      "(Vector i32 8)")
-    (string.string-eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
+    (string.eq (compiler-ir-vector-type-name (AstType.I32) 8) "(Vector i32 8)")
+    (string.eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
 
 (define (compiler-ir-display-op-names-ok?) : bool
   (and
-    (string.string-eq
+    (string.eq
       (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Sum)
       "sum")
-    (string.string-eq
+    (string.eq
       (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Min)
       "min")
-    (string.string-eq
+    (string.eq
       (compiler-ir-vector-reduce-op-name CompilerIrVectorReduceOp.Max)
       "max")
-    (string.string-eq
+    (string.eq
       (compiler-ir-mask-reduce-op-name CompilerIrMaskReduceOp.All)
       "all")
-    (string.string-eq
+    (string.eq
       (compiler-ir-mask-reduce-op-name CompilerIrMaskReduceOp.Any)
       "any")
-    (string.string-eq
-      (compiler-ir-mask-binop-name CompilerIrMaskBinOp.And)
-      "mask_and")
-    (string.string-eq
-      (compiler-ir-mask-binop-name CompilerIrMaskBinOp.Or)
-      "mask_or")))
+    (string.eq (compiler-ir-mask-binop-name CompilerIrMaskBinOp.And) "mask_and")
+    (string.eq (compiler-ir-mask-binop-name CompilerIrMaskBinOp.Or) "mask_or")))
 
 (define (compiler-ir-display-instrs-ok?) : bool
   (let
     [ok : bool true]
     (begin
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe (CompilerIrInstr.LaneId 0 4 (AstType.I64)))
         "  %0 = lane_id 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 7) 4 (AstType.I64)))
         "  %1 = splat 7 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (ir-instr-vector-bin-op
             2
@@ -3921,7 +3896,7 @@
         "  %2 = vector_add %0, %1 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (CompilerIrInstr.VectorReduce
             8
@@ -3932,7 +3907,7 @@
         "  %8 = vector_reduce_sum %2 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (ir-instr-vector-compare
             3
@@ -3944,7 +3919,7 @@
         "  %3 = vector_cmp_lt %0, %1 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (CompilerIrInstr.MaskBinOp
             4
@@ -3955,13 +3930,13 @@
         "  %4 = mask_or %3, %3 : 4")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (CompilerIrInstr.MaskNot 5 (CompilerIrValue.Var 4) 4))
         "  %5 = mask_not %4 : 4")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (CompilerIrInstr.MaskReduce
             9
@@ -3971,7 +3946,7 @@
         "  %9 = mask_reduce_any %5 : 4")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (ir-instr-select
             6
@@ -3983,7 +3958,7 @@
         "  %6 = select %5, %2, %1 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (CompilerIrInstr.VectorLoad
             7
@@ -3994,7 +3969,7 @@
         "  %7 = vector_load %10, %11 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (ir-instr-vector-store
             (CompilerIrValue.Var 12)
@@ -4005,7 +3980,7 @@
         "  vector_store %12, %11, %6 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (ir-instr-predicated-store
             (CompilerIrValue.Var 12)
@@ -4017,7 +3992,7 @@
         "  predicated_store %12, %11, %6, %5 : 4 x i64")
         unit
         (set! ok false))
-      (if (string.string-eq
+      (if (string.eq
         (compiler-ir-instr-describe
           (ir-instr-predicated-load
             10
@@ -4040,7 +4015,7 @@
         (CompilerIrValue.Var 2)
         8)]
     (and
-      (string.string-eq
+      (string.eq
         (compiler-ir-instr-describe instr)
         "  %9 = tail_mask %1, %2 : 8")
       (compiler-ir-effect-is? instr CompilerIrEffect.Pure)
@@ -4061,7 +4036,7 @@
     (compiler-ir-display-tail-mask-ok?)))
 
 (define (compiler-ir-tail-call-render-ok?) : bool
-  (string.string-eq
+  (string.eq
     (compiler-ir-instr-render
       (CompilerIrInstr.TailCall
         "fact_loop"
@@ -4079,10 +4054,10 @@
     [instr : CompilerIrInstr
       (CompilerIrInstr.Switch (CompilerIrValue.Var 9) 4 cases "other")]
     (and
-      (string.string-eq
+      (string.eq
         (compiler-ir-instr-render instr)
         "  switch %9 base 4 [4:four, 5:five] default other")
-      (string.string-eq
+      (string.eq
         (compiler-ir-instr-describe instr)
         "  switch %9 base 4 [4:four, 5:five] default other"))))
 
@@ -4205,7 +4180,7 @@
   (match (compiler-ir-block-list-force-cons blocks)
     [(CompilerIrBlockList.Cons block _)
       (match block
-        [(CompilerIrBlock.Block label _) (string.string-eq label want)])]
+        [(CompilerIrBlock.Block label _) (string.eq label want)])]
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Array _) false]))
 

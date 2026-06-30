@@ -26,7 +26,7 @@
   (match fields
     [FieldNil (Missing)]
     [(FieldCons key value rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (Found value)
         (field-list-get (box-get rest) name))]))
 

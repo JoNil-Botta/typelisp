@@ -8,9 +8,9 @@
 (define (use [items : (&mut items (Array i64))]) : unit
   (begin
     (let
-      [slot : (&mut items i64) (&mut (array.array-ref items 0))]
+      [slot : (&mut items i64) (&mut (array-ref items 0))]
       (touch slot))
-    (array.array-set! items 0 7)))
+    (array-set! items 0 7)))
 
 (define (main [items : (Array i64)]) : unit
   (use (&mut items)))

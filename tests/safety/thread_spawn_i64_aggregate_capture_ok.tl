@@ -26,7 +26,7 @@
         (+
           (struct-get pair left)
           (+
-            (array.array-ref items 0)
+            (array-ref items 0)
             (+
               (choice-score choice)
               (+ (tuple-ref coords 0) (tuple-ref coords 1)))))))

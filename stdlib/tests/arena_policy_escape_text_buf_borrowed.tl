@@ -4,4 +4,4 @@
 (define (main [text : String]) : (text_buf_borrowed.TextBufBorrowed text)
   (let
     [chunk : String "inner"]
-    (text_buf_borrowed.text-buf-borrowed-single (& chunk))))
+    (text_buf_borrowed.single (& chunk))))

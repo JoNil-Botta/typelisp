@@ -229,7 +229,7 @@
   (match shadowed
     [(SpecTemplateShadowList.Nil) false]
     [(SpecTemplateShadowList.Cons shadow-name rest)
-      (if (string.string-eq shadow-name name)
+      (if (string.eq shadow-name name)
         true
         (spec-template-shadow-contains? (box-get rest) name))]))
 
@@ -246,7 +246,7 @@
   (if (>= index count)
     unit
     (begin
-      (array.array-set! values index (SpecMaybeTemplate.None))
+      (array-set! values index (SpecMaybeTemplate.None))
       (spec-template-values-fill-empty values (+ index 1) count))))
 
 (define (spec-template-index-build
@@ -262,7 +262,7 @@
           (if (hashmap.string-i64-map-contains? index name)
             (spec-template-index-build (box-get rest) index values slot)
             (begin
-              (array.array-set! values slot (SpecMaybeTemplate.Some template))
+              (array-set! values slot (SpecMaybeTemplate.Some template))
               (spec-template-index-build
                 (box-get rest)
                 (hashmap.string-i64-map-put index name slot)
@@ -290,7 +290,7 @@
     (SpecMaybeTemplate.None)
     (match (hashmap.string-i64-map-get (struct-get templates index) name)
       [(hashmap.StringI64MapFound slot)
-        (array.array-ref (struct-get templates values) slot)]
+        (array.ref (struct-get templates values) slot)]
       [(hashmap.StringI64MapMissing) (SpecMaybeTemplate.None)])))
 
 (define (spec-template-env-shadow-name
@@ -425,26 +425,24 @@
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
-    (string.string-append "m" (string.int->string (- 0 n)))
+    (string.append "m" (string.int->string (- 0 n)))
     (string.int->string n)))
 
 (define (spec-string-key-from [text : String] [idx : i64] [n : i64]) : String
   (if (>= idx n)
     ""
-    (string.string-append
+    (string.append
       "_"
-      (string.string-append
+      (string.append
         (string.int->string (cast (string.string-ref text idx) : i64))
         (spec-string-key-from text (+ idx 1) n)))))
 
 (define (spec-string-key [text : String]) : String
   (let
     [n : i64 (string.string-length text)]
-    (string.string-append
+    (string.append
       "string_"
-      (string.string-append
-        (string.int->string n)
-        (spec-string-key-from text 0 n)))))
+      (string.append (string.int->string n) (spec-string-key-from text 0 n)))))
 
 (define (spec-type-list-key [types : AstTypeList]) : String
   (match types
@@ -453,9 +451,9 @@
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
-        (string.string-append
+        (string.append
           (spec-type-key head)
-          (string.string-append "_" (spec-type-list-key rest))))]))
+          (string.append "_" (spec-type-list-key rest))))]))
 
 (define (spec-lifetime-list-key [lifetimes : AstLifetimeList]) : String
   (match lifetimes
@@ -463,9 +461,7 @@
     [(AstLifetimeList.Cons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
-        (string.string-append
-          head
-          (string.string-append "_" (spec-lifetime-list-key rest))))]))
+        (string.append head (string.append "_" (spec-lifetime-list-key rest))))]))
 
 (define (spec-type-key [ty : AstType]) : String
   (match ty
@@ -489,82 +485,74 @@
     [(AstType.Expr) "Expr"]
     [(AstType.ExprList) "ExprList"]
     [(AstType.Func args ret)
-      (string.string-append
+      (string.append
         "fn_"
-        (string.string-append
+        (string.append
           (spec-type-list-key (box-get args))
-          (string.string-append "_to_" (spec-type-key (ty-node-get ret)))))]
+          (string.append "_to_" (spec-type-key (ty-node-get ret)))))]
     [(AstType.Tuple elems)
-      (string.string-append "tuple_" (spec-type-list-key (box-get elems)))]
+      (string.append "tuple_" (spec-type-list-key (box-get elems)))]
     [(AstType.Array elem count)
-      (string.string-append
+      (string.append
         "array_"
-        (string.string-append
+        (string.append
           (spec-type-key (ty-node-get elem))
-          (string.string-append "_" (spec-int-key count))))]
+          (string.append "_" (spec-int-key count))))]
     [(AstType.DynArray elem)
-      (string.string-append "dynarray_" (spec-type-key (ty-node-get elem)))]
+      (string.append "dynarray_" (spec-type-key (ty-node-get elem)))]
     [(AstType.Box elem)
-      (string.string-append "box_" (spec-type-key (ty-node-get elem)))]
+      (string.append "box_" (spec-type-key (ty-node-get elem)))]
     [(AstType.Ptr elem)
-      (string.string-append "ptr_" (spec-type-key (ty-node-get elem)))]
+      (string.append "ptr_" (spec-type-key (ty-node-get elem)))]
     [(AstType.MutPtr elem)
-      (string.string-append "mutptr_" (spec-type-key (ty-node-get elem)))]
+      (string.append "mutptr_" (spec-type-key (ty-node-get elem)))]
     [(AstType.Ref region inner)
-      (string.string-append
+      (string.append
         "ref_"
-        (string.string-append
+        (string.append
           region
-          (string.string-append "_" (spec-type-key (ty-node-get inner)))))]
+          (string.append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstType.MutRef region inner)
-      (string.string-append
+      (string.append
         "mutref_"
-        (string.string-append
+        (string.append
           region
-          (string.string-append "_" (spec-type-key (ty-node-get inner)))))]
+          (string.append "_" (spec-type-key (ty-node-get inner)))))]
     [(AstType.Region region inner)
-      (string.string-append
+      (string.append
         "region_"
-        (string.string-append
+        (string.append
           region
-          (string.string-append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstType.Enum name) (string.string-append "enum_" (intern-str name))]
+          (string.append "_" (spec-type-key (ty-node-get inner)))))]
+    [(AstType.Enum name) (string.append "enum_" (intern-str name))]
     [(AstType.EnumArgs name lifetimes)
-      (string.string-append
+      (string.append
         "enumargs_"
-        (string.string-append
+        (string.append
           (intern-str name)
-          (string.string-append
-            "_"
-            (spec-lifetime-list-key (box-get lifetimes)))))]
-    [(AstType.Struct name) (string.string-append "struct_" (intern-str name))]
+          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
+    [(AstType.Struct name) (string.append "struct_" (intern-str name))]
     [(AstType.StructArgs name lifetimes)
-      (string.string-append
+      (string.append
         "structargs_"
-        (string.string-append
+        (string.append
           (intern-str name)
-          (string.string-append
-            "_"
-            (spec-lifetime-list-key (box-get lifetimes)))))]
-    [(AstType.Var name) (string.string-append "var_" (intern-str name))]
+          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
+    [(AstType.Var name) (string.append "var_" (intern-str name))]
     [(AstType.VarArgs name lifetimes)
-      (string.string-append
+      (string.append
         "varargs_"
-        (string.string-append
+        (string.append
           (intern-str name)
-          (string.string-append
-            "_"
-            (spec-lifetime-list-key (box-get lifetimes)))))]))
+          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
-    [(CompilerCtfeValue.I64 n) (string.string-append "i64_" (spec-int-key n))]
+    [(CompilerCtfeValue.I64 n) (string.append "i64_" (spec-int-key n))]
     [(CompilerCtfeValue.F64 n)
-      (string.string-append
-        "f64_"
-        (spec-string-key (compiler-float-format-f64 n)))]
+      (string.append "f64_" (spec-string-key (compiler-float-format-f64 n)))]
     [(CompilerCtfeValue.F32 n)
-      (string.string-append
+      (string.append
         "f32_"
         (spec-string-key
           (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n))))]
@@ -573,11 +561,10 @@
         "bool_1"
         "bool_0")]
     [(CompilerCtfeValue.Char c)
-      (string.string-append "char_" (string.int->string (cast c : i64)))]
+      (string.append "char_" (string.int->string (cast c : i64)))]
     [(CompilerCtfeValue.String text) (spec-string-key text)]
     [(CompilerCtfeValue.Unit) "unit"]
-    [(CompilerCtfeValue.Type ty)
-      (string.string-append "type_" (spec-type-key ty))]
+    [(CompilerCtfeValue.Type ty) (string.append "type_" (spec-type-key ty))]
     [(CompilerCtfeValue.Expr _ _) "Expr"]
     [(CompilerCtfeValue.ExprList _) "expr-list"]
     [(CompilerCtfeValue.ExprClause _) "expr-clause"]
@@ -589,9 +576,9 @@
     [(CompilerCtfeValue.MatchArm _) "match-arm"]
     [(CompilerCtfeValue.MatchArmList _) "match-arm-list"]
     [(CompilerCtfeValue.TypeInfo ty)
-      (string.string-append "typeinfo_" (spec-type-key ty))]
+      (string.append "typeinfo_" (spec-type-key ty))]
     [(CompilerCtfeValue.TypeInfoBox ty)
-      (string.string-append "typeinfo-box_" (spec-type-key ty))]
+      (string.append "typeinfo-box_" (spec-type-key ty))]
     [(CompilerCtfeValue.TypeInfoList _) "typeinfo-list"]
     [(CompilerCtfeValue.TypeField _ _) "type-field"]
     [(CompilerCtfeValue.TypeFieldList _) "type-field-list"]
@@ -604,21 +591,17 @@
   (match values
     [(SpecValueList.Nil) "none"]
     [(SpecValueList.Cons head rest)
-      (string.string-append
+      (string.append
         (spec-value-key head)
-        (string.string-append "_" (spec-values-key (box-get rest))))]))
+        (string.append "_" (spec-values-key (box-get rest))))]))
 
 (define (spec-specialization-key [name : String] [values : SpecValueList]) : String
-  (string.string-append
-    name
-    (string.string-append ":" (spec-values-key values))))
+  (string.append name (string.append ":" (spec-values-key values))))
 
 (define (spec-specialized-name [name : String] [values : SpecValueList]) : String
-  (string.string-append
+  (string.append
     "__tl_specialized_"
-    (string.string-append
-      name
-      (string.string-append "_" (spec-values-key values)))))
+    (string.append name (string.append "_" (spec-values-key values)))))
 
 (define (gen-registry-empty) : GenRegistry
   (let
@@ -629,7 +612,7 @@
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
   (match (hashmap.string-i64-map-get (struct-get registry index) key)
     [(hashmap.StringI64MapFound slot)
-      (GenMaybeEntry.Some (array.array-ref (struct-get registry decls) slot))]
+      (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))]
     [(hashmap.StringI64MapMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
@@ -640,7 +623,7 @@
   (if (>= index count)
     unit
     (begin
-      (array.array-set! dst index (array.array-ref src index))
+      (array-set! dst index (array.ref src index))
       (gen-registry-copy-decls src dst (+ index 1) count))))
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
@@ -648,7 +631,7 @@
     [old-index : hashmap.StringI64Map (struct-get registry index)]
     [old-decls : (Array AstDecl) (struct-get registry decls)]
     [old-len : i64 (struct-get registry len)]
-    [old-capacity : i64 (array.array-length old-decls)]
+    [old-capacity : i64 (array.length old-decls)]
     [new-capacity : i64
       (if (< old-capacity 1)
         1
@@ -666,14 +649,14 @@
     [ready : GenRegistry
       (if (>=
         (struct-get registry len)
-        (array.array-length (struct-get registry decls)))
+        (array.length (struct-get registry decls)))
         (gen-registry-grow registry)
         registry)]
     [slot : i64 (struct-get ready len)]
     [decls : (Array AstDecl) (struct-get ready decls)]
     [index : hashmap.StringI64Map (struct-get ready index)]
     (begin
-      (array.array-set! decls slot decl)
+      (array-set! decls slot decl)
       (GenRegistry (hashmap.string-i64-map-put index key slot) decls (+ slot 1)))))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
@@ -947,7 +930,7 @@
         [_ false])]
     [(AstMaybeModuleName.Some a-name)
       (match b
-        [(AstMaybeModuleName.Some b-name) (string.string-eq a-name b-name)]
+        [(AstMaybeModuleName.Some b-name) (string.eq a-name b-name)]
         [_ false])]))
 
 (define (gen-maybe-import-alias-eq?
@@ -960,7 +943,7 @@
         [_ false])]
     [(AstMaybeImportAlias.Some a-name)
       (match b
-        [(AstMaybeImportAlias.Some b-name) (string.string-eq a-name b-name)]
+        [(AstMaybeImportAlias.Some b-name) (string.eq a-name b-name)]
         [_ false])]))
 
 (define (gen-import-spec-eq? [a : AstImportSpec] [b : AstImportSpec]) : bool
@@ -970,7 +953,7 @@
         [(AstImportSpec.Spec b-kind b-path b-module b-alias _)
           (and
             (gen-import-kind-eq? a-kind b-kind)
-            (string.string-eq a-path b-path)
+            (string.eq a-path b-path)
             (gen-maybe-module-name-eq? a-module b-module)
             (gen-maybe-import-alias-eq? a-alias b-alias))])]))
 
@@ -1063,16 +1046,12 @@
     [(AstDecl.IncludeStr a-name a-path)
       (match b
         [(AstDecl.IncludeStr b-name b-path)
-          (and
-            (string.string-eq a-name b-name)
-            (string.string-eq a-path b-path))]
+          (and (string.eq a-name b-name) (string.eq a-path b-path))]
         [_ false])]
     [(AstDecl.IncludeBin a-name a-path)
       (match b
         [(AstDecl.IncludeBin b-name b-path)
-          (and
-            (string.string-eq a-name b-name)
-            (string.string-eq a-path b-path))]
+          (and (string.eq a-name b-name) (string.eq a-path b-path))]
         [_ false])]
     [(AstDecl.Test a-name a-body-box _)
       (let
@@ -1116,9 +1095,9 @@
                 (match (gen-key-exprs (box-get rest) env head-fuel)
                   [(ResultGenKey.Ok tail tail-fuel)
                     (ResultGenKey.Ok
-                      (string.string-append
+                      (string.append
                         (spec-string-key text)
-                        (string.string-append "_" tail))
+                        (string.append "_" tail))
                       tail-fuel)]
                   [(ResultGenKey.Err diag) (ResultGenKey.Err diag)])]
               [_
@@ -1134,26 +1113,24 @@
   [generator : String]
   [item : String]
   [arg-key : String]) : String
-  (string.string-append
+  (string.append
     "generated:"
-    (string.string-append
+    (string.append
       (spec-string-key module)
-      (string.string-append
+      (string.append
         ":"
-        (string.string-append
+        (string.append
           (spec-string-key generator)
-          (string.string-append
+          (string.append
             ":"
-            (string.string-append
-              (spec-string-key item)
-              (string.string-append ":" arg-key))))))))
+            (string.append (spec-string-key item) (string.append ":" arg-key))))))))
 
 (define (gen-key-prefix? [key : String] [prefix : String]) : bool
   (let
     [prefix-len : i64 (string.string-length prefix)]
     (if (< (string.string-length key) prefix-len)
       false
-      (string.string-eq (string.substring key 0 prefix-len) prefix))))
+      (string.eq (string.substring key 0 prefix-len) prefix))))
 
 (define (gen-full-key? [key : String]) : bool
   (gen-key-prefix? key "generated:"))
@@ -1162,7 +1139,7 @@
   (gen-key-prefix? key "decls:"))
 
 (define (gen-metadata-key-normalizable? [key : String]) : bool
-  (or (string.string-eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
+  (or (string.eq key "") (gen-full-key? key) (gen-decls-macro-key? key)))
 
 (define (gen-registration-key
   [module : String]
@@ -1204,27 +1181,25 @@
     [start : i64 (gen-qualified-local-name-start item-name)]
     (if (= start 0)
       local-prefix
-      (string.string-append (string.substring item-name 0 start) local-prefix))))
+      (string.append (string.substring item-name 0 start) local-prefix))))
 
 (define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start
     ""
-    (string.string-append
+    (string.append
       "generated-decl: metadata item "
-      (string.string-append
-        expected
-        (string.string-append " does not match payload " actual)))))
+      (string.append expected (string.append " does not match payload " actual)))))
 
 (define (gen-incompatible-diag [item : String] [key : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-note
     (compiler-diagnostic-with-note
       (compiler-diagnostic-at-start
         ""
-        (string.string-append
+        (string.append
           "generated-decl: duplicate generated key for "
-          (string.string-append item " has incompatible payload")))
-      (string.string-append "conflicting generated item: " item))
-    (string.string-append "generated identity: " key)))
+          (string.append item " has incompatible payload")))
+      (string.append "conflicting generated item: " item))
+    (string.append "generated identity: " key)))
 
 (define (gen-register-generated-decl
   [template : AstDecl]
@@ -1283,7 +1258,7 @@
                         ""
                         "generated-decl: generated payload must declare a visible item")))]
                 [(SpecMaybeString.Some actual)
-                  (if (not (string.string-eq item actual))
+                  (if (not (string.eq item actual))
                     (ResultGenDecl.Err
                       (box (gen-item-mismatch-diag item actual)))
                     (match (gen-metadata-arg-key meta-key args env)
@@ -1573,7 +1548,7 @@
   (match subs
     [(SpecTypeSubst.Nil) (SpecMaybeString.None)]
     [(SpecTypeSubst.Cons key _ rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (SpecMaybeString.Some key)
         (spec-type-subst-lookup (box-get rest) name))]))
 
@@ -1581,7 +1556,7 @@
   (match subs
     [(SpecTypeSubst.Nil) (AstType.Var (intern name))]
     [(SpecTypeSubst.Cons key ty rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         ty
         (spec-type-subst-type (box-get rest) name))]))
 
@@ -1589,7 +1564,7 @@
   (match subs
     [(SpecValueSubst.Nil) (SpecMaybeString.None)]
     [(SpecValueSubst.Cons key _ rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (SpecMaybeString.Some key)
         (spec-value-subst-lookup (box-get rest) name))]))
 
@@ -1597,7 +1572,7 @@
   (match subs
     [(SpecValueSubst.Nil) (CompilerCtfeValue.Unit)]
     [(SpecValueSubst.Cons key value rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         value
         (spec-value-subst-value (box-get rest) name))]))
 
@@ -1605,7 +1580,7 @@
   (match subs
     [(SpecValueSubst.Nil) SpecValueSubst.Nil]
     [(SpecValueSubst.Cons key value rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (spec-value-subst-remove-name (box-get rest) name)
         (spec-value-subst-cons
           key
@@ -1674,7 +1649,7 @@
   (match subs
     [(SpecTypeSubst.Nil) SpecTypeSubst.Nil]
     [(SpecTypeSubst.Cons key ty rest)
-      (if (string.string-eq key name)
+      (if (string.eq key name)
         (spec-type-subst-remove-name (box-get rest) name)
         (spec-type-subst-cons
           key
@@ -1843,11 +1818,9 @@
         (box
           (spec-diagnostic-at-expr
             origin
-            (string.string-append
+            (string.append
               "cannot substitute compile-time type value "
-              (string.string-append
-                (spec-type-key ty)
-                " into runtime expression")))))]
+              (string.append (spec-type-key ty) " into runtime expression")))))]
     [(CompilerCtfeValue.Expr _ _)
       (ResultSpecSubExpr.Err
         (box
@@ -2124,13 +2097,13 @@
                                 (box
                                   (spec-diagnostic-at-expr
                                     arg
-                                    (string.string-append
+                                    (string.append
                                       "comptime argument '"
-                                      (string.string-append
+                                      (string.append
                                         (intern-str param-name)
-                                        (string.string-append
+                                        (string.append
                                           "' for function '"
-                                          (string.string-append
+                                          (string.append
                                             fn-name
                                             "' must be a type value such as `(type i64)`")))))))])
                           (if (spec-value-runtime-type-matches? value param-ty)
@@ -2154,19 +2127,19 @@
                               (box
                                 (spec-diagnostic-at-expr
                                   arg
-                                  (string.string-append
+                                  (string.append
                                     "comptime argument '"
-                                    (string.string-append
+                                    (string.append
                                       (intern-str param-name)
-                                      (string.string-append
+                                      (string.append
                                         "' for function '"
-                                        (string.string-append
+                                        (string.append
                                           fn-name
-                                          (string.string-append
+                                          (string.append
                                             "' has type "
-                                            (string.string-append
+                                            (string.append
                                               (spec-value-type-label value)
-                                              (string.string-append
+                                              (string.append
                                                 ", expected "
                                                 (spec-type-key param-ty)))))))))))))]
                       [(ResultCtfe.Err diag) (ResultSpecArgs.Err diag)])
@@ -3281,9 +3254,9 @@
               (box
                 (spec-diagnostic-at-expr
                   expr
-                  (string.string-append
+                  (string.append
                     "cannot assign to comptime parameter '"
-                    (string.string-append (intern-str name) "'")))))]
+                    (string.append (intern-str name) "'")))))]
           [(SpecMaybeString.None)
             (match (spec-substitute-values-expr value subs)
               [(ResultSpecSubExpr.Ok rewritten)
@@ -3592,9 +3565,9 @@
             (box
               (spec-diagnostic-at-expr
                 expr
-                (string.string-append
+                (string.append
                   "cannot take address of comptime value parameter '"
-                  (string.string-append (intern-str name) "'")))))]
+                  (string.append (intern-str name) "'")))))]
         [(SpecMaybeString.None)
           (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id name))])]
     [(AstExpr.PtrRead ptr-box)
@@ -3872,9 +3845,9 @@
             (box
               (spec-diagnostic-at-expr
                 expr
-                (string.string-append
+                (string.append
                   "type-valued comptime parameter '"
-                  (string.string-append
+                  (string.append
                     (intern-str name)
                     "' cannot be used as a runtime value")))))]
         [(SpecMaybeString.None) (ResultSpecSubExpr.Ok (ast-node-push expr))])]
@@ -4234,11 +4207,9 @@
               (box
                 (spec-diagnostic-at-expr
                   expr
-                  (string.string-append
+                  (string.append
                     "type-valued comptime parameter '"
-                    (string.string-append
-                      (intern-str name)
-                      "' cannot be assigned")))))]
+                    (string.append (intern-str name) "' cannot be assigned")))))]
           [(SpecMaybeString.None)
             (match (spec-substitute-types-expr value subs)
               [(ResultSpecSubExpr.Ok rewritten)
@@ -4391,9 +4362,9 @@
             (box
               (spec-diagnostic-at-expr
                 expr
-                (string.string-append
+                (string.append
                   "type-valued comptime parameter '"
-                  (string.string-append
+                  (string.append
                     (intern-str name)
                     "' cannot be used as a runtime value")))))]
         [(SpecMaybeString.None)
@@ -4781,7 +4752,7 @@
           [(ResultSpecDecl.Err diag) (ResultSpecDeclsWithPaths.Err diag)]))]))
 
 (define (spec-generated-paths [decls : AstDeclList] [fallback-path : String]) : AstDeclPathList
-  (if (string.string-eq fallback-path "")
+  (if (string.eq fallback-path "")
     AstDeclPathList.Nil
     (gen-path-list-for-decls decls fallback-path AstDeclPathList.Nil)))
 
@@ -4938,7 +4909,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.string-eq (intern-str fn-name) name)
+                  (if (string.eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [(AstDecl.ComptimeDecl _ template-box)
@@ -4946,13 +4917,13 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDecl.DefFn fn-name _ _ _ _)
-                        (if (string.string-eq (intern-str fn-name) name)
+                        (if (string.eq (intern-str fn-name) name)
                           true
                           (compiler-specialize-decl-list-defines? rest name))]
                       [_ (compiler-specialize-decl-list-defines? rest name)]))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
           [(AstDecl.DefFn fn-name _ _ _ _)
-            (if (string.string-eq (intern-str fn-name) name)
+            (if (string.eq (intern-str fn-name) name)
               true
               (compiler-specialize-decl-list-defines? rest name))]
           [(AstDecl.ComptimeDecl _ template-box)
@@ -4960,7 +4931,7 @@
               [template : AstDecl (box-get template-box)]
               (match template
                 [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.string-eq (intern-str fn-name) name)
+                  (if (string.eq (intern-str fn-name) name)
                     true
                     (compiler-specialize-decl-list-defines? rest name))]
                 [_ (compiler-specialize-decl-list-defines? rest name)]))]
@@ -5062,8 +5033,8 @@
     [subs : SpecTypeSubst
       (spec-type-subst-cons "T" (AstType.I64) SpecTypeSubst.Nil)]
     (and
-      (string.string-eq (spec-type-key (ast-ty-ptr (AstType.I64))) "ptr_i64")
-      (string.string-eq
+      (string.eq (spec-type-key (ast-ty-ptr (AstType.I64))) "ptr_i64")
+      (string.eq
         (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstType.U8))))
         "mutptr_ptr_u8")
       (ctfe-type-eq
@@ -5093,26 +5064,24 @@
     [vals-string : SpecValueList
       (spec-value-cons (CompilerCtfeValue.String "a b") (SpecValueList.Nil))]
     (and
-      (string.string-eq
+      (string.eq
         (spec-specialized-name "alloc" vals-i64)
         "__tl_specialized_alloc_type_i64_none")
-      (string.string-eq
+      (string.eq
         (spec-specialized-name "alloc" vals-i64)
         (spec-specialized-name "alloc" vals-i64))
-      (string.string-eq
+      (string.eq
         (spec-specialization-key "alloc" vals-i64)
         "alloc:type_i64_none")
       (not
-        (string.string-eq
+        (string.eq
           (spec-specialized-name "alloc" vals-i64)
           (spec-specialized-name "alloc" vals-bool)))
-      (string.string-eq
+      (string.eq
         (spec-specialized-name "pair" vals-multi)
         "__tl_specialized_pair_type_i64_i64_5_none")
-      (string.string-eq
-        (spec-value-key (CompilerCtfeValue.I64 (- 0 3)))
-        "i64_m3")
-      (string.string-eq
+      (string.eq (spec-value-key (CompilerCtfeValue.I64 (- 0 3))) "i64_m3")
+      (string.eq
         (spec-specialized-name "name" vals-string)
         "__tl_specialized_name_string_3_97_32_98_none"))))
 
@@ -5132,7 +5101,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.string-eq (intern-str fn-name) name)
+                  (if (string.eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [(AstDecl.ComptimeDecl _ template-box)
@@ -5140,7 +5109,7 @@
                     [template : AstDecl (box-get template-box)]
                     (match template
                       [(AstDecl.DefFn fn-name _ _ _ _)
-                        (if (string.string-eq (intern-str fn-name) name)
+                        (if (string.eq (intern-str fn-name) name)
                           (+
                             1
                             (compiler-specialize-decl-list-count-defs rest name))
@@ -5148,7 +5117,7 @@
                       [_ (compiler-specialize-decl-list-count-defs rest name)]))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
           [(AstDecl.DefFn fn-name _ _ _ _)
-            (if (string.string-eq (intern-str fn-name) name)
+            (if (string.eq (intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
           [(AstDecl.ComptimeDecl _ inner-box)
@@ -5156,7 +5125,7 @@
               [inner : AstDecl (box-get inner-box)]
               (match inner
                 [(AstDecl.DefFn fn-name _ _ _ _)
-                  (if (string.string-eq (intern-str fn-name) name)
+                  (if (string.eq (intern-str fn-name) name)
                     (+ 1 (compiler-specialize-decl-list-count-defs rest name))
                     (compiler-specialize-decl-list-count-defs rest name))]
                 [_ (compiler-specialize-decl-list-count-defs rest name)]))]
@@ -5174,7 +5143,7 @@
           (compiler-specialize-decl-list-count-visible rest name)]
         (match (gen-decl-visible-name decl)
           [(SpecMaybeString.Some found)
-            (if (string.string-eq found name)
+            (if (string.eq found name)
               (+ 1 tail-count)
               tail-count)]
           [(SpecMaybeString.None) tail-count]))]))
@@ -5220,20 +5189,20 @@
     [subs : SpecTypeSubst
       (spec-type-subst-cons "T" (AstType.I64) SpecTypeSubst.Nil)]
     (and
-      (string.string-eq
+      (string.eq
         (spec-type-key (spec-substitute-type (AstType.Var (intern "T")) subs))
         "i64")
-      (string.string-eq
+      (string.eq
         (spec-type-key
           (spec-substitute-type (ast-ty-ptr (AstType.Var (intern "T"))) subs))
         "ptr_i64")
-      (string.string-eq
+      (string.eq
         (spec-type-key
           (spec-substitute-type
             (ast-ty-dyn-array (AstType.Var (intern "T")))
             subs))
         "dynarray_i64")
-      (string.string-eq
+      (string.eq
         (spec-type-key
           (spec-substitute-type
             (ast-ty-func
@@ -5241,7 +5210,7 @@
               (AstType.Var (intern "T")))
             subs))
         "fn_i64_nil_to_i64")
-      (string.string-eq
+      (string.eq
         (spec-type-key (spec-substitute-type (AstType.Var (intern "U")) subs))
         "var_U"))))
 
@@ -5268,7 +5237,7 @@
       (match (spec-substitute-values-expr (AstExpr.Var (intern "y")) subs)
         [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)
-            [(AstExpr.Var name) (string.string-eq (intern-str name) "y")]
+            [(AstExpr.Var name) (string.eq (intern-str name) "y")]
             [_ false])]
         [(ResultSpecSubExpr.Err _) false])
       ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
@@ -5292,8 +5261,7 @@
                         [_ false])]
                     [_ false])
                   (match else-branch
-                    [(AstExpr.Var name)
-                      (string.string-eq (intern-str name) "y")]
+                    [(AstExpr.Var name) (string.eq (intern-str name) "y")]
                     [_ false])))]
             [_ false])]
         [(ResultSpecSubExpr.Err _) false]))))
@@ -5344,12 +5312,12 @@
       (match (spec-template-lookup template-env "second")
         [(SpecMaybeTemplate.Some template)
           (match template
-            [(SpecTemplate.Item name _ _ _) (string.string-eq name "second")])]
+            [(SpecTemplate.Item name _ _ _) (string.eq name "second")])]
         [(SpecMaybeTemplate.None) false])
       (match (spec-cache-lookup cache "two")
-        [(SpecMaybeString.Some name) (string.string-eq name "generated-two")]
+        [(SpecMaybeString.Some name) (string.eq name "generated-two")]
         [(SpecMaybeString.None) false])
-      (string.string-eq (spec-values-key values) "i64_1_bool_1_none")
+      (string.eq (spec-values-key values) "i64_1_bool_1_none")
       (match (spec-value-subst-value value-subs "flag")
         [(CompilerCtfeValue.Bool flag) flag]
         [_ false])
@@ -5412,7 +5380,7 @@
     ""
     "sample-family"
     "Box_String"
-    (string.string-append (spec-string-key "String") "_none")))
+    (string.append (spec-string-key "String") "_none")))
 
 (define (compiler-generated-decl-cross-module-reuse-source) : String
   "(module sample.family)
@@ -5498,9 +5466,9 @@
         [(ResultSpecProgram.Err diag)
           (match (compiler-diagnostic-notes (box-get diag))
             [(CompilerDiagnosticNoteCons note _)
-              (string.string-eq
+              (string.eq
                 note
-                (string.string-append
+                (string.append
                   "generated identity: "
                   (compiler-generated-decl-expected-string-key)))]
             [(CompilerDiagnosticNoteNil) false])])]
@@ -5568,15 +5536,15 @@
                         (match meta
                           [(AstGeneratedDeclMeta.Some generator item _ key)
                             (and
-                              (string.string-eq generator "sample-family")
-                              (string.string-eq item "Box_String")
-                              (string.string-eq
+                              (string.eq generator "sample-family")
+                              (string.eq item "Box_String")
+                              (string.eq
                                 key
                                 (compiler-generated-decl-expected-string-key)))]
                           [(AstGeneratedDeclMeta.No) false])
                         (match (box-get template-box)
                           [(AstDecl.DefStruct name _ _ _)
-                            (string.string-eq (intern-str name) "Box_String")]
+                            (string.eq (intern-str name) "Box_String")]
                           [_ false]))]
                     [_ false])]
                 [(AstDeclList.Nil) false])])]

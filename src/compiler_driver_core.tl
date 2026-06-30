@@ -56,11 +56,11 @@
       (array.make-array CompilerLowerArenaState 1)]
     [pool-arena-cell : (Array i64) (array.make-array i64 1)]
     (begin
-      (array.array-set! expr-cell 0 expr-pool)
-      (array.array-set! type-cell 0 type-pool)
-      (array.array-set! builtin-cell 0 (cbi.state-new))
-      (array.array-set! lower-cell 0 (compiler-lower-arena-state-new))
-      (array.array-set! pool-arena-cell 0 pool-arena)
+      (array-set! expr-cell 0 expr-pool)
+      (array-set! type-cell 0 type-pool)
+      (array-set! builtin-cell 0 (cbi.state-new))
+      (array-set! lower-cell 0 (compiler-lower-arena-state-new))
+      (array-set! pool-arena-cell 0 pool-arena)
       (CompilerDriverState
         expr-cell
         type-cell
@@ -89,9 +89,9 @@
         pool-arena)]
     (begin
       (cbi.state-capture-from-globals!
-        (array.array-ref (struct-get state builtin-ids) 0))
+        (array-ref (struct-get state builtin-ids) 0))
       (compiler-lower-arena-state-capture-from-globals!
-        (array.array-ref (struct-get state lower-arenas) 0))
+        (array-ref (struct-get state lower-arenas) 0))
       state)))
 
 (define (compiler-driver-state-session-cache-enabled?
@@ -126,8 +126,8 @@
 
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
   (ast-node-pools-state-install!
-    (array.array-ref (struct-get state expr-pool) 0)
-    (array.array-ref (struct-get state type-pool) 0)))
+    (array-ref (struct-get state expr-pool) 0)
+    (array-ref (struct-get state type-pool) 0)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -135,7 +135,7 @@
     (struct-get state type-pool)))
 
 (define (compiler-driver-state-owned-pool-arena [state : CompilerDriverState]) : i64
-  (array.array-ref (struct-get state pool-arena) 0))
+  (array-ref (struct-get state pool-arena) 0))
 
 (define (compiler-driver-state-has-owned-pool-arena?
   [state : CompilerDriverState]) : bool
@@ -157,12 +157,12 @@
         (if (tc-prefix-snapshot-cache-active?)
           unit
           (tc-prefix-snapshot-cache-clear!))
-        (array.array-set! (struct-get state pool-arena) 0 new-arena)
-        (array.array-set!
+        (array-set! (struct-get state pool-arena) 0 new-arena)
+        (array-set!
           (struct-get state expr-pool)
           0
           (ast-expr-node-pool-state-init 2097152 new-arena))
-        (array.array-set!
+        (array-set!
           (struct-get state type-pool)
           0
           (ast-type-node-pool-state-init 262144 new-arena))
@@ -179,36 +179,29 @@
     (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (cbi.state-install! (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-install!
-    (array.array-ref (struct-get state lower-arenas) 0)))
+    (array-ref (struct-get state lower-arenas) 0)))
 
 (define (compiler-driver-state-capture-active-pools!
   [state : CompilerDriverState]) : unit
   (begin
-    (array.array-set!
-      (struct-get state expr-pool)
-      0
-      (ast-node-pool-state-capture))
-    (array.array-set!
-      (struct-get state type-pool)
-      0
-      (ty-node-pool-state-capture))))
+    (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
+    (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
 
 (define (compiler-driver-state-capture-active-builtins!
   [state : CompilerDriverState]) : unit
-  (cbi.state-capture-from-globals!
-    (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-capture-from-globals! (array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-builtin-generation [state : CompilerDriverState]) : i64
-  (cbi.state-generation (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-generation (array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-state-builtin-ids-data-addr
   [state : CompilerDriverState]) : i64
-  (cbi.state-ids-data-addr (array.array-ref (struct-get state builtin-ids) 0)))
+  (cbi.state-ids-data-addr (array-ref (struct-get state builtin-ids) 0)))
 
 (define (compiler-driver-builtin-reset!) : unit
   (cbi.compiler-builtin-reset!))
@@ -222,7 +215,7 @@
 (define (compiler-driver-state-capture-active-lower-arenas!
   [state : CompilerDriverState]) : unit
   (compiler-lower-arena-state-capture-from-globals!
-    (array.array-ref (struct-get state lower-arenas) 0)))
+    (array-ref (struct-get state lower-arenas) 0)))
 
 (define (compiler-driver-state-install-transients!
   [state : CompilerDriverState]) : unit
@@ -381,7 +374,7 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-field [value : i64]) : String
-    (string.string-append "|" (string.int->string value))))
+    (string.append "|" (string.int->string value))))
 
 (cfg
   compile-profile
@@ -391,19 +384,17 @@
     [alloc-delta : i64]
     [live-delta : i64]
     [peak-delta : i64]) : String
-    (string.string-append
+    (string.append
       "compile-profile|"
-      (string.string-append
+      (string.append
         phase
-        (string.string-append
+        (string.append
           (compiler-driver-profile-field elapsed-ms)
-          (string.string-append
+          (string.append
             (compiler-driver-profile-field alloc-delta)
-            (string.string-append
+            (string.append
               (compiler-driver-profile-field live-delta)
-              (string.string-append
-                (compiler-driver-profile-field peak-delta)
-                "\n"))))))))
+              (string.append (compiler-driver-profile-field peak-delta) "\n"))))))))
 
 (cfg
   compile-profile
@@ -1020,7 +1011,7 @@
         (unsafe
           (arena.tl_arena_set node-pool-base-arena))
         (let
-          [persistent-key : String (string.string-copy (& key))]
+          [persistent-key : String (string.copy (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold stdlib-roots cfgs)]
           (begin
@@ -1206,7 +1197,7 @@
         (unsafe
           (arena.tl_arena_set (ast-node-pool-context-base-arena pools)))
         (let
-          [persistent-key : String (string.string-copy (& key))]
+          [persistent-key : String (string.copy (& key))]
           [cold : ResultCompilerLoadWithPaths
             (compiler-driver-load-runtime-prelude-cold-with-pools
               stdlib-roots
@@ -2041,11 +2032,9 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-driver-ir-summary-line [name : String] [value : i64]) : String
-  (string.string-append
+  (string.append
     name
-    (string.string-append
-      " "
-      (string.string-append (string.int->string value) "\n"))))
+    (string.append " " (string.append (string.int->string value) "\n"))))
 
 (define (compiler-driver-ir-summary-render [summary : CompilerIrSummary]) : String
   (let
@@ -2053,7 +2042,7 @@
     (begin
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "globals"
@@ -2061,7 +2050,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "functions"
@@ -2069,7 +2058,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "externs"
@@ -2077,7 +2066,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "blocks"
@@ -2085,7 +2074,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "instructions"
@@ -2093,7 +2082,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "vars"
@@ -2101,7 +2090,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "empty-blocks"
@@ -2109,7 +2098,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "max-instructions-function"
@@ -2117,7 +2106,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "max-instructions-block"
@@ -2125,7 +2114,7 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "call-arg-entries"
@@ -2133,13 +2122,13 @@
           ""))
       (set!
         out
-        (string.string-concat3
+        (string.concat3
           out
           (compiler-driver-ir-summary-line
             "phi-input-entries"
             (compiler-ir-summary-phi-input-entries summary))
           ""))
-      (string.string-concat3
+      (string.concat3
         out
         (compiler-driver-ir-summary-line
           "score"
@@ -2297,7 +2286,7 @@
 (define (compiler-driver-write-text-buf
   [output-path : String]
   [buf : text_buf.TextBuf]) : i64
-  (text_buf.text-buf-write-file output-path buf))
+  (text_buf.write-file output-path buf))
 
 (define (compiler-driver-write-result
   [result : ResultCompilerDriver]
@@ -2310,9 +2299,7 @@
         (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-string
-          (string.string-append
-            "Wrote "
-            (string.string-append output-path "\n")))
+          (string.append "Wrote " (string.append output-path "\n")))
         0)]
     [(ResultCompilerDriver.Err diag)
       (begin
@@ -2336,9 +2323,7 @@
           (if (= status 0)
             (begin
               (io.print-string
-                (string.string-append
-                  "Wrote "
-                  (string.string-append output-path "\n")))
+                (string.append "Wrote " (string.append output-path "\n")))
               0)
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
@@ -2348,7 +2333,7 @@
         1)]))
 
 (define (compiler-driver-pic-fixups-path [output-path : String]) : String
-  (string.string-append output-path ".fixups"))
+  (string.append output-path ".fixups"))
 
 (define (compiler-driver-write-pic-result
   [result : ResultCompilerDriverPic]
@@ -2364,13 +2349,9 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
           (cfg compile-profile (compiler-driver-profile-finish-total))
           (io.print-string
-            (string.string-append
-              "Wrote "
-              (string.string-append output-path "\n")))
+            (string.append "Wrote " (string.append output-path "\n")))
           (io.print-string
-            (string.string-append
-              "Wrote "
-              (string.string-append fixups-path "\n")))
+            (string.append "Wrote " (string.append fixups-path "\n")))
           0))]
     [(ResultCompilerDriverPic.Err diag)
       (begin

@@ -53,7 +53,7 @@
     [(ExprClause test result)
       (match test
         [(ExprVar name)
-          (if (string.string-eq name "else")
+          (if (string.eq name "else")
             result
             (comptime.expr-int 0))]
         [_ (comptime.expr-int 0)])]))
@@ -82,7 +82,7 @@
       (let
         [first : comptime.ExprBindingClause
           (__tl_array-ref (struct-get bindings items) 0)]
-        (if (string.string-eq (struct-get first name) "value")
+        (if (string.eq (struct-get first name) "value")
           (struct-get first init)
           (comptime.expr-int 0)))
       (comptime.expr-int 0))))
@@ -111,8 +111,8 @@
           (+
             (length base)
             (+
-              (string->int "7")
-              (if (string.string-eq base "stdlib-comptime-derived")
+              (string.>int "7")
+              (if (string.eq base "stdlib-comptime-derived")
                 (if (string=? base "stdlib-comptime-derived")
                   (if (=
                     (cast (string-ref base 0) : i64)
@@ -125,7 +125,7 @@
 
 (defmacro (stdlib-comptime-error-unreached [x : comptime.Expr]) : i64
   (if false
-    (comptime.comptime-error "unreached stdlib comptime error")
+    (comptime.error "unreached stdlib comptime error")
     x))
 
 (define (stdlib-comptime-qualified-import-shape) : i64
@@ -176,7 +176,7 @@
       (stdlib-comptime-derived-name stdlib-comptime-derived))))
 
 (define (stdlib-comptime-derived-string-shape) : bool
-  (string.string-eq
+  (string.eq
     (stdlib-comptime-derived-string stdlib-comptime-derived)
     "stdlib-comptime-derived-literal"))
 

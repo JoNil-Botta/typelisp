@@ -10,5 +10,5 @@
       [(ThreadArrayI64SpawnErr _) 1]
       [(ThreadArrayI64SpawnOk worker)
         (match (thread-join-array-i64 worker)
-          [(ThreadArrayI64JoinOk joined) (array.array-length joined)]
+          [(ThreadArrayI64JoinOk joined) (array-length joined)]
           [(ThreadArrayI64JoinErr _) 2])])))

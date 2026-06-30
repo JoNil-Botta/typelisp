@@ -165,44 +165,42 @@
   [home : Address]
   [zip : i64]
   [city : String]) : bool
-  (and
-    (= (struct-get home zip) zip)
-    (string.string-eq (struct-get home city) city)))
+  (and (= (struct-get home zip) zip) (string.eq (struct-get home city) city)))
 
 (define (serialize-json-address-ok? [home : Address]) : bool
   (serialize-json-address-eq? home 12345 "London"))
 
 (define (serialize-json-scores-ok? [scores : (Array i64 3)]) : bool
   (and
-    (= (array.array-ref scores 0) 4)
-    (= (array.array-ref scores 1) 5)
-    (= (array.array-ref scores 2) 6)))
+    (= (array-ref scores 0) 4)
+    (= (array-ref scores 1) 5)
+    (= (array-ref scores 2) 6)))
 
 (define (serialize-json-samples-ok? [samples : (Array i64)]) : bool
   (and
-    (= (array.array-length samples) 2)
-    (= (array.array-ref samples 0) 7)
-    (= (array.array-ref samples 1) 8)))
+    (= (array-length samples) 2)
+    (= (array-ref samples 0) 7)
+    (= (array-ref samples 1) 8)))
 
 (define (serialize-json-previous-ok? [previous : (Array Address 2)]) : bool
   (and
-    (serialize-json-address-eq? (array.array-ref previous 0) 111 "Oxford")
-    (serialize-json-address-eq? (array.array-ref previous 1) 222 "Paris")))
+    (serialize-json-address-eq? (array-ref previous 0) 111 "Oxford")
+    (serialize-json-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-json-combo-ok?
   [combo : (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))]) : bool
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-json-address-eq? (tuple-ref combo 1) 333 "Rome")
-    (= (array.array-ref (tuple-ref combo 2) 0) 9)
-    (= (array.array-ref (tuple-ref combo 2) 1) 10)
+    (= (array.ref (tuple-ref combo 2) 0) 9)
+    (= (array.ref (tuple-ref combo 2) 1) 10)
     (serialize-json-samples-ok? (tuple-ref combo 3))
-    (string.string-eq (tuple-ref (tuple-ref combo 4) 0) "inner")
+    (string.eq (tuple-ref (tuple-ref combo 4) 0) "inner")
     (tuple-ref (tuple-ref combo 4) 1)))
 
 (define (serialize-json-person-ok? [person : Person]) : bool
   (and
-    (string.string-eq (struct-get person name) "Ada\nLovelace")
+    (string.eq (struct-get person name) "Ada\nLovelace")
     (= (struct-get person age) (cast 36 : i32))
     (struct-get person active)
     (= (struct-get person score) 9.5)
@@ -217,8 +215,8 @@
   (let
     [samples : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! samples 0 7)
-      (array.array-set! samples 1 8)
+      (array-set! samples 0 7)
+      (array-set! samples 1 8)
       samples)))
 
 (define (serialize-json-previous-addresses) : (Array Address 2)
@@ -254,7 +252,7 @@
     [json : json.Json (person_json.to-json person)]
     [encoded : String (stdlib.json.json-stringify json)]
     (and
-      (string.string-eq
+      (string.eq
         encoded
         "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"score\":9.5,\"ratio\":1.25,\"home\":{\"zip\":12345,\"city\":\"London\"},\"scores\":[4,5,6],\"previous\":[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}],\"samples\":[7,8],\"combo\":[99,{\"zip\":333,\"city\":\"Rome\"},[9,10],[7,8],[\"inner\",true]]}")
       (match (person_json.from-json json)

@@ -513,7 +513,7 @@
   windows
   (define (process-byte-builder-addr [buf : byte_buf_core.ByteBufBuilder]) : i64
     (begin
-      (set! (struct-get buf len) (array.array-length (struct-get buf slots)))
+      (set! (struct-get buf len) (array-length (struct-get buf slots)))
       (let
         [bytes : (Array u8)
           (byte_buf_core.byte-buf-builder-finish-array (& buf))]
@@ -569,7 +569,7 @@
 ;: (an array of override `NAME=VALUE` C string addresses).
 (define (process-inherited-overridden? [entry : (Ptr u8)] [ov : (Array u64)]) : bool
   (let
-    [n : i64 (array.array-length ov)]
+    [n : i64 (array-length ov)]
     [i : i64 0]
     [found : bool false]
     (begin
@@ -577,7 +577,7 @@
         (if (stdlib.process_runtime.process-cstr-name-matches?
           entry
           (stdlib.process_runtime.process-addr->ptr
-            (cast (array.array-ref ov i) : i64)))
+            (cast (array-ref ov i) : i64)))
           (set! found true)
           (set! i (+ i 1))))
       found)))
@@ -592,15 +592,15 @@
     (begin
       (while (< i nl)
         (begin
-          (array.array-set! buf i (cast (string-ref name i) : u8))
+          (array-set! buf i (cast (string-ref name i) : u8))
           (set! i (+ i 1))))
-      (array.array-set! buf nl (cast 61 : u8))
+      (array-set! buf nl (cast 61 : u8))
       (set! i 0)
       (while (< i vl)
         (begin
-          (array.array-set! buf (+ (+ nl 1) i) (cast (string-ref value i) : u8))
+          (array-set! buf (+ (+ nl 1) i) (cast (string-ref value i) : u8))
           (set! i (+ i 1))))
-      (array.array-set! buf (+ (+ nl 1) vl) (cast 0 : u8))
+      (array-set! buf (+ (+ nl 1) vl) (cast 0 : u8))
       buf)))
 
 ;: Materialize the override list into an array of `NAME=VALUE` C string
@@ -623,7 +623,7 @@
               [rest : ProcessRuntimeEnvList
                 (stdlib.process_runtime.env-step-rest step)]
               (begin
-                (array.array-push!
+                (array-push!
                   ov
                   (unsafe
                     (cast
@@ -720,7 +720,7 @@
     [cur : ProcessRuntimeStringList argv]
     [continue : bool true]
     (begin
-      (array.array-set! arr 0 (cast exec-addr : u64))
+      (array-set! arr 0 (cast exec-addr : u64))
       (while continue
         (let
           [step : ProcessRuntimeStringStep
@@ -731,7 +731,7 @@
               [rest : ProcessRuntimeStringList
                 (stdlib.process_runtime.string-step-rest step)]
               (begin
-                (array.array-set!
+                (array-set!
                   arr
                   w
                   (unsafe
@@ -741,7 +741,7 @@
                 (set! w (+ w 1))
                 (set! cur rest)))
             (set! continue false))))
-      (array.array-set! arr w (cast 0 : u64))
+      (array-set! arr w (cast 0 : u64))
       (stdlib.process_runtime.process-array-u64-addr arr))))
 
 ;: Count inherited environment entries not overridden by `ov`.
@@ -775,7 +775,7 @@
   (let
     [ov : (Array u64)
       (stdlib.process_runtime.process-build-override-cstrings env)]
-    [ovc : i64 (array.array-length ov)]
+    [ovc : i64 (array-length ov)]
     (if (= ovc 0)
       (unsafe
         (cast
@@ -809,7 +809,7 @@
                       entry
                       ov))
                     (begin
-                      (array.array-set!
+                      (array-set!
                         arr
                         w
                         (unsafe
@@ -819,10 +819,10 @@
                   (set! i (+ i 1))))))
           (while (< k ovc)
             (begin
-              (array.array-set! arr w (array.array-ref ov k))
+              (array-set! arr w (array-ref ov k))
               (set! w (+ w 1))
               (set! k (+ k 1))))
-          (array.array-set! arr w (cast 0 : u64))
+          (array-set! arr w (cast 0 : u64))
           (stdlib.process_runtime.process-array-u64-addr arr))))))
 
 ;: Decode a `wait4` status word into the process exit status: a terminating
@@ -882,7 +882,7 @@
           [act : (Array u64) (array.make-array u64 4)]
           [old : (Array u64) (array.make-array u64 4)]
           (begin
-            (array.array-set! act 0 (cast 1 : u64))
+            (array-set! act 0 (cast 1 : u64))
             (unsafe
               (syscall
                 13
@@ -963,8 +963,8 @@
             0)
             (set! failed true)
             (begin
-              (set! stdin-r (cast (array.array-ref pbuf 0) : i64))
-              (set! stdin-w (cast (array.array-ref pbuf 1) : i64))))
+              (set! stdin-r (cast (array-ref pbuf 0) : i64))
+              (set! stdin-w (cast (array-ref pbuf 1) : i64))))
           unit)
         (if (not failed)
           (let
@@ -1002,8 +1002,8 @@
             0)
             (set! failed true)
             (begin
-              (set! exec-r (cast (array.array-ref ebuf 0) : i64))
-              (set! exec-w (cast (array.array-ref ebuf 1) : i64))))
+              (set! exec-r (cast (array-ref ebuf 0) : i64))
+              (set! exec-w (cast (array-ref ebuf 1) : i64))))
           unit)
         (ProcessLinuxSpawn
           exec-addr
@@ -1176,7 +1176,7 @@
                     (io.read-fd-to-string (struct-get spawn stderr-fd))]
                   [status : i64
                     (stdlib.process_runtime.process-decode-status
-                      (array.array-ref statusbuf 0))]
+                      (array-ref statusbuf 0))]
                   (begin
                     (stdlib.process_runtime.process-linux-close-if
                       (struct-get spawn stdout-fd))
@@ -1327,7 +1327,7 @@
                 (stdlib.process_runtime.process-linux-close-if stderr-fd)
                 (stdlib.process_runtime.output-ok
                   (stdlib.process_runtime.process-decode-status
-                    (array.array-ref statusbuf 0))
+                    (array-ref statusbuf 0))
                   stdout-text
                   stderr-text)))))))))
 
@@ -1350,7 +1350,7 @@
 ;: Quote a command-line argument with double quotes when it contains a space.
 (define (process-quote-arg [text : String]) : String
   (if (stdlib.process_runtime.process-string-has-space? text)
-    (string.string-append (string.string-append "\"" text) "\"")
+    (string.append (string.append "\"" text) "\"")
     text))
 
 ;: Join the executable and argv into a single space-separated command line,
@@ -1376,8 +1376,8 @@
               (begin
                 (set!
                   line
-                  (string.string-append
-                    (string.string-append line " ")
+                  (string.append
+                    (string.append line " ")
                     (stdlib.process_runtime.process-quote-arg text)))
                 (set! cur rest)))
             (set! continue false))))
@@ -1400,7 +1400,7 @@
           (let
             [byte : i64 (stdlib.process_runtime.process-byte-at ptr i)]
             (begin
-              (array.array-push! (struct-get block slots) (cast byte : u8))
+              (array-push! (struct-get block slots) (cast byte : u8))
               (if (= byte 0)
                 (set! done true)
                 (set! i (+ i 1))))))
@@ -1415,7 +1415,7 @@
     (let
       [ov : (Array u64)
         (stdlib.process_runtime.process-build-override-cstrings env)]
-      [ovc : i64 (array.array-length ov)]
+      [ovc : i64 (array-length ov)]
       (if (= ovc 0)
         0
         (let
@@ -1453,9 +1453,9 @@
               (begin
                 (stdlib.process_runtime.process-windows-push-cstr
                   (&mut block)
-                  (cast (array.array-ref ov k) : i64))
+                  (cast (array-ref ov k) : i64))
                 (set! k (+ k 1))))
-            (array.array-push! (struct-get block slots) (cast 0 : u8))
+            (array-push! (struct-get block slots) (cast 0 : u8))
             (stdlib.process_runtime.process-byte-builder-addr block)))))))
 
 ;: Close a Windows handle when it is not INVALID_HANDLE_VALUE.
@@ -1496,9 +1496,9 @@
             (let
               [security : (Array u64) (array.make-array u64 3)]
               (begin
-                (array.array-set! security 0 (cast 24 : u64))
-                (array.array-set! security 1 (cast 0 : u64))
-                (array.array-set! security 2 (cast 1 : u64))
+                (array-set! security 0 (cast 24 : u64))
+                (array-set! security 1 (cast 0 : u64))
+                (array-set! security 2 (cast 1 : u64))
                 (let
                   [handle : i64
                     (stdlib.process_runtime.process-win-create-file
@@ -1528,16 +1528,16 @@
       [startup : (Array u64) (array.make-array u64 13)]
       [procinfo : (Array u64) (array.make-array u64 3)]
       (begin
-        (array.array-set! startup 0 (cast 104 : u64))
-        (array.array-set! startup 7 (shl (cast 0x100 : u64) 32))
-        (array.array-set!
+        (array-set! startup 0 (cast 104 : u64))
+        (array-set! startup 7 (shl (cast 0x100 : u64) 32))
+        (array-set!
           startup
           10
           (cast
             (stdlib.process_runtime.process-win-get-std-handle (cast -10 : i32))
             : u64))
-        (array.array-set! startup 11 (cast out-handle : u64))
-        (array.array-set! startup 12 (cast err-handle : u64))
+        (array-set! startup 11 (cast out-handle : u64))
+        (array-set! startup 12 (cast err-handle : u64))
         (let
           [created : i32
             (stdlib.process_runtime.process-win-create-process
@@ -1555,8 +1555,8 @@
             -1
             (let
               [codebuf : (Array i32) (array.make-array i32 1)]
-              [process-handle : i64 (cast (array.array-ref procinfo 0) : i64)]
-              [thread-handle : i64 (cast (array.array-ref procinfo 1) : i64)]
+              [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
+              [thread-handle : i64 (cast (array-ref procinfo 1) : i64)]
               (begin
                 (stdlib.process_runtime.process-win-wait-single
                   process-handle
@@ -1567,7 +1567,7 @@
                     (ptr-cast (array-data codebuf) : (MutPtr i32))))
                 (stdlib.process_runtime.process-win-close-handle process-handle)
                 (stdlib.process_runtime.process-win-close-handle thread-handle)
-                (cast (array.array-ref codebuf 0) : i64)))))))))
+                (cast (array-ref codebuf 0) : i64)))))))))
 
 ;: Seek a raw Windows file HANDLE and return the resulting offset.
 (cfg
@@ -1587,7 +1587,7 @@
           whence)]
       (if (= ok (cast 0 : i32))
         -1
-        (array.array-ref pos 0)))))
+        (array-ref pos 0)))))
 
 ;: Non-Windows stub for the module-qualified helper name.
 (cfg
@@ -1641,7 +1641,7 @@
                       (unsafe
                         (ptr-cast (array-data readbuf) : (MutPtr i32)))
                       0)]
-                  [read-count : i64 (cast (array.array-ref readbuf 0) : i64)]
+                  [read-count : i64 (cast (array-ref readbuf 0) : i64)]
                   (if (= ok (cast 0 : i32))
                     (set! done true)
                     (if (= read-count 0)

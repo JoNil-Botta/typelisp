@@ -45,9 +45,7 @@
 
 ;: Convert a `timespec {sec,nsec}` array to milliseconds.
 (define (timespec-ms [timespec : (Array i64)]) : i64
-  (+
-    (* (array.array-ref timespec 0) 1000)
-    (/ (array.array-ref timespec 1) 1000000)))
+  (+ (* (array-ref timespec 0) 1000) (/ (array-ref timespec 1) 1000000)))
 
 ;: Return the raw data address of an `i64` array for Linux syscalls.
 (cfg
@@ -100,7 +98,7 @@
             (array-data file-time)))]
       [unix-ms : i64
         (-
-          (/ (array.array-ref file-time 0) 10000)
+          (/ (array-ref file-time 0) 10000)
           (stdlib.time.windows-filetime-unix-epoch-ms))]
       (if (< unix-ms 0)
         (stdlib.time.unavailable "time: system time before Unix epoch")
@@ -121,13 +119,13 @@
         (stdlib.time.windows-query-performance-frequency
           (unsafe
             (array-data freq)))]
-      [freq-value : i64 (array.array-ref freq 0)]
+      [freq-value : i64 (array-ref freq 0)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
         (stdlib.time.unavailable "time: performance counter unavailable")
         (if (= freq-value 0)
           (stdlib.time.unavailable
             "time: performance counter frequency is zero")
-          (OkTimeMs (/ (* (array.array-ref counter 0) 1000) freq-value)))))))
+          (OkTimeMs (/ (* (array-ref counter 0) 1000) freq-value)))))))
 
 ;: Return wall-clock Unix epoch milliseconds.
 (define (unix-ms) : ResultTimeMs
@@ -158,7 +156,7 @@
 
 ;: Inline test owned string assertion.
 (define (test-assert-string-eq [actual : String] [expected : String]) : unit
-  (stdlib.time.test-assert (string.string-eq actual expected)))
+  (stdlib.time.test-assert (string.eq actual expected)))
 
 ;: Inline test assertion for error result shape.
 (define (test-assert-result-error-shape) : unit

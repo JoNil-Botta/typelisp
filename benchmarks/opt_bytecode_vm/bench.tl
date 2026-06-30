@@ -26,15 +26,15 @@
   (let
     [program : (Array Inst) (array.make-array Inst 9)]
     (begin
-      (array.array-set! program 0 (PushInput))
-      (array.array-set! program 1 (PushConst 1000003))
-      (array.array-set! program 2 (MulOp))
-      (array.array-set! program 3 (PushConst 98765))
-      (array.array-set! program 4 (AddOp))
-      (array.array-set! program 5 (Dup))
-      (array.array-set! program 6 (MulOp))
-      (array.array-set! program 7 (PushConst 54321))
-      (array.array-set! program 8 (XorOp))
+      (array-set! program 0 (PushInput))
+      (array-set! program 1 (PushConst 1000003))
+      (array-set! program 2 (MulOp))
+      (array-set! program 3 (PushConst 98765))
+      (array-set! program 4 (AddOp))
+      (array-set! program 5 (Dup))
+      (array-set! program 6 (MulOp))
+      (array-set! program 7 (PushConst 54321))
+      (array-set! program 8 (XorOp))
       program)))
 
 (define (vm-run
@@ -48,47 +48,47 @@
     (begin
       (while (< pc plen)
         (begin
-          (match (array.array-ref program pc)
+          (match (array-ref program pc)
             [(PushInput)
               (begin
-                (array.array-set! stack sp input)
+                (array-set! stack sp input)
                 (set! sp (+ sp 1)))]
             [(PushConst value)
               (begin
-                (array.array-set! stack sp value)
+                (array-set! stack sp value)
                 (set! sp (+ sp 1)))]
             [(Dup)
               (begin
-                (array.array-set! stack sp (array.array-ref stack (- sp 1)))
+                (array-set! stack sp (array-ref stack (- sp 1)))
                 (set! sp (+ sp 1)))]
             [(AddOp)
               (let
-                [b : i64 (array.array-ref stack (- sp 1))]
-                [a : i64 (array.array-ref stack (- sp 2))]
+                [b : i64 (array-ref stack (- sp 1))]
+                [a : i64 (array-ref stack (- sp 2))]
                 (begin
-                  (array.array-set! stack (- sp 2) (% (+ a b) vm-prime))
+                  (array-set! stack (- sp 2) (% (+ a b) vm-prime))
                   (set! sp (- sp 1))))]
             [(MulOp)
               (let
-                [b : i64 (array.array-ref stack (- sp 1))]
-                [a : i64 (array.array-ref stack (- sp 2))]
+                [b : i64 (array-ref stack (- sp 1))]
+                [a : i64 (array-ref stack (- sp 2))]
                 (begin
-                  (array.array-set! stack (- sp 2) (% (* a b) vm-prime))
+                  (array-set! stack (- sp 2) (% (* a b) vm-prime))
                   (set! sp (- sp 1))))]
             [(XorOp)
               (let
-                [b : i64 (array.array-ref stack (- sp 1))]
-                [a : i64 (array.array-ref stack (- sp 2))]
+                [b : i64 (array-ref stack (- sp 1))]
+                [a : i64 (array-ref stack (- sp 2))]
                 (begin
-                  (array.array-set! stack (- sp 2) (% (bit-xor a b) vm-prime))
+                  (array-set! stack (- sp 2) (% (bit-xor a b) vm-prime))
                   (set! sp (- sp 1))))])
           (set! pc (+ pc 1))))
-      (array.array-ref stack 0))))
+      (array-ref stack 0))))
 
 (define (vm-bench [rounds : i64]) : i64
   (let
     [program : (Array Inst) (vm-build-program)]
-    [plen : i64 (array.array-length program)]
+    [plen : i64 (array-length program)]
     [stack : (Array i64) (array.make-array i64 64)]
     [round : i64 0]
     [acc : i64 0]
@@ -103,7 +103,7 @@
 
 (define (main) : i64
   (let
-    [rounds : i64 (string->int (arg 1))]
+    [rounds : i64 (>int (arg 1))]
     (begin
       (print (vm-bench rounds))
       0)))

@@ -12,7 +12,7 @@
     [found : bool false]
     (begin
       (while (< idx (vector.string-vec-len items))
-        (if (string.string-eq (vector.string-vec-get items idx "") needle)
+        (if (string.eq (vector.string-vec-get items idx "") needle)
           (begin
             (set! found true)
             (set! idx (vector.string-vec-len items)))
@@ -74,9 +74,9 @@
             (tc-inlay-hints-disable!)
             (and
               (= (json.json-list-count hints) 2)
-              (string.string-contains (& rendered) (& type-label))
-              (string.string-contains (& rendered) (& total-pos))
-              (string.string-contains (& rendered) (& next-pos)))))))))
+              (string.contains (& rendered) (& type-label))
+              (string.contains (& rendered) (& total-pos))
+              (string.contains (& rendered) (& next-pos)))))))))
 
 (define (lsp-formatting-smoke-ok?) : bool
   (let
@@ -90,9 +90,9 @@
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]
           (and
-            (string.string-contains (& formatted) (& sig))
-            (string.string-contains (& rendered) (& newtext-key))
-            (string.string-contains (& rendered) (& range-key))))]
+            (string.contains (& formatted) (& sig))
+            (string.contains (& rendered) (& newtext-key))
+            (string.contains (& rendered) (& range-key))))]
       [(ResultFormatString.Err _) false])))
 
 (define (lsp-format-edit-text-smoke-ok?) : bool
@@ -103,9 +103,9 @@
     [fallback : String (lsp-format-edit-text invalid)]
     [sig : String "(define (f) : i64"]
     (and
-      (string.string-contains (& formatted) (& sig))
-      (not (string.string-eq formatted messy))
-      (string.string-eq fallback invalid))))
+      (string.contains (& formatted) (& sig))
+      (not (string.eq formatted messy))
+      (string.eq fallback invalid))))
 
 (define (lsp-check-smoke-ok?) : bool
   (let
@@ -156,9 +156,7 @@
                 [target-col : i64 (+ total-off 1)]
                 (begin
                   (if (and (= hint-line target-line) (= hint-col target-col))
-                    (set!
-                      found-ok
-                      (string.string-eq (tc-inlay-hint-type-at i) "i32"))
+                    (set! found-ok (string.eq (tc-inlay-hint-type-at i) "i32"))
                     unit)
                   (set! i (+ i 1)))))
             (let
@@ -166,7 +164,7 @@
               (if (>= near-idx 0)
                 (set!
                   near-ok
-                  (string.string-eq (tc-inlay-hint-type-at near-idx) "i32"))
+                  (string.eq (tc-inlay-hint-type-at near-idx) "i32"))
                 unit))
             (tc-inlay-hints-disable!)
             (and found-ok near-ok)))))))
@@ -185,7 +183,7 @@
     [rendered : String (json.json-stringify (lsp-json-array refs))]
     [count-ok : bool (= (json.json-list-count refs) 2)]
     [needle0 : String "\"line\":0"]
-    [line0-ok : bool (string.string-contains (& rendered) (& needle0))]
+    [line0-ok : bool (string.contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))
 
 (define (lsp-document-decls-cache-empty-ok?) : bool
@@ -231,12 +229,12 @@
     (and
       (= (lsp-decl-list-len (& first-decls)) 1)
       (= (lsp-decl-list-len (& second-decls)) 2)
-      (string.string-eq (struct-get wide name) "wide")
+      (string.eq (struct-get wide name) "wide")
       (= (struct-get wide form-start-line) 5)
       (= (struct-get wide form-start-col) 1)
       (= (struct-get wide name-line) 5)
       (= (struct-get wide name-col) 10)
-      (string.string-eq (struct-get next name) "next")
+      (string.eq (struct-get next name) "next")
       (= (struct-get next form-start-line) 6)
       (= (struct-get next form-start-col) 1)
       (= (struct-get next name-line) 6)

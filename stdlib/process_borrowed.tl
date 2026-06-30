@@ -436,7 +436,7 @@
 
 ;: Inline test assertion for owned process strings.
 (define (test-assert-owned-string-eq [actual : String] [expected : String]) : unit
-  (test-assert-true (string.string-eq actual expected)))
+  (test-assert-true (string.eq actual expected)))
 
 ;: Inline test assertion for a one-element owned process string list.
 (define (test-assert-process-string-list1
@@ -509,7 +509,7 @@
     [(ProcessBorrowedStringCons actual rest)
       (match (args-normalize (box-get rest))
         [(ProcessBorrowedStringNil)
-          (test-assert-true (string.string-eq actual (& expected)))]
+          (test-assert-true (string.eq actual (& expected)))]
         [_ (test-fail)])]
     [(ProcessBorrowedStringNil) (test-fail)]))
 
@@ -519,7 +519,7 @@
   [expected : String]) : unit
   (match (maybe-normalize value)
     [(ProcessBorrowedSomeString actual)
-      (test-assert-true (string.string-eq actual (& expected)))]
+      (test-assert-true (string.eq actual (& expected)))]
     [(ProcessBorrowedNoString) (test-fail)]))
 
 ;: Inline test assertion for the head of an owned process environment list.
@@ -580,8 +580,8 @@
   (match (env-normalize env)
     [(ProcessBorrowedEnvCons name value _)
       (begin
-        (test-assert-true (string.string-eq name (& expected-name)))
-        (test-assert-true (string.string-eq value (& expected-value))))]
+        (test-assert-true (string.eq name (& expected-name)))
+        (test-assert-true (string.eq value (& expected-value))))]
     [(ProcessBorrowedEnvNil) (test-fail)]))
 
 ;: Inline test assertion for invalid borrowed process output results.
@@ -631,8 +631,7 @@
       (command-with-stdin with-env-list (& stdin))]
     [owned : process.ProcessCommand (command-owned borrowed)]
     (begin
-      (test-assert-true
-        (string.string-eq (command-executable borrowed) (& exe)))
+      (test-assert-true (string.eq (command-executable borrowed) (& exe)))
       (test-assert-borrowed-string-list1 (command-argv borrowed) "hello")
       (test-assert-i64-eq (args-count (command-argv borrowed)) 1)
       (test-assert-borrowed-some-string (command-cwd borrowed) "target")

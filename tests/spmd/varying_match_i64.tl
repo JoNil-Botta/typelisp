@@ -6,7 +6,7 @@
 (define (fill-match [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
       (match (% i 4)
@@ -20,7 +20,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set!
+        (array-set!
           out
           i
           (match (% i 4)
@@ -37,7 +37,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))

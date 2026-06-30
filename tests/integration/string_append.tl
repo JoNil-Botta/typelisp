@@ -9,16 +9,16 @@
 (define (main) : i64
   (begin
     (print-string "[")
-    (print-string (string-append "" ""))
+    (print-string (append "" ""))
     (print-string "]\n")
-    (print-string (string-append "" "right"))
+    (print-string (append "" "right"))
     (print-string "\n")
-    (print-string (string-append "left" ""))
+    (print-string (append "left" ""))
     (print-string "\n")
-    (print-string (string-append "foo" "bar"))
+    (print-string (append "foo" "bar"))
     (print-string "\n")
     (print-string
-      (string-concat
+      (concat
         "abcdefghijklmnopqrstuvwxyz"
         "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
     (print-string "\n")

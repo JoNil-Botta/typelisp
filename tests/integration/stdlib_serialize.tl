@@ -24,44 +24,42 @@
 (import (serialize.serialize toy Person) as person_ser_again)
 
 (define (serialize-address-eq? [home : Address] [zip : i64] [city : String]) : bool
-  (and
-    (= (struct-get home zip) zip)
-    (string.string-eq (struct-get home city) city)))
+  (and (= (struct-get home zip) zip) (string.eq (struct-get home city) city)))
 
 (define (serialize-address-ok? [home : Address]) : bool
   (serialize-address-eq? home 12345 "London"))
 
 (define (serialize-scores-ok? [scores : (Array i64 3)]) : bool
   (and
-    (= (array.array-ref scores 0) 4)
-    (= (array.array-ref scores 1) 5)
-    (= (array.array-ref scores 2) 6)))
+    (= (array-ref scores 0) 4)
+    (= (array-ref scores 1) 5)
+    (= (array-ref scores 2) 6)))
 
 (define (serialize-samples-ok? [samples : (Array i64)]) : bool
   (and
-    (= (array.array-length samples) 2)
-    (= (array.array-ref samples 0) 7)
-    (= (array.array-ref samples 1) 8)))
+    (= (array-length samples) 2)
+    (= (array-ref samples 0) 7)
+    (= (array-ref samples 1) 8)))
 
 (define (serialize-previous-ok? [previous : (Array Address 2)]) : bool
   (and
-    (serialize-address-eq? (array.array-ref previous 0) 111 "Oxford")
-    (serialize-address-eq? (array.array-ref previous 1) 222 "Paris")))
+    (serialize-address-eq? (array-ref previous 0) 111 "Oxford")
+    (serialize-address-eq? (array-ref previous 1) 222 "Paris")))
 
 (define (serialize-combo-ok?
   [combo : (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))]) : bool
   (and
     (= (tuple-ref combo 0) 99)
     (serialize-address-eq? (tuple-ref combo 1) 333 "Rome")
-    (= (array.array-ref (tuple-ref combo 2) 0) 9)
-    (= (array.array-ref (tuple-ref combo 2) 1) 10)
+    (= (array.ref (tuple-ref combo 2) 0) 9)
+    (= (array.ref (tuple-ref combo 2) 1) 10)
     (serialize-samples-ok? (tuple-ref combo 3))
-    (string.string-eq (tuple-ref (tuple-ref combo 4) 0) "inner")
+    (string.eq (tuple-ref (tuple-ref combo 4) 0) "inner")
     (tuple-ref (tuple-ref combo 4) 1)))
 
 (define (serialize-person-ok? [person : Person]) : bool
   (and
-    (string.string-eq (struct-get person name) "Ada")
+    (string.eq (struct-get person name) "Ada")
     (= (struct-get person age) (cast 36 : i32))
     (struct-get person active)
     (= (struct-get person score) 9.5)
@@ -79,7 +77,7 @@
       (match (toy.field-list-get (box-get fields) "city")
         [(toy.Found city-value)
           (match city-value
-            [(toy.Text found) (string.string-eq found expected-city)]
+            [(toy.Text found) (string.eq found expected-city)]
             [_ false])]
         [(toy.Missing) false])]
     [_ false]))
@@ -144,7 +142,7 @@
         (match (toy.value-list-get (box-get items) 0)
           [(toy.Found item)
             (match item
-              [(toy.Text found) (string.string-eq found "inner")]
+              [(toy.Text found) (string.eq found "inner")]
               [_ false])]
           [(toy.Missing) false])
         (match (toy.value-list-get (box-get items) 1)
@@ -208,8 +206,8 @@
   (let
     [samples : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! samples 0 7)
-      (array.array-set! samples 1 8)
+      (array-set! samples 0 7)
+      (array-set! samples 1 8)
       samples)))
 
 (define (serialize-combo) : (Tuple

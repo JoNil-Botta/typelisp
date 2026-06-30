@@ -10,7 +10,7 @@
   (y i64))
 
 (define (fill [out : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array.array-set! out i (+ i 1))))
+  (foreach ([i : i64 0 n]) (array-set! out i (+ i 1))))
 
 (define (main) : i64
   (let
@@ -20,7 +20,7 @@
     (begin
       (fill items 3)
       (cond
-        [(!= (array.array-ref items 2) 3) 1]
+        [(!= (array-ref items 2) 3) 1]
         [(!= (string-length (substring "abcdef" 1 3)) 3) 2]
         [(!= (+ (struct-get p x) (struct-get p y)) 42) 3]
         [(!=

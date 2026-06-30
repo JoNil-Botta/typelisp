@@ -13,5 +13,5 @@
     [borrowed : (&mut bag (Array i64)) (&mut (struct-get bag left))]
     [copy : (Array i64) (struct-get bag left)]
     (begin
-      (array.array-set! borrowed 0 41)
-      (array.array-length copy))))
+      (array-set! borrowed 0 41)
+      (array-length copy))))

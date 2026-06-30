@@ -5,5 +5,5 @@
   (foreach
     ([i : i64 0 n])
     (if (> i 0)
-      (array.array-set! out i (array.array-ref xs i))
-      (array.array-set! out i ""))))
+      (array-set! out i (array-ref xs i))
+      (array-set! out i ""))))

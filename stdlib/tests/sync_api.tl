@@ -91,7 +91,7 @@
 
 (define (sync-api-run-string-channel [channel : sync.ChannelString]) : i64
   (let
-    [owner : arena.Arena (arena.arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [packed : (Array i64)
       (array.make-array i64 sync.channel-string-raw-field-count)]
     (begin
@@ -101,16 +101,16 @@
         [send-a : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.string-append "alpha" ":one")))]
+            (in-arena owner (string.append "alpha" ":one")))]
         [send-b : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.string-append "beta" ":two")))]
+            (in-arena owner (string.append "beta" ":two")))]
         [first : String (sync.channel-string-recv-or loaded "missing")]
         [send-c : bool
           (sync.channel-string-send-value-ok?
             loaded
-            (in-arena owner (string.string-append "gamma" ":three")))]
+            (in-arena owner (string.append "gamma" ":three")))]
         [second : String (sync.channel-string-recv-or loaded "missing")]
         [third : String (sync.channel-string-recv-or loaded "missing")]
         [closed : bool (sync.channel-string-close loaded)]
@@ -119,9 +119,9 @@
           send-b
           send-c
           closed
-          (string.string-eq first "alpha:one")
-          (string.string-eq second "beta:two")
-          (string.string-eq third "gamma:three"))
+          (string.eq first "alpha:one")
+          (string.eq second "beta:two")
+          (string.eq third "gamma:three"))
           42
           9)))))
 

@@ -1,4 +1,4 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/thread.tl")
 
 (define (thread-safe-box-i64-join-code
@@ -23,7 +23,7 @@
 
 (define (thread-safe-box-i64-atomic-run) : i64
   (let
-    [owner : Arena (arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     [base : i64 50]
     (match (thread-spawn-box-i64
       (lambda () : (Box i64)

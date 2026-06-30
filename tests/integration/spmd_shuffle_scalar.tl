@@ -9,7 +9,7 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! xs i (+ (* i 3) 1))
+        (array-set! xs i (+ (* i 3) 1))
         (set! i (+ i 1))))))
 
 (define (sum [xs : (Array i64)] [n : i64]) : i64
@@ -19,7 +19,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref xs i)))
+          (set! acc (+ acc (array-ref xs i)))
           (set! i (+ i 1))))
       acc)))
 
@@ -32,7 +32,7 @@
       (init xs n)
       (foreach
         ([i : i64 0 n])
-        (array.array-set! out i (spmd-shuffle (array-ref xs i) (- i i))))
+        (array-set! out i (spmd-shuffle (array-ref xs i) (- i i))))
       (if (= (sum out n) 35)
         42
         1))))

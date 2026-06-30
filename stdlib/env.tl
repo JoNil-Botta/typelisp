@@ -55,7 +55,7 @@
       (begin
         (while (< i n)
           (begin
-            (array.array-set!
+            (array-set!
               buf
               i
               (unsafe
@@ -306,7 +306,7 @@
 ;: Return the value of `name`, or `EnvNoString` when the variable is missing.
 (define (get [name : (& name str)]) : EnvMaybeString
   (let
-    [owned-name : String (string.string-copy name)]
+    [owned-name : String (string.copy name)]
     (if (var-exists? owned-name)
       (some-string (var-value owned-name))
       EnvNoString)))
@@ -378,8 +378,8 @@
     [(EnvStringCons head rest)
       (path-join-tail
         (let
-          [acc-with-separator : String (string.string-append (& acc) separator)]
-          (string.string-append acc-with-separator head))
+          [acc-with-separator : String (string.append (& acc) separator)]
+          (string.append acc-with-separator head))
         (box-get rest)
         separator)]))
 
@@ -393,8 +393,8 @@
     acc
     (path-join-vec-tail
       (let
-        [acc-with-separator : String (string.string-append (& acc) separator)]
-        (string.string-append
+        [acc-with-separator : String (string.append (& acc) separator)]
+        (string.append
           acc-with-separator
           (vector.string-vec-get items index "")))
       items
@@ -446,7 +446,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (test-assert-true (string.string-eq actual expected) message))
+  (test-assert-true (string.eq actual expected) message))
 
 ;: Assert that an environment lookup is missing.
 (define (test-assert-none [value : EnvMaybeString] [_message : String]) : unit

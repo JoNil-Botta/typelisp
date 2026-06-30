@@ -1,4 +1,4 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import "stdlib/str_cat.tl")
 (import "stdlib/string.tl")
 (import "stdlib/thread.tl")
@@ -19,7 +19,7 @@
 
 (define (safe-threading-join-string-ok? [thread : ThreadString]) : bool
   (match (thread-join-string thread)
-    [(ThreadStringJoinOk text) (string-eq text "safe-thread")]
+    [(ThreadStringJoinOk text) (eq text "safe-thread")]
     [(ThreadStringJoinErr _) false]))
 
 (define (safe-threading-finish
@@ -39,7 +39,7 @@
 (define (main) : i64
   (let
     [base : i64 20]
-    [owner : Arena (arena-make-atomic)]
+    [owner : arena.Arena (arena.make-atomic)]
     (match (thread_i64.spawn
       (lambda () : i64
         (+ base 1)))

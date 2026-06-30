@@ -76,7 +76,7 @@
 (define (read-all-stdin-acc [acc : String]) : String
   (let
     [chunk : String (read-stdin-bytes stdin-read-size)]
-    [text : String (string-append acc chunk)]
+    [text : String (append acc chunk)]
     (if (stdin-eof?)
       text
       (read-all-stdin-acc text))))
@@ -118,15 +118,15 @@
             (begin
               (set!
                 out
-                (string-append
-                  (string-append
+                (append
+                  (append
                     out
                     (substring input segment-start (- i segment-start)))
                   "?"))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
-      (string-append out (substring input segment-start (- n segment-start))))))
+      (append out (substring input segment-start (- n segment-start))))))
 
 ;: Extract an i64 from a JSON number field, defaulting to 0 when absent/wrong.
 (define (json-field-number [item : Json] [field : String]) : i64
@@ -135,7 +135,7 @@
     (match (json-object-get item (& key))
       [(JsonFound found)
         (match found
-          [(JsonNumber text) (string->int text)]
+          [(JsonNumber text) (>int text)]
           [_ 0])]
       [(JsonMissing) 0])))
 
@@ -167,7 +167,7 @@
   (match labels
     [(JsonListNil) false]
     [(JsonListCons head rest)
-      (if (string-eq (json-field-string head "name") needle)
+      (if (eq (json-field-string head "name") needle)
         true
         (label-list-has? (box-get rest) needle))]))
 
@@ -204,14 +204,11 @@
 
 ;: Return true when a check run status is terminal; conclusions may pass/fail.
 (define (pr-check-status-complete? [status : String]) : bool
-  (string-eq status "COMPLETED"))
+  (eq status "COMPLETED"))
 
 ;: Return true when a legacy status context state is terminal.
 (define (pr-check-state-complete? [state : String]) : bool
-  (or
-    (string-eq state "SUCCESS")
-    (string-eq state "FAILURE")
-    (string-eq state "ERROR")))
+  (or (eq state "SUCCESS") (eq state "FAILURE") (eq state "ERROR")))
 
 ;: Return true when a rollup entry is complete. Unknown entries do not block so
 ;: a missing check shape is treated like no checks rather than a pending check.
@@ -597,13 +594,13 @@
 
 ;: Render one candidate as the chooser's action line (without trailing newline).
 (define (candidate-line [cand : Candidate]) : String
-  (string-append
-    (string-append (action-name (struct-get cand kind)) " ")
-    (string-append
-      (string-append (github-kind (struct-get cand kind)) " #")
-      (string-append
+  (append
+    (append (action-name (struct-get cand kind)) " ")
+    (append
+      (append (github-kind (struct-get cand kind)) " #")
+      (append
         (int->string (struct-get cand number))
-        (string-append ": " (struct-get cand title))))))
+        (append ": " (struct-get cand title))))))
 
 ;: Choose one candidate from the input JSON, returning an error message on
 ;: invalid input or an empty candidate set.
@@ -613,7 +610,7 @@
     [text : String normalized]
     (match (json-parse (& text))
       [(ErrJson message)
-        (ChooserResult.Err (string-append "Error: invalid JSON: " message))]
+        (ChooserResult.Err (append "Error: invalid JSON: " message))]
       [(OkJson root)
         (let
           [cands : CandList (build-candidates root)]
@@ -624,13 +621,13 @@
                 (ChooserResult.Err
                   (match err
                     [(RandomSystemSeedUnavailable message)
-                      (string-append "Error: " message)]))]
+                      (append "Error: " message)]))]
               [(OkSystemSeed seed)
                 (match (weighted-index
                   (stdlib.random.seed seed)
                   (cand-weights cands))
                   [(ErrRandomWeightedIndex message)
-                    (ChooserResult.Err (string-append "Error: " message))]
+                    (ChooserResult.Err (append "Error: " message))]
                   [(OkRandomWeightedIndex _ index)
                     (ChooserResult.Ok (cand-nth cands index))])])))])))
 

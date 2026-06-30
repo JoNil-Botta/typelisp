@@ -67,27 +67,25 @@
 
 (define (clone-type-name-canonical [module : String] [name : String]) : String
   (if (or
-    (string.string-eq module "")
+    (string.eq module "")
     (>= (clone-type-name-last-slash name) 0)
     (clone-type-name-has-dot? name))
     name
-    (string.string-append (string.string-append module "/") name)))
+    (string.append (string.append module "/") name)))
 
 (define (clone-local-helper-name [type-name : String]) : String
-  (string.string-append "clone$" (clone-type-name-base type-name)))
+  (string.append "clone$" (clone-type-name-base type-name)))
 
 (define (clone-helper-name [type-name : String]) : String
   (let
     [module : String (clone-type-name-module type-name)]
     [local : String (clone-local-helper-name type-name)]
-    (if (string.string-eq module "")
+    (if (string.eq module "")
       local
-      (string.string-append (string.string-append module "/") local))))
+      (string.append (string.append module "/") local))))
 
 (define (clone-short-list-variant-name? [variant-name : String]) : bool
-  (or
-    (string.string-eq variant-name "Nil")
-    (string.string-eq variant-name "Cons")))
+  (or (string.eq variant-name "Nil") (string.eq variant-name "Cons")))
 
 (define (clone-list-variant-reference-name
   [type-name : String]
@@ -95,9 +93,9 @@
   (if (clone-short-list-variant-name? variant-name)
     (let
       [type-base : String (clone-type-name-base type-name)]
-      (if (string.string-eq type-base variant-name)
+      (if (string.eq type-base variant-name)
         variant-name
-        (string.string-append (string.string-append type-base ".") variant-name)))
+        (string.append (string.append type-base ".") variant-name)))
     variant-name))
 
 (define (clone-name-set-empty) : CloneNameSet
@@ -139,7 +137,7 @@
   (if (clone-name-set-contains-canonical? names module name)
     true
     (if (or
-      (string.string-eq module "")
+      (string.eq module "")
       (>= (clone-type-name-last-slash name) 0)
       (clone-type-name-has-dot? name))
       false
@@ -163,7 +161,7 @@
         (match cur
           [(CloneNameList.Nil) unit]
           [(CloneNameList.Cons head rest)
-            (if (string.string-eq head name)
+            (if (string.eq head name)
               (set! found true)
               (set! cur (box-get rest)))]))
       found)))
@@ -180,7 +178,7 @@
     (clone-name-set-smoke-insert-count
       (clone-name-set-insert
         names
-        (string.string-append "T" (string.int->string count)))
+        (string.append "T" (string.int->string count)))
       (- count 1))))
 
 (define (clone-name-set-smoke-ok?) : bool
@@ -444,7 +442,7 @@
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
 (define (clone-binder-name [i : i64]) : String
-  (string.string-append "tlc" (string.int->string i)))
+  (string.append "tlc" (string.int->string i)))
 
 ;; Pattern args (AstPattern.Binding tlc0) (AstPattern.Binding tlc1) ... for `count` fields.
 (define (clone-variant-pat-args [count : i64] [i : i64]) : AstPatternList
@@ -559,8 +557,8 @@
 
 (define (clone-type-is-name? [ty : AstType] [name : String]) : bool
   (match ty
-    [(AstType.Var n) (string.string-eq (intern-str n) name)]
-    [(AstType.Enum n) (string.string-eq (intern-str n) name)]
+    [(AstType.Var n) (string.eq (intern-str n) name)]
+    [(AstType.Enum n) (string.eq (intern-str n) name)]
     [_ false]))
 
 ;; True iff `tail` is the enum itself, either directly or through a Box tail.
@@ -669,10 +667,10 @@
     [_ (CloneListShape.NotList)]))
 
 (define (clone-list-acc-name [type-name : String]) : String
-  (string.string-append (clone-local-helper-name type-name) "$acc"))
+  (string.append (clone-local-helper-name type-name) "$acc"))
 
 (define (clone-list-rev-name [type-name : String]) : String
-  (string.string-append (clone-local-helper-name type-name) "$rev"))
+  (string.append (clone-local-helper-name type-name) "$rev"))
 
 ;; `(Nil)` - a nullary constructor is a zero-arg call, as in clone-variant-arm.
 (define (clone-nil-expr [pools : AstNodePoolContext] [nil-ctor : String]) : i64
@@ -875,7 +873,7 @@
 (cfg
   test
   (define (clone-test-id-name? [name : i64] [want : String]) : bool
-    (string.string-eq (intern-str name) want)))
+    (string.eq (intern-str name) want)))
 
 (cfg
   test
@@ -1017,7 +1015,7 @@
           0)
         (= (clone-test-decl-list-name-count pools decls "Nil") 0)
         (= (clone-test-decl-list-name-count pools decls "Cons") 0)
-        (string.string-eq
+        (string.eq
           (clone-list-variant-reference-name "SelfNamed" "SelfNamed")
           "SelfNamed")))))
 
@@ -1026,7 +1024,7 @@
   [module : String]
   [generated : AstDeclList]
   [acc : AstDeclList]) : AstDeclList
-  (if (string.string-eq module "")
+  (if (string.eq module "")
     (clone-decl-list-append generated acc)
     (ast-decl-cons
       (ast-decl-module module)
@@ -1234,7 +1232,7 @@
                     (set! current-module (intern-str next-module))
                     (set! cur rest))]
                 [(AstDecl.DefEnum decl-name _ variants)
-                  (if (string.string-eq
+                  (if (string.eq
                     (clone-type-name-canonical
                       current-module
                       (intern-str decl-name))
@@ -1252,7 +1250,7 @@
                       (set! done true))
                     (set! cur rest))]
                 [(AstDecl.DefStruct decl-name _ _ fields)
-                  (if (string.string-eq
+                  (if (string.eq
                     (clone-type-name-canonical
                       current-module
                       (intern-str decl-name))

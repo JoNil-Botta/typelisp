@@ -16,20 +16,18 @@
   `(__tl_make-array ,T ,count))
 
 ;: Return the current length of a dynamic array.
-(defmacro (array-length [items : comptime.Expr]) : comptime.Expr
+(defmacro (length [items : comptime.Expr]) : comptime.Expr
   `(__tl_array-length ,items))
 
 ;: Read a bounds-checked dynamic or fixed array element.
-(defmacro (array-ref [items : comptime.Expr] [index : comptime.Expr]) : comptime.Expr
+(defmacro (ref [items : comptime.Expr] [index : comptime.Expr]) : comptime.Expr
   `(__tl_array-ref ,items ,index))
 
 ;: Write a bounds-checked dynamic or fixed array element.
-(defmacro (array-set!
-  [items : comptime.Expr]
-  [index : comptime.Expr]
-  [value : comptime.Expr]) : comptime.Expr
-  `(__tl_array-set! ,items ,index ,value))
-
+;:
+;: The compiler fast path recognizes the short base for future qualified use,
+;: but exporting a macro named `set!` makes the bootstrap compiler resolve the
+;: language `set!` form as an imported array macro in larger import graphs.
 ;: Append a value to a dynamic array, growing storage when needed.
-(defmacro (array-push! [items : comptime.Expr] [value : comptime.Expr]) : comptime.Expr
+(defmacro (push! [items : comptime.Expr] [value : comptime.Expr]) : comptime.Expr
   `(__tl_array-push! ,items ,value))

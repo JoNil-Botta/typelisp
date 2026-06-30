@@ -23,19 +23,19 @@
 (import "stdlib/string.tl")
 
 (define (integration-trim-left [s : String]) : String
-  (string-trim-left (& s)))
+  (trim-left (& s)))
 
 (define (integration-trim-right [s : String]) : String
-  (string-trim-right (& s)))
+  (trim-right (& s)))
 
 (define (integration-trim [s : String]) : String
-  (string-trim (& s)))
+  (trim (& s)))
 
 (define (integration-contains [haystack : String] [needle : String]) : bool
-  (string-contains (& haystack) (& needle)))
+  (contains (& haystack) (& needle)))
 
 (define (integration-contains-char [haystack : String] [c : char]) : bool
-  (string-contains-char (& haystack) c))
+  (contains-char (& haystack) c))
 
 (define (main) : i64
   (begin
@@ -69,9 +69,9 @@
       (print-string "not missing")
       (print-string "missing"))
     (print-newline)
-    (print-string (string-replace "hello" "ell" "ipp"))
+    (print-string (replace "hello" "ell" "ipp"))
     (print-newline)
-    (print-string (string-replace "abc" "c" "x"))
+    (print-string (replace "abc" "c" "x"))
     (print-newline)
     (print-string (int->string 0))
     (print-newline)
@@ -84,9 +84,9 @@
     (print-string (int->string (- (- 0 9223372036854775807) 1)))
     (print-newline)
     (if (and
-      (string-eq "same" (string-append "sa" "me"))
+      (eq "same" (append "sa" "me"))
       (not (string=? "same" "different"))
-      (= (string->int "-42") -42)
-      (= (string->int "12a") 169))
+      (= (>int "-42") -42)
+      (= (>int "12a") 169))
       42
       1)))

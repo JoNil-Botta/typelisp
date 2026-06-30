@@ -56,8 +56,8 @@
     (if (< status 0)
       0
       (+
-        (* (array.array-ref stdlib.profile.profile-now-scratch 0) 1000)
-        (/ (array.array-ref stdlib.profile.profile-now-scratch 1) 1000000)))))
+        (* (array-ref stdlib.profile.profile-now-scratch 0) 1000)
+        (/ (array-ref stdlib.profile.profile-now-scratch 1) 1000000)))))
 
 ;: Windows `QueryPerformanceCounter/Frequency` timestamp.
 (cfg
@@ -70,14 +70,12 @@
       [freq-ok : i32
         (stdlib.profile.profile-win-query-performance-frequency
           (stdlib.profile.scratch-ptr 1))]
-      [freq : i64 (array.array-ref stdlib.profile.profile-now-scratch 1)]
+      [freq : i64 (array-ref stdlib.profile.profile-now-scratch 1)]
       (if (or (= counter-ok (cast 0 : i32)) (= freq-ok (cast 0 : i32)))
         0
         (if (= freq 0)
           0
-          (/
-            (* (array.array-ref stdlib.profile.profile-now-scratch 0) 1000)
-            freq))))))
+          (/ (* (array-ref stdlib.profile.profile-now-scratch 0) 1000) freq))))))
 
 ;: Return a coarse monotonic timestamp in milliseconds.
 (define (now-ms) : i64
@@ -119,7 +117,7 @@
   (let
     [items : (Array i64) (array.make-array i64 4)]
     (begin
-      (array.array-set! items 0 12)
+      (array-set! items 0 12)
       items)))
 
 (test
@@ -135,8 +133,8 @@
       [after-live : i64 (stdlib.profile.alloc-live)]
       [peak : i64 (stdlib.profile.alloc-peak)]
       (begin
-        (stdlib.profile.test-assert (= (array.array-length items) 4))
-        (stdlib.profile.test-assert (= (array.array-ref items 0) 12))
+        (stdlib.profile.test-assert (= (array-length items) 4))
+        (stdlib.profile.test-assert (= (array-ref items 0) 12))
         (stdlib.profile.test-assert (>= after-total before-total))
         (stdlib.profile.test-assert (>= after-live before-live))
         (stdlib.profile.test-assert (>= peak after-live))))))

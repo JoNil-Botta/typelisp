@@ -10,8 +10,8 @@
   (let
     [items : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! items 0 11)
-      (array.array-set! items 1 31)
+      (array-set! items 0 11)
+      (array-set! items 1 31)
       (let
         [view : (i64s.Slice items) (i64s.from-array (& items) 2 0 2)]
         (begin

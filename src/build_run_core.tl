@@ -8,7 +8,7 @@
 (import stdlib.msvc)
 (import stdlib.process)
 (import stdlib.string)
-(import stdlib.str_cat)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
 (import sym_i64_env)
 
@@ -66,7 +66,7 @@
     [(CompilerBackendTarget.Windows) "windows-x86_64"]))
 
 (define (source-tool-default-target) : CompilerBackendTarget
-  (if (string.string-eq (env.path-separator) ";")
+  (if (string.eq (env.path-separator) ";")
     (CompilerBackendTarget.Windows)
     (CompilerBackendTarget.Linux)))
 
@@ -74,16 +74,13 @@
   (source-tool-target-name (source-tool-default-target)))
 
 (define (source-tool-target [value : String]) : ResultSourceToolTarget
-  (if (or
-    (string.string-eq value "linux-x86_64")
-    (string.string-eq value "linux_x86_64"))
+  (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
     (ResultSourceToolTarget.Ok (CompilerBackendTarget.Linux))
     (if (or
-      (string.string-eq value "windows-x86_64")
-      (string.string-eq value "windows_x86_64"))
+      (string.eq value "windows-x86_64")
+      (string.eq value "windows_x86_64"))
       (ResultSourceToolTarget.Ok (CompilerBackendTarget.Windows))
-      (ResultSourceToolTarget.Err
-        (string.string-append "unknown target " value)))))
+      (ResultSourceToolTarget.Err (string.append "unknown target " value)))))
 
 (define (source-tool-target-supported? [target : CompilerBackendTarget]) : bool
   (match target
@@ -92,21 +89,18 @@
 
 (define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
   (cond
-    [(string.string-eq value "scalar")
+    [(string.eq value "scalar")
       (ResultSourceToolBackendMode.Ok (CompilerBackendMode.Scalar))]
-    [(string.string-eq value "avx2")
+    [(string.eq value "avx2")
       (ResultSourceToolBackendMode.Ok (CompilerBackendMode.Avx2))]
-    [(string.string-eq value "avx512")
+    [(string.eq value "avx512")
       (ResultSourceToolBackendMode.Ok (CompilerBackendMode.Avx512))]
     [else
       (ResultSourceToolBackendMode.Err
         (str_cat.str-cat command ": unknown backend mode " value))]))
 
 (define (source-tool-opt-level-valid? [value : String]) : bool
-  (or
-    (string.string-eq value "0")
-    (string.string-eq value "1")
-    (string.string-eq value "2")))
+  (or (string.eq value "0") (string.eq value "1") (string.eq value "2")))
 
 (define (source-tool-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
@@ -297,7 +291,7 @@
     [(process.ProcessStringNil) false]
     [(process.ProcessStringCons head rest)
       (or
-        (string.string-eq head value)
+        (string.eq head value)
         (source-tool-string-list-contains? (box-get rest) value))]))
 
 (define (source-tool-args-append-unique
@@ -329,7 +323,7 @@
       (match right
         [(process.ProcessStringCons right-head right-rest)
           (and
-            (string.string-eq left-head right-head)
+            (string.eq left-head right-head)
             (source-tool-string-list-eq?
               (box-get left-rest)
               (box-get right-rest)))]
@@ -540,11 +534,11 @@
     [(io.ErrIoBool _) false]))
 
 (define (source-tool-windows-host?) : bool
-  (string.string-eq (env.path-separator) ";"))
+  (string.eq (env.path-separator) ";"))
 
 (define (source-tool-windows-exe-candidate [candidate : String]) : String
   (if (source-tool-windows-host?)
-    (string.string-append candidate ".exe")
+    (string.append candidate ".exe")
     candidate))
 
 (define (source-tool-find-command-on-path
@@ -561,7 +555,7 @@
         (let
           [exe-candidate : String (source-tool-windows-exe-candidate candidate)]
           (if (and
-            (not (string.string-eq exe-candidate candidate))
+            (not (string.eq exe-candidate candidate))
             (source-tool-path-command-exists? exe-candidate))
             exe-candidate
             (source-tool-find-command-on-path tool paths (+ index 1))))))))
@@ -581,7 +575,7 @@
   [default-command : String]) : String
   (match (env.get (& name))
     [(env.EnvSomeString value)
-      (if (string.string-eq value "")
+      (if (string.eq value "")
         default-command
         value)]
     [(env.EnvNoString) default-command]))
@@ -594,7 +588,7 @@
 
 (define (source-tool-env-command-set? [name : String]) : bool
   (match (env.get (& name))
-    [(env.EnvSomeString value) (not (string.string-eq value ""))]
+    [(env.EnvSomeString value) (not (string.eq value ""))]
     [(env.EnvNoString) false]))
 
 (define (source-tool-replace-extension
@@ -891,12 +885,12 @@
   (and
     (compiler-object-symbol-kind-eq? kind (CompilerObjectSymbolKind.Function))
     (or
-      (string.string-eq name "ExitProcess")
-      (string.string-eq name "GetCommandLineA")
-      (string.string-eq name "GetStdHandle")
-      (string.string-eq name "WriteFile")
-      (string.string-eq name "VirtualAlloc")
-      (string.string-eq name "VirtualFree"))))
+      (string.eq name "ExitProcess")
+      (string.eq name "GetCommandLineA")
+      (string.eq name "GetStdHandle")
+      (string.eq name "WriteFile")
+      (string.eq name "VirtualAlloc")
+      (string.eq name "VirtualFree"))))
 
 (define (source-tool-windows-direct-object-relocation-target-linkable?
   [symbols : CompilerObjectSymbolList]
@@ -910,7 +904,7 @@
       (while (and (not done) (< index count))
         (match (compiler-object-symbol-list-ref symbols index)
           [(CompilerObjectSymbol.Symbol name binding kind _)
-            (if (string.string-eq name target)
+            (if (string.eq name target)
               (begin
                 (match binding
                   [(CompilerObjectSymbolBinding.Extern)
@@ -1052,9 +1046,9 @@
     [haystack : String asm]
     [needle : String ".note.GNU-stack"]
     (if (compiler-backend-target-linux? target)
-      (if (string.string-contains (& haystack) (& needle))
+      (if (string.contains (& haystack) (& needle))
         haystack
-        (string.string-append haystack (source-tool-noexecstack-note)))
+        (string.append haystack (source-tool-noexecstack-note)))
       haystack)))
 
 (define (source-tool-write-file
@@ -1192,7 +1186,7 @@
     [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons dir rest)
       (process.args-cons
-        (string.string-append "-L" dir)
+        (string.append "-L" dir)
         (source-tool-linux-link-search-args (box-get rest)))]))
 
 (define (source-tool-linux-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
@@ -1200,7 +1194,7 @@
     [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons name rest)
       (process.args-cons
-        (string.string-append "-l" name)
+        (string.append "-l" name)
         (source-tool-linux-link-lib-args (box-get rest)))]))
 
 (define (source-tool-link-inputs-linux-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
@@ -1269,7 +1263,7 @@
     [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons dir rest)
       (process.args-cons
-        (string.string-append "/LIBPATH:" dir)
+        (string.append "/LIBPATH:" dir)
         (source-tool-windows-link-search-args (box-get rest)))]))
 
 (define (source-tool-windows-link-lib-args [libs : process.ProcessStringList]) : process.ProcessStringList
@@ -1277,7 +1271,7 @@
     [(process.ProcessStringNil) (process.args-empty)]
     [(process.ProcessStringCons name rest)
       (process.args-cons
-        (string.string-append name ".lib")
+        (string.append name ".lib")
         (source-tool-windows-link-lib-args (box-get rest)))]))
 
 (define (source-tool-link-inputs-windows-args [inputs : SourceToolLinkInputs]) : process.ProcessStringList
@@ -1297,7 +1291,7 @@
     (process.args-cons
       obj-path
       (process.args-cons
-        (string.string-append "/OUT:" bin-path)
+        (string.append "/OUT:" bin-path)
         (process.args-cons
           "/SUBSYSTEM:CONSOLE"
           (process.args-cons
@@ -1455,7 +1449,7 @@
   (process.args-cons
     "/NOLOGO"
     (process.args-cons
-      (string.string-append "/OUT:" archive-path)
+      (string.append "/OUT:" archive-path)
       (process.args-cons obj-path (process.args-empty)))))
 
 (define (source-tool-windows-archiver-fallback-command
@@ -1952,9 +1946,7 @@
             [(SourceToolCommandStatus.Ok)
               (begin
                 (io.print-string
-                  (string.string-append
-                    "Built "
-                    (string.string-append bin-path "\n")))
+                  (string.append "Built " (string.append bin-path "\n")))
                 (source-tool-clean-temp
                   temp-dir
                   asm-path
@@ -1987,7 +1979,7 @@
     [(ResultSourceToolString.Err message)
       (begin
         (io.print-error
-          (string.string-append "build: failed to create temp dir: " message))
+          (string.append "build: failed to create temp dir: " message))
         1)]))
 
 (define (source-tool-run-executable
@@ -2106,5 +2098,5 @@
     [(ResultSourceToolString.Err message)
       (begin
         (io.print-error
-          (string.string-append "run: failed to create temp dir: " message))
+          (string.append "run: failed to create temp dir: " message))
         1)]))

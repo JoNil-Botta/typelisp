@@ -8,11 +8,9 @@
 ;; enumeration fall back to the manifest entry source.
 (import stdlib.fs)
 (import stdlib.io)
-(import stdlib.array)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import stdlib.string)
-(import stdlib.str_cat)
 (import "compiler_diagnostic.tl")
 (import "compiler_load.tl")
 
@@ -91,7 +89,7 @@
     index
     (let
       [head : String (svec.get (& items) index "")]
-      (if (string.string-eq head value)
+      (if (string.eq head value)
         -1
         (if (package-source-string-less? value head)
           index
@@ -111,9 +109,9 @@
         (begin
           (while (> i slot)
             (begin
-              (array.array-set! slots i (array.array-ref slots (- i 1)))
+              (array-set! slots i (array-ref slots (- i 1)))
               (set! i (- i 1))))
-          (array.array-set! slots slot value)))
+          (array-set! slots slot value)))
       out)))
 
 (define (package-source-vec-insert [items : svec.Vec] [value : String]) : svec.Vec
@@ -134,11 +132,11 @@
   (if (<= fuel 0)
     (CompilerLoadNoPath)
     (let
-      [candidate : String (string.string-append prefix "typelisp.pkg")]
+      [candidate : String (string.append prefix "typelisp.pkg")]
       (if (io.file-exists? candidate)
         (CompilerLoadSomePath candidate)
         (package-source-discover-manifest-up
-          (string.string-append prefix "../")
+          (string.append prefix "../")
           (- fuel 1))))))
 
 (define (package-source-load-manifest [path : String]) : ResultPackageSourceSet
@@ -148,12 +146,10 @@
       (io.read-file path))
       [(ResultCompilerPkgManifestDiagnostic.Err diag)
         (ResultPackageSourceSet.Err
-          (str_cat.str-cat
+          (string.concat3
             "invalid package manifest '"
             (compiler-diagnostic-path (box-get diag))
-            (string.string-append
-              "': "
-              (compiler-diagnostic-message (box-get diag)))))]
+            (string.append "': " (compiler-diagnostic-message (box-get diag)))))]
       [(ResultCompilerPkgManifestDiagnostic.Ok manifest)
         (ResultPackageSourceSet.Ok
           (PackageSourceSet
@@ -162,7 +158,7 @@
             manifest
             (package-source-list-new)))])
     (ResultPackageSourceSet.Err
-      (str_cat.str-cat "cannot read package manifest '" path "'"))))
+      (string.concat3 "cannot read package manifest '" path "'"))))
 
 (define (package-source-resolve-manifest
   [command : String]
@@ -176,7 +172,7 @@
     (match resolved
       [(CompilerLoadNoPath)
         (ResultPackageSourceSet.Err
-          (string.string-append
+          (string.append
             command
             ": could not find typelisp.pkg from '.' or any parent directory"))]
       [(CompilerLoadSomePath path) (package-source-load-manifest path)])))
@@ -193,14 +189,14 @@
 
 (define (package-source-internal-dir? [name : String]) : bool
   (or
-    (string.string-eq name "target")
-    (string.string-eq name ".git")
-    (string.string-eq name ".hg")
-    (string.string-eq name ".svn")
-    (string.string-eq name ".jj")))
+    (string.eq name "target")
+    (string.eq name ".git")
+    (string.eq name ".hg")
+    (string.eq name ".svn")
+    (string.eq name ".jj")))
 
 (define (package-source-test-dir? [name : String]) : bool
-  (string.string-eq name "tests"))
+  (string.eq name "tests"))
 
 (define (package-source-skip-dir? [name : String]) : bool
   (or (package-source-internal-dir? name) (package-source-test-dir? name)))
@@ -231,9 +227,9 @@
         "src/a.tl")]
     (and
       (= (svec.len (& items)) 3)
-      (string.string-eq (svec.get (& items) 0 "") "src/a.tl")
-      (string.string-eq (svec.get (& items) 1 "") "src/m.tl")
-      (string.string-eq (svec.get (& items) 2 "") "src/z.tl"))))
+      (string.eq (svec.get (& items) 0 "") "src/a.tl")
+      (string.eq (svec.get (& items) 1 "") "src/m.tl")
+      (string.eq (svec.get (& items) 2 "") "src/z.tl"))))
 
 (test
   package-source-vector-insert-sorts-and-dedups
@@ -268,9 +264,9 @@
       [_
         (and
           (= (svec.len (& items)) 3)
-          (string.string-eq (svec.get (& items) 0 "") "alpha")
-          (string.string-eq (svec.get (& items) 1 "") "middle")
-          (string.string-eq (svec.get (& items) 2 "") "zeta"))])))
+          (string.eq (svec.get (& items) 0 "") "alpha")
+          (string.eq (svec.get (& items) 1 "") "middle")
+          (string.eq (svec.get (& items) 2 "") "zeta"))])))
 
 (test
   package-source-sorts-directory-entries-before-scanning
@@ -282,7 +278,7 @@
   (io.file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
 
 (define (package-source-tl-file? [path : String]) : bool
-  (string.string-eq (fs.extension (& path)) "tl"))
+  (string.eq (fs.extension (& path)) "tl"))
 
 (define (package-source-include-file?
   [path : String]
@@ -296,20 +292,20 @@
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
   (ResultPackageSourceList.Err
-    (str_cat.str-cat
-      (string.string-append command ": failed to inspect package path '")
+    (string.concat3
+      (string.append command ": failed to inspect package path '")
       path
-      (string.string-append "': " (io.error-message error)))))
+      (string.append "': " (io.error-message error)))))
 
 (define (package-source-read-dir-error
   [command : String]
   [path : String]
   [error : io.IoError]) : ResultPackageSourceList
   (ResultPackageSourceList.Err
-    (str_cat.str-cat
-      (string.string-append command ": failed to read package directory '")
+    (string.concat3
+      (string.append command ": failed to read package directory '")
       path
-      (string.string-append "': " (io.error-message error)))))
+      (string.append "': " (io.error-message error)))))
 
 (define (package-source-entry-list [source-set : PackageSourceSet]) : PackageSourceList
   (let
@@ -456,8 +452,8 @@
         [(ResultPackageSourceList.Ok sources)
           (if (= (package-source-list-len sources) 0)
             (ResultPackageSourceSet.Err
-              (str_cat.str-cat
-                (string.string-append
+              (string.concat3
+                (string.append
                   command
                   ": no TypeLisp source files found in package '")
                 (struct-get base manifest-path)

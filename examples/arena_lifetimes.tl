@@ -3,8 +3,7 @@
 ; - level state lives inside one lexical with-arena scope
 ; - frame-only temporaries live inside a nested lexical with-arena scope
 ; - one frame result is cloned out of a first-class scratch arena with with-escape
-(import stdlib.array)
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 (import stdlib.profile)
 (import "stdlib/string.tl")
 (import "stdlib/test.tl")
@@ -26,7 +25,7 @@
         (let
           [prefix : String "visible:"]
           [index-text : String (int->string frame-index)]
-          [label : String (string-append (& prefix) (& index-text))]
+          [label : String (append (& prefix) (& index-text))]
           (string-length (& label))))]
     [after : i64 (profile.alloc-live)]
     (begin
@@ -36,19 +35,22 @@
         "per-frame with-arena should restore live bytes")
       score)))
 
-(define (frame-summary [scratch : Arena] [frame-index : i64] [score : i64]) : String
+(define (frame-summary
+  [scratch : arena.Arena]
+  [frame-index : i64]
+  [score : i64]) : String
   (with-escape
     scratch
     (let
       [frame-text : String (int->string frame-index)]
       [score-text : String (int->string score)]
-      [prefix : String (string-append "frame:" frame-text)]
-      [suffix : String (string-append "/score:" score-text)]
-      (string-append prefix suffix))))
+      [prefix : String (append "frame:" frame-text)]
+      [suffix : String (append "/score:" score-text)]
+      (append prefix suffix))))
 
 (define (run-level [global : GlobalState]) : i64
   (let
-    [scratch : Arena (arena-make)]
+    [scratch : arena.Arena (arena.make)]
     [result : i64
       (with-arena
         level
@@ -63,7 +65,7 @@
                 [score : i64 (frame-temp-score frame-index)]
                 [summary : String (frame-summary scratch frame-index score)]
                 (begin
-                  (array.array-set! frame-scores frame-index score)
+                  (array-set! frame-scores frame-index score)
                   (assert-i64-eq
                     (string-length (& summary))
                     15
@@ -77,12 +79,12 @@
                 (frame-summary
                   scratch
                   0
-                  (array.array-ref (struct-get state frame-scores) 0))]
+                  (array-ref (struct-get state frame-scores) 0))]
               [last : String
                 (frame-summary
                   scratch
                   2
-                  (array.array-ref (struct-get state frame-scores) 2))]
+                  (array-ref (struct-get state frame-scores) 2))]
               [want-title : String "arena-cookbook"]
               [want-first : String "frame:0/score:9"]
               [want-last : String "frame:2/score:9"]
@@ -107,13 +109,13 @@
                 42)))))]
     (begin
       (unsafe
-        (arena-destroy scratch))
+        (arena.destroy scratch))
       result)))
 
 (define (run-game) : i64
   (let
     [title-prefix : String "arena"]
-    [title : String (string-append title-prefix "-cookbook")]
+    [title : String (append title-prefix "-cookbook")]
     [global : GlobalState (GlobalState title 3)]
     (run-level global)))
 

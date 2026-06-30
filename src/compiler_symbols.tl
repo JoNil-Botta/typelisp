@@ -3,7 +3,6 @@
 ;; Handles are packed as kind * stride + declaration index, where index is the
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
-(import stdlib.array)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import sym_i64_env)
@@ -174,8 +173,8 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
-    (array.make-array AstDecl decl-count)
-    (array.make-array String decl-count)))
+    (make-array AstDecl decl-count)
+    (make-array String decl-count)))
 
 (define (compiler-symbols-empty) : CompilerSymbols
   (compiler-symbols-empty-with-decls 0))
@@ -290,24 +289,24 @@
     [(CompilerSymbols _ _ _ _ owner-names) owner-names]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
-  (string.string-append "symbols: duplicate value declaration " name))
+  (string.append "symbols: duplicate value declaration " name))
 
 (define (compiler-symbols-duplicate-type-message [name : String]) : String
-  (string.string-append "symbols: duplicate type declaration " name))
+  (string.append "symbols: duplicate type declaration " name))
 
 (define (compiler-symbols-duplicate-macro-message [name : String]) : String
-  (string.string-append "symbols: duplicate macro declaration " name))
+  (string.append "symbols: duplicate macro declaration " name))
 
 (define (compiler-symbols-duplicate-macro-value-message [name : String]) : String
-  (string.string-append "symbols: duplicate macro/value declaration " name))
+  (string.append "symbols: duplicate macro/value declaration " name))
 
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
-  (string.string-append "symbols: duplicate enum variant " name))
+  (string.append "symbols: duplicate enum variant " name))
 
 (define (compiler-struct-field-key [struct-name : String] [field-name : String]) : String
   ;; Flat field registry key. Field names may repeat across structs because the
   ;; struct name is part of the key.
-  (string.string-append (string.string-append struct-name ".") field-name))
+  (string.append (string.append struct-name ".") field-name))
 
 (define (compiler-composite-pair-key-id [left-id : i64] [right-id : i64]) : i64
   (+ (intern-capacity) (+ (* left-id (intern-capacity)) right-id)))
@@ -349,19 +348,19 @@
 (define (compiler-registries-duplicate-field-message
   [struct-name : String]
   [field-name : String]) : String
-  (string.string-append
+  (string.append
     "symbols: duplicate field "
     (compiler-struct-field-key struct-name field-name)))
 
 (define (compiler-symbol-module-key [module : String] [name : String]) : String
   (if (= (string.string-length module) 0)
     name
-    (string.string-append module (string.string-append "/" name))))
+    (string.append module (string.append "/" name))))
 
 (define (compiler-enum-qualified-variant-name
   [enum-name : String]
   [variant-name : String]) : String
-  (string.string-append enum-name (string.string-append "." variant-name)))
+  (string.append enum-name (string.append "." variant-name)))
 
 (define (compiler-qualified-name [module : String] [name : String]) : CompilerQualifiedName
   (CompilerQualifiedName (intern module) (intern name)))
@@ -630,8 +629,7 @@
   (match (compiler-symbols-owner-name-at-index
     symbols
     (compiler-symbol-handle-index handle))
-    [(CompilerSomeString owner-name)
-      (string.string-contains-char (& owner-name) '/')]
+    [(CompilerSomeString owner-name) (string.contains-char (& owner-name) '/')]
     [(CompilerNoString) false]))
 
 (define (compiler-symbols-add-root-macro-id
@@ -710,7 +708,7 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id module name)]
     [display-name : String (compiler-symbol-module-key module name)]
-    (match (if (string.string-eq module "")
+    (match (if (string.eq module "")
       (compiler-symbols-add-root-value-id symbols key-id display-name handle)
       (compiler-symbols-add-value-id symbols key-id display-name handle))
       [(ResultCompilerSymbols.Ok next)
@@ -721,7 +719,7 @@
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (compiler-symbols-comptime-module? [module : String]) : bool
-  (string.string-eq module "stdlib.comptime"))
+  (string.eq module "stdlib.comptime"))
 
 (define (compiler-symbols-add-type-in-module
   [symbols : CompilerSymbols]
@@ -820,7 +818,7 @@
   (let
     [key-id : i64 (compiler-symbol-module-key-id module name)]
     [display-name : String (compiler-symbol-module-key module name)]
-    (match (if (string.string-eq module "")
+    (match (if (string.eq module "")
       (compiler-symbols-add-root-macro-id symbols key-id display-name handle)
       (compiler-symbols-add-macro-id symbols key-id display-name handle))
       [(ResultCompilerSymbols.Ok next)
@@ -1007,20 +1005,18 @@
   (match meta
     [(AstGeneratedDeclMeta.Some generator item _ key)
       (if (> (string.string-length key) 0)
-        (string.string-append
-          " (generated identity: "
-          (string.string-append key ")"))
-        (string.string-append
+        (string.append " (generated identity: " (string.append key ")"))
+        (string.append
           " (generated declaration: "
-          (string.string-append
+          (string.append
             item
-            (string.string-append " from " (string.string-append generator ")")))))]
+            (string.append " from " (string.append generator ")")))))]
     [(AstGeneratedDeclMeta.No) ""]))
 
 (define (compiler-symbols-with-generated-context
   [message : String]
   [meta : AstGeneratedDeclMeta]) : String
-  (string.string-append message (compiler-symbols-generated-meta-suffix meta)))
+  (string.append message (compiler-symbols-generated-meta-suffix meta)))
 
 (define (compiler-symbols-add-struct-cleanup-in-module
   [symbols : CompilerSymbols]
@@ -1817,7 +1813,7 @@
 (define (compiler-symbols-import-alias-key
   [importer-module : String]
   [alias : String]) : String
-  (if (string.string-eq alias "")
+  (if (string.eq alias "")
     importer-module
     alias))
 
@@ -1860,7 +1856,7 @@
                             all-decls
                             target-module)
                           cur-symbols)]
-                      (if (string.string-eq alias "")
+                      (if (string.eq alias "")
                         (compiler-symbols-add-module-aliases
                           without-bare-macros
                           all-decls
@@ -1924,20 +1920,14 @@
   [duplicate-path : String]) : String
   (if (> (string.string-length first-path) 0)
     (if (> (string.string-length duplicate-path) 0)
-      (string.string-append
+      (string.append
         " (first declared in "
-        (string.string-append
+        (string.append
           first-path
-          (string.string-append
-            "; duplicate in "
-            (string.string-append duplicate-path ")"))))
-      (string.string-append
-        " (first declared in "
-        (string.string-append first-path ")")))
+          (string.append "; duplicate in " (string.append duplicate-path ")"))))
+      (string.append " (first declared in " (string.append first-path ")")))
     (if (> (string.string-length duplicate-path) 0)
-      (string.string-append
-        " (duplicate in "
-        (string.string-append duplicate-path ")"))
+      (string.append " (duplicate in " (string.append duplicate-path ")"))
       "")))
 
 (define (compiler-symbols-duplicate-value-message-with-paths
@@ -1951,7 +1941,7 @@
   (match (compiler-symbols-lookup-value-in-module symbols module name)
     [(option_i64.Some existing)
       (if (and
-        (string.string-eq module "")
+        (string.eq module "")
         (compiler-symbols-handle-from-nonroot-owner? symbols existing))
         CompilerNoString
         (let
@@ -1963,7 +1953,7 @@
               0)]
           [display-name : String (compiler-symbol-module-key module name)]
           (CompilerSomeString
-            (string.string-append
+            (string.append
               (compiler-symbols-duplicate-value-message display-name)
               (compiler-symbols-duplicate-location-suffix first-path decl-path)))))]
     [(option_i64.None) CompilerNoString]))
@@ -2079,8 +2069,8 @@
   (let
     [indexed : AstDecl (compiler-symbol-indexed-decl decl)]
     (begin
-      (array.array-set! (compiler-symbols-decls symbols) index indexed)
-      (array.array-set!
+      (array-set! (compiler-symbols-decls symbols) index indexed)
+      (array-set!
         (compiler-symbols-owner-names symbols)
         index
         (compiler-symbol-owner-name-for-decl indexed module)))))
@@ -2090,10 +2080,10 @@
   [target : i64]) : CompilerMaybeString
   (let
     [owner-names : (Array String) (compiler-symbols-owner-names symbols)]
-    (if (or (< target 0) (>= target (array.array-length owner-names)))
+    (if (or (< target 0) (>= target (array-length owner-names)))
       (CompilerNoString)
       (let
-        [owner-name : String (array.array-ref owner-names target)]
+        [owner-name : String (array-ref owner-names target)]
         (if (> (string.string-length owner-name) 0)
           (CompilerSomeString owner-name)
           (CompilerNoString))))))
@@ -2644,8 +2634,7 @@
                 [(AstDecl.Test _ _ _) (set! cur-decls rest)]
                 [_
                   (let
-                    [in-target : bool
-                      (string.string-eq cur-module target-module)]
+                    [in-target : bool (string.eq cur-module target-module)]
                     [next-registries : CompilerRegistries
                       (if in-target
                         (compiler-registries-add-decl-alias-in-module
@@ -2699,7 +2688,7 @@
                         (AstMaybeModuleName.Some target-module)
                         (AstMaybeImportAlias.Some alias)
                         _))
-                    (if (string.string-eq alias "")
+                    (if (string.eq alias "")
                       (compiler-registries-add-module-aliases
                         cur-registries
                         all-decls
@@ -3072,9 +3061,9 @@
   [target : i64]) : ResultAstDecl
   (let
     [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
-    (if (or (< target 0) (>= target (array.array-length decls)))
+    (if (or (< target 0) (>= target (array-length decls)))
       (ResultAstDecl.Err "symbols: declaration index not found")
-      (ResultAstDecl.Ok (array.array-ref decls target)))))
+      (ResultAstDecl.Ok (array-ref decls target)))))
 
 (define (compiler-variant-types-at-index
   [variants : AstVariantDefList]
@@ -3440,18 +3429,14 @@
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-value-source))
     [(ResultCompilerSymbols.Err message)
-      (string.string-eq
-        message
-        (compiler-symbols-duplicate-value-message "answer"))]
+      (string.eq message (compiler-symbols-duplicate-value-message "answer"))]
     [(ResultCompilerSymbols.Ok _) false]))
 
 (define (compiler-symbols-duplicate-type-ok?) : bool
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-type-source))
     [(ResultCompilerSymbols.Err message)
-      (string.string-eq
-        message
-        (compiler-symbols-duplicate-type-message "Point"))]
+      (string.eq message (compiler-symbols-duplicate-type-message "Point"))]
     [(ResultCompilerSymbols.Ok _) false]))
 
 (define (compiler-symbols-duplicate-value-error-ok?
@@ -3459,7 +3444,7 @@
   [name : String]) : bool
   (match (build-compiler-symbols-from-source src)
     [(ResultCompilerSymbols.Err message)
-      (string.string-eq message (compiler-symbols-duplicate-value-message name))]
+      (string.eq message (compiler-symbols-duplicate-value-message name))]
     [(ResultCompilerSymbols.Ok _) false]))
 
 (define (compiler-symbols-variant-value-collisions-ok?) : bool
@@ -3493,7 +3478,7 @@
   (match (build-compiler-registries-from-source
     (compiler-registries-duplicate-variant-source))
     [(ResultCompilerRegistries.Err message)
-      (string.string-eq
+      (string.eq
         message
         (compiler-registries-duplicate-variant-message "Left.Same"))]
     [(ResultCompilerRegistries.Ok _) false]))
@@ -3523,7 +3508,7 @@
   (match (build-compiler-registries-from-source
     (compiler-registries-duplicate-field-source))
     [(ResultCompilerRegistries.Err message)
-      (string.string-eq
+      (string.eq
         message
         (compiler-registries-duplicate-field-message "Pair" "x"))]
     [(ResultCompilerRegistries.Ok _) false]))
@@ -3554,7 +3539,7 @@
   (match (build-compiler-symbols-from-source
     (compiler-symbols-duplicate-macro-value-source))
     [(ResultCompilerSymbols.Err message)
-      (string.string-eq
+      (string.eq
         message
         (compiler-symbols-duplicate-macro-value-message "same"))]
     [(ResultCompilerSymbols.Ok _) false]))
@@ -3843,8 +3828,8 @@
   "(module stdlib.comptime)
 (defenum Expr (ExprBool bool))
 (define (string.int->string [value : i64]) : String \"\")
-(define (string.string-append [left : String] [right : String]) : String left)
-(define (string.string-concat [left : String] [right : String]) : String left)
+(define (string.append [left : String] [right : String]) : String left)
+(define (string.concat [left : String] [right : String]) : String left)
 (define (expr-bool [value : bool]) : Expr (ExprBool value))
 (module main)
 (defenum Expr (ExprBool i64))
@@ -3868,7 +3853,7 @@
               (compiler-symbol-lookup-score
                 (compiler-symbols-lookup-value
                   symbols
-                  "stdlib.comptime/string.string-append")
+                  "stdlib.comptime/string.append")
                 (compiler-symbol-kind-function-define)
                 2)
               1)
@@ -3876,7 +3861,7 @@
               (compiler-symbol-lookup-score
                 (compiler-symbols-lookup-value
                   symbols
-                  "stdlib.comptime/string.string-concat")
+                  "stdlib.comptime/string.concat")
                 (compiler-symbol-kind-function-define)
                 3)
               1)

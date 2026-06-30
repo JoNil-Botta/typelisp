@@ -12,6 +12,5 @@
     [bags : Bags (Bags left-items right-items)]
     (let
       [whole-left : (&mut bags (Array i64)) (&mut (struct-get bags left))]
-      [first-item : (&mut bags i64)
-        (&mut (array.array-ref (struct-get bags left) 0))]
+      [first-item : (&mut bags i64) (&mut (array-ref (struct-get bags left) 0))]
       unit)))

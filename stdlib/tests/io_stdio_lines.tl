@@ -17,11 +17,11 @@
     (assert-owned-string-eq
       (io.stdin-read-text read)
       expected-text
-      (string.string-append message " text"))
+      (string.append message " text"))
     (test.assert-bool-eq
       (io.stdin-read-eof? read)
       expected-eof
-      (string.string-append message " eof"))))
+      (string.append message " eof"))))
 
 (define (main) : i64
   (begin

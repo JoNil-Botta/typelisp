@@ -4,43 +4,43 @@
 
 (define (init-xs [xs : (Array i64)]) : unit
   (begin
-    (array.array-set! xs 0 99)
-    (array.array-set! xs 1 -3)
-    (array.array-set! xs 2 4)
-    (array.array-set! xs 3 -1)
-    (array.array-set! xs 4 0)
-    (array.array-set! xs 5 7)
-    (array.array-set! xs 6 -8)
-    (array.array-set! xs 7 2)
-    (array.array-set! xs 8 9)
-    (array.array-set! xs 9 -5)
-    (array.array-set! xs 10 1)
-    (array.array-set! xs 11 6)
-    (array.array-set! xs 12 -2)))
+    (array-set! xs 0 99)
+    (array-set! xs 1 -3)
+    (array-set! xs 2 4)
+    (array-set! xs 3 -1)
+    (array-set! xs 4 0)
+    (array-set! xs 5 7)
+    (array-set! xs 6 -8)
+    (array-set! xs 7 2)
+    (array-set! xs 8 9)
+    (array-set! xs 9 -5)
+    (array-set! xs 10 1)
+    (array-set! xs 11 6)
+    (array-set! xs 12 -2)))
 
 (define (init-out [out : (Array i64)] [len : i64]) : unit
   (let
     [i : i64 0]
     (while (< i len)
       (begin
-        (array.array-set! out i -99)
+        (array-set! out i -99)
         (set! i (+ i 1))))))
 
 (define (fill-masked [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (if (< (array.array-ref xs (+ i 1)) 0)
-      (array.array-set! out (+ i 1) 0)
-      (array.array-set! out (+ i 1) (+ (array.array-ref xs (+ i 1)) 1)))))
+    (if (< (array-ref xs (+ i 1)) 0)
+      (array-set! out (+ i 1) 0)
+      (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))))
 
 (define (fill-scalar [xs : (Array i64)] [out : (Array i64)] [n : i64]) : unit
   (let
     [i : i64 0]
     (while (< i n)
       (begin
-        (if (< (array.array-ref xs (+ i 1)) 0)
-          (array.array-set! out (+ i 1) 0)
-          (array.array-set! out (+ i 1) (+ (array.array-ref xs (+ i 1)) 1)))
+        (if (< (array-ref xs (+ i 1)) 0)
+          (array-set! out (+ i 1) 0)
+          (array-set! out (+ i 1) (+ (array-ref xs (+ i 1)) 1)))
         (set! i (+ i 1))))))
 
 (define (arrays-eq [a : (Array i64)] [b : (Array i64)] [n : i64]) : bool
@@ -50,7 +50,7 @@
     (begin
       (while (< i n)
         (begin
-          (if (!= (array.array-ref a i) (array.array-ref b i))
+          (if (!= (array-ref a i) (array-ref b i))
             (set! ok false)
             unit)
           (set! i (+ i 1))))

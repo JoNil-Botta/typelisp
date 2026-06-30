@@ -9,6 +9,6 @@
     [f : (-> i64 i64) bump]
     (foreach
       ([i : i64 0 n])
-      (if (> (array.array-ref xs i) 0)
-        (array.array-set! out i (f (array.array-ref xs i)))
-        (array.array-set! out i 0)))))
+      (if (> (array-ref xs i) 0)
+        (array-set! out i (f (array-ref xs i)))
+        (array-set! out i 0)))))

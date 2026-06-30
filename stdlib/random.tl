@@ -198,7 +198,7 @@
   (if (>= index count)
     (OkRandomWeightTotal acc)
     (let
-      [weight : i64 (array.array-ref weights index)]
+      [weight : i64 (array-ref weights index)]
       (if (< weight 0)
         (ErrRandomWeightTotal "random: weight must not be negative")
         (weight-array-total-from weights count (+ index 1) (+ acc weight))))))
@@ -223,7 +223,7 @@
   (if (>= index count)
     -1
     (let
-      [weight : i64 (array.array-ref weights index)]
+      [weight : i64 (array-ref weights index)]
       (if (<= weight 0)
         (weight-array-scan-from weights count target (+ index 1))
         (if (< target weight)
@@ -258,7 +258,7 @@
   (weighted-index-array-prefix
     state
     (& weights)
-    (array.array-length weights)
+    (array-length weights)
     "random: weight array must not be empty"))
 
 ;: Choose an index from the live prefix of `weights`, skipping zero weights.
@@ -288,7 +288,7 @@
     [(RandomWeightNil) unit]
     [(RandomWeightCons weight rest)
       (begin
-        (array.array-set! out index weight)
+        (array-set! out index weight)
         (weight-list-fill-array out (box-get rest) (+ index 1)))]))
 
 ;: Return a fresh array containing the weight list in list order.
@@ -308,7 +308,7 @@
       [array-weights : (Array i64) (weight-list-to-array weights)]
       (weight-array-total-prefix
         array-weights
-        (array.array-length array-weights)
+        (array-length array-weights)
         "random: weight list must not be empty"))))
 
 ;: Choose an index from `weights`, skipping zero weights.
@@ -323,7 +323,7 @@
       (weighted-index-array-prefix
         state
         array-weights
-        (array.array-length array-weights)
+        (array-length array-weights)
         "random: weight list must not be empty"))))
 
 ;: Return the shared system-seed failure result.
@@ -344,7 +344,7 @@
           8
           0)]
       (if (= read-count 8)
-        (OkSystemSeed (array.array-ref seed 0))
+        (OkSystemSeed (array.ref seed 0))
         (system-seed-unavailable)))))
 
 ;: Rotate a 64-bit value left by 17 bits.
@@ -380,9 +380,8 @@
         (random-windows-get-system-time-as-file-time
           (unsafe
             (array-data file-time)))]
-      [counter-seed : u64 (cast (array.array-ref counter 0) : u64)]
-      [time-seed : u64
-        (random-rotl64-17 (cast (array.array-ref file-time 0) : u64))]
+      [counter-seed : u64 (cast (array-ref counter 0) : u64)]
+      [time-seed : u64 (random-rotl64-17 (cast (array-ref file-time 0) : u64))]
       [pid-seed : u64
         (shl (cast (random-windows-get-current-process-id) : u64) 32)]
       [thread-seed : u64 (cast (random-windows-get-current-thread-id) : u64)]
@@ -424,7 +423,7 @@
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (test-assert-true (string.string-eq actual expected) message))
+  (test-assert-true (string.eq actual expected) message))
 
 ;: Assert that a system seed result succeeded and was normalized.
 (define (test-assert-system-seed-ok [result : ResultSystemSeed]) : unit
@@ -537,10 +536,10 @@
   (let
     [weights : (Array i64) (array.make-array i64 4)]
     (begin
-      (array.array-set! weights 0 0)
-      (array.array-set! weights 1 10)
-      (array.array-set! weights 2 0)
-      (array.array-set! weights 3 5)
+      (array-set! weights 0 0)
+      (array-set! weights 1 10)
+      (array-set! weights 2 0)
+      (array-set! weights 3 5)
       weights)))
 
 ;: Weighted-array fixture whose total is zero.
@@ -552,8 +551,8 @@
   (let
     [weights : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! weights 0 1)
-      (array.array-set! weights 1 -1)
+      (array-set! weights 0 1)
+      (array-set! weights 1 -1)
       weights)))
 
 ;: Weighted-vector fixture with zeros around positive buckets.

@@ -34,7 +34,7 @@
         (process.args-empty)))))
 
 (define (main) : i64
-  (if (string.string-eq (env.path-list-separator) ";")
+  (if (string.eq (env.path-list-separator) ";")
     (begin
       (assert-process-output-eq
         (process.output (process-runtime-stderr-windows-command))

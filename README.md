@@ -209,7 +209,7 @@ struct/enum fields, and (optionally) `let` bindings.
 (let ([n : i64 (init)]
       [text : String (init : String)]
       [items : (Array i64 4) (init : (Array i64 4))])
-  (+ n (array.array-ref items 0)))
+  (+ n (array-ref items 0)))
 ```
 
 `cast` supports the full scalar numeric matrix: integer/char widening,
@@ -745,14 +745,14 @@ helpers below. See [SPEC.md §5.16](SPEC.md) and §7.3 for the full contract.
 
 The standard scratch patterns are: use `(with-arena scratch ...)` for temporary
 work that returns only scalars or outer-owned values; use `(with-escape scratch
-...)` with a typed first-class `Arena` from `arena-make` when one supported
-result must be cloned out across repeated scratch builds; use `(with-scratch
-body ...)` when a supported result should be cloned out from a fresh one-shot
-scratch arena; use `(arena-make-atomic)` for a shared atomic allocation target;
-use `(in-arena arena body ...)` when the result should remain owned by that
-first-class arena; use `arena-phase` plus `arena-rewind-safe!` or
-`arena-destroy-safe!` for checker-proven ordinary single-thread arena
-invalidation; reserve manual `arena-set!` / `arena-rewind` / `arena-destroy`
+...)` with a typed first-class `arena.Arena` from `arena.make` when one
+supported result must be cloned out across repeated scratch builds; use
+`(with-scratch body ...)` when a supported result should be cloned out from a
+fresh one-shot scratch arena; use `(arena.make-atomic)` for a shared atomic
+allocation target; use `(in-arena arena body ...)` when the result should remain
+owned by that first-class arena; use `arena.phase` plus `arena.rewind-safe!` or
+`arena.destroy-safe!` for checker-proven ordinary single-thread arena
+invalidation; reserve manual `arena.set!` / `arena.rewind` / `arena.destroy`
 calls for unsafe internals that can prove every invalidated handle is dead.
 
 ### Safe task threading
@@ -795,16 +795,17 @@ functions in reverse binding order on scope exit for files, process handles,
 locks, mapped files, and similar resources; it does not imply destructors,
 `free`, or arena reset semantics.
 
-Programs that need manual control import `stdlib/arena.tl` and use the typed
-first-class arena helpers. `arena-make`, `arena-make-atomic`, and
-`arena-current` create or observe an `Arena`; `arena-mark` records an
-`ArenaMark`; `arena-phase` records an `ArenaPhase` token for a direct local
-ordinary `arena-make` owner. `arena-rewind-safe!` consumes that token and
-invalidates only values allocated in the token's phase; `arena-destroy-safe!`
-consumes a direct local ordinary owner and invalidates all values owned by it.
+Programs that need manual control import `stdlib.arena` and use the typed
+first-class arena helpers. `arena.make`, `arena.make-atomic`, and
+`arena.current` create or observe an `arena.Arena`; `arena.mark` records an
+`arena.ArenaMark`; `arena.phase` records an `arena.ArenaPhase` token for a
+direct local ordinary `arena.make` owner. `arena.rewind-safe!` consumes that
+token and invalidates only values allocated in the token's phase;
+`arena.destroy-safe!` consumes a direct local ordinary owner and invalidates all
+values owned by it.
 The checker rejects both operations while such values, borrows, captures, or
 owner handles remain live. Raw integers do not satisfy those public helper
-signatures. `arena-set!`, raw `arena-destroy`, and raw `arena-rewind` require
+signatures. `arena.set!`, raw `arena.destroy`, and raw `arena.rewind` require
 `(unsafe ...)`, because switching, freeing, or rewinding arenas can invalidate
 live heap handles. The safe `in-arena` form switches allocation targets without
 marking, rewinding, destroying, or cloning. See [SPEC.md §7.3](SPEC.md) for

@@ -45,7 +45,7 @@
 (define (read-file-or-result-string [result : (ReadFileOrResult fallback)]) : String
   (if (read-file-or-result-owned? result)
     (struct-get result owned)
-    (string.string-copy (struct-get result fallback))))
+    (string.copy (struct-get result fallback))))
 
 ;: Read `path`, returning fresh active-arena contents on success or a borrow of
 ;: `fallback` on any structured read error.
@@ -70,7 +70,7 @@
 
 ;: Inline test assertion for owned string equality.
 (define (test-string-eq [actual : String] [expected : String]) : unit
-  (if (string.string-eq actual expected)
+  (if (string.eq actual expected)
     unit
     (test-fail)))
 

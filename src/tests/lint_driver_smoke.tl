@@ -7,7 +7,7 @@
 
 (define (lint-driver-smoke-string-concat-source) : String
   "(define (main) : i64
-  (string.string-length (string.string-append \"a\" \"b\")))")
+  (string.string-length (string.append \"a\" \"b\")))")
 
 (define (lint-driver-smoke-loop-string-concat-source) : String
   "(define (main) : i64
@@ -17,27 +17,27 @@
     (begin
       (while (< i 3)
         (begin
-          (set! out (string.string-append out \"x\"))
+          (set! out (string.append out \"x\"))
           (set! i (+ i 1))))
       (string.string-length out))))")
 
 (define (lint-driver-smoke-nested-string-concat-source) : String
   "(define (main) : i64
-  (string.string-length (string.string-append \"a\" (string.string-append \"b\" \"c\"))))")
+  (string.string-length (string.append \"a\" (string.append \"b\" \"c\"))))")
 
 (define (lint-driver-smoke-suppressed-string-concat-source) : String
   "(define (main) : i64
   ;; lint-allow: deprecated-string-concat
-  (string.string-length (string.string-append \"a\" \"b\")))")
+  (string.string-length (string.append \"a\" \"b\")))")
 
 (define (lint-driver-smoke-redundant-import-alias-source) : String
-  (string.string-append
+  (string.append
     "(import pkg.data "
     "as data)
 (define (main) : i64 (data.value))"))
 
 (define (lint-driver-smoke-redundant-import-colon-alias-source) : String
-  (string.string-append
+  (string.append
     "(import pkg.data "
     ":as data)
 (define (main) : i64 (data.value))"))
@@ -51,7 +51,7 @@
 (define (main) : i64 (d.value))")
 
 (define (lint-driver-smoke-suppressed-redundant-import-alias-source) : String
-  (string.string-append
+  (string.append
     ";; lint-allow: redundant-import-alias
 (import pkg.data "
     "as data)
@@ -346,7 +346,7 @@
         (and
           (= (struct-get finding depth) depth)
           (> (struct-get fspan start-line) 0)
-          (string.string-eq
+          (string.eq
             (struct-get finding rule-id)
             (lint-rule-deprecated-string-concat-id))))]
     [(LintMaybeFinding.No) false]))
@@ -361,7 +361,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (> (struct-get fspan start-line) 0)
-          (string.string-eq (struct-get finding rule-id) rule-id)))]
+          (string.eq (struct-get finding rule-id) rule-id)))]
     [(LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-finding-rule-line-ok?
@@ -375,7 +375,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get fspan start-line) line)
-          (string.string-eq (struct-get finding rule-id) rule-id)))]
+          (string.eq (struct-get finding rule-id) rule-id)))]
     [(LintMaybeFinding.No) false]))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
@@ -721,12 +721,12 @@
             0))
         86]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-message rule)
             (lint-rule-copy-on-update-struct-message)))
         87]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-suggestion rule)
             (lint-rule-copy-on-update-struct-suggestion)))
         88]
@@ -777,7 +777,7 @@
             0))
         73]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-message rule)
             (lint-rule-redundant-import-alias-message)))
         74]
@@ -816,12 +816,12 @@
             0))
         78]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-message rule)
             (lint-rule-redundant-function-name-message)))
         79]
       [(not
-          (string.string-eq
+          (string.eq
             (lint-rule-suggestion rule)
             (lint-rule-redundant-function-name-suggestion)))
         80]

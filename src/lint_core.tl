@@ -398,7 +398,7 @@
   (match rules
     [(LintRuleList.Nil) LintMaybeRule.NotFound]
     [(LintRuleList.Cons rule rest)
-      (if (string.string-eq (struct-get rule rule-id) rule-id)
+      (if (string.eq (struct-get rule rule-id) rule-id)
         (LintMaybeRule.Found rule)
         (lint-rule-find-in (box-get rest) rule-id))]))
 
@@ -552,7 +552,7 @@
         (match func
           [(AstExpr.Var name)
             (and
-              (string.string-eq (intern-str name) "not")
+              (string.eq (intern-str name) "not")
               (lint-single-arg-call? args))]
           [_ false]))]
     [(AstExpr.Unary (AstUnOp.Not) _) true]
@@ -680,20 +680,18 @@
 
 (define (lint-dead-code-finding [name : String] [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "dead code: top-level declaration "
-      (string.string-append
-        name
-        " is unreachable from package entry/test roots"))
+      (string.append name " is unreachable from package entry/test roots"))
     (lint-rule-dead-code-id)
     0
     span))
 
 (define (lint-unused-assignment-finding [name : String] [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "unused assignment: value assigned to "
-      (string.string-append name " is overwritten before it is read"))
+      (string.append name " is overwritten before it is read"))
     (lint-rule-unused-assignment-id)
     0
     span))
@@ -703,13 +701,13 @@
   [field : String]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "copy-on-update struct mutation: "
-      (string.string-append
+      (string.append
         name
-        (string.string-append
+        (string.append
           " rebuilds the same struct to change field "
-          (string.string-append field "; use in-place field assignment"))))
+          (string.append field "; use in-place field assignment"))))
     (lint-rule-copy-on-update-struct-id)
     1
     span))
@@ -718,9 +716,9 @@
   [name : String]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "single-element array scalar cell: "
-      (string.string-append
+      (string.append
         name
         " is only read or written at index 0; prefer Box T, &mut, or returning the updated value"))
     (lint-rule-single-element-array-cell-id)
@@ -729,9 +727,7 @@
 
 (define (lint-unused-variable-finding [name : String] [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
-      "unused variable: "
-      (string.string-append name " is never used"))
+    (string.append "unused variable: " (string.append name " is never used"))
     (lint-rule-unused-variable-id)
     0
     span))
@@ -755,15 +751,13 @@
         (string.substring name (+ module-len 1) (- name-len (+ module-len 1)))
         name)]
     (LintFinding
-      (string.string-append
+      (string.append
         "redundant function name: "
-        (string.string-append
+        (string.append
           name
-          (string.string-append
+          (string.append
             " repeats module prefix "
-            (string.string-append
-              module-name
-              (string.string-append "; use " short-name)))))
+            (string.append module-name (string.append "; use " short-name)))))
       (lint-rule-redundant-function-name-id)
       0
       span)))
@@ -775,14 +769,14 @@
 
 (define (lint-terminal-callee-name? [text : String]) : bool
   (or
-    (string.string-eq text "panic")
-    (string.string-eq text "error")
-    (string.string-eq text "io.panic")
-    (string.string-eq text "io.error")
-    (string.string-eq text "stdlib.io.panic")
-    (string.string-eq text "stdlib.io.error")
-    (string.string-eq text "stdlib/io.panic")
-    (string.string-eq text "stdlib/io.error")))
+    (string.eq text "panic")
+    (string.eq text "error")
+    (string.eq text "io.panic")
+    (string.eq text "io.error")
+    (string.eq text "stdlib.io.panic")
+    (string.eq text "stdlib.io.error")
+    (string.eq text "stdlib/io.panic")
+    (string.eq text "stdlib/io.error")))
 
 (define (lint-terminal-callee? [expr : AstExpr]) : bool
   (match expr
@@ -899,24 +893,24 @@
 
 (define (lint-deprecated-string-concat-name? [name : String]) : bool
   (or
-    (string.string-eq name "string-append")
-    (string.string-eq name "string.string-append")
-    (string.string-eq name "string-concat")
-    (string.string-eq name "string.string-concat")
-    (string.string-eq name "string-concat3")
-    (string.string-eq name "string.string-concat3")
-    (string.string-eq name "string-concat4")
-    (string.string-eq name "string.string-concat4")
-    (string.string-eq name "string-concat5")
-    (string.string-eq name "string.string-concat5")))
+    (string.eq name "string-append")
+    (string.eq name "string.append")
+    (string.eq name "string-concat")
+    (string.eq name "string.concat")
+    (string.eq name "string-concat3")
+    (string.eq name "string.concat3")
+    (string.eq name "string-concat4")
+    (string.eq name "string.concat4")
+    (string.eq name "string-concat5")
+    (string.eq name "string.concat5")))
 
 (define (lint-deprecated-string-concat-loop-form? [name : String]) : bool
   (or
-    (string.string-eq name "while")
-    (string.string-eq name "foreach")
-    (string.string-eq name "spmd-reduce")
-    (string.string-eq name "spmd-scan")
-    (string.string-eq name "spmd-shuffle")))
+    (string.eq name "while")
+    (string.eq name "foreach")
+    (string.eq name "spmd-reduce")
+    (string.eq name "spmd-scan")
+    (string.eq name "spmd-shuffle")))
 
 (define (lint-token-name [tok : token.Token]) : String
   (if (= (token.tag tok) (token.tag-sym))
@@ -946,16 +940,16 @@
 
 (define (lint-and-or-op-name [name : String]) : String
   (if (or
-    (string.string-eq name "and")
-    (string.string-eq name "core/and")
-    (string.string-eq name "core.and")
-    (string.string-eq name "stdlib.core_macros.and"))
+    (string.eq name "and")
+    (string.eq name "core/and")
+    (string.eq name "core.and")
+    (string.eq name "stdlib.core_macros.and"))
     "and"
     (if (or
-      (string.string-eq name "or")
-      (string.string-eq name "core/or")
-      (string.string-eq name "core.or")
-      (string.string-eq name "stdlib.core_macros.or"))
+      (string.eq name "or")
+      (string.eq name "core/or")
+      (string.eq name "core.or")
+      (string.eq name "stdlib.core_macros.or"))
       "or"
       "")))
 
@@ -974,7 +968,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-str-cat-func? inner))]
-    [(AstExpr.Var name) (string.string-eq (intern-str name) "str-cat")]
+    [(AstExpr.Var name) (string.eq (intern-str name) "str-cat")]
     [_ false]))
 
 (define (lint-literal-render [lit : AstLiteral]) : String
@@ -988,8 +982,7 @@
       (if value
         "true"
         "false")]
-    [(AstLiteral.String value)
-      (string.string-append "\"" (string.string-append value "\""))]
+    [(AstLiteral.String value) (string.append "\"" (string.append value "\""))]
     [(AstLiteral.Unit) "unit"]
     [_ "<expr>"]))
 
@@ -1021,9 +1014,9 @@
     [(AstUnOp.BitNot) "bit-not"]))
 
 (define (lint-render-args-join [head : String] [tail : String]) : String
-  (if (string.string-eq tail "")
+  (if (string.eq tail "")
     head
-    (string.string-append head (string.string-append " " tail))))
+    (string.append head (string.append " " tail))))
 
 (define (lint-expr-list-render [exprs : AstExprList]) : String
   (match exprs
@@ -1037,13 +1030,11 @@
           (lint-expr-list-render rest)))]))
 
 (define (lint-parenthesized-call-render [callee : String] [args : String]) : String
-  (if (string.string-eq args "")
-    (string.string-append "(" (string.string-append callee ")"))
-    (string.string-append
+  (if (string.eq args "")
+    (string.append "(" (string.append callee ")"))
+    (string.append
       "("
-      (string.string-append
-        callee
-        (string.string-append " " (string.string-append args ")"))))))
+      (string.append callee (string.append " " (string.append args ")"))))))
 
 (define (lint-expr-render [expr : AstExpr]) : String
   (match expr
@@ -1085,7 +1076,7 @@
     [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (string.string-eq (lint-and-or-func-op func) op))]
+        (string.eq (lint-and-or-func-op func) op))]
     [_ false]))
 
 (define (lint-and-or-args-have-kind? [op : String] [args : AstExprList]) : bool
@@ -1131,7 +1122,7 @@
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (string.string-eq (lint-and-or-func-op func) op)
+        (if (string.eq (lint-and-or-func-op func) op)
           (lint-cascading-and-or-flat-args-render op args)
           (lint-expr-render expr)))]
     [_ (lint-expr-render expr)]))
@@ -1158,7 +1149,7 @@
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (string.string-eq (lint-and-or-func-op func) op)
+        (if (string.eq (lint-and-or-func-op func) op)
           (lint-cascading-and-or-flat-arg-count-list op args)
           1))]
     [_ 1]))
@@ -1190,11 +1181,11 @@
   [args : AstExprList]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "cascading "
-      (string.string-append
+      (string.append
         op
-        (string.string-append
+        (string.append
           ": prefer flat n-ary form "
           (lint-cascading-and-or-flat-call callee op args))))
     (lint-rule-cascading-and-or-id)
@@ -1333,9 +1324,9 @@
     [alias-n : i64 (string.string-length alias)]
     [start : i64 (- module-n alias-n)]
     (and
-      (string.string-eq name alias)
+      (string.eq name alias)
       (>= start 0)
-      (string.string-eq (string.substring module-name start alias-n) alias)
+      (string.eq (string.substring module-name start alias-n) alias)
       (or
         (= start 0)
         (string.char-eq (string.string-ref module-name (- start 1)) '.')))))
@@ -1499,15 +1490,15 @@
   [alias : String]
   [module-name : String]) : bool
   (and
-    (string.string-eq alias "__tl_lint_unused_unsafe_candidate")
-    (string.string-eq module-name "")))
+    (string.eq alias "__tl_lint_unused_unsafe_candidate")
+    (string.eq module-name "")))
 
 (define (lint-requires-enclosing-unsafe-sentinel?
   [alias : String]
   [module-name : String]) : bool
   (and
-    (string.string-eq alias "__tl_lint_requires_enclosing_unsafe")
-    (string.string-eq module-name "")))
+    (string.eq alias "__tl_lint_requires_enclosing_unsafe")
+    (string.eq module-name "")))
 
 (define (lint-expr-list-requires-enclosing-unsafe? [exprs : AstExprList]) : bool
   (lint-expr-list-uses-import? exprs "__tl_lint_requires_enclosing_unsafe" ""))
@@ -2113,13 +2104,13 @@
   [alias : String]
   [span : AstSourceSpan]) : LintFinding
   (LintFinding
-    (string.string-append
+    (string.append
       "unused import: module alias "
-      (string.string-append
+      (string.append
         alias
-        (string.string-append
+        (string.append
           " from "
-          (string.string-append module-name " is never referenced"))))
+          (string.append module-name " is never referenced"))))
     (lint-rule-unused-import-id)
     0
     span))
@@ -2197,9 +2188,7 @@
                 [(AstMaybeImportAlias.No) acc]
                 [(AstMaybeImportAlias.Some alias)
                   (if (and
-                    (string.string-eq
-                      alias
-                      (lint-module-default-alias module-name))
+                    (string.eq alias (lint-module-default-alias module-name))
                     (lint-import-span-has-explicit-alias? source span))
                     (lint-findings-add
                       (lint-redundant-import-alias-finding span)
@@ -2280,7 +2269,7 @@
   (match items
     [(LintNameList.Nil) false]
     [(LintNameList.Cons head rest)
-      (if (string.string-eq head name)
+      (if (string.eq head name)
         true
         (lint-name-list-contains? (box-get rest) name))]))
 
@@ -2356,7 +2345,7 @@
   (match shapes
     [(LintCopyOnUpdateStructList.Nil) LintCopyOnUpdateMaybeStruct.NoStruct]
     [(LintCopyOnUpdateStructList.Cons shape rest)
-      (if (string.string-eq (struct-get shape name) name)
+      (if (string.eq (struct-get shape name) name)
         (LintCopyOnUpdateMaybeStruct.SomeStruct shape)
         (lint-copy-on-update-struct-find (box-get rest) name))]))
 
@@ -2397,7 +2386,7 @@
     [(LintCopyOnUpdateLocalList.Cons local rest)
       (let
         [rest-locals : LintCopyOnUpdateLocalList (box-get rest)]
-        (if (string.string-eq (struct-get local name) name)
+        (if (string.eq (struct-get local name) name)
           (lint-copy-on-update-local-remove rest-locals name)
           (LintCopyOnUpdateLocalList.Cons
             local
@@ -2410,7 +2399,7 @@
   (let
     [without : LintCopyOnUpdateLocalList
       (lint-copy-on-update-local-remove locals name)]
-    (if (string.string-eq type-name "")
+    (if (string.eq type-name "")
       without
       (LintCopyOnUpdateLocalList.Cons
         (LintCopyOnUpdateLocal name type-name)
@@ -2422,7 +2411,7 @@
   (match locals
     [(LintCopyOnUpdateLocalList.Nil) ""]
     [(LintCopyOnUpdateLocalList.Cons local rest)
-      (if (string.string-eq (struct-get local name) name)
+      (if (string.eq (struct-get local name) name)
         (struct-get local type-name)
         (lint-copy-on-update-local-type (box-get rest) name))]))
 
@@ -2479,14 +2468,14 @@
         (ast-node-get inner))]
     [(AstExpr.StructGet receiver field)
       (and
-        (string.string-eq
+        (string.eq
           (lint-copy-on-update-expr-var-name (ast-node-get receiver))
           target-name)
-        (string.string-eq (intern-str field) field-name))]
+        (string.eq (intern-str field) field-name))]
     [(AstExpr.Var name)
-      (string.string-eq
+      (string.eq
         (intern-str name)
-        (string.string-append target-name (string.string-append "." field-name)))]
+        (string.append target-name (string.append "." field-name)))]
     [_ false]))
 
 (define (lint-copy-on-update-arg-check-invalid) : LintCopyOnUpdateArgCheck
@@ -2557,9 +2546,7 @@
     [target-name : String (intern-str target)]
     [type-name : String
       (lint-copy-on-update-local-type (struct-get state locals) target-name)]
-    (if (or
-      (string.string-eq type-name "")
-      (lint-underscore-prefixed? target-name))
+    (if (or (string.eq type-name "") (lint-underscore-prefixed? target-name))
       state
       (match value
         [(AstExpr.Spanned inner _)
@@ -2584,7 +2571,7 @@
           (let
             [callee-name : String
               (lint-copy-on-update-expr-var-name (ast-node-get callee))]
-            (if (not (string.string-eq callee-name type-name))
+            (if (not (string.eq callee-name type-name))
               state
               (match (lint-copy-on-update-struct-find
                 (struct-get state shapes)
@@ -2621,7 +2608,7 @@
           (lint-copy-on-update-struct-name-from-type
             (struct-get state shapes)
             ty)]
-        (if (string.string-eq annotated "")
+        (if (string.eq annotated "")
           (lint-copy-on-update-init-type-name state (ast-node-get inner))
           annotated))]
     [(AstExpr.Cast inner ty)
@@ -2630,7 +2617,7 @@
           (lint-copy-on-update-struct-name-from-type
             (struct-get state shapes)
             ty)]
-        (if (string.string-eq casted "")
+        (if (string.eq casted "")
           (lint-copy-on-update-init-type-name state (ast-node-get inner))
           casted))]
     [(AstExpr.Call callee _)
@@ -2657,7 +2644,7 @@
       (lint-copy-on-update-struct-name-from-maybe-type
         (struct-get state shapes)
         maybe-ty)]
-    (if (string.string-eq annotated "")
+    (if (string.eq annotated "")
       (lint-copy-on-update-init-type-name state (ast-node-get init))
       annotated)))
 
@@ -3062,7 +3049,7 @@
   (match items
     [(LintSingleElementArrayCandidateList.Nil) false]
     [(LintSingleElementArrayCandidateList.Cons item rest)
-      (if (string.string-eq (struct-get item name) name)
+      (if (string.eq (struct-get item name) name)
         true
         (lint-single-element-array-candidate-tracked? (box-get rest) name))]))
 
@@ -3075,7 +3062,7 @@
     [(LintSingleElementArrayCandidateList.Cons item rest)
       (let
         [rest-items : LintSingleElementArrayCandidateList (box-get rest)]
-        (if (string.string-eq (struct-get item name) name)
+        (if (string.eq (struct-get item name) name)
           (lint-single-element-array-candidate-remove rest-items name)
           (LintSingleElementArrayCandidateList.Cons
             item
@@ -3098,7 +3085,7 @@
     [(LintSingleElementArrayCandidateList.Cons item rest)
       (let
         [updated : LintSingleElementArrayCandidate
-          (if (string.string-eq (struct-get item name) name)
+          (if (string.eq (struct-get item name) name)
             (LintSingleElementArrayCandidate
               (struct-get item name)
               (struct-get item span)
@@ -3119,7 +3106,7 @@
     [(LintSingleElementArrayCandidateList.Cons item rest)
       (let
         [updated : LintSingleElementArrayCandidate
-          (if (string.string-eq (struct-get item name) name)
+          (if (string.eq (struct-get item name) name)
             (LintSingleElementArrayCandidate
               (struct-get item name)
               (struct-get item span)
@@ -3234,27 +3221,22 @@
 
 (define (lint-single-element-array-make-array-callee? [name : String]) : bool
   (or
-    (string.string-eq name "make-array")
-    (string.string-eq name "__tl_make-array")
-    (string.string-eq name "array.make-array")
-    (string.string-eq name "array/make-array")
-    (string.string-eq name "stdlib.array.make-array")))
+    (string.eq name "make-array")
+    (string.eq name "__tl_make-array")
+    (string.eq name "array.make-array")
+    (string.eq name "array/make-array")
+    (string.eq name "stdlib.array.make-array")))
 
 (define (lint-single-element-array-ref-callee? [name : String]) : bool
   (or
-    (string.string-eq name "array-ref")
-    (string.string-eq name "__tl_array-ref")
-    (string.string-eq name "array.array-ref")
-    (string.string-eq name "array/array-ref")
-    (string.string-eq name "stdlib.array.array-ref")))
+    (string.eq name "array-ref")
+    (string.eq name "__tl_array-ref")
+    (string.eq name "array.ref")
+    (string.eq name "array/ref")
+    (string.eq name "stdlib.array.ref")))
 
 (define (lint-single-element-array-set-callee? [name : String]) : bool
-  (or
-    (string.string-eq name "array-set!")
-    (string.string-eq name "__tl_array-set!")
-    (string.string-eq name "array.array-set!")
-    (string.string-eq name "array/array-set!")
-    (string.string-eq name "stdlib.array.array-set!")))
+  (or (string.eq name "array-set!") (string.eq name "__tl_array-set!")))
 
 (define (lint-single-element-array-args-second-int?
   [args : AstExprList]
@@ -3781,7 +3763,7 @@
   (match items
     [(LintPendingAssignmentList.Nil) LintMaybePendingAssignment.No]
     [(LintPendingAssignmentList.Cons item rest)
-      (if (string.string-eq (struct-get item name) name)
+      (if (string.eq (struct-get item name) name)
         (LintMaybePendingAssignment.Some item)
         (lint-pending-assignment-find (box-get rest) name))]))
 
@@ -3793,7 +3775,7 @@
     [(LintPendingAssignmentList.Cons item rest)
       (let
         [rest-items : LintPendingAssignmentList (box-get rest)]
-        (if (string.string-eq (struct-get item name) name)
+        (if (string.eq (struct-get item name) name)
           (lint-pending-assignment-remove rest-items name)
           (LintPendingAssignmentList.Cons
             item
@@ -4632,18 +4614,16 @@
   [span : AstSourceSpan]
   [state : LintRedundantFunctionNameState]) : LintRedundantFunctionNameState
   (cond
-    [(string.string-eq callee "module")
+    [(string.eq callee "module")
       (let
         [module-name : String
           (lint-redundant-function-name-literal-module args)]
-        (if (string.string-eq module-name "")
+        (if (string.eq module-name "")
           (lint-redundant-function-name-quoted-expr-list args state)
           (lint-redundant-function-name-quoted-expr-list
             args
             (lint-redundant-function-name-state-with-module state module-name))))]
-    [(or
-        (string.string-eq callee "define")
-        (string.string-eq callee "defmacro"))
+    [(or (string.eq callee "define") (string.eq callee "defmacro"))
       (lint-redundant-function-name-quoted-expr-list
         args
         (lint-redundant-function-name-add
@@ -4849,7 +4829,7 @@
         LintUnusedVariableBindingList.Nil
         false)]
     [(LintUnusedVariableBindingList.Cons binding rest)
-      (if (string.string-eq (struct-get binding name) name)
+      (if (string.eq (struct-get binding name) name)
         (LintUnusedVariableMarkBindingsResult
           (lint-unused-variable-binding-cons
             (lint-unused-variable-binding-mark-used binding)
@@ -5948,7 +5928,7 @@
   [name : String]
   [fallback : AstSourceSpan]) : i64
   (let
-    [needle : String (string.string-append prefix name)]
+    [needle : String (string.append prefix name)]
     [source-len : i64 (string.string-length source)]
     [found : i64 (- 0 1)]
     [cursor : i64 0]
@@ -6746,7 +6726,7 @@
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
-        (if (string.string-eq (lint-and-or-func-op func) op)
+        (if (string.eq (lint-and-or-func-op func) op)
           (lint-walk-and-or-skip-args op args threshold acc)
           (lint-walk-expr expr threshold acc)))]
     [_ (lint-walk-expr expr threshold acc)]))
@@ -6776,9 +6756,7 @@
   [acc : LintFindings]) : LintFindings
   (let
     [op : String (lint-and-or-func-op func)]
-    (if (and
-      (not (string.string-eq op ""))
-      (lint-and-or-args-have-kind? op args))
+    (if (and (not (string.eq op "")) (lint-and-or-args-have-kind? op args))
       (lint-walk-and-or-skip-args
         op
         args
@@ -7518,7 +7496,7 @@
         [(LintMaybeFinding.Some finding)
           (if (and
             (= (struct-get finding depth) 3)
-            (string.string-eq
+            (string.eq
               (struct-get finding rule-id)
               (lint-rule-nested-if-ladder-id)))
             unit
@@ -7569,7 +7547,7 @@
           (lint-findings-empty))
         0)
         [(LintMaybeFinding.Some finding)
-          (if (string.string-eq
+          (if (string.eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))
             unit
@@ -7592,7 +7570,7 @@
           (lint-findings-empty))
         0)
         [(LintMaybeFinding.Some finding)
-          (if (string.string-eq
+          (if (string.eq
             (struct-get finding rule-id)
             (lint-rule-unit-if-guard-id))
             unit
@@ -7664,7 +7642,7 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 51)
-              (string.string-eq
+              (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-single-begin-id)))
               unit
@@ -7704,7 +7682,7 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 7)
-              (string.string-eq
+              (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-nested-if-ladder-id)))
               unit
@@ -7750,9 +7728,7 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 11)
-              (string.string-eq
-                (struct-get finding rule-id)
-                (lint-rule-nested-let-id)))
+              (string.eq (struct-get finding rule-id) (lint-rule-nested-let-id)))
               unit
               (io.panic
                 "lint: nested-let finding should carry rule id and span")))]
@@ -7815,10 +7791,10 @@
             (if (and
               (= (struct-get fspan start-line) 21)
               (= (struct-get finding depth) 3)
-              (string.string-eq
+              (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-cascading-and-or-id))
-              (string.string-eq
+              (string.eq
                 (struct-get finding message)
                 "cascading and: prefer flat n-ary form (and x y z)"))
               unit
@@ -7832,11 +7808,11 @@
           (lint-findings-empty))
         0)
         [(LintMaybeFinding.Some finding)
-          (if (string.string-eq
+          (if (string.eq
             (struct-get finding message)
-            (string.string-append
+            (string.append
               "cascading and: prefer flat n-ary form ("
-              (string.string-append "core/and" " x y z)")))
+              (string.append "core/and" " x y z)")))
             unit
             (io.panic "lint: core/and cascade should preserve callee spelling"))]
         [(LintMaybeFinding.No)
@@ -7861,9 +7837,7 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 31)
-              (string.string-eq
-                (struct-get finding rule-id)
-                (lint-rule-no-effect-id)))
+              (string.eq (struct-get finding rule-id) (lint-rule-no-effect-id)))
               unit
               (io.panic "lint: no-effect finding should carry rule id and span")))]
         [(LintMaybeFinding.No)
@@ -7953,7 +7927,7 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 41)
-              (string.string-eq
+              (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-unreachable-code-id)))
               unit
@@ -8000,7 +7974,7 @@
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
               (= (struct-get fspan start-line) 43)
-              (string.string-eq
+              (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-redundant-divergence-padding-id)))
               unit
@@ -8028,12 +8002,12 @@
         unit
         (io.panic
           "lint: branch-local return should not make following code unreachable"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-nested-if-ladder-id))
         "prefer cond (value/guard ladders) or match (variant dispatch)")
         unit
         (io.panic "lint: nested-if-ladder suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-nested-if-ladder-id))
         "nested if-ladder: chain of if/else-if; prefer cond (value/guard ladders) or match (variant dispatch)")
         unit
@@ -8041,13 +8015,13 @@
       (match (lint-rule-find (lint-rule-nested-if-ladder-id))
         [(LintMaybeRule.Found rule)
           (if (and
-            (string.string-eq
+            (string.eq
               (struct-get rule rule-id)
               (lint-rule-nested-if-ladder-id))
-            (string.string-eq
+            (string.eq
               (struct-get rule message)
               (lint-rule-nested-if-ladder-message))
-            (string.string-eq
+            (string.eq
               (struct-get rule suggestion)
               (lint-rule-nested-if-ladder-suggestion)))
             unit
@@ -8055,136 +8029,136 @@
               "lint: nested-if-ladder registry entry should match metadata"))]
         [(LintMaybeRule.NotFound)
           (io.panic "lint: nested-if-ladder should be registered")])
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-nested-let-id))
         "merge the nested let bindings into one sequential let")
         unit
         (io.panic "lint: nested-let suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-single-begin-id))
         "remove the begin wrapper")
         unit
         (io.panic "lint: single-begin suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-single-begin-id))
         "single begin: begin with one expression is redundant")
         unit
         (io.panic "lint: single-begin message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-return-path-chain-id))
         "prefer early return guards with (return ...)")
         unit
         (io.panic "lint: return-path-chain suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-unit-if-guard-id))
         "prefer when/unless for unit guard branches")
         unit
         (io.panic "lint: unit-if-guard suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-no-effect-id))
         "remove the expression or use its value")
         unit
         (io.panic "lint: no-effect suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-no-effect-id))
         "no-effect expression: value is discarded")
         unit
         (io.panic "lint: no-effect message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-unreachable-code-id))
         "remove the unreachable expression or move it before the terminal expression")
         unit
         (io.panic "lint: unreachable-code suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-unreachable-code-id))
         "unreachable code: expression follows a terminal expression")
         unit
         (io.panic "lint: unreachable-code message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-redundant-divergence-padding-id))
         "remove the trailing dead expression and the stale unreachable-code lint allow")
         unit
         (io.panic
           "lint: redundant-divergence-padding suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-redundant-divergence-padding-id))
         "redundant divergence padding: trailing expressions after panic/error are dead")
         unit
         (io.panic
           "lint: redundant-divergence-padding message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-deprecated-string-concat-id))
         "import stdlib/str_cat.tl and use str-cat, or use stdlib/text_buf.tl in accumulation loops")
         unit
         (io.panic
           "lint: deprecated-string-concat suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-nested-str-cat-id))
         "flatten nested str-cat operands into the outer call")
         unit
         (io.panic "lint: nested-str-cat suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-cascading-and-or-id))
         "flatten same-operator and/or operands, e.g. (and a b c)")
         unit
         (io.panic "lint: cascading-and-or suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-unused-import-id))
         "remove the import or prefix an intentionally unused alias with _")
         unit
         (io.panic "lint: unused-import suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-unused-import-id))
         "unused import: imported module alias is never referenced")
         unit
         (io.panic "lint: unused-import message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-redundant-import-alias-id))
         "remove the explicit as clause")
         unit
         (io.panic
           "lint: redundant-import-alias suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-redundant-import-alias-id))
         "redundant import alias: dotted module import already binds that alias")
         unit
         (io.panic "lint: redundant-import-alias message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-unused-variable-id))
         "remove the binding or prefix an intentionally unused name with _")
         unit
         (io.panic "lint: unused-variable suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-unused-variable-id))
         "unused variable: parameter or local binding is never used")
         unit
         (io.panic "lint: unused-variable message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-single-element-array-cell-id))
         "replace the one-element array cell with Box T, &mut, or an explicit returned value")
         unit
         (io.panic
           "lint: single-element-array-cell suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-single-element-array-cell-id))
         "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring")
         unit
         (io.panic
           "lint: single-element-array-cell message should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-suggestion (lint-rule-unused-unsafe-id))
         "remove the unsafe wrapper")
         unit
         (io.panic "lint: unused-unsafe suggestion should be registered"))
-      (if (string.string-eq
+      (if (string.eq
         (lint-rule-message (lint-rule-unused-unsafe-id))
         "unused unsafe block: body does not require unsafe context")
         unit
         (io.panic "lint: unused-unsafe message should be registered"))
-      (if (string.string-eq (lint-rule-suggestion "unknown-rule") "")
+      (if (string.eq (lint-rule-suggestion "unknown-rule") "")
         unit
         (io.panic "lint: unknown rule should have no suggestion"))
-      (if (string.string-eq (lint-rule-message "unknown-rule") "")
+      (if (string.eq (lint-rule-message "unknown-rule") "")
         unit
         (io.panic "lint: unknown rule should have no message"))
       (match (lint-rule-find "unknown-rule")

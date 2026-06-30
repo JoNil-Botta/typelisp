@@ -11,5 +11,5 @@
     (take-mut-and-value
       (&mut items)
       (begin
-        (array.array-push! items 1)
+        (array-push! items 1)
         0))))

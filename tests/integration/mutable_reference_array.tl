@@ -1,13 +1,13 @@
 (import stdlib.array)
 
 (define (put-first [items : (&mut items (Array i64))] [value : i64]) : unit
-  (array.array-set! items 0 value))
+  (array-set! items 0 value))
 
 (define (push-tail [items : (&mut items (Array i64))] [value : i64]) : unit
-  (array.array-push! items value))
+  (array-push! items value))
 
 (define (put-fixed [items : (&mut items (Array i64 2))] [value : i64]) : unit
-  (array.array-set! items 1 value))
+  (array-set! items 1 value))
 
 (defstruct ArrayBag
   (items (Array i64)))
@@ -22,19 +22,19 @@
   (ArrayBagHandle (&mut (struct-get bag items)) index))
 
 (define (array-bag-handle-write [handle : (ArrayBagHandle bag)] [value : i64]) : unit
-  (array.array-set! (struct-get handle items) (struct-get handle index) value))
+  (array-set! (struct-get handle items) (struct-get handle index) value))
 
 (define (array-bag-handle-read [handle : (ArrayBagHandle bag)]) : i64
   (+
-    (array.array-length (struct-get handle items))
-    (array.array-ref (struct-get handle items) (struct-get handle index))))
+    (array-length (struct-get handle items))
+    (array-ref (struct-get handle items) (struct-get handle index))))
 
 (define (array-bag-handle-score) : i64
   (let
     [items : (Array i64) (array.make-array i64 2)]
     (begin
-      (array.array-set! items 0 7)
-      (array.array-set! items 1 9)
+      (array-set! items 0 7)
+      (array-set! items 1 9)
       (let
         [bag : ArrayBag (ArrayBag items)]
         [handle : (ArrayBagHandle bag) (array-bag-handle (&mut bag) 1)]
@@ -47,15 +47,15 @@
     [items : (Array i64) (array.make-array i64 1)]
     [fixed : (Array i64 2) (array 0 0)]
     (begin
-      (array.array-set! items 0 1)
+      (array-set! items 0 1)
       (put-first (&mut items) 40)
       (push-tail (&mut items) 2)
       (put-fixed (&mut fixed) 41)
       (if (and
-        (= (array.array-length items) 2)
+        (= (array-length items) 2)
         (= (array-bag-handle-score) 42)
-        (= (array.array-ref items 0) 40)
-        (= (array.array-ref items 1) 2)
-        (= (array.array-ref fixed 1) 41))
+        (= (array-ref items 0) 40)
+        (= (array-ref items 1) 2)
+        (= (array-ref fixed 1) 41))
         42
         1))))

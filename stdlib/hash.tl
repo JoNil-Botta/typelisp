@@ -117,7 +117,7 @@
 
 ;: Return true when two borrowed string keys are equal.
 (define (key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
-  (string_mod.string-eq a b))
+  (string_mod.eq a b))
 
 (test
   hash-api
@@ -136,9 +136,9 @@
     [ba : String "ba"]
     [a-newline-b : String "a\nb"]
     [bc : String "bc"]
-    [joined : String (string_mod.string-append a bc)]
+    [joined : String (string_mod.append a bc)]
     [same : String "same"]
-    [same-copy : String (string_mod.string-append "sa" "me")]
+    [same-copy : String (string_mod.append "sa" "me")]
     [different : String "different"]
     [edge : String "edge\ncase"]
     [range-min : i64 (stdlib.hash.i64 -9223372036854775808)]

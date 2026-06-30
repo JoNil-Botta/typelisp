@@ -6,7 +6,7 @@
   (CompilerEmbeddedStdlibSomeSource String))
 
 (define (embedded-eq? [left : String] [right : String]) : bool
-  (string.string-eq left right))
+  (string.eq left right))
 
 (include-str compiler-embedded-stdlib-arena "stdlib/arena.tl")
 (include-str compiler-embedded-stdlib-atomic "stdlib/atomic.tl")

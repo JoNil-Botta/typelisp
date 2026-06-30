@@ -1,9 +1,9 @@
-(import "stdlib/arena.tl")
+(import stdlib.arena)
 
 (define (main) : i64
   (let
-    [owner : Arena (arena-current)]
-    [phase : ArenaPhase (arena-phase owner)]
+    [owner : arena.Arena (arena.current)]
+    [phase : arena.ArenaPhase (arena.phase owner)]
     (begin
-      (arena-rewind-safe! phase)
+      (arena.rewind-safe! phase)
       42)))

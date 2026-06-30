@@ -8,9 +8,9 @@
     [i : i64 0]
     (while (< i n)
       (begin
-        (array.array-set! a i (+ i 1))
-        (array.array-set! b i (+ (* i 2) 3))
-        (array.array-set! c i (+ (* i 3) 7))
+        (array-set! a i (+ i 1))
+        (array-set! b i (+ (* i 2) 3))
+        (array-set! c i (+ (* i 3) 7))
         (set! i (+ i 1))))))
 
 (define (fill
@@ -22,14 +22,10 @@
   [r : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set!
+    (array-set!
       out
       i
-      (+
-        (+
-          (* (array.array-ref a i) (array.array-ref b i))
-          (array.array-ref c i))
-        r))))
+      (+ (+ (* (array-ref a i) (array-ref b i)) (array-ref c i)) r))))
 
 (define (checksum [out : (Array i64)] [n : i64]) : i64
   (let
@@ -38,7 +34,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref out i)))
+          (set! acc (+ acc (array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 

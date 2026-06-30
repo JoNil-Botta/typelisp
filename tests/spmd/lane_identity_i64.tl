@@ -7,7 +7,7 @@
 (define (fill [out : (Array i64)] [n : i64]) : unit
   (foreach
     ([i : i64 0 n])
-    (array.array-set! out i (+ (* (program-count) 10) (program-index)))))
+    (array-set! out i (+ (* (program-count) 10) (program-index)))))
 
 (define (checksum [out : (Array i64)] [n : i64]) : i64
   (let
@@ -16,7 +16,7 @@
     (begin
       (while (< i n)
         (begin
-          (set! acc (+ acc (array.array-ref out i)))
+          (set! acc (+ acc (array-ref out i)))
           (set! i (+ i 1))))
       acc)))
 

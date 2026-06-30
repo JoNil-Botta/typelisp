@@ -22,11 +22,9 @@
   (Err String))
 
 (define (fmt-write-error-message [path : String] [error : io.IoError]) : String
-  (string.string-append
+  (string.append
     "fmt: failed to write "
-    (string.string-append
-      path
-      (string.string-append ": " (io.error-message error)))))
+    (string.append path (string.append ": " (io.error-message error)))))
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
   (match (io.try-write-file (& path) (& formatted))
@@ -39,32 +37,32 @@
     [(ResultFmtWrite.Ok) 0]
     [(ResultFmtWrite.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]))
 
 (define (fmt-source-error-message [path : String] [err : FormatSourceError]) : String
   (let
     [span : FormatSourceSpan (format-source-error-span err)]
-    (string.string-append
+    (string.append
       path
-      (string.string-append
+      (string.append
         ":"
-        (string.string-append
+        (string.append
           (string.int->string (format-source-span-start-line span))
-          (string.string-append
+          (string.append
             ":"
-            (string.string-append
+            (string.append
               (string.int->string (format-source-span-start-col span))
-              (string.string-append ": " (format-source-error-message err)))))))))
+              (string.append ": " (format-source-error-message err)))))))))
 
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
   (match (fmt-try-write-formatted-file "" "(define x 1)\n")
     [(ResultFmtWrite.Ok) (io.panic "fmt write unexpectedly succeeded")]
     [(ResultFmtWrite.Err message)
-      (if (string.string-eq message "fmt: failed to write : io: invalid path: ")
+      (if (string.eq message "fmt: failed to write : io: invalid path: ")
         unit
-        (io.panic (string.string-copy message)))]))
+        (io.panic (string.copy message)))]))
 
 (test
   fmt-parse-diagnostic-includes-path-line-and-column
@@ -73,7 +71,7 @@
     [(ResultFormatString.Err err)
       (let
         [message : String (fmt-source-error-message "bad.tl" err)]
-        (if (string.string-eq
+        (if (string.eq
           message
           "bad.tl:2:3: format cst: unexpected closing delimiter")
           unit
@@ -83,7 +81,7 @@
   (match (format-rules-render-source-width-result source 80)
     [(ResultFormatString.Ok _) false]
     [(ResultFormatString.Err err)
-      (string.string-eq
+      (string.eq
         (format-source-error-message err)
         "format lexer: malformed integer literal")]))
 
@@ -124,9 +122,9 @@
     (let
       [current : String (io.arg idx)]
       (cond
-        [(string.string-eq current "--check")
+        [(string.eq current "--check")
           (fmt-parse-args (+ idx 1) count true paths manifest-path has-manifest)]
-        [(string.string-eq current "--manifest-path")
+        [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultFmtConfig.Err "fmt: --manifest-path requires a value")
             (if has-manifest
@@ -138,7 +136,7 @@
                 paths
                 (io.arg (+ idx 1))
                 true)))]
-        [(string.string-eq current "--stdlib-root")
+        [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
             (ResultFmtConfig.Err "fmt: --stdlib-root requires a value")
             (fmt-parse-args
@@ -149,8 +147,7 @@
               manifest-path
               has-manifest))]
         [(fmt-flag? current)
-          (ResultFmtConfig.Err
-            (string.string-append "fmt: unknown flag " current))]
+          (ResultFmtConfig.Err (string.append "fmt: unknown flag " current))]
         [else
           (fmt-parse-args
             (+ idx 1)
@@ -169,21 +166,19 @@
     (match (format-rules-render-source-width-result source 80)
       [(ResultFormatString.Ok formatted)
         (if check
-          (if (string.string-eq source formatted)
+          (if (string.eq source formatted)
             0
             (begin
               (io.print-error
-                (string.string-append
-                  "fmt: would reformat "
-                  (string.string-append path "\n")))
+                (string.append "fmt: would reformat " (string.append path "\n")))
               1))
-          (if (string.string-eq source formatted)
+          (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
       [(ResultFormatString.Err err)
         (begin
           (io.print-error
-            (string.string-append (fmt-source-error-message path err) "\n"))
+            (string.append (fmt-source-error-message path err) "\n"))
           1)])))
 
 (define (fmt-files-from
@@ -238,7 +233,7 @@
   (match (package-source-discover-for "fmt" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (fmt-package-files check (struct-get source-set sources) 0)]))
@@ -254,5 +249,5 @@
           (fmt-package check manifest-path has-manifest)])]
     [(ResultFmtConfig.Err message)
       (begin
-        (io.print-error (string.string-append message "\n"))
+        (io.print-error (string.append message "\n"))
         1)]))

@@ -28,13 +28,13 @@
   compile-profile
   (define (compiler-check-profile-finish [phase : String]) : unit
     (io.print-error
-      (string.string-append
+      (string.append
         "compile-profile|check."
-        (string.string-append
+        (string.append
           phase
-          (string.string-append
+          (string.append
             "|"
-            (string.string-append
+            (string.append
               (string.int->string
                 (- (profile.now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
@@ -59,7 +59,7 @@
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]
   [path : String]) : CompilerDiagnostic
-  (if (string.string-eq (compiler-diagnostic-path diag) "")
+  (if (string.eq (compiler-diagnostic-path diag) "")
     (compiler-diagnostic-with-path diag path)
     diag))
 
@@ -411,7 +411,7 @@
   (match (compiler-check-source path source)
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")
@@ -459,7 +459,7 @@
   (match (compiler-check-direct-source path source)
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (string.string-eq (compiler-diagnostic-message (box-get diag)) want)]))
+      (string.eq (compiler-diagnostic-message (box-get diag)) want)]))
 
 (define (compiler-check-qualified-export-cache-exported-source) : String
   "(module a)
@@ -484,11 +484,11 @@
     (begin
       (when (and (> 5 3) (< 2 4) (= 1 1)) (set! value (+ value 10)))
       (unless (or false false false) (set! value (+ value 20)))
-      (arr.array-set! items 0 value)
-      (arr.array-push! items 2)
+      (array-set! items 0 value)
+      (arr.push! items 2)
       (+
-        (arr.array-length items)
-        (+ (arr.array-ref items 0) (arr.array-ref items 1))))))")
+        (arr.length items)
+        (+ (arr.ref items 0) (arr.ref items 1))))))")
 
 (define (compiler-check-runtime-stdlib-boundary-io-source) : String
   "(import stdlib.io)
@@ -618,11 +618,11 @@
     "(define (main) : i64 true)")
     [(ResultCompilerCheck.Ok _) false]
     [(ResultCompilerCheck.Err diag)
-      (if (string.string-eq
+      (if (string.eq
         (compiler-diagnostic-path (box-get diag))
         "docs/examples/bad_type.tl")
         (if (= (compiler-diagnostic-line (box-get diag)) 1)
-          (string.string-eq
+          (string.eq
             (compiler-diagnostic-message (box-get diag))
             "typecheck: return type mismatch")
           false)

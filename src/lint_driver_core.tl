@@ -7,7 +7,6 @@
 ;; and staged migration rules are opt-in until their in-tree migrations land.
 (import stdlib.io)
 (import stdlib.vector)
-(import (vector String) as svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")
@@ -1663,15 +1662,15 @@
     [(ResultAstProgramDiagnostic.Err _) scan]))
 
 (define (selfhost-lint-package-dead-scan-files
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [index : i64]
   [visible-root : bool]
   [reportable : bool]
   [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (if (>= index (svec.len (& sources)))
+  (if (>= index (package-source-list-len sources))
     scan
     (let
-      [path : String (svec.get (& sources) index "")]
+      [path : String (package-source-list-get sources index "")]
       (selfhost-lint-package-dead-scan-files
         sources
         (+ index 1)
@@ -1774,7 +1773,7 @@
     [(CompilerPkgKindLib) scan]))
 
 (define (selfhost-lint-package-dead-code
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [kind : CompilerPkgKind]) : SelfhostLintDeadDecls
   (let
     [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
@@ -2018,7 +2017,7 @@
     status))
 
 (define (selfhost-lint-package-files-from
-  [input-paths : svec.Vec]
+  [input-paths : PackageSourceList]
   [index : i64]
   [stdlib-roots : vector.StringVec]
   [enforcing : bool]
@@ -2027,10 +2026,10 @@
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (svec.len (& input-paths)))
+  (if (>= index (package-source-list-len input-paths))
     status
     (let
-      [input-path : String (svec.get (& input-paths) index "")]
+      [input-path : String (package-source-list-get input-paths index "")]
       [file-status : i64
         (begin
           (if print-headers
@@ -2060,7 +2059,7 @@
           status)))))
 
 (define (selfhost-lint-package-files
-  [input-paths : svec.Vec]
+  [input-paths : PackageSourceList]
   [stdlib-roots : vector.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
@@ -2093,7 +2092,7 @@
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (let
-        [sources : svec.Vec (struct-get source-set sources)]
+        [sources : PackageSourceList (struct-get source-set sources)]
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [dead-decls : SelfhostLintDeadDecls
           (selfhost-lint-package-dead-code sources (struct-get manifest kind))]
@@ -2104,7 +2103,7 @@
           deprecated-string-concat
           redundant-function-name
           dead-decls
-          (> (svec.len (& sources)) 1)
+          (> (package-source-list-len sources) 1)
           0))]))
 
 ;; Run the `lint` command over arguments starting at `start`.

@@ -11,7 +11,6 @@
 (import stdlib.process)
 (import stdlib.hashmap)
 (import stdlib.vector)
-(import (vector String) as svec)
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
 (import "compiler_load.tl")
@@ -2013,7 +2012,7 @@
         value)]))
 
 (define (tltest-inline-typecheck-package-sources-from
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [index : i64]
   [roots : vector.StringVec]
   [manifest-dir : String]
@@ -2022,14 +2021,14 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (let
-    [count : i64 (svec.len (& sources))]
+    [count : i64 (package-source-list-len sources)]
     [cursor : i64 index]
     [status : i64 0]
     [cfg-names : TltestCfgNameList (tltest-cfg-name-list-from-env cfgs)]
     (begin
       (while (and (= status 0) (< cursor count))
         (let
-          [source : String (svec.get (& sources) cursor "")]
+          [source : String (package-source-list-get sources cursor "")]
           [has-inline-tests : bool (tltest-source-has-inline-tests? source)]
           (begin
             (if has-inline-tests
@@ -2069,7 +2068,7 @@
         status))))
 
 (define (tltest-inline-typecheck-package-sources-with-cfg
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [roots : vector.StringVec]
   [manifest-dir : String]
   [package-owner : String]
@@ -3860,7 +3859,7 @@
         [(ResultTestPackageTotals.Ok _ tests) tests]))))
 
 (define (tltest-package-run-sources-from
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [index : i64]
   [tests-prefix : String]
   [target : String]
@@ -3873,10 +3872,10 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (if (>= index (svec.len (& sources)))
+  (if (>= index (package-source-list-len sources))
     (ResultTestPackageTotals.Ok file-count test-count)
     (let
-      [source : String (svec.get (& sources) index "")]
+      [source : String (package-source-list-get sources index "")]
       (if (tltest-package-test-source? source tests-prefix)
         (tltest-package-run-sources-from
           sources
@@ -3924,7 +3923,7 @@
               (+ test-count source-tests))))))))
 
 (define (tltest-package-run-sources
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [tests-prefix : String]
   [target : String]
   [roots : vector.StringVec]
@@ -3952,7 +3951,7 @@
     test-count))
 
 (define (tltest-package-run-integration-sources-from
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [index : i64]
   [tests-prefix : String]
   [target : String]
@@ -3965,10 +3964,10 @@
   [deps : CompilerPkgDeps]
   [file-count : i64]
   [test-count : i64]) : ResultTestPackageTotals
-  (if (>= index (svec.len (& sources)))
+  (if (>= index (package-source-list-len sources))
     (ResultTestPackageTotals.Ok file-count test-count)
     (let
-      [source : String (svec.get (& sources) index "")]
+      [source : String (package-source-list-get sources index "")]
       (if (tltest-package-integration-source? source tests-prefix)
         (let
           [source-tests : i64
@@ -4014,7 +4013,7 @@
           test-count)))))
 
 (define (tltest-package-run-integration-sources
-  [sources : svec.Vec]
+  [sources : PackageSourceList]
   [tests-prefix : String]
   [target : String]
   [roots : vector.StringVec]

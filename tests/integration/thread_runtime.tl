@@ -1,5 +1,5 @@
 (import stdlib.array)
-(import "stdlib/thread.tl")
+(import stdlib.thread)
 
 (define (integration-array-i64-addr [items : (Array i64)]) : i64
   (unsafe
@@ -59,10 +59,10 @@
   [out-c : (Array i64)]
   [out-d : (Array i64)]) : i64
   (let
-    [a-code : i64 (integration-join-code (thread-join a))]
-    [b-code : i64 (integration-join-code (thread-join b))]
-    [c-code : i64 (integration-join-code (thread-join c))]
-    [d-code : i64 (integration-join-code (thread-join d))]
+    [a-code : i64 (integration-join-code (thread.join a))]
+    [b-code : i64 (integration-join-code (thread.join b))]
+    [c-code : i64 (integration-join-code (thread.join c))]
+    [d-code : i64 (integration-join-code (thread.join d))]
     [a-expected : i64 (integration-worker-expected 11)]
     [b-expected : i64 (integration-worker-expected 31)]
     [c-expected : i64 (integration-worker-expected 41)]
@@ -87,20 +87,20 @@
   [ctx-b : (Array i64)]
   [ctx-c : (Array i64)]
   [ctx-d : (Array i64)]) : i64
-  (match (thread-spawn integration-worker (integration-array-i64-addr ctx-a))
+  (match (thread.spawn integration-worker (integration-array-i64-addr ctx-a))
     [(ThreadSpawnErr _) 11]
     [(ThreadSpawnOk a)
-      (match (thread-spawn
+      (match (thread.spawn
         integration-worker
         (integration-array-i64-addr ctx-b))
         [(ThreadSpawnErr _) 12]
         [(ThreadSpawnOk b)
-          (match (thread-spawn
+          (match (thread.spawn
             integration-worker
             (integration-array-i64-addr ctx-c))
             [(ThreadSpawnErr _) 13]
             [(ThreadSpawnOk c)
-              (match (thread-spawn
+              (match (thread.spawn
                 integration-worker
                 (integration-array-i64-addr ctx-d))
                 [(ThreadSpawnErr _) 14]
@@ -126,7 +126,7 @@
       (array-set! ctx-c 1 41)
       (array-set! ctx-d 0 (integration-array-i64-addr out-d))
       (array-set! ctx-d 1 59)
-      (if (< (thread-default-worker-count) 1)
+      (if (< (thread.default-worker-count) 1)
         1
         (integration-run-threads
           out-a

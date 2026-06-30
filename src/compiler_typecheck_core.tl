@@ -16617,23 +16617,23 @@
       (>= (tc-thread-name-last-dot name) 0)
       (string.eq (tc-thread-source-name-base name) "Handle"))))
 
-(define (tc-thread-spawn-string-name? [name : String]) : bool
-  (string.eq (tc-thread-name-base name) "thread-spawn-string"))
+(define (tc-spawn-string-name? [name : String]) : bool
+  (string.eq (tc-thread-source-name-base name) "spawn-string"))
 
-(define (tc-thread-spawn-array-i64-name? [name : String]) : bool
-  (string.eq (tc-thread-name-base name) "thread-spawn-array-i64"))
+(define (tc-spawn-array-i64-name? [name : String]) : bool
+  (string.eq (tc-thread-source-name-base name) "spawn-array-i64"))
 
-(define (tc-thread-spawn-box-i64-name? [name : String]) : bool
-  (string.eq (tc-thread-name-base name) "thread-spawn-box-i64"))
+(define (tc-spawn-box-i64-name? [name : String]) : bool
+  (string.eq (tc-thread-source-name-base name) "spawn-box-i64"))
 
 (define (tc-thread-legacy-safe-spawn-base? [base : String]) : bool
   (or
-    (string.eq base "thread-spawn-string")
-    (string.eq base "thread-spawn-array-i64")
-    (string.eq base "thread-spawn-box-i64")))
+    (string.eq base "spawn-string")
+    (string.eq base "spawn-array-i64")
+    (string.eq base "spawn-box-i64")))
 
 (define (tc-thread-legacy-safe-spawn-name? [name : String]) : bool
-  (tc-thread-legacy-safe-spawn-base? (tc-thread-name-base name)))
+  (tc-thread-legacy-safe-spawn-base? (tc-thread-source-name-base name)))
 
 (define (tc-thread-safe-handle-type-name? [name : String]) : bool
   (let
@@ -16667,17 +16667,9 @@
   (tc-string-has-suffix? source-name ".spawn"))
 
 (define (tc-thread-potential-safe-spawn-source-name? [source-name : String]) : bool
-  (cond
-    [(or
-        (string.eq source-name "spawn")
-        (tc-thread-legacy-safe-spawn-base? source-name))
-      true]
-    [(tc-name-qualified? source-name)
-      (let
-        [base : String (tc-qualified-name-base source-name)]
-        (or (string.eq base "spawn") (tc-thread-legacy-safe-spawn-base? base)))]
-    [(tc-thread-potential-safe-spawn-dotted-source-name? source-name) true]
-    [else false]))
+  (let
+    [base : String (tc-thread-source-name-base source-name)]
+    (or (string.eq base "spawn") (tc-thread-legacy-safe-spawn-base? base))))
 
 (define (tc-thread-safe-spawn-call-name
   [ctx : TcContext]
@@ -16696,7 +16688,7 @@
 
 (define (tc-thread-channel-send-name? [name : String]) : bool
   (let
-    [base : String (tc-thread-name-base name)]
+    [base : String (tc-thread-source-name-base name)]
     (and
       (tc-string-prefix? base "channel-")
       (tc-string-has-suffix? base "-send"))))
@@ -16809,11 +16801,11 @@
   [spawn-name : String]
   [result-name : String]) : bool
   (cond
-    [(tc-thread-spawn-string-name? spawn-name)
+    [(tc-spawn-string-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadStringSpawnResult")]
-    [(tc-thread-spawn-array-i64-name? spawn-name)
+    [(tc-spawn-array-i64-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadArrayI64SpawnResult")]
-    [(tc-thread-spawn-box-i64-name? spawn-name)
+    [(tc-spawn-box-i64-name? spawn-name)
       (tc-thread-name-base-eq? result-name "ThreadBoxI64SpawnResult")]
     [else false]))
 
@@ -16888,14 +16880,14 @@
         [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
         (cond
           [(or
-              (tc-thread-spawn-string-name? source-name)
-              (tc-thread-spawn-string-name? lookup-name))
+              (tc-spawn-string-name? source-name)
+              (tc-spawn-string-name? lookup-name))
             (match resolved
               [(AstType.String) true]
               [_ false])]
           [(or
-              (tc-thread-spawn-array-i64-name? source-name)
-              (tc-thread-spawn-array-i64-name? lookup-name))
+              (tc-spawn-array-i64-name? source-name)
+              (tc-spawn-array-i64-name? lookup-name))
             (match resolved
               [(AstType.DynArray elem)
                 (match (tc-type-strip-region
@@ -16904,8 +16896,8 @@
                   [_ false])]
               [_ false])]
           [(or
-              (tc-thread-spawn-box-i64-name? source-name)
-              (tc-thread-spawn-box-i64-name? lookup-name))
+              (tc-spawn-box-i64-name? source-name)
+              (tc-spawn-box-i64-name? lookup-name))
             (match resolved
               [(AstType.Box elem)
                 (match (tc-type-strip-region

@@ -1,7 +1,7 @@
 (import stdlib.array)
 (import stdlib.arena)
-(import "stdlib/sync.tl")
-(import "stdlib/thread.tl")
+(import stdlib.sync)
+(import stdlib.thread)
 (import "stdlib/string.tl")
 
 (define sync-string-integration-count : i64
@@ -22,8 +22,8 @@
         (ptr-offset (sync-string-integration-addr->mut-i64 addr) slot)
         : (Ptr i64)))))
 
-(define (sync-string-integration-channel-from-ctx [ctx : i64] [offset : i64]) : ChannelString
-  (ChannelString
+(define (sync-string-integration-channel-from-ctx [ctx : i64] [offset : i64]) : sync.ChannelString
+  (sync.ChannelString
     (sync-string-integration-read-i64 ctx offset)
     (sync-string-integration-read-i64 ctx (+ offset 1))
     (sync-string-integration-read-i64 ctx (+ offset 2))
@@ -32,17 +32,18 @@
     (sync-string-integration-read-i64 ctx (+ offset 5))
     (sync-string-integration-read-i64 ctx (+ offset 6))))
 
-(define (sync-string-integration-send-ok? [result : ChannelStringSendResult]) : bool
+(define (sync-string-integration-send-ok?
+  [result : sync.ChannelStringSendResult]) : bool
   (match result
-    [(ChannelStringSendOk) true]
-    [(ChannelStringSendErr _) false]))
+    [(sync.ChannelStringSendOk) true]
+    [(sync.ChannelStringSendErr _) false]))
 
 (define (sync-string-integration-recv-value-or
-  [result : ChannelStringRecvResult]
+  [result : sync.ChannelStringRecvResult]
   [fallback : String]) : String
   (match result
-    [(ChannelStringRecvOk value) value]
-    [(ChannelStringRecvErr _) fallback]))
+    [(sync.ChannelStringRecvOk value) value]
+    [(sync.ChannelStringRecvErr _) fallback]))
 
 (define (sync-string-integration-message [index : i64]) : String
   (append "message:" (int->string index)))
@@ -62,9 +63,10 @@
 
 (define (sync-string-integration-consumer [ctx : i64]) : i64
   (let
-    [channel : ChannelString (sync-string-integration-channel-from-ctx ctx 0)]
+    [channel : sync.ChannelString
+      (sync-string-integration-channel-from-ctx ctx 0)]
     [count : i64
-      (sync-string-integration-read-i64 ctx channel-string-raw-field-count)]
+      (sync-string-integration-read-i64 ctx sync.channel-string-raw-field-count)]
     [i : i64 0]
     [sum : i64 0]
     [ok : bool true]
@@ -73,7 +75,7 @@
         (let
           [value : String
             (sync-string-integration-recv-value-or
-              (channel-string-recv channel)
+              (sync.channel-string-recv channel)
               "missing")]
           [expected : String (sync-string-integration-message i)]
           (if (eq value expected)
@@ -92,17 +94,17 @@
 
 (define (sync-string-integration-pack-context!
   [ctx : (Array i64)]
-  [channel : ChannelString]
+  [channel : sync.ChannelString]
   [count : i64]) : unit
   (begin
-    (channel-string-store-raw! channel ctx 0)
-    (array-set! ctx channel-string-raw-field-count count)))
+    (sync.channel-string-store-raw! channel ctx 0)
+    (array-set! ctx sync.channel-string-raw-field-count count)))
 
-(define (sync-string-integration-run [channel : ChannelString]) : i64
+(define (sync-string-integration-run [channel : sync.ChannelString]) : i64
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [ctx : (Array i64)
-      (array.make-array i64 (+ channel-string-raw-field-count 1))]
+      (array.make-array i64 (+ sync.channel-string-raw-field-count 1))]
     [expected : i64
       (sync-string-integration-expected-sum sync-string-integration-count)]
     [sent : i64 0]
@@ -113,7 +115,7 @@
         ctx
         channel
         sync-string-integration-count)
-      (match (thread-spawn
+      (match (thread.spawn
         sync-string-integration-consumer
         (sync-string-integration-array-i64-addr ctx))
         [(ThreadSpawnErr _) 2]
@@ -125,7 +127,7 @@
                   (string-length (sync-string-integration-message i))]
                 [message-sent : bool
                   (sync-string-integration-send-ok?
-                    (channel-string-send
+                    (sync.channel-string-send
                       channel
                       (in-arena owner (sync-string-integration-message i))))]
                 (if message-sent
@@ -135,8 +137,8 @@
                   (set! ok false))))
             (let
               [worker-code : i64
-                (sync-string-integration-join-code (thread-join worker))]
-              [closed : bool (channel-string-close channel)]
+                (sync-string-integration-join-code (thread.join worker))]
+              [closed : bool (sync.channel-string-close channel)]
               (cond
                 [(not ok) 3]
                 [(not closed) 4]
@@ -145,6 +147,6 @@
                 [else 42])))]))))
 
 (define (main) : i64
-  (match (channel-string-create 4)
-    [(ChannelStringCreateErr _) 1]
-    [(ChannelStringCreateOk channel) (sync-string-integration-run channel)]))
+  (match (sync.channel-string-create 4)
+    [(sync.ChannelStringCreateErr _) 1]
+    [(sync.ChannelStringCreateOk channel) (sync-string-integration-run channel)]))

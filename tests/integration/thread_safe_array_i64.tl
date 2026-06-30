@@ -1,6 +1,6 @@
 (import stdlib.array)
 (import stdlib.arena)
-(import "stdlib/thread.tl")
+(import stdlib.thread)
 
 ;; Compatibility dynamic-array thread wrapper coverage kept until public
 ;; unsized `(Array T)` removal in #3581. User-facing examples should prefer
@@ -28,10 +28,10 @@
       sum)))
 
 (define (thread-safe-array-i64-join-code
-  [thread : ThreadArrayI64]
+  [worker : ThreadArrayI64]
   [expected : i64]
   [failure : i64]) : i64
-  (match (thread-join-array-i64 thread)
+  (match (thread.join-array-i64 worker)
     [(ThreadArrayI64JoinOk items)
       (if (and
         (= (array-length items) 5)
@@ -43,7 +43,7 @@
 (define (thread-safe-array-i64-worker-default-run) : i64
   (let
     [base : i64 8]
-    (match (thread-spawn-array-i64
+    (match (thread.spawn-array-i64
       (lambda () : (Array i64)
         (thread-safe-array-i64-build base)))
       [(ThreadArrayI64SpawnErr _) 1]
@@ -54,7 +54,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [base : i64 18]
-    (match (thread-spawn-array-i64
+    (match (thread.spawn-array-i64
       (lambda () : (Array i64)
         (in-arena owner (thread-safe-array-i64-build base))))
       [(ThreadArrayI64SpawnErr _) 3]

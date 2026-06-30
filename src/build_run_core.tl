@@ -1256,12 +1256,11 @@
 (define (source-tool-windows-link-libs) : process.ProcessStringList
   (process.args-cons "kernel32.lib" (process.args-empty)))
 
-;; #2599: 64MB, matching scripts/lib-native-link.sh's
-;; NL_WINDOWS_STACK_RESERVE. The large compiler declaration walks that required
-;; the temporary 1GB reserve now run iteratively, and current selfhost Windows
-;; smoke workloads pass with a 48MB reserve.
+;; Keep this in sync with scripts/lib-native-link.sh's NL_WINDOWS_STACK_RESERVE.
+;; The selfhost backend still needs more than 64MB on Windows for compiler-sized
+;; sources such as src/doc_test.tl.
 (define (source-tool-windows-stack-reserve-arg) : String
-  "/STACK:67108864")
+  "/STACK:134217728")
 
 (define (source-tool-windows-link-search-args
   [dirs : process.ProcessStringList]) : process.ProcessStringList

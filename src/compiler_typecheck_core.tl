@@ -6187,6 +6187,126 @@
 (define (tc-bind-atomic-arena-owner [env : TcTypeEnv] [name : String]) : TcTypeEnv
   (tc-bind env (tc-atomic-arena-owner-marker-name) (AstTyVar (intern name))))
 
+(define (tc-arena-phase-region-separator) : String
+  "#phase:")
+
+(define (tc-arena-phase-region-prefix [owner : String]) : String
+  (string.string-append owner (tc-arena-phase-region-separator)))
+
+(define (tc-arena-phase-region [owner : String] [token : String]) : String
+  (string.string-append (tc-arena-phase-region-prefix owner) token))
+
+(define (tc-arena-region-owned-by? [owner : String] [region : String]) : bool
+  (or
+    (string.string-eq owner region)
+    (tc-string-prefix? region (tc-arena-phase-region-prefix owner))))
+
+(define (tc-arena-phase-token-region-marker-name [token : String]) : String
+  (str_cat.str-cat " __tl_arena_phase_token_region:" token))
+
+(define (tc-arena-phase-token-owner-marker-name [token : String]) : String
+  (str_cat.str-cat " __tl_arena_phase_token_owner:" token))
+
+(define (tc-arena-phase-current-region-marker-name [owner : String]) : String
+  (str_cat.str-cat " __tl_arena_phase_current_region:" owner))
+
+(define (tc-bind-arena-phase-token
+  [env : TcTypeEnv]
+  [token : String]
+  [owner : String]) : TcTypeEnv
+  (let
+    [region : String (tc-arena-phase-region owner token)]
+    (tc-bind
+      (tc-bind
+        (tc-bind
+          env
+          (tc-arena-phase-current-region-marker-name owner)
+          (AstTyVar (intern region)))
+        (tc-arena-phase-token-owner-marker-name token)
+        (AstTyVar (intern owner)))
+      (tc-arena-phase-token-region-marker-name token)
+      (AstTyVar (intern region)))))
+
+(define (tc-arena-phase-token-region-head [env : TcTypeEnv] [token : String]) : TcMaybeString
+  (match env
+    [(TcTypeEnv.Bind key ty _)
+      (if (= key (tc-name-id (tc-arena-phase-token-region-marker-name token)))
+        (match ty
+          [(AstTyVar region) (TcMaybeString.Some (intern-str region))]
+          [_ (TcMaybeString.No)])
+        (TcMaybeString.No))]
+    [_ (TcMaybeString.No)]))
+
+(define (tc-arena-phase-token-owner-head [env : TcTypeEnv] [token : String]) : TcMaybeString
+  (match env
+    [(TcTypeEnv.Bind key ty rest)
+      (if (= key (tc-name-id (tc-arena-phase-token-owner-marker-name token)))
+        (match ty
+          [(AstTyVar owner) (TcMaybeString.Some (intern-str owner))]
+          [_ (TcMaybeString.No)])
+        (if (= key (tc-name-id (tc-arena-phase-token-region-marker-name token)))
+          (tc-arena-phase-token-owner-head (box-get rest) token)
+          (TcMaybeString.No)))]
+    [_ (TcMaybeString.No)]))
+
+(define (tc-arena-phase-token-region-active-scan
+  [env : TcTypeEnv]
+  [token : String]) : TcMaybeString
+  (match env
+    [(TcTypeEnv.Nil) (TcMaybeString.No)]
+    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-arena-phase-token-region-active-scan (box-get rest) token)
+        (TcMaybeString.No))]
+    [(TcTypeEnv.Bind key _ rest)
+      (if (= key (tc-name-id token))
+        (tc-arena-phase-token-region-head (box-get rest) token)
+        (tc-arena-phase-token-region-active-scan (box-get rest) token))]))
+
+(define (tc-arena-phase-token-region-active [env : TcTypeEnv] [token : String]) : TcMaybeString
+  (begin
+    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (match env
+      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+        (tc-arena-phase-token-region-active-scan (box-get rest) token)]
+      [_ (tc-arena-phase-token-region-active-scan env token)])))
+
+(define (tc-arena-phase-token-owner-active-scan
+  [env : TcTypeEnv]
+  [token : String]) : TcMaybeString
+  (match env
+    [(TcTypeEnv.Nil) (TcMaybeString.No)]
+    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+      (if scan-through
+        (tc-arena-phase-token-owner-active-scan (box-get rest) token)
+        (TcMaybeString.No))]
+    [(TcTypeEnv.Bind key _ rest)
+      (if (= key (tc-name-id token))
+        (tc-arena-phase-token-owner-head (box-get rest) token)
+        (tc-arena-phase-token-owner-active-scan (box-get rest) token))]))
+
+(define (tc-arena-phase-token-owner-active [env : TcTypeEnv] [token : String]) : TcMaybeString
+  (begin
+    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (match env
+      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+        (tc-arena-phase-token-owner-active-scan (box-get rest) token)]
+      [_ (tc-arena-phase-token-owner-active-scan env token)])))
+
+(define (tc-current-arena-owner-region [env : TcTypeEnv] [owner : String]) : String
+  (begin
+    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (match (tc-env-marker-type
+      env
+      (tc-name-id (tc-arena-phase-current-region-marker-name owner)))
+      [(AstSomeType (AstTyVar region)) (intern-str region)]
+      [_ owner])))
+
+(define (tc-active-region-owned-by-arena? [env : TcTypeEnv] [owner : String]) : bool
+  (match (tc-active-region env)
+    [(TcMaybeString.Some region) (tc-arena-region-owned-by? owner region)]
+    [(TcMaybeString.No) false]))
+
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
   [ty : AstType]
@@ -6481,13 +6601,20 @@
   [key : i64]
   [ty : AstType]
   [lifetime : String]) : bool
-  (if (= key (tc-name-id lifetime))
-    true
-    (if (= key (tc-region-marker-id))
+  (cond
+    [(= key (tc-name-id lifetime)) true]
+    [(= key (tc-region-marker-id))
       (match ty
         [(AstTyVar region) (string.string-eq (intern-str region) lifetime)]
-        [_ false])
-      false)))
+        [_ false])]
+    [(or
+        (= key (tc-ordinary-arena-owner-marker-id))
+        (= key (tc-atomic-arena-owner-marker-id)))
+      (match ty
+        [(AstTyVar owner)
+          (tc-arena-region-owned-by? (intern-str owner) lifetime)]
+        [_ false])]
+    [else false]))
 
 (define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
@@ -7050,6 +7177,19 @@
 
 (define (tc-type-collect-regions [ty : AstType]) : TcStringList
   (tc-type-collect-regions-into ty TcStringList.Nil))
+
+(define (tc-region-list-contains-arena-owner?
+  [regions : TcStringList]
+  [owner : String]) : bool
+  (match regions
+    [(TcStringList.Nil) false]
+    [(TcStringList.Cons region rest)
+      (or
+        (tc-arena-region-owned-by? owner region)
+        (tc-region-list-contains-arena-owner? (box-get rest) owner))]))
+
+(define (tc-type-contains-arena-owner-region? [ty : AstType] [owner : String]) : bool
+  (tc-region-list-contains-arena-owner? (tc-type-collect-regions ty) owner))
 
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -12464,22 +12604,25 @@
                 env
                 (intern-str name)
                 (cond
-                  [(tc-macro-type-param-kind? ty) (CtfeType (AstTyVar name))]
-                  [(tc-macro-module-param-kind? ty) (CtfeString "")]
+                  [(tc-macro-type-param-kind? ty)
+                    (CompilerCtfeValue.Type (AstTyVar name))]
+                  [(tc-macro-module-param-kind? ty)
+                    (CompilerCtfeValue.String "")]
                   [(and
                       variadic
                       (tc-macro-expr-clause-type?
                         (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (CtfeExprClauseList AstExprClauseList.Nil)]
+                    (CompilerCtfeValue.ExprClauseList AstExprClauseList.Nil)]
                   [(and
                       variadic
                       (tc-macro-expr-binding-clause-type?
                         (tc-resolve-type ctx (tc-macro-signature-type ty))))
-                    (CtfeExprBindingClauseList AstExprBindingClauseList.Nil)]
-                  [variadic (CtfeExprList AstExprList.Nil)]
+                    (CompilerCtfeValue.ExprBindingClauseList
+                      AstExprBindingClauseList.Nil)]
+                  [variadic (CompilerCtfeValue.ExprList AstExprList.Nil)]
                   [(tc-macro-expr-clause-type?
                       (tc-resolve-type ctx (tc-macro-signature-type ty)))
-                    (CtfeExprClause
+                    (CompilerCtfeValue.ExprClause
                       (ast-expr-clause
                         (ast-node-pool-context-expr-push
                           (tc-context-pools ctx)
@@ -12498,7 +12641,7 @@
                         (ast-node-pool-context-expr-push
                           (tc-context-pools ctx)
                           (AstExpr.Literal (AstLitUnit)))]
-                      (CtfeExprBindingClause
+                      (CompilerCtfeValue.ExprBindingClause
                         (ast-expr-binding-clause-id
                           name
                           false
@@ -12510,7 +12653,7 @@
                                 (string.string-append (intern-str name) "$init"))))
                           (AstSourceSpan 0 0 0 0))))]
                   [else
-                    (CtfeExpr
+                    (CompilerCtfeValue.Expr
                       (ast-node-pool-context-expr-push
                         (tc-context-pools ctx)
                         (AstExpr.Var name))
@@ -14382,54 +14525,60 @@
 
 (define (tc-ctfe-value-type [ctx : TcContext] [value : CompilerCtfeValue]) : ResultTcType
   (match value
-    [(CtfeI64 _) (ResultTcType.Ok (AstTyI64))]
-    [(CtfeF64 _) (ResultTcType.Ok (AstTyF64))]
-    [(CtfeF32 _) (ResultTcType.Ok (AstTyF32))]
-    [(CtfeBool _) (ResultTcType.Ok (AstTyBool))]
-    [(CtfeChar _) (ResultTcType.Ok (AstTyChar))]
-    [(CtfeString _) (ResultTcType.Err "String value is compile-time only")]
-    [(CtfeUnit) (ResultTcType.Ok (AstTyUnit))]
-    [(CtfeExpr _ _) (ResultTcType.Ok (AstTyExpr))]
-    [(CtfeType ty)
+    [(CompilerCtfeValue.I64 _) (ResultTcType.Ok (AstTyI64))]
+    [(CompilerCtfeValue.F64 _) (ResultTcType.Ok (AstTyF64))]
+    [(CompilerCtfeValue.F32 _) (ResultTcType.Ok (AstTyF32))]
+    [(CompilerCtfeValue.Bool _) (ResultTcType.Ok (AstTyBool))]
+    [(CompilerCtfeValue.Char _) (ResultTcType.Ok (AstTyChar))]
+    [(CompilerCtfeValue.String _)
+      (ResultTcType.Err "String value is compile-time only")]
+    [(CompilerCtfeValue.Unit) (ResultTcType.Ok (AstTyUnit))]
+    [(CompilerCtfeValue.Expr _ _) (ResultTcType.Ok (AstTyExpr))]
+    [(CompilerCtfeValue.Type ty)
       (ResultTcType.Err
         (string.string-append
           "type value "
           (string.string-append
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
-    [(CtfeExprList _) (ResultTcType.Ok (AstTyExprList))]
-    [(CtfeExprClause _) (ResultTcType.Ok (tc-macro-expr-clause-type))]
-    [(CtfeExprClauseList _) (ResultTcType.Ok (tc-macro-expr-clause-list-type))]
-    [(CtfeExprBindingClause _)
+    [(CompilerCtfeValue.ExprList _) (ResultTcType.Ok (AstTyExprList))]
+    [(CompilerCtfeValue.ExprClause _)
+      (ResultTcType.Ok (tc-macro-expr-clause-type))]
+    [(CompilerCtfeValue.ExprClauseList _)
+      (ResultTcType.Ok (tc-macro-expr-clause-list-type))]
+    [(CompilerCtfeValue.ExprBindingClause _)
       (ResultTcType.Ok (tc-macro-expr-binding-clause-type))]
-    [(CtfeExprBindingClauseList _)
+    [(CompilerCtfeValue.ExprBindingClauseList _)
       (ResultTcType.Ok (tc-macro-expr-binding-clause-list-type))]
-    [(CtfePattern _) (ResultTcType.Ok (tc-macro-pattern-type))]
-    [(CtfePatternList _) (ResultTcType.Ok (tc-macro-pattern-list-type))]
-    [(CtfeMatchArm _) (ResultTcType.Ok (tc-macro-match-arm-type))]
-    [(CtfeMatchArmList _) (ResultTcType.Ok (tc-macro-match-arm-list-type))]
-    [(CtfeTypeInfo _) (ResultTcType.Err "TypeInfo value is compile-time only")]
-    [(CtfeTypeInfoBox _)
+    [(CompilerCtfeValue.Pattern _) (ResultTcType.Ok (tc-macro-pattern-type))]
+    [(CompilerCtfeValue.PatternList _)
+      (ResultTcType.Ok (tc-macro-pattern-list-type))]
+    [(CompilerCtfeValue.MatchArm _) (ResultTcType.Ok (tc-macro-match-arm-type))]
+    [(CompilerCtfeValue.MatchArmList _)
+      (ResultTcType.Ok (tc-macro-match-arm-list-type))]
+    [(CompilerCtfeValue.TypeInfo _)
+      (ResultTcType.Err "TypeInfo value is compile-time only")]
+    [(CompilerCtfeValue.TypeInfoBox _)
       (ResultTcType.Err "TypeInfo box value is compile-time only")]
-    [(CtfeTypeInfoList _)
+    [(CompilerCtfeValue.TypeInfoList _)
       (ResultTcType.Err "TypeInfoList value is compile-time only")]
-    [(CtfeTypeField _ _)
+    [(CompilerCtfeValue.TypeField _ _)
       (ResultTcType.Err "TypeField value is compile-time only")]
-    [(CtfeTypeFieldList _)
+    [(CompilerCtfeValue.TypeFieldList _)
       (ResultTcType.Err "TypeFieldList value is compile-time only")]
-    [(CtfeTypeVariantPayload _)
+    [(CompilerCtfeValue.TypeVariantPayload _)
       (ResultTcType.Err "TypeVariantPayload value is compile-time only")]
-    [(CtfeTypeVariantPayloadList _)
+    [(CompilerCtfeValue.TypeVariantPayloadList _)
       (ResultTcType.Err "TypeVariantPayloadList value is compile-time only")]
-    [(CtfeTypeVariant _ _)
+    [(CompilerCtfeValue.TypeVariant _ _)
       (ResultTcType.Err "TypeVariant value is compile-time only")]
-    [(CtfeTypeVariantList _)
+    [(CompilerCtfeValue.TypeVariantList _)
       (ResultTcType.Err "TypeVariantList value is compile-time only")]))
 
 (define (tc-ctfe-float-value? [value : CompilerCtfeValue]) : bool
   (match value
-    [(CtfeF64 _) true]
-    [(CtfeF32 _) true]
+    [(CompilerCtfeValue.F64 _) true]
+    [(CompilerCtfeValue.F32 _) true]
     [_ false]))
 
 (define (tc-ctfe-value-type-with-expected
@@ -14599,9 +14748,9 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-          [(OkCtfe value _)
+          [(ResultCtfe.Ok value _)
             (tc-ctfe-value-type-with-expected ctx value expected)]
-          [(ErrCtfe diag)
+          [(ResultCtfe.Err diag)
             (ResultTcType.Err (compiler-diagnostic-message (box-get diag)))]))]
     [(AstExpr.Init maybe-ty)
       (match maybe-ty
@@ -15709,6 +15858,9 @@
 (define (tc-arena-mark-type-name) : String
   "stdlib.arena/ArenaMark")
 
+(define (tc-arena-phase-type-name) : String
+  "stdlib.arena/ArenaPhase")
+
 (define (tc-nominal-struct-type-name-eq?
   [ctx : TcContext]
   [ty : AstType]
@@ -15724,6 +15876,9 @@
 (define (tc-arena-mark-type? [ctx : TcContext] [ty : AstType]) : bool
   (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-mark-type-name)))
 
+(define (tc-arena-phase-type? [ctx : TcContext] [ty : AstType]) : bool
+  (tc-nominal-struct-type-name-eq? ctx ty (tc-arena-phase-type-name)))
+
 (define (tc-arena-owner-call-name?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15735,6 +15890,19 @@
       (string.string-eq name base)
       (or
         (not (tc-name-local-bound-before-module? env base))
+        (string.string-eq (tc-context-module ctx) (tc-arena-module-name))))))
+
+(define (tc-arena-safe-call-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [base : String]) : bool
+  (and
+    (tc-arena-owner-call-name? ctx env name base)
+    (or
+      (tc-source-name-bound-exact? env name)
+      (and
+        (not (tc-name-qualified? name))
         (string.string-eq (tc-context-module ctx) (tc-arena-module-name))))))
 
 (define (tc-arena-owner-kind-none) : i64
@@ -15766,6 +15934,34 @@
         [_ (tc-arena-owner-kind-none)])]
     [_ (tc-arena-owner-kind-none)]))
 
+(define (tc-arena-phase-call-owner
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]) : TcMaybeString
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Call func-box args)
+      (match args
+        [(AstExprList.Cons owner-box rest-box)
+          (let
+            [owner-expr : AstExpr (ast-node-get owner-box)]
+            [rest : AstExprList (box-get rest-box)]
+            (match rest
+              [(AstExprList.Nil)
+                (match (tc-expr-var-name (ast-node-get func-box))
+                  [(TcMaybeString.Some name)
+                    (if (tc-arena-safe-call-name? ctx env name "arena-phase")
+                      (match (tc-expr-var-name owner-expr)
+                        [(TcMaybeString.Some owner)
+                          (if (tc-ordinary-arena-owner-active? env owner)
+                            (TcMaybeString.Some owner)
+                            (TcMaybeString.No))]
+                        [(TcMaybeString.No) (TcMaybeString.No)])
+                      (TcMaybeString.No))]
+                  [(TcMaybeString.No) (TcMaybeString.No)])]
+              [(AstExprList.Cons _ _) (TcMaybeString.No)]))]
+        [(AstExprList.Nil) (TcMaybeString.No)])]
+    [_ (TcMaybeString.No)]))
+
 (define (tc-bind-arena-owner-if-needed-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15780,6 +15976,16 @@
         (tc-bind-ordinary-arena-owner env (intern-str name))]
       [else env])))
 
+(define (tc-bind-arena-phase-if-needed-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [init : AstExpr]) : TcTypeEnv
+  (match (tc-arena-phase-call-owner ctx env init)
+    [(TcMaybeString.Some owner)
+      (tc-bind-arena-phase-token env (intern-str name) owner)]
+    [(TcMaybeString.No) env]))
+
 (define (tc-bind-c-abi-fnptr-if-needed-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -15793,9 +15999,11 @@
         (tc-arena-type? ctx ty))
         (tc-bind-arena-owner-if-needed-id ctx env name init)
         env)]
+    [phase-env : TcTypeEnv
+      (tc-bind-arena-phase-if-needed-id ctx owner-env name init)]
     (if (and (tc-c-abi-fnptr-type? ty) (tc-expr-c-abi-fnptr? ctx env init))
-      (tc-bind-c-abi-fnptr-id owner-env name ty)
-      (tc-bind-id owner-env name ty))))
+      (tc-bind-c-abi-fnptr-id phase-env name ty)
+      (tc-bind-id phase-env name ty))))
 
 (define (tc-raw-c-fnptr-flow-ok
   [ctx : TcContext]
@@ -17269,6 +17477,138 @@
             [_ (ResultTcType.Err "typecheck: call target is not a function")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
+(define (tc-arena-phase-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprList.Cons owner-box rest-box)
+      (let
+        [owner-expr : AstExpr (ast-node-get owner-box)]
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprList.Nil)
+            (match (tc-expr ctx env owner-expr)
+              [(ResultTcType.Ok owner-ty)
+                (if (tc-arena-type? ctx owner-ty)
+                  (match (tc-expr-var-name owner-expr)
+                    [(TcMaybeString.Some owner)
+                      (if (tc-ordinary-arena-owner-active? env owner)
+                        (ResultTcType.Ok
+                          (AstTyStruct (intern (tc-arena-phase-type-name))))
+                        (ResultTcType.Err
+                          (tc-locate-error-at-expr
+                            owner-expr
+                            "typecheck: arena-phase requires a direct ordinary arena owner")))]
+                    [(TcMaybeString.No)
+                      (ResultTcType.Err
+                        (tc-locate-error-at-expr
+                          owner-expr
+                          "typecheck: arena-phase requires a direct ordinary arena owner"))])
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      owner-expr
+                      "typecheck: arena-phase arena must be Arena")))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          [(AstExprList.Cons _ _)
+            (ResultTcType.Err
+              "typecheck: arena-phase expects exactly one argument")]))]
+    [(AstExprList.Nil)
+      (ResultTcType.Err "typecheck: arena-phase expects exactly one argument")]))
+
+(define (tc-arena-rewind-safe-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprList.Cons phase-box rest-box)
+      (let
+        [phase-expr : AstExpr (ast-node-get phase-box)]
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprList.Nil)
+            (match (tc-expr ctx env phase-expr)
+              [(ResultTcType.Ok phase-ty)
+                (if (tc-arena-phase-type? ctx phase-ty)
+                  (match (tc-expr-var-name phase-expr)
+                    [(TcMaybeString.Some phase)
+                      (match (tc-arena-phase-token-region-active env phase)
+                        [(TcMaybeString.Some _)
+                          (match (tc-arena-phase-token-owner-active env phase)
+                            [(TcMaybeString.Some owner)
+                              (if (tc-active-region-owned-by-arena? env owner)
+                                (ResultTcType.Err
+                                  (tc-locate-error-at-expr
+                                    phase-expr
+                                    "typecheck: arena-rewind-safe! cannot run inside the arena it rewinds"))
+                                (ResultTcType.Ok (AstTyUnit)))]
+                            [(TcMaybeString.No) (ResultTcType.Ok (AstTyUnit))])]
+                        [(TcMaybeString.No)
+                          (ResultTcType.Err
+                            (tc-locate-error-at-expr
+                              phase-expr
+                              "typecheck: arena-rewind-safe! requires a direct arena phase token"))])]
+                    [(TcMaybeString.No)
+                      (ResultTcType.Err
+                        (tc-locate-error-at-expr
+                          phase-expr
+                          "typecheck: arena-rewind-safe! requires a direct arena phase token"))])
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      phase-expr
+                      "typecheck: arena-rewind-safe! phase must be ArenaPhase")))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          [(AstExprList.Cons _ _)
+            (ResultTcType.Err
+              "typecheck: arena-rewind-safe! expects exactly one argument")]))]
+    [(AstExprList.Nil)
+      (ResultTcType.Err
+        "typecheck: arena-rewind-safe! expects exactly one argument")]))
+
+(define (tc-arena-destroy-safe-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : AstExprList]) : ResultTcType
+  (match args
+    [(AstExprList.Cons owner-box rest-box)
+      (let
+        [owner-expr : AstExpr (ast-node-get owner-box)]
+        [rest : AstExprList (box-get rest-box)]
+        (match rest
+          [(AstExprList.Nil)
+            (match (tc-expr ctx env owner-expr)
+              [(ResultTcType.Ok owner-ty)
+                (if (tc-arena-type? ctx owner-ty)
+                  (match (tc-expr-var-name owner-expr)
+                    [(TcMaybeString.Some owner)
+                      (if (tc-ordinary-arena-owner-active? env owner)
+                        (if (tc-active-region-owned-by-arena? env owner)
+                          (ResultTcType.Err
+                            (tc-locate-error-at-expr
+                              owner-expr
+                              "typecheck: arena-destroy-safe! cannot run inside the arena it destroys"))
+                          (ResultTcType.Ok (AstTyUnit)))
+                        (ResultTcType.Err
+                          (tc-locate-error-at-expr
+                            owner-expr
+                            "typecheck: arena-destroy-safe! requires a direct ordinary arena owner")))]
+                    [(TcMaybeString.No)
+                      (ResultTcType.Err
+                        (tc-locate-error-at-expr
+                          owner-expr
+                          "typecheck: arena-destroy-safe! requires a direct ordinary arena owner"))])
+                  (ResultTcType.Err
+                    (tc-locate-error-at-expr
+                      owner-expr
+                      "typecheck: arena-destroy-safe! arena must be Arena")))]
+              [(ResultTcType.Err message) (ResultTcType.Err message)])]
+          [(AstExprList.Cons _ _)
+            (ResultTcType.Err
+              "typecheck: arena-destroy-safe! expects exactly one argument")]))]
+    [(AstExprList.Nil)
+      (ResultTcType.Err
+        "typecheck: arena-destroy-safe! expects exactly one argument")]))
+
 (define (tc-call-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -17295,6 +17635,12 @@
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
+          [(tc-arena-safe-call-name? ctx env name "arena-phase")
+            (tc-arena-phase-call ctx env args)]
+          [(tc-arena-safe-call-name? ctx env name "arena-rewind-safe!")
+            (tc-arena-rewind-safe-call ctx env args)]
+          [(tc-arena-safe-call-name? ctx env name "arena-destroy-safe!")
+            (tc-arena-destroy-safe-call ctx env args)]
           [(and
               (tc-borrowed-string-builtin-id? name-id)
               (tc-default-builtin-unshadowed-id? env name-id))
@@ -18103,6 +18449,12 @@
             (tc-string-ref-call ctx env args)]
           [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
             (tc-atomic-pointer-call ctx env name args)]
+          [(tc-arena-safe-call-name? ctx env name "arena-phase")
+            (tc-arena-phase-call ctx env args)]
+          [(tc-arena-safe-call-name? ctx env name "arena-rewind-safe!")
+            (tc-arena-rewind-safe-call ctx env args)]
+          [(tc-arena-safe-call-name? ctx env name "arena-destroy-safe!")
+            (tc-arena-destroy-safe-call ctx env args)]
           [(and
               (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
               (not (tc-name-bound? env name)))
@@ -25100,7 +25452,9 @@
         [(TcInlineFieldLayout name _ offset)
           (tc-ctfe-inline-layout-fields-into
             (box-get rest)
-            (ctfe-layout-field-list-push out (CtfeLayoutField name offset)))])]))
+            (ctfe-layout-field-list-push
+              out
+              (CtfeLayoutField.Field name offset)))])]))
 
 (define (tc-ctfe-inline-layout-field-count [fields : TcInlineFieldLayoutList]) : i64
   (match fields
@@ -25119,38 +25473,38 @@
   [layout : TcInlineAggregateLayout]) : CtfeLayoutInfo
   (match layout
     [(TcInlineAggregateLayout.Struct size align fields)
-      (CtfeLayoutInfo
+      (CtfeLayoutInfo.Info
         name
         true
         size
         align
         (tc-ctfe-inline-layout-fields fields))]
     [(TcInlineAggregateLayout.Enum size align _)
-      (CtfeLayoutInfo name false size align (ctfe-layout-field-list-empty))]))
+      (CtfeLayoutInfo.Info name false size align (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-struct-layout-info [ctx : TcContext] [struct-name : String]) : CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for ctx struct-name)
     [(ResultTcInlineAggregateLayout.Ok layout)
       (tc-ctfe-inline-aggregate-layout-info struct-name layout)]
     [(ResultTcInlineAggregateLayout.Err _)
-      (CtfeLayoutInfo struct-name false 8 8 (ctfe-layout-field-list-empty))]))
+      (CtfeLayoutInfo.Info struct-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-type-layout-info [ctx : TcContext] [type-name : String]) : CtfeLayoutInfo
   (match (tc-inline-aggregate-layout-for ctx type-name)
     [(ResultTcInlineAggregateLayout.Ok layout)
       (tc-ctfe-inline-aggregate-layout-info type-name layout)]
     [(ResultTcInlineAggregateLayout.Err _)
-      (CtfeLayoutInfo type-name false 8 8 (ctfe-layout-field-list-empty))]))
+      (CtfeLayoutInfo.Info type-name false 8 8 (ctfe-layout-field-list-empty))]))
 
 (define (tc-ctfe-layout-add-alias
   [layouts : CtfeLayoutInfoList]
   [info : CtfeLayoutInfo]
   [alias : String]) : CtfeLayoutInfoList
   (match info
-    [(CtfeLayoutInfo _ repr-c? size align fields)
+    [(CtfeLayoutInfo.Info _ repr-c? size align fields)
       (ctfe-layout-info-list-add-if-missing
         layouts
-        (CtfeLayoutInfo alias repr-c? size align fields))]))
+        (CtfeLayoutInfo.Info alias repr-c? size align fields))]))
 
 (define (tc-ctfe-layout-add-names
   [layouts : CtfeLayoutInfoList]
@@ -29055,7 +29409,8 @@
 
 (define (tc-in-arena-body-env [env : TcTypeEnv] [arena : AstExpr]) : TcTypeEnv
   (match (tc-in-arena-owner env arena)
-    [(TcMaybeString.Some owner) (tc-push-region env owner)]
+    [(TcMaybeString.Some owner)
+      (tc-push-region env (tc-current-arena-owner-region env owner))]
     [(TcMaybeString.No) env]))
 
 (define (tc-in-arena-expr
@@ -30029,8 +30384,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (compiler-ctfe-eval inner (tc-ctfe-env ctx) (ctfe-fuel-limit))
-          [(OkCtfe value _) (tc-ctfe-value-type ctx value)]
-          [(ErrCtfe diag)
+          [(ResultCtfe.Ok value _) (tc-ctfe-value-type ctx value)]
+          [(ResultCtfe.Err diag)
             (ResultTcType.Err (compiler-diagnostic-message (box-get diag)))]))]
     [(AstExpr.Quote _) (ResultTcType.Ok (AstTyExpr))]
     [(AstExpr.Quasiquote template-box)
@@ -30361,14 +30716,14 @@
   [value : CompilerCtfeValue]) : ResultTcUnit
   (if (tc-macro-result-module? ret)
     (match value
-      [(CtfeExpr _ _) ResultTcUnit.Ok]
+      [(CompilerCtfeValue.Expr _ _) ResultTcUnit.Ok]
       [_ (ResultTcUnit.Err "typecheck: Module macro body must return Expr")])
     (if (tc-macro-result-decls? ret)
       (match value
-        [(CtfeExpr _ _) ResultTcUnit.Ok]
+        [(CompilerCtfeValue.Expr _ _) ResultTcUnit.Ok]
         [_ (ResultTcUnit.Err "typecheck: Decls macro body must return Expr")])
       (match value
-        [(CtfeExpr _ produced)
+        [(CompilerCtfeValue.Expr _ produced)
           (if (tc-macro-produced-type-compatible? ctx ret produced)
             ResultTcUnit.Ok
             (ResultTcUnit.Err
@@ -31670,12 +32025,12 @@
                         (tc-ctfe-env ctx)
                         params)
                       (ctfe-fuel-limit))
-                      [(OkCtfe value _)
+                      [(ResultCtfe.Ok value _)
                         (begin
                           (ast-node-pool-context-install!
                             (tc-context-pools ctx))
                           (tc-check-defmacro-produced-type ctx ret value))]
-                      [(ErrCtfe diag)
+                      [(ResultCtfe.Err diag)
                         (ResultTcUnit.Err
                           (compiler-diagnostic-message (box-get diag)))])))]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
@@ -32608,7 +32963,15 @@
   [maybe-ty : AstMaybeType]
   [init : AstExpr]) : AstType
   (match maybe-ty
-    [(AstSomeType t) (tc-resolve-type ctx t)]
+    [(AstSomeType t)
+      (let
+        [resolved : AstType (tc-resolve-type ctx t)]
+        (match (tc-expr-with-expected-or-actual ctx env init resolved)
+          [(ResultTcType.Ok init-ty)
+            (if (tc-type-contains-any-region init-ty)
+              init-ty
+              resolved)]
+          [(ResultTcType.Err _) resolved]))]
     [(AstNoType)
       (match (tc-expr ctx env init)
         [(ResultTcType.Ok t) t]
@@ -32772,6 +33135,337 @@
         (tc-moved-add-origin moved v expr)
         moved)]
     [(TcMaybeString.No) moved]))
+
+(define (tc-move-consume-local
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [name : String]
+  [origin : AstExpr]) : TcMoveResult
+  (if (tc-moved-contains? locals name)
+    (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
+      (tc-move-rich-use-conflict-result
+        (tc-moved-root-conflict moved name)
+        name
+        origin
+        name)
+      (if (tc-moved-contains? loop-carried name)
+        (tc-move-rich-loop-carried-result name origin)
+        (OkTcMove (tc-moved-add-origin moved name origin))))
+    (OkTcMove moved)))
+
+(define (tc-move-invalidate-local
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [name : String]
+  [origin : AstExpr]) : TcMoveResult
+  (cond
+    [(not (tc-moved-contains? locals name)) (OkTcMove moved)]
+    [(tc-moved-contains? moved name) (OkTcMove moved)]
+    [(tc-moved-partial? moved name)
+      (tc-move-rich-use-conflict-result
+        (tc-moved-root-conflict moved name)
+        name
+        origin
+        name)]
+    [(tc-moved-contains? loop-carried name)
+      (tc-move-rich-loop-carried-result name origin)]
+    [else (OkTcMove (tc-moved-add-origin moved name origin))]))
+
+(define (tc-move-mark-region-locals-scan
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [region : String]
+  [seen : TcStringList]
+  [remaining : i64]
+  [origin : AstExpr]) : TcMoveResult
+  (if (<= remaining 0)
+    (OkTcMove moved)
+    (match env
+      [(TcTypeEnv.Nil) (OkTcMove moved)]
+      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+        (if scan-through
+          (tc-move-mark-region-locals-scan
+            (box-get rest)
+            locals
+            loop-carried
+            moved
+            region
+            seen
+            remaining
+            origin)
+          (OkTcMove moved))]
+      [(TcTypeEnv.Bind key ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [name : String (intern-str key)]
+          (cond
+            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(tc-string-list-contains seen name)
+              (tc-move-mark-region-locals-scan
+                rest-env
+                locals
+                loop-carried
+                moved
+                region
+                seen
+                remaining
+                origin)]
+            [(not (tc-moved-contains? locals name))
+              (tc-move-mark-region-locals-scan
+                rest-env
+                locals
+                loop-carried
+                moved
+                region
+                (tc-string-list-add seen name)
+                remaining
+                origin)]
+            [(tc-type-contains-region ty region)
+              (match (tc-move-invalidate-local
+                locals
+                loop-carried
+                moved
+                name
+                origin)
+                [(OkTcMove moved2)
+                  (tc-move-mark-region-locals-scan
+                    rest-env
+                    locals
+                    loop-carried
+                    moved2
+                    region
+                    (tc-string-list-add seen name)
+                    (- remaining 1)
+                    origin)]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [else
+              (tc-move-mark-region-locals-scan
+                rest-env
+                locals
+                loop-carried
+                moved
+                region
+                (tc-string-list-add seen name)
+                (- remaining 1)
+                origin)]))])))
+
+(define (tc-move-mark-region-locals
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [region : String]
+  [origin : AstExpr]) : TcMoveResult
+  (tc-move-mark-region-locals-scan
+    env
+    locals
+    loop-carried
+    moved
+    region
+    TcStringList.Nil
+    (tc-moved-len locals)
+    origin))
+
+(define (tc-move-mark-owner-region-locals-scan
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [owner : String]
+  [seen : TcStringList]
+  [remaining : i64]
+  [origin : AstExpr]) : TcMoveResult
+  (if (<= remaining 0)
+    (OkTcMove moved)
+    (match env
+      [(TcTypeEnv.Nil) (OkTcMove moved)]
+      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+        (if scan-through
+          (tc-move-mark-owner-region-locals-scan
+            (box-get rest)
+            locals
+            loop-carried
+            moved
+            owner
+            seen
+            remaining
+            origin)
+          (OkTcMove moved))]
+      [(TcTypeEnv.Bind key ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [name : String (intern-str key)]
+          (cond
+            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(tc-string-list-contains seen name)
+              (tc-move-mark-owner-region-locals-scan
+                rest-env
+                locals
+                loop-carried
+                moved
+                owner
+                seen
+                remaining
+                origin)]
+            [(not (tc-moved-contains? locals name))
+              (tc-move-mark-owner-region-locals-scan
+                rest-env
+                locals
+                loop-carried
+                moved
+                owner
+                (tc-string-list-add seen name)
+                remaining
+                origin)]
+            [(tc-type-contains-arena-owner-region? ty owner)
+              (match (tc-move-invalidate-local
+                locals
+                loop-carried
+                moved
+                name
+                origin)
+                [(OkTcMove moved2)
+                  (tc-move-mark-owner-region-locals-scan
+                    rest-env
+                    locals
+                    loop-carried
+                    moved2
+                    owner
+                    (tc-string-list-add seen name)
+                    (- remaining 1)
+                    origin)]
+                [(ErrTcMove message) (ErrTcMove message)])]
+            [else
+              (tc-move-mark-owner-region-locals-scan
+                rest-env
+                locals
+                loop-carried
+                moved
+                owner
+                (tc-string-list-add seen name)
+                (- remaining 1)
+                origin)]))])))
+
+(define (tc-move-mark-owner-region-locals
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [owner : String]
+  [origin : AstExpr]) : TcMoveResult
+  (tc-move-mark-owner-region-locals-scan
+    env
+    locals
+    loop-carried
+    moved
+    owner
+    TcStringList.Nil
+    (tc-moved-len locals)
+    origin))
+
+(define (tc-move-safe-arena-rewind-effect
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [args : AstExprList]
+  [origin : AstExpr]) : TcMoveResult
+  (match args
+    [(AstExprList.Cons phase-box _)
+      (let
+        [phase-expr : AstExpr (ast-node-get phase-box)]
+        (match (tc-expr-var-name phase-expr)
+          [(TcMaybeString.Some phase)
+            (match (tc-arena-phase-token-region-active env phase)
+              [(TcMaybeString.Some region)
+                (match (tc-move-consume-local
+                  locals
+                  loop-carried
+                  moved
+                  phase
+                  origin)
+                  [(OkTcMove moved2)
+                    (tc-move-mark-region-locals
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      region
+                      origin)]
+                  [(ErrTcMove message) (ErrTcMove message)])]
+              [(TcMaybeString.No) (OkTcMove moved)])]
+          [(TcMaybeString.No) (OkTcMove moved)]))]
+    [(AstExprList.Nil) (OkTcMove moved)]))
+
+(define (tc-move-safe-arena-destroy-effect
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [args : AstExprList]
+  [origin : AstExpr]) : TcMoveResult
+  (match args
+    [(AstExprList.Cons owner-box _)
+      (let
+        [owner-expr : AstExpr (ast-node-get owner-box)]
+        (match (tc-expr-var-name owner-expr)
+          [(TcMaybeString.Some owner)
+            (if (tc-ordinary-arena-owner-active? env owner)
+              (match (tc-move-consume-local
+                locals
+                loop-carried
+                moved
+                owner
+                origin)
+                [(OkTcMove moved2)
+                  (tc-move-mark-owner-region-locals
+                    env
+                    locals
+                    loop-carried
+                    moved2
+                    owner
+                    origin)]
+                [(ErrTcMove message) (ErrTcMove message)])
+              (OkTcMove moved))]
+          [(TcMaybeString.No) (OkTcMove moved)]))]
+    [(AstExprList.Nil) (OkTcMove moved)]))
+
+(define (tc-move-check-safe-arena-call-effects
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [func : AstExpr]
+  [args : AstExprList]
+  [origin : AstExpr]) : TcMoveResult
+  (match (tc-expr-var-name func)
+    [(TcMaybeString.Some raw-name)
+      (let
+        [name : String (tc-hygiene-global-symbol-name raw-name)]
+        (cond
+          [(tc-arena-safe-call-name? ctx env name "arena-rewind-safe!")
+            (tc-move-safe-arena-rewind-effect
+              env
+              locals
+              loop-carried
+              moved
+              args
+              origin)]
+          [(tc-arena-safe-call-name? ctx env name "arena-destroy-safe!")
+            (tc-move-safe-arena-destroy-effect
+              env
+              locals
+              loop-carried
+              moved
+              args
+              origin)]
+          [else (OkTcMove moved)]))]
+    [(TcMaybeString.No) (OkTcMove moved)]))
 
 (define (tc-move-check-lambda-owner-captures-scan
   [ctx : TcContext]
@@ -33101,6 +33795,7 @@
   [locals : TcMovedSet]
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
+  [call-expr : AstExpr]
   [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]) : TcMoveResult
@@ -33113,7 +33808,7 @@
     args
     params)
     [(OkTcMove moved-args)
-      (tc-move-check-thread-channel-send-message
+      (match (tc-move-check-thread-channel-send-message
         ctx
         env
         locals
@@ -33121,7 +33816,18 @@
         moved-args
         func
         args
-        params)]
+        params)
+        [(OkTcMove moved-thread)
+          (tc-move-check-safe-arena-call-effects
+            ctx
+            env
+            locals
+            loop-carried
+            moved-thread
+            func
+            args
+            call-expr)]
+        [(ErrTcMove message) (ErrTcMove message)])]
     [(ErrTcMove message) (ErrTcMove message)]))
 
 (define (tc-move-call-param-types
@@ -33503,6 +34209,7 @@
                             locals
                             loop-carried
                             moved1
+                            expr
                             func
                             args
                             expanded-params)]
@@ -33513,6 +34220,7 @@
                         locals
                         loop-carried
                         moved1
+                        expr
                         func
                         args
                         params))]
@@ -33523,11 +34231,29 @@
                       locals
                       loop-carried
                       moved1
+                      expr
                       func
                       args
                       params)])]
               [(ResultTcTypeList.Err _)
-                (tc-move-check-exprs ctx env locals loop-carried moved1 args)])]
+                (match (tc-move-check-exprs
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved1
+                  args)
+                  [(OkTcMove moved-args)
+                    (tc-move-check-safe-arena-call-effects
+                      ctx
+                      env
+                      locals
+                      loop-carried
+                      moved-args
+                      func
+                      args
+                      expr)]
+                  [(ErrTcMove message) (ErrTcMove message)])])]
           [(ErrTcMove message) (ErrTcMove message)]))]
     [(AstExpr.BracketClause items)
       (tc-move-check-exprs ctx env locals loop-carried moved items)]
@@ -34917,6 +35643,249 @@
         ResultTcUnit.Ok)]
     [(TcMaybeString.No) ResultTcUnit.Ok]))
 
+(define (tc-borrow-check-region-invalidation-scan
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [region : String]
+  [seen : TcStringList]
+  [remaining : i64]
+  [primary : AstExpr]) : TcBorrowCheckResult
+  (if (<= remaining 0)
+    (OkTcBorrowCheck borrowed)
+    (match env
+      [(TcTypeEnv.Nil) (OkTcBorrowCheck borrowed)]
+      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+        (if scan-through
+          (tc-borrow-check-region-invalidation-scan
+            ctx
+            (box-get rest)
+            locals
+            borrowed
+            region
+            seen
+            remaining
+            primary)
+          (OkTcBorrowCheck borrowed))]
+      [(TcTypeEnv.Bind key ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [name : String (intern-str key)]
+          (cond
+            [(= key (tc-default-boundary-id)) (OkTcBorrowCheck borrowed)]
+            [(tc-string-list-contains seen name)
+              (tc-borrow-check-region-invalidation-scan
+                ctx
+                rest-env
+                locals
+                borrowed
+                region
+                seen
+                remaining
+                primary)]
+            [(not (tc-moved-contains? locals name))
+              (tc-borrow-check-region-invalidation-scan
+                ctx
+                rest-env
+                locals
+                borrowed
+                region
+                (tc-string-list-add seen name)
+                remaining
+                primary)]
+            [(tc-type-contains-region ty region)
+              (match (tc-borrow-check-assign-conflict borrowed name primary)
+                [(ResultTcUnit.Ok)
+                  (tc-borrow-check-region-invalidation-scan
+                    ctx
+                    rest-env
+                    locals
+                    borrowed
+                    region
+                    (tc-string-list-add seen name)
+                    (- remaining 1)
+                    primary)]
+                [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
+            [else
+              (tc-borrow-check-region-invalidation-scan
+                ctx
+                rest-env
+                locals
+                borrowed
+                region
+                (tc-string-list-add seen name)
+                (- remaining 1)
+                primary)]))])))
+
+(define (tc-borrow-check-owner-invalidation-scan
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [owner : String]
+  [seen : TcStringList]
+  [remaining : i64]
+  [primary : AstExpr]) : TcBorrowCheckResult
+  (if (<= remaining 0)
+    (OkTcBorrowCheck borrowed)
+    (match env
+      [(TcTypeEnv.Nil) (OkTcBorrowCheck borrowed)]
+      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
+        (if scan-through
+          (tc-borrow-check-owner-invalidation-scan
+            ctx
+            (box-get rest)
+            locals
+            borrowed
+            owner
+            seen
+            remaining
+            primary)
+          (OkTcBorrowCheck borrowed))]
+      [(TcTypeEnv.Bind key ty rest)
+        (let
+          [rest-env : TcTypeEnv (box-get rest)]
+          [name : String (intern-str key)]
+          (cond
+            [(= key (tc-default-boundary-id)) (OkTcBorrowCheck borrowed)]
+            [(tc-string-list-contains seen name)
+              (tc-borrow-check-owner-invalidation-scan
+                ctx
+                rest-env
+                locals
+                borrowed
+                owner
+                seen
+                remaining
+                primary)]
+            [(not (tc-moved-contains? locals name))
+              (tc-borrow-check-owner-invalidation-scan
+                ctx
+                rest-env
+                locals
+                borrowed
+                owner
+                (tc-string-list-add seen name)
+                remaining
+                primary)]
+            [(tc-type-contains-arena-owner-region? ty owner)
+              (match (tc-borrow-check-assign-conflict borrowed name primary)
+                [(ResultTcUnit.Ok)
+                  (tc-borrow-check-owner-invalidation-scan
+                    ctx
+                    rest-env
+                    locals
+                    borrowed
+                    owner
+                    (tc-string-list-add seen name)
+                    (- remaining 1)
+                    primary)]
+                [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
+            [else
+              (tc-borrow-check-owner-invalidation-scan
+                ctx
+                rest-env
+                locals
+                borrowed
+                owner
+                (tc-string-list-add seen name)
+                (- remaining 1)
+                primary)]))])))
+
+(define (tc-borrow-check-safe-arena-rewind-effect
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : AstExprList]
+  [primary : AstExpr]) : TcBorrowCheckResult
+  (match args
+    [(AstExprList.Cons phase-box _)
+      (let
+        [phase-expr : AstExpr (ast-node-get phase-box)]
+        (match (tc-expr-var-name phase-expr)
+          [(TcMaybeString.Some phase)
+            (match (tc-borrow-check-assign-conflict borrowed phase primary)
+              [(ResultTcUnit.Ok)
+                (match (tc-arena-phase-token-region-active env phase)
+                  [(TcMaybeString.Some region)
+                    (tc-borrow-check-region-invalidation-scan
+                      ctx
+                      env
+                      locals
+                      borrowed
+                      region
+                      TcStringList.Nil
+                      (tc-moved-len locals)
+                      primary)]
+                  [(TcMaybeString.No) (OkTcBorrowCheck borrowed)])]
+              [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
+          [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))]
+    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]))
+
+(define (tc-borrow-check-safe-arena-destroy-effect
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [args : AstExprList]
+  [primary : AstExpr]) : TcBorrowCheckResult
+  (match args
+    [(AstExprList.Cons owner-box _)
+      (let
+        [owner-expr : AstExpr (ast-node-get owner-box)]
+        (match (tc-expr-var-name owner-expr)
+          [(TcMaybeString.Some owner)
+            (if (tc-ordinary-arena-owner-active? env owner)
+              (match (tc-borrow-check-assign-conflict borrowed owner primary)
+                [(ResultTcUnit.Ok)
+                  (tc-borrow-check-owner-invalidation-scan
+                    ctx
+                    env
+                    locals
+                    borrowed
+                    owner
+                    TcStringList.Nil
+                    (tc-moved-len locals)
+                    primary)]
+                [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
+              (OkTcBorrowCheck borrowed))]
+          [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))]
+    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]))
+
+(define (tc-borrow-check-safe-arena-call-effects
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [call-expr : AstExpr]
+  [func : AstExpr]
+  [args : AstExprList]) : TcBorrowCheckResult
+  (match (tc-expr-var-name func)
+    [(TcMaybeString.Some raw-name)
+      (let
+        [name : String (tc-hygiene-global-symbol-name raw-name)]
+        (cond
+          [(tc-arena-safe-call-name? ctx env name "arena-rewind-safe!")
+            (tc-borrow-check-safe-arena-rewind-effect
+              ctx
+              env
+              locals
+              borrowed
+              args
+              call-expr)]
+          [(tc-arena-safe-call-name? ctx env name "arena-destroy-safe!")
+            (tc-borrow-check-safe-arena-destroy-effect
+              ctx
+              env
+              locals
+              borrowed
+              args
+              call-expr)]
+          [else (OkTcBorrowCheck borrowed)]))]
+    [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))
+
 (define (tc-string-has-suffix-at?
   [text : String]
   [suffix : String]
@@ -34979,37 +35948,47 @@
   [call-expr : AstExpr]
   [func : AstExpr]
   [args : AstExprList]) : TcBorrowCheckResult
-  (match (tc-expr-var-name func)
-    [(TcMaybeString.Some name)
-      (if (tc-hashmap-mutating-call-name? name)
-        (match (tc-borrow-check-first-call-arg-root-mutation
-          locals
-          borrowed
-          args)
-          [(OkTcBorrowCheck _)
+  (match (tc-borrow-check-safe-arena-call-effects
+    ctx
+    env
+    locals
+    borrowed
+    call-expr
+    func
+    args)
+    [(OkTcBorrowCheck borrowed0)
+      (match (tc-expr-var-name func)
+        [(TcMaybeString.Some name)
+          (if (tc-hashmap-mutating-call-name? name)
+            (match (tc-borrow-check-first-call-arg-root-mutation
+              locals
+              borrowed0
+              args)
+              [(OkTcBorrowCheck _)
+                (tc-borrow-check-after-returning-call
+                  ctx
+                  env
+                  locals
+                  borrowed0
+                  call-expr
+                  args)]
+              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
             (tc-borrow-check-after-returning-call
               ctx
               env
               locals
-              borrowed
+              borrowed0
               call-expr
-              args)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
-        (tc-borrow-check-after-returning-call
-          ctx
-          env
-          locals
-          borrowed
-          call-expr
-          args))]
-    [(TcMaybeString.No)
-      (tc-borrow-check-after-returning-call
-        ctx
-        env
-        locals
-        borrowed
-        call-expr
-        args)]))
+              args))]
+        [(TcMaybeString.No)
+          (tc-borrow-check-after-returning-call
+            ctx
+            env
+            locals
+            borrowed0
+            call-expr
+            args)])]
+    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
 
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
   (match names
@@ -37418,7 +38397,7 @@
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;;
 ;; Pipeline: parse -> EXPAND -> typecheck. When a call head names a `defmacro`,
-;; the unevaluated operand forms are passed as `Expr` values (CtfeExpr) to the
+;; the unevaluated operand forms are passed as `Expr` values (CompilerCtfeValue.Expr) to the
 ;; transformer, which is run via CTFE; the produced `Expr` is spliced at the
 ;; call site and re-expanded to a fixpoint (depth-limited). Macro calls in
 ;; ordinary evaluated positions are expanded; quoted/quasiquoted code is left
@@ -38014,10 +38993,11 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultGenKey
   (match (compiler-ctfe-eval expr env fuel)
-    [(OkCtfe value next-fuel)
+    [(ResultCtfe.Ok value next-fuel)
       (match value
-        [(CtfeString text) (ResultGenKey.Ok (spec-string-key text) next-fuel)]
-        [(CtfeI64 n)
+        [(CompilerCtfeValue.String text)
+          (ResultGenKey.Ok (spec-string-key text) next-fuel)]
+        [(CompilerCtfeValue.I64 n)
           (ResultGenKey.Ok
             (str_cat.str-cat "i64:" (string.int->string n))
             next-fuel)]
@@ -38027,7 +39007,7 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
-    [(ErrCtfe diag) (ResultGenKey.Err diag)]))
+    [(ResultCtfe.Err diag) (ResultGenKey.Err diag)]))
 
 (define (macro-identity-key-string-exprs
   [exprs : AstExprList]
@@ -40696,7 +41676,7 @@
   [origin : AstExpr]
   [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _)
+    [(CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -40710,7 +41690,7 @@
   [origin : AstExpr]
   [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
-    [(CtfeExpr node _)
+    [(CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
     [_
       (ResultMacroParsedDecls.Err
@@ -43219,13 +44199,13 @@
     arg
     (ctfe-env-empty-with-pools (tc-context-pools ctx))
     (ctfe-fuel-limit))
-    [(OkCtfeQuoteType ty _)
+    [(ResultCtfeQuoteType.Ok ty _)
       (match (tc-source-type-policy-ok ctx ty)
         [(ResultTcUnit.Ok)
           (ResultMacroTypeArg.Ok (macro-type-arg-resolve ctx decls ty))]
         [(ResultTcUnit.Err message)
           (ResultMacroTypeArg.Err (box (ctfe-diagnostic-at-expr arg message)))])]
-    [(ErrCtfeQuoteType diag) (ResultMacroTypeArg.Err diag)]))
+    [(ResultCtfeQuoteType.Err diag) (ResultMacroTypeArg.Err diag)]))
 
 (define (macro-type-arg-with-fallback
   [ctx : TcContext]
@@ -43611,7 +44591,10 @@
       (match (macro-expr-clause-list-from-args args)
         [(ResultMacroClauseList.Ok clauses)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeExprClauseList clauses)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.ExprClauseList clauses)))]
         [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-list-from-args args)
@@ -43620,7 +44603,7 @@
             (ctfe-env-extend
               env
               (intern-str name)
-              (CtfeExprBindingClauseList clauses)))]
+              (CompilerCtfeValue.ExprBindingClauseList clauses)))]
         [(ResultMacroBindingClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [else
       (match (macro-check-variadic-operands
@@ -43631,7 +44614,10 @@
         args)
         [(ResultMacroCheck.Ok)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeExprList args)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.ExprList args)))]
         [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
 
 (define (macro-bind-fixed-param
@@ -43650,7 +44636,10 @@
       (match (macro-type-arg-with-fallback ctx decls fallback-module arg-expr)
         [(ResultMacroTypeArg.Ok resolved-ty)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeType resolved-ty)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.Type resolved-ty)))]
         [(ResultMacroTypeArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(tc-macro-module-param-kind? ty)
       (match (macro-module-strategy-arg-with-fallback
@@ -43662,14 +44651,17 @@
             (ctfe-env-extend-typed
               env
               (intern-str name)
-              (CtfeString module)
+              (CompilerCtfeValue.String module)
               (AstTyString)))]
         [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-clause? ctx fallback-module ty)
       (match (macro-expr-clause-from-arg arg-expr)
         [(ResultMacroClause.Ok clause)
           (ResultMacroEnv.Ok
-            (ctfe-env-extend env (intern-str name) (CtfeExprClause clause)))]
+            (ctfe-env-extend
+              env
+              (intern-str name)
+              (CompilerCtfeValue.ExprClause clause)))]
         [(ResultMacroClause.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-from-arg arg-expr)
@@ -43678,7 +44670,7 @@
             (ctfe-env-extend
               env
               (intern-str name)
-              (CtfeExprBindingClause clause)))]
+              (CompilerCtfeValue.ExprBindingClause clause)))]
         [(ResultMacroBindingClause.Err diag) (ResultMacroEnv.Err diag)])]
     [else
       (let
@@ -43690,7 +44682,7 @@
               (ctfe-env-extend
                 env
                 (intern-str name)
-                (CtfeExpr
+                (CompilerCtfeValue.Expr
                   arg-id
                   (macro-captured-expr-produced-type
                     ctx
@@ -43800,16 +44792,19 @@
           (cfg compile-profile (compiler-tc-macro-profile-start))
           (match (ctfe-eval-node
             body
-            (ctfe-env-extend env (ctfe-hygiene-enabled-name) (CtfeBool true))
+            (ctfe-env-extend
+              env
+              (ctfe-hygiene-enabled-name)
+              (CompilerCtfeValue.Bool true))
             (ctfe-fuel-limit))
-            [(OkCtfe value _)
+            [(ResultCtfe.Ok value _)
               (begin
                 (ast-node-pool-context-install! (tc-context-pools ctx))
                 (cfg
                   compile-profile
                   (compiler-tc-macro-profile-finish macro-name expanded-args))
                 (ResultMacroValueEnv.Ok value env))]
-            [(ErrCtfe diag)
+            [(ResultCtfe.Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -43894,11 +44889,12 @@
       (let
         [lookup-name : String (macro-output-source-name (intern-str name))]
         (match (ctfe-env-lookup env lookup-name)
-          [(CtfeSomeValue value)
+          [(CtfeMaybeValue.Some value)
             (match value
-              [(CtfeType ty) (ast-node-push (AstExpr.TypeLiteral ty))]
+              [(CompilerCtfeValue.Type ty)
+                (ast-node-push (AstExpr.TypeLiteral ty))]
               [_ (ast-node-push expr)])]
-          [(CtfeNoValue) (ast-node-push expr)]))]
+          [(CtfeMaybeValue.None) (ast-node-push expr)]))]
     [(AstExpr.Call func-box args)
       (ast-expr-call func-box (macro-generated-type-param-expr-list env args))]
     [_ (ast-node-push expr)]))
@@ -44176,7 +45172,7 @@
       (ctfe-env-extend
         (ctfe-env-rebase-pools env (tc-context-pools ctx))
         (ctfe-hygiene-enabled-name)
-        (CtfeBool true))]
+        (CompilerCtfeValue.Bool true))]
     (macro-rewrite-generated-import-decls-with-env
       ctx
       orig-decls
@@ -45385,7 +46381,7 @@
             call-expr)
             [(ResultMacroValue.Ok value)
               (match value
-                [(CtfeExpr expanded produced)
+                [(CompilerCtfeValue.Expr expanded produced)
                   (if (tc-macro-produced-type-compatible? ctx ret produced)
                     (macro-expand-expr
                       ctx

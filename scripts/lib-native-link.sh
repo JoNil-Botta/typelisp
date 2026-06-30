@@ -15,16 +15,15 @@
 #
 # Stack reserve: the self-hosted backend recurses over the AST/IR (parse,
 # typecheck, and lower all descend per-expression), so a self-hosted-built
-# compiler needs a generous stack to self-compile on Windows (a 16MB reserve
-# STATUS_STACK_OVERFLOWs; 64MB sufficed for cli.tl). #2357: making local
-# struct/enum aggregates inline-by-value enlarged the per-frame footprint of
-# those recursive descents. #2599 moved the large declaration walks out of native
-# recursion; current selfhost Windows builds pass the compiler smoke workloads
-# with a 48MB reserve, so the default keeps 64MB of headroom. Override with
-# TYPELISP_WINDOWS_STACK_RESERVE (bytes).
+# compiler needs a generous stack to self-compile on Windows. #2357: making
+# local struct/enum aggregates inline-by-value enlarged the per-frame footprint
+# of those recursive descents. #2599 moved the largest declaration walks out of
+# native recursion, but the stage1 selfhost compile manifest still needs more
+# than 64MB on Windows for compiler-sized sources such as src/doc_test.tl.
+# Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
 
 HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
-NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-67108864}
+NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-134217728}
 TYPELISP_WINDOWS_LINK_POSIX=
 TYPELISP_WINDOWS_CLANG_POSIX=
 

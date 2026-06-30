@@ -576,6 +576,7 @@
 
 (define (case-end-bound-evaluated-once) : bool
   (let
+    ;; lint-allow: single-element-array-cell
     [bounds : (Array i64) (array.make-array i64 1)]
     [out : (Array i64) (array.make-array i64 3)]
     (begin

@@ -122,6 +122,7 @@
 ;; without consuming, `advance` bumps it.
 ;; Current cursor position.
 (define (cur-pos [cur : (Array i64 1)]) : i64
+  ;; lint-allow: single-element-array-cell
   (array-ref cur 0))
 
 ;; Kind tag of the token under the cursor.

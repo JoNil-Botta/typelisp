@@ -38,6 +38,7 @@
   (let
     [ints : (Array i64) (array.make-array i64 3)]
     [flags : (Array bool) (array.make-array bool 2)]
+    ;; lint-allow: single-element-array-cell
     [chars : (Array char) (array.make-array char 1)]
     [texts : (Array String) (array.make-array String 2)]
     [points : (Array Point) (array.make-array Point 2)]

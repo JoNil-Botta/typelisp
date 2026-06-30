@@ -182,6 +182,15 @@
 (define (lint-rule-copy-on-update-struct-suggestion) : String
   "replace same-struct reassignment with (set! (struct-get value field) new-value)")
 
+(define (lint-rule-single-element-array-cell-id) : String
+  "single-element-array-cell")
+
+(define (lint-rule-single-element-array-cell-message) : String
+  "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring")
+
+(define (lint-rule-single-element-array-cell-suggestion) : String
+  "replace the one-element array cell with Box T, &mut, or an explicit returned value")
+
 (define (lint-rule-unused-variable-id) : String
   "unused-variable")
 
@@ -319,6 +328,12 @@
     (lint-rule-copy-on-update-struct-message)
     (lint-rule-copy-on-update-struct-suggestion)))
 
+(define (lint-rule-single-element-array-cell) : LintRule
+  (LintRule
+    (lint-rule-single-element-array-cell-id)
+    (lint-rule-single-element-array-cell-message)
+    (lint-rule-single-element-array-cell-suggestion)))
+
 (define (lint-rule-unused-variable) : LintRule
   (LintRule
     (lint-rule-unused-variable-id)
@@ -372,10 +387,12 @@
                                   (lint-rule-cons
                                     (lint-rule-copy-on-update-struct)
                                     (lint-rule-cons
-                                      (lint-rule-unused-variable)
+                                      (lint-rule-single-element-array-cell)
                                       (lint-rule-cons
-                                        (lint-rule-unused-unsafe)
-                                        LintRuleList.Nil))))))))))))))))))))
+                                        (lint-rule-unused-variable)
+                                        (lint-rule-cons
+                                          (lint-rule-unused-unsafe)
+                                          LintRuleList.Nil)))))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -693,6 +710,19 @@
           (string.append field "; use in-place field assignment"))))
     (lint-rule-copy-on-update-struct-id)
     1
+    span))
+
+(define (lint-single-element-array-cell-finding
+  [name : String]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string.append
+      "single-element array scalar cell: "
+      (string.append
+        name
+        " is only read or written at index 0; prefer Box T, &mut, or returning the updated value"))
+    (lint-rule-single-element-array-cell-id)
+    0
     span))
 
 (define (lint-unused-variable-finding [name : String] [span : AstSourceSpan]) : LintFinding
@@ -2991,6 +3021,741 @@
         (box-get rest)
         shapes
         (lint-copy-on-update-structs-in-decl decl shapes acc))]))
+
+(defstruct LintSingleElementArrayCandidate
+  (name String)
+  (span AstSourceSpan)
+  (valid bool)
+  (used bool))
+
+(defenum LintSingleElementArrayCandidateList
+  (Nil)
+  (Cons
+    LintSingleElementArrayCandidate
+    (Box LintSingleElementArrayCandidateList)))
+
+(defstruct LintSingleElementArrayState
+  (candidates LintSingleElementArrayCandidateList)
+  (findings LintFindings))
+
+(define (lint-single-element-array-state-with-candidates
+  [state : LintSingleElementArrayState]
+  [candidates : LintSingleElementArrayCandidateList]) : LintSingleElementArrayState
+  (LintSingleElementArrayState candidates (struct-get state findings)))
+
+(define (lint-single-element-array-candidate-tracked?
+  [items : LintSingleElementArrayCandidateList]
+  [name : String]) : bool
+  (match items
+    [(LintSingleElementArrayCandidateList.Nil) false]
+    [(LintSingleElementArrayCandidateList.Cons item rest)
+      (if (string.eq (struct-get item name) name)
+        true
+        (lint-single-element-array-candidate-tracked? (box-get rest) name))]))
+
+(define (lint-single-element-array-candidate-remove
+  [items : LintSingleElementArrayCandidateList]
+  [name : String]) : LintSingleElementArrayCandidateList
+  (match items
+    [(LintSingleElementArrayCandidateList.Nil)
+      LintSingleElementArrayCandidateList.Nil]
+    [(LintSingleElementArrayCandidateList.Cons item rest)
+      (let
+        [rest-items : LintSingleElementArrayCandidateList (box-get rest)]
+        (if (string.eq (struct-get item name) name)
+          (lint-single-element-array-candidate-remove rest-items name)
+          (LintSingleElementArrayCandidateList.Cons
+            item
+            (box (lint-single-element-array-candidate-remove rest-items name)))))]))
+
+(define (lint-single-element-array-candidate-add
+  [items : LintSingleElementArrayCandidateList]
+  [name : String]
+  [span : AstSourceSpan]) : LintSingleElementArrayCandidateList
+  (LintSingleElementArrayCandidateList.Cons
+    (LintSingleElementArrayCandidate name span true false)
+    (box (lint-single-element-array-candidate-remove items name))))
+
+(define (lint-single-element-array-candidate-mark-use
+  [items : LintSingleElementArrayCandidateList]
+  [name : String]) : LintSingleElementArrayCandidateList
+  (match items
+    [(LintSingleElementArrayCandidateList.Nil)
+      LintSingleElementArrayCandidateList.Nil]
+    [(LintSingleElementArrayCandidateList.Cons item rest)
+      (let
+        [updated : LintSingleElementArrayCandidate
+          (if (string.eq (struct-get item name) name)
+            (LintSingleElementArrayCandidate
+              (struct-get item name)
+              (struct-get item span)
+              (struct-get item valid)
+              true)
+            item)]
+        (LintSingleElementArrayCandidateList.Cons
+          updated
+          (box
+            (lint-single-element-array-candidate-mark-use (box-get rest) name))))]))
+
+(define (lint-single-element-array-candidate-invalidate
+  [items : LintSingleElementArrayCandidateList]
+  [name : String]) : LintSingleElementArrayCandidateList
+  (match items
+    [(LintSingleElementArrayCandidateList.Nil)
+      LintSingleElementArrayCandidateList.Nil]
+    [(LintSingleElementArrayCandidateList.Cons item rest)
+      (let
+        [updated : LintSingleElementArrayCandidate
+          (if (string.eq (struct-get item name) name)
+            (LintSingleElementArrayCandidate
+              (struct-get item name)
+              (struct-get item span)
+              false
+              (struct-get item used))
+            item)]
+        (LintSingleElementArrayCandidateList.Cons
+          updated
+          (box
+            (lint-single-element-array-candidate-invalidate (box-get rest) name))))]))
+
+(define (lint-single-element-array-note-use
+  [state : LintSingleElementArrayState]
+  [name : String]) : LintSingleElementArrayState
+  (lint-single-element-array-state-with-candidates
+    state
+    (lint-single-element-array-candidate-mark-use
+      (struct-get state candidates)
+      name)))
+
+(define (lint-single-element-array-note-escape
+  [state : LintSingleElementArrayState]
+  [name : String]) : LintSingleElementArrayState
+  (lint-single-element-array-state-with-candidates
+    state
+    (lint-single-element-array-candidate-invalidate
+      (struct-get state candidates)
+      name)))
+
+(define (lint-single-element-array-note-var
+  [state : LintSingleElementArrayState]
+  [name : String]) : LintSingleElementArrayState
+  (if (lint-single-element-array-candidate-tracked?
+    (struct-get state candidates)
+    name)
+    (lint-single-element-array-note-escape state name)
+    state))
+
+(define (lint-single-element-array-scalar-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.I64) true]
+    [(AstType.I32) true]
+    [(AstType.I16) true]
+    [(AstType.I8) true]
+    [(AstType.U64) true]
+    [(AstType.U32) true]
+    [(AstType.U16) true]
+    [(AstType.U8) true]
+    [(AstType.F64) true]
+    [(AstType.F32) true]
+    [(AstType.Bool) true]
+    [(AstType.Char) true]
+    [(AstType.Ptr _) true]
+    [(AstType.MutPtr _) true]
+    [_ false]))
+
+(define (lint-single-element-array-scalar-type-id? [ty-id : i64]) : bool
+  (lint-single-element-array-scalar-type? (ty-node-get ty-id)))
+
+(define (lint-single-element-array-fixed-type? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Array elem count)
+      (and (= count 1) (lint-single-element-array-scalar-type-id? elem))]
+    [_ false]))
+
+(define (lint-single-element-array-maybe-fixed-type? [maybe-ty : AstMaybeType]) : bool
+  (match maybe-ty
+    [(AstMaybeType.Some ty) (lint-single-element-array-fixed-type? ty)]
+    [(AstMaybeType.No) false]))
+
+(define (lint-single-element-array-dynamic-element-scalar?
+  [maybe-ty : AstMaybeType]) : bool
+  (match maybe-ty
+    [(AstMaybeType.Some ty)
+      (match ty
+        [(AstType.DynArray elem)
+          (lint-single-element-array-scalar-type-id? elem)]
+        [_ false])]
+    [(AstMaybeType.No) false]))
+
+(define (lint-single-element-array-int-literal? [expr : AstExpr] [value : i64]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-single-element-array-int-literal? (ast-node-get inner) value)]
+    [(AstExpr.Ann inner _)
+      (lint-single-element-array-int-literal? (ast-node-get inner) value)]
+    [(AstExpr.Literal lit)
+      (and
+        (> (string.string-length (ast-lit-int-text lit)) 0)
+        (= (ast-lit-int-value lit) value))]
+    [_ false]))
+
+(define (lint-single-element-array-expr-list-count [exprs : AstExprList]) : i64
+  (match exprs
+    [(AstExprList.Nil) 0]
+    [(AstExprList.Cons _ rest)
+      (+ 1 (lint-single-element-array-expr-list-count (box-get rest)))]))
+
+(define (lint-single-element-array-callee-name [expr : AstExpr]) : String
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-single-element-array-callee-name (ast-node-get inner))]
+    [(AstExpr.Var name) (intern-str name)]
+    [_ ""]))
+
+(define (lint-single-element-array-var-name [expr : AstExpr]) : String
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-single-element-array-var-name (ast-node-get inner))]
+    [(AstExpr.Var name) (intern-str name)]
+    [_ ""]))
+
+(define (lint-single-element-array-make-array-callee? [name : String]) : bool
+  (or
+    (string.eq name "make-array")
+    (string.eq name "__tl_make-array")
+    (string.eq name "array.make-array")
+    (string.eq name "array/make-array")
+    (string.eq name "stdlib.array.make-array")))
+
+(define (lint-single-element-array-ref-callee? [name : String]) : bool
+  (or
+    (string.eq name "array-ref")
+    (string.eq name "__tl_array-ref")
+    (string.eq name "array.ref")
+    (string.eq name "array/ref")
+    (string.eq name "stdlib.array.ref")))
+
+(define (lint-single-element-array-set-callee? [name : String]) : bool
+  (or (string.eq name "array-set!") (string.eq name "__tl_array-set!")))
+
+(define (lint-single-element-array-args-second-int?
+  [args : AstExprList]
+  [value : i64]) : bool
+  (match args
+    [(AstExprList.Nil) false]
+    [(AstExprList.Cons _ rest)
+      (match (box-get rest)
+        [(AstExprList.Nil) false]
+        [(AstExprList.Cons second _)
+          (lint-single-element-array-int-literal? (ast-node-get second) value)])]))
+
+(define (lint-single-element-array-first-arg-name [args : AstExprList]) : String
+  (match args
+    [(AstExprList.Nil) ""]
+    [(AstExprList.Cons first _)
+      (lint-single-element-array-var-name (ast-node-get first))]))
+
+(define (lint-single-element-array-make-array-one? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-single-element-array-make-array-one? (ast-node-get inner))]
+    [(AstExpr.Ann inner _)
+      (lint-single-element-array-make-array-one? (ast-node-get inner))]
+    [(AstExpr.MakeArray _ len)
+      (lint-single-element-array-int-literal? (ast-node-get len) 1)]
+    [(AstExpr.Call func args)
+      (and
+        (lint-single-element-array-make-array-callee?
+          (lint-single-element-array-callee-name (ast-node-get func)))
+        (lint-single-element-array-args-second-int? args 1))]
+    [_ false]))
+
+(define (lint-single-element-array-local-candidate?
+  [maybe-ty : AstMaybeType]
+  [init : i64]) : bool
+  (or
+    (lint-single-element-array-maybe-fixed-type? maybe-ty)
+    (and
+      (lint-single-element-array-dynamic-element-scalar? maybe-ty)
+      (lint-single-element-array-make-array-one? (ast-node-get init)))))
+
+(define (lint-single-element-array-binding-span [init : i64]) : AstSourceSpan
+  (lint-no-effect-span (ast-node-get init)))
+
+(define (lint-single-element-array-add-local-if-candidate
+  [name-id : i64]
+  [maybe-ty : AstMaybeType]
+  [init : i64]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (let
+    [name : String (intern-str name-id)]
+    [base : LintSingleElementArrayState
+      (lint-single-element-array-state-with-candidates
+        state
+        (lint-single-element-array-candidate-remove
+          (struct-get state candidates)
+          name))]
+    (if (lint-single-element-array-local-candidate? maybe-ty init)
+      (lint-single-element-array-state-with-candidates
+        base
+        (lint-single-element-array-candidate-add
+          (struct-get base candidates)
+          name
+          (lint-single-element-array-binding-span init)))
+      base)))
+
+(define (lint-single-element-array-param-candidates
+  [params : AstParamList]
+  [span : AstSourceSpan]
+  [items : LintSingleElementArrayCandidateList]) : LintSingleElementArrayCandidateList
+  (match params
+    [(AstParamList.Nil) items]
+    [(AstParamList.Cons param rest)
+      (match param
+        [(AstParam.Param name ty _)
+          (let
+            [text : String (intern-str name)]
+            [with-param : LintSingleElementArrayCandidateList
+              (if (lint-single-element-array-fixed-type? ty)
+                (lint-single-element-array-candidate-add items text span)
+                items)]
+            (lint-single-element-array-param-candidates
+              (box-get rest)
+              span
+              with-param))])]))
+
+(define (lint-single-element-array-finalize-candidates
+  [items : LintSingleElementArrayCandidateList]
+  [acc : LintFindings]) : LintFindings
+  (match items
+    [(LintSingleElementArrayCandidateList.Nil) acc]
+    [(LintSingleElementArrayCandidateList.Cons item rest)
+      (let
+        [next : LintFindings
+          (if (and
+            (struct-get item valid)
+            (struct-get item used)
+            (not (lint-underscore-prefixed? (struct-get item name))))
+            (lint-findings-add
+              (lint-single-element-array-cell-finding
+                (struct-get item name)
+                (struct-get item span))
+              acc)
+            acc)]
+        (lint-single-element-array-finalize-candidates (box-get rest) next))]))
+
+(define (lint-single-element-array-finalize-state
+  [state : LintSingleElementArrayState]) : LintFindings
+  (lint-single-element-array-finalize-candidates
+    (struct-get state candidates)
+    (struct-get state findings)))
+
+(define (lint-single-element-array-expr-list
+  [exprs : AstExprList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (match exprs
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons head rest)
+      (lint-single-element-array-expr-list
+        (box-get rest)
+        (lint-single-element-array-expr (ast-node-get head) state))]))
+
+(define (lint-single-element-array-expr-list-after-two
+  [exprs : AstExprList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (match exprs
+    [(AstExprList.Nil) state]
+    [(AstExprList.Cons _ rest)
+      (match (box-get rest)
+        [(AstExprList.Nil) state]
+        [(AstExprList.Cons _ tail)
+          (lint-single-element-array-expr-list (box-get tail) state)])]))
+
+(define (lint-single-element-array-let-bindings
+  [bindings : AstLetBindingList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (match bindings
+    [(AstLetBindingList.Nil) state]
+    [(AstLetBindingList.Cons binding rest)
+      (match binding
+        [(AstLetBinding.Binding name maybe-ty init)
+          (let
+            [after-init : LintSingleElementArrayState
+              (lint-single-element-array-expr (ast-node-get init) state)]
+            [after-binding : LintSingleElementArrayState
+              (lint-single-element-array-add-local-if-candidate
+                name
+                maybe-ty
+                init
+                after-init)]
+            (lint-single-element-array-let-bindings
+              (box-get rest)
+              after-binding))])]))
+
+(define (lint-single-element-array-match-arms
+  [arms : AstMatchArmList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (match arms
+    [(AstMatchArmList.Nil) state]
+    [(AstMatchArmList.Cons arm rest)
+      (match arm
+        [(AstMatchArm.Arm _ body)
+          (lint-single-element-array-match-arms
+            (box-get rest)
+            (lint-single-element-array-expr (ast-node-get body) state))])]))
+
+(define (lint-single-element-array-resource-bindings
+  [bindings : AstResourceBindingList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (match bindings
+    [(AstResourceBindingList.Nil) state]
+    [(AstResourceBindingList.Cons binding rest)
+      (match binding
+        [(AstResourceBinding.Binding name init cleanup)
+          (let
+            [after-init : LintSingleElementArrayState
+              (lint-single-element-array-expr (ast-node-get init) state)]
+            [after-cleanup : LintSingleElementArrayState
+              (lint-single-element-array-expr (ast-node-get cleanup) after-init)]
+            [after-shadow : LintSingleElementArrayState
+              (lint-single-element-array-state-with-candidates
+                after-cleanup
+                (lint-single-element-array-candidate-remove
+                  (struct-get after-cleanup candidates)
+                  (intern-str name)))]
+            (lint-single-element-array-resource-bindings
+              (box-get rest)
+              after-shadow))])]))
+
+(define (lint-single-element-array-call-ref
+  [args : AstExprList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (let
+    [name : String (lint-single-element-array-first-arg-name args)]
+    (if (and
+      (= (lint-single-element-array-expr-list-count args) 2)
+      (lint-single-element-array-candidate-tracked?
+        (struct-get state candidates)
+        name)
+      (lint-single-element-array-args-second-int? args 0))
+      (lint-single-element-array-expr-list-after-two
+        args
+        (lint-single-element-array-note-use state name))
+      (lint-single-element-array-expr-list args state))))
+
+(define (lint-single-element-array-call-set
+  [args : AstExprList]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (let
+    [name : String (lint-single-element-array-first-arg-name args)]
+    (if (and
+      (= (lint-single-element-array-expr-list-count args) 3)
+      (lint-single-element-array-candidate-tracked?
+        (struct-get state candidates)
+        name)
+      (lint-single-element-array-args-second-int? args 0))
+      (lint-single-element-array-expr-list-after-two
+        args
+        (lint-single-element-array-note-use state name))
+      (lint-single-element-array-expr-list args state))))
+
+(define (lint-single-element-array-expr
+  [expr : AstExpr]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Literal _) state]
+    [(AstExpr.Var name)
+      (lint-single-element-array-note-var state (intern-str name))]
+    [(AstExpr.Binary _ left right)
+      (lint-single-element-array-expr
+        (ast-node-get right)
+        (lint-single-element-array-expr (ast-node-get left) state))]
+    [(AstExpr.Unary _ inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Call func args)
+      (let
+        [callee : String
+          (lint-single-element-array-callee-name (ast-node-get func))]
+        [after-func : LintSingleElementArrayState
+          (lint-single-element-array-expr (ast-node-get func) state)]
+        (cond
+          [(lint-single-element-array-ref-callee? callee)
+            (lint-single-element-array-call-ref args after-func)]
+          [(lint-single-element-array-set-callee? callee)
+            (lint-single-element-array-call-set args after-func)]
+          [else (lint-single-element-array-expr-list args after-func)]))]
+    [(AstExpr.If cond then-branch else-branch)
+      (lint-single-element-array-expr
+        (ast-node-get else-branch)
+        (lint-single-element-array-expr
+          (ast-node-get then-branch)
+          (lint-single-element-array-expr (ast-node-get cond) state)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body)
+          (lint-single-element-array-expr
+            (ast-node-get body)
+            (lint-single-element-array-let-bindings bindings state))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda _ _ body)
+          (lint-single-element-array-expr (ast-node-get body) state)])]
+    [(AstExpr.Tuple exprs) (lint-single-element-array-expr-list exprs state)]
+    [(AstExpr.TupleRef tuple _)
+      (lint-single-element-array-expr (ast-node-get tuple) state)]
+    [(AstExpr.Array exprs) (lint-single-element-array-expr-list exprs state)]
+    [(AstExpr.MakeArray _ len)
+      (lint-single-element-array-expr (ast-node-get len) state)]
+    [(AstExpr.ArrayRef array index)
+      (let
+        [name : String
+          (lint-single-element-array-var-name (ast-node-get array))]
+        (if (and
+          (lint-single-element-array-candidate-tracked?
+            (struct-get state candidates)
+            name)
+          (lint-single-element-array-int-literal? (ast-node-get index) 0))
+          (lint-single-element-array-note-use state name)
+          (lint-single-element-array-expr
+            (ast-node-get index)
+            (lint-single-element-array-expr (ast-node-get array) state))))]
+    [(AstExpr.ArraySet array index value)
+      (let
+        [name : String
+          (lint-single-element-array-var-name (ast-node-get array))]
+        (if (and
+          (lint-single-element-array-candidate-tracked?
+            (struct-get state candidates)
+            name)
+          (lint-single-element-array-int-literal? (ast-node-get index) 0))
+          (lint-single-element-array-expr
+            (ast-node-get value)
+            (lint-single-element-array-note-use state name))
+          (lint-single-element-array-expr
+            (ast-node-get value)
+            (lint-single-element-array-expr
+              (ast-node-get index)
+              (lint-single-element-array-expr (ast-node-get array) state)))))]
+    [(AstExpr.ArrayPush array value)
+      (lint-single-element-array-expr
+        (ast-node-get value)
+        (lint-single-element-array-expr (ast-node-get array) state))]
+    [(AstExpr.StringRef text index)
+      (lint-single-element-array-expr
+        (ast-node-get index)
+        (lint-single-element-array-expr (ast-node-get text) state))]
+    [(AstExpr.While cond body)
+      (lint-single-element-array-expr
+        (ast-node-get body)
+        (lint-single-element-array-expr (ast-node-get cond) state))]
+    [(AstExpr.Begin exprs) (lint-single-element-array-expr-list exprs state)]
+    [(AstExpr.Unsafe exprs) (lint-single-element-array-expr-list exprs state)]
+    [(AstExpr.Set target value)
+      (lint-single-element-array-expr
+        (ast-node-get value)
+        (lint-single-element-array-note-var state (intern-str target)))]
+    [(AstExpr.Ann inner _)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Cast inner _)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Borrow _ _ place)
+      (lint-single-element-array-expr (ast-node-get place) state)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (lint-single-element-array-match-arms
+            arms
+            (lint-single-element-array-expr (ast-node-get scrutinee) state))])]
+    [(AstExpr.Foreach fe-box)
+      (match (box-get fe-box)
+        [(AstForeach.Foreach _ _ start end body)
+          (lint-single-element-array-expr
+            (ast-node-get body)
+            (lint-single-element-array-expr
+              (ast-node-get end)
+              (lint-single-element-array-expr (ast-node-get start) state)))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ _ _ start end init value)
+          (lint-single-element-array-expr
+            (ast-node-get value)
+            (lint-single-element-array-expr
+              (ast-node-get init)
+              (lint-single-element-array-expr
+                (ast-node-get end)
+                (lint-single-element-array-expr (ast-node-get start) state))))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
+          (lint-single-element-array-expr
+            (ast-node-get body)
+            (lint-single-element-array-expr
+              (ast-node-get value)
+              (lint-single-element-array-expr
+                (ast-node-get init)
+                (lint-single-element-array-expr
+                  (ast-node-get end)
+                  (lint-single-element-array-expr (ast-node-get start) state)))))])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (lint-single-element-array-expr
+        (ast-node-get lane)
+        (lint-single-element-array-expr (ast-node-get value) state))]
+    [(AstExpr.SpmdShuffle value lane)
+      (lint-single-element-array-expr
+        (ast-node-get lane)
+        (lint-single-element-array-expr (ast-node-get value) state))]
+    [(AstExpr.StructGet receiver _)
+      (lint-single-element-array-expr (ast-node-get receiver) state)]
+    [(AstExpr.StructSet receiver _ value)
+      (lint-single-element-array-expr
+        (ast-node-get value)
+        (lint-single-element-array-expr (ast-node-get receiver) state))]
+    [(AstExpr.WithRegion _ body)
+      (lint-single-element-array-expr-list body state)]
+    [(AstExpr.WithEscape scratch body)
+      (lint-single-element-array-expr-list
+        body
+        (lint-single-element-array-expr (ast-node-get scratch) state))]
+    [(AstExpr.WithScratch body)
+      (lint-single-element-array-expr-list body state)]
+    [(AstExpr.InArena arena body)
+      (lint-single-element-array-expr-list
+        body
+        (lint-single-element-array-expr (ast-node-get arena) state))]
+    [(AstExpr.WithResource wr-box)
+      (match (box-get wr-box)
+        [(AstWithResource.WithResource bindings body)
+          (lint-single-element-array-expr-list
+            body
+            (lint-single-element-array-resource-bindings bindings state))])]
+    [(AstExpr.Box inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.BoxGet inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.BoxTake inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.BoxSet inner value)
+      (lint-single-element-array-expr
+        (ast-node-get value)
+        (lint-single-element-array-expr (ast-node-get inner) state))]
+    [(AstExpr.TypeLiteral _) state]
+    [(AstExpr.Init _) state]
+    [(AstExpr.Comptime inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Quote _) state]
+    [(AstExpr.Quasiquote _) state]
+    [(AstExpr.Unquote inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.UnquoteSplicing inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.BracketClause items)
+      (lint-single-element-array-expr-list items state)]
+    [(AstExpr.Try inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.Return inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.PtrNull _) state]
+    [(AstExpr.PtrNullCheck inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.PtrAddrOf place)
+      (lint-single-element-array-expr (ast-node-get place) state)]
+    [(AstExpr.PtrRead ptr)
+      (lint-single-element-array-expr (ast-node-get ptr) state)]
+    [(AstExpr.PtrWrite ptr value)
+      (lint-single-element-array-expr
+        (ast-node-get value)
+        (lint-single-element-array-expr (ast-node-get ptr) state))]
+    [(AstExpr.PtrOffset ptr offset)
+      (lint-single-element-array-expr
+        (ast-node-get offset)
+        (lint-single-element-array-expr (ast-node-get ptr) state))]
+    [(AstExpr.PtrCast ptr _)
+      (lint-single-element-array-expr (ast-node-get ptr) state)]
+    [(AstExpr.PtrToInt ptr)
+      (lint-single-element-array-expr (ast-node-get ptr) state)]
+    [(AstExpr.IntToPtr value _)
+      (lint-single-element-array-expr (ast-node-get value) state)]
+    [(AstExpr.StringData inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.StringFromBytes ptr len)
+      (lint-single-element-array-expr
+        (ast-node-get len)
+        (lint-single-element-array-expr (ast-node-get ptr) state))]
+    [(AstExpr.ArrayData inner)
+      (lint-single-element-array-expr (ast-node-get inner) state)]
+    [(AstExpr.BinaryData _) state]
+    [(AstExpr.SpmdProgramIndex) state]
+    [(AstExpr.SpmdProgramCount) state]
+    [(AstExpr.ProgramArgc) state]
+    [(AstExpr.ProgramArgv) state]
+    [(AstExpr.ProgramEnvp) state]
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (lint-single-element-array-expr
+        (ast-node-get subleaf)
+        (lint-single-element-array-expr (ast-node-get leaf) state))]
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (lint-single-element-array-expr
+        (ast-node-get subleaf)
+        (lint-single-element-array-expr (ast-node-get leaf) state))]
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (lint-single-element-array-expr
+        (ast-node-get subleaf)
+        (lint-single-element-array-expr (ast-node-get leaf) state))]
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (lint-single-element-array-expr
+        (ast-node-get subleaf)
+        (lint-single-element-array-expr (ast-node-get leaf) state))]
+    [(AstExpr.Xgetbv index)
+      (lint-single-element-array-expr (ast-node-get index) state)]
+    [(AstExpr.Syscall args) (lint-single-element-array-expr-list args state)]))
+
+(define (lint-single-element-array-cells-in-decl
+  [decl : AstDecl]
+  [acc : LintFindings]) : LintFindings
+  (match decl
+    [(AstDecl.Def _ _ body)
+      (lint-single-element-array-finalize-state
+        (lint-single-element-array-expr
+          (ast-node-get body)
+          (LintSingleElementArrayState
+            LintSingleElementArrayCandidateList.Nil
+            acc)))]
+    [(AstDecl.DefFn _ params _ body _)
+      (let
+        [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
+        [param-candidates : LintSingleElementArrayCandidateList
+          (lint-single-element-array-param-candidates
+            params
+            body-span
+            LintSingleElementArrayCandidateList.Nil)]
+        (lint-single-element-array-finalize-state
+          (lint-single-element-array-expr
+            (ast-node-get body)
+            (LintSingleElementArrayState param-candidates acc))))]
+    [(AstDecl.Test _ body _)
+      (lint-single-element-array-finalize-state
+        (lint-single-element-array-expr
+          (ast-node-get body)
+          (LintSingleElementArrayState
+            LintSingleElementArrayCandidateList.Nil
+            acc)))]
+    [(AstDecl.Unsafe inner)
+      (lint-single-element-array-cells-in-decl (box-get inner) acc)]
+    [(AstDecl.ComptimeDecl _ inner)
+      (lint-single-element-array-cells-in-decl (box-get inner) acc)]
+    [_ acc]))
+
+(define (lint-single-element-array-cells-in-decl-list
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (match decls
+    [(AstDeclList.Nil) acc]
+    [(AstDeclList.Cons decl rest)
+      (lint-single-element-array-cells-in-decl-list
+        (box-get rest)
+        (lint-single-element-array-cells-in-decl decl acc))]))
 
 (define (lint-pending-assignment-find
   [items : LintPendingAssignmentList]
@@ -6457,8 +7222,14 @@
             decls
             copy-on-update-shapes
             unused-assignments)]
+        [single-element-array-cells : LintFindings
+          (lint-single-element-array-cells-in-decl-list decls copy-on-update)]
         [unused-imports : LintFindings
-          (lint-unused-imports-in-decl-list source decls decls copy-on-update)]
+          (lint-unused-imports-in-decl-list
+            source
+            decls
+            decls
+            single-element-array-cells)]
         (lint-unused-variables-in-decl-list source decls unused-imports))]))
 
 ;: Run all lint rules over `program`, returning the collected findings.
@@ -6486,8 +7257,14 @@
             decls
             copy-on-update-shapes
             unused-assignments)]
+        [single-element-array-cells : LintFindings
+          (lint-single-element-array-cells-in-decl-list decls copy-on-update)]
         [unused-imports : LintFindings
-          (lint-unused-imports-in-decl-list source decls decls copy-on-update)]
+          (lint-unused-imports-in-decl-list
+            source
+            decls
+            decls
+            single-element-array-cells)]
         (lint-deprecated-string-concat-scan
           source
           (lint-unused-variables-in-decl-list source decls unused-imports)))]))
@@ -7356,6 +8133,18 @@
         "unused variable: parameter or local binding is never used")
         unit
         (io.panic "lint: unused-variable message should be registered"))
+      (if (string.eq
+        (lint-rule-suggestion (lint-rule-single-element-array-cell-id))
+        "replace the one-element array cell with Box T, &mut, or an explicit returned value")
+        unit
+        (io.panic
+          "lint: single-element-array-cell suggestion should be registered"))
+      (if (string.eq
+        (lint-rule-message (lint-rule-single-element-array-cell-id))
+        "single-element array scalar cell: prefer Box T, &mut, or return-value refactoring")
+        unit
+        (io.panic
+          "lint: single-element-array-cell message should be registered"))
       (if (string.eq
         (lint-rule-suggestion (lint-rule-unused-unsafe-id))
         "remove the unsafe wrapper")

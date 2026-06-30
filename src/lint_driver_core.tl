@@ -2396,6 +2396,67 @@
       (set! x 2)
       x)))")
 
+(define (selfhost-lint-single-element-array-fixed-source) : String
+  "(define (main) : i64
+  (let
+    [cur : (Array i64 1) (array 0)]
+    (begin
+      (array-set! cur 0 3)
+      (array-ref cur 0))))")
+
+(define (selfhost-lint-single-element-array-param-source) : String
+  "(define (read-cell [cur : (Array i64 1)]) : i64
+  (array-ref cur 0))")
+
+(define (selfhost-lint-single-element-array-dynamic-source) : String
+  "(define (main) : i64
+  (let
+    [cur : (Array i64) (make-array i64 1)]
+    (begin
+      (array-set! cur 0 3)
+      (array-ref cur 0))))")
+
+(define (selfhost-lint-single-element-array-dotted-source) : String
+  "(define (main) : i64
+  (let
+    [cur : (Array i64) (array.make-array i64 1)]
+    (begin
+      (array-set! cur 0 3)
+      (array.ref cur 0))))")
+
+(define (selfhost-lint-single-element-array-nonzero-source) : String
+  "(define (main) : i64
+  (let
+    [cur : (Array i64 2) (array 1 2)]
+    (array-ref cur 1)))")
+
+(define (selfhost-lint-single-element-array-dynamic-index-source) : String
+  "(define (main [index : i64]) : i64
+  (let
+    [cur : (Array i64) (make-array i64 1)]
+    (array-ref cur index)))")
+
+(define (selfhost-lint-single-element-array-escape-source) : String
+  "(define (use-array [items : (Array i64)]) : i64
+  (array-length items))
+(define (main) : i64
+  (let
+    [cur : (Array i64) (make-array i64 1)]
+    (use-array cur)))")
+
+(define (selfhost-lint-single-element-array-aggregate-source) : String
+  "(define (main) : String
+  (let
+    [cur : (Array String 1) (array \"x\")]
+    (array-ref cur 0)))")
+
+(define (selfhost-lint-single-element-array-suppressed-source) : String
+  "(define (main) : i64
+  (let
+    ;; lint-allow: single-element-array-cell
+    [cur : (Array i64 1) (array 0)]
+    (array-ref cur 0)))")
+
 (define (selfhost-lint-nested-let-source) : String
   "(define (main) : i64
   (let
@@ -2761,6 +2822,80 @@
             (lint-rule-message rule)
             (lint-rule-unused-assignment-message)))
         56]
+      [else 42])))
+
+(define (selfhost-lint-single-element-array-cell-self-test) : i64
+  (let
+    [rule : String (lint-rule-single-element-array-cell-id)]
+    (cond
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-fixed-source)
+              rule)
+            1))
+        60]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-param-source)
+              rule)
+            1))
+        61]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-dynamic-source)
+              rule)
+            1))
+        62]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-dotted-source)
+              rule)
+            1))
+        63]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-nonzero-source)
+              rule)
+            0))
+        64]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-dynamic-index-source)
+              rule)
+            0))
+        65]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-escape-source)
+              rule)
+            0))
+        66]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-aggregate-source)
+              rule)
+            0))
+        67]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-single-element-array-suppressed-source)
+              rule)
+            0))
+        68]
+      [(not
+          (string.eq
+            (lint-rule-message rule)
+            (lint-rule-single-element-array-cell-message)))
+        69]
       [else 42])))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.

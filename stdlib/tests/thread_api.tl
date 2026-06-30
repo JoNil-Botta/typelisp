@@ -1,6 +1,6 @@
 (import stdlib.array)
 (import stdlib.thread)
-(import (thread.thread-handle i64) as thread_i64)
+(import (thread.handle i64) as thread_i64)
 (import stdlib.string)
 
 (define (test-array-i64-addr [items : (Array i64)]) : i64
@@ -27,17 +27,17 @@
     [sem-handle : i64 (test-read-i64 ctx 2)]
     (begin
       (test-write-i64! out-addr 0 value)
-      (thread.thread-semaphore-post (thread.ThreadSemaphore sem-handle))
+      (thread.semaphore-post (thread.ThreadSemaphore sem-handle))
       value)))
 
 (define (thread-api-join-code [result : thread.ThreadJoinResult]) : i64
-  (thread.thread-join-result-value-or result -1))
+  (thread.join-result-value-or result -1))
 
 (define (thread-api-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
-    (thread.thread-spawn-result-handle-or spawn 0)
-    (thread.thread-spawn-result-clear-tid-addr-or spawn 0)
-    (thread.thread-spawn-result-result-addr-or spawn 0)))
+    (thread.spawn-result-handle-or spawn 0)
+    (thread.spawn-result-clear-tid-addr-or spawn 0)
+    (thread.spawn-result-result-addr-or spawn 0)))
 
 (define (thread-api-join-i64-code [result : thread_i64.JoinResult]) : i64
   (thread_i64.join-value-or result -1))
@@ -75,22 +75,22 @@
       (thread_i64.spawn
         (lambda () : i64
           (+ base delta)))
-      (thread.thread-spawn-string
+      (thread.spawn-string
         (lambda () : String
           (string.append "thread:" (string.int->string (+ base 2)))))
-      (thread.thread-spawn-array-i64
+      (thread.spawn-array-i64
         (lambda () : (Array i64)
           (thread-api-array-i64-build 10)))
-      (thread.thread-spawn-box-i64
+      (thread.spawn-box-i64
         (lambda () : (Box i64)
           (box 42)))
       unit)))
 
 (define (thread-api-negative-semaphore-rejected?) : bool
-  (= (thread.thread-semaphore-create-handle-or -1 -1) -1))
+  (= (thread.semaphore-create-handle-or -1 -1) -1))
 
 (define (thread-api-large-semaphore-rejected?) : bool
-  (= (thread.thread-semaphore-create-handle-or 2147483648 -1) -1))
+  (= (thread.semaphore-create-handle-or 2147483648 -1) -1))
 
 (define (thread-api-finish-run
   [sem : thread.ThreadSemaphore]
@@ -103,15 +103,15 @@
     [a-code : i64 -1]
     [b-code : i64 -1]
     (begin
-      (if (not (thread.thread-semaphore-wait sem))
+      (if (not (thread.semaphore-wait sem))
         (set! result 4)
         unit)
-      (if (and (= result 42) (not (thread.thread-semaphore-wait sem)))
+      (if (and (= result 42) (not (thread.semaphore-wait sem)))
         (set! result 5)
         unit)
-      (set! a-code (thread-api-join-code (thread.thread-join a)))
-      (set! b-code (thread-api-join-code (thread.thread-join b)))
-      (if (and (= result 42) (not (thread.thread-semaphore-close sem)))
+      (set! a-code (thread-api-join-code (thread.join a)))
+      (set! b-code (thread-api-join-code (thread.join b)))
+      (if (and (= result 42) (not (thread.semaphore-close sem)))
         (set! result 6)
         unit)
       (if (and (= result 42) (not (= (array-ref out-a 0) 11)))
@@ -144,16 +144,14 @@
       (array-set! ctx-b 2 sem-handle)
       (let
         [a-spawn : thread.ThreadSpawnResult
-          (thread.thread-spawn thread-api-worker (test-array-i64-addr ctx-a))]
-        (if (not (thread.thread-spawn-result-ok? a-spawn))
+          (thread.spawn thread-api-worker (test-array-i64-addr ctx-a))]
+        (if (not (thread.spawn-result-ok? a-spawn))
           2
           (let
             [a : thread.Thread (thread-api-thread-or a-spawn)]
             [b-spawn : thread.ThreadSpawnResult
-              (thread.thread-spawn
-                thread-api-worker
-                (test-array-i64-addr ctx-b))]
-            (if (not (thread.thread-spawn-result-ok? b-spawn))
+              (thread.spawn thread-api-worker (test-array-i64-addr ctx-b))]
+            (if (not (thread.spawn-result-ok? b-spawn))
               3
               (thread-api-finish-run
                 sem
@@ -169,7 +167,7 @@
     [safe-array-code : i64 (thread-api-safe-array-i64-run)]
     [safe-box-code : i64 (thread-api-safe-box-i64-run)]
     (cond
-      [(< (thread.thread-default-worker-count) 1) 1]
+      [(< (thread.default-worker-count) 1) 1]
       [(not (= safe-code 42)) safe-code]
       [(not (= safe-string-code 42)) safe-string-code]
       [(not (= safe-array-code 42)) safe-array-code]
@@ -178,7 +176,7 @@
       [(not (thread-api-large-semaphore-rejected?)) 12]
       [else
         (let
-          [sem-handle : i64 (thread.thread-semaphore-create-handle-or 0 -1)]
+          [sem-handle : i64 (thread.semaphore-create-handle-or 0 -1)]
           (if (= sem-handle -1)
             13
             (thread-api-run-with-semaphore (thread.ThreadSemaphore sem-handle))))])))

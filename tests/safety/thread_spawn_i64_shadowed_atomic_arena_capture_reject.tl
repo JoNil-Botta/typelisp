@@ -1,7 +1,7 @@
 (import stdlib.arena as real_arena)
 (import "thread_spawn_i64_shadowed_atomic_arena_lib.tl" module shadow_arena as arena)
-(import "stdlib/thread.tl")
-(import (thread-handle i64) as thread_i64)
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
 (import stdlib.string)
 
 (define (main) : i64

@@ -1,5 +1,5 @@
-(import "stdlib/thread.tl")
-(import (thread-handle (type unit)) as thread_unit)
+(import stdlib.thread)
+(import (thread.handle (type unit)) as thread_unit)
 
 (define (thread-safe-unit-join-ok? [thread : thread_unit.Handle]) : bool
   (match (thread_unit.join thread)

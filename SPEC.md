@@ -5511,7 +5511,7 @@ support lands.
 
 This section specifies the safe task-threading model for the future stdlib
 surface tracked by #2592. The current `stdlib/thread.tl` remains a raw substrate:
-`thread-spawn` takes a `(-> i64 i64)` entry and one `i64` context, `thread-join`
+`thread.spawn` takes a `(-> i64 i64)` entry and one `i64` context, `thread.join`
 returns an `i64`, and callers that smuggle addresses through those integers are
 responsible for their own synchronization in unsafe code. The safe surface is
 closure-based and checker-visible; it does not add `Send`/`Sync` traits or any

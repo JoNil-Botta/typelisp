@@ -1,6 +1,6 @@
 ;: Mutex guards must be owned by `with`, not ordinary `let`.
-(import "stdlib/sync.tl")
-(import (mutex i64) as mutex_i64)
+(import stdlib.sync)
+(import (sync.mutex i64) as mutex_i64)
 
 (define (bad [mutex : mutex_i64.Mutex]) : i64
   (let

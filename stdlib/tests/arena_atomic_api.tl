@@ -30,19 +30,18 @@
             7))))))
 
 (define (arena-atomic-join [worker : thread.Thread]) : i64
-  (thread.thread-join-result-value-or (thread.thread-join worker) 8))
+  (thread.join-result-value-or (thread.join worker) 8))
 
 (define (arena-atomic-thread-or [spawn : thread.ThreadSpawnResult]) : thread.Thread
   (thread.Thread
-    (thread.thread-spawn-result-handle-or spawn 0)
-    (thread.thread-spawn-result-clear-tid-addr-or spawn 0)
-    (thread.thread-spawn-result-result-addr-or spawn 0)))
+    (thread.spawn-result-handle-or spawn 0)
+    (thread.spawn-result-clear-tid-addr-or spawn 0)
+    (thread.spawn-result-result-addr-or spawn 0)))
 
 (define (arena-atomic-spawn-second [owner : i64] [first : thread.Thread]) : i64
   (let
-    [spawn : thread.ThreadSpawnResult
-      (thread.thread-spawn arena-atomic-worker owner)]
-    (if (not (thread.thread-spawn-result-ok? spawn))
+    [spawn : thread.ThreadSpawnResult (thread.spawn arena-atomic-worker owner)]
+    (if (not (thread.spawn-result-ok? spawn))
       3
       (let
         [second : thread.Thread (arena-atomic-thread-or spawn)]
@@ -54,9 +53,8 @@
 
 (define (arena-atomic-run [owner : i64]) : i64
   (let
-    [spawn : thread.ThreadSpawnResult
-      (thread.thread-spawn arena-atomic-worker owner)]
-    (if (not (thread.thread-spawn-result-ok? spawn))
+    [spawn : thread.ThreadSpawnResult (thread.spawn arena-atomic-worker owner)]
+    (if (not (thread.spawn-result-ok? spawn))
       2
       (arena-atomic-spawn-second owner (arena-atomic-thread-or spawn)))))
 

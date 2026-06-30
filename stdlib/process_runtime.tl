@@ -1556,7 +1556,7 @@
             (let
               [codebuf : (Array i32) (array.make-array i32 1)]
               [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
-              [thread-handle : i64 (cast (array-ref procinfo 1) : i64)]
+              [worker-handle : i64 (cast (array-ref procinfo 1) : i64)]
               (begin
                 (stdlib.process_runtime.process-win-wait-single
                   process-handle
@@ -1566,7 +1566,7 @@
                   (unsafe
                     (ptr-cast (array-data codebuf) : (MutPtr i32))))
                 (stdlib.process_runtime.process-win-close-handle process-handle)
-                (stdlib.process_runtime.process-win-close-handle thread-handle)
+                (stdlib.process_runtime.process-win-close-handle worker-handle)
                 (cast (array-ref codebuf 0) : i64)))))))))
 
 ;: Seek a raw Windows file HANDLE and return the resulting offset.

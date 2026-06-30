@@ -65,7 +65,7 @@ surface exists.
   contiguous source/destination surface. The public SPMD vector/slice migration
   is separate from ordinary collection migration.
 - `tests/integration/thread_safe_array_i64.tl` and thread runtime fixtures cover
-  the currently implemented `thread-spawn-array-i64` / `thread-join-array-i64`
+  the currently implemented `thread.spawn-array-i64` / `thread.join-array-i64`
   aggregate transfer surface.
 - `stdlib/tests/vector_slice_escape.tl` and vector/slice inline tests keep
   explicit array conversion coverage for `from-array`, `to-array`, and slice

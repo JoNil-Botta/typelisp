@@ -758,9 +758,9 @@ calls for unsafe internals that can prove every invalidated handle is dead.
 ### Safe task threading
 
 Safe task threads use generated typed closure modules from `stdlib/thread.tl`,
-such as `(import (thread.thread-handle i64) as thread_i64)` with
+such as `(import (thread.handle i64) as thread_i64)` with
 `thread_i64.spawn` / `thread_i64.join`, plus aggregate wrappers such as
-`thread-spawn-string` and their matching joins. The checker validates the
+`thread.spawn-string` and their matching joins. The checker validates the
 captured environment and joined result structurally: references, borrowed `str`
 views, scoped regions, ordinary first-class arenas, raw pointer ownership
 claims, live mutable aliases, and guards do not cross safe task-thread

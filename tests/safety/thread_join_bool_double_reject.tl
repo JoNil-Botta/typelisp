@@ -1,5 +1,5 @@
-(import "stdlib/thread.tl")
-(import (thread-handle bool) as thread_bool)
+(import stdlib.thread)
+(import (thread.handle bool) as thread_bool)
 
 (define (main) : i64
   (match (thread_bool.spawn

@@ -1,11 +1,11 @@
 (import stdlib.arena)
-(import "stdlib/thread.tl")
+(import stdlib.thread)
 
 (define (thread-safe-box-i64-join-code
-  [thread : ThreadBoxI64]
+  [worker : ThreadBoxI64]
   [expected : i64]
   [failure : i64]) : i64
-  (match (thread-join-box-i64 thread)
+  (match (thread.join-box-i64 worker)
     [(ThreadBoxI64JoinOk cell)
       (if (= (box-get cell) expected)
         42
@@ -15,7 +15,7 @@
 (define (thread-safe-box-i64-worker-default-run) : i64
   (let
     [base : i64 40]
-    (match (thread-spawn-box-i64
+    (match (thread.spawn-box-i64
       (lambda () : (Box i64)
         (box (+ base 2))))
       [(ThreadBoxI64SpawnErr _) 1]
@@ -25,7 +25,7 @@
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [base : i64 50]
-    (match (thread-spawn-box-i64
+    (match (thread.spawn-box-i64
       (lambda () : (Box i64)
         (in-arena owner (box (+ base 7)))))
       [(ThreadBoxI64SpawnErr _) 3]

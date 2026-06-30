@@ -1,7 +1,7 @@
 (import stdlib.array)
-(import "stdlib/sync.tl")
-(import (mutex i64) as mutex_i64)
-(import "stdlib/thread.tl")
+(import stdlib.sync)
+(import (sync.mutex i64) as mutex_i64)
+(import stdlib.thread)
 
 (define sync-mutex-integration-count : i64
   512)
@@ -64,8 +64,8 @@
   [a : Thread]
   [b : Thread]) : i64
   (let
-    [a-code : i64 (sync-mutex-integration-join-code (thread-join a))]
-    [b-code : i64 (sync-mutex-integration-join-code (thread-join b))]
+    [a-code : i64 (sync-mutex-integration-join-code (thread.join a))]
+    [b-code : i64 (sync-mutex-integration-join-code (thread.join b))]
     [total : i64 (sync-mutex-integration-total mutex)]
     [closed : bool (mutex_i64.close mutex)]
     (cond
@@ -84,12 +84,12 @@
     (begin
       (sync-mutex-integration-pack-context! ctx-a mutex)
       (sync-mutex-integration-pack-context! ctx-b mutex)
-      (match (thread-spawn
+      (match (thread.spawn
         sync-mutex-integration-worker
         (sync-mutex-integration-array-i64-addr ctx-a))
         [(ThreadSpawnErr _) 6]
         [(ThreadSpawnOk a)
-          (match (thread-spawn
+          (match (thread.spawn
             sync-mutex-integration-worker
             (sync-mutex-integration-array-i64-addr ctx-b))
             [(ThreadSpawnErr _) 7]

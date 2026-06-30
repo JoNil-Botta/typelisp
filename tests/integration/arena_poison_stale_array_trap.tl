@@ -11,6 +11,7 @@
       [seed : String (string-append "seed" "arena")]
       [base : i64 (string-length seed)]
       [mark : ArenaMark (arena-mark)]
+      ;; lint-allow: single-element-array-cell
       [items : (Array i64) (array.make-array i64 1)]
       (begin
         (array.array-set! items 0 (+ base 33))

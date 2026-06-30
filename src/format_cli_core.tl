@@ -207,6 +207,30 @@
 (define (fmt-files [check : bool] [paths : vector.StringVec] [status : i64]) : i64
   (fmt-files-from check paths 0 status))
 
+(define (fmt-package-files-from
+  [check : bool]
+  [paths : PackageSourceList]
+  [index : i64]
+  [status : i64]) : i64
+  (if (>= index (package-source-list-len paths))
+    status
+    (let
+      [path : String (package-source-list-get paths index "")]
+      [file-status : i64 (fmt-format-file check path)]
+      (fmt-package-files-from
+        check
+        paths
+        (+ index 1)
+        (if (= status 0)
+          file-status
+          status)))))
+
+(define (fmt-package-files
+  [check : bool]
+  [paths : PackageSourceList]
+  [status : i64]) : i64
+  (fmt-package-files-from check paths 0 status))
+
 (define (fmt-package
   [check : bool]
   [manifest-path : String]
@@ -217,7 +241,7 @@
         (io.print-error (string.string-append message "\n"))
         1)]
     [(ResultPackageSourceSet.Ok source-set)
-      (fmt-files check (struct-get source-set sources) 0)]))
+      (fmt-package-files check (struct-get source-set sources) 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.

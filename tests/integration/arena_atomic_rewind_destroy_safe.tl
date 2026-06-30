@@ -25,4 +25,6 @@
           (begin
             (arena.rewind-safe! phase)
             (arena.destroy-safe! owner)
-            (if (= joined 20) 42 2)))])))
+            (if (= joined 20)
+              42
+              2)))])))

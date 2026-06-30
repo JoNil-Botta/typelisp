@@ -1257,9 +1257,10 @@
 
 ;; Keep this in sync with scripts/lib-native-link.sh's NL_WINDOWS_STACK_RESERVE.
 ;; The selfhost backend still needs more than 64MB on Windows for compiler-sized
-;; sources such as src/doc_test.tl.
+;; source graphs as the generated compiler grows; use the same 256MB reserve as
+;; the integration Windows link helpers.
 (define (source-tool-windows-stack-reserve-arg) : String
-  "/STACK:134217728")
+  "/STACK:268435456")
 
 (define (source-tool-windows-link-search-args
   [dirs : process.ProcessStringList]) : process.ProcessStringList

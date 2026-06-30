@@ -112,11 +112,12 @@
   [dst : (Array AstType)]
   [src : (Array AstType)]
   [index : i64]) : unit
-  (if (>= index tc-body-type-fact-count)
-    unit
-    (begin
-      (array.array-set! dst index (array.array-ref src index))
-      (tc-body-type-fact-grow-copy! dst src (+ index 1)))))
+  (let
+    [i : i64 index]
+    (while (< i tc-body-type-fact-count)
+      (begin
+        (array.array-set! dst i (array.array-ref src i))
+        (set! i (+ i 1))))))
 
 (define (tc-body-type-fact-grow!) : unit
   (let
@@ -52574,37 +52575,56 @@
   [decls : AstDeclList]
   [summary : CompilerTypecheckSummary]
   [module : String]) : ResultCompilerTypecheck
-  (match decls
-    [(AstDeclList.Nil) (ResultCompilerTypecheck.Ok summary)]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-check-decls-in-module
-              ctx
-              top-env
-              rest
-              summary
-              (intern-str next-module))]
-          [_
-            (match (tc-module-local-env ctx top-env module)
-              [(ResultTcEnv.Ok local-env)
-                (let
-                  [decl-ctx : TcContext (tc-context-with-module ctx module)]
-                  (match (tc-check-decl decl-ctx local-env decl)
-                    [(ResultTcUnit.Ok)
-                      (tc-check-decls-in-module
-                        ctx
-                        top-env
-                        rest
-                        (tc-summary-add-decl summary decl)
-                        module)]
-                    [(ResultTcUnit.Err message)
-                      (ResultCompilerTypecheck.Err
-                        (box (tc-decl-diag decl message)))]))]
-              [(ResultTcEnv.Err message)
-                (ResultCompilerTypecheck.Err (box (tc-decl-diag decl message)))])]))]))
+  (let
+    [cursor : AstDeclList decls]
+    [current-summary : CompilerTypecheckSummary summary]
+    [current-module : String module]
+    [done : bool false]
+    [result : ResultCompilerTypecheck
+      (ResultCompilerTypecheck.Ok current-summary)]
+    (begin
+      (while (not done)
+        (match cursor
+          [(AstDeclList.Nil)
+            (begin
+              (set! result (ResultCompilerTypecheck.Ok current-summary))
+              (set! done true))]
+          [(AstDeclList.Cons decl rest)
+            (let
+              [next : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDecl.Module next-module)
+                  (begin
+                    (set! current-module (intern-str next-module))
+                    (set! cursor next))]
+                [_
+                  (match (tc-module-local-env ctx top-env current-module)
+                    [(ResultTcEnv.Ok local-env)
+                      (let
+                        [decl-ctx : TcContext
+                          (tc-context-with-module ctx current-module)]
+                        (match (tc-check-decl decl-ctx local-env decl)
+                          [(ResultTcUnit.Ok)
+                            (begin
+                              (set!
+                                current-summary
+                                (tc-summary-add-decl current-summary decl))
+                              (set! cursor next))]
+                          [(ResultTcUnit.Err message)
+                            (begin
+                              (set!
+                                result
+                                (ResultCompilerTypecheck.Err
+                                  (box (tc-decl-diag decl message))))
+                              (set! done true))]))]
+                    [(ResultTcEnv.Err message)
+                      (begin
+                        (set!
+                          result
+                          (ResultCompilerTypecheck.Err
+                            (box (tc-decl-diag decl message))))
+                        (set! done true))])]))]))
+      result)))
 
 (define (tc-decl-path-list-last [paths : AstDeclPathList] [last : String]) : String
   (match paths

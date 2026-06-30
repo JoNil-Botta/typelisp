@@ -119,7 +119,7 @@
 
 ;: Return true when the host path-list separator identifies Windows.
 (define (msvc-host-windows?) : bool
-  (string.string-eq (env.env-path-list-separator) ";"))
+  (string.string-eq (env.path-list-separator) ";"))
 
 ;: Return true when `target` is a v1-supported MSVC target triple.
 (define (msvc-supported-target? [target : (& target str)]) : bool
@@ -223,11 +223,11 @@
 
 ;: Return true when an owned path exists and is a directory.
 (define (msvc-dir-exists-owned? [path : String]) : bool
-  (= (fs.fs-file-kind-status path) fs.fs-file-kind-directory-code))
+  (= (fs.file-kind-status path) fs.fs-file-kind-directory-code))
 
 ;: Join two filesystem path segments using the platform separator.
 (define (msvc-path-join [left : String] [right : String]) : String
-  (fs.fs-path-join (& left) (& right)))
+  (fs.path-join (& left) (& right)))
 
 ;: Join three filesystem path segments.
 (define (msvc-path-join3 [a : String] [b : String] [c : String]) : String
@@ -276,7 +276,7 @@
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-owned [dirs : env.EnvStringList] [tool : String]) : MsvcMaybeString
-  (msvc-search-dirs-vec-owned (env.env-string-list-to-vec dirs) tool))
+  (msvc-search-dirs-vec-owned (env.string-list-to-vec dirs) tool))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-vec [dirs : vector.StringVec] [tool : (& tool str)]) : MsvcMaybeString
@@ -294,13 +294,13 @@
 (define (msvc-find-on-path [tool : (& tool str)]) : MsvcMaybeString
   (let
     [name : String "PATH"]
-    (match (env.env-path-list-vec (& name))
+    (match (env.path-list-vec (& name))
       [(env.EnvNoStringVec) (MsvcNoString)]
       [(env.EnvSomeStringVec dirs) (msvc-search-dirs-vec dirs tool)])))
 
 ;: Read an environment variable or the empty string when it is unset.
 (define (msvc-env-or-empty [name : (& name str)]) : String
-  (match (env.env-get name)
+  (match (env.get name)
     [(env.EnvSomeString value) value]
     [(env.EnvNoString) ""]))
 
@@ -321,7 +321,7 @@
   (if (string.string-eq tail "")
     head
     (string.string-append
-      (string.string-append head (env.env-path-list-separator))
+      (string.string-append head (env.path-list-separator))
       tail)))
 
 ;: Join `head` before an optional PATH-style suffix.
@@ -333,9 +333,7 @@
 
 ;: Join two owned required PATH-style entries.
 (define (msvc-path-list-join2-owned [a : String] [b : String]) : String
-  (string.string-append
-    (string.string-append a (env.env-path-list-separator))
-    b))
+  (string.string-append (string.string-append a (env.path-list-separator)) b))
 
 ;: Join two required PATH-style entries.
 (define (msvc-path-list-join2 [a : (& a str)] [b : (& b str)]) : String
@@ -444,7 +442,7 @@
 (define (msvc-configured-result [executable : String]) : ResultMsvcTool
   (let
     [name : String "LIB"]
-    (match (env.env-get (& name))
+    (match (env.get (& name))
       [(env.EnvNoString)
         (ErrMsvcTool
           (MsvcMissingEnvironment
@@ -452,7 +450,7 @@
       [(env.EnvSomeString lib)
         (let
           [name : String "INCLUDE"]
-          (match (env.env-get (& name))
+          (match (env.get (& name))
             [(env.EnvNoString)
               (ErrMsvcTool
                 (MsvcMissingEnvironment

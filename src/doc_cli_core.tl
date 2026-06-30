@@ -278,7 +278,7 @@
       (ResultDocTestBatchPaths.Err
         (string.string-append
           "doc: failed to read --batch list file: "
-          (io.io-error-message error)))]))
+          (io.error-message error)))]))
 
 (define (doc-test-config-finish
   [input-paths : vector.StringVec]

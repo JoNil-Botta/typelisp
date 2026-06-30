@@ -484,18 +484,18 @@
   (compiler-typecheck-with-io-source
     (compiler-typecheck-with-alloc-string-helper-source
       (string.string-append
-        "(extern (fs-mkdir-status [arg0 : String]) : i64)
-(extern (fs-remove-file-status [arg0 : String]) : i64)
-(extern (fs-remove-dir-status [arg0 : String]) : i64)
-(extern (fs-rename-status [arg0 : String] [arg1 : String]) : i64)
-(extern (fs-read-dir-status [arg0 : String]) : i64)
-(extern (fs-read-dir [arg0 : String]) : String)
-(extern (fs-file-kind-status [arg0 : String]) : i64)
-(extern (fs-file-size-status [arg0 : String]) : i64)
-(extern (fs-file-size [arg0 : String]) : i64)
-(extern (fs-process-id) : i64)
-(extern (fs-current-dir-status) : i64)
-(extern (fs-current-dir) : String)
+        "(extern (mkdir-status [arg0 : String]) : i64)
+(extern (remove-file-status [arg0 : String]) : i64)
+(extern (remove-dir-status [arg0 : String]) : i64)
+(extern (rename-status [arg0 : String] [arg1 : String]) : i64)
+(extern (read-dir-status [arg0 : String]) : i64)
+(extern (read-dir [arg0 : String]) : String)
+(extern (file-kind-status [arg0 : String]) : i64)
+(extern (file-size-status [arg0 : String]) : i64)
+(extern (file-size [arg0 : String]) : i64)
+(extern (process-id) : i64)
+(extern (current-dir-status) : i64)
+(extern (current-dir) : String)
 "
         src))))
 
@@ -504,9 +504,9 @@
 
 (define (compiler-typecheck-with-env-source [src : String]) : String
   (string.string-append
-    "(define (env-var-exists? [name : String]) : bool true)
-(define (env-var-value [name : String]) : String name)
-(define (env-path-separator) : String \":\")
+    "(define (var-exists? [name : String]) : bool true)
+(define (var-value [name : String]) : String name)
+(define (path-separator) : String \":\")
 "
     src))
 
@@ -818,18 +818,18 @@
   (compiler-typecheck-with-fs-source
     "(define (main [s : String]) : String
   (begin
-    (fs-mkdir-status s)
-    (fs-remove-file-status s)
-    (fs-remove-dir-status s)
-    (fs-rename-status s s)
-    (fs-read-dir-status s)
-    (fs-file-kind-status s)
-    (fs-file-size-status s)
-    (fs-file-size s)
-    (fs-process-id)
-    (fs-current-dir-status)
-    (__tl_string_length (fs-current-dir))
-    (string.string-append (fs-read-dir s)
+    (mkdir-status s)
+    (remove-file-status s)
+    (remove-dir-status s)
+    (rename-status s s)
+    (read-dir-status s)
+    (file-kind-status s)
+    (file-size-status s)
+    (file-size s)
+    (process-id)
+    (current-dir-status)
+    (__tl_string_length (current-dir))
+    (string.string-append (read-dir s)
       (string.string-append (string.substring s 0 (__tl_string_length s))
                     (string.int->string (__tl_string_to_int \"7\"))))))"))
 
@@ -845,13 +845,13 @@
 (define (compiler-typecheck-env-source) : String
   (compiler-typecheck-with-env-source
     "(define (main [name : String]) : String
-  (if (env-var-exists? name)
-    (env-var-value name)
-    (env-path-separator)))"))
+  (if (var-exists? name)
+    (var-value name)
+    (path-separator)))"))
 
 (define (compiler-typecheck-env-missing-import-source) : String
   "(define (main [name : String]) : String
-  (env-var-value name))")
+  (var-value name))")
 
 (define (compiler-typecheck-tuple-oob-source) : String
   "(define (main) : i64 (tuple-ref (tuple 1 true) 2))")
@@ -1143,7 +1143,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-env-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-env-missing-import-source)
-      "typecheck: unbound name env-var-value")
+      "typecheck: unbound name var-value")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-tuple-oob-source)
       "typecheck: tuple index out of bounds")
@@ -6329,33 +6329,33 @@
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [from : String] [to : String]) : i64
-  (fs-rename-status from to))"))
+  (rename-status from to))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : i64 (fs-file-size-status p))"))
+          "(define (f [p : String]) : i64 (file-size-status p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [p : String]) : i64 (fs-file-size p))"))
+          "(define (f [p : String]) : i64 (file-size p))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [from : String] [to : String]) : i64
-  (fs-rename-status from to))"))
+  (rename-status from to))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f) : i64 (fs-current-dir-status))"))
+          "(define (f) : i64 (current-dir-status))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f) : String (fs-current-dir))"))
+          "(define (f) : String (current-dir))"))
         unit
         (set! ok false))
       (if (compiler-typecheck-ok?
@@ -6448,20 +6448,20 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [from : String]) : i64 (fs-rename-status from 5))")
+          "(define (f [from : String]) : i64 (rename-status from 5))")
         "typecheck: argument type mismatch")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [from : String]) : i64 (fs-rename-status from))")
-        "typecheck: call arity mismatch: fs-rename-status expected 2 arguments, got 1 argument")
+          "(define (f [from : String]) : i64 (rename-status from))")
+        "typecheck: call arity mismatch: rename-status expected 2 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
-          "(define (f [path : String]) : i64 (fs-current-dir-status path))")
-        "typecheck: call arity mismatch: fs-current-dir-status expected 0 arguments, got 1 argument")
+          "(define (f [path : String]) : i64 (current-dir-status path))")
+        "typecheck: call arity mismatch: current-dir-status expected 0 arguments, got 1 argument")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6489,8 +6489,8 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : String (fs-current-dir))"
-        "typecheck: unbound name fs-current-dir")
+        "(define (f) : String (current-dir))"
+        "typecheck: unbound name current-dir")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6509,8 +6509,8 @@
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
-        "(define (f) : i64 (fs-process-id))"
-        "typecheck: unbound name fs-process-id")
+        "(define (f) : i64 (process-id))"
+        "typecheck: unbound name process-id")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?

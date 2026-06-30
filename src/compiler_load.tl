@@ -949,10 +949,10 @@
   (cast (string.string-ref text idx) : i64))
 
 (define (compiler-load-path-separator? [c : char]) : bool
-  (fs.fs-path-separator? c))
+  (fs.path-separator? c))
 
 (define (compiler-load-absolute-path? [path : String]) : bool
-  (fs.fs-path-absolute? (& path)))
+  (fs.path-absolute? (& path)))
 
 (define (compiler-load-dirname [path : String]) : String
   (let
@@ -978,10 +978,10 @@
     (string.string-append (compiler-load-dirname importer-path) import-path)))
 
 (define (compiler-load-normalize-path [path : String]) : String
-  (fs.fs-path-normalize (& path)))
+  (fs.path-normalize (& path)))
 
 (define (compiler-load-safe-relative? [path : String]) : bool
-  (fs.fs-path-safe-relative? (& path)))
+  (fs.path-safe-relative? (& path)))
 
 (define (compiler-load-string-prefix-at?
   [text : String]
@@ -1170,7 +1170,7 @@
       [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoString)])))
 
 (define (compiler-load-lazy-env-disabled? [name : String]) : bool
-  (match (env.env-get (& name))
+  (match (env.get (& name))
     [(env.EnvSomeString value)
       (or
         (string.string-eq value "0")
@@ -1215,7 +1215,7 @@
 (define (compiler-load-roots-with-env [roots : vector.StringVec]) : vector.StringVec
   (let
     [name : String "TYPELISP_STDLIB_ROOT"]
-    (match (env.env-get (& name))
+    (match (env.get (& name))
       [(env.EnvNoString) roots]
       [(env.EnvSomeString root)
         (if (= (string.string-length root) 0)
@@ -4959,7 +4959,7 @@
 (define (compiler-load-stdlib-owner-root? [root : String]) : bool
   (let
     [normalized : String (compiler-load-normalize-path root)]
-    [base : String (fs.fs-basename (& normalized))]
+    [base : String (fs.basename (& normalized))]
     (string.string-eq base "stdlib")))
 
 (define (compiler-load-stdlib-owned-path-from-roots
@@ -7765,8 +7765,8 @@
     [root-dir : String "target/cl_sre_root"]
     [entry-dir : String "target/cl_sre_entry_dir"]
     (begin
-      (fs.fs-mkdir-status-owned root-dir)
-      (fs.fs-mkdir-status-owned entry-dir)
+      (fs.mkdir-status-owned root-dir)
+      (fs.mkdir-status-owned entry-dir)
       (io.write-file
         "target/cl_sre_out.tl"
         "(module sre.out)

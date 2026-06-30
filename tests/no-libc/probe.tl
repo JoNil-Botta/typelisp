@@ -11,13 +11,13 @@
   (let
     [name : String "PATH"]
     [exists : bool (file-exists? "tests/no-libc/probe.tl")]
-    [cwd : String (fs-current-dir)]
+    [cwd : String (current-dir)]
     (begin
       (print-string "no-libc probe\n")
       (print-float 1.5)
       (print-string (int->string (+ 40 2)))
       (print-string "\n")
-      (match (env-get (& name))
+      (match (get (& name))
         [(EnvSomeString _) (print-string "have-path\n")]
         [(EnvNoString) (print-string "no-path\n")])
       (if (and exists (> (string-length cwd) 0))

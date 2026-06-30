@@ -252,13 +252,13 @@
   (io.file-exists? (compiler-load-join-root-path dir "typelisp.pkg")))
 
 (define (package-source-tl-file? [path : String]) : bool
-  (string.string-eq (fs.fs-extension (& path)) "tl"))
+  (string.string-eq (fs.extension (& path)) "tl"))
 
 (define (package-source-include-file?
   [path : String]
   [metadata : fs.FsMetadata]) : bool
   (and
-    (fs.fs-file-kind-regular? (fs.fs-metadata-kind metadata))
+    (fs.file-kind-regular? (fs.metadata-kind metadata))
     (package-source-tl-file? path)))
 
 (define (package-source-entry-error
@@ -269,7 +269,7 @@
     (str_cat.str-cat
       (string.string-append command ": failed to inspect package path '")
       path
-      (string.string-append "': " (io.io-error-message error)))))
+      (string.string-append "': " (io.error-message error)))))
 
 (define (package-source-read-dir-error
   [command : String]
@@ -279,7 +279,7 @@
     (str_cat.str-cat
       (string.string-append command ": failed to read package directory '")
       path
-      (string.string-append "': " (io.io-error-message error)))))
+      (string.string-append "': " (io.error-message error)))))
 
 (define (package-source-entry-vec [source-set : PackageSourceSet]) : vector.StringVec
   (let
@@ -318,7 +318,7 @@
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
       [(fs.ErrIoStringVec error)
-        (if (or (io.io-error-not-found? error) (io.io-error-unsupported? error))
+        (if (or (io.error-not-found? error) (io.error-unsupported? error))
           (ResultPackageSourceList.Ok acc)
           (package-source-read-dir-error command dir error))]
       [(fs.OkIoStringVec entries)
@@ -336,7 +336,7 @@
     [root : String (struct-get source-set manifest-dir)]
     (match (fs.try-read-dir (& root))
       [(fs.ErrIoStringVec error)
-        (if (io.io-error-unsupported? error)
+        (if (io.error-unsupported? error)
           (ResultPackageSourceList.Ok (package-source-entry-vec source-set))
           (package-source-read-dir-error command root error))]
       [(fs.OkIoStringVec entries)
@@ -363,8 +363,8 @@
           (package-source-entry-error command child-path error)]
         [(fs.OkFsMetadata metadata)
           (let
-            [kind : fs.FsFileKind (fs.fs-metadata-kind metadata)]
-            (if (fs.fs-file-kind-directory? kind)
+            [kind : fs.FsFileKind (fs.metadata-kind metadata)]
+            (if (fs.file-kind-directory? kind)
               (if (package-source-dir-has-manifest? child-path)
                 (ResultPackageSourceList.Ok acc)
                 (package-source-scan-dir command root child-relative acc))

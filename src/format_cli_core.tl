@@ -26,7 +26,7 @@
     "fmt: failed to write "
     (string.string-append
       path
-      (string.string-append ": " (io.io-error-message error)))))
+      (string.string-append ": " (io.error-message error)))))
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
   (match (io.try-write-file (& path) (& formatted))

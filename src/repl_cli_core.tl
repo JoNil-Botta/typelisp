@@ -25,6 +25,7 @@
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
 (import stdlib.io)
+(import stdlib.fs)
 (import stdlib.process)
 (import stdlib.vector)
 (import "compiler_typecheck.tl")
@@ -67,13 +68,13 @@
   (io.stderr-write-line (& text)))
 
 (define (repl-path-join [left : String] [right : String]) : String
-  (fs-path-join (& left) (& right)))
+  (fs.path-join (& left) (& right)))
 
 (define (repl-try-remove-file-if-exists [path : String]) : io.ResultIoUnit
-  (try-remove-file-if-exists (& path)))
+  (fs.try-remove-file-if-exists (& path)))
 
 (define (repl-try-remove-dir-if-exists [path : String]) : io.ResultIoUnit
-  (try-remove-dir-if-exists (& path)))
+  (fs.try-remove-dir-if-exists (& path)))
 
 ;; Print the prompt and flush stdout so it is visible before the blocking read.
 ;; A pending multiline form shows a `... ` continuation marker (aligned to the

@@ -66,7 +66,7 @@
     [(CompilerBackendTarget.Windows) "windows-x86_64"]))
 
 (define (source-tool-default-target) : CompilerBackendTarget
-  (if (string.string-eq (env.env-path-separator) ";")
+  (if (string.string-eq (env.path-separator) ";")
     (CompilerBackendTarget.Windows)
     (CompilerBackendTarget.Linux)))
 
@@ -511,10 +511,10 @@
     (source-tool-fs-path-join dir tool)))
 
 (define (source-tool-fs-path-join [left : String] [right : String]) : String
-  (fs.fs-path-join (& left) (& right)))
+  (fs.path-join (& left) (& right)))
 
 (define (source-tool-fs-basename [path : String]) : String
-  (fs.fs-basename (& path)))
+  (fs.basename (& path)))
 
 (define (source-tool-try-file-exists? [path : String]) : io.ResultIoBool
   (io.try-file-exists? (& path)))
@@ -540,7 +540,7 @@
     [(io.ErrIoBool _) false]))
 
 (define (source-tool-windows-host?) : bool
-  (string.string-eq (env.env-path-separator) ";"))
+  (string.string-eq (env.path-separator) ";"))
 
 (define (source-tool-windows-exe-candidate [candidate : String]) : String
   (if (source-tool-windows-host?)
@@ -571,7 +571,7 @@
     tool
     (let
       [name : String "PATH"]
-      (match (env.env-path-list-vec (& name))
+      (match (env.path-list-vec (& name))
         [(env.EnvSomeStringVec paths)
           (source-tool-find-command-on-path tool paths 0)]
         [(env.EnvNoStringVec) tool]))))
@@ -579,7 +579,7 @@
 (define (source-tool-env-command-or-default
   [name : String]
   [default-command : String]) : String
-  (match (env.env-get (& name))
+  (match (env.get (& name))
     [(env.EnvSomeString value)
       (if (string.string-eq value "")
         default-command
@@ -593,7 +593,7 @@
     (source-tool-env-command-or-default name default-command)))
 
 (define (source-tool-env-command-set? [name : String]) : bool
-  (match (env.env-get (& name))
+  (match (env.get (& name))
     [(env.EnvSomeString value) (not (string.string-eq value ""))]
     [(env.EnvNoString) false]))
 
@@ -686,7 +686,7 @@
   (match (fs.try-create-temp-dir (& prefix))
     [(io.OkIoString path) (ResultSourceToolString.Ok path)]
     [(io.ErrIoString error)
-      (ResultSourceToolString.Err (io.io-error-message error))]))
+      (ResultSourceToolString.Err (io.error-message error))]))
 
 (define (source-tool-cannot-read-module-message
   [source : String]
@@ -695,7 +695,7 @@
     "Error: cannot read module '"
     source
     "': "
-    (io.io-error-message error)))
+    (io.error-message error)))
 
 (define (source-tool-emit-assembly
   [source : String]
@@ -1065,7 +1065,7 @@
     [(io.OkIoUnit) SourceToolCommandStatus.Ok]
     [(io.ErrIoUnit error)
       (SourceToolCommandStatus.Err
-        (str_cat.str-cat context ": " (io.io-error-message error)))]))
+        (str_cat.str-cat context ": " (io.error-message error)))]))
 
 (define (source-tool-forward-output [output : process.ProcessOutput]) : unit
   (begin

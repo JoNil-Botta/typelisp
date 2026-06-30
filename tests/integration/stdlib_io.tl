@@ -22,7 +22,7 @@
         1
         100)]
     [(ErrIoString error)
-      (if (io-error-not-found? error)
+      (if (error-not-found? error)
         2
         200)]))
 
@@ -30,7 +30,7 @@
   (match result
     [(OkIoUnit) 3]
     [(ErrIoUnit error)
-      (if (io-error-invalid-path? error)
+      (if (error-invalid-path? error)
         4
         5)]))
 

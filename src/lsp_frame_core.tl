@@ -730,14 +730,14 @@
 
 (define (lsp-resolved-path-to-file-uri [path : String]) : String
   (let
-    [normalized : String (fs.fs-path-normalize (& path))]
+    [normalized : String (fs.path-normalize (& path))]
     (lsp-path-to-file-uri
-      (if (fs.fs-path-absolute? (& normalized))
+      (if (fs.path-absolute? (& normalized))
         normalized
         (let
-          [cwd : String (fs.fs-current-dir)]
-          [joined : String (fs.fs-path-join (& cwd) (& normalized))]
-          (fs.fs-path-normalize (& joined)))))))
+          [cwd : String (fs.current-dir)]
+          [joined : String (fs.path-join (& cwd) (& normalized))]
+          (fs.path-normalize (& joined)))))))
 
 (define (lsp-zero-based [value : i64]) : i64
   (if (> value 0)
@@ -4394,7 +4394,7 @@
                                     (if (lsp-tl-source-file-name? entry)
                                       (let
                                         [entry-path : String
-                                          (fs.fs-path-join (& path) (& entry))]
+                                          (fs.path-join (& path) (& entry))]
                                         (match (io.try-read-file (& entry-path))
                                           [(io.OkIoString source)
                                             (if (lsp-decls-contain-name?
@@ -4403,7 +4403,7 @@
                                               (let
                                                 [entry-uri : String
                                                   (lsp-path-to-file-uri
-                                                    (fs.fs-path-normalize
+                                                    (fs.path-normalize
                                                       (& entry-path)))]
                                                 (set!
                                                   results
@@ -4434,7 +4434,7 @@
                               -32600
                               (lsp-str2
                                 "Failed to read directory: "
-                                (io.io-error-message message)))
+                                (io.error-message message)))
                             (LspHandleResult.Continue docs))])]
                     [(LspUriPath.Err message)
                       (begin

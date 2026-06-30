@@ -157,7 +157,7 @@
       (ResultTestBatchPaths.Err
         (string.string-append
           "test: failed to read --batch list file: "
-          (io.io-error-message error)))]))
+          (io.error-message error)))]))
 
 (define (tltest-config-finish
   [source : String]
@@ -3075,7 +3075,7 @@
     [(io.ErrIoBool error)
       (string.string-append
         "could not inspect test executable: "
-        (io.io-error-message error))]))
+        (io.error-message error))]))
 
 (define (tltest-run-executable-error-message
   [bin-path : String]

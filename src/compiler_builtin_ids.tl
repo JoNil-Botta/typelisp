@@ -454,9 +454,7 @@
         compiler-builtin-id-tl-env-var-exists
         (ci.intern "tl_env_var_exists"))
       (set! compiler-builtin-id-tl-env-var-value (ci.intern "tl_env_var_value"))
-      (set!
-        compiler-builtin-id-env-path-separator
-        (ci.intern "env-path-separator"))
+      (set! compiler-builtin-id-env-path-separator (ci.intern "path-separator"))
       (set! compiler-builtin-id-tl-oob-abort (ci.intern "tl_oob_abort"))
       (set! compiler-builtin-id-tl-abort-label (ci.intern ".L_tl_abort"))
       (set! compiler-builtin-id-tl-div-abort (ci.intern "tl_div_abort"))

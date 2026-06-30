@@ -3416,9 +3416,9 @@ All operators are prefix functions (or special forms):
 
 | Operator | Signature | Description |
 |----------|-----------|-------------|
-| `+` | integer integer → integer | Addition |
+| `+` | integer integer [integer ...] → integer | Addition |
 | `-` | integer integer → integer | Subtraction |
-| `*` | integer integer → integer | Multiplication |
+| `*` | integer integer [integer ...] → integer | Multiplication |
 | `neg` | integer → integer | Unary negation |
 | `/` | integer integer → integer | Signed division |
 | `%` | integer integer → integer | Remainder |
@@ -3429,6 +3429,7 @@ All operators are prefix functions (or special forms):
 | `shr` | integer integer → integer | Right shift (arithmetic for signed, logical for unsigned) |
 
 - Integer arithmetic operators require matching operand types and return that type.
+- Integer `+` and `*` accept two or more operands and are left-associated.
 - Integer `+`, `-`, `*`, and `neg` wrap modulo 2^N, where N is the result type
   width. Signed integer results use two's-complement interpretation of those
   wrapped bits.
@@ -3437,8 +3438,9 @@ All operators are prefix functions (or special forms):
 - Bitwise and shift operators accept integer operands and return the left-hand
   operand type. `bit-and`, `bit-or`, and `bit-xor` accept two or more operands
   and are left-associated. Shift operators accept exactly two operands.
-- `+`, `-`, `*`, `/` also operate on `f64` and `f32`; `%` on floating-point values is
-  rejected by backend validation.
+- `+`, `-`, `*`, `/` also operate on `f64` and `f32`; floating-point `+` and
+  `*` accept two or more matching operands and are left-associated. `%` on
+  floating-point values is rejected by backend validation.
 - Integer `/` and `%` trap at runtime when the divisor is zero, or when a
   signed dividend is the minimum value for its width and the divisor is `-1`
   (since the mathematical result is not representable). Both cases abort

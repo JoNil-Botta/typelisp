@@ -212,11 +212,16 @@
   (CompilerRegEdgeCopyRewrite CompilerIrBlockList)
   (CompilerRegEdgeCopyRewriteRefused String))
 
+;; A loop-split rescue candidate. The region is a LIST of block labels: a single
+;; label for the single-block (read-only / non-phi self-loop / step-2 single-block)
+;; paths, or the whole natural-loop block range for the step-2 MULTI-BLOCK
+;; phi-carried homing. apply-candidate remaps every region block and the edge-copy
+;; plan (already multi-block aware) places boundary copies at the region edges.
 (defenum CompilerRegLoopSplitCandidate
   (CompilerRegLoopSplitNoCandidate)
   (CompilerRegLoopSplitCandidate
     i64
-    String
+    CompilerRegStringList
     AstType
     String
     CompilerRegEdgeCopyList
@@ -6474,6 +6479,22 @@
     (compiler-live-set-contains? (compiler-live-block-live-out from-block) var)
     (compiler-live-set-contains? (compiler-live-block-live-in to-block) var)))
 
+;; Group-aware variant for the SplitKit phi-carried homing: the coalesce group
+;; (which shares one spill slot) is live across the edge iff SOME member is live
+;; out of `from` AND SOME member is live in to `to`. Different members are live on
+;; different boundary edges (the preheader edge carries the phi's INIT input, the
+;; exit edge carries the back-edge/result member), but they share the slot the
+;; INTO/OUT copies load/store, so any-member liveness is the correct test.
+(define (compiler-reg-edge-copy-group-live-on-edge?
+  [from-block : CompilerLiveBlock]
+  [to-block : CompilerLiveBlock]
+  [members : CompilerLiveI64Set]) : bool
+  (and
+    (compiler-live-set-intersects?
+      (compiler-live-block-live-out from-block) members)
+    (compiler-live-set-intersects?
+      (compiler-live-block-live-in to-block) members)))
+
 (define (compiler-reg-edge-copy-boundary-one
   [ids : hashmap.StringI64Map]
   [blocks : (Array CompilerLiveBlock)]
@@ -6486,6 +6507,7 @@
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
+  [members : CompilerLiveI64Set]
   [to-label : String]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
   (match (hashmap.string-i64-map-get ids to-label)
@@ -6496,7 +6518,14 @@
         (if (or
           (= from-inside to-inside)
           (not
-            (compiler-reg-edge-copy-live-on-edge? from-block to-block stack-var)))
+            ;; An empty `members` set selects the existing per-var liveness test
+            ;; (read-only / non-phi homing -- byte-identical). A non-empty set is
+            ;; the phi-carried coalesce group: the slot is live on the edge iff ANY
+            ;; member is (no single member is live on every boundary edge).
+            (if (= (compiler-live-set-word-count members) 0)
+              (compiler-reg-edge-copy-live-on-edge? from-block to-block stack-var)
+              (compiler-reg-edge-copy-group-live-on-edge?
+                from-block to-block members))))
           (CompilerRegEdgeCopyPlan acc)
           (match (compiler-reg-edge-copy-placement-for
             from-label
@@ -6547,6 +6576,7 @@
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
+  [members : CompilerLiveI64Set]
   [succs : CompilerLiveLabelSet]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
   (match succs
@@ -6564,6 +6594,7 @@
         stack-var
         region-var
         ty
+        members
         to-label
         acc)
         [(CompilerRegEdgeCopyPlan next)
@@ -6579,6 +6610,7 @@
             stack-var
             region-var
             ty
+            members
             (box-get rest)
             next)]
         [(CompilerRegEdgeCopyRefused message)
@@ -6592,6 +6624,7 @@
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
+  [members : CompilerLiveI64Set]
   [index : i64]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
   (if (>= index (array.array-length blocks))
@@ -6613,6 +6646,7 @@
         stack-var
         region-var
         ty
+        members
         succs
         acc)
         [(CompilerRegEdgeCopyPlan next)
@@ -6624,6 +6658,7 @@
             stack-var
             region-var
             ty
+            members
             (+ index 1)
             next)]
         [(CompilerRegEdgeCopyRefused message)
@@ -6635,6 +6670,30 @@
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]) : CompilerRegEdgeCopyPlan
+  ;; Per-var (read-only / non-phi self-loop) planning: empty member set selects
+  ;; the existing per-var liveness test in boundary-one (byte-identical).
+  (compiler-reg-edge-copy-plan-for-region-members
+    func region-labels stack-var region-var ty (compiler-live-set-empty)))
+
+;; Group-aware planning for the SplitKit phi-carried homing: `members` is the
+;; coalesce group's bitset; boundary edges are tested against any-member liveness.
+(define (compiler-reg-edge-copy-plan-for-region-group
+  [func : CompilerIrFunction]
+  [region-labels : CompilerRegStringList]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
+  (compiler-reg-edge-copy-plan-for-region-members
+    func region-labels stack-var region-var ty members))
+
+(define (compiler-reg-edge-copy-plan-for-region-members
+  [func : CompilerIrFunction]
+  [region-labels : CompilerRegStringList]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
   (match (compiler-live-analyze-function func)
     [(CompilerFunctionLiveness ids blocks)
       (let
@@ -6648,6 +6707,7 @@
           stack-var
           region-var
           ty
+          members
           0
           CompilerRegEdgeCopyNil))]))
 
@@ -6879,12 +6939,169 @@
           unit)
         (set! v (+ v 1))))))
 
+;; SplitKit step 2 (phi-carried homing). The bitset of every coalesce-group
+;; member of `root` (every v in [0,vars) with parents[v] == root, root included).
+;; The coalescer keeps `parents` flat (every member points directly at its root --
+;; see merge-root-parents-into!), so membership is a single array read. Used for
+;; group-aware liveness on region-boundary edges and for the group mention count.
+(define (compiler-reg-loop-split-group-member-set
+  [parents : (Array i64)]
+  [root : i64]
+  [vars : i64]) : CompilerLiveI64Set
+  (let
+    [n : i64
+      (if (< vars (array.array-length parents)) vars (array.array-length parents))]
+    [set : CompilerLiveI64Set (compiler-live-set-empty)]
+    [v : i64 0]
+    (begin
+      (while (< v n)
+        (begin
+          (if (= (array.array-ref parents v) root)
+            (set! set (compiler-live-set-insert set v))
+            unit)
+          (set! v (+ v 1))))
+      set)))
+
+;; Does any phi in `instrs` DEFINE a member of `root`'s coalesce group (a phi whose
+;; destination's root is `root`)? That phi is the loop-carrying phi -- its result
+;; flows around the back-edge. (compiler-ir-instr-seq-to-list materializes the
+;; block's instruction list.)
+(define (compiler-reg-loop-split-phi-group-defined-list?
+  [instrs : CompilerIrInstrList]
+  [parents : (Array i64)]
+  [root : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi dst _ _)
+          (if (and
+                (>= dst 0)
+                (< dst (array.array-length parents))
+                (= (array.array-ref parents dst) root))
+            true
+            (compiler-reg-loop-split-phi-group-defined-list?
+              (box-get rest) parents root))]
+        [_
+          (compiler-reg-loop-split-phi-group-defined-list?
+            (box-get rest) parents root)])]))
+
+;; Every input of a group-carrying phi must be a VARIABLE whose root is also
+;; `root`. This is the phi-correctness gate: after the region remap rewrites every
+;; group member to the homed register R, such a phi becomes `R = phi [R, ...],
+;; [R, ...]` -- an identity whose per-edge lowering is a self-move (R = R), so it
+;; cannot RACE the INTO copy (R = slot) on the preheader edge. A constant input or
+;; an input in a DIFFERENT coalesce group would lower to a real edge move that
+;; conflicts with the INTO copy (order-dependent => silent miscompile), so it is
+;; rejected.
+(define (compiler-reg-loop-split-phi-inputs-all-in-group?
+  [inputs : CompilerIrPhiInputList]
+  [parents : (Array i64)]
+  [root : i64]) : bool
+  (match inputs
+    [(IrPhiInputNil) true]
+    [(IrPhiInputCons value _ rest)
+      (and
+        (match value
+          [(IrValueVar src)
+            (and
+              (>= src 0)
+              (< src (array.array-length parents))
+              (= (array.array-ref parents src) root))]
+          [_ false])
+        (compiler-reg-loop-split-phi-inputs-all-in-group?
+          (box-get rest) parents root))]))
+
+;; True iff EVERY phi defining a member of `root`'s group has all-in-group inputs
+;; (vacuously true when no such phi exists -- the existence is required separately).
+(define (compiler-reg-loop-split-phi-carry-clean-list?
+  [instrs : CompilerIrInstrList]
+  [parents : (Array i64)]
+  [root : i64]) : bool
+  (match instrs
+    [(IrInstrNil) true]
+    [(IrInstrCons instr rest)
+      (and
+        (match instr
+          [(IrInstrPhi dst inputs _)
+            (if (and
+                  (>= dst 0)
+                  (< dst (array.array-length parents))
+                  (= (array.array-ref parents dst) root))
+              (compiler-reg-loop-split-phi-inputs-all-in-group? inputs parents root)
+              true)]
+          [_ true])
+        (compiler-reg-loop-split-phi-carry-clean-list?
+          (box-get rest) parents root))]))
+
+;; The block is a phi-carrier for `root` iff (a) some phi defines a group member
+;; AND (b) every such phi has all-in-group inputs. (a) ensures we only take this
+;; path for genuinely phi-carried values (step 1 handles the non-phi self-loop
+;; redefinition); (b) is the phi-correctness gate above.
+(define (compiler-reg-loop-split-phi-carried-group?
+  [instrs : CompilerIrInstrSeq]
+  [parents : (Array i64)]
+  [root : i64]) : bool
+  (let
+    [items : CompilerIrInstrList (compiler-ir-instr-seq-to-list instrs)]
+    (and
+      (compiler-reg-loop-split-phi-group-defined-list? items parents root)
+      (compiler-reg-loop-split-phi-carry-clean-list? items parents root))))
+
+;; The step-2 acceptance predicate: a single-block SELF-LOOP that carries `var`'s
+;; coalesce group through a phi-correct header phi, with `var` the canonical
+;; coalesce root. The back-edge of a self-loop is internal to the (single-block)
+;; region, so the carried value stays in the homed register across iterations with
+;; NO per-iteration copy; the only boundary work is the INTO copy at the loop entry
+;; and (when the value is read after the loop) the OUT copy at the exit, both
+;; placed/refused by the edge-copy planner.
+(define (compiler-reg-loop-split-phi-carried-candidate?
+  [block : CompilerLiveBlock]
+  [region-label : String]
+  [instrs : CompilerIrInstrSeq]
+  [var : i64]
+  [parents : (Array i64)]) : bool
+  (and
+    (compiler-reg-loop-split-self-loop? block region-label)
+    (compiler-reg-loop-split-coalesce-root? parents var)
+    (compiler-reg-loop-split-phi-carried-group? instrs parents var)))
+
 (define (compiler-reg-loop-split-instr-mentions-var?
   [instr : CompilerIrInstr]
   [var : i64]) : bool
   (or
     (compiler-live-set-contains? (compiler-live-instr-uses instr) var)
     (compiler-live-set-contains? (compiler-live-instr-defs instr) var)))
+
+;; Group-aware mention count: how many instructions touch ANY member of the homed
+;; coalesce group (used by the hot-benefit gate for the phi-carried path, where the
+;; per-iteration uses are spread across the phi result / back-edge / preheader
+;; members rather than a single var).
+(define (compiler-reg-loop-split-instr-mentions-group?
+  [instr : CompilerIrInstr]
+  [members : CompilerLiveI64Set]) : bool
+  (or
+    (compiler-live-set-intersects? (compiler-live-instr-uses instr) members)
+    (compiler-live-set-intersects? (compiler-live-instr-defs instr) members)))
+
+(define (compiler-reg-loop-split-mention-count-group-list
+  [instrs : CompilerIrInstrList]
+  [members : CompilerLiveI64Set]) : i64
+  (match instrs
+    [(IrInstrNil) 0]
+    [(IrInstrCons instr rest)
+      (+
+        (if (compiler-reg-loop-split-instr-mentions-group? instr members)
+          1
+          0)
+        (compiler-reg-loop-split-mention-count-group-list (box-get rest) members))]))
+
+(define (compiler-reg-loop-split-mention-count-group
+  [instrs : CompilerIrInstrSeq]
+  [members : CompilerLiveI64Set]) : i64
+  (compiler-reg-loop-split-mention-count-group-list
+    (compiler-ir-instr-seq-to-list instrs)
+    members))
 
 (define (compiler-reg-loop-split-mention-count-list
   [instrs : CompilerIrInstrList]
@@ -7504,7 +7721,30 @@
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]
   [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
-  (if (and
+  (let
+    ;; SplitKit step 2: is this a phi-carried single-block self-loop value (a real
+    ;; SSA loop-carried accumulator/counter, phi-defined at the loop header) whose
+    ;; whole coalesce group is phi-correct (every header-phi input is in the group)?
+    ;; If so we home the GROUP (the shared spill slot) in a register across the
+    ;; self-loop with a group-aware boundary plan; step 1 only covered NON-phi
+    ;; self-loop redefinition.
+    [phi-carried? : bool
+      (compiler-reg-loop-split-phi-carried-candidate?
+        block region-label instrs var parents)]
+    [members : CompilerLiveI64Set
+      (if phi-carried?
+        (compiler-reg-loop-split-group-member-set parents var vars)
+        (compiler-live-set-empty))]
+  (if (if phi-carried?
+        ;; Phi-carried gate. The structural preconditions (self-loop, `var` is the
+        ;; coalesce root, the header phi(s) carrying the group have all-in-group
+        ;; inputs) are checked by phi-carried-candidate? above. The remaining gate
+        ;; is only "is it a spillable multi-segment value"; group liveness across
+        ;; the region boundary is enforced by the group-aware plan below (an INTO
+        ;; copy proves the group is live into the loop; OUT copies, emitted on every
+        ;; live exit edge or else the plan is refused, prove the write-backs exist).
+        (compiler-reg-interval-index-var-has-segments? intervals var)
+        (and
     (compiler-live-set-contains? (compiler-live-block-live-in block) var)
     (compiler-live-set-contains? (compiler-live-block-live-out block) var)
     ;; SplitKit step 1: admit BOTH read-only loop invariants (var not written in the
@@ -7530,7 +7770,7 @@
     ;; group is homed exactly once).
     (if (compiler-live-set-contains? (compiler-live-block-defs block) var)
       (compiler-reg-loop-split-coalesce-root? parents var)
-      (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))))
+      (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))))
     (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegSomeLocation location)
         (match location
@@ -7541,18 +7781,28 @@
                   [labels : CompilerRegStringList
                     (compiler-reg-string-cons region-label CompilerRegStringNil)]
                   [mentions : i64
-                    (compiler-reg-loop-split-mention-count instrs var)]
+                    (if phi-carried?
+                      (compiler-reg-loop-split-mention-count-group instrs members)
+                      (compiler-reg-loop-split-mention-count instrs var))]
                   [region-intervals : CompilerRegIntervalList
                     (compiler-reg-loop-split-region-interval
                       vars
                       region-start
                       region-end)]
-                  (match (compiler-reg-edge-copy-plan-for-region
-                    func
-                    labels
-                    var
-                    vars
-                    ty)
+                  (match (if phi-carried?
+                    (compiler-reg-edge-copy-plan-for-region-group
+                      func
+                      labels
+                      var
+                      vars
+                      ty
+                      members)
+                    (compiler-reg-edge-copy-plan-for-region
+                      func
+                      labels
+                      var
+                      vars
+                      ty))
                     [(CompilerRegEdgeCopyPlan copies)
                       (let
                         [copy-count : i64
@@ -7570,10 +7820,19 @@
                           ;; non-refused bidirectional plan write-backs every exit;
                           ;; requiring at least one OUT (copies-bidirectional?) rejects
                           ;; the degenerate no-exit redefinition that never writes back.
-                          (if (compiler-live-set-contains?
-                                (compiler-live-block-defs block) var)
-                            (compiler-reg-loop-split-copies-bidirectional? copies)
-                            (compiler-reg-loop-split-direction-present? copies true))
+                          ;;
+                          ;; The PHI-CARRIED path uses the weaker INTO-present test:
+                          ;; the group-aware planner already emits an OUT copy on
+                          ;; every live exit edge (or refuses on a critical one), so a
+                          ;; non-refused plan with an INTO copy has all required
+                          ;; write-backs; values NOT live after the loop (a homed
+                          ;; counter) correctly need no OUT copy and are still homed.
+                          (if phi-carried?
+                            (compiler-reg-loop-split-direction-present? copies true)
+                            (if (compiler-live-set-contains?
+                                  (compiler-live-block-defs block) var)
+                              (compiler-reg-loop-split-copies-bidirectional? copies)
+                              (compiler-reg-loop-split-direction-present? copies true)))
                           (compiler-reg-loop-split-hot-benefit?
                             mentions
                             depth
@@ -7593,7 +7852,7 @@
                               [(CompilerRegSomeString reg)
                                 (CompilerRegLoopSplitCandidate
                                   var
-                                  region-label
+                                  labels
                                   ty
                                   reg
                                   copies
@@ -7613,7 +7872,7 @@
                                   [(CompilerRegLoopSplitEvict ereg evar)
                                     (CompilerRegLoopSplitCandidate
                                       var
-                                      region-label
+                                      labels
                                       ty
                                       ereg
                                       copies
@@ -7626,7 +7885,7 @@
               [(CompilerRegNoType) (CompilerRegLoopSplitNoCandidate)])]
           [_ (CompilerRegLoopSplitNoCandidate)])]
       [(CompilerRegNoLocation) (CompilerRegLoopSplitNoCandidate)])
-    (CompilerRegLoopSplitNoCandidate)))
+    (CompilerRegLoopSplitNoCandidate))))
 
 (define (compiler-reg-loop-split-select-var
   [func : CompilerIrFunction]
@@ -7801,7 +8060,7 @@
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [stack-var : i64]
-  [region-label : String]
+  [region-labels : CompilerRegStringList]
   [ty : AstType]
   [reg : String]
   [copies : CompilerRegEdgeCopyList]
@@ -7809,9 +8068,11 @@
   [parents : (Array i64)]) : CompilerRegCallSaveRewrite
   (let
     [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
+    ;; The region is the candidate's block-label list (one label for the
+    ;; single-block paths -- byte-identical to the prior single-label map -- or the
+    ;; whole natural loop for the multi-block phi-carried homing).
     [region-map : hashmap.StringI64Map
-      (compiler-reg-region-label-map
-        (compiler-reg-string-cons region-label CompilerRegStringNil))]
+      (compiler-reg-region-label-map region-labels)]
     ;; The new region-resident var (id `vars`) takes the register. When this
     ;; candidate evicted a lower-weight var to free that register, also override
     ;; the evicted var to Spill -- assignment-list-merge -> assignment-insert
@@ -7850,6 +8111,304 @@
               CompilerRegVarTypeNil))]
         [(CompilerRegEdgeCopyRewriteRefused _)
           (compiler-reg-loop-split-noop blocks vars)]))))
+
+;; ===========================================================================
+;; SplitKit step 2 -- MULTI-BLOCK phi-carried homing (the dominant 607 population).
+;;
+;; A real SSA loop-carried value is a phi at the loop HEADER taking the initial
+;; value from the preheader edge and the updated value from the back-edge; the body
+;; that updates it is a SEPARATE block. So it is a MULTI-BLOCK region (header +
+;; body), which the single-block self-loop path (try-var) rejects. Here we home the
+;; whole coalesce group across the natural loop: the back-edge is INTERNAL to the
+;; region (the carry stays in the homed register with NO per-iteration copy), the
+;; preheader edge gets the INTO copy, and live exit edges get the OUT copy (or the
+;; plan is refused on a critical edge). The phi becomes `R = phi [R,..],[R,..]`
+;; (an identity whose per-edge lowering is a self-move) once every group member --
+;; result, back-edge input, preheader input -- is remapped to R; the
+;; phi-correctness gate (every header-phi input is in the group) guarantees that,
+;; so the INTO copy cannot race a real phi-lowering move.
+;;
+;; BOUNDED to a 2-block natural loop (header H + single body B = H+1) where B is
+;; entered ONLY from H (pred-count 1): a clean single-entry loop whose only external
+;; entry is H's preheader edge, so soundness matches the single-block case. Wider
+;; natural-loop bodies (>2 blocks) are the next slice.
+;; ===========================================================================
+
+;; Start point (doubled instruction index, matching select-blocks) of each block;
+;; length n+1 so points[n] is the end point of the last block.
+(define (compiler-reg-loop-phi-mb-block-points
+  [block-array : (Array CompilerIrBlock)]) : (Array i64)
+  (let
+    [n : i64 (array.array-length block-array)]
+    [points : (Array i64) (array.make-array i64 (+ n 1))]
+    [i : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array.array-set! points i acc)
+          (set! acc
+            (+ acc
+              (match (array.array-ref block-array i)
+                [(IrBlock _ instrs)
+                  (* 2 (compiler-ir-instr-seq-count instrs))])))
+          (set! i (+ i 1))))
+      (array.array-set! points n acc)
+      points)))
+
+(define (compiler-reg-loop-phi-mb-region-labels
+  [block-array : (Array CompilerIrBlock)]
+  [idx : i64]
+  [end-idx : i64]) : CompilerRegStringList
+  (if (or (> idx end-idx) (>= idx (array.array-length block-array)))
+    CompilerRegStringNil
+    (compiler-reg-string-cons
+      (match (array.array-ref block-array idx) [(IrBlock label _) label])
+      (compiler-reg-loop-phi-mb-region-labels block-array (+ idx 1) end-idx))))
+
+;; Any call/syscall in region blocks [s..e]? (caller-saved candidates are only safe
+;; when none clobbers them across the loop.)
+(define (compiler-reg-loop-phi-mb-region-has-call?
+  [block-array : (Array CompilerIrBlock)]
+  [s : i64]
+  [e : i64]) : bool
+  (if (or (> s e) (>= s (array.array-length block-array)))
+    false
+    (or
+      (match (array.array-ref block-array s)
+        [(IrBlock _ instrs)
+          (compiler-reg-loop-split-seq-has-call-or-syscall? instrs)])
+      (compiler-reg-loop-phi-mb-region-has-call? block-array (+ s 1) e))))
+
+;; Sum group mentions across region blocks [s..e] (hot-benefit input).
+(define (compiler-reg-loop-phi-mb-region-mentions
+  [block-array : (Array CompilerIrBlock)]
+  [s : i64]
+  [e : i64]
+  [members : CompilerLiveI64Set]) : i64
+  (if (or (> s e) (>= s (array.array-length block-array)))
+    0
+    (+
+      (match (array.array-ref block-array s)
+        [(IrBlock _ instrs)
+          (compiler-reg-loop-split-mention-count-group instrs members)])
+      (compiler-reg-loop-phi-mb-region-mentions block-array (+ s 1) e members))))
+
+;; Try to home coalesce-root `var`'s phi-carried group across the 2-block region.
+(define (compiler-reg-loop-phi-mb-try-var
+  [func : CompilerIrFunction]
+  [block-array : (Array CompilerIrBlock)]
+  [h : i64]
+  [end-idx : i64]
+  [header-instrs : CompilerIrInstrSeq]
+  [region-labels : CompilerRegStringList]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [clobber-free? : bool]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
+  (if (and
+    (compiler-reg-loop-split-coalesce-root? parents var)
+    (compiler-reg-loop-split-phi-carried-group? header-instrs parents var)
+    (compiler-reg-interval-index-var-has-segments? intervals var))
+    (match (compiler-reg-assignment-lookup assignments var)
+      [(CompilerRegSomeLocation location)
+        (match location
+          [(CompilerRegSpill _)
+            (match (compiler-reg-loop-split-type-ok? type-info group-vars var)
+              [(CompilerRegSomeType ty)
+                (let
+                  [members : CompilerLiveI64Set
+                    (compiler-reg-loop-split-group-member-set parents var vars)]
+                  [mentions : i64
+                    (compiler-reg-loop-phi-mb-region-mentions
+                      block-array h end-idx members)]
+                  [region-intervals : CompilerRegIntervalList
+                    (compiler-reg-loop-split-region-interval
+                      vars region-start region-end)]
+                  (match (compiler-reg-edge-copy-plan-for-region-group
+                    func region-labels var vars ty members)
+                    [(CompilerRegEdgeCopyPlan copies)
+                      (if (and
+                        ;; INTO present + non-refused => every live exit edge already
+                        ;; carries its OUT write-back (the planner refuses otherwise),
+                        ;; so this is the sufficient soundness witness; not-live-out
+                        ;; carried values correctly need no OUT copy.
+                        (compiler-reg-loop-split-direction-present? copies true)
+                        (compiler-reg-loop-split-hot-benefit?
+                          mentions
+                          depth
+                          (compiler-reg-edge-copy-list-count copies)))
+                        (let
+                          [cregs : CompilerRegStringList
+                            (compiler-reg-loop-split-candidate-regs clobber-free?)]
+                          (match (compiler-reg-loop-split-first-register
+                            cregs assignments intervals region-intervals var)
+                            [(CompilerRegSomeString reg)
+                              (CompilerRegLoopSplitCandidate
+                                var region-labels ty reg copies (- 0 1))]
+                            [(CompilerRegNoString)
+                              (match (compiler-reg-loop-split-first-register-evict
+                                cregs assignments intervals region-intervals var
+                                weights
+                                (if (< var (array.array-length weights))
+                                  (array.array-ref weights var)
+                                  0))
+                                [(CompilerRegLoopSplitEvict ereg evar)
+                                  (CompilerRegLoopSplitCandidate
+                                    var region-labels ty ereg copies evar)]
+                                [(CompilerRegLoopSplitEvictNone)
+                                  (CompilerRegLoopSplitNoCandidate)])]))
+                        (CompilerRegLoopSplitNoCandidate))]
+                    [(CompilerRegEdgeCopyRefused _)
+                      (CompilerRegLoopSplitNoCandidate)]))]
+              [(CompilerRegNoType) (CompilerRegLoopSplitNoCandidate)])]
+          [_ (CompilerRegLoopSplitNoCandidate)])]
+      [(CompilerRegNoLocation) (CompilerRegLoopSplitNoCandidate)])
+    (CompilerRegLoopSplitNoCandidate)))
+
+(define (compiler-reg-loop-phi-mb-select-var
+  [func : CompilerIrFunction]
+  [block-array : (Array CompilerIrBlock)]
+  [h : i64]
+  [end-idx : i64]
+  [header-instrs : CompilerIrInstrSeq]
+  [region-labels : CompilerRegStringList]
+  [region-start : i64]
+  [region-end : i64]
+  [depth : i64]
+  [clobber-free? : bool]
+  [vars : i64]
+  [var : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
+  (if (>= var vars)
+    (CompilerRegLoopSplitNoCandidate)
+    (match (compiler-reg-loop-phi-mb-try-var
+      func block-array h end-idx header-instrs region-labels region-start
+      region-end depth clobber-free? vars var type-info assignments intervals
+      group-vars parents weights)
+      [(CompilerRegLoopSplitNoCandidate)
+        (compiler-reg-loop-phi-mb-select-var
+          func block-array h end-idx header-instrs region-labels region-start
+          region-end depth clobber-free? vars (+ var 1) type-info assignments
+          intervals group-vars parents weights)]
+      [(CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)
+        (CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)])))
+
+;; Scan block indices for a 2-block natural-loop header (loop-ends[h]==h+1) whose
+;; body B=h+1 is entered ONLY from h (pred-count 1) and at loop depth>0, then try
+;; to home one of its phi-carried groups.
+(define (compiler-reg-loop-phi-mb-select-headers
+  [func : CompilerIrFunction]
+  [block-array : (Array CompilerIrBlock)]
+  [points : (Array i64)]
+  [loop-ends : (Array i64)]
+  [pred-counts : (Array i64)]
+  [depths : (Array i64)]
+  [h : i64]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
+  (if (>= h (array.array-length block-array))
+    (CompilerRegLoopSplitNoCandidate)
+    (let
+      [end-idx : i64
+        (if (< h (array.array-length loop-ends))
+          (array.array-ref loop-ends h)
+          (- 0 1))]
+      [body : i64 (+ h 1)]
+      (if (and
+            (= end-idx body)
+            (< body (array.array-length block-array))
+            (< h (array.array-length depths))
+            (> (array.array-ref depths h) 0)
+            (< body (array.array-length pred-counts))
+            (= (array.array-ref pred-counts body) 1))
+        (match (compiler-reg-loop-phi-mb-select-var
+          func
+          block-array
+          h
+          end-idx
+          (match (array.array-ref block-array h) [(IrBlock _ instrs) instrs])
+          (compiler-reg-loop-phi-mb-region-labels block-array h end-idx)
+          (array.array-ref points h)
+          (array.array-ref points (+ end-idx 1))
+          (array.array-ref depths h)
+          (not (compiler-reg-loop-phi-mb-region-has-call? block-array h end-idx))
+          vars
+          0
+          type-info
+          assignments
+          intervals
+          group-vars
+          parents
+          weights)
+          [(CompilerRegLoopSplitNoCandidate)
+            (compiler-reg-loop-phi-mb-select-headers
+              func block-array points loop-ends pred-counts depths (+ h 1) vars
+              type-info assignments intervals group-vars parents weights)]
+          [(CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)
+            (CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)])
+        (compiler-reg-loop-phi-mb-select-headers
+          func block-array points loop-ends pred-counts depths (+ h 1) vars
+          type-info assignments intervals group-vars parents weights)))))
+
+;; Top-level multi-block phi selector: build block array / points / loop-ends /
+;; pred-counts and scan headers. Returns a candidate (with multi-block region
+;; labels) or NoCandidate. Called as the fallback after the single-block
+;; select-blocks finds nothing, so the single-block paths stay byte-identical.
+(define (compiler-reg-loop-phi-mb-select
+  [func : CompilerIrFunction]
+  [blocks : CompilerIrBlockList]
+  [ids : hashmap.StringI64Map]
+  [live-blocks : (Array CompilerLiveBlock)]
+  [depths : (Array i64)]
+  [vars : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentList]
+  [intervals : CompilerRegIntervalIndex]
+  [group-vars : CompilerLiveI64Set]
+  [parents : (Array i64)]
+  [weights : (Array i64)]) : CompilerRegLoopSplitCandidate
+  (let
+    [cons-blocks : CompilerIrBlockList
+      (compiler-ir-block-list-force-cons blocks)]
+    [block-array : (Array CompilerIrBlock)
+      (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
+    [count : i64 (array.array-length block-array)]
+    (if (<= count 1)
+      (CompilerRegLoopSplitNoCandidate)
+      (compiler-reg-loop-phi-mb-select-headers
+        func
+        block-array
+        (compiler-reg-loop-phi-mb-block-points block-array)
+        (compiler-reg-preheader-loop-ends cons-blocks count)
+        (compiler-reg-edge-copy-pred-counts ids live-blocks)
+        depths
+        0
+        vars
+        type-info
+        assignments
+        intervals
+        group-vars
+        parents
+        weights))))
 
 ;; Multi-split: rescue EVERY profitable spilled loop-carried var, not just the
 ;; first. Each split rewrites the IR (region uses -> a new register-resident var
@@ -7914,7 +8473,7 @@
               (compiler-reg-coalesce-merged-root-set coalesce)]
             (match liveness
               [(CompilerFunctionLiveness ids live-blocks)
-                (match (compiler-reg-loop-split-select-blocks
+                (match (match (compiler-reg-loop-split-select-blocks
                   func
                   blocks
                   ids
@@ -7930,6 +8489,27 @@
                   parents
                   merged-roots
                   (compiler-reg-function-spill-weights func))
+                  ;; Step-2 fallback: when the single-block paths (read-only /
+                  ;; non-phi self-loop / single-block phi) find nothing, try the
+                  ;; MULTI-BLOCK phi-carried homing (the dominant 607 population).
+                  ;; As a fallback it leaves every single-block decision -- and so
+                  ;; all non-phi / read-only codegen -- byte-identical.
+                  [(CompilerRegLoopSplitNoCandidate)
+                    (compiler-reg-loop-phi-mb-select
+                      func
+                      blocks
+                      ids
+                      live-blocks
+                      depths
+                      vars
+                      type-info
+                      assignments
+                      intervals
+                      group-vars
+                      parents
+                      (compiler-reg-function-spill-weights func))]
+                  [(CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)
+                    (CompilerRegLoopSplitCandidate sv lbls ty reg copies ev)])
                   [(CompilerRegLoopSplitNoCandidate)
                     (compiler-reg-loop-split-noop blocks vars)]
                   [(CompilerRegLoopSplitCandidate
@@ -8021,12 +8601,28 @@
   [group-vars : CompilerLiveI64Set]
   [parents : (Array i64)]
   [merged-roots : CompilerLiveI64Set]) : String
-  (if (and
+  (let
+    ;; SplitKit step 2: phi-carried single-block self-loop refused only by a
+    ;; critical ENTRY edge is unblocked by a dedicated preheader, just like the
+    ;; read-only case below. Variable-bound loops (no provable >=1 trip) keep the
+    ;; zero-trip pre-test, so entry->header is critical; a preheader gives the
+    ;; once-per-loop INTO copy a non-critical edge. (Live-out values whose EXIT
+    ;; edge is also critical still refuse at plan time -- not a preheader case.)
+    [phi-carried? : bool
+      (compiler-reg-loop-split-phi-carried-candidate?
+        block region-label instrs var parents)]
+    [members : CompilerLiveI64Set
+      (if phi-carried?
+        (compiler-reg-loop-split-group-member-set parents var vars)
+        (compiler-live-set-empty))]
+  (if (if phi-carried?
+        (compiler-reg-interval-index-var-has-segments? intervals var)
+        (and
     (compiler-live-set-contains? (compiler-live-block-live-in block) var)
     (compiler-live-set-contains? (compiler-live-block-live-out block) var)
     (not (compiler-live-set-contains? (compiler-live-block-defs block) var))
     (compiler-reg-interval-index-var-has-segments? intervals var)
-    (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
+    (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))))
     (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegSomeLocation location)
         (match location
@@ -8041,12 +8637,20 @@
                       vars
                       region-start
                       region-end)]
-                  (match (compiler-reg-edge-copy-plan-for-region
-                    func
-                    labels
-                    var
-                    vars
-                    ty)
+                  (match (if phi-carried?
+                    (compiler-reg-edge-copy-plan-for-region-group
+                      func
+                      labels
+                      var
+                      vars
+                      ty
+                      members)
+                    (compiler-reg-edge-copy-plan-for-region
+                      func
+                      labels
+                      var
+                      vars
+                      ty))
                     ;; A plan (not refused) means the existing rounds already
                     ;; handle this var -- not a preheader case.
                     [(CompilerRegEdgeCopyPlan _) ""]
@@ -8067,7 +8671,7 @@
               [(CompilerRegNoType) ""])]
           [_ ""])]
       [(CompilerRegNoLocation) ""])
-    ""))
+    "")))
 
 (define (compiler-reg-loop-split-refused-select-var
   [func : CompilerIrFunction]

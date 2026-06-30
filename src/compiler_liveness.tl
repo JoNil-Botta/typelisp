@@ -162,6 +162,33 @@
       [mask : i64 (compiler-live-set-bit-mask value)]
       (not (= (bit-and (compiler-live-set-word-at set word-index) mask) 0)))))
 
+;; True iff `a` and `b` share at least one element (bitset word-level AND). Used
+;; by the SplitKit phi-carried loop homing to test whether ANY member of a
+;; coalesce group is live across a region boundary edge (no single member is live
+;; on every boundary edge of a phi-carried value, so the per-var live-on-edge test
+;; is insufficient -- the group/slot is what must be loaded/stored).
+(define (compiler-live-set-intersects?
+  [a : CompilerLiveI64Set]
+  [b : CompilerLiveI64Set]) : bool
+  (let
+    [na : i64 (compiler-live-set-word-count a)]
+    [nb : i64 (compiler-live-set-word-count b)]
+    [n : i64 (if (< na nb) na nb)]
+    [i : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (begin
+          (if (not
+                (= (bit-and
+                     (compiler-live-set-word-at a i)
+                     (compiler-live-set-word-at b i))
+                   0))
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
 (define (compiler-live-set-insert [set : CompilerLiveI64Set] [value : i64]) : CompilerLiveI64Set
   (if (< value 0)
     set

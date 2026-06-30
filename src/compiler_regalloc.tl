@@ -1145,6 +1145,22 @@
           (array.array-set! items var location)))
       assignments)))
 
+;; RAGreedy Component 1: drop a var's current assignment (present[var]=0) without
+;; choosing a new location. The evict-and-requeue worklist UNASSIGNS an evicted
+;; resident here (rather than whole-spilling it via insert-Spill) so it can be
+;; re-enqueued and given a fresh allocation attempt. items[var] is left stale; it
+;; is dead while present[var]=0 and is overwritten on the next insert.
+(define (compiler-reg-assignment-table-unassign
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]) : CompilerRegAssignmentTable
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    (begin
+      (if (or (< var 0) (>= var (array.array-length present)))
+        unit
+        (array.array-set! present var 0))
+      assignments)))
+
 (define (compiler-reg-assignment-table-lookup
   [assignments : CompilerRegAssignmentTable]
   [var : i64]) : CompilerRegMaybeLocation
@@ -9601,12 +9617,79 @@
               [(CompilerRegRemat _) ""])]
           [(CompilerRegNoLocation) ""])))))
 
+;; RAGreedy Component 1 cascade cap (LLVM canEvictInterference / cascade number).
+;; A resident may be evicted+requeued at most this many times; once its
+;; evict-count reaches the cap it becomes UNEVICTABLE (see interferer-max-capped),
+;; so it stays put and the would-be evictor spills instead. This bounds the total
+;; number of (re-)allocation attempts to count*(cap+1) -> guaranteed termination,
+;; independent of the strict-lower-weight quality gate.
+(define (compiler-reg-greedy-evict-cascade-cap) : i64
+  4)
+
+;; A weight strictly larger than any real spill weight; returned by
+;; interferer-max-capped when a register is pinned by an over-cap (unevictable)
+;; resident, so the `< weight` evictability gate can never select it.
+(define (compiler-reg-greedy-evict-inf) : i64
+  1000000000)
+
+;; Like compiler-reg-greedy-interferer-max, but cascade-aware: if any interferer
+;; holding `reg` (and interfering with `var`) has already been evicted at least
+;; `cap` times, returns evict-inf (the register is unevictable). Otherwise returns
+;; the max interferer weight (-1 if no interferer), identical to interferer-max.
+;; With every evict-count==0 this is byte-identical to interferer-max, so the
+;; no-eviction forward pass is unchanged.
+(define (compiler-reg-greedy-interferer-max-capped
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [evict-count : (Array i64)]
+  [var : i64]
+  [reg : String]
+  [idx : i64]
+  [n : i64]
+  [acc : i64]) : i64
+  (if (>= idx n)
+    acc
+    (let
+      [next-acc : i64
+        (if (and
+          (not (= idx var))
+          (compiler-reg-greedy-holds-reg? assignments idx reg)
+          (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
+          (let
+            [ec : i64
+              (if (< idx (array.array-length evict-count))
+                (array.array-ref evict-count idx)
+                0)]
+            [w : i64
+              (if (< idx (array.array-length ref-counts))
+                (array.array-ref ref-counts idx)
+                0)]
+            (if (>= ec (compiler-reg-greedy-evict-cascade-cap))
+              (compiler-reg-greedy-evict-inf)
+              (if (> w acc)
+                w
+                acc)))
+          acc)]
+      (compiler-reg-greedy-interferer-max-capped
+        assignments
+        interval-index
+        ref-counts
+        evict-count
+        var
+        reg
+        (+ idx 1)
+        n
+        next-acc))))
+
 ;; First pool register all of whose interferers are STRICTLY lower weight than
-;; `weight` (so clearing it costs less than spilling `var`); "" if none.
+;; `weight` (so clearing it costs less than spilling `var`) AND none of which is
+;; over the cascade cap; "" if none.
 (define (compiler-reg-greedy-first-evictable
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
+  [evict-count : (Array i64)]
   [var : i64]
   [weight : i64]
   [reg-arr : (Array String)]
@@ -9619,10 +9702,11 @@
     (let
       [reg : String (array.array-ref reg-arr ridx)]
       [m : i64
-        (compiler-reg-greedy-interferer-max
+        (compiler-reg-greedy-interferer-max-capped
           assignments
           interval-index
           ref-counts
+          evict-count
           var
           (array.array-ref reg-arr ridx)
           0
@@ -9637,6 +9721,7 @@
           assignments
           interval-index
           ref-counts
+          evict-count
           var
           weight
           reg-arr
@@ -9645,9 +9730,19 @@
           n
           forbidden)))))
 
-(define (compiler-reg-greedy-evict-reg!
+;; RAGreedy Component 1: evict every resident holding `reg` that interferes with
+;; `var`, then UNASSIGN it (present[]=0) and RE-ENQUEUE it (pending[]=1) for a
+;; fresh allocation attempt, bumping its cascade evict-count. This replaces the
+;; old whole-spill-on-evict (which gave the evicted resident no second chance):
+;; the requeued resident competes again at its own priority and may land in a
+;; different free register, or evict a still-lower resident, or finally spill.
+;; first-evictable's cap gate guarantees no resident is requeued more than the
+;; cascade cap, so the worklist terminates.
+(define (compiler-reg-greedy-evict-requeue!
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
+  [pending : (Array i64)]
+  [evict-count : (Array i64)]
   [var : i64]
   [reg : String]
   [idx : i64]
@@ -9660,15 +9755,23 @@
         (compiler-reg-greedy-holds-reg? assignments idx reg)
         (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
         (begin
-          (compiler-reg-assignment-table-insert
-            assignments
-            idx
-            (CompilerRegSpill (compiler-reg-stack-slot-offset idx)))
+          (compiler-reg-assignment-table-unassign assignments idx)
+          (if (and (>= idx 0) (< idx (array.array-length pending)))
+            (array.array-set! pending idx 1)
+            unit)
+          (if (and (>= idx 0) (< idx (array.array-length evict-count)))
+            (array.array-set!
+              evict-count
+              idx
+              (+ (array.array-ref evict-count idx) 1))
+            unit)
           unit)
         unit)
-      (compiler-reg-greedy-evict-reg!
+      (compiler-reg-greedy-evict-requeue!
         assignments
         interval-index
+        pending
+        evict-count
         var
         reg
         (+ idx 1)
@@ -9774,7 +9877,9 @@
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
-  [caller-saved-count : i64]) : i64
+  [caller-saved-count : i64]
+  [pending : (Array i64)]
+  [evict-count : (Array i64)]) : i64
   (if (or
     (compiler-reg-greedy-already-assigned? assignments var)
     (compiler-live-set-contains? group-vars var))
@@ -9873,6 +9978,7 @@
                   assignments
                   interval-index
                   ref-counts
+                  evict-count
                   var
                   weight
                   reg-arr
@@ -9882,9 +9988,11 @@
                   forbidden)]
               (if (not (string-eq ev ""))
                 (begin
-                  (compiler-reg-greedy-evict-reg!
+                  (compiler-reg-greedy-evict-requeue!
                     assignments
                     interval-index
+                    pending
+                    evict-count
                     var
                     ev
                     0
@@ -10011,10 +10119,158 @@
           (set! v (+ v 1))))
       out)))
 
-;; Staged worklist driver: pop each root in priority (spill-weight desc) order,
-;; run selectOrSplit (alloc-one!), and record its terminal RS_* stage in `stages`.
-;; The stage array is the explicit selectOrSplit state the post-pass region split
-;; consumes (RS_Split roots are exactly the loop-split rescue candidates).
+;; Seed the worklist: mark every collected root arr[i..count) pending. Non-roots
+;; (group-var members, never-collected vars) stay pending=0 and are never popped.
+(define (compiler-reg-greedy-worklist-seed!
+  [arr : (Array i64)]
+  [i : i64]
+  [count : i64]
+  [pending : (Array i64)]) : unit
+  (if (>= i count)
+    unit
+    (begin
+      (let
+        [v : i64 (array.array-ref arr i)]
+        (if (and (>= v 0) (< v (array.array-length pending)))
+          (array.array-set! pending v 1)
+          unit))
+      (compiler-reg-greedy-worklist-seed! arr (+ i 1) count pending))))
+
+;; Pick the highest-priority pending root: max spill weight, ties broken by lowest
+;; var index. This reproduces the compiler-reg-greedy-weight-before? total order
+;; the static sort produced, so with NO requeues the worklist pops exactly the
+;; sorted sequence -> byte-identical to the old forward pass. Returns -1 when the
+;; worklist is empty. O(n) per pop.
+(define (compiler-reg-greedy-worklist-pick!
+  [pending : (Array i64)]
+  [ref-counts : (Array i64)]
+  [n : i64]
+  [idx : i64]
+  [best : i64]
+  [best-w : i64]) : i64
+  (if (>= idx n)
+    best
+    (if (and
+      (< idx (array.array-length pending))
+      (= (array.array-ref pending idx) 1))
+      (let
+        [w : i64
+          (if (< idx (array.array-length ref-counts))
+            (array.array-ref ref-counts idx)
+            0)]
+        (if (or (< best 0) (> w best-w))
+          (compiler-reg-greedy-worklist-pick! pending ref-counts n (+ idx 1) idx w)
+          (compiler-reg-greedy-worklist-pick!
+            pending
+            ref-counts
+            n
+            (+ idx 1)
+            best
+            best-w)))
+      (compiler-reg-greedy-worklist-pick!
+        pending
+        ref-counts
+        n
+        (+ idx 1)
+        best
+        best-w))))
+
+;; Re-entrant evict-and-requeue worklist loop (RAGreedy Component 1). Pop the
+;; highest-weight pending root, dequeue it (pending=0), run selectOrSplit
+;; (alloc-one!), and record its terminal RS_* stage. alloc-one! may, on the
+;; tryEvict path, UNASSIGN + RE-ENQUEUE strictly-lower-weight residents (setting
+;; their pending=1 and bumping evict-count); those get a fresh allocation attempt
+;; here at their own priority. Termination: a resident is requeued at most
+;; cascade-cap times (first-evictable refuses to evict an over-cap resident), so
+;; the total pop count is bounded by count*(cap+1).
+(define (compiler-reg-greedy-worklist-run!
+  [pending : (Array i64)]
+  [evict-count : (Array i64)]
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [ref-counts : (Array i64)]
+  [copy-hints : (Array i64)]
+  [arg-prefs : (Array i64)]
+  [group-vars : CompilerLiveI64Set]
+  [regs : CompilerRegStringList]
+  [reg-arr : (Array String)]
+  [rcount : i64]
+  [stages : (Array i64)]
+  [n : i64]
+  [call-points : CompilerLiveI64Set]
+  [div-points : CompilerLiveI64Set]
+  [shift-points : CompilerLiveI64Set]
+  [callee-regs : CompilerRegStringList]
+  [caller-saved-count : i64]) : unit
+  (let
+    [v : i64
+      (compiler-reg-greedy-worklist-pick!
+        pending
+        ref-counts
+        n
+        0
+        (- 0 1)
+        (- 0 1))]
+    (if (< v 0)
+      unit
+      (begin
+        (if (and (>= v 0) (< v (array.array-length pending)))
+          (array.array-set! pending v 0)
+          unit)
+        (let
+          [stg : i64
+            (compiler-reg-greedy-alloc-one!
+              assignments
+              interval-index
+              ref-counts
+              copy-hints
+              arg-prefs
+              group-vars
+              regs
+              reg-arr
+              rcount
+              v
+              n
+              call-points
+              div-points
+              shift-points
+              callee-regs
+              caller-saved-count
+              pending
+              evict-count)]
+          (if (and (>= v 0) (< v (array.array-length stages)))
+            (array.array-set! stages v stg)
+            unit))
+        (compiler-reg-greedy-worklist-run!
+          pending
+          evict-count
+          assignments
+          interval-index
+          ref-counts
+          copy-hints
+          arg-prefs
+          group-vars
+          regs
+          reg-arr
+          rcount
+          stages
+          n
+          call-points
+          div-points
+          shift-points
+          callee-regs
+          caller-saved-count)))))
+
+;; Staged worklist driver (RAGreedy Component 1): re-entrant evict-and-requeue
+;; priority worklist over the unassigned root set, processing highest-current-
+;; weight first. Replaces the static forward recursion: when a higher-weight root
+;; evicts a lower-weight resident, the resident is UNASSIGNED and RE-ENQUEUED for
+;; another allocation attempt (instead of being whole-spilled with no second
+;; chance) -- the foundation Component 2 (split-on-spill) builds on. With no
+;; eviction firing (the strict descending-weight order makes tryEvict dead for
+;; the initial pass) the worklist pops the same sorted sequence and produces the
+;; same plan as the old forward pass. `arr[i..count)` are the sorted roots; the
+;; per-root terminal RS_* stage is recorded in `stages` for the post-pass split.
 (define (compiler-reg-greedy-alloc-all!
   [arr : (Array i64)]
   [i : i64]
@@ -10035,52 +10291,33 @@
   [shift-points : CompilerLiveI64Set]
   [callee-regs : CompilerRegStringList]
   [caller-saved-count : i64]) : unit
-  (if (>= i count)
-    unit
-    (let
-      [v : i64 (array.array-ref arr i)]
-      [stg : i64
-        (compiler-reg-greedy-alloc-one!
-          assignments
-          interval-index
-          ref-counts
-          copy-hints
-          arg-prefs
-          group-vars
-          regs
-          reg-arr
-          rcount
-          v
-          n
-          call-points
-          div-points
-          shift-points
-          callee-regs
-          caller-saved-count)]
-      (begin
-        (if (and (>= v 0) (< v (array.array-length stages)))
-          (array.array-set! stages v stg)
-          unit)
-        (compiler-reg-greedy-alloc-all!
-          arr
-          (+ i 1)
-          count
-          assignments
-          interval-index
-          ref-counts
-          copy-hints
-          arg-prefs
-          group-vars
-          regs
-          reg-arr
-          rcount
-          stages
-          n
-          call-points
-          div-points
-          shift-points
-          callee-regs
-          caller-saved-count)))))
+  (let
+    [cap : i64 (if (< n 1) 1 n)]
+    [pending : (Array i64) (array.make-array i64 cap)]
+    [evict-count : (Array i64) (array.make-array i64 cap)]
+    (begin
+      (compiler-reg-fill-i64-array pending 0)
+      (compiler-reg-fill-i64-array evict-count 0)
+      (compiler-reg-greedy-worklist-seed! arr i count pending)
+      (compiler-reg-greedy-worklist-run!
+        pending
+        evict-count
+        assignments
+        interval-index
+        ref-counts
+        copy-hints
+        arg-prefs
+        group-vars
+        regs
+        reg-arr
+        rcount
+        stages
+        n
+        call-points
+        div-points
+        shift-points
+        callee-regs
+        caller-saved-count))))
 
 ;; Unified Greedy integer register pool: caller-saved zero-call scratch
 ;; (%r9/%rcx/%rdx) FIRST so non-call-spanning values prefer them -- no

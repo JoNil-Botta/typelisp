@@ -49,12 +49,15 @@ VERSION_STDOUT="$WORKDIR/version.stdout"
 VERSION_STDERR="$WORKDIR/version.stderr"
 BUILD_GIT_HASH=$(git rev-parse --verify HEAD)
 BUILD_GIT_HASH_FILE="$WORKDIR/git-hash.txt"
+BUILD_DATE=$(date -u +%Y-%m-%d)
+BUILD_DATE_FILE="$WORKDIR/build-date.txt"
 RUN_OUT=$OUT
 case "$RUN_OUT" in
     */* | *\\* | [A-Za-z]:*) ;;
     *) RUN_OUT="./$RUN_OUT" ;;
 esac
 printf '%s' "$BUILD_GIT_HASH" > "$BUILD_GIT_HASH_FILE"
+printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 
 # The published stage0 is built at opt-level 2: it enables scalar register
 # allocation in the binary's own code, which makes the shipped binary both
@@ -103,8 +106,8 @@ if ! "$RUN_OUT" --version > "$VERSION_STDOUT" 2> "$VERSION_STDERR"; then
     sed 's/^/  /' "$VERSION_STDERR" >&2 || true
     exit 1
 fi
-if ! grep -F -- "typelisp $BUILD_GIT_HASH" "$VERSION_STDOUT" >/dev/null; then
-    echo "[build-stage0] built compiler did not report git hash $BUILD_GIT_HASH" >&2
+if ! grep -F -- "typelisp $BUILD_GIT_HASH built $BUILD_DATE" "$VERSION_STDOUT" >/dev/null; then
+    echo "[build-stage0] built compiler did not report git hash $BUILD_GIT_HASH and build date $BUILD_DATE" >&2
     echo "[build-stage0] stdout:" >&2
     sed 's/^/  /' "$VERSION_STDOUT" >&2 || true
     exit 1

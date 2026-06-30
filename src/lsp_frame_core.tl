@@ -353,7 +353,7 @@
         (lsp-json-member k3 v3 (lsp-json-member k4 v4 json.JsonMemberListNil))))))
 
 (define (lsp-json-string-field [value : json.Json] [key : String]) : LspJsonText
-  (match (json.json-object-get value (& key))
+  (match (json.object-get value (& key))
     [(json.JsonFound field)
       (match field
         [(json.JsonString text) (LspJsonText.Ok text)]
@@ -369,7 +369,7 @@
     [(LspJsonText.Missing) fallback]))
 
 (define (lsp-write-json [value : json.Json]) : unit
-  (lsp-frame-write-body (json.json-stringify value)))
+  (lsp-frame-write-body (json.stringify value)))
 
 (define (lsp-write-response [id : json.Json] [result : json.Json]) : unit
   (lsp-write-json
@@ -636,7 +636,7 @@
                 [hi : i64 (lsp-hex-value (string.string-ref text (+ i 1)))]
                 [lo : i64 (lsp-hex-value (string.string-ref text (+ i 2)))]
                 (if (and (>= hi 0) (>= lo 0))
-                  (match (json.json-codepoint-string (+ (* hi 16) lo))
+                  (match (json.codepoint-string (+ (* hi 16) lo))
                     [(json.OkJsonCodepointString decoded)
                       (begin
                         (set! out (string.concat3 out decoded ""))
@@ -714,8 +714,8 @@
                 (lsp-str4
                   out
                   "%"
-                  (json.json-hex-digit (/ code 16))
-                  (json.json-hex-digit (- code (* (/ code 16) 16)))))))
+                  (json.hex-digit (/ code 16))
+                  (json.hex-digit (- code (* (/ code 16) 16)))))))
           (set! i (+ i 1))))
       out)))
 
@@ -903,7 +903,7 @@
             "E7777")
           (CompilerDiagnosticSpan "" 4 5 4 8)
           (CompilerDiagnosticSomeString "borrow remains live"))]
-      [rendered : String (json.json-stringify (lsp-compiler-diagnostic diag))]
+      [rendered : String (json.stringify (lsp-compiler-diagnostic diag))]
       [related-key : String "\"relatedInformation\""]
       [related-message : String "\"message\":\"borrow remains live\""]
       [related-uri-prefix : String "\"uri\":\"file:///"]
@@ -1134,7 +1134,7 @@
 (define (lsp-first-change-text [params : json.Json]) : LspJsonText
   (let
     [key : String "contentChanges"]
-    (match (json.json-object-get params (& key))
+    (match (json.object-get params (& key))
       [(json.JsonFound value)
         (match value
           [(json.JsonArray items)
@@ -1150,7 +1150,7 @@
   [stdlib-roots : vector.StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
-    (match (json.json-object-get params (& key))
+    (match (json.object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
@@ -1178,7 +1178,7 @@
   [stdlib-roots : vector.StringVec]) : LspHandleResult
   (let
     [key : String "textDocument"]
-    (match (json.json-object-get params (& key))
+    (match (json.object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
@@ -1210,7 +1210,7 @@
 (define (lsp-did-close [params : json.Json] [docs : LspDocuments]) : LspHandleResult
   (let
     [key : String "textDocument"]
-    (match (json.json-object-get params (& key))
+    (match (json.object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
@@ -1921,11 +1921,11 @@
   [value : json.Json]
   [key : String]
   [fallback : i64]) : i64
-  (match (json.json-object-get value (& key))
+  (match (json.object-get value (& key))
     [(json.JsonFound field)
       (match field
         [(json.JsonNumber text)
-          (match (json.json-number->i64 (& text))
+          (match (json.number->i64 (& text))
             [(json.OkJsonNumberI64 number) number]
             [(json.ErrJsonNumberI64 _) fallback])]
         [_ fallback])]
@@ -1994,13 +1994,13 @@
   [stdlib-roots : vector.StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json.json-object-get params (& td-key))
+    (match (json.object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
             (let
               [pos-key : String "position"]
-              (match (json.json-object-get params (& pos-key))
+              (match (json.object-get params (& pos-key))
                 [(json.JsonFound position)
                   (lsp-definition-respond id uri position docs stdlib-roots)]
                 [(json.JsonMissing) (lsp-write-response id json.JsonNull)]))]
@@ -2257,7 +2257,7 @@
   [range : json.Json]
   [which : String]
   [fallback : i64]) : i64
-  (match (json.json-object-get range (& which))
+  (match (json.object-get range (& which))
     [(json.JsonFound endpoint)
       (lsp-json-int-field-default endpoint "line" fallback)]
     [(json.JsonMissing) fallback]))
@@ -2331,13 +2331,13 @@
   [stdlib-roots : vector.StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json.json-object-get params (& td-key))
+    (match (json.object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
             (let
               [range-key : String "range"]
-              (match (json.json-object-get params (& range-key))
+              (match (json.object-get params (& range-key))
                 [(json.JsonFound range)
                   (lsp-inlay-respond id uri range docs stdlib-roots)]
                 [(json.JsonMissing)
@@ -2397,7 +2397,7 @@
   [docs : LspDocuments]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json.json-object-get params (& td-key))
+    (match (json.object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri) (lsp-formatting-respond id uri docs)]
@@ -3316,13 +3316,13 @@
   [stdlib-roots : vector.StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json.json-object-get params (& td-key))
+    (match (json.object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
             (let
               [pos-key : String "position"]
-              (match (json.json-object-get params (& pos-key))
+              (match (json.object-get params (& pos-key))
                 [(json.JsonFound position)
                   (lsp-hover-respond id uri position docs stdlib-roots)]
                 [(json.JsonMissing) (lsp-write-response id json.JsonNull)]))]
@@ -3416,7 +3416,7 @@
   [stdlib-roots : vector.StringVec]) : unit
   (let
     [td-key : String "textDocument"]
-    (match (json.json-object-get params (& td-key))
+    (match (json.object-get params (& td-key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
@@ -3429,7 +3429,7 @@
 (define (lsp-maybe-write-method-not-found [message : json.Json]) : unit
   (let
     [key : String "id"]
-    (match (json.json-object-get message (& key))
+    (match (json.object-get message (& key))
       [(json.JsonFound id) (lsp-write-error id -32601 "Method not found")]
       [(json.JsonMissing) unit])))
 
@@ -3511,7 +3511,7 @@
 (define (lsp-get-document [params : json.Json] [docs : LspDocuments]) : LspDocumentLookup
   (let
     [key : String "textDocument"]
-    (match (json.json-object-get params (& key))
+    (match (json.object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri) (lsp-documents-lookup docs uri)]
@@ -3521,7 +3521,7 @@
 (define (lsp-get-document-decls [params : json.Json] [docs : LspDocuments]) : LspDocumentDeclsLookup
   (let
     [key : String "textDocument"]
-    (match (json.json-object-get params (& key))
+    (match (json.object-get params (& key))
       [(json.JsonFound document)
         (match (lsp-json-string-field document "uri")
           [(LspJsonText.Ok uri)
@@ -3801,7 +3801,7 @@
 (define (lsp-structural-move-name [params : json.Json] [text : String]) : String
   (let
     [pos-key : String "position"]
-    (match (json.json-object-get params (& pos-key))
+    (match (json.object-get params (& pos-key))
       [(json.JsonFound position)
         (let
           [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -4055,7 +4055,7 @@
         [(LspJsonText.Missing)
           (let
             [td-key : String "textDocument"]
-            (match (json.json-object-get params (& td-key))
+            (match (json.object-get params (& td-key))
               [(json.JsonFound document)
                 (match (lsp-json-string-field document "uri")
                   [(LspJsonText.Ok u) u]
@@ -4171,7 +4171,7 @@
     [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
-        (match (json.json-object-get params (& pos-key))
+        (match (json.object-get params (& pos-key))
           [(json.JsonFound position)
             (let
               [line0 : i64 (lsp-json-int-field-default position "line" 0)]
@@ -4281,7 +4281,7 @@
             [(LspJsonText.Missing)
               (let
                 [pos-key : String "position"]
-                (match (json.json-object-get params (& pos-key))
+                (match (json.object-get params (& pos-key))
                   [(json.JsonFound position)
                     (let
                       [line0 : i64
@@ -4355,7 +4355,7 @@
           (LspHandleResult.Continue docs))
         (let
           [td-key : String "textDocument"]
-          (match (json.json-object-get params (& td-key))
+          (match (json.object-get params (& td-key))
             [(json.JsonFound document)
               (match (lsp-json-string-field document "uri")
                 [(LspJsonText.Ok uri)
@@ -4571,7 +4571,7 @@
               (set! handled true)
               (let
                 [key : String "id"]
-                (match (json.json-object-get message (& key))
+                (match (json.object-get message (& key))
                   [(json.JsonFound id)
                     (lsp-write-response id (lsp-initialize-result))]
                   [(json.JsonMissing) unit]))
@@ -4587,7 +4587,7 @@
               (set! handled true)
               (let
                 [key : String "id"]
-                (match (json.json-object-get message (& key))
+                (match (json.object-get message (& key))
                   [(json.JsonFound id) (lsp-write-response id json.JsonNull)]
                   [(json.JsonMissing) unit]))
               (set! result (LspHandleResult.Continue docs)))
@@ -4602,7 +4602,7 @@
               (set! handled true)
               (let
                 [key : String "params"]
-                (match (json.json-object-get message (& key))
+                (match (json.object-get message (& key))
                   [(json.JsonFound params)
                     (set! result (lsp-did-open params docs stdlib-roots))]
                   [(json.JsonMissing)
@@ -4613,7 +4613,7 @@
               (set! handled true)
               (let
                 [key : String "params"]
-                (match (json.json-object-get message (& key))
+                (match (json.object-get message (& key))
                   [(json.JsonFound params)
                     (set! result (lsp-did-change params docs stdlib-roots))]
                   [(json.JsonMissing)
@@ -4624,7 +4624,7 @@
               (set! handled true)
               (let
                 [key : String "params"]
-                (match (json.json-object-get message (& key))
+                (match (json.object-get message (& key))
                   [(json.JsonFound params)
                     (set! result (lsp-did-close params docs))]
                   [(json.JsonMissing)
@@ -4635,11 +4635,11 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
+                (match (json.object-get message (& id-key))
                   [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
+                      (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-definition id params docs stdlib-roots)]
                         [(json.JsonMissing)
@@ -4652,7 +4652,7 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
+                (match (json.object-get message (& id-key))
                   [(json.JsonFound id) (lsp-completion-respond id docs)]
                   [(json.JsonMissing) unit]))
               (set! result (LspHandleResult.Continue docs)))
@@ -4662,11 +4662,11 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
+                (match (json.object-get message (& id-key))
                   [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
+                      (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-inlay id params docs stdlib-roots)]
                         [(json.JsonMissing)
@@ -4681,11 +4681,11 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
+                (match (json.object-get message (& id-key))
                   [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
+                      (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-formatting id params docs)]
                         [(json.JsonMissing)
@@ -4700,11 +4700,11 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
+                (match (json.object-get message (& id-key))
                   [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
+                      (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-hover id params docs stdlib-roots)]
                         [(json.JsonMissing)
@@ -4717,11 +4717,11 @@
               (set! handled true)
               (let
                 [id-key : String "id"]
-                (match (json.json-object-get message (& id-key))
+                (match (json.object-get message (& id-key))
                   [(json.JsonFound id)
                     (let
                       [params-key : String "params"]
-                      (match (json.json-object-get message (& params-key))
+                      (match (json.object-get message (& params-key))
                         [(json.JsonFound params)
                           (lsp-handle-document-link id params docs stdlib-roots)]
                         [(json.JsonMissing)
@@ -4919,11 +4919,11 @@
   [stdlib-roots : vector.StringVec]) : unit
   (let
     [id-key : String "id"]
-    (match (json.json-object-get message (& id-key))
+    (match (json.object-get message (& id-key))
       [(json.JsonFound id)
         (let
           [params-key : String "params"]
-          (match (json.json-object-get message (& params-key))
+          (match (json.object-get message (& params-key))
             [(json.JsonFound params)
               (lsp-handle-tool-with-params!
                 method
@@ -4983,7 +4983,7 @@
           [(LspFrameRead.Ok payload)
             (let
               [text : String payload]
-              (match (json.json-parse (& text))
+              (match (json.parse (& text))
                 [(json.OkJson message)
                   (match (lsp-handle-message message docs stdlib-roots)
                     [(LspHandleResult.Continue next-docs) (set! docs next-docs)]
@@ -5040,7 +5040,7 @@
         [old-name : String
           (let
             [pos-key : String "position"]
-            (match (json.json-object-get params (& pos-key))
+            (match (json.object-get params (& pos-key))
               [(json.JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -5791,7 +5791,7 @@
     [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
-        (match (json.json-object-get params (& pos-key))
+        (match (json.object-get params (& pos-key))
           [(json.JsonFound position)
             (match (lsp-json-string-field params "newText")
               [(LspJsonText.Ok new-text)
@@ -5882,7 +5882,7 @@
     [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
-        (match (json.json-object-get params (& pos-key))
+        (match (json.object-get params (& pos-key))
           [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -5957,7 +5957,7 @@
         [(LspJsonText.Ok new-text)
           (let
             [pos-key : String "position"]
-            (match (json.json-object-get params (& pos-key))
+            (match (json.object-get params (& pos-key))
               [(json.JsonFound position)
                 (let
                   [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -6112,7 +6112,7 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [pos-key : String "position"]
-        (match (json.json-object-get params (& pos-key))
+        (match (json.object-get params (& pos-key))
           [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -6210,7 +6210,7 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [pos-key : String "position"]
-        (match (json.json-object-get params (& pos-key))
+        (match (json.object-get params (& pos-key))
           [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]
@@ -6279,7 +6279,7 @@
     [(LspDocumentLookup.Found path text _)
       (let
         [pos-key : String "position"]
-        (match (json.json-object-get params (& pos-key))
+        (match (json.object-get params (& pos-key))
           [(json.JsonFound position)
             (let
               [line : i64 (lsp-json-int-field-default position "line" 0)]

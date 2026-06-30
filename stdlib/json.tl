@@ -15,7 +15,7 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.json)
-;# (define sample : String (json.json-stringify (json.JsonBool true)))
+;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
 (module stdlib.json)
 
@@ -57,26 +57,26 @@
 (import (vector.vector JsonMember) as jmvec)
 
 ;: Convert builder elements `[0, index]` into a public JSON list.
-(define (json-vec-to-list-from
+(define (vec-to-list-from
   [items : (& items jvec.Vec)]
   [index : i64]
   [acc : JsonList]) : JsonList
   (if (< index 0)
     acc
-    (stdlib.json.json-vec-to-list-from
+    (stdlib.json.vec-to-list-from
       items
       (- index 1)
       (JsonListCons (jvec.get items index JsonNull) (box acc)))))
 
 ;: Convert an internal JSON element builder into the public list model.
-(define (json-vec-to-list [items : jvec.Vec]) : JsonList
-  (stdlib.json.json-vec-to-list-from
+(define (vec-to-list [items : jvec.Vec]) : JsonList
+  (stdlib.json.vec-to-list-from
     (& items)
     (- (jvec.len (& items)) 1)
     JsonListNil))
 
 ;: Convert builder members `[0, index]` into a public JSON member list.
-(define (json-member-vec-to-list-from
+(define (member-vec-to-list-from
   [items : (& items jmvec.Vec)]
   [index : i64]
   [acc : JsonMemberList]) : JsonMemberList
@@ -84,7 +84,7 @@
     acc
     (let
       [member : JsonMember (jmvec.get items index (JsonMember "" JsonNull))]
-      (stdlib.json.json-member-vec-to-list-from
+      (stdlib.json.member-vec-to-list-from
         items
         (- index 1)
         (JsonMemberListCons
@@ -93,8 +93,8 @@
           (box acc))))))
 
 ;: Convert an internal JSON member builder into the public list model.
-(define (json-member-vec-to-list [items : jmvec.Vec]) : JsonMemberList
-  (stdlib.json.json-member-vec-to-list-from
+(define (member-vec-to-list [items : jmvec.Vec]) : JsonMemberList
+  (stdlib.json.member-vec-to-list-from
     (& items)
     (- (jmvec.len (& items)) 1)
     JsonMemberListNil))
@@ -155,43 +155,43 @@
   (JsonMissing))
 
 ;: ASCII printable lookup table used to materialize supported codepoints.
-(define json-ascii-printable-table : String
+(define ascii-printable-table : String
   " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
 
 ;: Return the numeric scalar code for `c`.
-(define (json-char-code [c : char]) : i64
+(define (char-code [c : char]) : i64
   (cast c : i64))
 
 ;: Return the numeric scalar code at `idx` in borrowed `text`.
-(define (json-char-code-at [text : (& text str)] [idx : i64]) : i64
-  (stdlib.json.json-char-code (string-ref text idx)))
+(define (char-code-at [text : (& text str)] [idx : i64]) : i64
+  (stdlib.json.char-code (string-ref text idx)))
 
 ;: Return true when `text[idx]` exists and has the supplied code.
-(define (json-char-code-eq-at [text : (& text str)] [idx : i64] [code : i64]) : bool
+(define (char-code-eq-at [text : (& text str)] [idx : i64] [code : i64]) : bool
   (if (< idx (string-length text))
-    (= (stdlib.json.json-char-code-at text idx) code)
+    (= (stdlib.json.char-code-at text idx) code)
     false))
 
 ;: Return true for JSON whitespace scalar codes.
-(define (json-space-code? [code : i64]) : bool
+(define (space-code? [code : i64]) : bool
   (or (= code 32) (= code 10) (= code 13) (= code 9)))
 
 ;: Return true for ASCII decimal digit scalar codes.
-(define (json-digit-code? [code : i64]) : bool
+(define (digit-code? [code : i64]) : bool
   (and (>= code 48) (<= code 57)))
 
 ;: Return true when `text[idx]` exists and is an ASCII decimal digit.
-(define (json-digit-at? [text : (& text str)] [idx : i64]) : bool
+(define (digit-at? [text : (& text str)] [idx : i64]) : bool
   (if (< idx (string-length text))
-    (stdlib.json.json-digit-code? (stdlib.json.json-char-code-at text idx))
+    (stdlib.json.digit-code? (stdlib.json.char-code-at text idx))
     false))
 
 ;: Maximum non-zero significant decimal digits accepted by JSON float helpers.
-(define json-number-max-significant-digits : i64
+(define number-max-significant-digits : i64
   300)
 
 ;: Return the first offset at or after `pos` that is not JSON whitespace.
-(define (json-skip-ws [text : (& text str)] [pos : i64]) : i64
+(define (skip-ws [text : (& text str)] [pos : i64]) : i64
   (let
     [i : i64 pos]
     [n : i64 (string-length text)]
@@ -199,8 +199,7 @@
     (begin
       (while (not done)
         (if (< i n)
-          (if (stdlib.json.json-space-code?
-            (stdlib.json.json-char-code-at text i))
+          (if (stdlib.json.space-code? (stdlib.json.char-code-at text i))
             (set! i (+ i 1))
             (set! done true))
           (set! done true)))
@@ -211,16 +210,14 @@
 ;: This pre-scan ignores strings and nested arrays/objects so commas in nested
 ;: values do not affect the result. It is intentionally permissive because the
 ;: real parser still performs validation after the builder is sized.
-(define (json-composite-item-count
+(define (composite-item-count
   [text : (& text str)]
   [pos : i64]
   [close-code : i64]) : i64
   (let
-    [first : i64 (stdlib.json.json-skip-ws text (+ pos 1))]
+    [first : i64 (stdlib.json.skip-ws text (+ pos 1))]
     [n : i64 (string-length text)]
-    (if (or
-      (>= first n)
-      (stdlib.json.json-char-code-eq-at text first close-code))
+    (if (or (>= first n) (stdlib.json.char-code-eq-at text first close-code))
       0
       (let
         [i : i64 (+ pos 1)]
@@ -231,7 +228,7 @@
         (begin
           (while (and (< i n) (> depth 0))
             (let
-              [code : i64 (stdlib.json.json-char-code-at text i)]
+              [code : i64 (stdlib.json.char-code-at text i)]
               (begin
                 (if in-string
                   (cond
@@ -249,7 +246,7 @@
           count)))))
 
 ;: Return true when borrowed `prefix` occurs in borrowed `text` at `start`.
-(define (json-string-prefix-at?
+(define (string-prefix-at?
   [text : (& text str)]
   [prefix : (& prefix str)]
   [start : i64]) : bool
@@ -264,48 +261,48 @@
         (begin
           (while (and ok (< i prefix-len))
             (if (=
-              (stdlib.json.json-char-code-at text (+ start i))
-              (stdlib.json.json-char-code (string-ref prefix i)))
+              (stdlib.json.char-code-at text (+ start i))
+              (stdlib.json.char-code (string-ref prefix i)))
               (set! i (+ i 1))
               (set! ok false)))
           ok)))))
 
 ;: Reverse `items` onto `acc`, allocating a fresh active-arena list spine.
-(define (json-list-reverse-onto [items : JsonList] [acc : JsonList]) : JsonList
+(define (list-reverse-onto [items : JsonList] [acc : JsonList]) : JsonList
   (match items
     [(JsonListNil) acc]
     [(JsonListCons head rest)
-      (stdlib.json.json-list-reverse-onto
+      (stdlib.json.list-reverse-onto
         (box-get rest)
         (JsonListCons head (box acc)))]))
 
 ;: Return `items` in reverse order.
-(define (json-list-reverse [items : JsonList]) : JsonList
-  (stdlib.json.json-list-reverse-onto items JsonListNil))
+(define (list-reverse [items : JsonList]) : JsonList
+  (stdlib.json.list-reverse-onto items JsonListNil))
 
 ;: Reverse object `items` onto `acc`, allocating a fresh active-arena list spine.
-(define (json-member-list-reverse-onto
+(define (member-list-reverse-onto
   [items : JsonMemberList]
   [acc : JsonMemberList]) : JsonMemberList
   (match items
     [(JsonMemberListNil) acc]
     [(JsonMemberListCons key value rest)
-      (stdlib.json.json-member-list-reverse-onto
+      (stdlib.json.member-list-reverse-onto
         (box-get rest)
         (JsonMemberListCons key value (box acc)))]))
 
 ;: Return object `items` in reverse order.
-(define (json-member-list-reverse [items : JsonMemberList]) : JsonMemberList
-  (stdlib.json.json-member-list-reverse-onto items JsonMemberListNil))
+(define (member-list-reverse [items : JsonMemberList]) : JsonMemberList
+  (stdlib.json.member-list-reverse-onto items JsonMemberListNil))
 
 ;: Return the number of elements in a JSON array list.
-(define (json-list-count [items : JsonList]) : i64
+(define (list-count [items : JsonList]) : i64
   (match items
     [(JsonListNil) 0]
-    [(JsonListCons _ rest) (+ 1 (stdlib.json.json-list-count (box-get rest)))]))
+    [(JsonListCons _ rest) (+ 1 (stdlib.json.list-count (box-get rest)))]))
 
 ;: Look up an array element by zero-based index.
-(define (json-list-get-index [items : JsonList] [index : i64]) : JsonLookup
+(define (list-get-index [items : JsonList] [index : i64]) : JsonLookup
   (if (< index 0)
     JsonMissing
     (match items
@@ -313,26 +310,26 @@
       [(JsonListCons head rest)
         (if (= index 0)
           (JsonFound head)
-          (stdlib.json.json-list-get-index (box-get rest) (- index 1)))])))
+          (stdlib.json.list-get-index (box-get rest) (- index 1)))])))
 
 ;: Return the number of key/value entries in a JSON object member list.
-(define (json-member-list-count [items : JsonMemberList]) : i64
+(define (member-list-count [items : JsonMemberList]) : i64
   (match items
     [(JsonMemberListNil) 0]
     [(JsonMemberListCons _ _ rest)
-      (+ 1 (stdlib.json.json-member-list-count (box-get rest)))]))
+      (+ 1 (stdlib.json.member-list-count (box-get rest)))]))
 
 ;: Look up borrowed `key` in an object member list.
-(define (json-member-list-get [items : JsonMemberList] [key : (& key str)]) : JsonLookup
+(define (member-list-get [items : JsonMemberList] [key : (& key str)]) : JsonLookup
   (match items
     [(JsonMemberListNil) JsonMissing]
     [(JsonMemberListCons item-key value rest)
       (if (string.eq (& item-key) key)
         (JsonFound value)
-        (stdlib.json.json-member-list-get (box-get rest) key))]))
+        (stdlib.json.member-list-get (box-get rest) key))]))
 
 ;: Compare two owned strings with only safe character indexing.
-(define (json-string-eq-safe? [left : String] [right : String]) : bool
+(define (string-eq-safe? [left : String] [right : String]) : bool
   (let
     [left-len : i64 (string-length left)]
     [right-len : i64 (string-length right)]
@@ -344,20 +341,20 @@
         (begin
           (while (and same (< i left-len))
             (if (=
-              (stdlib.json.json-char-code (string-ref left i))
-              (stdlib.json.json-char-code (string-ref right i)))
+              (stdlib.json.char-code (string-ref left i))
+              (stdlib.json.char-code (string-ref right i)))
               (set! i (+ i 1))
               (set! same false)))
           same)))))
 
 ;: Look up owned `key` in an object member list without unsafe helpers.
-(define (json-member-list-get-owned [items : JsonMemberList] [key : String]) : JsonLookup
+(define (member-list-get-owned [items : JsonMemberList] [key : String]) : JsonLookup
   (match items
     [(JsonMemberListNil) JsonMissing]
     [(JsonMemberListCons item-key value rest)
-      (if (stdlib.json.json-string-eq-safe? item-key key)
+      (if (stdlib.json.string-eq-safe? item-key key)
         (JsonFound value)
-        (stdlib.json.json-member-list-get-owned (box-get rest) key))]))
+        (stdlib.json.member-list-get-owned (box-get rest) key))]))
 
 ;: Look up borrowed `key` in `value` when it is a JSON object.
 ;:
@@ -368,7 +365,7 @@
 ;: (define found : json.JsonLookup
 ;:   (let
 ;:     [key : String "name"]
-;:     (json.json-object-get
+;:     (json.object-get
 ;:       (json.JsonObject
 ;:         (box
 ;:           (json.JsonMemberListCons
@@ -377,25 +374,24 @@
 ;:             (box json.JsonMemberListNil))))
 ;:       (& key))))
 ;: ```
-(define (json-object-get [value : Json] [key : (& key str)]) : JsonLookup
+(define (object-get [value : Json] [key : (& key str)]) : JsonLookup
   (match value
-    [(JsonObject members)
-      (stdlib.json.json-member-list-get (box-get members) key)]
+    [(JsonObject members) (stdlib.json.member-list-get (box-get members) key)]
     [_ JsonMissing]))
 
 ;: Look up owned `key` in `value` without unsafe helpers.
 ;:
 ;: This is useful for generated declarations, whose templates are purity-checked.
-(define (json-object-get-owned [value : Json] [key : String]) : JsonLookup
+(define (object-get-owned [value : Json] [key : String]) : JsonLookup
   (match value
     [(JsonObject members)
-      (stdlib.json.json-member-list-get-owned (box-get members) key)]
+      (stdlib.json.member-list-get-owned (box-get members) key)]
     [_ JsonMissing]))
 
 ;: Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
-(define (json-hex-value [c : char]) : i64
+(define (hex-value [c : char]) : i64
   (let
-    [code : i64 (stdlib.json.json-char-code c)]
+    [code : i64 (stdlib.json.char-code c)]
     (cond
       [(and (>= code 48) (<= code 57)) (- code 48)]
       [(and (>= code 65) (<= code 70)) (+ 10 (- code 65))]
@@ -403,7 +399,7 @@
       [else -1])))
 
 ;: Encode a value from 0 through 15 as a one-character lowercase hex string.
-(define (json-hex-digit [value : i64]) : String
+(define (hex-digit [value : i64]) : String
   (cond
     [(= value 0) "0"]
     [(= value 1) "1"]
@@ -423,7 +419,7 @@
     [else "f"]))
 
 ;: Return the JSON escape spelling for a control scalar code.
-(define (json-control-escape [code : i64]) : String
+(define (control-escape [code : i64]) : String
   (cond
     [(= code 8) "\\b"]
     [(= code 9) "\\t"]
@@ -434,21 +430,21 @@
       (string.append
         "\\u00"
         (string.append
-          (stdlib.json.json-hex-digit (/ code 16))
-          (stdlib.json.json-hex-digit (- code (* (/ code 16) 16)))))]))
+          (stdlib.json.hex-digit (/ code 16))
+          (stdlib.json.hex-digit (- code (* (/ code 16) 16)))))]))
 
 ;: Return the JSON escape spelling for one string scalar code.
-(define (json-escape-char [code : i64]) : String
+(define (escape-char [code : i64]) : String
   (if (= code 34)
     (string.append "\\" "\"")
     (if (= code 92)
       (string.append "\\" "\\")
-      (stdlib.json.json-control-escape code))))
+      (stdlib.json.control-escape code))))
 
 ;: Escape borrowed raw text for JSON string output.
 ;:
 ;: The returned escaped string is allocated in the active arena.
-(define (json-escape-string [text : (& text str)]) : String
+(define (escape-string [text : (& text str)]) : String
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -457,7 +453,7 @@
     (begin
       (while (< i n)
         (let
-          [code : i64 (stdlib.json.json-char-code-at text i)]
+          [code : i64 (stdlib.json.char-code-at text i)]
           (if (or (= code 34) (= code 92) (< code 32))
             (begin
               (set!
@@ -465,9 +461,7 @@
                 (text_buf.append
                   out
                   (string.substring text segment-start (- i segment-start))))
-              (set!
-                out
-                (text_buf.append out (stdlib.json.json-escape-char code)))
+              (set! out (text_buf.append out (stdlib.json.escape-char code)))
               (set! i (+ i 1))
               (set! segment-start i))
             (set! i (+ i 1)))))
@@ -479,29 +473,28 @@
       (text_buf.render out))))
 
 ;: Append serialized array elements to `buf`.
-(define (json-stringify-list-into [items : JsonList] [buf : text_buf.TextBuf]) : text_buf.TextBuf
+(define (stringify-list-into [items : JsonList] [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match items
     [(JsonListNil) buf]
     [(JsonListCons head rest)
       (let
         [with-head : text_buf.TextBuf
-          (text_buf.append buf (stdlib.json.json-stringify head))]
+          (text_buf.append buf (stdlib.json.stringify head))]
         (match (box-get rest)
           [(JsonListNil) with-head]
           [(JsonListCons _ _)
-            (stdlib.json.json-stringify-list-into
+            (stdlib.json.stringify-list-into
               (box-get rest)
               (text_buf.append with-head ","))]))]))
 
 ;: Serialize array `items` without the surrounding brackets.
 ;:
 ;: The returned comma-separated string is allocated in the active arena.
-(define (json-stringify-list [items : JsonList]) : String
-  (text_buf.render
-    (stdlib.json.json-stringify-list-into items (text_buf.empty))))
+(define (stringify-list [items : JsonList]) : String
+  (text_buf.render (stdlib.json.stringify-list-into items (text_buf.empty))))
 
 ;: Append serialized object members to `buf`.
-(define (json-stringify-members-into
+(define (stringify-members-into
   [items : JsonMemberList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match items
@@ -514,22 +507,21 @@
             (text_buf.append
               (text_buf.append
                 (text_buf.append buf "\"")
-                (stdlib.json.json-escape-string (& text)))
+                (stdlib.json.escape-string (& text)))
               "\":")
-            (stdlib.json.json-stringify value))]
+            (stdlib.json.stringify value))]
         (match (box-get rest)
           [(JsonMemberListNil) with-item]
           [(JsonMemberListCons _ _ _)
-            (stdlib.json.json-stringify-members-into
+            (stdlib.json.stringify-members-into
               (box-get rest)
               (text_buf.append with-item ","))]))]))
 
 ;: Serialize object `items` without the surrounding braces.
 ;:
 ;: The returned comma-separated member string is allocated in the active arena.
-(define (json-stringify-members [items : JsonMemberList]) : String
-  (text_buf.render
-    (stdlib.json.json-stringify-members-into items (text_buf.empty))))
+(define (stringify-members [items : JsonMemberList]) : String
+  (text_buf.render (stdlib.json.stringify-members-into items (text_buf.empty))))
 
 ;: Serialize a JSON value to canonical compact JSON text.
 ;:
@@ -538,11 +530,11 @@
 ;: ```typelisp
 ;: (import stdlib.json)
 ;: (define encoded : String
-;:   (json.json-stringify
+;:   (json.stringify
 ;:     (json.JsonArray
 ;:       (box (json.JsonListCons (json.JsonBool true) (box json.JsonListNil))))))
 ;: ```
-(define (json-stringify [value : Json]) : String
+(define (stringify [value : Json]) : String
   (match value
     [(JsonNull) "null"]
     [(JsonBool b)
@@ -553,40 +545,38 @@
     [(JsonString text)
       (string.append
         "\""
-        (string.append (stdlib.json.json-escape-string (& text)) "\""))]
+        (string.append (stdlib.json.escape-string (& text)) "\""))]
     [(JsonArray items)
       (string.append
         "["
-        (string.append (stdlib.json.json-stringify-list (box-get items)) "]"))]
+        (string.append (stdlib.json.stringify-list (box-get items)) "]"))]
     [(JsonObject members)
       (string.append
         "{"
-        (string.append
-          (stdlib.json.json-stringify-members (box-get members))
-          "}"))]))
+        (string.append (stdlib.json.stringify-members (box-get members)) "}"))]))
 
 ;: Render an i64 as a JSON number value.
-(define (json-i64->number [value : i64]) : Json
+(define (i64->number [value : i64]) : Json
   (JsonNumber (string.int->string value)))
 
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:
 ;: Only tab, newline, carriage return, and printable ASCII are supported today.
 ;: Successful decoded strings allocate in the active arena.
-(define (json-codepoint-string [code : i64]) : JsonCodepointStringResult
+(define (codepoint-string [code : i64]) : JsonCodepointStringResult
   (cond
     [(= code 9) (OkJsonCodepointString "\t")]
     [(= code 10) (OkJsonCodepointString "\n")]
     [(= code 13) (OkJsonCodepointString "\r")]
     [(and (>= code 32) (<= code 126))
       (OkJsonCodepointString
-        (string.substring json-ascii-printable-table (- code 32) 1))]
+        (string.substring ascii-printable-table (- code 32) 1))]
     [else
       (ErrJsonCodepointString
         "json: unicode escape outside supported string range")]))
 
 ;: Parse four hex digits after a `\u` escape and return the decoded string.
-(define (json-parse-unicode-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
+(define (parse-unicode-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
   (let
     [n : i64 (string-length text)]
     (if (> (+ pos 4) n)
@@ -599,8 +589,7 @@
         (begin
           (while (and ok (< j 4))
             (let
-              [digit : i64
-                (stdlib.json.json-hex-value (string-ref text (+ pos j)))]
+              [digit : i64 (stdlib.json.hex-value (string-ref text (+ pos j)))]
               (if (< digit 0)
                 (begin
                   (set! ok false)
@@ -609,7 +598,7 @@
                   (set! value (+ (* value 16) digit))
                   (set! j (+ j 1))))))
           (if ok
-            (match (stdlib.json.json-codepoint-string value)
+            (match (stdlib.json.codepoint-string value)
               [(OkJsonCodepointString decoded)
                 (OkJsonParseEscape decoded (+ pos 4))]
               [(ErrJsonCodepointString err) (ErrJsonParseEscape err)])
@@ -618,11 +607,11 @@
 ;: Parse a JSON string escape at `pos`.
 ;:
 ;: Successful decoded strings allocate in the active arena.
-(define (json-parse-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
+(define (parse-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
   (if (>= pos (string-length text))
     (ErrJsonParseEscape "json: unterminated JSON escape")
     (let
-      [code : i64 (stdlib.json.json-char-code-at text pos)]
+      [code : i64 (stdlib.json.char-code-at text pos)]
       (cond
         [(= code 34) (OkJsonParseEscape "\"" (+ pos 1))]
         [(= code 92) (OkJsonParseEscape "\\" (+ pos 1))]
@@ -630,14 +619,14 @@
         [(= code 110) (OkJsonParseEscape "\n" (+ pos 1))]
         [(= code 114) (OkJsonParseEscape "\r" (+ pos 1))]
         [(= code 116) (OkJsonParseEscape "\t" (+ pos 1))]
-        [(= code 117) (stdlib.json.json-parse-unicode-escape text (+ pos 1))]
+        [(= code 117) (stdlib.json.parse-unicode-escape text (+ pos 1))]
         [else (ErrJsonParseEscape "json: unsupported JSON string escape")]))))
 
 ;: Parse a JSON string starting at `pos`, including the opening quote.
 ;:
 ;: The decoded string is allocated in the active arena.
-(define (json-parse-string [text : (& text str)] [pos : i64]) : JsonParseStringResult
-  (if (not (stdlib.json.json-char-code-eq-at text pos 34))
+(define (parse-string [text : (& text str)] [pos : i64]) : JsonParseStringResult
+  (if (not (stdlib.json.char-code-eq-at text pos 34))
     (ErrJsonParseString "json: expected string")
     (let
       [n : i64 (string-length text)]
@@ -655,7 +644,7 @@
               (set! done true)
               (set! message "json: unterminated string"))
             (let
-              [code : i64 (stdlib.json.json-char-code-at text i)]
+              [code : i64 (stdlib.json.char-code-at text i)]
               (cond
                 [(= code 34)
                   (begin
@@ -679,7 +668,7 @@
                           text
                           segment-start
                           (- i segment-start))))
-                    (match (stdlib.json.json-parse-escape text (+ i 1))
+                    (match (stdlib.json.parse-escape text (+ i 1))
                       [(OkJsonParseEscape decoded next)
                         (begin
                           (set! out (text_buf.append out decoded))
@@ -701,13 +690,13 @@
           (ErrJsonParseString message))))))
 
 ;: Return the first offset at or after `pos` that is not an ASCII digit.
-(define (json-consume-digits [text : (& text str)] [pos : i64]) : i64
+(define (consume-digits [text : (& text str)] [pos : i64]) : i64
   (let
     [i : i64 pos]
     [done : bool false]
     (begin
       (while (not done)
-        (if (stdlib.json.json-digit-at? text i)
+        (if (stdlib.json.digit-at? text i)
           (set! i (+ i 1))
           (set! done true)))
       i)))
@@ -715,14 +704,14 @@
 ;: Parse a JSON number starting at `pos`.
 ;:
 ;: The numeric spelling is kept as a String allocated in the active arena.
-(define (json-parse-number [text : (& text str)] [pos : i64]) : JsonParseValueResult
+(define (parse-number [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
     [n : i64 (string-length text)]
     [i : i64 pos]
     [ok : bool true]
     [message : String ""]
     (begin
-      (if (stdlib.json.json-char-code-eq-at text i 45)
+      (if (stdlib.json.char-code-eq-at text i 45)
         (set! i (+ i 1))
         unit)
       (if (>= i n)
@@ -731,26 +720,26 @@
           (set! message "json: expected digit in number"))
         unit)
       (if ok
-        (if (stdlib.json.json-char-code-eq-at text i 48)
+        (if (stdlib.json.char-code-eq-at text i 48)
           (begin
             (set! i (+ i 1))
-            (if (stdlib.json.json-digit-at? text i)
+            (if (stdlib.json.digit-at? text i)
               (begin
                 (set! ok false)
                 (set! message "json: leading zero in number"))
               unit))
-          (if (stdlib.json.json-digit-at? text i)
-            (set! i (stdlib.json.json-consume-digits text i))
+          (if (stdlib.json.digit-at? text i)
+            (set! i (stdlib.json.consume-digits text i))
             (begin
               (set! ok false)
               (set! message "json: expected digit in number"))))
         unit)
       (if ok
-        (if (stdlib.json.json-char-code-eq-at text i 46)
+        (if (stdlib.json.char-code-eq-at text i 46)
           (begin
             (set! i (+ i 1))
-            (if (stdlib.json.json-digit-at? text i)
-              (set! i (stdlib.json.json-consume-digits text i))
+            (if (stdlib.json.digit-at? text i)
+              (set! i (stdlib.json.consume-digits text i))
               (begin
                 (set! ok false)
                 (set! message "json: expected digit after decimal point"))))
@@ -758,17 +747,17 @@
         unit)
       (if ok
         (if (or
-          (stdlib.json.json-char-code-eq-at text i 101)
-          (stdlib.json.json-char-code-eq-at text i 69))
+          (stdlib.json.char-code-eq-at text i 101)
+          (stdlib.json.char-code-eq-at text i 69))
           (begin
             (set! i (+ i 1))
             (if (or
-              (stdlib.json.json-char-code-eq-at text i 43)
-              (stdlib.json.json-char-code-eq-at text i 45))
+              (stdlib.json.char-code-eq-at text i 43)
+              (stdlib.json.char-code-eq-at text i 45))
               (set! i (+ i 1))
               unit)
-            (if (stdlib.json.json-digit-at? text i)
-              (set! i (stdlib.json.json-consume-digits text i))
+            (if (stdlib.json.digit-at? text i)
+              (set! i (stdlib.json.consume-digits text i))
               (begin
                 (set! ok false)
                 (set! message "json: expected digit in exponent"))))
@@ -779,15 +768,15 @@
         (ErrJsonParseValue message)))))
 
 ;: Return the integer value of an ASCII decimal digit.
-(define (json-number-digit-value [c : char]) : i64
-  (- (stdlib.json.json-char-code c) 48))
+(define (number-digit-value [c : char]) : i64
+  (- (stdlib.json.char-code c) 48))
 
 ;: Return true when `code` is a JSON exponent marker.
-(define (json-number-exponent-code? [code : i64]) : bool
+(define (number-exponent-code? [code : i64]) : bool
   (or (= code 101) (= code 69)))
 
 ;: Scan grammar-checked JSON number text for significant digits and exponent.
-(define (json-number-shape [text : String]) : JsonNumberShapeResult
+(define (number-shape [text : String]) : JsonNumberShapeResult
   (let
     [n : i64 (string-length text)]
     [index : i64 0]
@@ -807,11 +796,11 @@
           unit)
         (while (and
           (< index n)
-          (stdlib.json.json-digit-code?
-            (stdlib.json.json-char-code (string-ref text index))))
+          (stdlib.json.digit-code?
+            (stdlib.json.char-code (string-ref text index))))
           (let
             [digit : i64
-              (stdlib.json.json-number-digit-value (string-ref text index))]
+              (stdlib.json.number-digit-value (string-ref text index))]
             (begin
               (when
                 (or seen-significant (!= digit 0))
@@ -825,11 +814,11 @@
             (set! index (+ index 1))
             (while (and
               (< index n)
-              (stdlib.json.json-digit-code?
-                (stdlib.json.json-char-code (string-ref text index))))
+              (stdlib.json.digit-code?
+                (stdlib.json.char-code (string-ref text index))))
               (let
                 [digit : i64
-                  (stdlib.json.json-number-digit-value (string-ref text index))]
+                  (stdlib.json.number-digit-value (string-ref text index))]
                 (begin
                   (when
                     (or seen-significant (!= digit 0))
@@ -842,8 +831,8 @@
           unit)
         (if (and
           (< index n)
-          (stdlib.json.json-number-exponent-code?
-            (stdlib.json.json-char-code (string-ref text index))))
+          (stdlib.json.number-exponent-code?
+            (stdlib.json.char-code (string-ref text index))))
           (begin
             (set! saw-exp true)
             (set! index (+ index 1))
@@ -856,11 +845,11 @@
                 unit))
             (while (and
               (< index n)
-              (stdlib.json.json-digit-code?
-                (stdlib.json.json-char-code (string-ref text index))))
+              (stdlib.json.digit-code?
+                (stdlib.json.char-code (string-ref text index))))
               (let
                 [digit : i64
-                  (stdlib.json.json-number-digit-value (string-ref text index))]
+                  (stdlib.json.number-digit-value (string-ref text index))]
                 (begin
                   (when
                     (< exp-value 4000)
@@ -879,10 +868,10 @@
             significant-digits))))))
 
 ;: Validate that borrowed text is exactly one JSON number and return an owned copy.
-(define (json-number-validated-text [text : (& text str)]) : JsonNumberTextResult
+(define (number-validated-text [text : (& text str)]) : JsonNumberTextResult
   (let
     [n : i64 (string-length text)]
-    (match (stdlib.json.json-parse-number text 0)
+    (match (stdlib.json.parse-number text 0)
       [(OkJsonParseValue _ next)
         (if (= next n)
           (OkJsonNumberText (string.substring text 0 n))
@@ -890,7 +879,7 @@
       [(ErrJsonParseValue message) (ErrJsonNumberText message)])))
 
 ;: Return true when validated JSON number text is an integer spelling.
-(define (json-number-integer-text? [text : String]) : bool
+(define (number-integer-text? [text : String]) : bool
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
@@ -899,7 +888,7 @@
       (if (>= i n)
         false
         (let
-          [first : i64 (stdlib.json.json-char-code (string-ref text i))]
+          [first : i64 (stdlib.json.char-code (string-ref text i))]
           [ok : bool true]
           (if (= first 48)
             (= (+ i 1) n)
@@ -908,19 +897,15 @@
                 (set! i (+ i 1))
                 (while (and ok (< i n))
                   (let
-                    [code : i64
-                      (stdlib.json.json-char-code (string-ref text i))]
-                    (if (stdlib.json.json-digit-code? code)
+                    [code : i64 (stdlib.json.char-code (string-ref text i))]
+                    (if (stdlib.json.digit-code? code)
                       (set! i (+ i 1))
                       (set! ok false))))
                 ok)
               false)))))))
 
 ;: Return true when `text[start..]` is lexicographically greater than `limit`.
-(define (json-number-digits-gt-limit?
-  [text : String]
-  [start : i64]
-  [limit : String]) : bool
+(define (number-digits-gt-limit? [text : String] [start : i64] [limit : String]) : bool
   (let
     [digits-len : i64 (- (string-length text) start)]
     [limit-len : i64 (string-length limit)]
@@ -935,8 +920,8 @@
           (while (and (not done) (< i limit-len))
             (let
               [actual : i64
-                (stdlib.json.json-char-code (string-ref text (+ start i)))]
-              [expected : i64 (stdlib.json.json-char-code (string-ref limit i))]
+                (stdlib.json.char-code (string-ref text (+ start i)))]
+              [expected : i64 (stdlib.json.char-code (string-ref limit i))]
               (if (> actual expected)
                 (begin
                   (set! greater true)
@@ -947,7 +932,7 @@
           greater)))))
 
 ;: Return true when integer number text fits in the signed i64 range.
-(define (json-number-i64-range? [text : String]) : bool
+(define (number-i64-range? [text : String]) : bool
   (let
     [negative : bool
       (and (> (string-length text) 0) (= (string-ref text 0) '-'))]
@@ -959,13 +944,13 @@
       (if negative
         "9223372036854775808"
         "9223372036854775807")]
-    (not (stdlib.json.json-number-digits-gt-limit? text start limit))))
+    (not (stdlib.json.number-digits-gt-limit? text start limit))))
 
 ;: Parse owned JSON integer number text into an i64 with recoverable errors.
-(define (json-number-owned->i64 [owned : String]) : JsonNumberI64Result
-  (if (not (stdlib.json.json-number-integer-text? owned))
+(define (number-owned->i64 [owned : String]) : JsonNumberI64Result
+  (if (not (stdlib.json.number-integer-text? owned))
     (ErrJsonNumberI64 "json: expected integer number")
-    (if (not (stdlib.json.json-number-i64-range? owned))
+    (if (not (stdlib.json.number-i64-range? owned))
       (ErrJsonNumberI64 "json: integer outside i64 range")
       (OkJsonNumberI64 (string.>int owned)))))
 
@@ -973,13 +958,13 @@
 ;:
 ;: The text must be exactly one JSON integer number. Decimal fractions,
 ;: exponents, malformed numbers, and i64 overflow reject.
-(define (json-number->i64 [text : (& text str)]) : JsonNumberI64Result
-  (match (stdlib.json.json-number-validated-text text)
-    [(OkJsonNumberText owned) (stdlib.json.json-number-owned->i64 owned)]
+(define (number->i64 [text : (& text str)]) : JsonNumberI64Result
+  (match (stdlib.json.number-validated-text text)
+    [(OkJsonNumberText owned) (stdlib.json.number-owned->i64 owned)]
     [(ErrJsonNumberText message) (ErrJsonNumberI64 message)]))
 
 ;: Convert validated JSON number text into a finite f64 result.
-(define (json-number-decimal-f64-result
+(define (number-decimal-f64-result
   [owned : String]
   [decimal-exp : i64]
   [significant-digits : i64]) : JsonNumberF64Result
@@ -990,7 +975,7 @@
         (+ decimal-exp (- significant-digits 1))
         0)]
     (cond
-      [(> significant-digits stdlib.json.json-number-max-significant-digits)
+      [(> significant-digits stdlib.json.number-max-significant-digits)
         (ErrJsonNumberF64 "json: number has too many significant digits")]
       [(and nonzero (> adjusted-exp 308))
         (ErrJsonNumberF64 "json: number outside finite f64 range")]
@@ -1008,12 +993,12 @@
 ;: Parse borrowed JSON number text into a finite f64.
 ;:
 ;: The text must be exactly one JSON number; overflow and underflow reject.
-(define (json-number->f64 [text : (& text str)]) : JsonNumberF64Result
-  (match (stdlib.json.json-number-validated-text text)
+(define (number->f64 [text : (& text str)]) : JsonNumberF64Result
+  (match (stdlib.json.number-validated-text text)
     [(OkJsonNumberText owned)
-      (match (stdlib.json.json-number-shape owned)
+      (match (stdlib.json.number-shape owned)
         [(OkJsonNumberShape decimal-exp significant-digits)
-          (stdlib.json.json-number-decimal-f64-result
+          (stdlib.json.number-decimal-f64-result
             owned
             decimal-exp
             significant-digits)]
@@ -1023,8 +1008,8 @@
 ;: Parse borrowed JSON number text into a finite f32.
 ;:
 ;: Uses the f64 path, then rejects f32 overflow and non-zero underflow.
-(define (json-number->f32 [text : (& text str)]) : JsonNumberF32Result
-  (match (stdlib.json.json-number->f64 text)
+(define (number->f32 [text : (& text str)]) : JsonNumberF32Result
+  (match (stdlib.json.number->f64 text)
     [(OkJsonNumberF64 wide)
       (let
         [narrow : f32 (cast wide : f32)]
@@ -1040,7 +1025,7 @@
 ;: Render a finite f64 as deterministic JSON number text.
 ;:
 ;: NaN and infinity are rejected; negative zero renders as `-0`.
-(define (json-f64->number-text [value : f64]) : JsonNumberTextResult
+(define (f64->number-text [value : f64]) : JsonNumberTextResult
   (if (io.float-f64-finite? value)
     (OkJsonNumberText (io.format-float-core value))
     (ErrJsonNumberText "json: non-finite f64 cannot be rendered as a number")))
@@ -1048,27 +1033,25 @@
 ;: Render a finite f32 as deterministic JSON number text.
 ;:
 ;: Widens to f64 so the binary32-rounded value is formatted deterministically.
-(define (json-f32->number-text [value : f32]) : JsonNumberTextResult
+(define (f32->number-text [value : f32]) : JsonNumberTextResult
   (if (io.float-f32-finite? value)
     (OkJsonNumberText (io.format-float-core (cast value : f64)))
     (ErrJsonNumberText "json: non-finite f32 cannot be rendered as a number")))
 
 ;: Convert a JSON number rendering result into a JSON value, panicking only for
 ;: non-finite floats that cannot be represented in JSON.
-(define (json-number-text-result->json [result : JsonNumberTextResult]) : Json
+(define (number-text-result->json [result : JsonNumberTextResult]) : Json
   (match result
     [(OkJsonNumberText text) (JsonNumber text)]
     [(ErrJsonNumberText message) (io.panic message)]))
 
 ;: Render a finite f64 as a JSON number value.
-(define (json-f64->number [value : f64]) : Json
-  (stdlib.json.json-number-text-result->json
-    (stdlib.json.json-f64->number-text value)))
+(define (f64->number [value : f64]) : Json
+  (stdlib.json.number-text-result->json (stdlib.json.f64->number-text value)))
 
 ;: Render a finite f32 as a JSON number value.
-(define (json-f32->number [value : f32]) : Json
-  (stdlib.json.json-number-text-result->json
-    (stdlib.json.json-f32->number-text value)))
+(define (f32->number [value : f32]) : Json
+  (stdlib.json.number-text-result->json (stdlib.json.f32->number-text value)))
 
 ;: `stdlib.serialize` hook for bool fields.
 (defmacro (encode-bool [value : bool]) : Value
@@ -1087,9 +1070,7 @@
   (match (type-key T)
     ["u64"
       (comptime.comptime-error "serialize json: u64 fields are not supported")]
-    [_
-      `(stdlib.json.JsonValue
-        (stdlib.json.json-i64->number (cast ,value : i64)))]))
+    [_ `(stdlib.json.JsonValue (stdlib.json.i64->number (cast ,value : i64)))]))
 
 ;: `stdlib.serialize` hook for integer fields.
 (defmacro (decode-int
@@ -1135,7 +1116,7 @@
             [(stdlib.json.JsonValue __json_value)
               (match __json_value
                 [(stdlib.json.JsonNumber text)
-                  (match (stdlib.json.json-number-owned->i64 text)
+                  (match (stdlib.json.number-owned->i64 text)
                     [(stdlib.json.OkJsonNumberI64 parsed) ,parsed-expr]
                     [(stdlib.json.ErrJsonNumberI64 message)
                       (return (,err-ctor message))])]
@@ -1144,8 +1125,8 @@
 ;: `stdlib.serialize` hook for float fields.
 (defmacro (encode-float [T : type] [value : comptime.Expr]) : Value
   (match (type-key T)
-    ["f64" `(stdlib.json.JsonValue (stdlib.json.json-f64->number ,value))]
-    ["f32" `(stdlib.json.JsonValue (stdlib.json.json-f32->number ,value))]
+    ["f64" `(stdlib.json.JsonValue (stdlib.json.f64->number ,value))]
+    ["f32" `(stdlib.json.JsonValue (stdlib.json.f32->number ,value))]
     [_
       (comptime.comptime-error
         (comptime.string-append
@@ -1163,7 +1144,7 @@
         [(stdlib.json.JsonValue __json_value)
           (match __json_value
             [(stdlib.json.JsonNumber text)
-              (match (stdlib.json.json-number->f64 (& text))
+              (match (stdlib.json.number->f64 (& text))
                 [(stdlib.json.OkJsonNumberF64 parsed) parsed]
                 [(stdlib.json.ErrJsonNumberF64 message)
                   (return (,err-ctor message))])]
@@ -1173,7 +1154,7 @@
         [(stdlib.json.JsonValue __json_value)
           (match __json_value
             [(stdlib.json.JsonNumber text)
-              (match (stdlib.json.json-number->f32 (& text))
+              (match (stdlib.json.number->f32 (& text))
                 [(stdlib.json.OkJsonNumberF32 parsed) parsed]
                 [(stdlib.json.ErrJsonNumberF32 message)
                   (return (,err-ctor message))])]
@@ -1231,7 +1212,7 @@
   [err-ctor : comptime.Expr]) : comptime.Expr
   `(match ,object
     [(stdlib.json.JsonValue __json_object)
-      (match (stdlib.json.json-object-get-owned __json_object ,name)
+      (match (stdlib.json.object-get-owned __json_object ,name)
         [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
         [(stdlib.json.JsonMissing) (return (,err-ctor "json: missing field"))])]))
 
@@ -1257,8 +1238,7 @@
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
-        [(stdlib.json.JsonArray items)
-          (stdlib.json.json-list-count (box-get items))]
+        [(stdlib.json.JsonArray items) (stdlib.json.list-count (box-get items))]
         [_ (return (,err-ctor "json: expected array"))])]))
 
 ;: `stdlib.serialize` hook for reading one decoded sequence element.
@@ -1270,7 +1250,7 @@
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
         [(stdlib.json.JsonArray items)
-          (match (stdlib.json.json-list-get-index (box-get items) ,index)
+          (match (stdlib.json.list-get-index (box-get items) ,index)
             [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
             [(stdlib.json.JsonMissing)
               (return (,err-ctor "json: missing array element"))])]
@@ -1286,14 +1266,14 @@
       (decode (stdlib.json.JsonValue value)))))
 
 ;: Parse `keyword` at `pos` and return its fixed JSON value.
-(define (json-parse-keyword
+(define (parse-keyword
   [text : (& text str)]
   [pos : i64]
   [keyword : String]
   [value : Json]) : JsonParseValueResult
   (let
     [prefix : String keyword]
-    (if (stdlib.json.json-string-prefix-at? text (& prefix) pos)
+    (if (stdlib.json.string-prefix-at? text (& prefix) pos)
       (OkJsonParseValue value (+ pos (string-length prefix)))
       (ErrJsonParseValue "json: expected keyword"))))
 
@@ -1301,32 +1281,32 @@
 ;:
 ;: Parser elements are accumulated in a vector builder, then converted once to
 ;: the public list model in source order.
-(define (json-parse-array [text : (& text str)] [pos : i64]) : JsonParseValueResult
+(define (parse-array [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
-    [i : i64 (stdlib.json.json-skip-ws text (+ pos 1))]
+    [i : i64 (stdlib.json.skip-ws text (+ pos 1))]
     [items : jvec.Vec
-      (jvec.with-capacity (stdlib.json.json-composite-item-count text pos 93))]
+      (jvec.with-capacity (stdlib.json.composite-item-count text pos 93))]
     [ok : bool true]
     [done : bool false]
     [message : String ""]
     (begin
-      (if (stdlib.json.json-char-code-eq-at text i 93)
+      (if (stdlib.json.char-code-eq-at text i 93)
         (begin
           (set! i (+ i 1))
           (set! done true))
         unit)
       (while (and ok (not done))
-        (match (stdlib.json.json-parse-value text i)
+        (match (stdlib.json.parse-value text i)
           [(OkJsonParseValue value next)
             (begin
               (jvec.push (&mut items) value)
-              (set! i (stdlib.json.json-skip-ws text next))
-              (if (stdlib.json.json-char-code-eq-at text i 93)
+              (set! i (stdlib.json.skip-ws text next))
+              (if (stdlib.json.char-code-eq-at text i 93)
                 (begin
                   (set! i (+ i 1))
                   (set! done true))
-                (if (stdlib.json.json-char-code-eq-at text i 44)
-                  (set! i (stdlib.json.json-skip-ws text (+ i 1)))
+                (if (stdlib.json.char-code-eq-at text i 44)
+                  (set! i (stdlib.json.skip-ws text (+ i 1)))
                   (begin
                     (set! ok false)
                     (set! message "json: expected ',' or ']' in array")))))]
@@ -1335,46 +1315,44 @@
               (set! ok false)
               (set! message err))]))
       (if ok
-        (OkJsonParseValue
-          (JsonArray (box (stdlib.json.json-vec-to-list items)))
-          i)
+        (OkJsonParseValue (JsonArray (box (stdlib.json.vec-to-list items))) i)
         (ErrJsonParseValue message)))))
 
 ;: Parse a JSON object starting at `pos`, including the opening brace.
 ;:
 ;: Parser members are accumulated in a vector builder, then converted once to
 ;: the public list model in source order.
-(define (json-parse-object [text : (& text str)] [pos : i64]) : JsonParseValueResult
+(define (parse-object [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
-    [i : i64 (stdlib.json.json-skip-ws text (+ pos 1))]
+    [i : i64 (stdlib.json.skip-ws text (+ pos 1))]
     [members : jmvec.Vec
-      (jmvec.with-capacity (stdlib.json.json-composite-item-count text pos 125))]
+      (jmvec.with-capacity (stdlib.json.composite-item-count text pos 125))]
     [ok : bool true]
     [done : bool false]
     [message : String ""]
     (begin
-      (if (stdlib.json.json-char-code-eq-at text i 125)
+      (if (stdlib.json.char-code-eq-at text i 125)
         (begin
           (set! i (+ i 1))
           (set! done true))
         unit)
       (while (and ok (not done))
-        (match (stdlib.json.json-parse-string text i)
+        (match (stdlib.json.parse-string text i)
           [(OkJsonParseString key after-key)
             (let
-              [colon-pos : i64 (stdlib.json.json-skip-ws text after-key)]
-              (if (stdlib.json.json-char-code-eq-at text colon-pos 58)
-                (match (stdlib.json.json-parse-value text (+ colon-pos 1))
+              [colon-pos : i64 (stdlib.json.skip-ws text after-key)]
+              (if (stdlib.json.char-code-eq-at text colon-pos 58)
+                (match (stdlib.json.parse-value text (+ colon-pos 1))
                   [(OkJsonParseValue value next)
                     (begin
                       (jmvec.push (&mut members) (JsonMember key value))
-                      (set! i (stdlib.json.json-skip-ws text next))
-                      (if (stdlib.json.json-char-code-eq-at text i 125)
+                      (set! i (stdlib.json.skip-ws text next))
+                      (if (stdlib.json.char-code-eq-at text i 125)
                         (begin
                           (set! i (+ i 1))
                           (set! done true))
-                        (if (stdlib.json.json-char-code-eq-at text i 44)
-                          (set! i (stdlib.json.json-skip-ws text (+ i 1)))
+                        (if (stdlib.json.char-code-eq-at text i 44)
+                          (set! i (stdlib.json.skip-ws text (+ i 1)))
                           (begin
                             (set! ok false)
                             (set! message "json: expected ',' or '}' in object")))))]
@@ -1391,36 +1369,36 @@
               (set! message err))]))
       (if ok
         (OkJsonParseValue
-          (JsonObject (box (stdlib.json.json-member-vec-to-list members)))
+          (JsonObject (box (stdlib.json.member-vec-to-list members)))
           i)
         (ErrJsonParseValue message)))))
 
 ;: Parse one JSON value from `text` at `pos`, after skipping whitespace.
 ;:
 ;: Returned aggregate, string, and number values allocate in the active arena.
-(define (json-parse-value [text : (& text str)] [pos : i64]) : JsonParseValueResult
+(define (parse-value [text : (& text str)] [pos : i64]) : JsonParseValueResult
   (let
-    [i : i64 (stdlib.json.json-skip-ws text pos)]
+    [i : i64 (stdlib.json.skip-ws text pos)]
     [n : i64 (string-length text)]
     (if (>= i n)
       (ErrJsonParseValue "json: expected JSON value")
       (let
-        [code : i64 (stdlib.json.json-char-code-at text i)]
+        [code : i64 (stdlib.json.char-code-at text i)]
         (cond
-          [(= code 110) (stdlib.json.json-parse-keyword text i "null" JsonNull)]
+          [(= code 110) (stdlib.json.parse-keyword text i "null" JsonNull)]
           [(= code 116)
-            (stdlib.json.json-parse-keyword text i "true" (JsonBool true))]
+            (stdlib.json.parse-keyword text i "true" (JsonBool true))]
           [(= code 102)
-            (stdlib.json.json-parse-keyword text i "false" (JsonBool false))]
+            (stdlib.json.parse-keyword text i "false" (JsonBool false))]
           [(= code 34)
-            (match (stdlib.json.json-parse-string text i)
+            (match (stdlib.json.parse-string text i)
               [(OkJsonParseString value next)
                 (OkJsonParseValue (JsonString value) next)]
               [(ErrJsonParseString err) (ErrJsonParseValue err)])]
-          [(= code 91) (stdlib.json.json-parse-array text i)]
-          [(= code 123) (stdlib.json.json-parse-object text i)]
-          [(or (= code 45) (stdlib.json.json-digit-code? code))
-            (stdlib.json.json-parse-number text i)]
+          [(= code 91) (stdlib.json.parse-array text i)]
+          [(= code 123) (stdlib.json.parse-object text i)]
+          [(or (= code 45) (stdlib.json.digit-code? code))
+            (stdlib.json.parse-number text i)]
           [else
             (ErrJsonParseValue "json: unexpected character while parsing value")])))))
 
@@ -1433,64 +1411,60 @@
 ;: (define parsed : json.JsonParseResult
 ;:   (let
 ;:     [text : String "{\"ok\":true}"]
-;:     (json.json-parse (& text))))
+;:     (json.parse (& text))))
 ;: ```
-(define (json-parse [text : (& text str)]) : JsonParseResult
-  (match (stdlib.json.json-parse-value text 0)
+(define (parse [text : (& text str)]) : JsonParseResult
+  (match (stdlib.json.parse-value text 0)
     [(OkJsonParseValue value pos)
       (let
-        [end : i64 (stdlib.json.json-skip-ws text pos)]
+        [end : i64 (stdlib.json.skip-ws text pos)]
         (if (= end (string-length text))
           (OkJson value)
           (ErrJson "json: trailing characters after JSON value")))]
     [(ErrJsonParseValue message) (ErrJson message)]))
 
 ;: Inline test assertion for boolean predicates.
-(define (json-stdlib-inline-test-assert-true
-  [condition : bool]
-  [message : String]) : unit
+(define (stdlib-inline-test-assert-true [condition : bool] [message : String]) : unit
   (if condition
     unit
     (io.panic message)))
 
 ;: Inline test assertion for false predicates.
-(define (json-stdlib-inline-test-assert-false
-  [condition : bool]
-  [message : String]) : unit
-  (stdlib.json.json-stdlib-inline-test-assert-true (not condition) message))
+(define (stdlib-inline-test-assert-false [condition : bool] [message : String]) : unit
+  (stdlib.json.stdlib-inline-test-assert-true (not condition) message))
 
 ;: Inline test assertion for `bool` equality.
-(define (json-stdlib-inline-test-assert-bool-eq
+(define (stdlib-inline-test-assert-bool-eq
   [actual : bool]
   [expected : bool]
   [message : String]) : unit
-  (stdlib.json.json-stdlib-inline-test-assert-true (= actual expected) message))
+  (stdlib.json.stdlib-inline-test-assert-true (= actual expected) message))
 
 ;: Inline test assertion for `i64` equality.
-(define (json-stdlib-inline-test-assert-i64-eq
+(define (stdlib-inline-test-assert-i64-eq
   [actual : i64]
   [expected : i64]
   [message : String]) : unit
-  (stdlib.json.json-stdlib-inline-test-assert-true (= actual expected) message))
+  (stdlib.json.stdlib-inline-test-assert-true (= actual expected) message))
 
 ;: Inline test assertion for `f64` equality.
-(define (json-stdlib-inline-test-assert-f64-eq
+(define (stdlib-inline-test-assert-f64-eq
   [actual : f64]
   [expected : f64]
   [message : String]) : unit
-  (stdlib.json.json-stdlib-inline-test-assert-true (= actual expected) message))
+  (stdlib.json.stdlib-inline-test-assert-true (= actual expected) message))
 
 ;: Inline test assertion for owned string equality.
-(define (json-stdlib-inline-test-assert-owned-string-eq
+(define (stdlib-inline-test-assert-owned-string-eq
   [actual : String]
   [expected : String]
   [message : String]) : unit
-  (stdlib.json.json-stdlib-inline-test-assert-true
+  (stdlib.json.stdlib-inline-test-assert-true
     (string.eq actual expected)
     message))
 
 ;: Assert that a lookup found the expected JSON number text.
-(define (json-stdlib-inline-test-assert-found-number
+(define (stdlib-inline-test-assert-found-number
   [lookup : JsonLookup]
   [expected : String]
   [message : String]) : unit
@@ -1498,7 +1472,7 @@
     [(JsonFound value)
       (match value
         [(JsonNumber text)
-          (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+          (stdlib.json.stdlib-inline-test-assert-owned-string-eq
             text
             expected
             message)]
@@ -1506,7 +1480,7 @@
     [(JsonMissing) (io.panic message)]))
 
 ;: Assert that a lookup is missing.
-(define (json-stdlib-inline-test-assert-missing
+(define (stdlib-inline-test-assert-missing
   [lookup : JsonLookup]
   [message : String]) : unit
   (match lookup
@@ -1514,26 +1488,26 @@
     [(JsonFound _) (io.panic message)]))
 
 ;: Build a JSON list node for inline tests.
-(define (json-stdlib-inline-test-list-cons [value : Json] [rest : JsonList]) : JsonList
+(define (stdlib-inline-test-list-cons [value : Json] [rest : JsonList]) : JsonList
   (JsonListCons value (box rest)))
 
 ;: Build a JSON member-list node for inline tests.
-(define (json-stdlib-inline-test-member-cons
+(define (stdlib-inline-test-member-cons
   [key : String]
   [value : Json]
   [rest : JsonMemberList]) : JsonMemberList
   (JsonMemberListCons key value (box rest)))
 
 ;: Build a JSON array for inline tests.
-(define (json-stdlib-inline-test-array [items : JsonList]) : Json
+(define (stdlib-inline-test-array [items : JsonList]) : Json
   (JsonArray (box items)))
 
 ;: Build a JSON object for inline tests.
-(define (json-stdlib-inline-test-object [members : JsonMemberList]) : Json
+(define (stdlib-inline-test-object [members : JsonMemberList]) : Json
   (JsonObject (box members)))
 
 ;: Assert a successful parsed string and next position.
-(define (json-stdlib-inline-test-assert-parse-string
+(define (stdlib-inline-test-assert-parse-string
   [result : JsonParseStringResult]
   [expected : String]
   [next : i64]
@@ -1541,15 +1515,15 @@
   (match result
     [(OkJsonParseString value pos)
       (begin
-        (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+        (stdlib.json.stdlib-inline-test-assert-owned-string-eq
           value
           expected
           message)
-        (stdlib.json.json-stdlib-inline-test-assert-i64-eq pos next message))]
+        (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
     [(ErrJsonParseString _) (io.panic message)]))
 
 ;: Assert a successful parsed escape and next position.
-(define (json-stdlib-inline-test-assert-parse-escape
+(define (stdlib-inline-test-assert-parse-escape
   [result : JsonParseEscapeResult]
   [expected : String]
   [next : i64]
@@ -1557,51 +1531,51 @@
   (match result
     [(OkJsonParseEscape value pos)
       (begin
-        (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+        (stdlib.json.stdlib-inline-test-assert-owned-string-eq
           value
           expected
           message)
-        (stdlib.json.json-stdlib-inline-test-assert-i64-eq pos next message))]
+        (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
     [(ErrJsonParseEscape _) (io.panic message)]))
 
 ;: Assert a successful JSON codepoint string.
-(define (json-stdlib-inline-test-assert-codepoint
+(define (stdlib-inline-test-assert-codepoint
   [result : JsonCodepointStringResult]
   [expected : String]
   [message : String]) : unit
   (match result
     [(OkJsonCodepointString value)
-      (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stdlib-inline-test-assert-owned-string-eq
         value
         expected
         message)]
     [(ErrJsonCodepointString _) (io.panic message)]))
 
 ;: Assert a successful JSON number-to-f64 conversion.
-(define (json-stdlib-inline-test-assert-json-f64
+(define (stdlib-inline-test-assert-json-f64
   [result : JsonNumberF64Result]
   [expected : f64]
   [message : String]) : unit
   (match result
     [(OkJsonNumberF64 value)
-      (stdlib.json.json-stdlib-inline-test-assert-f64-eq value expected message)]
+      (stdlib.json.stdlib-inline-test-assert-f64-eq value expected message)]
     [(ErrJsonNumberF64 _) (io.panic message)]))
 
 ;: Assert a successful JSON number-to-f32 conversion as f64.
-(define (json-stdlib-inline-test-assert-json-f32-as-f64
+(define (stdlib-inline-test-assert-json-f32-as-f64
   [result : JsonNumberF32Result]
   [expected : f64]
   [message : String]) : unit
   (match result
     [(OkJsonNumberF32 value)
-      (stdlib.json.json-stdlib-inline-test-assert-f64-eq
+      (stdlib.json.stdlib-inline-test-assert-f64-eq
         (cast value : f64)
         expected
         message)]
     [(ErrJsonNumberF32 _) (io.panic message)]))
 
 ;: Assert a JSON number-to-f64 conversion error.
-(define (json-stdlib-inline-test-assert-json-f64-error
+(define (stdlib-inline-test-assert-json-f64-error
   [result : JsonNumberF64Result]
   [message : String]) : unit
   (match result
@@ -1609,7 +1583,7 @@
     [(OkJsonNumberF64 _) (io.panic message)]))
 
 ;: Assert a JSON number-to-f32 conversion error.
-(define (json-stdlib-inline-test-assert-json-f32-error
+(define (stdlib-inline-test-assert-json-f32-error
   [result : JsonNumberF32Result]
   [message : String]) : unit
   (match result
@@ -1617,20 +1591,20 @@
     [(OkJsonNumberF32 _) (io.panic message)]))
 
 ;: Assert a successful JSON number text rendering.
-(define (json-stdlib-inline-test-assert-json-number-text
+(define (stdlib-inline-test-assert-json-number-text
   [result : JsonNumberTextResult]
   [expected : String]
   [message : String]) : unit
   (match result
     [(OkJsonNumberText text)
-      (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stdlib-inline-test-assert-owned-string-eq
         text
         expected
         message)]
     [(ErrJsonNumberText _) (io.panic message)]))
 
 ;: Assert a parsed JSON number and next position.
-(define (json-stdlib-inline-test-assert-parse-value-number
+(define (stdlib-inline-test-assert-parse-value-number
   [result : JsonParseValueResult]
   [expected : String]
   [next : i64]
@@ -1640,16 +1614,16 @@
       (match value
         [(JsonNumber text)
           (begin
-            (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+            (stdlib.json.stdlib-inline-test-assert-owned-string-eq
               text
               expected
               message)
-            (stdlib.json.json-stdlib-inline-test-assert-i64-eq pos next message))]
+            (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
 
 ;: Assert a parsed JSON bool and next position.
-(define (json-stdlib-inline-test-assert-parse-value-bool
+(define (stdlib-inline-test-assert-parse-value-bool
   [result : JsonParseValueResult]
   [expected : bool]
   [next : i64]
@@ -1659,16 +1633,16 @@
       (match value
         [(JsonBool actual)
           (begin
-            (stdlib.json.json-stdlib-inline-test-assert-bool-eq
+            (stdlib.json.stdlib-inline-test-assert-bool-eq
               actual
               expected
               message)
-            (stdlib.json.json-stdlib-inline-test-assert-i64-eq pos next message))]
+            (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
 
 ;: Assert a parsed JSON array element count and next position.
-(define (json-stdlib-inline-test-assert-parse-array-count
+(define (stdlib-inline-test-assert-parse-array-count
   [result : JsonParseValueResult]
   [expected-count : i64]
   [next : i64]
@@ -1678,16 +1652,16 @@
       (match value
         [(JsonArray items)
           (begin
-            (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-              (stdlib.json.json-list-count (box-get items))
+            (stdlib.json.stdlib-inline-test-assert-i64-eq
+              (stdlib.json.list-count (box-get items))
               expected-count
               message)
-            (stdlib.json.json-stdlib-inline-test-assert-i64-eq pos next message))]
+            (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
 
 ;: Assert a parsed JSON object member count and next position.
-(define (json-stdlib-inline-test-assert-parse-object-count
+(define (stdlib-inline-test-assert-parse-object-count
   [result : JsonParseValueResult]
   [expected-count : i64]
   [next : i64]
@@ -1697,113 +1671,111 @@
       (match value
         [(JsonObject members)
           (begin
-            (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-              (stdlib.json.json-member-list-count (box-get members))
+            (stdlib.json.stdlib-inline-test-assert-i64-eq
+              (stdlib.json.member-list-count (box-get members))
               expected-count
               message)
-            (stdlib.json.json-stdlib-inline-test-assert-i64-eq pos next message))]
+            (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message))]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
 
-;: Borrowing wrapper for `json-char-code-at` inline tests.
-(define (json-stdlib-inline-test-char-code-at [text : String] [idx : i64]) : i64
-  (stdlib.json.json-char-code-at (& text) idx))
+;: Borrowing wrapper for `char-code-at` inline tests.
+(define (stdlib-inline-test-char-code-at [text : String] [idx : i64]) : i64
+  (stdlib.json.char-code-at (& text) idx))
 
-;: Borrowing wrapper for `json-char-code-eq-at` inline tests.
-(define (json-stdlib-inline-test-char-code-eq-at
+;: Borrowing wrapper for `char-code-eq-at` inline tests.
+(define (stdlib-inline-test-char-code-eq-at
   [text : String]
   [idx : i64]
   [code : i64]) : bool
-  (stdlib.json.json-char-code-eq-at (& text) idx code))
+  (stdlib.json.char-code-eq-at (& text) idx code))
 
-;: Borrowing wrapper for `json-digit-at?` inline tests.
-(define (json-stdlib-inline-test-digit-at? [text : String] [idx : i64]) : bool
-  (stdlib.json.json-digit-at? (& text) idx))
+;: Borrowing wrapper for `digit-at?` inline tests.
+(define (stdlib-inline-test-digit-at? [text : String] [idx : i64]) : bool
+  (stdlib.json.digit-at? (& text) idx))
 
-;: Borrowing wrapper for `json-skip-ws` inline tests.
-(define (json-stdlib-inline-test-skip-ws [text : String] [pos : i64]) : i64
-  (stdlib.json.json-skip-ws (& text) pos))
+;: Borrowing wrapper for `skip-ws` inline tests.
+(define (stdlib-inline-test-skip-ws [text : String] [pos : i64]) : i64
+  (stdlib.json.skip-ws (& text) pos))
 
-;: Borrowing wrapper for `json-string-prefix-at?` inline tests.
-(define (json-stdlib-inline-test-prefix-at?
+;: Borrowing wrapper for `string-prefix-at?` inline tests.
+(define (stdlib-inline-test-prefix-at?
   [text : String]
   [prefix : String]
   [start : i64]) : bool
-  (stdlib.json.json-string-prefix-at? (& text) (& prefix) start))
+  (stdlib.json.string-prefix-at? (& text) (& prefix) start))
 
-;: Borrowing wrapper for `json-member-list-get` inline tests.
-(define (json-stdlib-inline-test-member-list-get
+;: Borrowing wrapper for `member-list-get` inline tests.
+(define (stdlib-inline-test-member-list-get
   [items : JsonMemberList]
   [key : String]) : JsonLookup
-  (stdlib.json.json-member-list-get items (& key)))
+  (stdlib.json.member-list-get items (& key)))
 
-;: Borrowing wrapper for `json-object-get` inline tests.
-(define (json-stdlib-inline-test-object-get [value : Json] [key : String]) : JsonLookup
-  (stdlib.json.json-object-get value (& key)))
+;: Borrowing wrapper for `object-get` inline tests.
+(define (stdlib-inline-test-object-get [value : Json] [key : String]) : JsonLookup
+  (stdlib.json.object-get value (& key)))
 
-;: Borrowing wrapper for `json-escape-string` inline tests.
-(define (json-stdlib-inline-test-escape-string [text : String]) : String
-  (stdlib.json.json-escape-string (& text)))
+;: Borrowing wrapper for `escape-string` inline tests.
+(define (stdlib-inline-test-escape-string [text : String]) : String
+  (stdlib.json.escape-string (& text)))
 
-;: Borrowing wrapper for `json-parse-unicode-escape` inline tests.
-(define (json-stdlib-inline-test-parse-unicode-escape
-  [text : String]
-  [pos : i64]) : JsonParseEscapeResult
-  (stdlib.json.json-parse-unicode-escape (& text) pos))
+;: Borrowing wrapper for `parse-unicode-escape` inline tests.
+(define (stdlib-inline-test-parse-unicode-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+  (stdlib.json.parse-unicode-escape (& text) pos))
 
-;: Borrowing wrapper for `json-parse-escape` inline tests.
-(define (json-stdlib-inline-test-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
-  (stdlib.json.json-parse-escape (& text) pos))
+;: Borrowing wrapper for `parse-escape` inline tests.
+(define (stdlib-inline-test-parse-escape [text : String] [pos : i64]) : JsonParseEscapeResult
+  (stdlib.json.parse-escape (& text) pos))
 
-;: Borrowing wrapper for `json-parse-string` inline tests.
-(define (json-stdlib-inline-test-parse-string [text : String] [pos : i64]) : JsonParseStringResult
-  (stdlib.json.json-parse-string (& text) pos))
+;: Borrowing wrapper for `parse-string` inline tests.
+(define (stdlib-inline-test-parse-string [text : String] [pos : i64]) : JsonParseStringResult
+  (stdlib.json.parse-string (& text) pos))
 
-;: Borrowing wrapper for `json-consume-digits` inline tests.
-(define (json-stdlib-inline-test-consume-digits [text : String] [pos : i64]) : i64
-  (stdlib.json.json-consume-digits (& text) pos))
+;: Borrowing wrapper for `consume-digits` inline tests.
+(define (stdlib-inline-test-consume-digits [text : String] [pos : i64]) : i64
+  (stdlib.json.consume-digits (& text) pos))
 
-;: Borrowing wrapper for `json-parse-number` inline tests.
-(define (json-stdlib-inline-test-parse-number [text : String] [pos : i64]) : JsonParseValueResult
-  (stdlib.json.json-parse-number (& text) pos))
+;: Borrowing wrapper for `parse-number` inline tests.
+(define (stdlib-inline-test-parse-number [text : String] [pos : i64]) : JsonParseValueResult
+  (stdlib.json.parse-number (& text) pos))
 
-;: Borrowing wrapper for `json-number->f64` inline tests.
-(define (json-stdlib-inline-test-number-f64 [text : String]) : JsonNumberF64Result
-  (stdlib.json.json-number->f64 (& text)))
+;: Borrowing wrapper for `number->f64` inline tests.
+(define (stdlib-inline-test-number-f64 [text : String]) : JsonNumberF64Result
+  (stdlib.json.number->f64 (& text)))
 
-;: Borrowing wrapper for `json-number->f32` inline tests.
-(define (json-stdlib-inline-test-number-f32 [text : String]) : JsonNumberF32Result
-  (stdlib.json.json-number->f32 (& text)))
+;: Borrowing wrapper for `number->f32` inline tests.
+(define (stdlib-inline-test-number-f32 [text : String]) : JsonNumberF32Result
+  (stdlib.json.number->f32 (& text)))
 
-;: Borrowing wrapper for `json-parse-keyword` inline tests.
-(define (json-stdlib-inline-test-parse-keyword
+;: Borrowing wrapper for `parse-keyword` inline tests.
+(define (stdlib-inline-test-parse-keyword
   [text : String]
   [pos : i64]
   [keyword : String]
   [value : Json]) : JsonParseValueResult
-  (stdlib.json.json-parse-keyword (& text) pos keyword value))
+  (stdlib.json.parse-keyword (& text) pos keyword value))
 
-;: Borrowing wrapper for `json-parse-array` inline tests.
-(define (json-stdlib-inline-test-parse-array [text : String] [pos : i64]) : JsonParseValueResult
-  (stdlib.json.json-parse-array (& text) pos))
+;: Borrowing wrapper for `parse-array` inline tests.
+(define (stdlib-inline-test-parse-array [text : String] [pos : i64]) : JsonParseValueResult
+  (stdlib.json.parse-array (& text) pos))
 
-;: Borrowing wrapper for `json-parse-object` inline tests.
-(define (json-stdlib-inline-test-parse-object [text : String] [pos : i64]) : JsonParseValueResult
-  (stdlib.json.json-parse-object (& text) pos))
+;: Borrowing wrapper for `parse-object` inline tests.
+(define (stdlib-inline-test-parse-object [text : String] [pos : i64]) : JsonParseValueResult
+  (stdlib.json.parse-object (& text) pos))
 
-;: Borrowing wrapper for `json-parse-value` inline tests.
-(define (json-stdlib-inline-test-parse-value [text : String] [pos : i64]) : JsonParseValueResult
-  (stdlib.json.json-parse-value (& text) pos))
+;: Borrowing wrapper for `parse-value` inline tests.
+(define (stdlib-inline-test-parse-value [text : String] [pos : i64]) : JsonParseValueResult
+  (stdlib.json.parse-value (& text) pos))
 
 ;: Assert a parsed document has the expected name member.
-(define (json-stdlib-inline-test-name [doc : Json]) : unit
+(define (stdlib-inline-test-name [doc : Json]) : unit
   (let
     [key : String "name"]
-    (match (stdlib.json.json-object-get doc (& key))
+    (match (stdlib.json.object-get doc (& key))
       [(JsonFound value)
         (match value
           [(JsonString text)
-            (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+            (stdlib.json.stdlib-inline-test-assert-owned-string-eq
               text
               "tl"
               "json name lookup")]
@@ -1811,47 +1783,45 @@
       [(JsonMissing) (io.panic "json name lookup")])))
 
 ;: Assert a parsed document has the expected array member.
-(define (json-stdlib-inline-test-numbers [doc : Json]) : unit
+(define (stdlib-inline-test-numbers [doc : Json]) : unit
   (let
     [key : String "items"]
-    (match (stdlib.json.json-object-get doc (& key))
+    (match (stdlib.json.object-get doc (& key))
       [(JsonFound value)
         (match value
           [(JsonArray items)
             (begin
-              (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-                (stdlib.json.json-list-count (box-get items))
+              (stdlib.json.stdlib-inline-test-assert-i64-eq
+                (stdlib.json.list-count (box-get items))
                 5
                 "json array count")
-              (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-                (stdlib.json.json-stringify-list (box-get items))
+              (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+                (stdlib.json.stringify-list (box-get items))
                 "1,-2.5e3,true,false,null"
                 "json array stringify"))]
           [_ (io.panic "json array lookup")])]
       [(JsonMissing) (io.panic "json array lookup")])))
 
 ;: Assert a parsed document has the expected nested object member.
-(define (json-stdlib-inline-test-nested [doc : Json]) : unit
+(define (stdlib-inline-test-nested [doc : Json]) : unit
   (let
     [key : String "nested"]
-    (match (stdlib.json.json-object-get doc (& key))
+    (match (stdlib.json.object-get doc (& key))
       [(JsonFound value)
         (match value
           [(JsonObject members)
             (begin
-              (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-                (stdlib.json.json-member-list-count (box-get members))
+              (stdlib.json.stdlib-inline-test-assert-i64-eq
+                (stdlib.json.member-list-count (box-get members))
                 2
                 "json nested object count")
               (let
                 [key : String "ok"]
-                (match (stdlib.json.json-member-list-get
-                  (box-get members)
-                  (& key))
+                (match (stdlib.json.member-list-get (box-get members) (& key))
                   [(JsonFound ok-value)
                     (match ok-value
                       [(JsonBool ok)
-                        (stdlib.json.json-stdlib-inline-test-assert-true
+                        (stdlib.json.stdlib-inline-test-assert-true
                           ok
                           "json nested bool")]
                       [_ (io.panic "json nested bool")])]
@@ -1860,14 +1830,14 @@
       [(JsonMissing) (io.panic "json nested object")])))
 
 ;: Assert a parsed document has the expected escaped string member.
-(define (json-stdlib-inline-test-escaped [doc : Json]) : unit
+(define (stdlib-inline-test-escaped [doc : Json]) : unit
   (let
     [key : String "escaped"]
-    (match (stdlib.json.json-object-get doc (& key))
+    (match (stdlib.json.object-get doc (& key))
       [(JsonFound value)
         (match value
           [(JsonString text)
-            (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+            (stdlib.json.stdlib-inline-test-assert-owned-string-eq
               text
               "a\nb\tc"
               "json escaped string")]
@@ -1875,399 +1845,396 @@
       [(JsonMissing) (io.panic "json escaped string")])))
 
 ;: Assert that parsing `text` fails.
-(define (json-stdlib-inline-test-assert-parse-error
+(define (stdlib-inline-test-assert-parse-error
   [text : String]
   [message : String]) : unit
-  (match (stdlib.json.json-parse (& text))
+  (match (stdlib.json.parse (& text))
     [(OkJson _) (io.panic message)]
     [(ErrJson _) unit]))
 
 (test
-  json-helpers-api
+  helpers-api
   (begin
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
       (string.append "a" (string.append "b" "c"))
       "abc"
       "json-cat3")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
       (string.append "a" (string.append "b" (string.append "c" "d")))
       "abcd"
       "json-cat4")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-char-code 'A')
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.char-code 'A')
       65
-      "stdlib.json.json-char-code")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-stdlib-inline-test-char-code-at "AZ" 1)
+      "stdlib.json.char-code")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.stdlib-inline-test-char-code-at "AZ" 1)
       90
-      "stdlib.json.json-char-code-at")
-    (stdlib.json.json-stdlib-inline-test-assert-true
-      (stdlib.json.json-stdlib-inline-test-char-code-eq-at "AZ" 0 65)
-      "stdlib.json.json-char-code-eq-at true")
-    (stdlib.json.json-stdlib-inline-test-assert-false
-      (stdlib.json.json-stdlib-inline-test-char-code-eq-at "AZ" 2 65)
-      "stdlib.json.json-char-code-eq-at out of range")
-    (stdlib.json.json-stdlib-inline-test-assert-true
-      (stdlib.json.json-space-code? 32)
-      "stdlib.json.json-space-code? space")
-    (stdlib.json.json-stdlib-inline-test-assert-false
-      (stdlib.json.json-space-code? 65)
-      "stdlib.json.json-space-code? false")
-    (stdlib.json.json-stdlib-inline-test-assert-true
-      (stdlib.json.json-digit-code? 57)
-      "stdlib.json.json-digit-code? true")
-    (stdlib.json.json-stdlib-inline-test-assert-false
-      (stdlib.json.json-digit-code? 65)
-      "stdlib.json.json-digit-code? false")
-    (stdlib.json.json-stdlib-inline-test-assert-true
-      (stdlib.json.json-stdlib-inline-test-digit-at? "a5" 1)
-      "stdlib.json.json-digit-at? true")
-    (stdlib.json.json-stdlib-inline-test-assert-false
-      (stdlib.json.json-stdlib-inline-test-digit-at? "a5" 0)
-      "stdlib.json.json-digit-at? false")
-    (stdlib.json.json-stdlib-inline-test-assert-false
-      (stdlib.json.json-stdlib-inline-test-digit-at? "a5" 2)
-      "stdlib.json.json-digit-at? out of range")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-stdlib-inline-test-skip-ws "   X" 0)
+      "stdlib.json.char-code-at")
+    (stdlib.json.stdlib-inline-test-assert-true
+      (stdlib.json.stdlib-inline-test-char-code-eq-at "AZ" 0 65)
+      "stdlib.json.char-code-eq-at true")
+    (stdlib.json.stdlib-inline-test-assert-false
+      (stdlib.json.stdlib-inline-test-char-code-eq-at "AZ" 2 65)
+      "stdlib.json.char-code-eq-at out of range")
+    (stdlib.json.stdlib-inline-test-assert-true
+      (stdlib.json.space-code? 32)
+      "stdlib.json.space-code? space")
+    (stdlib.json.stdlib-inline-test-assert-false
+      (stdlib.json.space-code? 65)
+      "stdlib.json.space-code? false")
+    (stdlib.json.stdlib-inline-test-assert-true
+      (stdlib.json.digit-code? 57)
+      "stdlib.json.digit-code? true")
+    (stdlib.json.stdlib-inline-test-assert-false
+      (stdlib.json.digit-code? 65)
+      "stdlib.json.digit-code? false")
+    (stdlib.json.stdlib-inline-test-assert-true
+      (stdlib.json.stdlib-inline-test-digit-at? "a5" 1)
+      "stdlib.json.digit-at? true")
+    (stdlib.json.stdlib-inline-test-assert-false
+      (stdlib.json.stdlib-inline-test-digit-at? "a5" 0)
+      "stdlib.json.digit-at? false")
+    (stdlib.json.stdlib-inline-test-assert-false
+      (stdlib.json.stdlib-inline-test-digit-at? "a5" 2)
+      "stdlib.json.digit-at? out of range")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.stdlib-inline-test-skip-ws "   X" 0)
       3
-      "stdlib.json.json-skip-ws")
-    (stdlib.json.json-stdlib-inline-test-assert-true
-      (stdlib.json.json-stdlib-inline-test-prefix-at? "abcdef" "cd" 2)
-      "stdlib.json.json-string-prefix-at? true")
-    (stdlib.json.json-stdlib-inline-test-assert-false
-      (stdlib.json.json-stdlib-inline-test-prefix-at? "abcdef" "cd" 5)
-      "stdlib.json.json-string-prefix-at? false")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-list-count
-        (stdlib.json.json-stdlib-inline-test-list-cons
+      "stdlib.json.skip-ws")
+    (stdlib.json.stdlib-inline-test-assert-true
+      (stdlib.json.stdlib-inline-test-prefix-at? "abcdef" "cd" 2)
+      "stdlib.json.string-prefix-at? true")
+    (stdlib.json.stdlib-inline-test-assert-false
+      (stdlib.json.stdlib-inline-test-prefix-at? "abcdef" "cd" 5)
+      "stdlib.json.string-prefix-at? false")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.list-count
+        (stdlib.json.stdlib-inline-test-list-cons
           JsonNull
-          (stdlib.json.json-stdlib-inline-test-list-cons
-            (JsonBool true)
-            JsonListNil)))
+          (stdlib.json.stdlib-inline-test-list-cons (JsonBool true) JsonListNil)))
       2
-      "stdlib.json.json-list-count")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-stringify-list
-        (stdlib.json.json-list-reverse
-          (stdlib.json.json-stdlib-inline-test-list-cons
+      "stdlib.json.list-count")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stringify-list
+        (stdlib.json.list-reverse
+          (stdlib.json.stdlib-inline-test-list-cons
             (JsonNumber "2")
-            (stdlib.json.json-stdlib-inline-test-list-cons
+            (stdlib.json.stdlib-inline-test-list-cons
               (JsonNumber "1")
               JsonListNil))))
       "1,2"
-      "stdlib.json.json-list-reverse")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-stringify-list
+      "stdlib.json.list-reverse")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stringify-list
         (let
           [items : jvec.Vec (jvec.new)]
           (begin
             (jvec.push (&mut items) (JsonNumber "1"))
             (jvec.push (&mut items) (JsonNumber "2"))
-            (stdlib.json.json-vec-to-list items))))
+            (stdlib.json.vec-to-list items))))
       "1,2"
-      "stdlib.json.json-vec-to-list")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-member-list-count
-        (stdlib.json.json-stdlib-inline-test-member-cons
+      "stdlib.json.vec-to-list")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.member-list-count
+        (stdlib.json.stdlib-inline-test-member-cons
           "a"
           JsonNull
-          (stdlib.json.json-stdlib-inline-test-member-cons
+          (stdlib.json.stdlib-inline-test-member-cons
             "b"
             (JsonBool true)
             JsonMemberListNil)))
       2
-      "stdlib.json.json-member-list-count")
-    (stdlib.json.json-stdlib-inline-test-assert-found-number
-      (stdlib.json.json-stdlib-inline-test-member-list-get
-        (stdlib.json.json-stdlib-inline-test-member-cons
+      "stdlib.json.member-list-count")
+    (stdlib.json.stdlib-inline-test-assert-found-number
+      (stdlib.json.stdlib-inline-test-member-list-get
+        (stdlib.json.stdlib-inline-test-member-cons
           "a"
           (JsonNumber "1")
-          (stdlib.json.json-stdlib-inline-test-member-cons
+          (stdlib.json.stdlib-inline-test-member-cons
             "b"
             (JsonNumber "2")
             JsonMemberListNil))
         "b")
       "2"
-      "stdlib.json.json-member-list-get")
-    (stdlib.json.json-stdlib-inline-test-assert-missing
-      (stdlib.json.json-stdlib-inline-test-member-list-get
-        (stdlib.json.json-stdlib-inline-test-member-cons
+      "stdlib.json.member-list-get")
+    (stdlib.json.stdlib-inline-test-assert-missing
+      (stdlib.json.stdlib-inline-test-member-list-get
+        (stdlib.json.stdlib-inline-test-member-cons
           "a"
           (JsonNumber "1")
           JsonMemberListNil)
         "z")
-      "stdlib.json.json-member-list-get missing")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-stringify-members
-        (stdlib.json.json-member-list-reverse
-          (stdlib.json.json-stdlib-inline-test-member-cons
+      "stdlib.json.member-list-get missing")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stringify-members
+        (stdlib.json.member-list-reverse
+          (stdlib.json.stdlib-inline-test-member-cons
             "b"
             (JsonBool true)
-            (stdlib.json.json-stdlib-inline-test-member-cons
+            (stdlib.json.stdlib-inline-test-member-cons
               "a"
               JsonNull
               JsonMemberListNil))))
       "\"a\":null,\"b\":true"
-      "stdlib.json.json-member-list-reverse")
-    (stdlib.json.json-stdlib-inline-test-assert-found-number
-      (stdlib.json.json-member-list-get-owned
+      "stdlib.json.member-list-reverse")
+    (stdlib.json.stdlib-inline-test-assert-found-number
+      (stdlib.json.member-list-get-owned
         (let
           [members : jmvec.Vec (jmvec.new)]
           (begin
             (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "1")))
             (jmvec.push (&mut members) (JsonMember "dup" (JsonNumber "2")))
-            (stdlib.json.json-member-vec-to-list members)))
+            (stdlib.json.member-vec-to-list members)))
         "dup")
       "1"
-      "stdlib.json.json-member-vec-to-list duplicate first")
-    (stdlib.json.json-stdlib-inline-test-assert-found-number
-      (stdlib.json.json-stdlib-inline-test-object-get
-        (stdlib.json.json-stdlib-inline-test-object
-          (stdlib.json.json-stdlib-inline-test-member-cons
+      "stdlib.json.member-vec-to-list duplicate first")
+    (stdlib.json.stdlib-inline-test-assert-found-number
+      (stdlib.json.stdlib-inline-test-object-get
+        (stdlib.json.stdlib-inline-test-object
+          (stdlib.json.stdlib-inline-test-member-cons
             "n"
             (JsonNumber "7")
             JsonMemberListNil))
         "n")
       "7"
-      "stdlib.json.json-object-get")
-    (stdlib.json.json-stdlib-inline-test-assert-missing
-      (stdlib.json.json-stdlib-inline-test-object-get JsonNull "n")
-      "stdlib.json.json-object-get non-object")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-hex-value 'A')
+      "stdlib.json.object-get")
+    (stdlib.json.stdlib-inline-test-assert-missing
+      (stdlib.json.stdlib-inline-test-object-get JsonNull "n")
+      "stdlib.json.object-get non-object")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.hex-value 'A')
       10
-      "stdlib.json.json-hex-value upper")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-hex-value 'f')
+      "stdlib.json.hex-value upper")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.hex-value 'f')
       15
-      "stdlib.json.json-hex-value lower")
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-hex-value 'g')
+      "stdlib.json.hex-value lower")
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.hex-value 'g')
       -1
-      "stdlib.json.json-hex-value invalid")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-hex-digit 15)
+      "stdlib.json.hex-value invalid")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.hex-digit 15)
       "f"
-      "stdlib.json.json-hex-digit")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-control-escape 10)
+      "stdlib.json.hex-digit")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.control-escape 10)
       "\\n"
-      "stdlib.json.json-control-escape newline")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-control-escape 1)
+      "stdlib.json.control-escape newline")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.control-escape 1)
       "\\u0001"
-      "stdlib.json.json-control-escape unicode")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-escape-char 34)
+      "stdlib.json.control-escape unicode")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.escape-char 34)
       "\\\""
-      "stdlib.json.json-escape-char quote")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-escape-char 92)
+      "stdlib.json.escape-char quote")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.escape-char 92)
       "\\\\"
-      "stdlib.json.json-escape-char slash")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-stdlib-inline-test-escape-string "a\n\"\\")
+      "stdlib.json.escape-char slash")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stdlib-inline-test-escape-string "a\n\"\\")
       "a\\n\\\"\\\\"
-      "stdlib.json.json-escape-string")
-    (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-      (stdlib.json.json-stringify
-        (stdlib.json.json-stdlib-inline-test-array
-          (stdlib.json.json-stdlib-inline-test-list-cons
+      "stdlib.json.escape-string")
+    (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+      (stdlib.json.stringify
+        (stdlib.json.stdlib-inline-test-array
+          (stdlib.json.stdlib-inline-test-list-cons
             (JsonNumber "1")
-            (stdlib.json.json-stdlib-inline-test-list-cons JsonNull JsonListNil))))
+            (stdlib.json.stdlib-inline-test-list-cons JsonNull JsonListNil))))
       "[1,null]"
-      "stdlib.json.json-stringify array")
-    (stdlib.json.json-stdlib-inline-test-assert-codepoint
-      (stdlib.json.json-codepoint-string 65)
+      "stdlib.json.stringify array")
+    (stdlib.json.stdlib-inline-test-assert-codepoint
+      (stdlib.json.codepoint-string 65)
       "A"
-      "stdlib.json.json-codepoint-string")
-    (match (stdlib.json.json-codepoint-string 200)
+      "stdlib.json.codepoint-string")
+    (match (stdlib.json.codepoint-string 200)
       [(ErrJsonCodepointString _) unit]
       [(OkJsonCodepointString _)
-        (io.panic "stdlib.json.json-codepoint-string rejects unsupported")])
-    (stdlib.json.json-stdlib-inline-test-assert-parse-escape
-      (stdlib.json.json-stdlib-inline-test-parse-unicode-escape "0041" 0)
+        (io.panic "stdlib.json.codepoint-string rejects unsupported")])
+    (stdlib.json.stdlib-inline-test-assert-parse-escape
+      (stdlib.json.stdlib-inline-test-parse-unicode-escape "0041" 0)
       "A"
       4
-      "stdlib.json.json-parse-unicode-escape")
-    (match (stdlib.json.json-stdlib-inline-test-parse-unicode-escape "00xz" 0)
+      "stdlib.json.parse-unicode-escape")
+    (match (stdlib.json.stdlib-inline-test-parse-unicode-escape "00xz" 0)
       [(ErrJsonParseEscape _) unit]
       [(OkJsonParseEscape _ _)
-        (io.panic "stdlib.json.json-parse-unicode-escape rejects invalid")])
-    (stdlib.json.json-stdlib-inline-test-assert-parse-escape
-      (stdlib.json.json-stdlib-inline-test-parse-escape "\\n" 1)
+        (io.panic "stdlib.json.parse-unicode-escape rejects invalid")])
+    (stdlib.json.stdlib-inline-test-assert-parse-escape
+      (stdlib.json.stdlib-inline-test-parse-escape "\\n" 1)
       "\n"
       2
-      "stdlib.json.json-parse-escape")
-    (match (stdlib.json.json-stdlib-inline-test-parse-escape "\\x" 1)
+      "stdlib.json.parse-escape")
+    (match (stdlib.json.stdlib-inline-test-parse-escape "\\x" 1)
       [(ErrJsonParseEscape _) unit]
       [(OkJsonParseEscape _ _)
-        (io.panic "stdlib.json.json-parse-escape rejects invalid")])
-    (stdlib.json.json-stdlib-inline-test-assert-parse-string
-      (stdlib.json.json-stdlib-inline-test-parse-string "\"a\\n\"" 0)
+        (io.panic "stdlib.json.parse-escape rejects invalid")])
+    (stdlib.json.stdlib-inline-test-assert-parse-string
+      (stdlib.json.stdlib-inline-test-parse-string "\"a\\n\"" 0)
       "a\n"
       5
-      "stdlib.json.json-parse-string")
-    (match (stdlib.json.json-stdlib-inline-test-parse-string "\"unterminated" 0)
+      "stdlib.json.parse-string")
+    (match (stdlib.json.stdlib-inline-test-parse-string "\"unterminated" 0)
       [(ErrJsonParseString _) unit]
       [(OkJsonParseString _ _)
-        (io.panic "stdlib.json.json-parse-string rejects invalid")])
-    (stdlib.json.json-stdlib-inline-test-assert-i64-eq
-      (stdlib.json.json-stdlib-inline-test-consume-digits "123abc" 0)
+        (io.panic "stdlib.json.parse-string rejects invalid")])
+    (stdlib.json.stdlib-inline-test-assert-i64-eq
+      (stdlib.json.stdlib-inline-test-consume-digits "123abc" 0)
       3
-      "stdlib.json.json-consume-digits")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-value-number
-      (stdlib.json.json-stdlib-inline-test-parse-number "-2.5e3" 0)
+      "stdlib.json.consume-digits")
+    (stdlib.json.stdlib-inline-test-assert-parse-value-number
+      (stdlib.json.stdlib-inline-test-parse-number "-2.5e3" 0)
       "-2.5e3"
       6
-      "stdlib.json.json-parse-number")
-    (match (stdlib.json.json-stdlib-inline-test-parse-number "01" 0)
+      "stdlib.json.parse-number")
+    (match (stdlib.json.stdlib-inline-test-parse-number "01" 0)
       [(ErrJsonParseValue _) unit]
       [(OkJsonParseValue _ _)
-        (io.panic "stdlib.json.json-parse-number rejects leading zero")])
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64
-      (stdlib.json.json-stdlib-inline-test-number-f64 "42")
+        (io.panic "stdlib.json.parse-number rejects leading zero")])
+    (stdlib.json.stdlib-inline-test-assert-json-f64
+      (stdlib.json.stdlib-inline-test-number-f64 "42")
       42.0
-      "stdlib.json.json-number->f64 int")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64
-      (stdlib.json.json-stdlib-inline-test-number-f64 "-2.5e3")
+      "stdlib.json.number->f64 int")
+    (stdlib.json.stdlib-inline-test-assert-json-f64
+      (stdlib.json.stdlib-inline-test-number-f64 "-2.5e3")
       -2500.0
-      "stdlib.json.json-number->f64 exponent")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64
-      (stdlib.json.json-stdlib-inline-test-number-f64 "6.25E-1")
+      "stdlib.json.number->f64 exponent")
+    (stdlib.json.stdlib-inline-test-assert-json-f64
+      (stdlib.json.stdlib-inline-test-number-f64 "6.25E-1")
       0.625
-      "stdlib.json.json-number->f64 fraction exponent")
-    (match (stdlib.json.json-stdlib-inline-test-number-f64 "-0")
+      "stdlib.json.number->f64 fraction exponent")
+    (match (stdlib.json.stdlib-inline-test-number-f64 "-0")
       [(OkJsonNumberF64 value)
-        (stdlib.json.json-stdlib-inline-test-assert-json-number-text
-          (stdlib.json.json-f64->number-text value)
+        (stdlib.json.stdlib-inline-test-assert-json-number-text
+          (stdlib.json.f64->number-text value)
           "-0"
-          "stdlib.json.json-number->f64 preserves negative zero")]
-      [(ErrJsonNumberF64 _)
-        (io.panic "stdlib.json.json-number->f64 negative zero")])
-    (match (stdlib.json.json-stdlib-inline-test-number-f64 "1e+17")
+          "stdlib.json.number->f64 preserves negative zero")]
+      [(ErrJsonNumberF64 _) (io.panic "stdlib.json.number->f64 negative zero")])
+    (match (stdlib.json.stdlib-inline-test-number-f64 "1e+17")
       [(OkJsonNumberF64 value)
-        (stdlib.json.json-stdlib-inline-test-assert-json-number-text
-          (stdlib.json.json-f64->number-text value)
+        (stdlib.json.stdlib-inline-test-assert-json-number-text
+          (stdlib.json.f64->number-text value)
           "1e+17"
-          "stdlib.json.json-number->f64 large magnitude")]
+          "stdlib.json.number->f64 large magnitude")]
       [(ErrJsonNumberF64 _)
-        (io.panic "stdlib.json.json-number->f64 large magnitude")])
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64-error
-      (stdlib.json.json-stdlib-inline-test-number-f64 "1x")
-      "stdlib.json.json-number->f64 trailing")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64-error
-      (stdlib.json.json-stdlib-inline-test-number-f64 "01")
-      "stdlib.json.json-number->f64 leading")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64-error
-      (stdlib.json.json-stdlib-inline-test-number-f64 "1e309")
-      "stdlib.json.json-number->f64 overflow")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f64-error
-      (stdlib.json.json-stdlib-inline-test-number-f64 "1e-400")
-      "stdlib.json.json-number->f64 underflow")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f32-as-f64
-      (stdlib.json.json-stdlib-inline-test-number-f32 "1.5")
+        (io.panic "stdlib.json.number->f64 large magnitude")])
+    (stdlib.json.stdlib-inline-test-assert-json-f64-error
+      (stdlib.json.stdlib-inline-test-number-f64 "1x")
+      "stdlib.json.number->f64 trailing")
+    (stdlib.json.stdlib-inline-test-assert-json-f64-error
+      (stdlib.json.stdlib-inline-test-number-f64 "01")
+      "stdlib.json.number->f64 leading")
+    (stdlib.json.stdlib-inline-test-assert-json-f64-error
+      (stdlib.json.stdlib-inline-test-number-f64 "1e309")
+      "stdlib.json.number->f64 overflow")
+    (stdlib.json.stdlib-inline-test-assert-json-f64-error
+      (stdlib.json.stdlib-inline-test-number-f64 "1e-400")
+      "stdlib.json.number->f64 underflow")
+    (stdlib.json.stdlib-inline-test-assert-json-f32-as-f64
+      (stdlib.json.stdlib-inline-test-number-f32 "1.5")
       1.5
-      "stdlib.json.json-number->f32")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f32-error
-      (stdlib.json.json-stdlib-inline-test-number-f32 "1e39")
-      "stdlib.json.json-number->f32 overflow")
-    (stdlib.json.json-stdlib-inline-test-assert-json-f32-error
-      (stdlib.json.json-stdlib-inline-test-number-f32 "1e-50")
-      "stdlib.json.json-number->f32 underflow")
-    (stdlib.json.json-stdlib-inline-test-assert-json-number-text
-      (stdlib.json.json-f64->number-text 0.125)
+      "stdlib.json.number->f32")
+    (stdlib.json.stdlib-inline-test-assert-json-f32-error
+      (stdlib.json.stdlib-inline-test-number-f32 "1e39")
+      "stdlib.json.number->f32 overflow")
+    (stdlib.json.stdlib-inline-test-assert-json-f32-error
+      (stdlib.json.stdlib-inline-test-number-f32 "1e-50")
+      "stdlib.json.number->f32 underflow")
+    (stdlib.json.stdlib-inline-test-assert-json-number-text
+      (stdlib.json.f64->number-text 0.125)
       "0.125"
-      "stdlib.json.json-f64->number-text")
-    (stdlib.json.json-stdlib-inline-test-assert-json-number-text
-      (stdlib.json.json-f32->number-text (cast 1.25 : f32))
+      "stdlib.json.f64->number-text")
+    (stdlib.json.stdlib-inline-test-assert-json-number-text
+      (stdlib.json.f32->number-text (cast 1.25 : f32))
       "1.25"
-      "stdlib.json.json-f32->number-text")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-value-bool
-      (stdlib.json.json-stdlib-inline-test-parse-keyword
+      "stdlib.json.f32->number-text")
+    (stdlib.json.stdlib-inline-test-assert-parse-value-bool
+      (stdlib.json.stdlib-inline-test-parse-keyword
         "true"
         0
         "true"
         (JsonBool true))
       true
       4
-      "stdlib.json.json-parse-keyword")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-array-count
-      (stdlib.json.json-stdlib-inline-test-parse-array "[1,true]" 0)
+      "stdlib.json.parse-keyword")
+    (stdlib.json.stdlib-inline-test-assert-parse-array-count
+      (stdlib.json.stdlib-inline-test-parse-array "[1,true]" 0)
       2
       8
-      "stdlib.json.json-parse-array")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-array-count
-      (stdlib.json.json-stdlib-inline-test-parse-array "[]" 0)
+      "stdlib.json.parse-array")
+    (stdlib.json.stdlib-inline-test-assert-parse-array-count
+      (stdlib.json.stdlib-inline-test-parse-array "[]" 0)
       0
       2
-      "stdlib.json.json-parse-array empty")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-object-count
-      (stdlib.json.json-stdlib-inline-test-parse-object "{\"a\":1}" 0)
+      "stdlib.json.parse-array empty")
+    (stdlib.json.stdlib-inline-test-assert-parse-object-count
+      (stdlib.json.stdlib-inline-test-parse-object "{\"a\":1}" 0)
       1
       7
-      "stdlib.json.json-parse-object")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-object-count
-      (stdlib.json.json-stdlib-inline-test-parse-object "{}" 0)
+      "stdlib.json.parse-object")
+    (stdlib.json.stdlib-inline-test-assert-parse-object-count
+      (stdlib.json.stdlib-inline-test-parse-object "{}" 0)
       0
       2
-      "stdlib.json.json-parse-object empty")
-    (stdlib.json.json-stdlib-inline-test-assert-parse-value-bool
-      (stdlib.json.json-stdlib-inline-test-parse-value " false" 0)
+      "stdlib.json.parse-object empty")
+    (stdlib.json.stdlib-inline-test-assert-parse-value-bool
+      (stdlib.json.stdlib-inline-test-parse-value " false" 0)
       false
       6
-      "stdlib.json.json-parse-value")
+      "stdlib.json.parse-value")
     unit))
 
 (test
-  json-parse-stringify-api
+  parse-stringify-api
   (let
     [text : String
       " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"nested\" : { \"ok\" : true, \"empty\" : [] }, \"escaped\" : \"a\\nb\\tc\" } "]
-    (match (stdlib.json.json-parse (& text))
+    (match (stdlib.json.parse (& text))
       [(OkJson doc)
         (begin
-          (stdlib.json.json-stdlib-inline-test-name doc)
-          (stdlib.json.json-stdlib-inline-test-numbers doc)
-          (stdlib.json.json-stdlib-inline-test-nested doc)
-          (stdlib.json.json-stdlib-inline-test-escaped doc)
-          (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-            (stdlib.json.json-stringify doc)
+          (stdlib.json.stdlib-inline-test-name doc)
+          (stdlib.json.stdlib-inline-test-numbers doc)
+          (stdlib.json.stdlib-inline-test-nested doc)
+          (stdlib.json.stdlib-inline-test-escaped doc)
+          (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+            (stdlib.json.stringify doc)
             "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"nested\":{\"ok\":true,\"empty\":[]},\"escaped\":\"a\\nb\\tc\"}"
             "json stringify document")
-          (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-            (stdlib.json.json-stringify (JsonString "a\n\"\\"))
+          (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+            (stdlib.json.stringify (JsonString "a\n\"\\"))
             "\"a\\n\\\"\\\\\""
             "json stringify escapes")
           (let
             [dupe-text : String "{\"a\":1,\"a\":2}"]
             [dupe-key : String "a"]
-            (match (stdlib.json.json-parse (& dupe-text))
+            (match (stdlib.json.parse (& dupe-text))
               [(OkJson dupe-doc)
                 (begin
-                  (stdlib.json.json-stdlib-inline-test-assert-found-number
-                    (stdlib.json.json-object-get dupe-doc (& dupe-key))
+                  (stdlib.json.stdlib-inline-test-assert-found-number
+                    (stdlib.json.object-get dupe-doc (& dupe-key))
                     "1"
                     "json duplicate key lookup keeps first source member")
-                  (stdlib.json.json-stdlib-inline-test-assert-owned-string-eq
-                    (stdlib.json.json-stringify dupe-doc)
+                  (stdlib.json.stdlib-inline-test-assert-owned-string-eq
+                    (stdlib.json.stringify dupe-doc)
                     "{\"a\":1,\"a\":2}"
                     "json duplicate key stringify order"))]
               [(ErrJson _) (io.panic "json duplicate keys should parse")]))
-          (stdlib.json.json-stdlib-inline-test-assert-parse-error
+          (stdlib.json.stdlib-inline-test-assert-parse-error
             "{\"bad\":[1,]}"
             "json rejects trailing comma")
-          (stdlib.json.json-stdlib-inline-test-assert-parse-error
+          (stdlib.json.stdlib-inline-test-assert-parse-error
             "{\"bad\" 1}"
             "json rejects missing colon")
-          (stdlib.json.json-stdlib-inline-test-assert-parse-error
+          (stdlib.json.stdlib-inline-test-assert-parse-error
             "\"unterminated"
             "json rejects unterminated string")
-          (stdlib.json.json-stdlib-inline-test-assert-parse-error
+          (stdlib.json.stdlib-inline-test-assert-parse-error
             "01"
             "json rejects leading zero")
-          (stdlib.json.json-stdlib-inline-test-assert-parse-error
+          (stdlib.json.stdlib-inline-test-assert-parse-error
             "true false"
             "json rejects trailing text")
           unit)]

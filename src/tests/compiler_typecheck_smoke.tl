@@ -1282,7 +1282,7 @@
     (module generated.json_nested_payload_user)
     (import stdlib.json as json)
     (define (score [value : json.Json]) : i64
-      (match (json.json-object-get-owned value \"zip\")
+      (match (json.object-get-owned value \"zip\")
         [(json.JsonFound __json_value)
           (match __json_value
             [(json.JsonNumber text) (__tl_string_length text)]

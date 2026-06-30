@@ -250,7 +250,7 @@
         (serialize-json-make-samples)
         (serialize-json-combo))]
     [json : json.Json (person_json.to-json person)]
-    [encoded : String (stdlib.json.json-stringify json)]
+    [encoded : String (stdlib.json.stringify json)]
     (and
       (string.eq
         encoded

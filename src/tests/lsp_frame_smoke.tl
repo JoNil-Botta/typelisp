@@ -66,14 +66,14 @@
         (tc-inlay-hint-record! 1 (+ next-off 1) "i64")
         (let
           [hints : json.JsonList (lsp-inlay-build src 0 0)]
-          [rendered : String (json.json-stringify (lsp-json-array hints))]
+          [rendered : String (json.stringify (lsp-json-array hints))]
           [type-label : String "\": i64\""]
           [total-pos : String "\"character\":33"]
           [next-pos : String "\"character\":59"]
           (begin
             (tc-inlay-hints-disable!)
             (and
-              (= (json.json-list-count hints) 2)
+              (= (json.list-count hints) 2)
               (string.contains (& rendered) (& type-label))
               (string.contains (& rendered) (& total-pos))
               (string.contains (& rendered) (& next-pos)))))))))
@@ -85,7 +85,7 @@
       [(ResultFormatString.Ok formatted)
         (let
           [rendered : String
-            (json.json-stringify (lsp-formatting-edit messy formatted))]
+            (json.stringify (lsp-formatting-edit messy formatted))]
           [sig : String "(define (f) : i64"]
           [newtext-key : String "\"newText\""]
           [range-key : String "\"range\""]
@@ -180,8 +180,8 @@
         0
         (string.string-length src)
         json.JsonListNil)]
-    [rendered : String (json.json-stringify (lsp-json-array refs))]
-    [count-ok : bool (= (json.json-list-count refs) 2)]
+    [rendered : String (json.stringify (lsp-json-array refs))]
+    [count-ok : bool (= (json.list-count refs) 2)]
     [needle0 : String "\"line\":0"]
     [line0-ok : bool (string.contains (& rendered) (& needle0))]
     (and count-ok line0-ok)))

@@ -18,7 +18,8 @@
   (home Address)
   (scores (Array i64 3))
   (previous (Array Address 2))
-  (samples (Array i64)))
+  (samples (Array i64))
+  (combo (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))))
 
 (import (serialize.serialize json Person) as person_json)
 (import (serialize.serialize json Person) as person_json_again)
@@ -71,6 +72,31 @@
           (serialize-json-address-json "222" "Paris")
           json.JsonListNil)))))
 
+(define (serialize-json-combo-json) : json.Json
+  (json.JsonArray
+    (box
+      (serialize-json-item
+        (json.JsonNumber "99")
+        (serialize-json-item
+          (serialize-json-address-json "333" "Rome")
+          (serialize-json-item
+            (json.JsonArray
+              (box
+                (serialize-json-item
+                  (json.JsonNumber "9")
+                  (serialize-json-item (json.JsonNumber "10") json.JsonListNil))))
+            (serialize-json-item
+              (serialize-json-samples-json)
+              (serialize-json-item
+                (json.JsonArray
+                  (box
+                    (serialize-json-item
+                      (json.JsonString "inner")
+                      (serialize-json-item
+                        (json.JsonBool true)
+                        json.JsonListNil))))
+                json.JsonListNil))))))))
+
 (define (serialize-json-person-json [age : json.Json]) : json.Json
   (json.JsonObject
     (box
@@ -101,7 +127,10 @@
                       (serialize-json-member
                         "samples"
                         (serialize-json-samples-json)
-                        json.JsonMemberListNil))))))))))))
+                        (serialize-json-member
+                          "combo"
+                          (serialize-json-combo-json)
+                          json.JsonMemberListNil)))))))))))))
 
 (define (serialize-json-person-missing-age) : json.Json
   (json.JsonObject
@@ -158,6 +187,17 @@
     (serialize-json-address-eq? (array-ref previous 0) 111 "Oxford")
     (serialize-json-address-eq? (array-ref previous 1) 222 "Paris")))
 
+(define (serialize-json-combo-ok?
+  [combo : (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))]) : bool
+  (and
+    (= (tuple-ref combo 0) 99)
+    (serialize-json-address-eq? (tuple-ref combo 1) 333 "Rome")
+    (= (array.ref (tuple-ref combo 2) 0) 9)
+    (= (array.ref (tuple-ref combo 2) 1) 10)
+    (serialize-json-samples-ok? (tuple-ref combo 3))
+    (string.eq (tuple-ref (tuple-ref combo 4) 0) "inner")
+    (tuple-ref (tuple-ref combo 4) 1)))
+
 (define (serialize-json-person-ok? [person : Person]) : bool
   (and
     (string.eq (struct-get person name) "Ada\nLovelace")
@@ -168,7 +208,8 @@
     (serialize-json-address-ok? (struct-get person home))
     (serialize-json-scores-ok? (struct-get person scores))
     (serialize-json-previous-ok? (struct-get person previous))
-    (serialize-json-samples-ok? (struct-get person samples))))
+    (serialize-json-samples-ok? (struct-get person samples))
+    (serialize-json-combo-ok? (struct-get person combo))))
 
 (define (serialize-json-make-samples) : (Array i64)
   (let
@@ -180,6 +221,19 @@
 
 (define (serialize-json-previous-addresses) : (Array Address 2)
   (array (Address 111 "Oxford") (Address 222 "Paris")))
+
+(define (serialize-json-combo) : (Tuple
+    i64
+    Address
+    (Array i64 2)
+    (Array i64)
+    (Tuple String bool))
+  (tuple
+    99
+    (Address 333 "Rome")
+    (array 9 10)
+    (serialize-json-make-samples)
+    (tuple "inner" true)))
 
 (define (serialize-json-roundtrip-ok?) : bool
   (let
@@ -193,13 +247,14 @@
         (Address 12345 "London")
         (array 4 5 6)
         (serialize-json-previous-addresses)
-        (serialize-json-make-samples))]
+        (serialize-json-make-samples)
+        (serialize-json-combo))]
     [json : json.Json (person_json.to-json person)]
     [encoded : String (stdlib.json.json-stringify json)]
     (and
       (string.eq
         encoded
-        "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"score\":9.5,\"ratio\":1.25,\"home\":{\"zip\":12345,\"city\":\"London\"},\"scores\":[4,5,6],\"previous\":[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}],\"samples\":[7,8]}")
+        "{\"name\":\"Ada\\nLovelace\",\"age\":36,\"active\":true,\"score\":9.5,\"ratio\":1.25,\"home\":{\"zip\":12345,\"city\":\"London\"},\"scores\":[4,5,6],\"previous\":[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}],\"samples\":[7,8],\"combo\":[99,{\"zip\":333,\"city\":\"Rome\"},[9,10],[7,8],[\"inner\",true]]}")
       (match (person_json.from-json json)
         [(person_json.Ok parsed) (serialize-json-person-ok? parsed)]
         [(person_json.Err _) false]))))

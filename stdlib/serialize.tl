@@ -34,7 +34,8 @@
 ;#   `object-finish(fields: Expr) -> Value`,
 ;#   `expect-object(value: Expr, type-name: Expr, err-ctor: Expr) -> unit`, and
 ;#   `field-value(object: Expr, name: Expr, err-ctor: Expr) -> Expr`.
-;# - Sequence hooks when any serialized field is a fixed or dynamic array:
+;# - Sequence hooks when any serialized field is a fixed array, dynamic array,
+;#   or tuple:
 ;#   `sequence-empty() -> ValueList`,
 ;#   `sequence-element(index: Expr, value: Expr, rest: Expr) -> ValueList`,
 ;#   `sequence-finish(items: Expr) -> Value`,
@@ -104,6 +105,104 @@
                                 (+ (* d3 1000) (+ (* d2 100) (+ (* d1 10) d0))))))
                           (comptime.comptime-error
                             "serialize: fixed array length suffix is too long"))))))))))))))
+
+;: Emit a tuple's encoded element-list expression using literal tuple indexes.
+(defmacro (encode-tuple-elements
+  [format : Module]
+  [tuple-type : type]
+  [nested-alias : comptime.Expr]
+  [value : comptime.Expr]
+  [index-expr : comptime.Expr]
+  [items : comptime.Expr]) : comptime.Expr
+  (match index-expr
+    [(comptime.ExprInt index)
+      (if (< index 0)
+        items
+        (let
+          [element-type : comptime.Expr (tuple-element-type tuple-type index)]
+          [element-alias : comptime.Expr
+            (match nested-alias
+              [(comptime.ExprVar nested-alias-text)
+                (comptime.expr-var
+                  (comptime.string-append
+                    (comptime.string-append nested-alias-text "_tuple_")
+                    (comptime.int->string index)))]
+              [_
+                (comptime.comptime-error
+                  "serialize: nested alias must be a name")])]
+          [element-hook : comptime.Expr
+            (comptime.module-hook format "sequence-element")]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
+          [element-value : comptime.Expr (comptime.expr-tuple-ref value index)]
+          [prev-index : comptime.Expr (comptime.expr-int (- index 1))]
+          `(stdlib.serialize.encode-tuple-elements
+            ,format-expr
+            ,tuple-type
+            ,nested-alias
+            ,value
+            ,prev-index
+            (,element-hook
+              ,index-expr
+              (stdlib.serialize.encode-value
+                ,format-expr
+                ,element-type
+                ,element-alias
+                ,element-value)
+              ,items))))]
+    [_
+      (comptime.comptime-error
+        "serialize: tuple encode index must be an integer literal")]))
+
+;: Emit a tuple constructor by accumulating decoded element expressions.
+(defmacro (decode-tuple-items
+  [format : Module]
+  [tuple-type : type]
+  [nested-alias : comptime.Expr]
+  [value : comptime.Expr]
+  [err-ctor : comptime.Expr]
+  [index-expr : comptime.Expr]
+  [items : comptime.Expr ...]) : comptime.Expr
+  (match index-expr
+    [(comptime.ExprInt index)
+      (if (>= index (tuple-element-count tuple-type))
+        `(tuple ,@items)
+        (let
+          [element-type : comptime.Expr (tuple-element-type tuple-type index)]
+          [element-alias : comptime.Expr
+            (match nested-alias
+              [(comptime.ExprVar nested-alias-text)
+                (comptime.expr-var
+                  (comptime.string-append
+                    (comptime.string-append nested-alias-text "_tuple_")
+                    (comptime.int->string index)))]
+              [_
+                (comptime.comptime-error
+                  "serialize: nested alias must be a name")])]
+          [element-hook : comptime.Expr
+            (comptime.module-hook format "sequence-element-value")]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
+          [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
+          [decoded : comptime.Expr
+            `(stdlib.serialize.decode-value
+              ,format-expr
+              ,element-type
+              ,element-alias
+              (,element-hook ,value ,index-expr ,err-ctor)
+              ,err-ctor)]
+          `(stdlib.serialize.decode-tuple-items
+            ,format-expr
+            ,tuple-type
+            ,nested-alias
+            ,value
+            ,err-ctor
+            ,next-index
+            ,@items
+            ,decoded)))]
+    [_
+      (comptime.comptime-error
+        "serialize: tuple decode index must be an integer literal")]))
 
 ;: Emit the encoded value expression for one supported value type.
 (defmacro (encode-value
@@ -237,6 +336,22 @@
                           __serialize_items))
                       (set! __serialize_i (- __serialize_i 1))))
                   (,finish-hook __serialize_items))))]
+          ["tuple"
+            (let
+              [empty-hook : comptime.Expr
+                (comptime.module-hook format "sequence-empty")]
+              [finish-hook : comptime.Expr
+                (comptime.module-hook format "sequence-finish")]
+              [last-index : comptime.Expr
+                (comptime.expr-int (- (tuple-element-count value-type) 1))]
+              `(,finish-hook
+                (stdlib.serialize.encode-tuple-elements
+                  ,format-expr
+                  ,value-type
+                  ,nested-alias
+                  ,value
+                  ,last-index
+                  (,empty-hook))))]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))
@@ -380,6 +495,25 @@
                           ,err-ctor))
                       (set! __serialize_i (+ __serialize_i 1))))
                   __serialize_out)))]
+          ["tuple"
+            (let
+              [length-hook : comptime.Expr
+                (comptime.module-hook format "sequence-length")]
+              [length-expr : comptime.Expr
+                (comptime.expr-int (tuple-element-count value-type))]
+              `(let
+                [__serialize_count : i64 (,length-hook ,value ,err-ctor)]
+                (begin
+                  (if (!= __serialize_count ,length-expr)
+                    (return (,err-ctor "serialize: sequence length mismatch"))
+                    unit)
+                  (stdlib.serialize.decode-tuple-items
+                    ,format-expr
+                    ,value-type
+                    ,nested-alias
+                    ,value
+                    ,err-ctor
+                    0))))]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))
@@ -553,7 +687,52 @@
             ,format-expr
             ,element-type
             ,(comptime.expr-var element-alias)))]
+      ["tuple"
+        `(stdlib.serialize.nested-imports-for-tuple
+          ,format-expr
+          ,value-type
+          ,nested-alias
+          0)]
       [_ `(begin)])))
+
+;: Emit recursive generated serializer imports needed for tuple element types.
+(defmacro (nested-imports-for-tuple
+  [format : Module]
+  [tuple-type : type]
+  [nested-alias : comptime.Expr]
+  [index-expr : comptime.Expr]) : Decls
+  (match index-expr
+    [(comptime.ExprInt index)
+      (if (>= index (tuple-element-count tuple-type))
+        `(begin)
+        (let
+          [element-type : comptime.Expr (tuple-element-type tuple-type index)]
+          [element-alias : comptime.Expr
+            (match nested-alias
+              [(comptime.ExprVar nested-alias-text)
+                (comptime.expr-var
+                  (comptime.string-append
+                    (comptime.string-append nested-alias-text "_tuple_")
+                    (comptime.int->string index)))]
+              [_
+                (comptime.comptime-error
+                  "serialize: nested alias must be a name")])]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
+          [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
+          `(begin
+            (stdlib.serialize.nested-imports-for-tuple
+              ,format-expr
+              ,tuple-type
+              ,nested-alias
+              ,next-index)
+            (stdlib.serialize.nested-import-for-type
+              ,format-expr
+              ,element-type
+              ,element-alias))))]
+    [_
+      (comptime.comptime-error
+        "serialize: nested tuple import index must be an integer literal")]))
 
 ;: Emit recursive generated serializer imports needed for nested struct fields.
 (defmacro (nested-imports

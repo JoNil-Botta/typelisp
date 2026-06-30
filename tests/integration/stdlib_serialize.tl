@@ -17,7 +17,8 @@
   (home Address)
   (scores (Array i64 3))
   (previous (Array Address 2))
-  (samples (Array i64)))
+  (samples (Array i64))
+  (combo (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))))
 
 (import (serialize.serialize toy Person) as person_ser)
 (import (serialize.serialize toy Person) as person_ser_again)
@@ -45,6 +46,17 @@
     (serialize-address-eq? (array-ref previous 0) 111 "Oxford")
     (serialize-address-eq? (array-ref previous 1) 222 "Paris")))
 
+(define (serialize-combo-ok?
+  [combo : (Tuple i64 Address (Array i64 2) (Array i64) (Tuple String bool))]) : bool
+  (and
+    (= (tuple-ref combo 0) 99)
+    (serialize-address-eq? (tuple-ref combo 1) 333 "Rome")
+    (= (array.ref (tuple-ref combo 2) 0) 9)
+    (= (array.ref (tuple-ref combo 2) 1) 10)
+    (serialize-samples-ok? (tuple-ref combo 3))
+    (string.eq (tuple-ref (tuple-ref combo 4) 0) "inner")
+    (tuple-ref (tuple-ref combo 4) 1)))
+
 (define (serialize-person-ok? [person : Person]) : bool
   (and
     (string.eq (struct-get person name) "Ada")
@@ -54,7 +66,8 @@
     (serialize-address-ok? (struct-get person home))
     (serialize-scores-ok? (struct-get person scores))
     (serialize-previous-ok? (struct-get person previous))
-    (serialize-samples-ok? (struct-get person samples))))
+    (serialize-samples-ok? (struct-get person samples))
+    (serialize-combo-ok? (struct-get person combo))))
 
 (define (serialize-address-value-city-ok?
   [value : toy.Value]
@@ -108,6 +121,63 @@
           [(toy.Missing) false]))]
     [_ false]))
 
+(define (serialize-combo-fixed-array-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 2)
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 10)]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-combo-inner-tuple-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 2)
+        (match (toy.value-list-get (box-get items) 0)
+          [(toy.Found item)
+            (match item
+              [(toy.Text found) (string.eq found "inner")]
+              [_ false])]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item)
+            (match item
+              [(toy.Bool found) found]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-combo-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 5)
+        (match (toy.value-list-get (box-get items) 0)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 99)]
+              [_ false])]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item) (serialize-address-value-city-ok? item "Rome")]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 2)
+          [(toy.Found item) (serialize-combo-fixed-array-value-ok? item)]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 3)
+          [(toy.Found item) (serialize-samples-value-ok? item)]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 4)
+          [(toy.Found item) (serialize-combo-inner-tuple-value-ok? item)]
+          [(toy.Missing) false]))]
+    [_ false]))
+
 (define (serialize-encoded-shape-ok? [value : toy.Value]) : bool
   (match value
     [(toy.Object fields)
@@ -123,6 +193,9 @@
           [(toy.Missing) false])
         (match (toy.field-list-get (box-get fields) "samples")
           [(toy.Found samples) (serialize-samples-value-ok? samples)]
+          [(toy.Missing) false])
+        (match (toy.field-list-get (box-get fields) "combo")
+          [(toy.Found combo) (serialize-combo-value-ok? combo)]
           [(toy.Missing) false]))]
     [_ false]))
 
@@ -137,6 +210,19 @@
       (array-set! samples 1 8)
       samples)))
 
+(define (serialize-combo) : (Tuple
+    i64
+    Address
+    (Array i64 2)
+    (Array i64)
+    (Tuple String bool))
+  (tuple
+    99
+    (Address 333 "Rome")
+    (array 9 10)
+    (serialize-make-samples)
+    (tuple "inner" true)))
+
 (define (serialize-encoded-shape-roundtrip-ok?) : bool
   (let
     [person : Person
@@ -148,7 +234,8 @@
         (Address 12345 "London")
         (array 4 5 6)
         (serialize-previous-addresses)
-        (serialize-make-samples))]
+        (serialize-make-samples)
+        (serialize-combo))]
     [encoded : toy.Value (person_ser.encode person)]
     (serialize-encoded-shape-ok? encoded)))
 
@@ -163,7 +250,8 @@
         (Address 12345 "London")
         (array 4 5 6)
         (serialize-previous-addresses)
-        (serialize-make-samples))]
+        (serialize-make-samples)
+        (serialize-combo))]
     [encoded : toy.Value (person_ser.encode person)]
     (match (person_ser.decode encoded)
       [(person_ser.Ok parsed) (serialize-person-ok? parsed)]
@@ -210,7 +298,8 @@
                             (Address 12345 "London")
                             (array 4 5 6)
                             (serialize-previous-addresses)
-                            (serialize-make-samples)))
+                            (serialize-make-samples)
+                            (serialize-combo)))
                         (box toy.FieldNil)))))))))))))
 
 (define (serialize-missing-field-ok?) : bool
@@ -234,7 +323,8 @@
         (Address 12345 "London")
         (array 4 5 6)
         (serialize-previous-addresses)
-        (serialize-make-samples))]
+        (serialize-make-samples)
+        (serialize-combo))]
     [encoded : toy.Value (person_ser_again.encode person)]
     (match (person_ser_again.decode encoded)
       [(person_ser_again.Ok parsed) (serialize-person-ok? parsed)]

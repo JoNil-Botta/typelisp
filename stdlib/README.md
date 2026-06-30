@@ -51,10 +51,15 @@ use.
   exported compile-time helper signatures such as `expr-int`,
   `expr-list-head`, `expr-clause-list->expr-list`, `pattern-variant`,
   `match-arm`, and `expr-match`. `expr-type` returns the produced type of a
-  captured expression for macro-time reflection. The compiler verifies these
-  shapes when the module is loaded and maps the syntax declarations and helper
-  calls to the current compile-time-only macro representation during the CTFE
-  migration. Import it with `(import "stdlib/comptime.tl")`.
+  captured expression for macro-time reflection. Dense sequence accessors use
+  the public `items` and `len` fields in ordinary stdlib source; remaining
+  compiler intrinsics are syntax constructors, reflection helpers, and
+  provenance-preserving sequence operations such as `expr-list-tail`,
+  `expr-clause-list->expr-list`, and `expr-binding-clause-list->expr-list`.
+  The compiler verifies these shapes when the module is loaded and maps the
+  syntax declarations and helper calls to the current compile-time-only macro
+  representation during the CTFE migration. Import it with
+  `(import "stdlib/comptime.tl")`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
@@ -211,11 +216,11 @@ use.
   module exposes `encode` / `decode` over the strategy's `Value` type, a local
   `Result` enum, and any format-specific declarations emitted by the strategy's
   `extra-decls` hook. Current derives cover structs with scalar `bool`, integer,
-  float, and `String` fields, nested structs, fixed arrays, and dynamic arrays;
-  strategy hooks own object and sequence representation, decode diagnostics, and
-  helper aliases. The checked toy format exercises the hook contract, and
-  `json.tl` provides the JSON integration strategy. Enum serialization remains a
-  separate follow-up.
+  float, and `String` fields, nested structs, fixed arrays, dynamic arrays, and
+  tuples; strategy hooks own object and sequence representation, decode
+  diagnostics, and helper aliases. The checked toy format exercises the hook
+  contract, and `json.tl` provides the JSON integration strategy. Enum
+  serialization remains a separate follow-up.
 - `process.tl`: process command/output/error data model and the public
   `output`/`start`/`wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

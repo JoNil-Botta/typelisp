@@ -1777,7 +1777,7 @@
     (AstMaybeType.Some (AstType.String))
     (ast-node-pool-context-expr-push
       pools
-      (AstExpr.Literal (AstLitString contents)))))
+      (AstExpr.Literal (AstLiteral.String contents)))))
 
 (define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
   (let
@@ -6077,7 +6077,7 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match value
-          [(AstExpr.Literal (AstLitString text))
+          [(AstExpr.Literal (AstLiteral.String text))
             (and
               (string.string-eq (intern-str got) name)
               (string.string-eq text want))]

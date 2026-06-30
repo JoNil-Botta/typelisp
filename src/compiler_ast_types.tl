@@ -28,24 +28,24 @@
   (end-col i64))
 
 (defenum AstLiteral
-  (AstLitInt i64 String)
-  (AstLitFloat String)
-  (AstLitBool bool)
-  (AstLitChar char)
-  (AstLitString String)
-  (AstLitUnit))
+  (Int i64 String)
+  (Float String)
+  (Bool bool)
+  (Char char)
+  (String String)
+  (Unit))
 
 (define (ast-lit-int [value : i64]) : AstLiteral
-  (AstLitInt value ""))
+  (AstLiteral.Int value ""))
 
 (define (ast-lit-int-value [lit : AstLiteral]) : i64
   (match lit
-    [(AstLitInt value _) value]
+    [(AstLiteral.Int value _) value]
     [_ 0]))
 
 (define (ast-lit-int-text [lit : AstLiteral]) : String
   (match lit
-    [(AstLitInt value text)
+    [(AstLiteral.Int value text)
       (if (> (string.string-length text) 0)
         text
         (string.int->string value))]
@@ -177,36 +177,36 @@
       (cast magnitude : i64))))
 
 (defenum AstBinOp
-  (AstBinAdd)
-  (AstBinSub)
-  (AstBinMul)
-  (AstBinDiv)
-  (AstBinMod)
-  (AstBinEq)
-  (AstBinNe)
-  (AstBinLt)
-  (AstBinLe)
-  (AstBinGt)
-  (AstBinGe)
-  (AstBinAnd)
-  (AstBinOr)
-  (AstBinBitAnd)
-  (AstBinBitOr)
-  (AstBinBitXor)
-  (AstBinShl)
-  (AstBinShr))
+  (Add)
+  (Sub)
+  (Mul)
+  (Div)
+  (Mod)
+  (Eq)
+  (Ne)
+  (Lt)
+  (Le)
+  (Gt)
+  (Ge)
+  (And)
+  (Or)
+  (BitAnd)
+  (BitOr)
+  (BitXor)
+  (Shl)
+  (Shr))
 
 (defenum AstUnOp
-  (AstUnNeg)
-  (AstUnNot)
-  (AstUnBitNot))
+  (Neg)
+  (Not)
+  (BitNot))
 
 (defenum AstReduceOp
-  (AstReduceSum)
-  (AstReduceMin)
-  (AstReduceMax)
-  (AstReduceAll)
-  (AstReduceAny))
+  (Sum)
+  (Min)
+  (Max)
+  (All)
+  (Any))
 
 (defenum AstType
   (I64)
@@ -4543,7 +4543,7 @@
         (and
           (= name (ci.intern want-name))
           (match value
-            [(AstExpr.Literal (AstLitInt actual _)) (= actual want-value)]
+            [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual want-value)]
             [_ false])))]
     [_ false]))
 
@@ -4682,7 +4682,7 @@
     [lit : AstLiteral (ast-lit-int 41)]
     [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
     [expr : i64
-      (ast-expr-binary (AstBinAdd) (ast-node-push (AstExpr.Literal lit)) one)]
+      (ast-expr-binary (AstBinOp.Add) (ast-node-push (AstExpr.Literal lit)) one)]
     [nested-expr-pattern-ok? : bool (compiler-ast-expr-pattern-box-smoke?)]
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]

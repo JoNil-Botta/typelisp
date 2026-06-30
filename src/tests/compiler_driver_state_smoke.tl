@@ -30,7 +30,7 @@
   (match (ast-expr-node-pool-state-get pool id)
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value _) (= value expected)]
+        [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -54,7 +54,7 @@
   (match (ast-node-get id)
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value _) (= value expected)]
+        [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -275,7 +275,7 @@
   [id : i64]
   [want : bool]) : bool
   (match (ast-node-pool-context-expr-get pools id)
-    [(AstExpr.Literal (AstLitBool value)) (= value want)]
+    [(AstExpr.Literal (AstLiteral.Bool value)) (= value want)]
     [_ false]))
 
 (define (compiler-driver-state-smoke-context-if-bool-lits?
@@ -466,7 +466,7 @@
     (ast-node-pool-context-expr-get pools body))
     [(AstExpr.Binary op left right)
       (match op
-        [(AstBinAdd)
+        [(AstBinOp.Add)
           (match (compiler-driver-state-smoke-context-expr-unspan
             pools
             (ast-node-pool-context-expr-get pools left))
@@ -477,7 +477,7 @@
                   (ast-node-pool-context-expr-get pools right))
                   [(AstExpr.Literal lit)
                     (match lit
-                      [(AstLitInt value _) (= value 7)]
+                      [(AstLiteral.Int value _) (= value 7)]
                       [_ false])]
                   [_ false])
                 false)]
@@ -610,7 +610,7 @@
         [cond-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExpr.Literal (AstLitBool true)))]
+            (AstExpr.Literal (AstLiteral.Bool true)))]
         [then-id : i64
           (ast-node-pool-context-expr-push
             pools-a
@@ -623,11 +623,11 @@
         [quote-cond-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExpr.Literal (AstLitBool true)))]
+            (AstExpr.Literal (AstLiteral.Bool true)))]
         [quote-false-id : i64
           (ast-node-pool-context-expr-push
             pools-a
-            (AstExpr.Literal (AstLitBool false)))]
+            (AstExpr.Literal (AstLiteral.Bool false)))]
         [quote-var-id : i64
           (ast-node-pool-context-expr-push
             pools-a

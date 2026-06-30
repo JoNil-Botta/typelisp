@@ -1179,11 +1179,11 @@
 ;; --- literals ---------------------------------------------------------------
 (define (ctfe-eval-literal [lit : AstLiteral] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match lit
-    [(AstLitInt n _) (ResultCtfe.Ok (CompilerCtfeValue.I64 n) fuel)]
-    [(AstLitBool b) (ResultCtfe.Ok (CompilerCtfeValue.Bool b) fuel)]
-    [(AstLitChar c) (ResultCtfe.Ok (CompilerCtfeValue.Char c) fuel)]
-    [(AstLitUnit) (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)]
-    [(AstLitFloat text)
+    [(AstLiteral.Int n _) (ResultCtfe.Ok (CompilerCtfeValue.I64 n) fuel)]
+    [(AstLiteral.Bool b) (ResultCtfe.Ok (CompilerCtfeValue.Bool b) fuel)]
+    [(AstLiteral.Char c) (ResultCtfe.Ok (CompilerCtfeValue.Char c) fuel)]
+    [(AstLiteral.Unit) (ResultCtfe.Ok (CompilerCtfeValue.Unit) fuel)]
+    [(AstLiteral.Float text)
       (match (compiler-float-parse-f64 text)
         [(CompilerFloatSomeF64 value)
           (if (compiler-float-f64-finite? value)
@@ -1203,7 +1203,8 @@
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))))])]
-    [(AstLitString text) (ResultCtfe.Ok (CompilerCtfeValue.String text) fuel)]))
+    [(AstLiteral.String text)
+      (ResultCtfe.Ok (CompilerCtfeValue.String text) fuel)]))
 
 ;; --- binary operators -------------------------------------------------------
 ;; i64 arithmetic/bitwise/shift and i64 comparisons.
@@ -1214,37 +1215,39 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinAdd) (ResultCtfe.Ok (CompilerCtfeValue.I64 (+ a b)) fuel)]
-    [(AstBinSub) (ResultCtfe.Ok (CompilerCtfeValue.I64 (- a b)) fuel)]
-    [(AstBinMul) (ResultCtfe.Ok (CompilerCtfeValue.I64 (* a b)) fuel)]
-    [(AstBinDiv)
+    [(AstBinOp.Add) (ResultCtfe.Ok (CompilerCtfeValue.I64 (+ a b)) fuel)]
+    [(AstBinOp.Sub) (ResultCtfe.Ok (CompilerCtfeValue.I64 (- a b)) fuel)]
+    [(AstBinOp.Mul) (ResultCtfe.Ok (CompilerCtfeValue.I64 (* a b)) fuel)]
+    [(AstBinOp.Div)
       (if (= b 0)
         (ResultCtfe.Err
           (box (ctfe-diagnostic-at-expr expr "division by zero in comptime")))
         (ResultCtfe.Ok (CompilerCtfeValue.I64 (/ a b)) fuel))]
-    [(AstBinMod)
+    [(AstBinOp.Mod)
       (if (= b 0)
         (ResultCtfe.Err
           (box (ctfe-diagnostic-at-expr expr "modulo by zero in comptime")))
         (ResultCtfe.Ok (CompilerCtfeValue.I64 (% a b)) fuel))]
-    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
-    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
-    [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
-    [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
-    [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
-    [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
-    [(AstBinBitAnd) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-and a b)) fuel)]
-    [(AstBinBitOr) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-or a b)) fuel)]
-    [(AstBinBitXor) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-xor a b)) fuel)]
-    [(AstBinShl) (ResultCtfe.Ok (CompilerCtfeValue.I64 (shl a b)) fuel)]
-    [(AstBinShr) (ResultCtfe.Ok (CompilerCtfeValue.I64 (shr a b)) fuel)]
-    [(AstBinAnd)
+    [(AstBinOp.Eq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
+    [(AstBinOp.Ne) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
+    [(AstBinOp.Lt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
+    [(AstBinOp.Le) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
+    [(AstBinOp.Gt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
+    [(AstBinOp.Ge) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
+    [(AstBinOp.BitAnd)
+      (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-and a b)) fuel)]
+    [(AstBinOp.BitOr) (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-or a b)) fuel)]
+    [(AstBinOp.BitXor)
+      (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-xor a b)) fuel)]
+    [(AstBinOp.Shl) (ResultCtfe.Ok (CompilerCtfeValue.I64 (shl a b)) fuel)]
+    [(AstBinOp.Shr) (ResultCtfe.Ok (CompilerCtfeValue.I64 (shr a b)) fuel)]
+    [(AstBinOp.And)
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
             "'and' in comptime requires bool operands")))]
-    [(AstBinOr)
+    [(AstBinOp.Or)
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
@@ -1280,21 +1283,21 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinAdd) (ctfe-f64-result (+ a b) expr fuel)]
-    [(AstBinSub) (ctfe-f64-result (- a b) expr fuel)]
-    [(AstBinMul) (ctfe-f64-result (* a b) expr fuel)]
-    [(AstBinDiv)
+    [(AstBinOp.Add) (ctfe-f64-result (+ a b) expr fuel)]
+    [(AstBinOp.Sub) (ctfe-f64-result (- a b) expr fuel)]
+    [(AstBinOp.Mul) (ctfe-f64-result (* a b) expr fuel)]
+    [(AstBinOp.Div)
       (if (= b 0.0)
         (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr expr "float division by zero in comptime")))
         (ctfe-f64-result (/ a b) expr fuel))]
-    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
-    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
-    [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
-    [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
-    [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
-    [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
+    [(AstBinOp.Eq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
+    [(AstBinOp.Ne) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
+    [(AstBinOp.Lt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
+    [(AstBinOp.Le) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
+    [(AstBinOp.Gt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
+    [(AstBinOp.Ge) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -1309,21 +1312,21 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinAdd) (ctfe-f32-result (+ a b) expr fuel)]
-    [(AstBinSub) (ctfe-f32-result (- a b) expr fuel)]
-    [(AstBinMul) (ctfe-f32-result (* a b) expr fuel)]
-    [(AstBinDiv)
+    [(AstBinOp.Add) (ctfe-f32-result (+ a b) expr fuel)]
+    [(AstBinOp.Sub) (ctfe-f32-result (- a b) expr fuel)]
+    [(AstBinOp.Mul) (ctfe-f32-result (* a b) expr fuel)]
+    [(AstBinOp.Div)
       (if (= b 0.0)
         (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr expr "float division by zero in comptime")))
         (ctfe-f32-result (/ a b) expr fuel))]
-    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
-    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
-    [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
-    [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
-    [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
-    [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
+    [(AstBinOp.Eq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= a b)) fuel)]
+    [(AstBinOp.Ne) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= a b)) fuel)]
+    [(AstBinOp.Lt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< a b)) fuel)]
+    [(AstBinOp.Le) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= a b)) fuel)]
+    [(AstBinOp.Gt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> a b)) fuel)]
+    [(AstBinOp.Ge) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= a b)) fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -1339,16 +1342,16 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq)
+    [(AstBinOp.Eq)
       (ResultCtfe.Ok
         (CompilerCtfeValue.Bool (or (and a b) (and (not a) (not b))))
         fuel)]
-    [(AstBinNe)
+    [(AstBinOp.Ne)
       (ResultCtfe.Ok
         (CompilerCtfeValue.Bool (not (or (and a b) (and (not a) (not b)))))
         fuel)]
-    [(AstBinAnd) (ResultCtfe.Ok (CompilerCtfeValue.Bool (and a b)) fuel)]
-    [(AstBinOr) (ResultCtfe.Ok (CompilerCtfeValue.Bool (or a b)) fuel)]
+    [(AstBinOp.And) (ResultCtfe.Ok (CompilerCtfeValue.Bool (and a b)) fuel)]
+    [(AstBinOp.Or) (ResultCtfe.Ok (CompilerCtfeValue.Bool (or a b)) fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -1367,12 +1370,12 @@
     [ca : i64 (ctfe-char-code a)]
     [cb : i64 (ctfe-char-code b)]
     (match op
-      [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= ca cb)) fuel)]
-      [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= ca cb)) fuel)]
-      [(AstBinLt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< ca cb)) fuel)]
-      [(AstBinLe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= ca cb)) fuel)]
-      [(AstBinGt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> ca cb)) fuel)]
-      [(AstBinGe) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= ca cb)) fuel)]
+      [(AstBinOp.Eq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (= ca cb)) fuel)]
+      [(AstBinOp.Ne) (ResultCtfe.Ok (CompilerCtfeValue.Bool (!= ca cb)) fuel)]
+      [(AstBinOp.Lt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (< ca cb)) fuel)]
+      [(AstBinOp.Le) (ResultCtfe.Ok (CompilerCtfeValue.Bool (<= ca cb)) fuel)]
+      [(AstBinOp.Gt) (ResultCtfe.Ok (CompilerCtfeValue.Bool (> ca cb)) fuel)]
+      [(AstBinOp.Ge) (ResultCtfe.Ok (CompilerCtfeValue.Bool (>= ca cb)) fuel)]
       [_
         (ResultCtfe.Err
           (box
@@ -1388,8 +1391,9 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool (string.eq a b)) fuel)]
-    [(AstBinNe)
+    [(AstBinOp.Eq)
+      (ResultCtfe.Ok (CompilerCtfeValue.Bool (string.eq a b)) fuel)]
+    [(AstBinOp.Ne)
       (ResultCtfe.Ok (CompilerCtfeValue.Bool (not (string.eq a b))) fuel)]
     [_
       (ResultCtfe.Err
@@ -1401,8 +1405,8 @@
 ;; unit comparisons (only `==`/`!=`).
 (define (ctfe-eval-bin-unit [op : AstBinOp] [expr : AstExpr] [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq) (ResultCtfe.Ok (CompilerCtfeValue.Bool true) fuel)]
-    [(AstBinNe) (ResultCtfe.Ok (CompilerCtfeValue.Bool false) fuel)]
+    [(AstBinOp.Eq) (ResultCtfe.Ok (CompilerCtfeValue.Bool true) fuel)]
+    [(AstBinOp.Ne) (ResultCtfe.Ok (CompilerCtfeValue.Bool false) fuel)]
     [_
       (ResultCtfe.Err
         (box
@@ -1418,11 +1422,11 @@
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstBinEq)
+    [(AstBinOp.Eq)
       (ResultCtfe.Ok
         (CompilerCtfeValue.Bool (ctfe-type-eq-in-env env a b))
         fuel)]
-    [(AstBinNe)
+    [(AstBinOp.Ne)
       (ResultCtfe.Ok
         (CompilerCtfeValue.Bool (not (ctfe-type-eq-in-env env a b)))
         fuel)]
@@ -1518,11 +1522,11 @@
       (match rv
         [(CompilerCtfeValue.Type b)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool (ctfe-type-eq-in-env env a b))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool (not (ctfe-type-eq-in-env env a b)))
                 fuel)]
@@ -1542,7 +1546,7 @@
       (match rv
         [(CompilerCtfeValue.Expr b b-ty)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (and
@@ -1552,7 +1556,7 @@
                       (ctfe-ast-get env b))
                     (ctfe-type-eq-in-env env a-ty b-ty)))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (not
@@ -1579,11 +1583,11 @@
       (match rv
         [(CompilerCtfeValue.ExprList b)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool (ctfe-expr-list-eq-in-env env a b))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (not (ctfe-expr-list-eq-in-env env a b)))
@@ -1604,11 +1608,11 @@
       (match rv
         [(CompilerCtfeValue.ExprClause b)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool (ctfe-expr-clause-eq-in-env env a b))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (not (ctfe-expr-clause-eq-in-env env a b)))
@@ -1629,12 +1633,12 @@
       (match rv
         [(CompilerCtfeValue.ExprClauseList b)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (ctfe-expr-clause-list-eq-in-env env a b))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (not (ctfe-expr-clause-list-eq-in-env env a b)))
@@ -1655,12 +1659,12 @@
       (match rv
         [(CompilerCtfeValue.ExprBindingClause b)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (ctfe-expr-binding-clause-eq-in-env env a b))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (not (ctfe-expr-binding-clause-eq-in-env env a b)))
@@ -1681,12 +1685,12 @@
       (match rv
         [(CompilerCtfeValue.ExprBindingClauseList b)
           (match op
-            [(AstBinEq)
+            [(AstBinOp.Eq)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (ctfe-expr-binding-clause-list-eq-in-env env a b))
                 fuel)]
-            [(AstBinNe)
+            [(AstBinOp.Ne)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool
                   (not (ctfe-expr-binding-clause-list-eq-in-env env a b)))
@@ -1753,7 +1757,7 @@
   [expr : AstExpr]
   [fuel : i64]) : ResultCtfe
   (match op
-    [(AstUnNeg)
+    [(AstUnOp.Neg)
       (match v
         [(CompilerCtfeValue.I64 n)
           (ResultCtfe.Ok (CompilerCtfeValue.I64 (- 0 n)) fuel)]
@@ -1765,7 +1769,7 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "negation in comptime requires a numeric type")))])]
-    [(AstUnNot)
+    [(AstUnOp.Not)
       (match v
         [(CompilerCtfeValue.Bool b)
           (ResultCtfe.Ok (CompilerCtfeValue.Bool (not b)) fuel)]
@@ -1773,7 +1777,7 @@
           (ResultCtfe.Err
             (box
               (ctfe-diagnostic-at-expr expr "'not' in comptime requires bool")))])]
-    [(AstUnBitNot)
+    [(AstUnOp.BitNot)
       (match v
         [(CompilerCtfeValue.I64 n)
           (ResultCtfe.Ok (CompilerCtfeValue.I64 (bit-not n)) fuel)]
@@ -4402,7 +4406,9 @@
                   [(CompilerCtfeValue.Bool b)
                     (ResultCtfe.Ok
                       (CompilerCtfeValue.Expr
-                        (ctfe-ast-push env (AstExpr.Literal (AstLitBool b)))
+                        (ctfe-ast-push
+                          env
+                          (AstExpr.Literal (AstLiteral.Bool b)))
                         (AstType.Bool))
                       arg-fuel)]
                   [_
@@ -4515,7 +4521,7 @@
                       (CompilerCtfeValue.Expr
                         (ctfe-ast-push
                           env
-                          (AstExpr.Literal (AstLitString text)))
+                          (AstExpr.Literal (AstLiteral.String text)))
                         (AstType.String))
                       arg-fuel)]
                   [_
@@ -5699,13 +5705,13 @@
   (ctfe-ast-push env (AstExpr.Var (intern name))))
 
 (define (ctfe-source-helper-bool [env : CtfeEnv] [value : bool]) : i64
-  (ctfe-ast-push env (AstExpr.Literal (AstLitBool value))))
+  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool value))))
 
 (define (ctfe-source-helper-i64 [env : CtfeEnv] [value : i64]) : i64
   (ctfe-ast-push env (AstExpr.Literal (ast-lit-int value))))
 
 (define (ctfe-source-helper-string [env : CtfeEnv] [value : String]) : i64
-  (ctfe-ast-push env (AstExpr.Literal (AstLitString value))))
+  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String value))))
 
 (define (ctfe-source-helper-struct-get
   [env : CtfeEnv]
@@ -5754,7 +5760,7 @@
 (define (ctfe-source-helper-sequence-empty? [env : CtfeEnv] [items : i64]) : i64
   (ctfe-source-helper-binary
     env
-    (AstBinEq)
+    (AstBinOp.Eq)
     (ctfe-source-helper-sequence-len env items)
     (ctfe-source-helper-i64 env 0)))
 
@@ -5767,7 +5773,7 @@
     [has-items : i64
       (ctfe-source-helper-binary
         env
-        (AstBinGt)
+        (AstBinOp.Gt)
         (ctfe-source-helper-sequence-len env items)
         zero)]
     [head : i64
@@ -5785,11 +5791,11 @@
   [message : String]) : i64
   (let
     [zero : i64 (ctfe-source-helper-i64 env 0)]
-    [negative : i64 (ctfe-source-helper-binary env (AstBinLt) index zero)]
+    [negative : i64 (ctfe-source-helper-binary env (AstBinOp.Lt) index zero)]
     [too-large : i64
       (ctfe-source-helper-binary
         env
-        (AstBinGe)
+        (AstBinOp.Ge)
         index
         (ctfe-source-helper-sequence-len env items))]
     [value : i64
@@ -6316,7 +6322,7 @@
 (define (ctfe-match-arm-empty-default [env : CtfeEnv]) : AstMatchArm
   (ast-match-arm
     AstPattern.Wildcard
-    (ctfe-ast-push env (AstExpr.Literal (AstLitUnit)))))
+    (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))))
 
 (define (ctfe-match-arm-list-length [lst : AstMatchArmList]) : i64
   (match lst
@@ -6757,23 +6763,23 @@
   [lit : AstLiteral]
   [value : CompilerCtfeValue]) : bool
   (match lit
-    [(AstLitInt n _)
+    [(AstLiteral.Int n _)
       (match value
         [(CompilerCtfeValue.I64 actual) (= actual n)]
         [_ false])]
-    [(AstLitBool b)
+    [(AstLiteral.Bool b)
       (match value
         [(CompilerCtfeValue.Bool actual) (= actual b)]
         [_ false])]
-    [(AstLitChar c)
+    [(AstLiteral.Char c)
       (match value
         [(CompilerCtfeValue.Char actual) (= actual c)]
         [_ false])]
-    [(AstLitUnit)
+    [(AstLiteral.Unit)
       (match value
         [(CompilerCtfeValue.Unit) true]
         [_ false])]
-    [(AstLitFloat text)
+    [(AstLiteral.Float text)
       (match (compiler-float-parse-f64 text)
         [(CompilerFloatSomeF64 want)
           (match value
@@ -6781,7 +6787,7 @@
             [(CompilerCtfeValue.F32 actual) (= actual want)]
             [_ false])]
         [(CompilerFloatNoF64) false])]
-    [(AstLitString text)
+    [(AstLiteral.String text)
       (match value
         [(CompilerCtfeValue.String actual) (string.eq actual text)]
         [_ false])]))
@@ -6823,14 +6829,14 @@
   (match (ctfe-expr-unspan env (ctfe-ast-get env node))
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitBool b)
+        [(AstLiteral.Bool b)
           (if (ctfe-pattern-variant-name? variant "ExprBool")
             (ctfe-match-pattern-list
               args
               (ctfe-value-list1 (CompilerCtfeValue.Bool b))
               env)
             (CtfePatternMatch.No))]
-        [(AstLitInt n _)
+        [(AstLiteral.Int n _)
           (if (ctfe-pattern-variant-name? variant "ExprInt")
             (ctfe-match-pattern-list
               args
@@ -6999,12 +7005,12 @@
 ;; --- quote / quasiquote -----------------------------------------------------
 (define (ctfe-quote-literal-type [lit : AstLiteral]) : AstType
   (match lit
-    [(AstLitInt _ _) (AstType.I64)]
-    [(AstLitFloat _) (AstType.F64)]
-    [(AstLitBool _) (AstType.Bool)]
-    [(AstLitChar _) (AstType.Char)]
-    [(AstLitString _) (AstType.String)]
-    [(AstLitUnit) (AstType.Unit)]))
+    [(AstLiteral.Int _ _) (AstType.I64)]
+    [(AstLiteral.Float _) (AstType.F64)]
+    [(AstLiteral.Bool _) (AstType.Bool)]
+    [(AstLiteral.Char _) (AstType.Char)]
+    [(AstLiteral.String _) (AstType.String)]
+    [(AstLiteral.Unit) (AstType.Unit)]))
 
 (define (ctfe-expr-list-append [left : AstExprList] [right : AstExprList]) : AstExprList
   (match left
@@ -7093,7 +7099,7 @@
   (ctfe-ast-push env (AstExpr.Var (intern name))))
 
 (define (ctfe-type-syntax-string [value : String] [env : CtfeEnv]) : i64
-  (ctfe-ast-push env (AstExpr.Literal (AstLitString value))))
+  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String value))))
 
 (define (ctfe-type-syntax-call
   [name : String]
@@ -7354,7 +7360,7 @@
                   (match end
                     [(AstExprList.Nil)
                       (match (ctfe-expr-unspan env len-expr)
-                        [(AstExpr.Literal (AstLitInt count _))
+                        [(AstExpr.Literal (AstLiteral.Int count _))
                           (ResultCtfeQuoteType.Ok
                             (ast-ty-array-with-pools
                               (ctfe-env-pools env)
@@ -7521,7 +7527,7 @@
         [name-expr : AstExpr (ctfe-ast-get env name-node)]
         [lifetime-exprs : AstExprList (box-get lifetime-rest)]
         (match (ctfe-expr-unspan env name-expr)
-          [(AstExpr.Literal (AstLitString name))
+          [(AstExpr.Literal (AstLiteral.String name))
             (match (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin)
               [(ResultCtfeQuoteLifetimeList.Ok lifetimes)
                 (ResultCtfeQuoteType.Ok
@@ -9042,29 +9048,29 @@
 ;; EQ -------------------------------------------------------------------------
 (define (ctfe-literal-eq [a : AstLiteral] [b : AstLiteral]) : bool
   (match a
-    [(AstLitInt a-n _)
+    [(AstLiteral.Int a-n _)
       (match b
-        [(AstLitInt b-n _) (= a-n b-n)]
+        [(AstLiteral.Int b-n _) (= a-n b-n)]
         [_ false])]
-    [(AstLitBool a-b)
+    [(AstLiteral.Bool a-b)
       (match b
-        [(AstLitBool b-b) (= a-b b-b)]
+        [(AstLiteral.Bool b-b) (= a-b b-b)]
         [_ false])]
-    [(AstLitChar a-c)
+    [(AstLiteral.Char a-c)
       (match b
-        [(AstLitChar b-c) (= a-c b-c)]
+        [(AstLiteral.Char b-c) (= a-c b-c)]
         [_ false])]
-    [(AstLitFloat a-text)
+    [(AstLiteral.Float a-text)
       (match b
-        [(AstLitFloat b-text) (string.eq a-text b-text)]
+        [(AstLiteral.Float b-text) (string.eq a-text b-text)]
         [_ false])]
-    [(AstLitString a-text)
+    [(AstLiteral.String a-text)
       (match b
-        [(AstLitString b-text) (string.eq a-text b-text)]
+        [(AstLiteral.String b-text) (string.eq a-text b-text)]
         [_ false])]
-    [(AstLitUnit)
+    [(AstLiteral.Unit)
       (match b
-        [(AstLitUnit) true]
+        [(AstLiteral.Unit) true]
         [_ false])]
     [_ false]))
 
@@ -9308,25 +9314,25 @@
 
 (define (ctfe-reduce-op-eq [a : AstReduceOp] [b : AstReduceOp]) : bool
   (match a
-    [(AstReduceSum)
+    [(AstReduceOp.Sum)
       (match b
-        [(AstReduceSum) true]
+        [(AstReduceOp.Sum) true]
         [_ false])]
-    [(AstReduceMin)
+    [(AstReduceOp.Min)
       (match b
-        [(AstReduceMin) true]
+        [(AstReduceOp.Min) true]
         [_ false])]
-    [(AstReduceMax)
+    [(AstReduceOp.Max)
       (match b
-        [(AstReduceMax) true]
+        [(AstReduceOp.Max) true]
         [_ false])]
-    [(AstReduceAll)
+    [(AstReduceOp.All)
       (match b
-        [(AstReduceAll) true]
+        [(AstReduceOp.All) true]
         [_ false])]
-    [(AstReduceAny)
+    [(AstReduceOp.Any)
       (match b
-        [(AstReduceAny) true]
+        [(AstReduceOp.Any) true]
         [_ false])]))
 
 (define (ctfe-expr-eq-inner-in-env [env : CtfeEnv] [a : AstExpr] [b : AstExpr]) : bool
@@ -10256,92 +10262,92 @@
 
 (define (ctfe-binop-eq [a : AstBinOp] [b : AstBinOp]) : bool
   (match a
-    [(AstBinAdd)
+    [(AstBinOp.Add)
       (match b
-        [(AstBinAdd) true]
+        [(AstBinOp.Add) true]
         [_ false])]
-    [(AstBinSub)
+    [(AstBinOp.Sub)
       (match b
-        [(AstBinSub) true]
+        [(AstBinOp.Sub) true]
         [_ false])]
-    [(AstBinMul)
+    [(AstBinOp.Mul)
       (match b
-        [(AstBinMul) true]
+        [(AstBinOp.Mul) true]
         [_ false])]
-    [(AstBinDiv)
+    [(AstBinOp.Div)
       (match b
-        [(AstBinDiv) true]
+        [(AstBinOp.Div) true]
         [_ false])]
-    [(AstBinMod)
+    [(AstBinOp.Mod)
       (match b
-        [(AstBinMod) true]
+        [(AstBinOp.Mod) true]
         [_ false])]
-    [(AstBinEq)
+    [(AstBinOp.Eq)
       (match b
-        [(AstBinEq) true]
+        [(AstBinOp.Eq) true]
         [_ false])]
-    [(AstBinNe)
+    [(AstBinOp.Ne)
       (match b
-        [(AstBinNe) true]
+        [(AstBinOp.Ne) true]
         [_ false])]
-    [(AstBinLt)
+    [(AstBinOp.Lt)
       (match b
-        [(AstBinLt) true]
+        [(AstBinOp.Lt) true]
         [_ false])]
-    [(AstBinLe)
+    [(AstBinOp.Le)
       (match b
-        [(AstBinLe) true]
+        [(AstBinOp.Le) true]
         [_ false])]
-    [(AstBinGt)
+    [(AstBinOp.Gt)
       (match b
-        [(AstBinGt) true]
+        [(AstBinOp.Gt) true]
         [_ false])]
-    [(AstBinGe)
+    [(AstBinOp.Ge)
       (match b
-        [(AstBinGe) true]
+        [(AstBinOp.Ge) true]
         [_ false])]
-    [(AstBinAnd)
+    [(AstBinOp.And)
       (match b
-        [(AstBinAnd) true]
+        [(AstBinOp.And) true]
         [_ false])]
-    [(AstBinOr)
+    [(AstBinOp.Or)
       (match b
-        [(AstBinOr) true]
+        [(AstBinOp.Or) true]
         [_ false])]
-    [(AstBinBitAnd)
+    [(AstBinOp.BitAnd)
       (match b
-        [(AstBinBitAnd) true]
+        [(AstBinOp.BitAnd) true]
         [_ false])]
-    [(AstBinBitOr)
+    [(AstBinOp.BitOr)
       (match b
-        [(AstBinBitOr) true]
+        [(AstBinOp.BitOr) true]
         [_ false])]
-    [(AstBinBitXor)
+    [(AstBinOp.BitXor)
       (match b
-        [(AstBinBitXor) true]
+        [(AstBinOp.BitXor) true]
         [_ false])]
-    [(AstBinShl)
+    [(AstBinOp.Shl)
       (match b
-        [(AstBinShl) true]
+        [(AstBinOp.Shl) true]
         [_ false])]
-    [(AstBinShr)
+    [(AstBinOp.Shr)
       (match b
-        [(AstBinShr) true]
+        [(AstBinOp.Shr) true]
         [_ false])]))
 
 (define (ctfe-unop-eq [a : AstUnOp] [b : AstUnOp]) : bool
   (match a
-    [(AstUnNeg)
+    [(AstUnOp.Neg)
       (match b
-        [(AstUnNeg) true]
+        [(AstUnOp.Neg) true]
         [_ false])]
-    [(AstUnNot)
+    [(AstUnOp.Not)
       (match b
-        [(AstUnNot) true]
+        [(AstUnOp.Not) true]
         [_ false])]
-    [(AstUnBitNot)
+    [(AstUnOp.BitNot)
       (match b
-        [(AstUnBitNot) true]
+        [(AstUnOp.BitNot) true]
         [_ false])]))
 
 ;; CONSTRUCTORS ----------------------------------------------------------------
@@ -10349,7 +10355,7 @@
   (ast-node-push (AstExpr.Literal lit)))
 
 (define (ctfe-expr-bool [b : bool]) : i64
-  (ast-node-push (AstExpr.Literal (AstLitBool b))))
+  (ast-node-push (AstExpr.Literal (AstLiteral.Bool b))))
 
 (define (ctfe-expr-var [name : String]) : i64
   (ast-node-push (AstExpr.Var (intern name))))
@@ -10416,8 +10422,8 @@
     [(AstExprClauseList.Cons head _) head]
     [_
       (ast-expr-clause
-        (ast-node-push (AstExpr.Literal (AstLitUnit)))
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]))
 
 (define (ctfe-expr-clause-list-tail [lst : AstExprClauseList]) : AstExprClauseList
   (match lst
@@ -10435,8 +10441,8 @@
         (ctfe-expr-clause-list-nth (box-get tail) (- index 1)))]
     [_
       (ast-expr-clause
-        (ast-node-push (AstExpr.Literal (AstLitUnit)))
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]))
 
 (define (ctfe-expr-clause-as-bracket-expr-in-env
   [env : CtfeEnv]
@@ -10490,7 +10496,7 @@
 
 (define (ctfe-expr-binding-clause-empty-default) : AstExprBindingClause
   (let
-    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     (ast-expr-binding-clause-id
       0
       false
@@ -10575,7 +10581,7 @@
   (match (ctfe-ast-get env e)
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitBool _) true]
+        [(AstLiteral.Bool _) true]
         [_ false])]
     [_ false]))
 
@@ -10583,7 +10589,7 @@
   (match (ctfe-ast-get env e)
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitBool b) b]
+        [(AstLiteral.Bool b) b]
         [_ false])]
     [_ false]))
 
@@ -10606,7 +10612,7 @@
 (define (ctfe-expr-literal-value-in-env [env : CtfeEnv] [e : i64]) : AstLiteral
   (match (ctfe-ast-get env e)
     [(AstExpr.Literal lit) lit]
-    [_ (AstLitUnit)]))
+    [_ (AstLiteral.Unit)]))
 
 (define (ctfe-expr-var-name-in-env [env : CtfeEnv] [e : i64]) : String
   (match (ctfe-ast-get env e)
@@ -10616,22 +10622,22 @@
 (define (ctfe-expr-if-cond-in-env [env : CtfeEnv] [e : i64]) : i64
   (match (ctfe-ast-get env e)
     [(AstExpr.If c _ _) c]
-    [_ (ctfe-ast-push env (AstExpr.Literal (AstLitUnit)))]))
+    [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
 
 (define (ctfe-expr-if-then-in-env [env : CtfeEnv] [e : i64]) : i64
   (match (ctfe-ast-get env e)
     [(AstExpr.If _ t _) t]
-    [_ (ctfe-ast-push env (AstExpr.Literal (AstLitUnit)))]))
+    [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
 
 (define (ctfe-expr-if-else-in-env [env : CtfeEnv] [e : i64]) : i64
   (match (ctfe-ast-get env e)
     [(AstExpr.If _ _ el) el]
-    [_ (ctfe-ast-push env (AstExpr.Literal (AstLitUnit)))]))
+    [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
 
 (define (ctfe-expr-call-func-in-env [env : CtfeEnv] [e : i64]) : i64
   (match (ctfe-ast-get env e)
     [(AstExpr.Call f _) f]
-    [_ (ctfe-ast-push env (AstExpr.Literal (AstLitUnit)))]))
+    [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
 
 (define (ctfe-expr-call-args-in-env [env : CtfeEnv] [e : i64]) : AstExprList
   (match (ctfe-ast-get env e)
@@ -10680,7 +10686,7 @@
 (define (ctfe-expr-list-head [lst : AstExprList]) : i64
   (match lst
     [(AstExprList.Cons head _) head]
-    [_ (ast-node-push (AstExpr.Literal (AstLitUnit)))]))
+    [_ (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]))
 
 (define (ctfe-expr-list-tail [lst : AstExprList]) : AstExprList
   (match lst
@@ -10696,7 +10702,7 @@
       (if (= index 0)
         head
         (ctfe-expr-list-nth (box-get tail) (- index 1)))]
-    [_ (ast-node-push (AstExpr.Literal (AstLitUnit)))]))
+    [_ (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]))
 
 ;; --- folding ----------------------------------------------------------------
 ;; Convert a folded compile-time value into the AST literal that lowering then
@@ -10706,34 +10712,34 @@
 (define (ctfe-value-to-literal [value : CompilerCtfeValue]) : AstLiteral
   (match value
     [(CompilerCtfeValue.I64 n) (ast-lit-int n)]
-    [(CompilerCtfeValue.F64 n) (AstLitFloat (compiler-float-format-f64 n))]
+    [(CompilerCtfeValue.F64 n) (AstLiteral.Float (compiler-float-format-f64 n))]
     [(CompilerCtfeValue.F32 n)
-      (AstLitFloat
+      (AstLiteral.Float
         (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
-    [(CompilerCtfeValue.Bool b) (AstLitBool b)]
-    [(CompilerCtfeValue.Char c) (AstLitChar c)]
-    [(CompilerCtfeValue.String text) (AstLitString text)]
-    [(CompilerCtfeValue.Unit) (AstLitUnit)]
-    [(CompilerCtfeValue.Type _) (AstLitUnit)]
-    [(CompilerCtfeValue.Expr _ _) (AstLitUnit)]
-    [(CompilerCtfeValue.ExprList _) (AstLitUnit)]
-    [(CompilerCtfeValue.ExprClause _) (AstLitUnit)]
-    [(CompilerCtfeValue.ExprClauseList _) (AstLitUnit)]
-    [(CompilerCtfeValue.ExprBindingClause _) (AstLitUnit)]
-    [(CompilerCtfeValue.ExprBindingClauseList _) (AstLitUnit)]
-    [(CompilerCtfeValue.Pattern _) (AstLitUnit)]
-    [(CompilerCtfeValue.PatternList _) (AstLitUnit)]
-    [(CompilerCtfeValue.MatchArm _) (AstLitUnit)]
-    [(CompilerCtfeValue.MatchArmList _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeInfo _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeInfoBox _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeInfoList _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeField _ _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeFieldList _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeVariantPayload _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeVariantPayloadList _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeVariant _ _) (AstLitUnit)]
-    [(CompilerCtfeValue.TypeVariantList _) (AstLitUnit)]))
+    [(CompilerCtfeValue.Bool b) (AstLiteral.Bool b)]
+    [(CompilerCtfeValue.Char c) (AstLiteral.Char c)]
+    [(CompilerCtfeValue.String text) (AstLiteral.String text)]
+    [(CompilerCtfeValue.Unit) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.Type _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.Expr _ _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.ExprList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.ExprClause _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.ExprClauseList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.ExprBindingClause _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.ExprBindingClauseList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.Pattern _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.PatternList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.MatchArm _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.MatchArmList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeInfo _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeInfoBox _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeInfoList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeField _ _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeFieldList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeVariantPayload _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeVariantPayloadList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeVariant _ _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.TypeVariantList _) (AstLiteral.Unit)]))
 
 (define (ctfe-value-to-literal-for-type
   [value : CompilerCtfeValue]
@@ -10742,7 +10748,7 @@
     [(AstType.F32)
       (match value
         [(CompilerCtfeValue.F64 n)
-          (AstLitFloat
+          (AstLiteral.Float
             (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
         [_ (ctfe-value-to-literal value)])]
     [(AstType.Region _ inner)
@@ -10996,7 +11002,7 @@
 (define (compiler-ctfe-type-comparison-ok?) : bool
   (match (compiler-ctfe-eval
     (AstExpr.Binary
-      (AstBinEq)
+      (AstBinOp.Eq)
       (ast-node-push (AstExpr.TypeLiteral (AstType.I64)))
       (ast-node-push (AstExpr.TypeLiteral (AstType.I64))))
     (ctfe-env-empty)
@@ -11006,7 +11012,7 @@
         [(CompilerCtfeValue.Bool same-ok)
           (match (compiler-ctfe-eval
             (AstExpr.Binary
-              (AstBinEq)
+              (AstBinOp.Eq)
               (ast-node-push (AstExpr.TypeLiteral (AstType.I64)))
               (ast-node-push (AstExpr.TypeLiteral (AstType.I32))))
             (ctfe-env-empty)
@@ -11023,7 +11029,7 @@
 (define (compiler-ctfe-raw-pointer-type-comparison-ok?) : bool
   (match (compiler-ctfe-eval
     (AstExpr.Binary
-      (AstBinEq)
+      (AstBinOp.Eq)
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-ptr (AstType.I64))))
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-ptr (AstType.I64)))))
     (ctfe-env-empty)
@@ -11033,7 +11039,7 @@
         [(CompilerCtfeValue.Bool same-ok)
           (match (compiler-ctfe-eval
             (AstExpr.Binary
-              (AstBinEq)
+              (AstBinOp.Eq)
               (ast-node-push (AstExpr.TypeLiteral (ast-ty-ptr (AstType.I64))))
               (ast-node-push
                 (AstExpr.TypeLiteral (ast-ty-mut-ptr (AstType.I64)))))
@@ -11158,40 +11164,41 @@
 
 (define (compiler-ctfe-f64-ok?) : bool
   (let
-    [one-five : i64 (ast-node-push (AstExpr.Literal (AstLitFloat "1.5")))]
-    [two-quarter : i64 (ast-node-push (AstExpr.Literal (AstLitFloat "2.25")))]
-    [zero : i64 (ast-node-push (AstExpr.Literal (AstLitFloat "0.0")))]
-    [neg-zero : i64 (ast-node-push (AstExpr.Literal (AstLitFloat "-0.0")))]
+    [one-five : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Float "1.5")))]
+    [two-quarter : i64
+      (ast-node-push (AstExpr.Literal (AstLiteral.Float "2.25")))]
+    [zero : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Float "0.0")))]
+    [neg-zero : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Float "-0.0")))]
     [one-f32 : i64 (ast-expr-cast one-five (AstType.F32))]
     [zero-f32 : i64 (ast-expr-cast zero (AstType.F32))]
     [sum-f32 : i64
-      (ast-node-push (AstExpr.Binary (AstBinAdd) one-f32 zero-f32))]
-    [neg-f32 : i64 (ast-node-push (AstExpr.Unary (AstUnNeg) sum-f32))]
+      (ast-node-push (AstExpr.Binary (AstBinOp.Add) one-f32 zero-f32))]
+    [neg-f32 : i64 (ast-node-push (AstExpr.Unary (AstUnOp.Neg) sum-f32))]
     [wide-f32 : i64 (ast-expr-cast one-f32 (AstType.F64))]
     [large-f32 : i64
       (ast-expr-cast
-        (ast-node-push (AstExpr.Literal (AstLitFloat "3.0e+38")))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Float "3.0e+38")))
         (AstType.F32))]
     [two-f32 : i64
       (ast-expr-cast
-        (ast-node-push (AstExpr.Literal (AstLitFloat "2.0")))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Float "2.0")))
         (AstType.F32))]
     [overflow-f32 : i64
-      (ast-node-push (AstExpr.Binary (AstBinMul) large-f32 two-f32))]
+      (ast-node-push (AstExpr.Binary (AstBinOp.Mul) large-f32 two-f32))]
     [overflow-f32-cast : i64
       (ast-expr-cast
-        (ast-node-push (AstExpr.Literal (AstLitFloat "3.5e+38")))
+        (ast-node-push (AstExpr.Literal (AstLiteral.Float "3.5e+38")))
         (AstType.F32))]
     [overflow-f64-left : i64
-      (ast-node-push (AstExpr.Literal (AstLitFloat "1e+308")))]
+      (ast-node-push (AstExpr.Literal (AstLiteral.Float "1e+308")))]
     [overflow-f64 : i64
       (ast-node-push
-        (AstExpr.Binary (AstBinMul) overflow-f64-left overflow-f64-left))]
+        (AstExpr.Binary (AstBinOp.Mul) overflow-f64-left overflow-f64-left))]
     [non-finite-f64-literal : i64
-      (ast-node-push (AstExpr.Literal (AstLitFloat "1e+309")))]
+      (ast-node-push (AstExpr.Literal (AstLiteral.Float "1e+309")))]
     [sum : i64
-      (ast-node-push (AstExpr.Binary (AstBinAdd) one-five two-quarter))]
-    [neg : i64 (ast-node-push (AstExpr.Unary (AstUnNeg) sum))]
+      (ast-node-push (AstExpr.Binary (AstBinOp.Add) one-five two-quarter))]
+    [neg : i64 (ast-node-push (AstExpr.Unary (AstUnOp.Neg) sum))]
     [neg-int : i64 (ast-node-push (AstExpr.Literal (ast-lit-int (- 0 42))))]
     [u64-max : i64
       (ast-expr-cast
@@ -11221,7 +11228,7 @@
             (ast-pat-binding "m")
             (ast-expr-cast match-u64-var (AstType.F64)))
           AstMatchArmList.Nil))]
-    [char-a : i64 (ast-node-push (AstExpr.Literal (AstLitChar 'A')))]
+    [char-a : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Char 'A')))]
     [char-a-f64 : i64 (ast-expr-cast char-a (AstType.F64))]
     [neg-int-f64 : i64 (ast-expr-cast neg-int (AstType.F64))]
     [rounded-int-f32 : i64
@@ -11233,24 +11240,27 @@
     [f64-to-char-to-i64 : i64
       (ast-expr-cast
         (ast-expr-cast
-          (ast-node-push (AstExpr.Literal (AstLitFloat "65.9")))
+          (ast-node-push (AstExpr.Literal (AstLiteral.Float "65.9")))
           (AstType.Char))
         (AstType.I64))]
     [f64-out-of-i64 : i64
       (ast-expr-cast
-        (ast-node-push (AstExpr.Literal (AstLitFloat "9223372036854775808.0")))
+        (ast-node-push
+          (AstExpr.Literal (AstLiteral.Float "9223372036854775808.0")))
         (AstType.I64))]
     [f64-out-of-u64-portable-range : i64
       (ast-expr-cast
-        (ast-node-push (AstExpr.Literal (AstLitFloat "9223372036854775808.0")))
+        (ast-node-push
+          (AstExpr.Literal (AstLiteral.Float "9223372036854775808.0")))
         (AstType.U64))]
     [lt : i64
       (ast-node-push
         (AstExpr.Binary
-          (AstBinLt)
+          (AstBinOp.Lt)
           sum
-          (ast-node-push (AstExpr.Literal (AstLitFloat "4.0")))))]
-    [div-zero : i64 (ast-node-push (AstExpr.Binary (AstBinDiv) one-five zero))]
+          (ast-node-push (AstExpr.Literal (AstLiteral.Float "4.0")))))]
+    [div-zero : i64
+      (ast-node-push (AstExpr.Binary (AstBinOp.Div) one-five zero))]
     [env : CtfeEnv (ctfe-env-empty)]
     (and
       (compiler-ctfe-eval-f64-ok? one-five env 1.5)
@@ -11727,7 +11737,7 @@
   (match (ctfe-eval-array-ref-value
     items
     index
-    (AstExpr.Literal (AstLitUnit))
+    (AstExpr.Literal (AstLiteral.Unit))
     env
     (ctfe-fuel-limit))
     [(ResultCtfe.Ok value _)
@@ -11755,7 +11765,7 @@
   (match (ctfe-eval-array-ref-value
     fields-value
     0
-    (AstExpr.Literal (AstLitUnit))
+    (AstExpr.Literal (AstLiteral.Unit))
     env
     (ctfe-fuel-limit))
     [(ResultCtfe.Ok field-value _)
@@ -11773,7 +11783,7 @@
   (match (ctfe-eval-array-ref-value
     variants-value
     1
-    (AstExpr.Literal (AstLitUnit))
+    (AstExpr.Literal (AstLiteral.Unit))
     env
     (ctfe-fuel-limit))
     [(ResultCtfe.Ok variant-value _)
@@ -11795,9 +11805,9 @@
       (ctfe-env-extend env "info" (CompilerCtfeValue.TypeInfo (AstType.I64)))]
     [scrutinee : i64 (ctfe-ast-push match-env (AstExpr.Var (intern "info")))]
     [true-lit : i64
-      (ctfe-ast-push match-env (AstExpr.Literal (AstLitBool true)))]
+      (ctfe-ast-push match-env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
-      (ctfe-ast-push match-env (AstExpr.Literal (AstLitBool false)))]
+      (ctfe-ast-push match-env (AstExpr.Literal (AstLiteral.Bool false)))]
     [builtin-arm : AstMatchArm
       (ast-match-arm
         (ast-pat-variant
@@ -12116,8 +12126,10 @@
 (define (compiler-ctfe-checked-expr-constructors-ok?) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
-    [true-lit : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitBool true)))]
-    [false-lit : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitBool false)))]
+    [true-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
+    [false-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool false)))]
     [true-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" true-lit)]
     [false-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" false-lit)]
     [spliced-false : i64
@@ -12132,13 +12144,14 @@
     [expected : i64
       (ast-expr-if-with-pools (ctfe-env-pools env) true-lit false-lit true-lit)]
     [point-name-lit : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLitString "point")))]
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "point")))]
     [field-name-lit : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLitString "x")))]
-    [name-lit : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitString "Ada")))]
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "x")))]
+    [name-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
     [name-expr : i64 (compiler-ctfe-call1-in-env env "expr-string" name-lit)]
     [expected-name : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLitString "Ada")))]
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
     [point-expr : i64
       (compiler-ctfe-call1-in-env env "expr-var" point-name-lit)]
     [field-expr : i64
@@ -12148,7 +12161,7 @@
         point-expr
         field-name-lit)]
     [tuple-index-lit : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLitInt 1 "")))]
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 1 "")))]
     [tuple-ref-expr : i64
       (compiler-ctfe-call2-in-env
         env
@@ -12243,8 +12256,10 @@
 (define (compiler-ctfe-checked-expr-inspectors-ok?) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
-    [true-lit : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitBool true)))]
-    [false-lit : i64 (ctfe-ast-push env (AstExpr.Literal (AstLitBool false)))]
+    [true-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
+    [false-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool false)))]
     [true-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" true-lit)]
     [false-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" false-lit)]
     [if-expr : i64
@@ -12365,7 +12380,7 @@
       (compiler-ctfe-call1-in-env
         env
         "expr-bool"
-        (ctfe-ast-push env (AstExpr.Literal (AstLitBool true))))]
+        (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true))))]
     [if-expr : i64
       (compiler-ctfe-call3-in-env env "expr-if" spliced-int true-expr true-expr)]
     (compiler-ctfe-eval-error-ok?
@@ -12377,9 +12392,9 @@
   (let
     [base-env : CtfeEnv (ctfe-env-empty)]
     [true-lit : i64
-      (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool true)))]
+      (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
-      (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool false)))]
+      (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool false)))]
     [flag-var : i64 (ctfe-ast-push base-env (AstExpr.Var (intern "flag")))]
     [spliced : AstExprList
       (ast-expr-cons true-lit (ast-expr-cons false-lit AstExprList.Nil))]
@@ -12517,9 +12532,9 @@
     [base-env : CtfeEnv (ctfe-env-empty)]
     [flag : i64 (ctfe-ast-push base-env (AstExpr.Var (intern "flag")))]
     [true-lit : i64
-      (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool true)))]
+      (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
-      (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool false)))]
+      (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool false)))]
     [if-node : i64
       (ast-expr-if-with-pools (ctfe-env-pools base-env) flag true-lit false-lit)]
     [subject : CompilerCtfeValue
@@ -12569,9 +12584,9 @@
   (let
     [base-env : CtfeEnv (ctfe-env-empty)]
     [true-lit : i64
-      (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool true)))]
+      (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
-      (ctfe-ast-push base-env (AstExpr.Literal (AstLitBool false)))]
+      (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool false)))]
     [clause : AstExprClause (AstExprClause true-lit false-lit)]
     [subject : CompilerCtfeValue (CompilerCtfeValue.ExprClause clause)]
     [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]

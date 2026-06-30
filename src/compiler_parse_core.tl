@@ -1376,22 +1376,22 @@
 
 (define (ast-binop-from-tag [tag : i64]) : AstBinOp
   (cond
-    [(= tag (compiler-parse-tag-bin-add)) (AstBinAdd)]
-    [(= tag (compiler-parse-tag-bin-sub)) (AstBinSub)]
-    [(= tag (compiler-parse-tag-bin-mul)) (AstBinMul)]
-    [(= tag (compiler-parse-tag-bin-div)) (AstBinDiv)]
-    [(= tag (compiler-parse-tag-bin-mod)) (AstBinMod)]
-    [(= tag (compiler-parse-tag-bin-eq)) (AstBinEq)]
-    [(= tag (compiler-parse-tag-bin-ne)) (AstBinNe)]
-    [(= tag (compiler-parse-tag-bin-lt)) (AstBinLt)]
-    [(= tag (compiler-parse-tag-bin-le)) (AstBinLe)]
-    [(= tag (compiler-parse-tag-bin-gt)) (AstBinGt)]
-    [(= tag (compiler-parse-tag-bin-ge)) (AstBinGe)]
-    [(= tag (compiler-parse-tag-bin-bit-and)) (AstBinBitAnd)]
-    [(= tag (compiler-parse-tag-bin-bit-or)) (AstBinBitOr)]
-    [(= tag (compiler-parse-tag-bin-bit-xor)) (AstBinBitXor)]
-    [(= tag (compiler-parse-tag-bin-shl)) (AstBinShl)]
-    [else (AstBinShr)]))
+    [(= tag (compiler-parse-tag-bin-add)) (AstBinOp.Add)]
+    [(= tag (compiler-parse-tag-bin-sub)) (AstBinOp.Sub)]
+    [(= tag (compiler-parse-tag-bin-mul)) (AstBinOp.Mul)]
+    [(= tag (compiler-parse-tag-bin-div)) (AstBinOp.Div)]
+    [(= tag (compiler-parse-tag-bin-mod)) (AstBinOp.Mod)]
+    [(= tag (compiler-parse-tag-bin-eq)) (AstBinOp.Eq)]
+    [(= tag (compiler-parse-tag-bin-ne)) (AstBinOp.Ne)]
+    [(= tag (compiler-parse-tag-bin-lt)) (AstBinOp.Lt)]
+    [(= tag (compiler-parse-tag-bin-le)) (AstBinOp.Le)]
+    [(= tag (compiler-parse-tag-bin-gt)) (AstBinOp.Gt)]
+    [(= tag (compiler-parse-tag-bin-ge)) (AstBinOp.Ge)]
+    [(= tag (compiler-parse-tag-bin-bit-and)) (AstBinOp.BitAnd)]
+    [(= tag (compiler-parse-tag-bin-bit-or)) (AstBinOp.BitOr)]
+    [(= tag (compiler-parse-tag-bin-bit-xor)) (AstBinOp.BitXor)]
+    [(= tag (compiler-parse-tag-bin-shl)) (AstBinOp.Shl)]
+    [else (AstBinOp.Shr)]))
 
 (define (ast-binop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstBinOp
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
@@ -1408,10 +1408,10 @@
 
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
   (if (= tag (compiler-parse-tag-un-not))
-    (AstUnNot)
+    (AstUnOp.Not)
     (if (= tag (compiler-parse-tag-un-neg))
-      (AstUnNeg)
-      (AstUnBitNot))))
+      (AstUnOp.Neg)
+      (AstUnOp.BitNot))))
 
 (define (ast-unop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstUnOp
   (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
@@ -2728,12 +2728,13 @@
   [s : Sexpr]) : ResultAstPattern
   (match s
     [(Sexpr.Int n text)
-      (ResultAstPattern.Ok (AstPattern.Literal (AstLitInt n text)))]
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Int n text)))]
     [(Sexpr.Float text)
-      (ResultAstPattern.Ok (AstPattern.Literal (AstLitFloat text)))]
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Float text)))]
     [(Sexpr.Str text)
-      (ResultAstPattern.Ok (AstPattern.Literal (AstLitString text)))]
-    [(Sexpr.Char c) (ResultAstPattern.Ok (AstPattern.Literal (AstLitChar c)))]
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.String text)))]
+    [(Sexpr.Char c)
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Char c)))]
     [(Sexpr.Sym name)
       (let
         [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
@@ -2741,9 +2742,9 @@
           [(= tag (compiler-parse-tag-pattern-wildcard))
             (ResultAstPattern.Ok AstPattern.Wildcard)]
           [(= tag (compiler-parse-tag-lit-true))
-            (ResultAstPattern.Ok (AstPattern.Literal (AstLitBool true)))]
+            (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Bool true)))]
           [(= tag (compiler-parse-tag-lit-false))
-            (ResultAstPattern.Ok (AstPattern.Literal (AstLitBool false)))]
+            (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Bool false)))]
           [else (ResultAstPattern.Ok (ast-pat-binding name))]))]
     [(Sexpr.Cons name-node args)
       (match (box-get name-node)
@@ -2817,7 +2818,9 @@
     [(ResultAstMaybeExpr.SomeExpr expr) (ResultAstExpr.Ok expr)]
     [(ResultAstMaybeExpr.NoExpr)
       (ResultAstExpr.Ok
-        (ast-node-pool-context-expr-push pools (AstExpr.Literal AstLitUnit)))]
+        (ast-node-pool-context-expr-push
+          pools
+          (AstExpr.Literal AstLiteral.Unit)))]
     [(ResultAstMaybeExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-expr-list
@@ -3758,11 +3761,11 @@
 
 (define (parse-ast-reduce-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceSum))]
-    [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceMin))]
-    [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceMax))]
-    [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceAll))]
-    [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceAny))]
+    [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
+    [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceOp.Min))]
+    [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceOp.Max))]
+    [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceOp.All))]
+    [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceOp.Any))]
     [else
       (ResultAstReduceOp.Err
         (string.append
@@ -3771,11 +3774,11 @@
 
 (define (parse-ast-scan-op [name : String]) : ResultAstReduceOp
   (cond
-    [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceSum))]
-    [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceMin))]
-    [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceMax))]
-    [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceAll))]
-    [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceAny))]
+    [(string.eq name "sum") (ResultAstReduceOp.Ok (AstReduceOp.Sum))]
+    [(string.eq name "min") (ResultAstReduceOp.Ok (AstReduceOp.Min))]
+    [(string.eq name "max") (ResultAstReduceOp.Ok (AstReduceOp.Max))]
+    [(string.eq name "all") (ResultAstReduceOp.Ok (AstReduceOp.All))]
+    [(string.eq name "any") (ResultAstReduceOp.Ok (AstReduceOp.Any))]
     [else
       (ResultAstReduceOp.Err
         (string.append
@@ -5343,7 +5346,7 @@
           pools
           (ast-node-pool-context-expr-push
             pools
-            (AstExpr.Literal (AstLitInt n text)))
+            (AstExpr.Literal (AstLiteral.Int n text)))
           s))]
     [(SpannedSexpr.Float text _)
       (ResultAstExpr.Ok
@@ -5351,7 +5354,7 @@
           pools
           (ast-node-pool-context-expr-push
             pools
-            (AstExpr.Literal (AstLitFloat text)))
+            (AstExpr.Literal (AstLiteral.Float text)))
           s))]
     [(SpannedSexpr.Str text _)
       (ResultAstExpr.Ok
@@ -5359,7 +5362,7 @@
           pools
           (ast-node-pool-context-expr-push
             pools
-            (AstExpr.Literal (AstLitString text)))
+            (AstExpr.Literal (AstLiteral.String text)))
           s))]
     [(SpannedSexpr.Char c _)
       (ResultAstExpr.Ok
@@ -5367,7 +5370,7 @@
           pools
           (ast-node-pool-context-expr-push
             pools
-            (AstExpr.Literal (AstLitChar c)))
+            (AstExpr.Literal (AstLiteral.Char c)))
           s))]
     [(SpannedSexpr.Sym name _)
       (let
@@ -5379,7 +5382,7 @@
                 pools
                 (ast-node-pool-context-expr-push
                   pools
-                  (AstExpr.Literal (AstLitBool true)))
+                  (AstExpr.Literal (AstLiteral.Bool true)))
                 s))]
           [(= tag (compiler-parse-tag-lit-false))
             (ResultAstExpr.Ok
@@ -5387,7 +5390,7 @@
                 pools
                 (ast-node-pool-context-expr-push
                   pools
-                  (AstExpr.Literal (AstLitBool false)))
+                  (AstExpr.Literal (AstLiteral.Bool false)))
                 s))]
           [(= tag (compiler-parse-tag-unit))
             (ResultAstExpr.Ok
@@ -5395,7 +5398,7 @@
                 pools
                 (ast-node-pool-context-expr-push
                   pools
-                  (AstExpr.Literal AstLitUnit))
+                  (AstExpr.Literal AstLiteral.Unit))
                 s))]
           [else
             (ResultAstExpr.Ok
@@ -8110,7 +8113,8 @@
               (and
                 (= name (intern "main"))
                 (match (ast-expr-unspan body)
-                  [(AstExpr.Literal (AstLitFloat text)) (string.eq text "1.5")]
+                  [(AstExpr.Literal (AstLiteral.Float text))
+                    (string.eq text "1.5")]
                   [_ false])))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
@@ -8885,7 +8889,7 @@
                       (let
                         [inner : AstExpr (ast-node-get inner-box)]
                         (match (ast-expr-unspan inner)
-                          [(AstExpr.Literal (AstLitInt 42 _)) true]
+                          [(AstExpr.Literal (AstLiteral.Int 42 _)) true]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]
@@ -8894,7 +8898,7 @@
 
 (define (compiler-parse-unit-expr? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
-    [(AstExpr.Literal AstLitUnit) true]
+    [(AstExpr.Literal AstLiteral.Unit) true]
     [_ false]))
 
 (define (compiler-parse-return-then-unit-begin? [expr : AstExpr]) : bool
@@ -9124,7 +9128,7 @@
                 (and
                   (= name (intern "box-size"))
                   (match (ast-expr-unspan value)
-                    [(AstExpr.Literal (AstLitInt actual _)) (= actual 8)]
+                    [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual 8)]
                     [_ false])))]
             [_ false])))]
     [_ false]))

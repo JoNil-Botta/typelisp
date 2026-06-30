@@ -510,7 +510,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-unit-expr? inner))]
-    [(AstExpr.Literal AstLitUnit) true]
+    [(AstExpr.Literal AstLiteral.Unit) true]
     [_ false]))
 
 (define (lint-single-arg-call? [args : AstExprList]) : bool
@@ -538,7 +538,7 @@
               (string.eq (intern-str name) "not")
               (lint-single-arg-call? args))]
           [_ false]))]
-    [(AstExpr.Unary (AstUnNot) _) true]
+    [(AstExpr.Unary (AstUnOp.Not) _) true]
     [_ false]))
 
 (define (lint-return-expr? [expr : AstExpr]) : bool
@@ -818,15 +818,15 @@
   (match op
     ;; These operators can intentionally trap, so keep the syntactic rule
     ;; conservative until typed/effect metadata can prove safety.
-    [(AstBinDiv) false]
-    [(AstBinMod) false]
-    [(AstBinShl) false]
-    [(AstBinShr) false]
+    [(AstBinOp.Div) false]
+    [(AstBinOp.Mod) false]
+    [(AstBinOp.Shl) false]
+    [(AstBinOp.Shr) false]
     [_ true]))
 
 (define (lint-no-effect-pure-literal? [lit : AstLiteral]) : bool
   (match lit
-    [(AstLitUnit) false]
+    [(AstLiteral.Unit) false]
     [_ true]))
 
 (define (lint-no-effect-pure-expr? [expr : AstExpr]) : bool
@@ -943,45 +943,45 @@
 
 (define (lint-literal-render [lit : AstLiteral]) : String
   (match lit
-    [(AstLitInt value text)
+    [(AstLiteral.Int value text)
       (if (> (string.string-length text) 0)
         text
         (string.int->string value))]
-    [(AstLitFloat value) value]
-    [(AstLitBool value)
+    [(AstLiteral.Float value) value]
+    [(AstLiteral.Bool value)
       (if value
         "true"
         "false")]
-    [(AstLitString value) (string.append "\"" (string.append value "\""))]
-    [(AstLitUnit) "unit"]
+    [(AstLiteral.String value) (string.append "\"" (string.append value "\""))]
+    [(AstLiteral.Unit) "unit"]
     [_ "<expr>"]))
 
 (define (lint-bin-op-render [op : AstBinOp]) : String
   (match op
-    [(AstBinAdd) "+"]
-    [(AstBinSub) "-"]
-    [(AstBinMul) "*"]
-    [(AstBinDiv) "/"]
-    [(AstBinMod) "%"]
-    [(AstBinEq) "="]
-    [(AstBinNe) "!="]
-    [(AstBinLt) "<"]
-    [(AstBinLe) "<="]
-    [(AstBinGt) ">"]
-    [(AstBinGe) ">="]
-    [(AstBinAnd) "and"]
-    [(AstBinOr) "or"]
-    [(AstBinBitAnd) "bit-and"]
-    [(AstBinBitOr) "bit-or"]
-    [(AstBinBitXor) "bit-xor"]
-    [(AstBinShl) "shl"]
-    [(AstBinShr) "shr"]))
+    [(AstBinOp.Add) "+"]
+    [(AstBinOp.Sub) "-"]
+    [(AstBinOp.Mul) "*"]
+    [(AstBinOp.Div) "/"]
+    [(AstBinOp.Mod) "%"]
+    [(AstBinOp.Eq) "="]
+    [(AstBinOp.Ne) "!="]
+    [(AstBinOp.Lt) "<"]
+    [(AstBinOp.Le) "<="]
+    [(AstBinOp.Gt) ">"]
+    [(AstBinOp.Ge) ">="]
+    [(AstBinOp.And) "and"]
+    [(AstBinOp.Or) "or"]
+    [(AstBinOp.BitAnd) "bit-and"]
+    [(AstBinOp.BitOr) "bit-or"]
+    [(AstBinOp.BitXor) "bit-xor"]
+    [(AstBinOp.Shl) "shl"]
+    [(AstBinOp.Shr) "shr"]))
 
 (define (lint-un-op-render [op : AstUnOp]) : String
   (match op
-    [(AstUnNeg) "-"]
-    [(AstUnNot) "not"]
-    [(AstUnBitNot) "bit-not"]))
+    [(AstUnOp.Neg) "-"]
+    [(AstUnOp.Not) "not"]
+    [(AstUnOp.BitNot) "bit-not"]))
 
 (define (lint-render-args-join [head : String] [tail : String]) : String
   (if (string.eq tail "")
@@ -6519,7 +6519,7 @@
     [vy : i64 (lint-test-var "y")]
     [vz : i64 (lint-test-var "z")]
     [one : i64 (ast-node-push (AstExpr.Literal (ast-lit-int 1)))]
-    [unit-expr : i64 (ast-node-push (AstExpr.Literal AstLitUnit))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal AstLiteral.Unit))]
     [ladder3 : i64
       (ast-expr-if vx one (ast-expr-if vx one (ast-expr-if vx one one)))]
     [ladder2 : i64 (ast-expr-if vx one (ast-expr-if vx one one))]
@@ -6531,9 +6531,11 @@
     [return-chain3 : i64
       (ast-expr-if vx (ast-expr-if vx (ast-expr-if vx one one) one) one)]
     [return-one : i64 (ast-expr-return one)]
-    [not-vx : i64 (ast-expr-unary (AstUnNot) vx)]
+    [not-vx : i64 (ast-expr-unary (AstUnOp.Not) vx)]
     [set-ok-false : i64
-      (ast-expr-set "ok" (ast-node-push (AstExpr.Literal (AstLitBool false))))]
+      (ast-expr-set
+        "ok"
+        (ast-node-push (AstExpr.Literal (AstLiteral.Bool false))))]
     [unit-then-guard : i64 (ast-expr-if vx unit-expr return-one)]
     [unit-else-guard : i64 (ast-expr-if vx return-one unit-expr)]
     [unit-value-guard : i64 (ast-expr-if vx one unit-expr)]
@@ -6594,7 +6596,7 @@
       (ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
     [spanned-and-cascade : i64
       (ast-expr-spanned and-cascade (AstSourceSpan 21 7 21 30))]
-    [discarded-add : i64 (ast-expr-binary (AstBinAdd) one vx)]
+    [discarded-add : i64 (ast-expr-binary (AstBinOp.Add) one vx)]
     [discarded-cast : i64 (ast-expr-cast one (AstType.I64))]
     [discarded-call : i64
       (ast-expr-call (lint-test-var "side-effect?") AstExprList.Nil)]

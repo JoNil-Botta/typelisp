@@ -12726,12 +12726,12 @@
 
 (define (tc-literal-type [lit : AstLiteral]) : AstType
   (match lit
-    [(AstLitInt _ _) (AstType.I32)]
-    [(AstLitFloat _) (AstType.F64)]
-    [(AstLitBool _) (AstType.Bool)]
-    [(AstLitChar _) (AstType.Char)]
-    [(AstLitString _) (AstType.String)]
-    [(AstLitUnit) (AstType.Unit)]))
+    [(AstLiteral.Int _ _) (AstType.I32)]
+    [(AstLiteral.Float _) (AstType.F64)]
+    [(AstLiteral.Bool _) (AstType.Bool)]
+    [(AstLiteral.Char _) (AstType.Char)]
+    [(AstLiteral.String _) (AstType.String)]
+    [(AstLiteral.Unit) (AstType.Unit)]))
 
 (define (tc-param-type-list [ctx : TcContext] [params : AstParamList]) : AstTypeList
   (match params
@@ -12924,7 +12924,7 @@
                       [unit-expr : i64
                         (ast-node-pool-context-expr-push
                           (tc-context-pools ctx)
-                          (AstExpr.Literal (AstLitUnit)))]
+                          (AstExpr.Literal (AstLiteral.Unit)))]
                       (CompilerCtfeValue.ExprBindingClause
                         (ast-expr-binding-clause-id
                           name
@@ -14398,7 +14398,7 @@
 
 (define (tc-literal-type-checked [lit : AstLiteral]) : ResultTcType
   (match lit
-    [(AstLitFloat text) (tc-float-literal-f64-type text)]
+    [(AstLiteral.Float text) (tc-float-literal-f64-type text)]
     [_ (ResultTcType.Ok (tc-literal-type lit))]))
 
 (define (tc-float-literal-expr? [expr : AstExpr]) : bool
@@ -14409,7 +14409,7 @@
         (tc-float-literal-expr? inner))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitFloat _) true]
+        [(AstLiteral.Float _) true]
         [_ false])]
     [_ false]))
 
@@ -14426,7 +14426,8 @@
             (tc-locate-spanned-error inner span message)]))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitFloat text) (tc-float-literal-type-with-expected text expected)]
+        [(AstLiteral.Float text)
+          (tc-float-literal-type-with-expected text expected)]
         [_ (ResultTcType.Ok (tc-literal-type lit))])]
     [_ (ResultTcType.Ok (AstType.F64))]))
 
@@ -14438,7 +14439,7 @@
         (tc-integer-literal-expr? inner))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt _ _) true]
+        [(AstLiteral.Int _ _) true]
         [_ false])]
     [_ false]))
 
@@ -14456,7 +14457,7 @@
             (tc-locate-spanned-error inner span message)]))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value text)
+        [(AstLiteral.Int value text)
           (tc-integer-literal-type-with-expected ctx value text expected)]
         [_ (ResultTcType.Ok (tc-literal-type lit))])]
     [_ (ResultTcType.Ok (AstType.I32))]))
@@ -14526,51 +14527,51 @@
 
 (define (tc-binop-contextual-operand-type [op : AstBinOp] [expected : AstType]) : AstMaybeType
   (match op
-    [(AstBinAdd)
+    [(AstBinOp.Add)
       (if (or (tc-integer-type? expected) (tc-float-type? expected))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinSub)
+    [(AstBinOp.Sub)
       (if (or (tc-integer-type? expected) (tc-float-type? expected))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinMul)
+    [(AstBinOp.Mul)
       (if (or (tc-integer-type? expected) (tc-float-type? expected))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinDiv)
+    [(AstBinOp.Div)
       (if (or (tc-integer-type? expected) (tc-float-type? expected))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinMod)
+    [(AstBinOp.Mod)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinBitAnd)
+    [(AstBinOp.BitAnd)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinBitOr)
+    [(AstBinOp.BitOr)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinBitXor)
+    [(AstBinOp.BitXor)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinShl)
+    [(AstBinOp.Shl)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinShr)
+    [(AstBinOp.Shr)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinAnd)
+    [(AstBinOp.And)
       (if (tc-type-eq expected (AstType.Bool))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstBinOr)
+    [(AstBinOp.Or)
       (if (tc-type-eq expected (AstType.Bool))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
@@ -14606,15 +14607,15 @@
 
 (define (tc-unop-contextual-operand-type [op : AstUnOp] [expected : AstType]) : AstMaybeType
   (match op
-    [(AstUnNeg)
+    [(AstUnOp.Neg)
       (if (or (tc-integer-type? expected) (tc-float-type? expected))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstUnBitNot)
+    [(AstUnOp.BitNot)
       (if (tc-integer-type? expected)
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]
-    [(AstUnNot)
+    [(AstUnOp.Not)
       (if (tc-type-eq expected (AstType.Bool))
         (AstMaybeType.Some expected)
         (AstMaybeType.No))]))
@@ -15219,36 +15220,36 @@
 
 (define (tc-binop-type [op : AstBinOp] [left : AstType] [right : AstType]) : ResultTcType
   (match op
-    [(AstBinAnd)
+    [(AstBinOp.And)
       (if (and
         (tc-type-eq left (AstType.Bool))
         (tc-type-eq right (AstType.Bool)))
         (ResultTcType.Ok (AstType.Bool))
         (ResultTcType.Err "typecheck: boolean operator expects bool operands"))]
-    [(AstBinOr)
+    [(AstBinOp.Or)
       (if (and
         (tc-type-eq left (AstType.Bool))
         (tc-type-eq right (AstType.Bool)))
         (ResultTcType.Ok (AstType.Bool))
         (ResultTcType.Err "typecheck: boolean operator expects bool operands"))]
-    [(AstBinEq)
+    [(AstBinOp.Eq)
       (if (tc-type-eq left right)
         (ResultTcType.Ok (AstType.Bool))
         (ResultTcType.Err "typecheck: equality operands must match"))]
-    [(AstBinNe)
+    [(AstBinOp.Ne)
       (if (tc-type-eq left right)
         (ResultTcType.Ok (AstType.Bool))
         (ResultTcType.Err "typecheck: equality operands must match"))]
-    [(AstBinLt) (tc-compare-binop-type left right)]
-    [(AstBinLe) (tc-compare-binop-type left right)]
-    [(AstBinGt) (tc-compare-binop-type left right)]
-    [(AstBinGe) (tc-compare-binop-type left right)]
-    [(AstBinAdd) (tc-arithmetic-binop-type left right)]
-    [(AstBinSub) (tc-arithmetic-binop-type left right)]
-    [(AstBinMul) (tc-arithmetic-binop-type left right)]
-    [(AstBinDiv) (tc-arithmetic-binop-type left right)]
-    [(AstBinShl) (tc-shift-binop-type left right)]
-    [(AstBinShr) (tc-shift-binop-type left right)]
+    [(AstBinOp.Lt) (tc-compare-binop-type left right)]
+    [(AstBinOp.Le) (tc-compare-binop-type left right)]
+    [(AstBinOp.Gt) (tc-compare-binop-type left right)]
+    [(AstBinOp.Ge) (tc-compare-binop-type left right)]
+    [(AstBinOp.Add) (tc-arithmetic-binop-type left right)]
+    [(AstBinOp.Sub) (tc-arithmetic-binop-type left right)]
+    [(AstBinOp.Mul) (tc-arithmetic-binop-type left right)]
+    [(AstBinOp.Div) (tc-arithmetic-binop-type left right)]
+    [(AstBinOp.Shl) (tc-shift-binop-type left right)]
+    [(AstBinOp.Shr) (tc-shift-binop-type left right)]
     [_ (tc-integer-binop-type left right)]))
 
 (define (tc-integer-binop-type [left : AstType] [right : AstType]) : ResultTcType
@@ -15277,15 +15278,15 @@
 
 (define (tc-unop-type [op : AstUnOp] [ty : AstType]) : ResultTcType
   (match op
-    [(AstUnNot)
+    [(AstUnOp.Not)
       (if (tc-type-eq ty (AstType.Bool))
         (ResultTcType.Ok (AstType.Bool))
         (ResultTcType.Err "typecheck: not expects bool"))]
-    [(AstUnNeg)
+    [(AstUnOp.Neg)
       (if (or (tc-integer-type? ty) (tc-float-type? ty))
         (ResultTcType.Ok ty)
         (ResultTcType.Err "typecheck: neg expects integer"))]
-    [(AstUnBitNot)
+    [(AstUnOp.BitNot)
       (if (tc-integer-type? ty)
         (ResultTcType.Ok ty)
         (ResultTcType.Err "typecheck: bit-not expects integer"))]))
@@ -20683,7 +20684,7 @@
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match op
-          [(AstBinAdd)
+          [(AstBinOp.Add)
             (match (tc-spmd-foreach-direct-index spmd-env left)
               [(ResultTcUnit.Ok)
                 (tc-spmd-foreach-uniform-offset ctx env spmd-env right)]
@@ -20692,7 +20693,7 @@
                   [(ResultTcUnit.Ok)
                     (tc-spmd-foreach-uniform-offset ctx env spmd-env left)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
-          [(AstBinSub)
+          [(AstBinOp.Sub)
             (match (tc-spmd-foreach-direct-index spmd-env left)
               [(ResultTcUnit.Ok)
                 (tc-spmd-foreach-uniform-offset ctx env spmd-env right)]
@@ -20761,7 +20762,7 @@
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match op
-          [(AstBinAdd)
+          [(AstBinOp.Add)
             (match (tc-spmd-masked-if-direct-index spmd-env left)
               [(ResultTcUnit.Ok)
                 (tc-spmd-masked-if-uniform-offset ctx env spmd-env right)]
@@ -20770,7 +20771,7 @@
                   [(ResultTcUnit.Ok)
                     (tc-spmd-masked-if-uniform-offset ctx env spmd-env left)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])])]
-          [(AstBinSub)
+          [(AstBinOp.Sub)
             (match (tc-spmd-masked-if-direct-index spmd-env left)
               [(ResultTcUnit.Ok)
                 (tc-spmd-masked-if-uniform-offset ctx env spmd-env right)]
@@ -27149,7 +27150,7 @@
   (let
     [lit-ty : AstType (tc-literal-type lit)]
     (match lit
-      [(AstLitInt _ _) (tc-integer-type? scrut-ty)]
+      [(AstLiteral.Int _ _) (tc-integer-type? scrut-ty)]
       [_ (tc-type-eq lit-ty scrut-ty)])))
 
 (define (tc-bind-literal-pattern
@@ -28566,7 +28567,7 @@
         (match arm
           [(AstMatchArm.Arm pattern _)
             (match pattern
-              [(AstPattern.Literal (AstLitBool value))
+              [(AstPattern.Literal (AstLiteral.Bool value))
                 (if (= value want)
                   true
                   (tc-match-arms-cover-bool? rest want))]
@@ -28755,76 +28756,76 @@
 ;; over i32/i64, `all`/`any` over bool.
 (define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
   (match op
-    [(AstReduceSum)
+    [(AstReduceOp.Sum)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
         [(AstType.F64) true]
         [_ false])]
-    [(AstReduceMin)
+    [(AstReduceOp.Min)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
         [_ false])]
-    [(AstReduceMax)
+    [(AstReduceOp.Max)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
         [_ false])]
-    [(AstReduceAll)
+    [(AstReduceOp.All)
       (match ty
         [(AstType.Bool) true]
         [_ false])]
-    [(AstReduceAny)
+    [(AstReduceOp.Any)
       (match ty
         [(AstType.Bool) true]
         [_ false])]))
 
 (define (tc-reduce-op-type-msg [op : AstReduceOp]) : String
   (match op
-    [(AstReduceSum)
+    [(AstReduceOp.Sum)
       "typecheck: spmd-reduce sum requires an i32, i64, or f64 type"]
-    [(AstReduceMin) "typecheck: spmd-reduce min requires an i32 or i64 type"]
-    [(AstReduceMax) "typecheck: spmd-reduce max requires an i32 or i64 type"]
-    [(AstReduceAll) "typecheck: spmd-reduce all requires a bool type"]
-    [(AstReduceAny) "typecheck: spmd-reduce any requires a bool type"]))
+    [(AstReduceOp.Min) "typecheck: spmd-reduce min requires an i32 or i64 type"]
+    [(AstReduceOp.Max) "typecheck: spmd-reduce max requires an i32 or i64 type"]
+    [(AstReduceOp.All) "typecheck: spmd-reduce all requires a bool type"]
+    [(AstReduceOp.Any) "typecheck: spmd-reduce any requires a bool type"]))
 
 (define (tc-scan-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
   (match op
-    [(AstReduceSum)
+    [(AstReduceOp.Sum)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
         [_ false])]
-    [(AstReduceMin)
+    [(AstReduceOp.Min)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
         [_ false])]
-    [(AstReduceMax)
+    [(AstReduceOp.Max)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
         [_ false])]
-    [(AstReduceAll)
+    [(AstReduceOp.All)
       (match ty
         [(AstType.Bool) true]
         [_ false])]
-    [(AstReduceAny)
+    [(AstReduceOp.Any)
       (match ty
         [(AstType.Bool) true]
         [_ false])]))
 
 (define (tc-scan-op-type-msg [op : AstReduceOp]) : String
   (match op
-    [(AstReduceSum)
+    [(AstReduceOp.Sum)
       "typecheck: spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred"]
-    [(AstReduceMin)
+    [(AstReduceOp.Min)
       "typecheck: spmd-scan min requires an i32 or i64 type; floating-point scan ordering is deferred"]
-    [(AstReduceMax)
+    [(AstReduceOp.Max)
       "typecheck: spmd-scan max requires an i32 or i64 type; floating-point scan ordering is deferred"]
-    [(AstReduceAll) "typecheck: spmd-scan all requires a bool type"]
-    [(AstReduceAny) "typecheck: spmd-scan any requires a bool type"]))
+    [(AstReduceOp.All) "typecheck: spmd-scan all requires a bool type"]
+    [(AstReduceOp.Any) "typecheck: spmd-scan any requires a bool type"]))
 
 ;; spmd-reduce purity/effect rules (#1011, SPEC.md 5.15): mirror the Rust
 ;; typechecker's `check_spmd_reduce_value`. The first reduction slice accepts a
@@ -29740,7 +29741,7 @@
 
 (define (tc-make-array-zero-literal-length? [len : AstExpr]) : bool
   (match (ast-expr-unspan len)
-    [(AstExpr.Literal (AstLitInt value _)) (= value 0)]
+    [(AstExpr.Literal (AstLiteral.Int value _)) (= value 0)]
     [_ false]))
 
 (define (tc-make-array-requires-element-init? [elem : AstType] [len : AstExpr]) : bool
@@ -33298,7 +33299,7 @@
         (tc-move-literal-index inner))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt index _) (TcMoveSomeIndex index)]
+        [(AstLiteral.Int index _) (TcMoveSomeIndex index)]
         [_ (TcMoveNoIndex)])]
     [_ (TcMoveNoIndex)]))
 
@@ -41464,30 +41465,30 @@
 
 (define (macro-binop-symbol [op : AstBinOp]) : String
   (match op
-    [(AstBinAdd) "+"]
-    [(AstBinSub) "-"]
-    [(AstBinMul) "*"]
-    [(AstBinDiv) "/"]
-    [(AstBinMod) "%"]
-    [(AstBinEq) "="]
-    [(AstBinNe) "!="]
-    [(AstBinLt) "<"]
-    [(AstBinLe) "<="]
-    [(AstBinGt) ">"]
-    [(AstBinGe) ">="]
-    [(AstBinAnd) "and"]
-    [(AstBinOr) "or"]
-    [(AstBinBitAnd) "bit-and"]
-    [(AstBinBitOr) "bit-or"]
-    [(AstBinBitXor) "bit-xor"]
-    [(AstBinShl) "shl"]
-    [(AstBinShr) "shr"]))
+    [(AstBinOp.Add) "+"]
+    [(AstBinOp.Sub) "-"]
+    [(AstBinOp.Mul) "*"]
+    [(AstBinOp.Div) "/"]
+    [(AstBinOp.Mod) "%"]
+    [(AstBinOp.Eq) "="]
+    [(AstBinOp.Ne) "!="]
+    [(AstBinOp.Lt) "<"]
+    [(AstBinOp.Le) "<="]
+    [(AstBinOp.Gt) ">"]
+    [(AstBinOp.Ge) ">="]
+    [(AstBinOp.And) "and"]
+    [(AstBinOp.Or) "or"]
+    [(AstBinOp.BitAnd) "bit-and"]
+    [(AstBinOp.BitOr) "bit-or"]
+    [(AstBinOp.BitXor) "bit-xor"]
+    [(AstBinOp.Shl) "shl"]
+    [(AstBinOp.Shr) "shr"]))
 
 (define (macro-unop-symbol [op : AstUnOp]) : String
   (match op
-    [(AstUnNeg) "-"]
-    [(AstUnNot) "not"]
-    [(AstUnBitNot) "bit-not"]))
+    [(AstUnOp.Neg) "-"]
+    [(AstUnOp.Not) "not"]
+    [(AstUnOp.BitNot) "bit-not"]))
 
 (define (macro-lifetime-list-to-spanned-sexpr
   [items : AstLifetimeList]
@@ -41730,17 +41731,17 @@
   [lit : AstLiteral]
   [span : token.SourceSpan]) : SpannedSexpr
   (match lit
-    [(AstLitInt n text) (SpannedSexpr.Int n text span)]
-    [(AstLitFloat text) (SpannedSexpr.Float text span)]
-    [(AstLitBool value)
+    [(AstLiteral.Int n text) (SpannedSexpr.Int n text span)]
+    [(AstLiteral.Float text) (SpannedSexpr.Float text span)]
+    [(AstLiteral.Bool value)
       (SpannedSexpr.Sym
         (if value
           "true"
           "false")
         span)]
-    [(AstLitChar c) (SpannedSexpr.Char c span)]
-    [(AstLitString text) (SpannedSexpr.Str text span)]
-    [(AstLitUnit) (SpannedSexpr.Sym "unit" span)]))
+    [(AstLiteral.Char c) (SpannedSexpr.Char c span)]
+    [(AstLiteral.String text) (SpannedSexpr.Str text span)]
+    [(AstLiteral.Unit) (SpannedSexpr.Sym "unit" span)]))
 
 (define (macro-pattern-list-to-spanned-sexpr
   [patterns : AstPatternList]
@@ -41927,20 +41928,21 @@
         origin)]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt n text)
+        [(AstLiteral.Int n text)
           (ResultMacroSexpr.Ok (SpannedSexpr.Int n text span))]
-        [(AstLitFloat text)
+        [(AstLiteral.Float text)
           (ResultMacroSexpr.Ok (SpannedSexpr.Float text span))]
-        [(AstLitBool value)
+        [(AstLiteral.Bool value)
           (ResultMacroSexpr.Ok
             (SpannedSexpr.Sym
               (if value
                 "true"
                 "false")
               span))]
-        [(AstLitChar c) (ResultMacroSexpr.Ok (SpannedSexpr.Char c span))]
-        [(AstLitString text) (ResultMacroSexpr.Ok (SpannedSexpr.Str text span))]
-        [(AstLitUnit) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "unit" span))])]
+        [(AstLiteral.Char c) (ResultMacroSexpr.Ok (SpannedSexpr.Char c span))]
+        [(AstLiteral.String text)
+          (ResultMacroSexpr.Ok (SpannedSexpr.Str text span))]
+        [(AstLiteral.Unit) (ResultMacroSexpr.Ok (SpannedSexpr.Sym "unit" span))])]
     [(AstExpr.Var name)
       (ResultMacroSexpr.Ok
         (SpannedSexpr.Sym (macro-output-syntax-name (intern-str name)) span))]
@@ -45060,7 +45062,7 @@
                 (ast-expr-binding-clause-id
                   name
                   false
-                  (ast-node-push (AstExpr.Literal (AstLitUnit)))
+                  (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
                   first
                   (macro-expr-span-or-zero arg)))]
             [_ (macro-expr-binding-clause-shape-error arg)])))]
@@ -45885,10 +45887,10 @@
   (ast-node-push (AstExpr.Literal (ast-lit-int value))))
 
 (define (macro-vf-lit-bool [value : bool]) : i64
-  (ast-node-push (AstExpr.Literal (AstLitBool value))))
+  (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
 
 (define (macro-vf-unit) : i64
-  (ast-node-push (AstExpr.Literal AstLitUnit)))
+  (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
 
 (define (macro-vf-expr-list1 [a : i64]) : AstExprList
   (ast-expr-cons a AstExprList.Nil))
@@ -46013,7 +46015,7 @@
     [cap-var : i64 (macro-vf-var "cap")]
     [cap-init : i64
       (ast-expr-if
-        (ast-expr-binary (AstBinLt) capacity-var (macro-vf-lit-i64 1))
+        (ast-expr-binary (AstBinOp.Lt) capacity-var (macro-vf-lit-i64 1))
         (macro-vf-lit-i64 1)
         (macro-vf-var "capacity"))]
     [make-slots : i64 (ast-expr-make-array elem-ty cap-var)]
@@ -46043,8 +46045,8 @@
 
 (define (macro-vf-bounds-check [len-expr : i64]) : i64
   (ast-expr-if
-    (ast-expr-binary (AstBinGe) (macro-vf-var "index") (macro-vf-lit-i64 0))
-    (ast-expr-binary (AstBinLt) (macro-vf-var "index") len-expr)
+    (ast-expr-binary (AstBinOp.Ge) (macro-vf-var "index") (macro-vf-lit-i64 0))
+    (ast-expr-binary (AstBinOp.Lt) (macro-vf-var "index") len-expr)
     (macro-vf-lit-bool false)))
 
 (define (macro-vf-get-decl
@@ -46100,7 +46102,10 @@
       (macro-vf-param "count" (AstType.I64)))
     (AstType.Unit)
     (ast-expr-if
-      (ast-expr-binary (AstBinGe) (macro-vf-var "index") (macro-vf-var "count"))
+      (ast-expr-binary
+        (AstBinOp.Ge)
+        (macro-vf-var "index")
+        (macro-vf-var "count"))
       (macro-vf-unit)
       (macro-vf-begin2
         (ast-expr-array-set
@@ -46113,7 +46118,7 @@
             (macro-vf-var "dst")
             (macro-vf-var "src")
             (ast-expr-binary
-              (AstBinAdd)
+              (AstBinOp.Add)
               (macro-vf-var "index")
               (macro-vf-lit-i64 1))
             (macro-vf-var "count")))))))
@@ -46130,12 +46135,12 @@
     [new-cap-init : i64
       (ast-expr-if
         (ast-expr-binary
-          (AstBinLt)
+          (AstBinOp.Lt)
           (macro-vf-var "old-cap")
           (macro-vf-lit-i64 1))
         (macro-vf-lit-i64 1)
         (ast-expr-binary
-          (AstBinMul)
+          (AstBinOp.Mul)
           (macro-vf-var "old-cap")
           (macro-vf-lit-i64 2)))]
     [bigger-init : i64 (ast-expr-make-array elem-ty (macro-vf-var "new-cap"))]
@@ -46188,7 +46193,7 @@
     [ensure-capacity : i64
       (ast-expr-if
         (ast-expr-binary
-          (AstBinLt)
+          (AstBinOp.Lt)
           (macro-vf-struct-get "v" "len")
           (macro-vf-array-length (macro-vf-struct-get "v" "slots")))
         (macro-vf-unit)
@@ -46210,7 +46215,7 @@
             "v"
             "len"
             (ast-expr-binary
-              (AstBinAdd)
+              (AstBinOp.Add)
               (macro-vf-var "index")
               (macro-vf-lit-i64 1)))))]
     (ast-decl-def-fn
@@ -46357,16 +46362,16 @@
     (string.eq (macro-core-fast-path-base macro-name) "str-cat")))
 
 (define (macro-core-fast-bool [value : bool]) : i64
-  (ast-node-push (AstExpr.Literal (AstLitBool value))))
+  (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
 
 (define (macro-core-fast-unit) : i64
-  (ast-node-push (AstExpr.Literal AstLitUnit)))
+  (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
 
 (define (macro-core-fast-var [name : String]) : i64
   (ast-node-push (AstExpr.Var (intern name))))
 
 (define (macro-core-fast-string [value : String]) : i64
-  (ast-node-push (AstExpr.Literal (AstLitString value))))
+  (ast-node-push (AstExpr.Literal (AstLiteral.String value))))
 
 (define (macro-core-fast-int [value : i64]) : i64
   (ast-node-push (AstExpr.Literal (ast-lit-int value))))
@@ -47200,7 +47205,7 @@
                 [(ResultMacroExpr.Err diag) (ResultMacroLetBindings.Err diag)]))]))]))
 
 (define (macro-compat-unit-expr) : i64
-  (ast-node-push (AstExpr.Literal AstLitUnit)))
+  (ast-node-push (AstExpr.Literal AstLiteral.Unit)))
 
 (define (macro-compat-append-unit [exprs : AstExprList]) : AstExprList
   (match exprs

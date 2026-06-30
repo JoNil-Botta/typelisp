@@ -8,7 +8,7 @@
   (match (ast-expr-node-pool-state-get pool id)
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value _) (= value expected)]
+        [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -179,7 +179,7 @@
   (match (ast-node-pool-context-expr-get pools id)
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitInt value _) (= value expected)]
+        [(AstLiteral.Int value _) (= value expected)]
         [_ false])]
     [_ false]))
 
@@ -215,7 +215,7 @@
               (match (ast-node-get inner)
                 [(AstExpr.Literal lit)
                   (match lit
-                    [(AstLitInt value _) (= value 7)]
+                    [(AstLiteral.Int value _) (= value 7)]
                     [_ false])]
                 [_ false])]
             [_ false])
@@ -313,7 +313,7 @@
     [source-body : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExpr.Binary (AstBinAdd) source-span source-span))]
+        (AstExpr.Binary (AstBinOp.Add) source-span source-span))]
     [program : AstProgram
       (ast-program
         (ast-decl-cons

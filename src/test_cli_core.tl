@@ -634,7 +634,7 @@
   (ast-expr-call
     (ast-node-push (AstExpr.Var (intern "__tl_test_print_error")))
     (ast-expr-cons
-      (ast-node-push (AstExpr.Literal (AstLitString text)))
+      (ast-node-push (AstExpr.Literal (AstLiteral.String text)))
       (ast-expr-cons
         (ast-expr-cast
           (ast-node-push
@@ -783,7 +783,7 @@
         AstLetBindingList.Nil))
     (ast-expr-if
       (ast-expr-binary
-        (AstBinEq)
+        (AstBinOp.Eq)
         (ast-node-push (AstExpr.Var (intern "ok")))
         (ast-expr-cast
           (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
@@ -838,7 +838,7 @@
         (ast-expr-cons
           (tltest-print-runtime-write-call)
           (ast-expr-cons
-            (ast-node-push (AstExpr.Literal (AstLitUnit)))
+            (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
             AstExprList.Nil))))))
 
 (define (tltest-program-with-print-runtime
@@ -2133,7 +2133,7 @@
         "eq"
         AstParamList.Nil
         (AstType.Bool)
-        (ast-node-push (AstExpr.Literal (AstLitBool true))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Bool true))))]
     [source-import : AstDecl
       (AstDecl.Import
         (AstImportSpec.Spec
@@ -2186,7 +2186,7 @@
         helper-name
         AstParamList.Nil
         (AstType.Unit)
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
     [second-span : AstSourceSpan (AstSourceSpan 22 1 22 1)]
     [decls : AstDeclList
@@ -2232,7 +2232,7 @@
 
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let
-    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-substring"
@@ -2307,7 +2307,7 @@
 
 (define (tltest-generated-runtime-lambda-reachability-self-test?) : bool
   (let
-    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-substring"
@@ -2367,7 +2367,7 @@
 
 (define (tltest-generated-runtime-substring-reachability-self-test?) : bool
   (let
-    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
       (ast-decl-def-fn
         "tl-runtime-substring"
@@ -2433,7 +2433,7 @@
         helper-name
         AstParamList.Nil
         (AstType.Unit)
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [owned-span : AstSourceSpan (AstSourceSpan 5 1 5 1)]
     [imported-span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
     [decls : AstDeclList
@@ -2505,7 +2505,7 @@
         (ast-decl-cons
           (ast-decl-test
             "uses-qualified-macro-alias"
-            (ast-node-push (AstExpr.Literal (AstLitUnit)))
+            (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
             span)
           AstDeclList.Nil))]
     [paths : AstDeclPathList
@@ -2538,7 +2538,7 @@
         dep-name
         AstParamList.Nil
         (AstType.Unit)
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
@@ -2550,7 +2550,7 @@
         eq-dep-name
         AstParamList.Nil
         (AstType.Unit)
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [eq-decl : AstDecl
       (ast-decl-def-fn
         eq-name
@@ -2570,7 +2570,7 @@
               (ast-decl-cons
                 (ast-decl-test
                   "runtime-helper-not-called-by-test"
-                  (ast-node-push (AstExpr.Literal (AstLitUnit)))
+                  (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
                   span)
                 AstDeclList.Nil)))))]
     [paths : AstDeclPathList
@@ -2619,7 +2619,7 @@
           dep-name
           AstParamList.Nil
           (AstType.Unit)
-          (ast-node-push (AstExpr.Literal (AstLitUnit)))))]
+          (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [live-decl : AstDecl
       (tltest-generated-wrapper
         live-name
@@ -2635,7 +2635,7 @@
           dead-name
           AstParamList.Nil
           (AstType.Unit)
-          (ast-node-push (AstExpr.Literal (AstLitUnit)))))]
+          (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [span : AstSourceSpan (AstSourceSpan 23 1 23 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2687,13 +2687,13 @@
           dead-name
           AstParamList.Nil
           (AstType.Unit)
-          (ast-node-push (AstExpr.Literal (AstLitUnit)))))]
+          (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [ordinary-decl : AstDecl
       (ast-decl-def-fn
         ordinary-name
         AstParamList.Nil
         (AstType.Unit)
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2703,7 +2703,7 @@
           (ast-decl-cons
             (ast-decl-test
               "keeps-imported-generated"
-              (ast-node-push (AstExpr.Literal (AstLitUnit)))
+              (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
               span)
             AstDeclList.Nil)))]
     [paths : AstDeclPathList
@@ -2738,7 +2738,7 @@
         helper-name
         AstParamList.Nil
         (AstType.Unit)
-        (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+        (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [macro-decl : AstDecl
       (ast-decl-def-macro
         macro-name
@@ -2846,7 +2846,10 @@
     roots
     (tltest-typecheck-cache-scope roots target))
     [(ResultCompilerTypecheck.Ok _) true]
-    [(ResultCompilerTypecheck.Err _) false]))
+    [(ResultCompilerTypecheck.Err diag)
+      (begin
+        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        false)]))
 
 (define (tltest-function-base-defined?
   [funcs : CompilerIrFunctionList]

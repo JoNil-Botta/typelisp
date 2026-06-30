@@ -8300,42 +8300,42 @@
 
 (define (lower-literal-value-with-type [lit : AstLiteral] [ty : AstType]) : CompilerIrValue
   (match lit
-    [(AstLitInt n _) (CompilerIrValue.I64 n)]
-    [(AstLitFloat n) (CompilerIrValue.F64 (lower-float-literal-bits n ty))]
-    [(AstLitBool b) (CompilerIrValue.Bool b)]
-    [(AstLitChar c) (CompilerIrValue.Char c)]
-    [(AstLitString s) (CompilerIrValue.String s)]
-    [(AstLitUnit) CompilerIrValue.Unit]))
+    [(AstLiteral.Int n _) (CompilerIrValue.I64 n)]
+    [(AstLiteral.Float n) (CompilerIrValue.F64 (lower-float-literal-bits n ty))]
+    [(AstLiteral.Bool b) (CompilerIrValue.Bool b)]
+    [(AstLiteral.Char c) (CompilerIrValue.Char c)]
+    [(AstLiteral.String s) (CompilerIrValue.String s)]
+    [(AstLiteral.Unit) CompilerIrValue.Unit]))
 
 (define (lower-literal-value [lit : AstLiteral]) : CompilerIrValue
   (lower-literal-value-with-type lit (tc-literal-type lit)))
 
 (define (lower-binop [op : AstBinOp]) : CompilerIrBinOp
   (match op
-    [(AstBinAdd) CompilerIrBinOp.Add]
-    [(AstBinSub) CompilerIrBinOp.Sub]
-    [(AstBinMul) CompilerIrBinOp.Mul]
-    [(AstBinDiv) CompilerIrBinOp.Div]
-    [(AstBinMod) CompilerIrBinOp.Mod]
-    [(AstBinEq) CompilerIrBinOp.Eq]
-    [(AstBinNe) CompilerIrBinOp.Ne]
-    [(AstBinLt) CompilerIrBinOp.Lt]
-    [(AstBinLe) CompilerIrBinOp.Le]
-    [(AstBinGt) CompilerIrBinOp.Gt]
-    [(AstBinGe) CompilerIrBinOp.Ge]
-    [(AstBinAnd) CompilerIrBinOp.And]
-    [(AstBinOr) CompilerIrBinOp.Or]
-    [(AstBinBitAnd) CompilerIrBinOp.BitAnd]
-    [(AstBinBitOr) CompilerIrBinOp.BitOr]
-    [(AstBinBitXor) CompilerIrBinOp.BitXor]
-    [(AstBinShl) CompilerIrBinOp.Shl]
-    [(AstBinShr) CompilerIrBinOp.Shr]))
+    [(AstBinOp.Add) CompilerIrBinOp.Add]
+    [(AstBinOp.Sub) CompilerIrBinOp.Sub]
+    [(AstBinOp.Mul) CompilerIrBinOp.Mul]
+    [(AstBinOp.Div) CompilerIrBinOp.Div]
+    [(AstBinOp.Mod) CompilerIrBinOp.Mod]
+    [(AstBinOp.Eq) CompilerIrBinOp.Eq]
+    [(AstBinOp.Ne) CompilerIrBinOp.Ne]
+    [(AstBinOp.Lt) CompilerIrBinOp.Lt]
+    [(AstBinOp.Le) CompilerIrBinOp.Le]
+    [(AstBinOp.Gt) CompilerIrBinOp.Gt]
+    [(AstBinOp.Ge) CompilerIrBinOp.Ge]
+    [(AstBinOp.And) CompilerIrBinOp.And]
+    [(AstBinOp.Or) CompilerIrBinOp.Or]
+    [(AstBinOp.BitAnd) CompilerIrBinOp.BitAnd]
+    [(AstBinOp.BitOr) CompilerIrBinOp.BitOr]
+    [(AstBinOp.BitXor) CompilerIrBinOp.BitXor]
+    [(AstBinOp.Shl) CompilerIrBinOp.Shl]
+    [(AstBinOp.Shr) CompilerIrBinOp.Shr]))
 
 (define (lower-unop [op : AstUnOp]) : CompilerIrUnOp
   (match op
-    [(AstUnNeg) CompilerIrUnOp.Neg]
-    [(AstUnNot) CompilerIrUnOp.Not]
-    [(AstUnBitNot) CompilerIrUnOp.BitNot]))
+    [(AstUnOp.Neg) CompilerIrUnOp.Neg]
+    [(AstUnOp.Not) CompilerIrUnOp.Not]
+    [(AstUnOp.BitNot) CompilerIrUnOp.BitNot]))
 
 (define (lower-align-up [n : i64] [align : i64]) : i64
   (if (<= align 1)
@@ -9263,8 +9263,8 @@
 ;; equal tags but different payloads compared equal.
 (define (lower-binop-group-eq? [op : AstBinOp]) : bool
   (match op
-    [(AstBinEq) true]
-    [(AstBinNe) true]
+    [(AstBinOp.Eq) true]
+    [(AstBinOp.Ne) true]
     [_ false]))
 
 (define (lower-group-equality
@@ -9328,7 +9328,7 @@
                                       combined
                                       ;; eq: both words equal; ne: either differs.
                                       (match op
-                                        [(AstBinNe) CompilerIrBinOp.BitOr]
+                                        [(AstBinOp.Ne) CompilerIrBinOp.BitOr]
                                         [_ CompilerIrBinOp.BitAnd])
                                       (CompilerIrValue.Var word0-cmp)
                                       (CompilerIrValue.Var word1-cmp)
@@ -11175,10 +11175,10 @@
 
 (define (lower-literal-payload-supported? [lit : AstLiteral]) : bool
   (match lit
-    [(AstLitInt _ _) true]
-    [(AstLitBool _) true]
-    [(AstLitChar _) true]
-    [(AstLitString _) true]
+    [(AstLiteral.Int _ _) true]
+    [(AstLiteral.Bool _) true]
+    [(AstLiteral.Char _) true]
+    [(AstLiteral.String _) true]
     [_ false]))
 
 (define (lower-enum-type-name-or-empty [ty : AstType]) : String
@@ -11304,7 +11304,7 @@
   [lit : AstLiteral]
   [resolved : AstType]) : ResultLowerExpr
   (match lit
-    [(AstLitString _)
+    [(AstLiteral.String _)
       (if (lower-string-handle-type? ctx resolved)
         (lower-string-payload-literal-eq
           state
@@ -18124,7 +18124,7 @@
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (match op
-          [(AstBinAnd)
+          [(AstBinOp.And)
             (lower-if
               ctx
               state
@@ -18132,16 +18132,16 @@
               type-env
               left
               right
-              (AstExpr.Literal (AstLitBool false))
+              (AstExpr.Literal (AstLiteral.Bool false))
               expr-ty)]
-          [(AstBinOr)
+          [(AstBinOp.Or)
             (lower-if
               ctx
               state
               env
               type-env
               left
-              (AstExpr.Literal (AstLitBool true))
+              (AstExpr.Literal (AstLiteral.Bool true))
               right
               expr-ty)]
           [_
@@ -25385,7 +25385,7 @@
 
 (define (lower-make-array-zero-literal-length? [len : AstExpr]) : bool
   (match (ast-expr-unspan len)
-    [(AstExpr.Literal (AstLitInt value _)) (= value 0)]
+    [(AstExpr.Literal (AstLiteral.Int value _)) (= value 0)]
     [_ false]))
 
 (define (lower-make-array-init-loop-nonzero
@@ -28158,11 +28158,11 @@
 
 (define (spmd-reduce-acc-update-expr [op : AstReduceOp] [value : i64]) : i64
   (match op
-    [(AstReduceSum) (spmd-reduce-acc-binop-update (AstBinAdd) value)]
-    [(AstReduceAll) (spmd-reduce-acc-binop-update (AstBinAnd) value)]
-    [(AstReduceAny) (spmd-reduce-acc-binop-update (AstBinOr) value)]
-    [(AstReduceMin) (spmd-reduce-acc-select-update (AstBinLt) value)]
-    [(AstReduceMax) (spmd-reduce-acc-select-update (AstBinGt) value)]))
+    [(AstReduceOp.Sum) (spmd-reduce-acc-binop-update (AstBinOp.Add) value)]
+    [(AstReduceOp.All) (spmd-reduce-acc-binop-update (AstBinOp.And) value)]
+    [(AstReduceOp.Any) (spmd-reduce-acc-binop-update (AstBinOp.Or) value)]
+    [(AstReduceOp.Min) (spmd-reduce-acc-select-update (AstBinOp.Lt) value)]
+    [(AstReduceOp.Max) (spmd-reduce-acc-select-update (AstBinOp.Gt) value)]))
 
 ;; Scalar `spmd-reduce` loop scaffold (#1013): desugar to an accumulator loop and
 ;; reuse the let/while/set lowering. `acc`/`end`/index are bound once before the
@@ -28214,7 +28214,7 @@
             (ast-expr-cons
               (ast-expr-while
                 (ast-expr-binary
-                  (AstBinLt)
+                  (AstBinOp.Lt)
                   (ast-node-push (AstExpr.Var (intern index)))
                   (ast-node-push (AstExpr.Var (lower-spmd-reduce-end-id))))
                 (ast-node-push
@@ -28225,7 +28225,7 @@
                         (ast-expr-set
                           index
                           (ast-expr-binary
-                            (AstBinAdd)
+                            (AstBinOp.Add)
                             (ast-node-push (AstExpr.Var (intern index)))
                             (ast-node-push (AstExpr.Literal (ast-lit-int 1)))))
                         (AstExprList.Nil))))))
@@ -28345,11 +28345,11 @@
 
 (define (spmd-scan-prefix-expr [op : AstReduceOp] [value : i64]) : i64
   (match op
-    [(AstReduceSum) (spmd-scan-binop-prefix (AstBinAdd) value)]
-    [(AstReduceAll) (spmd-scan-binop-prefix (AstBinAnd) value)]
-    [(AstReduceAny) (spmd-scan-binop-prefix (AstBinOr) value)]
-    [(AstReduceMin) (spmd-scan-select-prefix (AstBinLt) value)]
-    [(AstReduceMax) (spmd-scan-select-prefix (AstBinGt) value)]))
+    [(AstReduceOp.Sum) (spmd-scan-binop-prefix (AstBinOp.Add) value)]
+    [(AstReduceOp.All) (spmd-scan-binop-prefix (AstBinOp.And) value)]
+    [(AstReduceOp.Any) (spmd-scan-binop-prefix (AstBinOp.Or) value)]
+    [(AstReduceOp.Min) (spmd-scan-select-prefix (AstBinOp.Lt) value)]
+    [(AstReduceOp.Max) (spmd-scan-select-prefix (AstBinOp.Gt) value)]))
 
 (define (lower-spmd-scan-scaffold
   [ctx : TcContext]
@@ -28393,7 +28393,7 @@
             (ast-expr-cons
               (ast-expr-while
                 (ast-expr-binary
-                  (AstBinLt)
+                  (AstBinOp.Lt)
                   (ast-node-push (AstExpr.Var (intern index)))
                   (ast-node-push (AstExpr.Var (lower-spmd-scan-end-id))))
                 (ast-expr-let
@@ -28415,7 +28415,7 @@
                             (ast-expr-set
                               index
                               (ast-expr-binary
-                                (AstBinAdd)
+                                (AstBinOp.Add)
                                 (ast-node-push (AstExpr.Var (intern index)))
                                 (ast-node-push
                                   (AstExpr.Literal (ast-lit-int 1)))))
@@ -28760,7 +28760,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-simple-spmd-broadcast-lane env type-env inner))]
-    [(AstExpr.Literal (AstLitInt n _))
+    [(AstExpr.Literal (AstLiteral.Int n _))
       (LowerSomeIrValue (CompilerIrValue.I64 n))]
     [(AstExpr.Var name)
       (let
@@ -28890,7 +28890,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-index-literal-offset inner))]
-    [(AstExpr.Literal (AstLitInt n _))
+    [(AstExpr.Literal (AstLiteral.Int n _))
       (if (>= n 0)
         n
         -1)]
@@ -28910,7 +28910,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-positive-power-two-literal inner))]
-    [(AstExpr.Literal (AstLitInt n _))
+    [(AstExpr.Literal (AstLiteral.Int n _))
       (if (> n 0)
         (if (= (bit-and n (- n 1)) 0)
           n
@@ -28938,7 +28938,7 @@
         -1)]
     [(AstExpr.Binary op left-box right-box)
       (match op
-        [(AstBinAdd)
+        [(AstBinOp.Add)
           (let
             [left : AstExpr (ast-node-get left-box)]
             [right : AstExpr (ast-node-get right-box)]
@@ -28963,21 +28963,21 @@
 
 (define (lower-masked-vector-binop-supported? [op : AstBinOp]) : bool
   (match op
-    [(AstBinAdd) true]
-    [(AstBinMod) true]
-    [(AstBinEq) true]
-    [(AstBinNe) true]
-    [(AstBinLt) true]
-    [(AstBinLe) true]
-    [(AstBinGt) true]
-    [(AstBinGe) true]
-    [(AstBinAnd) true]
-    [(AstBinOr) true]
+    [(AstBinOp.Add) true]
+    [(AstBinOp.Mod) true]
+    [(AstBinOp.Eq) true]
+    [(AstBinOp.Ne) true]
+    [(AstBinOp.Lt) true]
+    [(AstBinOp.Le) true]
+    [(AstBinOp.Gt) true]
+    [(AstBinOp.Ge) true]
+    [(AstBinOp.And) true]
+    [(AstBinOp.Or) true]
     [_ false]))
 
 (define (lower-masked-vector-unop-supported? [op : AstUnOp]) : bool
   (match op
-    [(AstUnNot) true]
+    [(AstUnOp.Not) true]
     [_ false]))
 
 (define (lower-masked-vector-empty-lane-locals) : hashmap.StringI64Map
@@ -31468,8 +31468,8 @@
   [elem-ty : AstType]
   [op : AstBinOp]) : bool
   (match op
-    [(AstBinAdd) true]
-    [(AstBinMul)
+    [(AstBinOp.Add) true]
+    [(AstBinOp.Mul)
       (and
         (> (lower-simd-lanes-for-elem mode elem-ty) 0)
         (not (lower-spmd-byte-lane-type? elem-ty)))]
@@ -31500,7 +31500,7 @@
         (lower-spmd-expr-has-mul? inner))]
     [(AstExpr.Binary op lhs-box rhs-box)
       (match op
-        [(AstBinMul) true]
+        [(AstBinOp.Mul) true]
         [_
           (or
             (lower-spmd-expr-has-mul? (ast-node-get lhs-box))
@@ -31699,7 +31699,7 @@
       (let
         [lit-ty : AstType (tc-literal-type lit)]
         (match lit
-          [(AstLitInt _ _)
+          [(AstLiteral.Int _ _)
             (if (and
               (> (lower-simd-lanes-for-elem mode dst-elem) 0)
               (tc-integer-type? dst-elem))
@@ -31802,18 +31802,18 @@
   [op : AstReduceOp]
   [elem : AstType]) : bool
   (match op
-    [(AstReduceSum)
+    [(AstReduceOp.Sum)
       (match elem
         [(AstType.I64) true]
         [(AstType.I32) true]
         [(AstType.F64) true]
         [_ false])]
-    [(AstReduceMin)
+    [(AstReduceOp.Min)
       (match elem
         [(AstType.I32) true]
         [(AstType.I64) (lower-mode-avx512? mode)]
         [_ false])]
-    [(AstReduceMax)
+    [(AstReduceOp.Max)
       (match elem
         [(AstType.I32) true]
         [(AstType.I64) (lower-mode-avx512? mode)]
@@ -31822,8 +31822,8 @@
 
 (define (lower-simple-vector-reduce-op [op : AstReduceOp]) : CompilerIrVectorReduceOp
   (match op
-    [(AstReduceMin) (CompilerIrVectorReduceOp.Min)]
-    [(AstReduceMax) (CompilerIrVectorReduceOp.Max)]
+    [(AstReduceOp.Min) (CompilerIrVectorReduceOp.Min)]
+    [(AstReduceOp.Max) (CompilerIrVectorReduceOp.Max)]
     [_ (CompilerIrVectorReduceOp.Sum)]))
 
 (define (lower-simple-vector-reduce
@@ -34404,7 +34404,7 @@
   [left : AstExpr]
   [right : AstExpr]) : ResultLowerExpr
   (match op
-    [(AstBinAnd)
+    [(AstBinOp.And)
       (match (lower-avx512-masked-expr
         ctx
         state
@@ -34442,7 +34442,7 @@
                           lanes))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(AstBinOr)
+    [(AstBinOp.Or)
       (match (lower-avx512-masked-expr
         ctx
         state
@@ -34480,7 +34480,7 @@
                           lanes))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(AstBinAdd)
+    [(AstBinOp.Add)
       (match (lower-avx512-masked-expr
         ctx
         state
@@ -34520,7 +34520,7 @@
                           left-ty))])]
                 [(ErrLowerExpr message) (ErrLowerExpr message)])])]
         [(ErrLowerExpr message) (ErrLowerExpr message)])]
-    [(AstBinMod)
+    [(AstBinOp.Mod)
       (let
         [divisor : i64 (lower-masked-vector-positive-power-two-literal right)]
         [index-offset : i64 (lower-masked-vector-index-offset index left)]
@@ -34555,7 +34555,7 @@
                           left-ty))])])]
             [(ErrLowerExpr message) (ErrLowerExpr message)])
           (lower-avx512-masked-unsupported expr "this binary operator")))]
-    [(AstBinEq)
+    [(AstBinOp.Eq)
       (lower-avx512-masked-compare
         ctx
         state
@@ -34570,7 +34570,7 @@
         (CompilerIrBinOp.Eq)
         left
         right)]
-    [(AstBinNe)
+    [(AstBinOp.Ne)
       (lower-avx512-masked-compare
         ctx
         state
@@ -34585,7 +34585,7 @@
         (CompilerIrBinOp.Ne)
         left
         right)]
-    [(AstBinLt)
+    [(AstBinOp.Lt)
       (lower-avx512-masked-compare
         ctx
         state
@@ -34600,7 +34600,7 @@
         (CompilerIrBinOp.Lt)
         left
         right)]
-    [(AstBinLe)
+    [(AstBinOp.Le)
       (lower-avx512-masked-compare
         ctx
         state
@@ -34615,7 +34615,7 @@
         (CompilerIrBinOp.Le)
         left
         right)]
-    [(AstBinGt)
+    [(AstBinOp.Gt)
       (lower-avx512-masked-compare
         ctx
         state
@@ -34630,7 +34630,7 @@
         (CompilerIrBinOp.Gt)
         left
         right)]
-    [(AstBinGe)
+    [(AstBinOp.Ge)
       (lower-avx512-masked-compare
         ctx
         state
@@ -34710,7 +34710,7 @@
   (match (tc-type-without-regions scrut-ty)
     [(AstType.Bool)
       (match lit
-        [(AstLitBool value)
+        [(AstLiteral.Bool value)
           (if value
             (OkLowerExpr (LowerExpr state scrut-value (AstType.Bool)))
             (OkLowerExpr (lower-emit-mask-not state scrut-value lanes)))]
@@ -35152,7 +35152,7 @@
           inner))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLitBool value)
+        [(AstLiteral.Bool value)
           (OkLowerExpr
             (lower-avx512-masked-bool-literal state active-mask lanes value))]
         [_
@@ -35183,7 +35183,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match op
-          [(AstUnNot)
+          [(AstUnOp.Not)
             (match (lower-avx512-masked-expr
               ctx
               state
@@ -40381,7 +40381,7 @@
               AstParamList.Nil)]
           [body : AstExpr
             (match exprs
-              [(AstExprList.Nil) (AstExpr.Literal AstLitUnit)]
+              [(AstExprList.Nil) (AstExpr.Literal AstLiteral.Unit)]
               [_ (AstExpr.Begin exprs)])]
           (lower-function-escaping
             ctx
@@ -52888,7 +52888,7 @@
 
 (define (compiler-lower-type-decl-dce-test-body-program) : AstProgram
   (let
-    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [test-body : i64
       (ast-expr-let
         (ast-let-binding-cons

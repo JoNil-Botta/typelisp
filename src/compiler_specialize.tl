@@ -1790,19 +1790,21 @@
     [(CompilerCtfeValue.F64 n)
       (ResultSpecSubExpr.Ok
         (ast-node-push
-          (AstExpr.Literal (AstLitFloat (compiler-float-format-f64 n)))))]
+          (AstExpr.Literal (AstLiteral.Float (compiler-float-format-f64 n)))))]
     [(CompilerCtfeValue.F32 n)
       (ResultSpecSubExpr.Ok
         (ast-expr-ann
           (ast-node-push
             (AstExpr.Literal
-              (AstLitFloat
+              (AstLiteral.Float
                 (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))))
           (AstType.F32)))]
     [(CompilerCtfeValue.Bool b)
-      (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitBool b))))]
+      (ResultSpecSubExpr.Ok
+        (ast-node-push (AstExpr.Literal (AstLiteral.Bool b))))]
     [(CompilerCtfeValue.Char c)
-      (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitChar c))))]
+      (ResultSpecSubExpr.Ok
+        (ast-node-push (AstExpr.Literal (AstLiteral.Char c))))]
     [(CompilerCtfeValue.String _)
       (ResultSpecSubExpr.Err
         (box
@@ -1810,7 +1812,7 @@
             origin
             "cannot substitute compile-time String value into runtime expression")))]
     [(CompilerCtfeValue.Unit)
-      (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitUnit))))]
+      (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [(CompilerCtfeValue.Type ty)
       (ResultSpecSubExpr.Err
         (box
@@ -5227,7 +5229,7 @@
           (match (ast-node-get e)
             [(AstExpr.Literal lit)
               (match lit
-                [(AstLitInt n _) (= n 5)]
+                [(AstLiteral.Int n _) (= n 5)]
                 [_ false])]
             [_ false])]
         [(ResultSpecSubExpr.Err _) false])
@@ -5255,7 +5257,7 @@
                   (match cond
                     [(AstExpr.Literal lit)
                       (match lit
-                        [(AstLitInt n _) (= n 5)]
+                        [(AstLiteral.Int n _) (= n 5)]
                         [_ false])]
                     [_ false])
                   (match else-branch
@@ -5278,7 +5280,7 @@
             "second"
             AstParamList.Nil
             (AstType.Bool)
-            (AstExpr.Literal (AstLitBool true)))
+            (AstExpr.Literal (AstLiteral.Bool true)))
           SpecTemplateList.Nil))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
     [cache : hashmap.StringStringMap

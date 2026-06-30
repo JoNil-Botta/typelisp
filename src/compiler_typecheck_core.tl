@@ -3812,8 +3812,8 @@
   "__tl_macro_local$")
 
 (defenum TcHygieneGlobalName
-  (TcHygieneLegacyGlobal String)
-  (TcHygieneContextGlobal String String))
+  (Legacy String)
+  (Context String String))
 
 (define tc-hygiene-active-top-env-ready : bool
   false)
@@ -3901,10 +3901,10 @@
     [payload : String (tc-hygiene-global-base name)]
     [sep : i64 (tc-hygiene-context-separator-index payload)]
     (if (< sep 0)
-      (TcHygieneLegacyGlobal payload)
+      (TcHygieneGlobalName.Legacy payload)
       (let
         [start : i64 (+ sep 1)]
-        (TcHygieneContextGlobal
+        (TcHygieneGlobalName.Context
           (string.substring payload 0 sep)
           (string.substring
             payload
@@ -3914,15 +3914,15 @@
 (define (tc-hygiene-global-call-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
     (match (tc-hygiene-global-decode name)
-      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
-      [(TcHygieneContextGlobal _ lookup-name) lookup-name])
+      [(TcHygieneGlobalName.Legacy lookup-name) lookup-name]
+      [(TcHygieneGlobalName.Context _ lookup-name) lookup-name])
     name))
 
 (define (tc-hygiene-global-symbol-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
     (match (tc-hygiene-global-decode name)
-      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
-      [(TcHygieneContextGlobal module lookup-name)
+      [(TcHygieneGlobalName.Legacy lookup-name) lookup-name]
+      [(TcHygieneGlobalName.Context module lookup-name)
         (if (tc-name-qualified? lookup-name)
           lookup-name
           (compiler-symbol-module-key module lookup-name))])
@@ -4630,48 +4630,45 @@
     [(AstMaybeType.No) (tc-stdlib-comptime-syntax-alias-type (intern-str name))]))
 
 (defenum TcStdlibTypeSpec
-  (TcStdlibTyI64)
-  (TcStdlibTyBool)
-  (TcStdlibTyString)
-  (TcStdlibTyName String)
-  (TcStdlibTyBoxName String)
-  (TcStdlibTyArrayName String))
+  (I64)
+  (Bool)
+  (String)
+  (Name String)
+  (BoxName String)
+  (ArrayName String))
 
 (defenum TcStdlibTypeSpecList
-  (TcStdlibTypeSpecNil)
-  (TcStdlibTypeSpecCons TcStdlibTypeSpec (Box TcStdlibTypeSpecList)))
+  (Nil)
+  (Cons TcStdlibTypeSpec (Box TcStdlibTypeSpecList)))
 
 (defenum TcStdlibFieldSpecList
-  (TcStdlibFieldSpecNil)
-  (TcStdlibFieldSpecCons String TcStdlibTypeSpec (Box TcStdlibFieldSpecList)))
+  (Nil)
+  (Cons String TcStdlibTypeSpec (Box TcStdlibFieldSpecList)))
 
 (defenum TcStdlibVariantSpecList
-  (TcStdlibVariantSpecNil)
-  (TcStdlibVariantSpecCons
-    String
-    TcStdlibTypeSpecList
-    (Box TcStdlibVariantSpecList)))
+  (Nil)
+  (Cons String TcStdlibTypeSpecList (Box TcStdlibVariantSpecList)))
 
 (define (tc-stdlib-type-spec-list1 [a : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecCons a (box (TcStdlibTypeSpecNil))))
+  (TcStdlibTypeSpecList.Cons a (box (TcStdlibTypeSpecList.Nil))))
 
 (define (tc-stdlib-type-spec-list2
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecCons
+  (TcStdlibTypeSpecList.Cons
     a
-    (box (TcStdlibTypeSpecCons b (box (TcStdlibTypeSpecNil))))))
+    (box (TcStdlibTypeSpecList.Cons b (box (TcStdlibTypeSpecList.Nil))))))
 
 (define (tc-stdlib-type-spec-list3
   [a : TcStdlibTypeSpec]
   [b : TcStdlibTypeSpec]
   [c : TcStdlibTypeSpec]) : TcStdlibTypeSpecList
-  (TcStdlibTypeSpecCons
+  (TcStdlibTypeSpecList.Cons
     a
     (box
-      (TcStdlibTypeSpecCons
+      (TcStdlibTypeSpecList.Cons
         b
-        (box (TcStdlibTypeSpecCons c (box (TcStdlibTypeSpecNil))))))))
+        (box (TcStdlibTypeSpecList.Cons c (box (TcStdlibTypeSpecList.Nil))))))))
 
 (define (tc-stdlib-field-spec-cons
   [name : String]
@@ -4679,7 +4676,7 @@
   [rest : TcStdlibFieldSpecList]) : TcStdlibFieldSpecList
   (begin
     (cfg compile-profile (tc-lp-note 8))
-    (TcStdlibFieldSpecCons name ty (box rest))))
+    (TcStdlibFieldSpecList.Cons name ty (box rest))))
 
 (define (tc-stdlib-variant-spec-cons
   [name : String]
@@ -4687,7 +4684,7 @@
   [rest : TcStdlibVariantSpecList]) : TcStdlibVariantSpecList
   (begin
     (cfg compile-profile (tc-lp-note 10))
-    (TcStdlibVariantSpecCons name payloads (box rest))))
+    (TcStdlibVariantSpecList.Cons name payloads (box rest))))
 
 (define (tc-stdlib-name-type [name : String]) : AstType
   (AstType.Var (intern name)))
@@ -4873,25 +4870,25 @@
   [actual : AstType]
   [expected : TcStdlibTypeSpec]) : bool
   (match expected
-    [(TcStdlibTyI64)
+    [(TcStdlibTypeSpec.I64)
       (match actual
         [(AstType.I64) true]
         [_ false])]
-    [(TcStdlibTyBool)
+    [(TcStdlibTypeSpec.Bool)
       (match actual
         [(AstType.Bool) true]
         [_ false])]
-    [(TcStdlibTyString)
+    [(TcStdlibTypeSpec.String)
       (match actual
         [(AstType.String) true]
         [_ false])]
-    [(TcStdlibTyName name) (tc-stdlib-type-name-match? ctx actual name)]
-    [(TcStdlibTyBoxName name)
+    [(TcStdlibTypeSpec.Name name) (tc-stdlib-type-name-match? ctx actual name)]
+    [(TcStdlibTypeSpec.BoxName name)
       (match actual
         [(AstType.Box inner)
           (tc-stdlib-type-name-match? ctx (tc-context-type-get ctx inner) name)]
         [_ false])]
-    [(TcStdlibTyArrayName name)
+    [(TcStdlibTypeSpec.ArrayName name)
       (match actual
         [(AstType.DynArray inner)
           (tc-stdlib-type-name-match? ctx (tc-context-type-get ctx inner) name)]
@@ -4899,12 +4896,12 @@
 
 (define (tc-stdlib-type-spec-render [expected : TcStdlibTypeSpec]) : String
   (match expected
-    [(TcStdlibTyI64) "i64"]
-    [(TcStdlibTyBool) "bool"]
-    [(TcStdlibTyString) "String"]
-    [(TcStdlibTyName name) name]
-    [(TcStdlibTyBoxName name) (str_cat.str-cat "(Box " name ")")]
-    [(TcStdlibTyArrayName name) (str_cat.str-cat "(Array " name ")")]))
+    [(TcStdlibTypeSpec.I64) "i64"]
+    [(TcStdlibTypeSpec.Bool) "bool"]
+    [(TcStdlibTypeSpec.String) "String"]
+    [(TcStdlibTypeSpec.Name name) name]
+    [(TcStdlibTypeSpec.BoxName name) (str_cat.str-cat "(Box " name ")")]
+    [(TcStdlibTypeSpec.ArrayName name) (str_cat.str-cat "(Array " name ")")]))
 
 (define (tc-stdlib-check-field-specs
   [ctx : TcContext]
@@ -4913,11 +4910,11 @@
   [specs : TcStdlibFieldSpecList]
   [index : i64]) : ResultTcUnit
   (match specs
-    [(TcStdlibFieldSpecNil)
+    [(TcStdlibFieldSpecList.Nil)
       (match fields
         [(AstFieldDefList.Nil) ResultTcUnit.Ok]
         [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra field")])]
-    [(TcStdlibFieldSpecCons expected-name expected-ty rest-specs)
+    [(TcStdlibFieldSpecList.Cons expected-name expected-ty rest-specs)
       (begin
         (cfg compile-profile (tc-lp-note 9))
         (match fields
@@ -4962,14 +4959,14 @@
   [expected : TcStdlibTypeSpecList]
   [index : i64]) : ResultTcUnit
   (match expected
-    [(TcStdlibTypeSpecNil)
+    [(TcStdlibTypeSpecList.Nil)
       (match actual
         [(AstTypeList.Nil) ResultTcUnit.Ok]
         [_
           (tc-stdlib-well-known-mismatch
             type-name
             (str_cat.str-cat "payload arity mismatch for variant " variant-name))])]
-    [(TcStdlibTypeSpecCons expected-ty rest-expected)
+    [(TcStdlibTypeSpecList.Cons expected-ty rest-expected)
       (match actual
         [(AstTypeList.Nil)
           (tc-stdlib-well-known-mismatch
@@ -5003,11 +5000,11 @@
   [specs : TcStdlibVariantSpecList]
   [index : i64]) : ResultTcUnit
   (match specs
-    [(TcStdlibVariantSpecNil)
+    [(TcStdlibVariantSpecList.Nil)
       (match variants
         [(AstVariantDefList.Nil) ResultTcUnit.Ok]
         [_ (tc-stdlib-well-known-mismatch type-name "unexpected extra variant")])]
-    [(TcStdlibVariantSpecCons expected-name expected-payloads rest-specs)
+    [(TcStdlibVariantSpecList.Cons expected-name expected-payloads rest-specs)
       (begin
         (cfg compile-profile (tc-lp-note 11))
         (match variants
@@ -5121,105 +5118,113 @@
 (define (tc-stdlib-expr-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
     "ExprBool"
-    (tc-stdlib-type-spec-list1 (TcStdlibTyBool))
+    (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.Bool))
     (tc-stdlib-variant-spec-cons
       "ExprInt"
-      (tc-stdlib-type-spec-list1 (TcStdlibTyI64))
+      (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.I64))
       (tc-stdlib-variant-spec-cons
         "ExprVar"
-        (tc-stdlib-type-spec-list1 (TcStdlibTyString))
+        (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
         (tc-stdlib-variant-spec-cons
           "ExprSplice"
-          (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
+          (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.BoxName "Expr"))
           (tc-stdlib-variant-spec-cons
             "ExprIf"
             (tc-stdlib-type-spec-list3
-              (TcStdlibTyBoxName "Expr")
-              (TcStdlibTyBoxName "Expr")
-              (TcStdlibTyBoxName "Expr"))
+              (TcStdlibTypeSpec.BoxName "Expr")
+              (TcStdlibTypeSpec.BoxName "Expr")
+              (TcStdlibTypeSpec.BoxName "Expr"))
             (tc-stdlib-variant-spec-cons
               "ExprCall"
               (tc-stdlib-type-spec-list2
-                (TcStdlibTyBoxName "Expr")
-                (TcStdlibTyName "ExprList"))
+                (TcStdlibTypeSpec.BoxName "Expr")
+                (TcStdlibTypeSpec.Name "ExprList"))
               (tc-stdlib-variant-spec-cons
                 "ExprBegin"
-                (tc-stdlib-type-spec-list1 (TcStdlibTyName "ExprList"))
+                (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.Name "ExprList"))
                 (tc-stdlib-variant-spec-cons
                   "ExprQuote"
-                  (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
+                  (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.BoxName "Expr"))
                   (tc-stdlib-variant-spec-cons
                     "ExprQuasiquote"
-                    (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
+                    (tc-stdlib-type-spec-list1
+                      (TcStdlibTypeSpec.BoxName "Expr"))
                     (tc-stdlib-variant-spec-cons
                       "ExprUnquote"
-                      (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
+                      (tc-stdlib-type-spec-list1
+                        (TcStdlibTypeSpec.BoxName "Expr"))
                       (tc-stdlib-variant-spec-cons
                         "ExprUnquoteSplicing"
-                        (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "Expr"))
-                        (TcStdlibVariantSpecNil)))))))))))))
+                        (tc-stdlib-type-spec-list1
+                          (TcStdlibTypeSpec.BoxName "Expr"))
+                        (TcStdlibVariantSpecList.Nil)))))))))))))
 
 (define (tc-stdlib-sequence-fields [_ctx : TcContext] [elem-name : String]) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "items"
-    (TcStdlibTyArrayName elem-name)
-    (tc-stdlib-field-spec-cons "len" (TcStdlibTyI64) (TcStdlibFieldSpecNil))))
+    (TcStdlibTypeSpec.ArrayName elem-name)
+    (tc-stdlib-field-spec-cons
+      "len"
+      (TcStdlibTypeSpec.I64)
+      (TcStdlibFieldSpecList.Nil))))
 
 (define (tc-stdlib-pattern-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
     "PatternWildcard"
-    (TcStdlibTypeSpecNil)
+    (TcStdlibTypeSpecList.Nil)
     (tc-stdlib-variant-spec-cons
       "PatternBinding"
-      (tc-stdlib-type-spec-list1 (TcStdlibTyString))
+      (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
       (tc-stdlib-variant-spec-cons
         "PatternVariant"
         (tc-stdlib-type-spec-list2
-          (TcStdlibTyString)
-          (TcStdlibTyName "PatternList"))
-        (TcStdlibVariantSpecNil)))))
+          (TcStdlibTypeSpec.String)
+          (TcStdlibTypeSpec.Name "PatternList"))
+        (TcStdlibVariantSpecList.Nil)))))
 
 (define (tc-stdlib-match-arm-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "pattern"
-    (TcStdlibTyName "Pattern")
+    (TcStdlibTypeSpec.Name "Pattern")
     (tc-stdlib-field-spec-cons
       "body"
-      (TcStdlibTyName "Expr")
-      (TcStdlibFieldSpecNil))))
+      (TcStdlibTypeSpec.Name "Expr")
+      (TcStdlibFieldSpecList.Nil))))
 
 (define (tc-stdlib-type-info-specs [_ctx : TcContext]) : TcStdlibVariantSpecList
   (tc-stdlib-variant-spec-cons
     "TypeInfoBuiltin"
-    (tc-stdlib-type-spec-list1 (TcStdlibTyString))
+    (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
     (tc-stdlib-variant-spec-cons
       "TypeInfoArray"
-      (tc-stdlib-type-spec-list2 (TcStdlibTyBoxName "TypeInfo") (TcStdlibTyI64))
+      (tc-stdlib-type-spec-list2
+        (TcStdlibTypeSpec.BoxName "TypeInfo")
+        (TcStdlibTypeSpec.I64))
       (tc-stdlib-variant-spec-cons
         "TypeInfoDynArray"
-        (tc-stdlib-type-spec-list1 (TcStdlibTyBoxName "TypeInfo"))
+        (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.BoxName "TypeInfo"))
         (tc-stdlib-variant-spec-cons
           "TypeInfoFunction"
           (tc-stdlib-type-spec-list2
-            (TcStdlibTyName "TypeInfoList")
-            (TcStdlibTyBoxName "TypeInfo"))
+            (TcStdlibTypeSpec.Name "TypeInfoList")
+            (TcStdlibTypeSpec.BoxName "TypeInfo"))
           (tc-stdlib-variant-spec-cons
             "TypeInfoTuple"
-            (tc-stdlib-type-spec-list1 (TcStdlibTyName "TypeInfoList"))
+            (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.Name "TypeInfoList"))
             (tc-stdlib-variant-spec-cons
               "TypeInfoStruct"
               (tc-stdlib-type-spec-list2
-                (TcStdlibTyString)
-                (TcStdlibTyName "TypeFieldList"))
+                (TcStdlibTypeSpec.String)
+                (TcStdlibTypeSpec.Name "TypeFieldList"))
               (tc-stdlib-variant-spec-cons
                 "TypeInfoEnum"
                 (tc-stdlib-type-spec-list2
-                  (TcStdlibTyString)
-                  (TcStdlibTyName "TypeVariantList"))
+                  (TcStdlibTypeSpec.String)
+                  (TcStdlibTypeSpec.Name "TypeVariantList"))
                 (tc-stdlib-variant-spec-cons
                   "TypeInfoOpaque"
-                  (tc-stdlib-type-spec-list1 (TcStdlibTyString))
-                  (TcStdlibVariantSpecNil))))))))))
+                  (tc-stdlib-type-spec-list1 (TcStdlibTypeSpec.String))
+                  (TcStdlibVariantSpecList.Nil))))))))))
 
 (define (tc-stdlib-comptime-surface-step
   [current : ResultTcUnit]
@@ -5231,59 +5236,59 @@
 (define (tc-stdlib-expr-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "first"
-    (TcStdlibTyName "Expr")
+    (TcStdlibTypeSpec.Name "Expr")
     (tc-stdlib-field-spec-cons
       "second"
-      (TcStdlibTyName "Expr")
-      (TcStdlibFieldSpecNil))))
+      (TcStdlibTypeSpec.Name "Expr")
+      (TcStdlibFieldSpecList.Nil))))
 
 (define (tc-stdlib-expr-binding-clause-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (TcStdlibTyString)
+    (TcStdlibTypeSpec.String)
     (tc-stdlib-field-spec-cons
       "has-type"
-      (TcStdlibTyBool)
+      (TcStdlibTypeSpec.Bool)
       (tc-stdlib-field-spec-cons
         "ty"
-        (TcStdlibTyName "Expr")
+        (TcStdlibTypeSpec.Name "Expr")
         (tc-stdlib-field-spec-cons
           "init"
-          (TcStdlibTyName "Expr")
-          (TcStdlibFieldSpecNil))))))
+          (TcStdlibTypeSpec.Name "Expr")
+          (TcStdlibFieldSpecList.Nil))))))
 
 (define (tc-stdlib-type-field-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (TcStdlibTyString)
+    (TcStdlibTypeSpec.String)
     (tc-stdlib-field-spec-cons
       "ty"
-      (TcStdlibTyName "TypeInfo")
-      (TcStdlibFieldSpecNil))))
+      (TcStdlibTypeSpec.Name "TypeInfo")
+      (TcStdlibFieldSpecList.Nil))))
 
 (define (tc-stdlib-type-variant-payload-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "ty"
-    (TcStdlibTyName "TypeInfo")
-    (TcStdlibFieldSpecNil)))
+    (TcStdlibTypeSpec.Name "TypeInfo")
+    (TcStdlibFieldSpecList.Nil)))
 
 (define (tc-stdlib-type-variant-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (TcStdlibTyString)
+    (TcStdlibTypeSpec.String)
     (tc-stdlib-field-spec-cons
       "payloads"
-      (TcStdlibTyName "TypeVariantPayloadList")
-      (TcStdlibFieldSpecNil))))
+      (TcStdlibTypeSpec.Name "TypeVariantPayloadList")
+      (TcStdlibFieldSpecList.Nil))))
 
 (define (tc-stdlib-type-param-fields) : TcStdlibFieldSpecList
   (tc-stdlib-field-spec-cons
     "name"
-    (TcStdlibTyString)
+    (TcStdlibTypeSpec.String)
     (tc-stdlib-field-spec-cons
       "ty"
-      (TcStdlibTyName "TypeInfo")
-      (TcStdlibFieldSpecNil))))
+      (TcStdlibTypeSpec.Name "TypeInfo")
+      (TcStdlibFieldSpecList.Nil))))
 
 (define (tc-stdlib-comptime-surface-ok-impl [ctx : TcContext]) : ResultTcUnit
   (if (not (tc-stdlib-comptime-present? ctx))
@@ -15461,13 +15466,13 @@
 ;; that build, with byte-identical output for accepted programs and identical
 ;; diagnostics for rejected ones.
 (defenum TcArityMessage
-  (TcArityLiteral)
-  (TcArityDetailed AstExpr AstExprList AstTypeList))
+  (Literal)
+  (Detailed AstExpr AstExprList AstTypeList))
 
 (define (tc-arity-message-text [arity-msg : TcArityMessage]) : String
   (match arity-msg
-    [(TcArityLiteral) "typecheck: arity mismatch"]
-    [(TcArityDetailed func args params)
+    [(TcArityMessage.Literal) "typecheck: arity mismatch"]
+    [(TcArityMessage.Detailed func args params)
       (tc-call-arity-message func args params)]))
 
 (define (tc-nullary-variant-call-expr
@@ -16172,9 +16177,9 @@
   [env : TcTypeEnv]
   [name : String]) : bool
   (match (tc-hygiene-global-decode name)
-    [(TcHygieneLegacyGlobal global-name)
+    [(TcHygieneGlobalName.Legacy global-name)
       (tc-binding-c-abi-fnptr-id? env (tc-name-id global-name))]
-    [(TcHygieneContextGlobal module global-name)
+    [(TcHygieneGlobalName.Context module global-name)
       (match (tc-hygiene-definition-env ctx module)
         [(ResultTcEnv.Ok def-env)
           (tc-binding-c-abi-fnptr-id? def-env (tc-name-id global-name))]
@@ -17565,7 +17570,7 @@
                     params
                     allow-region-args
                     constructor-target
-                    (TcArityDetailed func args params)
+                    (TcArityMessage.Detailed func args params)
                     c-abi-args)
                     [(ResultTcUnit.Ok)
                       (match (tc-check-thread-safe-spawn-call
@@ -17725,7 +17730,7 @@
     params
     allow-region-args
     constructor-target
-    (TcArityLiteral)
+    (TcArityMessage.Literal)
     c-abi-args))
 
 (define (tc-check-args
@@ -17813,7 +17818,7 @@
                     (box-get params)
                     false
                     (AstMaybeType.No)
-                    (TcArityDetailed func args (box-get params))
+                    (TcArityMessage.Detailed func args (box-get params))
                     (tc-expr-c-abi-fnptr? ctx env func))
                     [(ResultTcUnit.Ok)
                       (ResultTcType.Ok
@@ -18051,7 +18056,7 @@
                       (box-get params)
                       false
                       (AstMaybeType.No)
-                      (TcArityDetailed func args (box-get params))
+                      (TcArityMessage.Detailed func args (box-get params))
                       (tc-expr-c-abi-fnptr? ctx env func))
                       [(ResultTcUnit.Ok)
                         (ResultTcType.Ok
@@ -25345,8 +25350,8 @@
 ;; computed while a transient lowering scratch arena is active would otherwise
 ;; dangle after the arena rewinds (the #2441 hazard).
 (defenum TcAggLayoutCacheSlot
-  (TcAggLayoutCacheEmpty)
-  (TcAggLayoutCacheFull TcInlineAggregateLayout))
+  (Empty)
+  (Full TcInlineAggregateLayout))
 
 (define tc-agg-layout-cache-capacity : i64
   65536)
@@ -25365,7 +25370,7 @@
       (begin
         (while (< i tc-agg-layout-cache-capacity)
           (begin
-            (array-set! tc-agg-layout-cache i (TcAggLayoutCacheEmpty))
+            (array-set! tc-agg-layout-cache i (TcAggLayoutCacheSlot.Empty))
             (set! i (+ i 1))))
         (set! tc-agg-layout-cache-generation (intern-generation))))))
 
@@ -25399,7 +25404,10 @@
         (begin
           (unsafe
             (arena.tl_arena_set prev))
-          (array-set! tc-agg-layout-cache key (TcAggLayoutCacheFull persistent)))))))
+          (array-set!
+            tc-agg-layout-cache
+            key
+            (TcAggLayoutCacheSlot.Full persistent)))))))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
   [ctx : TcContext]
@@ -25431,9 +25439,9 @@
       (begin
         (tc-agg-layout-cache-store! key layout)
         (match (array-ref tc-agg-layout-cache key)
-          [(TcAggLayoutCacheFull cached)
+          [(TcAggLayoutCacheSlot.Full cached)
             (ResultTcInlineAggregateLayout.Ok cached)]
-          [(TcAggLayoutCacheEmpty)
+          [(TcAggLayoutCacheSlot.Empty)
             ;; Unreachable: the slot was just stored. Recompute defensively.
             (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack)]))]
     [(ResultTcInlineAggregateLayout.Err message)
@@ -25459,11 +25467,11 @@
               (cfg compile-profile (tc-lp-note 14))
               (tc-inline-aggregate-layout-kind-dispatch ctx name handle stack))
             (match (array-ref tc-agg-layout-cache key)
-              [(TcAggLayoutCacheFull layout)
+              [(TcAggLayoutCacheSlot.Full layout)
                 (begin
                   (cfg compile-profile (tc-lp-note 12))
                   (ResultTcInlineAggregateLayout.Ok layout))]
-              [(TcAggLayoutCacheEmpty)
+              [(TcAggLayoutCacheSlot.Empty)
                 (begin
                   (cfg compile-profile (tc-lp-note 13))
                   (tc-inline-aggregate-layout-fill-cache
@@ -27217,8 +27225,8 @@
     ctx))
 
 (defenum ResultTcVariantPayloadTypes
-  (OkTcVariantPayloadTypes AstTypeList)
-  (ErrTcVariantPayloadTypes String))
+  (Ok AstTypeList)
+  (Err String))
 
 (define (tc-variant-pattern-payload-types
   [ctx : TcContext]
@@ -27229,17 +27237,17 @@
     [field-ctx : TcContext (tc-nominal-owner-context ctx enum-name)]
     [resolved-fields : AstTypeList (tc-resolve-type-list field-ctx fields)]
     (match enum-lifetimes
-      [(AstLifetimeList.Nil) (OkTcVariantPayloadTypes resolved-fields)]
+      [(AstLifetimeList.Nil) (ResultTcVariantPayloadTypes.Ok resolved-fields)]
       [_
         (match (tc-lifetime-subst-from-nominal-args
           field-ctx
           enum-name
           enum-lifetimes)
           [(ResultTcLifetimeSubst.Ok subst)
-            (OkTcVariantPayloadTypes
+            (ResultTcVariantPayloadTypes.Ok
               (tc-lifetime-subst-type-list subst resolved-fields))]
           [(ResultTcLifetimeSubst.Err message)
-            (ErrTcVariantPayloadTypes message)])])))
+            (ResultTcVariantPayloadTypes.Err message)])])))
 
 (define (tc-bind-variant-pattern
   [ctx : TcContext]
@@ -27270,7 +27278,7 @@
                   enum-name
                   enum-lifetimes
                   fields)
-                  [(OkTcVariantPayloadTypes payload-fields)
+                  [(ResultTcVariantPayloadTypes.Ok payload-fields)
                     (tc-bind-sub-pattern-list
                       ctx
                       env
@@ -27279,7 +27287,8 @@
                         [(TcMaybeString.Some region)
                           (tc-tag-type-list-region region payload-fields)]
                         [(TcMaybeString.No) payload-fields]))]
-                  [(ErrTcVariantPayloadTypes message) (ResultTcEnv.Err message)])]
+                  [(ResultTcVariantPayloadTypes.Err message)
+                    (ResultTcEnv.Err message)])]
               [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
             (ResultTcEnv.Err
               (string.append
@@ -27660,14 +27669,15 @@
                   enum-name
                   enum-lifetimes
                   fields)
-                  [(OkTcVariantPayloadTypes payload-fields)
+                  [(ResultTcVariantPayloadTypes.Ok payload-fields)
                     (tc-bind-borrowed-sub-pattern-list
                       ctx
                       env
                       lifetime
                       args
                       payload-fields)]
-                  [(ErrTcVariantPayloadTypes message) (ResultTcEnv.Err message)])]
+                  [(ResultTcVariantPayloadTypes.Err message)
+                    (ResultTcEnv.Err message)])]
               [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
             (ResultTcEnv.Err
               (string.append
@@ -30320,7 +30330,7 @@
             [(ResultTcExprId.Err message) (ResultTcType.Err message)])
           (if (tc-hygiene-global-name? name-text)
             (match (tc-hygiene-global-decode name-text)
-              [(TcHygieneLegacyGlobal global-name)
+              [(TcHygieneGlobalName.Legacy global-name)
                 (let
                   [global-id : i64 (tc-name-id global-name)]
                   (if (tc-hygiene-global-binding-unsafe? env global-name)
@@ -30329,7 +30339,7 @@
                         (tc-lookup-hygiene-global-visible-id ctx env global-id)]
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])
                     (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
-              [(TcHygieneContextGlobal module global-name)
+              [(TcHygieneGlobalName.Context module global-name)
                 (tc-lookup-hygiene-context-global-visible-id
                   ctx
                   env
@@ -32657,33 +32667,28 @@
   (map hashmap.StringI64Map))
 
 (defenum TcMoveResult
-  (OkTcMove TcMovedSet)
-  (ErrTcMove String))
+  (Ok TcMovedSet)
+  (Err String))
 
 (defenum TcMoveBindings
-  (OkTcMoveBindings TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
-  (ErrTcMoveBindings String))
+  (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
+  (Err String))
 
 (defenum TcMoveCleanupOwners
-  (TcMoveCleanupOwnersNil)
-  (TcMoveCleanupOwnersCons String i64 (Box TcMoveCleanupOwners)))
+  (Nil)
+  (Cons String i64 (Box TcMoveCleanupOwners)))
 
 (defenum TcMoveResourceBindings
-  (OkTcMoveResourceBindings
-    TcTypeEnv
-    TcMovedSet
-    TcMovedSet
-    TcMovedSet
-    TcMoveCleanupOwners)
-  (ErrTcMoveResourceBindings String))
+  (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet TcMoveCleanupOwners)
+  (Err String))
 
 (defenum TcMoveMaybeIndex
-  (TcMoveNoIndex)
-  (TcMoveSomeIndex i64))
+  (No)
+  (Some i64))
 
 (defenum TcMoveConflict
-  (TcNoMoveConflict)
-  (TcSomeMoveConflict String i64))
+  (No)
+  (Some String i64))
 
 (define (tc-moved-empty) : TcMovedSet
   (TcMovedSet (hashmap.string-i64-map-with-capacity 8)))
@@ -32729,8 +32734,8 @@
 
 (define (tc-moved-conflict [set : TcMovedSet] [name : String]) : TcMoveConflict
   (match (hashmap.string-i64-map-get (tc-moved-map set) name)
-    [(hashmap.StringI64MapFound origin-id) (TcSomeMoveConflict name origin-id)]
-    [(hashmap.StringI64MapMissing) TcNoMoveConflict]))
+    [(hashmap.StringI64MapFound origin-id) (TcMoveConflict.Some name origin-id)]
+    [(hashmap.StringI64MapMissing) TcMoveConflict.No]))
 
 (define (tc-move-use-message [name : String]) : String
   (string.append (string.append "typecheck: use of moved value `" name) "`"))
@@ -32839,13 +32844,13 @@
   [primary : AstExpr]
   [message : String]) : String
   (match conflict
-    [(TcSomeMoveConflict key origin-id)
+    [(TcMoveConflict.Some key origin-id)
       (tc-move-rich-origin-message
         primary
         message
         origin-id
         (tc-move-origin-label key))]
-    [TcNoMoveConflict
+    [TcMoveConflict.No
       (tc-move-rich-origin-message
         primary
         message
@@ -32870,7 +32875,7 @@
     (match (tc-expr-maybe-span scope)
       [(TcMaybeAstSourceSpan.Some primary-span)
         (match conflict
-          [(TcSomeMoveConflict key move-origin-id)
+          [(TcMoveConflict.Some key move-origin-id)
             (match (tc-move-origin-span move-origin-id)
               [(TcMaybeAstSourceSpan.Some move-span)
                 (match (tc-move-origin-span owner-origin-id)
@@ -32908,7 +32913,7 @@
                       (tc-move-help)
                       primary-span
                       owner-label)])])]
-          [TcNoMoveConflict
+          [TcMoveConflict.No
             (match (tc-move-origin-span owner-origin-id)
               [(TcMaybeAstSourceSpan.Some owner-span)
                 (tc-rich-error-one-secondary
@@ -32926,7 +32931,7 @@
                   owner-label)])])]
       [(TcMaybeAstSourceSpan.No)
         (match conflict
-          [(TcSomeMoveConflict key move-origin-id)
+          [(TcMoveConflict.Some key move-origin-id)
             (match (tc-move-origin-span move-origin-id)
               [(TcMaybeAstSourceSpan.Some move-span)
                 (match (tc-move-origin-span owner-origin-id)
@@ -32958,7 +32963,7 @@
                       owner-span
                       owner-label)]
                   [(TcMaybeAstSourceSpan.No) message])])]
-          [TcNoMoveConflict
+          [TcMoveConflict.No
             (match (tc-move-origin-span owner-origin-id)
               [(TcMaybeAstSourceSpan.Some owner-span)
                 (tc-rich-error-one-secondary
@@ -32974,7 +32979,7 @@
   [fallback-key : String]
   [primary : AstExpr]
   [message : String]) : TcMoveResult
-  (ErrTcMove
+  (TcMoveResult.Err
     (tc-move-rich-conflict-message conflict fallback-key primary message)))
 
 (define (tc-move-rich-use-conflict-result
@@ -32989,7 +32994,7 @@
     (tc-move-use-message name)))
 
 (define (tc-move-rich-loop-carried-result [name : String] [primary : AstExpr]) : TcMoveResult
-  (ErrTcMove (tc-move-rich-loop-carried-message name primary)))
+  (TcMoveResult.Err (tc-move-rich-loop-carried-message name primary)))
 
 (define (tc-moved-path-key-conflicts? [key : String] [path : String]) : bool
   (let
@@ -33008,11 +33013,11 @@
   [path : String]
   [index : i64]) : TcMoveConflict
   (if (>= index (hashmap.string-i64-map-capacity map))
-    TcNoMoveConflict
+    TcMoveConflict.No
     (match (hashmap.string-i64-map-entry-at map index)
       [(hashmap.StringI64MapEntrySome key value)
         (if (tc-moved-path-key-conflicts? key path)
-          (TcSomeMoveConflict key value)
+          (TcMoveConflict.Some key value)
           (tc-moved-path-conflict-loop
             map
             path
@@ -33031,8 +33036,8 @@
 
 (define (tc-moved-path-conflict? [set : TcMovedSet] [path : String]) : bool
   (match (tc-moved-path-conflict set path)
-    [(TcSomeMoveConflict _ _) true]
-    [TcNoMoveConflict false]))
+    [(TcMoveConflict.Some _ _) true]
+    [TcMoveConflict.No false]))
 
 (define (tc-moved-remove-prefix-loop
   [map : hashmap.StringI64Map]
@@ -33102,11 +33107,11 @@
   [prefix : String]
   [index : i64]) : TcMoveConflict
   (if (>= index (hashmap.string-i64-map-capacity map))
-    TcNoMoveConflict
+    TcMoveConflict.No
     (match (hashmap.string-i64-map-entry-at map index)
       [(hashmap.StringI64MapEntrySome key value)
         (if (and (tc-moved-path-key? key) (tc-move-string-prefix? key prefix))
-          (TcSomeMoveConflict key value)
+          (TcMoveConflict.Some key value)
           (tc-moved-root-path-conflict-loop
             map
             prefix
@@ -33125,11 +33130,12 @@
 
 (define (tc-moved-root-conflict [set : TcMovedSet] [root : String]) : TcMoveConflict
   (match (tc-moved-conflict set root)
-    [(TcSomeMoveConflict key origin-id) (TcSomeMoveConflict key origin-id)]
-    [TcNoMoveConflict
+    [(TcMoveConflict.Some key origin-id) (TcMoveConflict.Some key origin-id)]
+    [TcMoveConflict.No
       (match (tc-moved-root-path-conflict set root)
-        [(TcSomeMoveConflict key origin-id) (TcSomeMoveConflict key origin-id)]
-        [TcNoMoveConflict (tc-moved-conflict set (tc-moved-partial-key root))])]))
+        [(TcMoveConflict.Some key origin-id)
+          (TcMoveConflict.Some key origin-id)]
+        [TcMoveConflict.No (tc-moved-conflict set (tc-moved-partial-key root))])]))
 
 (define (tc-moved-remove-exact-path
   [set : TcMovedSet]
@@ -33299,9 +33305,9 @@
         (tc-move-literal-index inner))]
     [(AstExpr.Literal lit)
       (match lit
-        [(AstLiteral.Int index _) (TcMoveSomeIndex index)]
-        [_ (TcMoveNoIndex)])]
-    [_ (TcMoveNoIndex)]))
+        [(AstLiteral.Int index _) (TcMoveMaybeIndex.Some index)]
+        [_ (TcMoveMaybeIndex.No)])]
+    [_ (TcMoveMaybeIndex.No)]))
 
 (define (tc-move-direct-root-base-path [expr : AstExpr]) : TcMaybeString
   (match expr
@@ -33338,9 +33344,9 @@
         (match (tc-move-direct-root-base-path array)
           [(TcMaybeString.Some base)
             (match (tc-move-literal-index index-expr)
-              [(TcMoveSomeIndex index)
+              [(TcMoveMaybeIndex.Some index)
                 (TcMaybeString.Some (tc-move-array-index-path base index))]
-              [(TcMoveNoIndex) (TcMaybeString.No)])]
+              [(TcMoveMaybeIndex.No) (TcMaybeString.No)])]
           [(TcMaybeString.No) (TcMaybeString.No)]))]
     [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
     [_ (TcMaybeString.No)]))
@@ -33416,9 +33422,9 @@
   (match (tc-move-direct-root-base-path array)
     [(TcMaybeString.Some base)
       (match (tc-move-literal-index index-expr)
-        [(TcMoveSomeIndex index)
+        [(TcMoveMaybeIndex.Some index)
           (TcMaybeString.Some (tc-move-array-index-path base index))]
-        [(TcMoveNoIndex) (TcMaybeString.No)])]
+        [(TcMoveMaybeIndex.No) (TcMaybeString.No)])]
     [(TcMaybeString.No) (TcMaybeString.No)]))
 
 (define (tc-move-struct-set-path [receiver : AstExpr] [field : String]) : TcMaybeString
@@ -33588,29 +33594,29 @@
   [moved : TcMovedSet]
   [expr : AstExpr]) : TcMoveResult
   (if (tc-move-dynamic-array-element-projection? ctx env expr)
-    (ErrTcMove (tc-move-dynamic-array-element-message))
+    (TcMoveResult.Err (tc-move-dynamic-array-element-message))
     (if (tc-move-box-projection? expr)
-      (ErrTcMove (tc-move-box-projection-message))
+      (TcMoveResult.Err (tc-move-box-projection-message))
       (match (tc-move-projection-path expr)
         [(TcMaybeString.Some path)
           (match (tc-move-root-projection-var expr)
             [(TcMaybeString.Some root)
               (if (tc-moved-contains? locals root)
                 (match (tc-moved-path-conflict moved path)
-                  [(TcSomeMoveConflict key origin-id)
+                  [(TcMoveConflict.Some key origin-id)
                     (tc-move-rich-use-conflict-result
-                      (TcSomeMoveConflict key origin-id)
+                      (TcMoveConflict.Some key origin-id)
                       (tc-moved-path-key path)
                       expr
                       path)]
-                  [TcNoMoveConflict
-                    (OkTcMove
+                  [TcMoveConflict.No
+                    (TcMoveResult.Ok
                       (tc-moved-add-projection-path moved root path expr))])
-                (OkTcMove moved))]
-            [(TcMaybeString.No) (OkTcMove moved)])]
+                (TcMoveResult.Ok moved))]
+            [(TcMaybeString.No) (TcMoveResult.Ok moved)])]
         [(TcMaybeString.No)
           (if (tc-move-aggregate-path-projection? expr)
-            (ErrTcMove (tc-move-aggregate-path-message))
+            (TcMoveResult.Err (tc-move-aggregate-path-message))
             (match (tc-move-root-projection-var expr)
               [(TcMaybeString.Some root)
                 (if (tc-moved-contains? locals root)
@@ -33622,9 +33628,9 @@
                       root)
                     (if (tc-moved-contains? loop-carried root)
                       (tc-move-rich-loop-carried-result root expr)
-                      (OkTcMove (tc-moved-add-origin moved root expr))))
-                  (OkTcMove moved))]
-              [(TcMaybeString.No) (OkTcMove moved)]))]))))
+                      (TcMoveResult.Ok (tc-moved-add-origin moved root expr))))
+                  (TcMoveResult.Ok moved))]
+              [(TcMaybeString.No) (TcMoveResult.Ok moved)]))]))))
 
 (define (tc-move-after-bind-typed
   [ctx : TcContext]
@@ -33636,7 +33642,7 @@
   [init-ty : AstType]) : TcMoveResult
   (if (tc-type-consuming-by-value-now? ctx init-ty)
     (tc-move-after-consuming-projection ctx env locals loop-carried moved init)
-    (OkTcMove moved)))
+    (TcMoveResult.Ok moved)))
 
 ;; Mark the source variable moved when an init/rhs is a bare move-only variable
 ;; that names a tracked local/parameter (not an enum constructor or global).
@@ -33658,8 +33664,8 @@
             v)
           (if (tc-moved-contains? loop-carried v)
             (tc-move-rich-loop-carried-result v init)
-            (OkTcMove (tc-moved-add-origin moved v init))))
-        (OkTcMove moved))]
+            (TcMoveResult.Ok (tc-moved-add-origin moved v init))))
+        (TcMoveResult.Ok moved))]
     [(TcMaybeString.No)
       (match (cfg
         compile-profile
@@ -33674,7 +33680,7 @@
             moved
             init
             init-ty)]
-        [(ResultTcType.Err _) (OkTcMove moved)])]))
+        [(ResultTcType.Err _) (TcMoveResult.Ok moved)])]))
 
 (define (tc-move-after-bind-id
   [ctx : TcContext]
@@ -33696,8 +33702,8 @@
               v)
             (if (tc-moved-contains? loop-carried v)
               (tc-move-rich-loop-carried-result v init)
-              (OkTcMove (tc-moved-add-origin moved v init))))
-          (OkTcMove moved))]
+              (TcMoveResult.Ok (tc-moved-add-origin moved v init))))
+          (TcMoveResult.Ok moved))]
       [(TcMaybeString.No)
         (match (tc-body-type-fact-expr-id "move.bind_init" ctx env init-id)
           [(ResultTcType.Ok init-ty)
@@ -33709,7 +33715,7 @@
               moved
               init
               init-ty)]
-          [(ResultTcType.Err _) (OkTcMove moved)])])))
+          [(ResultTcType.Err _) (TcMoveResult.Ok moved)])])))
 
 (define (tc-move-after-bind-known-type-id
   [ctx : TcContext]
@@ -33732,8 +33738,8 @@
               v)
             (if (tc-moved-contains? loop-carried v)
               (tc-move-rich-loop-carried-result v init)
-              (OkTcMove (tc-moved-add-origin moved v init))))
-          (OkTcMove moved))]
+              (TcMoveResult.Ok (tc-moved-add-origin moved v init))))
+          (TcMoveResult.Ok moved))]
       [(TcMaybeString.No)
         (tc-move-after-bind-typed
           ctx
@@ -33754,7 +33760,7 @@
   [move? : bool]) : TcMoveResult
   (if move?
     (tc-move-after-consuming-projection ctx env locals loop-carried moved expr)
-    (OkTcMove moved)))
+    (TcMoveResult.Ok moved)))
 
 (define (tc-move-after-consuming-value
   [ctx : TcContext]
@@ -33820,8 +33826,8 @@
         name)
       (if (tc-moved-contains? loop-carried name)
         (tc-move-rich-loop-carried-result name origin)
-        (OkTcMove (tc-moved-add-origin moved name origin))))
-    (OkTcMove moved)))
+        (TcMoveResult.Ok (tc-moved-add-origin moved name origin))))
+    (TcMoveResult.Ok moved)))
 
 (define (tc-move-invalidate-local
   [locals : TcMovedSet]
@@ -33830,8 +33836,8 @@
   [name : String]
   [origin : AstExpr]) : TcMoveResult
   (cond
-    [(not (tc-moved-contains? locals name)) (OkTcMove moved)]
-    [(tc-moved-contains? moved name) (OkTcMove moved)]
+    [(not (tc-moved-contains? locals name)) (TcMoveResult.Ok moved)]
+    [(tc-moved-contains? moved name) (TcMoveResult.Ok moved)]
     [(tc-moved-partial? moved name)
       (tc-move-rich-use-conflict-result
         (tc-moved-root-conflict moved name)
@@ -33840,7 +33846,7 @@
         name)]
     [(tc-moved-contains? loop-carried name)
       (tc-move-rich-loop-carried-result name origin)]
-    [else (OkTcMove (tc-moved-add-origin moved name origin))]))
+    [else (TcMoveResult.Ok (tc-moved-add-origin moved name origin))]))
 
 (define (tc-move-mark-region-locals-scan
   [env : TcTypeEnv]
@@ -33852,9 +33858,9 @@
   [remaining : i64]
   [origin : AstExpr]) : TcMoveResult
   (if (<= remaining 0)
-    (OkTcMove moved)
+    (TcMoveResult.Ok moved)
     (match env
-      [(TcTypeEnv.Nil) (OkTcMove moved)]
+      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
       [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-move-mark-region-locals-scan
@@ -33866,13 +33872,13 @@
             seen
             remaining
             origin)
-          (OkTcMove moved))]
+          (TcMoveResult.Ok moved))]
       [(TcTypeEnv.Bind key ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
-            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
             [(tc-string-list-contains seen name)
               (tc-move-mark-region-locals-scan
                 rest-env
@@ -33900,7 +33906,7 @@
                 moved
                 name
                 origin)
-                [(OkTcMove moved2)
+                [(TcMoveResult.Ok moved2)
                   (tc-move-mark-region-locals-scan
                     rest-env
                     locals
@@ -33910,7 +33916,7 @@
                     (tc-string-list-add seen name)
                     (- remaining 1)
                     origin)]
-                [(ErrTcMove message) (ErrTcMove message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [else
               (tc-move-mark-region-locals-scan
                 rest-env
@@ -33949,9 +33955,9 @@
   [remaining : i64]
   [origin : AstExpr]) : TcMoveResult
   (if (<= remaining 0)
-    (OkTcMove moved)
+    (TcMoveResult.Ok moved)
     (match env
-      [(TcTypeEnv.Nil) (OkTcMove moved)]
+      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
       [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-move-mark-owner-region-locals-scan
@@ -33963,13 +33969,13 @@
             seen
             remaining
             origin)
-          (OkTcMove moved))]
+          (TcMoveResult.Ok moved))]
       [(TcTypeEnv.Bind key ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
-            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
             [(tc-string-list-contains seen name)
               (tc-move-mark-owner-region-locals-scan
                 rest-env
@@ -33997,7 +34003,7 @@
                 moved
                 name
                 origin)
-                [(OkTcMove moved2)
+                [(TcMoveResult.Ok moved2)
                   (tc-move-mark-owner-region-locals-scan
                     rest-env
                     locals
@@ -34007,7 +34013,7 @@
                     (tc-string-list-add seen name)
                     (- remaining 1)
                     origin)]
-                [(ErrTcMove message) (ErrTcMove message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
             [else
               (tc-move-mark-owner-region-locals-scan
                 rest-env
@@ -34057,7 +34063,7 @@
                   moved
                   phase
                   origin)
-                  [(OkTcMove moved2)
+                  [(TcMoveResult.Ok moved2)
                     (tc-move-mark-region-locals
                       env
                       locals
@@ -34065,10 +34071,10 @@
                       moved2
                       region
                       origin)]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(TcMaybeString.No) (OkTcMove moved)])]
-          [(TcMaybeString.No) (OkTcMove moved)]))]
-    [(AstExprList.Nil) (OkTcMove moved)]))
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMaybeString.No) (TcMoveResult.Ok moved)])]
+          [(TcMaybeString.No) (TcMoveResult.Ok moved)]))]
+    [(AstExprList.Nil) (TcMoveResult.Ok moved)]))
 
 (define (tc-move-safe-arena-destroy-effect
   [env : TcTypeEnv]
@@ -34090,7 +34096,7 @@
                 moved
                 owner
                 origin)
-                [(OkTcMove moved2)
+                [(TcMoveResult.Ok moved2)
                   (tc-move-mark-owner-region-locals
                     env
                     locals
@@ -34098,10 +34104,10 @@
                     moved2
                     owner
                     origin)]
-                [(ErrTcMove message) (ErrTcMove message)])
-              (OkTcMove moved))]
-          [(TcMaybeString.No) (OkTcMove moved)]))]
-    [(AstExprList.Nil) (OkTcMove moved)]))
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])
+              (TcMoveResult.Ok moved))]
+          [(TcMaybeString.No) (TcMoveResult.Ok moved)]))]
+    [(AstExprList.Nil) (TcMoveResult.Ok moved)]))
 
 (define (tc-move-check-safe-arena-call-effects
   [ctx : TcContext]
@@ -34133,8 +34139,8 @@
               moved
               args
               origin)]
-          [else (OkTcMove moved)]))]
-    [(TcMaybeString.No) (OkTcMove moved)]))
+          [else (TcMoveResult.Ok moved)]))]
+    [(TcMaybeString.No) (TcMoveResult.Ok moved)]))
 
 (define (tc-move-check-lambda-owner-captures-scan
   [ctx : TcContext]
@@ -34148,9 +34154,9 @@
   [remaining : i64]
   [body : AstExpr]) : TcMoveResult
   (if (<= remaining 0)
-    (OkTcMove moved)
+    (TcMoveResult.Ok moved)
     (match env
-      [(TcTypeEnv.Nil) (OkTcMove moved)]
+      [(TcTypeEnv.Nil) (TcMoveResult.Ok moved)]
       [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-move-check-lambda-owner-captures-scan
@@ -34164,13 +34170,13 @@
             seen
             remaining
             body)
-          (OkTcMove moved))]
+          (TcMoveResult.Ok moved))]
       [(TcTypeEnv.Bind key ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
-            [(= key (tc-default-boundary-id)) (OkTcMove moved)]
+            [(= key (tc-default-boundary-id)) (TcMoveResult.Ok moved)]
             [(or
                 (= key (tc-region-marker-id))
                 (tc-cleanup-owner-marker-entry? key ty))
@@ -34301,8 +34307,8 @@
   (match exprs
     [(AstExprList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkTcMove moved)]
-        [_ (ErrTcMove "typecheck: arity mismatch")])]
+        [(AstTypeList.Nil) (TcMoveResult.Ok moved)]
+        [_ (TcMoveResult.Err "typecheck: arity mismatch")])]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -34319,7 +34325,7 @@
                 loop-carried
                 moved
                 head)
-                [(OkTcMove moved1)
+                [(TcMoveResult.Ok moved1)
                   (match (tc-move-after-consuming-value
                     ctx
                     env
@@ -34328,7 +34334,7 @@
                     moved1
                     head-expr
                     ty)
-                    [(OkTcMove moved2)
+                    [(TcMoveResult.Ok moved2)
                       (tc-move-check-exprs-with-types-no-auto
                         ctx
                         env
@@ -34337,9 +34343,9 @@
                         moved2
                         rest
                         rest-types)]
-                    [(ErrTcMove message) (ErrTcMove message)])]
-                [(ErrTcMove message) (ErrTcMove message)]))]
-          [(AstTypeList.Nil) (ErrTcMove "typecheck: arity mismatch")]))]))
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+          [(AstTypeList.Nil) (TcMoveResult.Err "typecheck: arity mismatch")]))]))
 
 (define (tc-move-check-exprs-with-types-auto
   [ctx : TcContext]
@@ -34352,8 +34358,8 @@
   (match exprs
     [(AstExprList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkTcMove moved)]
-        [_ (ErrTcMove "typecheck: arity mismatch")])]
+        [(AstTypeList.Nil) (TcMoveResult.Ok moved)]
+        [_ (TcMoveResult.Err "typecheck: arity mismatch")])]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -34380,7 +34386,7 @@
                     loop-carried
                     moved
                     effective-head)
-                    [(OkTcMove moved1)
+                    [(TcMoveResult.Ok moved1)
                       (match (tc-move-after-consuming-value
                         ctx
                         env
@@ -34389,7 +34395,7 @@
                         moved1
                         effective-head
                         ty)
-                        [(OkTcMove moved2)
+                        [(TcMoveResult.Ok moved2)
                           (tc-move-check-exprs-with-types-auto
                             ctx
                             env
@@ -34398,10 +34404,10 @@
                             moved2
                             rest
                             rest-types)]
-                        [(ErrTcMove message) (ErrTcMove message)])]
-                    [(ErrTcMove message) (ErrTcMove message)])]
-                [(ResultTcExpr.Err message) (ErrTcMove message)]))]
-          [(AstTypeList.Nil) (ErrTcMove "typecheck: arity mismatch")]))]))
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(ResultTcExpr.Err message) (TcMoveResult.Err message)]))]
+          [(AstTypeList.Nil) (TcMoveResult.Err "typecheck: arity mismatch")]))]))
 
 (define (tc-move-check-exprs-with-types
   [ctx : TcContext]
@@ -34453,10 +34459,10 @@
                   moved
                   message-expr
                   message-ty)]
-              [(ResultTcExpr.Err message) (ErrTcMove message)])]
-          [(ResultTcType.Err message) (ErrTcMove message)])]
-      [(TcMaybeString.No) (OkTcMove moved)])
-    (OkTcMove moved)))
+              [(ResultTcExpr.Err message) (TcMoveResult.Err message)])]
+          [(ResultTcType.Err message) (TcMoveResult.Err message)])]
+      [(TcMaybeString.No) (TcMoveResult.Ok moved)])
+    (TcMoveResult.Ok moved)))
 
 (define (tc-move-check-call-args-with-types
   [ctx : TcContext]
@@ -34476,7 +34482,7 @@
     moved
     args
     params)
-    [(OkTcMove moved-args)
+    [(TcMoveResult.Ok moved-args)
       (match (tc-move-check-thread-channel-send-message
         ctx
         env
@@ -34486,7 +34492,7 @@
         func
         args
         params)
-        [(OkTcMove moved-thread)
+        [(TcMoveResult.Ok moved-thread)
           (tc-move-check-safe-arena-call-effects
             ctx
             env
@@ -34496,8 +34502,8 @@
             func
             args
             call-expr)]
-        [(ErrTcMove message) (ErrTcMove message)])]
-    [(ErrTcMove message) (ErrTcMove message)]))
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+    [(TcMoveResult.Err message) (TcMoveResult.Err message)]))
 
 (define (tc-move-call-param-types-from-type [fn-ty : AstType]) : ResultTcTypeList
   (match (tc-type-strip-region fn-ty)
@@ -34549,14 +34555,14 @@
   [moved : TcMovedSet]
   [exprs : AstExprList]) : TcMoveResult
   (match exprs
-    [(AstExprList.Nil) (OkTcMove moved)]
+    [(AstExprList.Nil) (TcMoveResult.Ok moved)]
     [(AstExprList.Cons head rest)
       (let
         [rest : AstExprList (box-get rest)]
         (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-exprs ctx env locals loop-carried moved1 rest)]
-          [(ErrTcMove message) (ErrTcMove message)]))]))
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]))
 
 (define (tc-move-check-let-bindings
   [ctx : TcContext]
@@ -34566,7 +34572,7 @@
   [moved : TcMovedSet]
   [bindings : AstLetBindingList]) : TcMoveBindings
   (match bindings
-    [(AstLetBindingList.Nil) (OkTcMoveBindings env moved locals loop-carried)]
+    [(AstLetBindingList.Nil) (TcMoveBindings.Ok env moved locals loop-carried)]
     [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -34581,7 +34587,7 @@
                 loop-carried
                 moved
                 init-box)
-                [(OkTcMove moved1)
+                [(TcMoveResult.Ok moved1)
                   (let
                     [binding-ty : AstType
                       (tc-move-binding-type-id
@@ -34598,7 +34604,7 @@
                       moved1
                       init-box
                       binding-ty)
-                      [(OkTcMove moved2)
+                      [(TcMoveResult.Ok moved2)
                         (tc-move-check-let-bindings
                           ctx
                           (tc-bind-c-abi-fnptr-if-needed-id
@@ -34613,8 +34619,8 @@
                             (intern-str name))
                           (tc-moved-remove-root-state moved2 (intern-str name))
                           rest)]
-                      [(ErrTcMove message) (ErrTcMoveBindings message)]))]
-                [(ErrTcMove message) (ErrTcMoveBindings message)]))]))]))
+                      [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]
+                [(TcMoveResult.Err message) (TcMoveBindings.Err message)]))]))]))
 
 (define (tc-move-check-resource-bindings
   [ctx : TcContext]
@@ -34625,12 +34631,12 @@
   [bindings : AstResourceBindingList]) : TcMoveResourceBindings
   (match bindings
     [(AstResourceBindingList.Nil)
-      (OkTcMoveResourceBindings
+      (TcMoveResourceBindings.Ok
         env
         moved
         locals
         loop-carried
-        TcMoveCleanupOwnersNil)]
+        TcMoveCleanupOwners.Nil)]
     [(AstResourceBindingList.Cons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
@@ -34645,7 +34651,7 @@
                 loop-carried
                 moved
                 init-box)
-                [(OkTcMove moved1)
+                [(TcMoveResult.Ok moved1)
                   (match (tc-move-after-bind-id
                     ctx
                     env
@@ -34653,7 +34659,7 @@
                     loop-carried
                     moved1
                     init-box)
-                    [(OkTcMove moved2)
+                    [(TcMoveResult.Ok moved2)
                       (match (tc-body-type-fact-expr-id
                         "move.resource_init"
                         ctx
@@ -34674,37 +34680,39 @@
                               moved2
                               (intern-str name))
                             rest)
-                            [(OkTcMoveResourceBindings
+                            [(TcMoveResourceBindings.Ok
                                 env2
                                 moved3
                                 locals2
                                 loop-carried2
                                 roots)
-                              (OkTcMoveResourceBindings
+                              (TcMoveResourceBindings.Ok
                                 env2
                                 moved3
                                 locals2
                                 loop-carried2
-                                (TcMoveCleanupOwnersCons
+                                (TcMoveCleanupOwners.Cons
                                   (intern-str name)
                                   init-box
                                   (box roots)))]
-                            [(ErrTcMoveResourceBindings message)
-                              (ErrTcMoveResourceBindings message)])]
+                            [(TcMoveResourceBindings.Err message)
+                              (TcMoveResourceBindings.Err message)])]
                         [(ResultTcType.Err message)
-                          (ErrTcMoveResourceBindings message)])]
-                    [(ErrTcMove message) (ErrTcMoveResourceBindings message)])]
-                [(ErrTcMove message) (ErrTcMoveResourceBindings message)]))]))]))
+                          (TcMoveResourceBindings.Err message)])]
+                    [(TcMoveResult.Err message)
+                      (TcMoveResourceBindings.Err message)])]
+                [(TcMoveResult.Err message)
+                  (TcMoveResourceBindings.Err message)]))]))]))
 
 (define (tc-move-check-cleanup-owner-exit
   [moved : TcMovedSet]
   [roots : TcMoveCleanupOwners]
   [scope : AstExpr]) : TcMoveResult
   (match roots
-    [(TcMoveCleanupOwnersNil) (OkTcMove moved)]
-    [(TcMoveCleanupOwnersCons name owner-origin-id rest)
+    [(TcMoveCleanupOwners.Nil) (TcMoveResult.Ok moved)]
+    [(TcMoveCleanupOwners.Cons name owner-origin-id rest)
       (if (or (tc-moved-contains? moved name) (tc-moved-partial? moved name))
-        (ErrTcMove
+        (TcMoveResult.Err
           (tc-move-rich-cleanup-owner-exit-message
             (tc-moved-root-conflict moved name)
             name
@@ -34761,7 +34769,7 @@
   [scrut-ty : AstType]
   [arms : AstMatchArmList]) : TcMoveResult
   (match arms
-    [(AstMatchArmList.Nil) (OkTcMove moved)]
+    [(AstMatchArmList.Nil) (TcMoveResult.Ok moved)]
     [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -34784,7 +34792,7 @@
                       (tc-moved-clone moved)
                       bound)
                     body)
-                    [(OkTcMove arm-moved)
+                    [(TcMoveResult.Ok arm-moved)
                       (let
                         [visible-arm-moved : TcMovedSet
                           (tc-moved-union
@@ -34798,12 +34806,13 @@
                           (tc-moved-clone moved)
                           scrut-ty
                           rest)
-                          [(OkTcMove rest-moved)
-                            (OkTcMove
+                          [(TcMoveResult.Ok rest-moved)
+                            (TcMoveResult.Ok
                               (tc-moved-union visible-arm-moved rest-moved))]
-                          [(ErrTcMove message) (ErrTcMove message)]))]
-                    [(ErrTcMove message) (ErrTcMove message)])]
-                [(ResultTcEnv.Err message) (ErrTcMove message)]))]))]))
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)]))]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(ResultTcEnv.Err message) (TcMoveResult.Err message)]))]))]))
 
 (define (tc-move-check-expr-id
   [ctx : TcContext]
@@ -34824,7 +34833,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (tc-move-check-expr-id ctx env locals loop-carried moved inner-box)]
-    [(AstExpr.Literal _) (OkTcMove moved)]
+    [(AstExpr.Literal _) (TcMoveResult.Ok moved)]
     [(AstExpr.Var name)
       (let
         [name-text : String (intern-str name)]
@@ -34838,19 +34847,19 @@
                 loop-carried
                 moved
                 virtual-id)]
-            [(ResultTcExprId.Err message) (ErrTcMove message)])
+            [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
           (if (tc-moved-contains? moved name-text)
             (tc-move-rich-use-conflict-result
               (tc-moved-conflict moved name-text)
               name-text
               expr
               name-text)
-            (OkTcMove moved))))]
+            (TcMoveResult.Ok moved))))]
     [(AstExpr.Binary _ left-box right-box)
       (match (tc-move-check-expr-id ctx env locals loop-carried moved left-box)
-        [(OkTcMove moved1)
+        [(TcMoveResult.Ok moved1)
           (tc-move-check-expr-id ctx env locals loop-carried moved1 right-box)]
-        [(ErrTcMove message) (ErrTcMove message)])]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(AstExpr.Unary _ inner-box)
       (tc-move-check-expr-id ctx env locals loop-carried moved inner-box)]
     [(AstExpr.Call func-box args)
@@ -34863,7 +34872,7 @@
           loop-carried
           moved
           func-box)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-call-param-types-id-with-facts
               "move.call_func"
               ctx
@@ -34890,7 +34899,8 @@
                             func
                             args
                             expanded-params)]
-                        [(ResultTcTypeList.Err message) (ErrTcMove message)])
+                        [(ResultTcTypeList.Err message)
+                          (TcMoveResult.Err message)])
                       (tc-move-check-call-args-with-types
                         ctx
                         env
@@ -34920,7 +34930,7 @@
                   loop-carried
                   moved1
                   args)
-                  [(OkTcMove moved-args)
+                  [(TcMoveResult.Ok moved-args)
                     (tc-move-check-safe-arena-call-effects
                       ctx
                       env
@@ -34930,13 +34940,13 @@
                       func
                       args
                       expr)]
-                  [(ErrTcMove message) (ErrTcMove message)])])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.BracketClause items)
       (tc-move-check-exprs ctx env locals loop-carried moved items)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (match (tc-move-check-expr-id ctx env locals loop-carried moved cond-box)
-        [(OkTcMove movedc)
+        [(TcMoveResult.Ok movedc)
           (match (tc-move-check-expr-id
             ctx
             env
@@ -34944,7 +34954,7 @@
             (tc-moved-clone loop-carried)
             (tc-moved-clone movedc)
             then-branch-box)
-            [(OkTcMove movedt)
+            [(TcMoveResult.Ok movedt)
               (match (tc-move-check-expr-id
                 ctx
                 env
@@ -34952,10 +34962,11 @@
                 (tc-moved-clone loop-carried)
                 (tc-moved-clone movedc)
                 else-branch-box)
-                [(OkTcMove movede) (OkTcMove (tc-moved-union movedt movede))]
-                [(ErrTcMove message) (ErrTcMove message)])]
-            [(ErrTcMove message) (ErrTcMove message)])]
-        [(ErrTcMove message) (ErrTcMove message)])]
+                [(TcMoveResult.Ok movede)
+                  (TcMoveResult.Ok (tc-moved-union movedt movede))]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
@@ -34966,7 +34977,7 @@
             (tc-moved-clone loop-carried)
             moved
             bindings)
-            [(OkTcMoveBindings env2 moved2 locals2 loop-carried2)
+            [(TcMoveBindings.Ok env2 moved2 locals2 loop-carried2)
               (tc-move-check-expr-id
                 ctx
                 env2
@@ -34974,7 +34985,7 @@
                 loop-carried2
                 moved2
                 body-box)]
-            [(ErrTcMoveBindings message) (ErrTcMove message)])])]
+            [(TcMoveBindings.Err message) (TcMoveResult.Err message)])])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
@@ -34990,7 +35001,7 @@
               (tc-moved-empty)
               (tc-moved-clone moved)
               body-box)
-              [(OkTcMove _)
+              [(TcMoveResult.Ok _)
                 (tc-move-check-lambda-owner-captures
                   ctx
                   env
@@ -34999,7 +35010,7 @@
                   moved
                   params
                   body)]
-              [(ErrTcMove message) (ErrTcMove message)]))])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(AstExpr.Tuple exprs)
       (match (tc-body-type-fact-expr-list-types "move.tuple_list" ctx env exprs)
         [(ResultTcTypeList.Ok types)
@@ -35017,7 +35028,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved inner)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-tuple-element-path expr)
               [(TcMaybeString.Some path)
                 (if (tc-moved-contains? moved1 (tc-moved-path-key path))
@@ -35026,9 +35037,9 @@
                     (tc-moved-path-key path)
                     expr
                     path)
-                  (OkTcMove moved1))]
-              [(TcMaybeString.No) (OkTcMove moved1)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+                  (TcMoveResult.Ok moved1))]
+              [(TcMaybeString.No) (TcMoveResult.Ok moved1)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.Array exprs)
       (match (tc-body-type-fact-expr-list-types "move.array_list" ctx env exprs)
         [(ResultTcTypeList.Ok types)
@@ -35051,9 +35062,9 @@
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved array)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
-              [(OkTcMove moved2)
+              [(TcMoveResult.Ok moved2)
                 (match (tc-move-array-element-path expr)
                   [(TcMaybeString.Some path)
                     (if (tc-moved-contains? moved2 (tc-moved-path-key path))
@@ -35062,19 +35073,19 @@
                         (tc-moved-path-key path)
                         expr
                         path)
-                      (OkTcMove moved2))]
-                  [(TcMaybeString.No) (OkTcMove moved2)])]
-              [(ErrTcMove message) (ErrTcMove message)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+                      (TcMoveResult.Ok moved2))]
+                  [(TcMaybeString.No) (TcMoveResult.Ok moved2)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved array)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-check-expr ctx env locals loop-carried moved1 index)
-              [(OkTcMove moved2)
+              [(TcMoveResult.Ok moved2)
                 (match (tc-move-check-expr
                   ctx
                   env
@@ -35082,54 +35093,54 @@
                   loop-carried
                   moved2
                   value)
-                  [(OkTcMove moved3)
-                    (OkTcMove
+                  [(TcMoveResult.Ok moved3)
+                    (TcMoveResult.Ok
                       (tc-move-reinitialize-array-set-path
                         locals
                         moved3
                         array
                         index))]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved receiver)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-check-expr ctx env locals loop-carried moved1 value)
-              [(OkTcMove moved2)
-                (OkTcMove
+              [(TcMoveResult.Ok moved2)
+                (TcMoveResult.Ok
                   (tc-move-reinitialize-struct-set-path
                     locals
                     moved2
                     receiver
                     (intern-str field)))]
-              [(ErrTcMove message) (ErrTcMove message)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved array)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 value)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StringRef str-box index-box)
       (let
         [str : AstExpr (ast-node-get str-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved str)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 index)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.While cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved cond)
-          [(OkTcMove movedc)
+          [(TcMoveResult.Ok movedc)
             (let
               [body-loop-carried : TcMovedSet
                 (tc-moved-union locals (tc-moved-clone loop-carried))]
@@ -35140,9 +35151,9 @@
                 body-loop-carried
                 (tc-moved-clone movedc)
                 body)
-                [(OkTcMove _) (OkTcMove movedc)]
-                [(ErrTcMove message) (ErrTcMove message)]))]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+                [(TcMoveResult.Ok _) (TcMoveResult.Ok movedc)]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.Begin exprs)
       (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExpr.Unsafe exprs)
@@ -35161,7 +35172,7 @@
                 loop-carried
                 moved
                 (ast-node-get virtual-id))]
-            [(ResultTcExprId.Err message) (ErrTcMove message)])
+            [(ResultTcExprId.Err message) (TcMoveResult.Err message)])
           (match (tc-move-check-expr-id
             ctx
             env
@@ -35169,7 +35180,7 @@
             loop-carried
             moved
             rhs-box)
-            [(OkTcMove moved1)
+            [(TcMoveResult.Ok moved1)
               (match (tc-move-after-bind-id
                 ctx
                 env
@@ -35177,10 +35188,11 @@
                 loop-carried
                 moved1
                 rhs-box)
-                [(OkTcMove moved2)
-                  (OkTcMove (tc-moved-remove-root-state moved2 name-text))]
-                [(ErrTcMove message) (ErrTcMove message)])]
-            [(ErrTcMove message) (ErrTcMove message)])))]
+                [(TcMoveResult.Ok moved2)
+                  (TcMoveResult.Ok
+                    (tc-moved-remove-root-state moved2 name-text))]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35199,7 +35211,7 @@
           (let
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-move-check-expr ctx env locals loop-carried moved scrut)
-              [(OkTcMove moveds)
+              [(TcMoveResult.Ok moveds)
                 (match (tc-body-type-fact-expr-id
                   "move.match_scrutinee"
                   ctx
@@ -35228,7 +35240,7 @@
                       moveds
                       (AstType.Unit)
                       arms)])]
-              [(ErrTcMove message) (ErrTcMove message)]))])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -35237,7 +35249,7 @@
             [end : AstExpr (ast-node-get end-box)]
             [body : AstExpr (ast-node-get body-box)]
             (match (tc-move-check-expr ctx env locals loop-carried moved start)
-              [(OkTcMove moved1)
+              [(TcMoveResult.Ok moved1)
                 (match (tc-move-check-expr
                   ctx
                   env
@@ -35245,7 +35257,7 @@
                   loop-carried
                   moved1
                   end)
-                  [(OkTcMove moved2)
+                  [(TcMoveResult.Ok moved2)
                     (let
                       [body-loop-carried : TcMovedSet
                         (tc-moved-union locals (tc-moved-clone loop-carried))]
@@ -35260,10 +35272,10 @@
                           (intern-str index))
                         (tc-moved-clone moved2)
                         body)
-                        [(OkTcMove _) (OkTcMove moved2)]
-                        [(ErrTcMove message) (ErrTcMove message)]))]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)]))])]
+                        [(TcMoveResult.Ok _) (TcMoveResult.Ok moved2)]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ a-box b-box c-box d-box)
@@ -35273,15 +35285,15 @@
             [c : AstExpr (ast-node-get c-box)]
             [d : AstExpr (ast-node-get d-box)]
             (match (tc-move-check-expr ctx env locals loop-carried moved a)
-              [(OkTcMove m1)
+              [(TcMoveResult.Ok m1)
                 (match (tc-move-check-expr ctx env locals loop-carried m1 b)
-                  [(OkTcMove m2)
+                  [(TcMoveResult.Ok m2)
                     (match (tc-move-check-expr ctx env locals loop-carried m2 c)
-                      [(OkTcMove m3)
+                      [(TcMoveResult.Ok m3)
                         (tc-move-check-expr ctx env locals loop-carried m3 d)]
-                      [(ErrTcMove message) (ErrTcMove message)])]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)]))])]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -35302,9 +35314,9 @@
             [value : AstExpr (ast-node-get value-box)]
             [body : AstExpr (ast-node-get body-box)]
             (match (tc-move-check-expr ctx env locals loop-carried moved start)
-              [(OkTcMove m1)
+              [(TcMoveResult.Ok m1)
                 (match (tc-move-check-expr ctx env locals loop-carried m1 end)
-                  [(OkTcMove m2)
+                  [(TcMoveResult.Ok m2)
                     (match (tc-move-check-expr
                       ctx
                       env
@@ -35312,7 +35324,7 @@
                       loop-carried
                       m2
                       init)
-                      [(OkTcMove m3)
+                      [(TcMoveResult.Ok m3)
                         (match (tc-move-check-expr
                           ctx
                           (tc-bind-id env index (tc-resolve-type ctx index-ty))
@@ -35322,7 +35334,7 @@
                           loop-carried
                           m3
                           value)
-                          [(OkTcMove m4)
+                          [(TcMoveResult.Ok m4)
                             (let
                               [scan-env : TcTypeEnv
                                 (tc-bind-id
@@ -35345,33 +35357,35 @@
                                 loop-carried
                                 m4
                                 body)
-                                [(OkTcMove _) (OkTcMove m4)]
-                                [(ErrTcMove message) (ErrTcMove message)]))]
-                          [(ErrTcMove message) (ErrTcMove message)])]
-                      [(ErrTcMove message) (ErrTcMove message)])]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)]))])]
+                                [(TcMoveResult.Ok _) (TcMoveResult.Ok m4)]
+                                [(TcMoveResult.Err message)
+                                  (TcMoveResult.Err message)]))]
+                          [(TcMoveResult.Err message)
+                            (TcMoveResult.Err message)])]
+                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved value)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 lane)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved value)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 lane)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StructGet inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved inner)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-struct-field-path expr)
               [(TcMaybeString.Some path)
                 (if (tc-moved-contains? moved1 (tc-moved-path-key path))
@@ -35380,27 +35394,27 @@
                     (tc-moved-path-key path)
                     expr
                     path)
-                  (OkTcMove moved1))]
-              [(TcMaybeString.No) (OkTcMove moved1)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+                  (TcMoveResult.Ok moved1))]
+              [(TcMaybeString.No) (TcMoveResult.Ok moved1)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.WithRegion _ exprs)
       (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExpr.WithEscape scratch-box exprs)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved scratch)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.WithScratch exprs)
       (tc-move-check-exprs ctx env locals loop-carried moved exprs)]
     [(AstExpr.InArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved arena)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-exprs ctx env locals loop-carried moved1 exprs)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings exprs)
@@ -35411,7 +35425,7 @@
             loop-carried
             moved
             bindings)
-            [(OkTcMoveResourceBindings
+            [(TcMoveResourceBindings.Ok
                 body-env
                 moved1
                 body-locals
@@ -35424,10 +35438,10 @@
                 body-loop
                 moved1
                 exprs)
-                [(OkTcMove moved2)
+                [(TcMoveResult.Ok moved2)
                   (tc-move-check-cleanup-owner-exit moved2 roots expr)]
-                [(ErrTcMove message) (ErrTcMove message)])]
-            [(ErrTcMoveResourceBindings message) (ErrTcMove message)])])]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResourceBindings.Err message) (TcMoveResult.Err message)])])]
     [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35440,7 +35454,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved inner)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-expr ctx env inner)
               [(ResultTcType.Ok box-ty)
                 (tc-move-after-consuming-value
@@ -35451,14 +35465,14 @@
                   moved1
                   inner
                   box-ty)]
-              [(ResultTcType.Err _) (OkTcMove moved1)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+              [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.BoxSet box-box value-box)
       (let
         [box-expr : AstExpr (ast-node-get box-box)]
         [_value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved box-expr)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-move-check-expr-id
               ctx
               env
@@ -35466,7 +35480,7 @@
               loop-carried
               moved1
               value-box)
-              [(OkTcMove moved2)
+              [(TcMoveResult.Ok moved2)
                 (match (tc-move-after-bind-id
                   ctx
                   env
@@ -35474,20 +35488,20 @@
                   loop-carried
                   moved2
                   value-box)
-                  [(OkTcMove moved3) (OkTcMove moved3)]
-                  [(ErrTcMove message) (ErrTcMove message)])]
-              [(ErrTcMove message) (ErrTcMove message)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
-    [(AstExpr.TypeLiteral _) (OkTcMove moved)]
-    [(AstExpr.Init _) (OkTcMove moved)]
+                  [(TcMoveResult.Ok moved3) (TcMoveResult.Ok moved3)]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+    [(AstExpr.TypeLiteral _) (TcMoveResult.Ok moved)]
+    [(AstExpr.Init _) (TcMoveResult.Ok moved)]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
-    [(AstExpr.Quote _) (OkTcMove moved)]
-    [(AstExpr.Quasiquote _) (OkTcMove moved)]
-    [(AstExpr.Unquote _) (OkTcMove moved)]
-    [(AstExpr.UnquoteSplicing _) (OkTcMove moved)]
+    [(AstExpr.Quote _) (TcMoveResult.Ok moved)]
+    [(AstExpr.Quasiquote _) (TcMoveResult.Ok moved)]
+    [(AstExpr.Unquote _) (TcMoveResult.Ok moved)]
+    [(AstExpr.UnquoteSplicing _) (TcMoveResult.Ok moved)]
     [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35496,7 +35510,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved inner)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (match (tc-current-return-type env)
               [(ResultTcType.Ok return-ty)
                 (tc-move-after-consuming-value
@@ -35507,9 +35521,9 @@
                   moved1
                   inner
                   return-ty)]
-              [(ResultTcType.Err _) (OkTcMove moved1)])]
-          [(ErrTcMove message) (ErrTcMove message)]))]
-    [(AstExpr.PtrNull _) (OkTcMove moved)]
+              [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+    [(AstExpr.PtrNull _) (TcMoveResult.Ok moved)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35521,7 +35535,7 @@
           (intern-str name)
           expr
           (intern-str name))
-        (OkTcMove moved))]
+        (TcMoveResult.Ok moved))]
     [(AstExpr.PtrRead inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35531,17 +35545,17 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 value)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 offset)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.PtrCast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -35563,51 +35577,51 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved ptr)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 len)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
-    [(AstExpr.BinaryData _) (OkTcMove moved)]
-    [(AstExpr.SpmdProgramIndex) (OkTcMove moved)]
-    [(AstExpr.SpmdProgramCount) (OkTcMove moved)]
-    [(AstExpr.ProgramArgc) (OkTcMove moved)]
-    [(AstExpr.ProgramArgv) (OkTcMove moved)]
-    [(AstExpr.ProgramEnvp) (OkTcMove moved)]
+    [(AstExpr.BinaryData _) (TcMoveResult.Ok moved)]
+    [(AstExpr.SpmdProgramIndex) (TcMoveResult.Ok moved)]
+    [(AstExpr.SpmdProgramCount) (TcMoveResult.Ok moved)]
+    [(AstExpr.ProgramArgc) (TcMoveResult.Ok moved)]
+    [(AstExpr.ProgramArgv) (TcMoveResult.Ok moved)]
+    [(AstExpr.ProgramEnvp) (TcMoveResult.Ok moved)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-move-check-expr ctx env locals loop-carried moved leaf)
-          [(OkTcMove moved1)
+          [(TcMoveResult.Ok moved1)
             (tc-move-check-expr ctx env locals loop-carried moved1 subleaf)]
-          [(ErrTcMove message) (ErrTcMove message)]))]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.Xgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
@@ -35627,8 +35641,8 @@
     (tc-moved-empty)
     (tc-moved-empty)
     body)
-    [(OkTcMove _) ResultTcUnit.Ok]
-    [(ErrTcMove message) (ResultTcUnit.Err message)]))
+    [(TcMoveResult.Ok _) ResultTcUnit.Ok]
+    [(TcMoveResult.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-move-check-body-id
   [ctx : TcContext]
@@ -35642,8 +35656,8 @@
     (tc-moved-empty)
     (tc-moved-empty)
     body-id)
-    [(OkTcMove _) ResultTcUnit.Ok]
-    [(ErrTcMove message) (ResultTcUnit.Err message)]))
+    [(TcMoveResult.Ok _) ResultTcUnit.Ok]
+    [(TcMoveResult.Err message) (ResultTcUnit.Err message)]))
 
 ;; --- lexical borrow conflict checker (#1050/#806) --------------------------
 ;;
@@ -35655,20 +35669,20 @@
 ;; add both the ordinary borrowed path and a namespaced mutable marker, allowing
 ;; many immutable borrows but only one exclusive mutable borrow.
 (defenum TcBorrowCheckResult
-  (OkTcBorrowCheck TcMovedSet)
-  (ErrTcBorrowCheck String))
+  (Ok TcMovedSet)
+  (Err String))
 
 (defenum TcBorrowCheckBindings
-  (OkTcBorrowCheckBindings TcTypeEnv TcMovedSet TcMovedSet)
-  (ErrTcBorrowCheckBindings String))
+  (Ok TcTypeEnv TcMovedSet TcMovedSet)
+  (Err String))
 
 (defenum TcBorrowCheckResourceBindings
-  (OkTcBorrowCheckResourceBindings TcTypeEnv TcMovedSet TcMovedSet)
-  (ErrTcBorrowCheckResourceBindings String))
+  (Ok TcTypeEnv TcMovedSet TcMovedSet)
+  (Err String))
 
 (defenum TcBorrowConflictOrigin
-  (TcNoBorrowConflictOrigin)
-  (TcSomeBorrowConflictOrigin i64))
+  (No)
+  (Some i64))
 
 (define (tc-borrow-check-move-message [path : String]) : String
   (string.append
@@ -35711,11 +35725,11 @@
   [path : String]
   [index : i64]) : TcBorrowConflictOrigin
   (if (>= index (hashmap.string-i64-map-capacity map))
-    TcNoBorrowConflictOrigin
+    TcBorrowConflictOrigin.No
     (match (hashmap.string-i64-map-entry-at map index)
       [(hashmap.StringI64MapEntrySome key value)
         (if (tc-moved-path-key-conflicts? key path)
-          (TcSomeBorrowConflictOrigin value)
+          (TcBorrowConflictOrigin.Some value)
           (tc-borrow-check-conflict-origin-loop
             map
             path
@@ -35743,7 +35757,7 @@
   (match (tc-expr-maybe-span primary)
     [(TcMaybeAstSourceSpan.Some primary-span)
       (match (tc-borrow-check-conflict-origin borrowed conflict-path)
-        [(TcSomeBorrowConflictOrigin origin-id)
+        [(TcBorrowConflictOrigin.Some origin-id)
           (match (tc-expr-maybe-span (ast-node-get origin-id))
             [(TcMaybeAstSourceSpan.Some origin-span)
               (tc-rich-error-one-secondary
@@ -35759,7 +35773,7 @@
                 (tc-borrow-check-help)
                 primary-span
                 (tc-borrow-check-origin-label display-path))])]
-        [(TcNoBorrowConflictOrigin)
+        [(TcBorrowConflictOrigin.No)
           (tc-rich-error-one-secondary
             primary-span
             message
@@ -35768,7 +35782,7 @@
             (tc-borrow-check-origin-label display-path))])]
     [(TcMaybeAstSourceSpan.No)
       (match (tc-borrow-check-conflict-origin borrowed conflict-path)
-        [(TcSomeBorrowConflictOrigin origin-id)
+        [(TcBorrowConflictOrigin.Some origin-id)
           (match (tc-expr-maybe-span (ast-node-get origin-id))
             [(TcMaybeAstSourceSpan.Some origin-span)
               (tc-rich-error-one-secondary
@@ -35778,7 +35792,7 @@
                 origin-span
                 (tc-borrow-check-origin-label display-path))]
             [(TcMaybeAstSourceSpan.No) message])]
-        [(TcNoBorrowConflictOrigin) message])]))
+        [(TcBorrowConflictOrigin.No) message])]))
 
 (define (tc-borrow-check-mut-path [path : String]) : String
   (string.append "#mut." path))
@@ -36061,10 +36075,10 @@
     [(TcMaybeString.Some path)
       (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
         [(ResultTcUnit.Ok)
-          (OkTcBorrowCheck
+          (TcBorrowCheckResult.Ok
             (tc-borrow-check-add-two-phase-mut-borrow-path borrowed path origin))]
-        [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-    [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))
+        [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
+    [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-move-conflict
   [borrowed : TcMovedSet]
@@ -36079,14 +36093,14 @@
         primary
         (tc-borrow-check-move-message path)))
     (match (tc-borrow-check-two-phase-mut-conflict borrowed path)
-      [(TcSomeMoveConflict _ _)
+      [(TcMoveConflict.Some _ _)
         (ResultTcUnit.Err
           (tc-borrow-check-two-phase-mut-conflict-message
             borrowed
             path
             primary
             (tc-borrow-check-move-message path)))]
-      [TcNoMoveConflict ResultTcUnit.Ok])))
+      [TcMoveConflict.No ResultTcUnit.Ok])))
 
 (define (tc-borrow-check-assign-conflict
   [borrowed : TcMovedSet]
@@ -36101,14 +36115,14 @@
         primary
         (tc-borrow-check-assign-message path)))
     (match (tc-borrow-check-two-phase-mut-conflict borrowed path)
-      [(TcSomeMoveConflict _ _)
+      [(TcMoveConflict.Some _ _)
         (ResultTcUnit.Err
           (tc-borrow-check-two-phase-mut-conflict-message
             borrowed
             path
             primary
             (tc-borrow-check-assign-message path)))]
-      [TcNoMoveConflict ResultTcUnit.Ok])))
+      [TcMoveConflict.No ResultTcUnit.Ok])))
 
 (define (tc-borrow-check-mutably-borrow-conflict
   [borrowed : TcMovedSet]
@@ -36123,14 +36137,14 @@
         primary
         (tc-borrow-check-mutably-borrow-message path)))
     (match (tc-borrow-check-two-phase-mut-conflict borrowed path)
-      [(TcSomeMoveConflict _ _)
+      [(TcMoveConflict.Some _ _)
         (ResultTcUnit.Err
           (tc-borrow-check-two-phase-mut-conflict-message
             borrowed
             path
             primary
             (tc-borrow-check-mutably-borrow-message path)))]
-      [TcNoMoveConflict ResultTcUnit.Ok])))
+      [TcMoveConflict.No ResultTcUnit.Ok])))
 
 (define (tc-borrow-check-immutably-borrow-conflict
   [borrowed : TcMovedSet]
@@ -36166,13 +36180,13 @@
   [expr : AstExpr]
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (= (tc-moved-len borrowed) 0)
-    (OkTcBorrowCheck borrowed)
+    (TcBorrowCheckResult.Ok borrowed)
     (match (tc-borrow-check-local-place-path locals expr)
       [(TcMaybeString.Some path)
         (match (tc-borrow-check-read-conflict borrowed path primary)
-          [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
-          [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-      [(TcMaybeString.No) (OkTcBorrowCheck borrowed)])))
+          [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+          [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
+      [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])))
 
 (define (tc-borrow-check-add-place-with-mutability
   [locals : TcMovedSet]
@@ -36185,15 +36199,15 @@
       (if mutable
         (match (tc-borrow-check-mutably-borrow-conflict borrowed path origin)
           [(ResultTcUnit.Ok)
-            (OkTcBorrowCheck
+            (TcBorrowCheckResult.Ok
               (tc-borrow-check-add-borrow-path borrowed path true origin))]
-          [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
+          [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
         (match (tc-borrow-check-immutably-borrow-conflict borrowed path origin)
           [(ResultTcUnit.Ok)
-            (OkTcBorrowCheck
+            (TcBorrowCheckResult.Ok
               (tc-borrow-check-add-borrow-path borrowed path false origin))]
-          [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)]))]
-    [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))
+          [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-place
   [locals : TcMovedSet]
@@ -36202,9 +36216,9 @@
   (match (tc-borrow-check-local-place-path locals expr)
     [(TcMaybeString.Some path)
       (match (tc-borrow-check-move-conflict borrowed path expr)
-        [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
-        [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-    [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))
+        [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+        [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
+    [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-after-consuming-value
   [ctx : TcContext]
@@ -36214,7 +36228,7 @@
   [target-ty : AstType]) : TcBorrowCheckResult
   (if (tc-type-consuming-by-value-now? ctx target-ty)
     (tc-borrow-check-after-consuming-place locals borrowed expr)
-    (OkTcBorrowCheck borrowed)))
+    (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-move-only-value
   [ctx : TcContext]
@@ -36224,7 +36238,7 @@
   [target-ty : AstType]) : TcBorrowCheckResult
   (if (tc-type-move-only? (tc-resolve-type ctx target-ty))
     (tc-borrow-check-after-consuming-place locals borrowed expr)
-    (OkTcBorrowCheck borrowed)))
+    (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-reading-value
   [ctx : TcContext]
@@ -36233,7 +36247,7 @@
   [expr : AstExpr]
   [target-ty : AstType]) : TcBorrowCheckResult
   (if (tc-type-consuming-by-value-now? ctx target-ty)
-    (OkTcBorrowCheck borrowed)
+    (TcBorrowCheckResult.Ok borrowed)
     (tc-borrow-check-place-read-conflict locals borrowed expr expr)))
 
 (define (tc-borrow-check-after-bind-typed
@@ -36244,7 +36258,7 @@
   [init-ty : AstType]) : TcBorrowCheckResult
   (if (tc-type-consuming-by-value-now? ctx init-ty)
     (tc-borrow-check-after-consuming-place locals borrowed init)
-    (OkTcBorrowCheck borrowed)))
+    (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-after-bind
   [ctx : TcContext]
@@ -36258,9 +36272,9 @@
         (tc-moved-contains? locals name)
         (tc-move-var-move-only? env name))
         (match (tc-borrow-check-move-conflict borrowed name init)
-          [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
-          [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
-        (OkTcBorrowCheck borrowed))]
+          [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+          [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
+        (TcBorrowCheckResult.Ok borrowed))]
     [(TcMaybeString.No)
       (match (cfg
         compile-profile
@@ -36268,7 +36282,7 @@
         (tc-expr ctx env init))
         [(ResultTcType.Ok init-ty)
           (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
-        [(ResultTcType.Err _) (OkTcBorrowCheck borrowed)])]))
+        [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])]))
 
 (define (tc-borrow-check-after-bind-id
   [ctx : TcContext]
@@ -36284,14 +36298,14 @@
           (tc-moved-contains? locals name)
           (tc-move-var-move-only? env name))
           (match (tc-borrow-check-move-conflict borrowed name init)
-            [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
-            [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
-          (OkTcBorrowCheck borrowed))]
+            [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+            [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
+          (TcBorrowCheckResult.Ok borrowed))]
       [(TcMaybeString.No)
         (match (tc-body-type-fact-expr-id "borrow.bind_init" ctx env init-id)
           [(ResultTcType.Ok init-ty)
             (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
-          [(ResultTcType.Err _) (OkTcBorrowCheck borrowed)])])))
+          [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])])))
 
 (define (tc-borrow-check-after-bind-known-type-id
   [ctx : TcContext]
@@ -36308,9 +36322,9 @@
           (tc-moved-contains? locals name)
           (tc-move-var-move-only? env name))
           (match (tc-borrow-check-move-conflict borrowed name init)
-            [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
-            [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
-          (OkTcBorrowCheck borrowed))]
+            [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+            [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
+          (TcBorrowCheckResult.Ok borrowed))]
       [(TcMaybeString.No)
         (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)])))
 
@@ -36379,9 +36393,9 @@
   [remaining : i64]
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (<= remaining 0)
-    (OkTcBorrowCheck borrowed)
+    (TcBorrowCheckResult.Ok borrowed)
     (match env
-      [(TcTypeEnv.Nil) (OkTcBorrowCheck borrowed)]
+      [(TcTypeEnv.Nil) (TcBorrowCheckResult.Ok borrowed)]
       [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-borrow-check-region-invalidation-scan
@@ -36393,13 +36407,13 @@
             seen
             remaining
             primary)
-          (OkTcBorrowCheck borrowed))]
+          (TcBorrowCheckResult.Ok borrowed))]
       [(TcTypeEnv.Bind key ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
-            [(= key (tc-default-boundary-id)) (OkTcBorrowCheck borrowed)]
+            [(= key (tc-default-boundary-id)) (TcBorrowCheckResult.Ok borrowed)]
             [(tc-string-list-contains seen name)
               (tc-borrow-check-region-invalidation-scan
                 ctx
@@ -36432,7 +36446,7 @@
                     (tc-string-list-add seen name)
                     (- remaining 1)
                     primary)]
-                [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
+                [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
             [else
               (tc-borrow-check-region-invalidation-scan
                 ctx
@@ -36454,9 +36468,9 @@
   [remaining : i64]
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (<= remaining 0)
-    (OkTcBorrowCheck borrowed)
+    (TcBorrowCheckResult.Ok borrowed)
     (match env
-      [(TcTypeEnv.Nil) (OkTcBorrowCheck borrowed)]
+      [(TcTypeEnv.Nil) (TcBorrowCheckResult.Ok borrowed)]
       [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
           (tc-borrow-check-owner-invalidation-scan
@@ -36468,13 +36482,13 @@
             seen
             remaining
             primary)
-          (OkTcBorrowCheck borrowed))]
+          (TcBorrowCheckResult.Ok borrowed))]
       [(TcTypeEnv.Bind key ty rest)
         (let
           [rest-env : TcTypeEnv (box-get rest)]
           [name : String (intern-str key)]
           (cond
-            [(= key (tc-default-boundary-id)) (OkTcBorrowCheck borrowed)]
+            [(= key (tc-default-boundary-id)) (TcBorrowCheckResult.Ok borrowed)]
             [(tc-string-list-contains seen name)
               (tc-borrow-check-owner-invalidation-scan
                 ctx
@@ -36507,7 +36521,7 @@
                     (tc-string-list-add seen name)
                     (- remaining 1)
                     primary)]
-                [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
+                [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
             [else
               (tc-borrow-check-owner-invalidation-scan
                 ctx
@@ -36545,10 +36559,10 @@
                       TcStringList.Nil
                       (tc-moved-len locals)
                       primary)]
-                  [(TcMaybeString.No) (OkTcBorrowCheck borrowed)])]
-              [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-          [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))]
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]))
+                  [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])]
+              [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])]
+          [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-safe-arena-destroy-effect
   [ctx : TcContext]
@@ -36575,10 +36589,10 @@
                     TcStringList.Nil
                     (tc-moved-len locals)
                     primary)]
-                [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])
-              (OkTcBorrowCheck borrowed))]
-          [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))]
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]))
+                [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
+              (TcBorrowCheckResult.Ok borrowed))]
+          [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-safe-arena-call-effects
   [ctx : TcContext]
@@ -36609,8 +36623,8 @@
               borrowed
               args
               call-expr)]
-          [else (OkTcBorrowCheck borrowed)]))]
-    [(TcMaybeString.No) (OkTcBorrowCheck borrowed)]))
+          [else (TcBorrowCheckResult.Ok borrowed)]))]
+    [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-string-has-suffix-at?
   [text : String]
@@ -36662,9 +36676,9 @@
       (let
         [arg : AstExpr (ast-node-get arg)]
         (match (tc-borrow-check-root-mutation-conflict locals borrowed arg arg)
-          [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed)]
-          [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)]))]
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]))
+          [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed)]
+          [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-after-call-effects
   [ctx : TcContext]
@@ -36682,7 +36696,7 @@
     call-expr
     func
     args)
-    [(OkTcBorrowCheck borrowed0)
+    [(TcBorrowCheckResult.Ok borrowed0)
       (match (tc-expr-var-name func)
         [(TcMaybeString.Some name)
           (if (tc-hashmap-mutating-call-name? name)
@@ -36690,7 +36704,7 @@
               locals
               borrowed0
               args)
-              [(OkTcBorrowCheck _)
+              [(TcBorrowCheckResult.Ok _)
                 (tc-borrow-check-after-returning-call
                   ctx
                   env
@@ -36698,7 +36712,8 @@
                   borrowed0
                   call-expr
                   args)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])
             (tc-borrow-check-after-returning-call
               ctx
               env
@@ -36714,7 +36729,7 @@
             borrowed0
             call-expr
             args)])]
-    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
+    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-add-names [locals : TcMovedSet] [names : TcStringList]) : TcMovedSet
   (match names
@@ -36771,14 +36786,14 @@
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
   (match (tc-borrow-check-expr ctx env locals borrowed arg)
-    [(OkTcBorrowCheck borrowed1)
+    [(TcBorrowCheckResult.Ok borrowed1)
       (match (tc-borrow-check-after-consuming-value ctx locals borrowed1 arg ty)
-        [(OkTcBorrowCheck borrowed2)
+        [(TcBorrowCheckResult.Ok borrowed2)
           (if (= (tc-moved-len borrowed2) 0)
-            (OkTcBorrowCheck borrowed2)
+            (TcBorrowCheckResult.Ok borrowed2)
             (tc-borrow-check-after-reading-value ctx locals borrowed2 arg ty))]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
+    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-arg-with-type
   [ctx : TcContext]
@@ -36805,7 +36820,7 @@
         effective
         ty)]
     [(ResultTcExpr.Err message)
-      (ErrTcBorrowCheck (tc-locate-error-at-expr arg message))]))
+      (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))]))
 
 (define (tc-borrow-check-exprs-with-types
   [ctx : TcContext]
@@ -36817,8 +36832,8 @@
   (match exprs
     [(AstExprList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkTcBorrowCheck borrowed)]
-        [_ (ErrTcBorrowCheck "typecheck: arity mismatch")])]
+        [(AstTypeList.Nil) (TcBorrowCheckResult.Ok borrowed)]
+        [_ (TcBorrowCheckResult.Err "typecheck: arity mismatch")])]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -36835,7 +36850,7 @@
                 borrowed
                 head-expr
                 ty)
-                [(OkTcBorrowCheck borrowed1)
+                [(TcBorrowCheckResult.Ok borrowed1)
                   (tc-borrow-check-exprs-with-types
                     ctx
                     env
@@ -36843,8 +36858,10 @@
                     borrowed1
                     rest
                     rest-types)]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-          [(AstTypeList.Nil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)]))]
+          [(AstTypeList.Nil)
+            (TcBorrowCheckResult.Err "typecheck: arity mismatch")]))]))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows-loop
   [borrowed : TcMovedSet]
@@ -36852,7 +36869,7 @@
   [index : i64]
   [primary : AstExpr]) : TcBorrowCheckResult
   (if (>= index (hashmap.string-i64-map-capacity map))
-    (OkTcBorrowCheck borrowed)
+    (TcBorrowCheckResult.Ok borrowed)
     (match (hashmap.string-i64-map-entry-at map index)
       [(hashmap.StringI64MapEntrySome key _)
         (let
@@ -36865,15 +36882,15 @@
                   [display-path : String
                     (tc-borrow-check-two-phase-mut-original-path path)]
                   (match (tc-moved-path-conflict borrowed display-path)
-                    [(TcSomeMoveConflict _ _)
-                      (ErrTcBorrowCheck
+                    [(TcMoveConflict.Some _ _)
+                      (TcBorrowCheckResult.Err
                         (tc-borrow-check-rich-conflict-message
                           borrowed
                           display-path
                           display-path
                           primary
                           (tc-borrow-check-mutably-borrow-message display-path)))]
-                    [TcNoMoveConflict
+                    [TcMoveConflict.No
                       (tc-borrow-check-activate-two-phase-mut-borrows-loop
                         borrowed
                         map
@@ -36913,9 +36930,9 @@
   [borrow-expr : AstExpr]
   [place : AstExpr]) : TcBorrowCheckResult
   (match (tc-borrow-check-place-read-conflict locals borrowed place borrow-expr)
-    [(OkTcBorrowCheck borrowed0)
+    [(TcBorrowCheckResult.Ok borrowed0)
       (match (tc-borrow-check-expr ctx env locals borrowed0 place)
-        [(OkTcBorrowCheck borrowed1)
+        [(TcBorrowCheckResult.Ok borrowed1)
           (match (tc-borrow-place ctx env place)
             [(ResultTcBorrowPlace.Ok _)
               (tc-borrow-check-add-two-phase-mut-place
@@ -36923,9 +36940,10 @@
                 borrowed1
                 place
                 borrow-expr)]
-            [(ResultTcBorrowPlace.Err message) (ErrTcBorrowCheck message)])]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))
+            [(ResultTcBorrowPlace.Err message)
+              (TcBorrowCheckResult.Err message)])]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
+    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
 
 (define (tc-borrow-check-call-args-two-phase-with-types
   [ctx : TcContext]
@@ -36942,8 +36960,8 @@
         [(AstTypeList.Nil)
           (if reserved
             (tc-borrow-check-activate-two-phase-mut-borrows borrowed call-expr)
-            (OkTcBorrowCheck borrowed))]
-        [_ (ErrTcBorrowCheck "typecheck: arity mismatch")])]
+            (TcBorrowCheckResult.Ok borrowed))]
+        [_ (TcBorrowCheckResult.Err "typecheck: arity mismatch")])]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -36975,7 +36993,7 @@
                             borrowed
                             effective-head
                             place)
-                            [(OkTcBorrowCheck borrowed1)
+                            [(TcBorrowCheckResult.Ok borrowed1)
                               (tc-borrow-check-call-args-two-phase-with-types
                                 ctx
                                 env
@@ -36985,8 +37003,8 @@
                                 call-expr
                                 rest
                                 rest-types)]
-                            [(ErrTcBorrowCheck message)
-                              (ErrTcBorrowCheck message)]))
+                            [(TcBorrowCheckResult.Err message)
+                              (TcBorrowCheckResult.Err message)]))
                         (match (tc-borrow-check-effective-arg-with-type
                           ctx
                           env
@@ -36994,7 +37012,7 @@
                           borrowed
                           effective-head
                           ty)
-                          [(OkTcBorrowCheck borrowed1)
+                          [(TcBorrowCheckResult.Ok borrowed1)
                             (tc-borrow-check-call-args-two-phase-with-types
                               ctx
                               env
@@ -37004,8 +37022,8 @@
                               call-expr
                               rest
                               rest-types)]
-                          [(ErrTcBorrowCheck message)
-                            (ErrTcBorrowCheck message)]))]
+                          [(TcBorrowCheckResult.Err message)
+                            (TcBorrowCheckResult.Err message)]))]
                     [_
                       (match (tc-borrow-check-effective-arg-with-type
                         ctx
@@ -37014,7 +37032,7 @@
                         borrowed
                         effective-head
                         ty)
-                        [(OkTcBorrowCheck borrowed1)
+                        [(TcBorrowCheckResult.Ok borrowed1)
                           (tc-borrow-check-call-args-two-phase-with-types
                             ctx
                             env
@@ -37024,10 +37042,13 @@
                             call-expr
                             rest
                             rest-types)]
-                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
+                        [(TcBorrowCheckResult.Err message)
+                          (TcBorrowCheckResult.Err message)])])]
                 [(ResultTcExpr.Err message)
-                  (ErrTcBorrowCheck (tc-locate-error-at-expr head-expr message))]))]
-          [(AstTypeList.Nil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+                  (TcBorrowCheckResult.Err
+                    (tc-locate-error-at-expr head-expr message))]))]
+          [(AstTypeList.Nil)
+            (TcBorrowCheckResult.Err "typecheck: arity mismatch")]))]))
 
 (define (tc-call-explicit-borrow-expr? [expr : AstExpr]) : bool
   (match (ast-expr-unspan expr)
@@ -37042,7 +37063,7 @@
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
   (if (tc-call-explicit-borrow-expr? arg)
-    (OkTcBorrowCheck borrowed)
+    (TcBorrowCheckResult.Ok borrowed)
     (match (cfg
       compile-profile
       (compiler-tc-reinfer-profile-effective-arg-expr
@@ -37063,9 +37084,9 @@
                 mutable
                 place
                 arg))]
-          [_ (OkTcBorrowCheck borrowed)])]
+          [_ (TcBorrowCheckResult.Ok borrowed)])]
       [(ResultTcExpr.Err message)
-        (ErrTcBorrowCheck (tc-locate-error-at-expr arg message))])))
+        (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))])))
 
 (define (tc-borrow-check-auto-borrowed-call-args
   [ctx : TcContext]
@@ -37077,8 +37098,8 @@
   (match args
     [(AstExprList.Nil)
       (match types
-        [(AstTypeList.Nil) (OkTcBorrowCheck borrowed)]
-        [_ (ErrTcBorrowCheck "typecheck: arity mismatch")])]
+        [(AstTypeList.Nil) (TcBorrowCheckResult.Ok borrowed)]
+        [_ (TcBorrowCheckResult.Err "typecheck: arity mismatch")])]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
@@ -37095,7 +37116,7 @@
                 borrowed
                 head-expr
                 ty)
-                [(OkTcBorrowCheck borrowed1)
+                [(TcBorrowCheckResult.Ok borrowed1)
                   (tc-borrow-check-auto-borrowed-call-args
                     ctx
                     env
@@ -37103,8 +37124,10 @@
                     borrowed1
                     rest
                     rest-types)]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-          [(AstTypeList.Nil) (ErrTcBorrowCheck "typecheck: arity mismatch")]))]))
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)]))]
+          [(AstTypeList.Nil)
+            (TcBorrowCheckResult.Err "typecheck: arity mismatch")]))]))
 
 (define (tc-borrow-check-thread-channel-send-message
   [ctx : TcContext]
@@ -37127,10 +37150,10 @@
                   borrowed
                   message-expr
                   message-ty)]
-              [(ResultTcExpr.Err message) (ErrTcBorrowCheck message)])]
-          [(ResultTcType.Err message) (ErrTcBorrowCheck message)])]
-      [(TcMaybeString.No) (OkTcBorrowCheck borrowed)])
-    (OkTcBorrowCheck borrowed)))
+              [(ResultTcExpr.Err message) (TcBorrowCheckResult.Err message)])]
+          [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+      [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])
+    (TcBorrowCheckResult.Ok borrowed)))
 
 (define (tc-borrow-check-string-helper-intrinsic-call?
   [ctx : TcContext]
@@ -37163,7 +37186,7 @@
       locals
       (tc-moved-clone borrowed)
       args)
-      [(OkTcBorrowCheck _)
+      [(TcBorrowCheckResult.Ok _)
         (tc-borrow-check-after-call-effects
           ctx
           env
@@ -37172,7 +37195,7 @@
           call-expr
           func
           args)]
-      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])
     (let
       [validation-borrowed : TcMovedSet (tc-moved-clone borrowed)]
       [validation-result : TcBorrowCheckResult
@@ -37186,7 +37209,7 @@
           args
           types)]
       (match validation-result
-        [(OkTcBorrowCheck _)
+        [(TcBorrowCheckResult.Ok _)
           (if (tc-call-type-list-has-immutable-ref-formal? ctx types)
             (match (tc-borrow-check-auto-borrowed-call-args
               ctx
@@ -37195,7 +37218,7 @@
               borrowed
               args
               types)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-thread-channel-send-message
                   ctx
                   env
@@ -37204,7 +37227,7 @@
                   func
                   args
                   types)
-                  [(OkTcBorrowCheck borrowed3)
+                  [(TcBorrowCheckResult.Ok borrowed3)
                     (tc-borrow-check-after-call-effects
                       ctx
                       env
@@ -37213,8 +37236,10 @@
                       call-expr
                       func
                       args)]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])
             (match (tc-borrow-check-thread-channel-send-message
               ctx
               env
@@ -37223,7 +37248,7 @@
               func
               args
               types)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (tc-borrow-check-after-call-effects
                   ctx
                   env
@@ -37232,8 +37257,9 @@
                   call-expr
                   func
                   args)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))))
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))))
 
 (define (tc-borrow-check-exprs-retry-after-prune
   [ctx : TcContext]
@@ -37246,14 +37272,14 @@
   [rest : AstExprList]
   [message : String]) : TcBorrowCheckResult
   (if (= (tc-moved-len borrowed) 0)
-    (ErrTcBorrowCheck message)
+    (TcBorrowCheckResult.Err message)
     (let
       [borrowed0 : TcMovedSet
         (tc-borrow-check-prune-before-exprs ctx env borrowed protected exprs)]
       (if (= (tc-moved-len borrowed0) (tc-moved-len borrowed))
-        (ErrTcBorrowCheck message)
+        (TcBorrowCheckResult.Err message)
         (match (tc-borrow-check-expr ctx env locals borrowed0 head)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-exprs-with-protected
               ctx
               env
@@ -37261,7 +37287,8 @@
               borrowed1
               protected
               rest)]
-          [(ErrTcBorrowCheck retry-message) (ErrTcBorrowCheck retry-message)])))))
+          [(TcBorrowCheckResult.Err retry-message)
+            (TcBorrowCheckResult.Err retry-message)])))))
 
 (define (tc-borrow-check-exprs-with-protected
   [ctx : TcContext]
@@ -37271,13 +37298,13 @@
   [protected : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
   (match exprs
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExprList.Cons head rest)
       (let
         [head-expr : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (tc-borrow-check-expr-id ctx env locals borrowed head)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-exprs-with-protected
               ctx
               env
@@ -37285,7 +37312,7 @@
               borrowed1
               protected
               rest)]
-          [(ErrTcBorrowCheck message)
+          [(TcBorrowCheckResult.Err message)
             (tc-borrow-check-exprs-retry-after-prune
               ctx
               env
@@ -37672,12 +37699,12 @@
   [rest : AstExprList]
   [message : String]) : TcBorrowCheckResult
   (if (= (tc-moved-len borrowed) 0)
-    (ErrTcBorrowCheck message)
+    (TcBorrowCheckResult.Err message)
     (let
       [borrowed0 : TcMovedSet
         (tc-borrow-check-prune-before-exprs ctx env borrowed protected exprs)]
       (if (= (tc-moved-len borrowed0) (tc-moved-len borrowed))
-        (ErrTcBorrowCheck message)
+        (TcBorrowCheckResult.Err message)
         (match (tc-borrow-check-expr-loop
           ctx
           env
@@ -37686,7 +37713,7 @@
           borrowed0
           protected
           head)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (let
               [protected1 : TcMovedSet
                 (tc-borrow-check-loop-protect-stored-facts
@@ -37708,7 +37735,8 @@
                 borrowed1
                 protected1
                 rest))]
-          [(ErrTcBorrowCheck retry-message) (ErrTcBorrowCheck retry-message)])))))
+          [(TcBorrowCheckResult.Err retry-message)
+            (TcBorrowCheckResult.Err retry-message)])))))
 
 (define (tc-borrow-check-exprs-loop
   [ctx : TcContext]
@@ -37719,7 +37747,7 @@
   [protected : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
   (match exprs
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
@@ -37732,7 +37760,7 @@
           borrowed
           protected
           head)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (let
               [protected1 : TcMovedSet
                 (tc-borrow-check-loop-protect-stored-facts
@@ -37754,7 +37782,7 @@
                 borrowed1
                 protected1
                 rest))]
-          [(ErrTcBorrowCheck message)
+          [(TcBorrowCheckResult.Err message)
             (tc-borrow-check-exprs-loop-retry-after-prune
               ctx
               env
@@ -37777,7 +37805,7 @@
   [arms : AstMatchArmList]
   [joined : TcMovedSet]) : TcBorrowCheckResult
   (match arms
-    [(AstMatchArmList.Nil) (OkTcBorrowCheck joined)]
+    [(AstMatchArmList.Nil) (TcBorrowCheckResult.Ok joined)]
     [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -37799,7 +37827,7 @@
                     (tc-moved-clone borrowed)
                     borrowed
                     body)
-                    [(OkTcBorrowCheck arm-borrowed)
+                    [(TcBorrowCheckResult.Ok arm-borrowed)
                       (let
                         [visible-arm-borrowed : TcMovedSet
                           (tc-borrow-check-remove-root-states
@@ -37817,8 +37845,9 @@
                           scrut-ty
                           rest
                           (tc-moved-union joined visible-arm-borrowed)))]
-                    [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-                [(ResultTcEnv.Err message) (ErrTcBorrowCheck message)]))]))]))
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(ResultTcEnv.Err message) (TcBorrowCheckResult.Err message)]))]))]))
 
 (define (tc-borrow-check-arms-loop
   [ctx : TcContext]
@@ -37882,7 +37911,7 @@
         [then-branch : AstExpr (ast-node-get then-branch-box)]
         [else-branch : AstExpr (ast-node-get else-branch-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed cond)
-          [(OkTcBorrowCheck borrowedc)
+          [(TcBorrowCheckResult.Ok borrowedc)
             (match (tc-borrow-check-expr-loop
               ctx
               env
@@ -37891,7 +37920,7 @@
               (tc-moved-clone borrowedc)
               borrowedc
               then-branch)
-              [(OkTcBorrowCheck borrowedt)
+              [(TcBorrowCheckResult.Ok borrowedt)
                 (match (tc-borrow-check-expr-loop
                   ctx
                   env
@@ -37900,11 +37929,14 @@
                   (tc-moved-clone borrowedc)
                   borrowedc
                   else-branch)
-                  [(OkTcBorrowCheck borrowede)
-                    (OkTcBorrowCheck (tc-moved-union borrowedt borrowede))]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                  [(TcBorrowCheckResult.Ok borrowede)
+                    (TcBorrowCheckResult.Ok
+                      (tc-moved-union borrowedt borrowede))]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
@@ -37916,7 +37948,7 @@
               (tc-moved-clone locals)
               (tc-moved-clone borrowed)
               bindings)
-              [(OkTcBorrowCheckBindings env2 locals2 borrowed2)
+              [(TcBorrowCheckBindings.Ok env2 locals2 borrowed2)
                 (match (tc-borrow-check-expr-loop
                   ctx
                   env2
@@ -37925,22 +37957,24 @@
                   borrowed2
                   borrowed
                   body)
-                  [(OkTcBorrowCheck body-borrowed)
-                    (OkTcBorrowCheck
+                  [(TcBorrowCheckResult.Ok body-borrowed)
+                    (TcBorrowCheckResult.Ok
                       (tc-borrow-check-loop-visible-body-borrows
                         ctx
                         loop-env
                         borrowed
                         body-borrowed))]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheckBindings message) (ErrTcBorrowCheck message)]))])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckBindings.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed scrut)
-              [(OkTcBorrowCheck borroweds)
+              [(TcBorrowCheckResult.Ok borroweds)
                 (match (tc-body-type-fact-expr-id
                   "borrow.match_scrutinee"
                   ctx
@@ -37955,8 +37989,9 @@
                       borroweds
                       scrut-ty
                       arms)]
-                  [(ResultTcType.Err message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+                  [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [_ (tc-borrow-check-expr ctx env locals borrowed expr)]))
 
 (define (tc-borrow-check-read-exprs
@@ -37966,13 +38001,13 @@
   [borrowed : TcMovedSet]
   [exprs : AstExprList]) : TcBorrowCheckResult
   (match exprs
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExprList.Cons head rest)
       (let
         [head : AstExpr (ast-node-get head)]
         [rest : AstExprList (box-get rest)]
         (match (tc-borrow-check-expr ctx env locals borrowed head)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (if (= (tc-moved-len borrowed1) 0)
               (tc-borrow-check-read-exprs ctx env locals borrowed1 rest)
               (match (tc-borrow-check-place-read-conflict
@@ -37980,10 +38015,11 @@
                 borrowed1
                 head
                 head)
-                [(OkTcBorrowCheck borrowed2)
+                [(TcBorrowCheckResult.Ok borrowed2)
                   (tc-borrow-check-read-exprs ctx env locals borrowed2 rest)]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]))
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]))
 
 (define (tc-borrow-check-add-returned-call-arg-borrow
   [ctx : TcContext]
@@ -38030,9 +38066,9 @@
                 borrowed
                 inner
                 result-lifetimes))]
-          [_ (OkTcBorrowCheck borrowed)])
-        (OkTcBorrowCheck borrowed))]
-    [(ResultTcType.Err _) (OkTcBorrowCheck borrowed)]))
+          [_ (TcBorrowCheckResult.Ok borrowed)])
+        (TcBorrowCheckResult.Ok borrowed))]
+    [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-add-returned-call-borrows
   [ctx : TcContext]
@@ -38042,7 +38078,7 @@
   [args : AstExprList]
   [result-lifetimes : TcStringList]) : TcBorrowCheckResult
   (match args
-    [(AstExprList.Nil) (OkTcBorrowCheck borrowed)]
+    [(AstExprList.Nil) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExprList.Cons arg rest)
       (let
         [arg : AstExpr (ast-node-get arg)]
@@ -38054,7 +38090,7 @@
           borrowed
           arg
           result-lifetimes)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-add-returned-call-borrows
               ctx
               env
@@ -38062,7 +38098,7 @@
               borrowed1
               rest
               result-lifetimes)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]))
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]))
 
 (define (tc-borrow-check-after-returning-call
   [ctx : TcContext]
@@ -38080,7 +38116,7 @@
         [result-lifetimes : TcStringList
           (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
         (match result-lifetimes
-          [(TcStringList.Nil) (OkTcBorrowCheck borrowed)]
+          [(TcStringList.Nil) (TcBorrowCheckResult.Ok borrowed)]
           [_
             (tc-borrow-check-add-returned-call-borrows
               ctx
@@ -38089,7 +38125,7 @@
               borrowed
               args
               result-lifetimes)]))]
-    [(ResultTcType.Err _) (OkTcBorrowCheck borrowed)]))
+    [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))
 
 (define (tc-borrow-check-let-bindings
   [ctx : TcContext]
@@ -38098,7 +38134,7 @@
   [borrowed : TcMovedSet]
   [bindings : AstLetBindingList]) : TcBorrowCheckBindings
   (match bindings
-    [(AstLetBindingList.Nil) (OkTcBorrowCheckBindings env locals borrowed)]
+    [(AstLetBindingList.Nil) (TcBorrowCheckBindings.Ok env locals borrowed)]
     [(AstLetBindingList.Cons binding rest)
       (let
         [rest : AstLetBindingList (box-get rest)]
@@ -38107,7 +38143,7 @@
             (let
               [init : AstExpr (ast-node-get init-box)]
               (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
-                [(OkTcBorrowCheck borrowed1)
+                [(TcBorrowCheckResult.Ok borrowed1)
                   (let
                     [binding-ty : AstType
                       (tc-move-binding-type-id
@@ -38123,7 +38159,7 @@
                       borrowed1
                       init-box
                       binding-ty)
-                      [(OkTcBorrowCheck borrowed2)
+                      [(TcBorrowCheckResult.Ok borrowed2)
                         (tc-borrow-check-let-bindings
                           ctx
                           (tc-bind-c-abi-fnptr-if-needed-id
@@ -38137,9 +38173,10 @@
                             borrowed2
                             (intern-str name))
                           rest)]
-                      [(ErrTcBorrowCheck message)
-                        (ErrTcBorrowCheckBindings message)]))]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheckBindings message)]))]))]))
+                      [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckBindings.Err message)]))]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckBindings.Err message)]))]))]))
 
 (define (tc-borrow-check-resource-bindings
   [ctx : TcContext]
@@ -38149,7 +38186,7 @@
   [bindings : AstResourceBindingList]) : TcBorrowCheckResourceBindings
   (match bindings
     [(AstResourceBindingList.Nil)
-      (OkTcBorrowCheckResourceBindings env locals borrowed)]
+      (TcBorrowCheckResourceBindings.Ok env locals borrowed)]
     [(AstResourceBindingList.Cons binding rest)
       (let
         [rest : AstResourceBindingList (box-get rest)]
@@ -38158,14 +38195,14 @@
             (let
               [_init : AstExpr (ast-node-get init-box)]
               (match (tc-borrow-check-expr-id ctx env locals borrowed init-box)
-                [(OkTcBorrowCheck borrowed1)
+                [(TcBorrowCheckResult.Ok borrowed1)
                   (match (tc-borrow-check-after-bind-id
                     ctx
                     env
                     locals
                     borrowed1
                     init-box)
-                    [(OkTcBorrowCheck borrowed2)
+                    [(TcBorrowCheckResult.Ok borrowed2)
                       (match (tc-body-type-fact-expr-id
                         "borrow.resource_init"
                         ctx
@@ -38184,11 +38221,11 @@
                               (intern-str name))
                             rest)]
                         [(ResultTcType.Err message)
-                          (ErrTcBorrowCheckResourceBindings message)])]
-                    [(ErrTcBorrowCheck message)
-                      (ErrTcBorrowCheckResourceBindings message)])]
-                [(ErrTcBorrowCheck message)
-                  (ErrTcBorrowCheckResourceBindings message)]))]))]))
+                          (TcBorrowCheckResourceBindings.Err message)])]
+                    [(TcBorrowCheckResult.Err message)
+                      (TcBorrowCheckResourceBindings.Err message)])]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResourceBindings.Err message)]))]))]))
 
 (define (tc-borrow-check-arms-join
   [ctx : TcContext]
@@ -38199,7 +38236,7 @@
   [arms : AstMatchArmList]
   [joined : TcMovedSet]) : TcBorrowCheckResult
   (match arms
-    [(AstMatchArmList.Nil) (OkTcBorrowCheck joined)]
+    [(AstMatchArmList.Nil) (TcBorrowCheckResult.Ok joined)]
     [(AstMatchArmList.Cons arm rest)
       (let
         [rest : AstMatchArmList (box-get rest)]
@@ -38217,7 +38254,7 @@
                     (tc-moved-clone locals))
                   (tc-moved-clone borrowed)
                   body-box)
-                  [(OkTcBorrowCheck arm-borrowed)
+                  [(TcBorrowCheckResult.Ok arm-borrowed)
                     (let
                       [visible-arm-borrowed : TcMovedSet
                         (tc-borrow-check-remove-root-states
@@ -38234,8 +38271,9 @@
                         scrut-ty
                         rest
                         (tc-moved-union joined visible-arm-borrowed)))]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ResultTcEnv.Err message) (ErrTcBorrowCheck message)])]))]))
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(ResultTcEnv.Err message) (TcBorrowCheckResult.Err message)])]))]))
 
 (define (tc-borrow-check-arms
   [ctx : TcContext]
@@ -38263,7 +38301,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
-    [(AstExpr.Literal _) (OkTcBorrowCheck borrowed)]
+    [(AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Var name)
       (let
         [name-text : String (intern-str name)]
@@ -38271,20 +38309,20 @@
           (match (tc-dotted-local-field-expr-id env name-text)
             [(ResultTcExprId.Ok virtual-id)
               (tc-borrow-check-expr-id ctx env locals borrowed virtual-id)]
-            [(ResultTcExprId.Err message) (ErrTcBorrowCheck message)])
-          (OkTcBorrowCheck borrowed)))]
+            [(ResultTcExprId.Err message) (TcBorrowCheckResult.Err message)])
+          (TcBorrowCheckResult.Ok borrowed)))]
     [(AstExpr.Binary _ left-box right-box)
       (match (tc-borrow-check-expr-id ctx env locals borrowed left-box)
-        [(OkTcBorrowCheck borrowed1)
+        [(TcBorrowCheckResult.Ok borrowed1)
           (tc-borrow-check-expr-id ctx env locals borrowed1 right-box)]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.Unary _ inner-box)
       (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
     [(AstExpr.Call func-box args)
       (let
         [func : AstExpr (ast-node-get func-box)]
         (match (tc-borrow-check-expr-id ctx env locals borrowed func-box)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-move-call-param-types-id-with-facts
               "borrow.call_func"
               ctx
@@ -38311,7 +38349,7 @@
                             args
                             expanded-params)]
                         [(ResultTcTypeList.Err message)
-                          (ErrTcBorrowCheck message)])
+                          (TcBorrowCheckResult.Err message)])
                       (tc-borrow-check-call-args-with-types
                         ctx
                         env
@@ -38338,7 +38376,7 @@
                   locals
                   (tc-moved-clone borrowed1)
                   args)
-                  [(OkTcBorrowCheck _)
+                  [(TcBorrowCheckResult.Ok _)
                     (tc-borrow-check-after-call-effects
                       ctx
                       env
@@ -38347,31 +38385,34 @@
                       expr
                       func
                       args)]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.BracketClause items)
       (tc-borrow-check-exprs ctx env locals borrowed items)]
     [(AstExpr.If cond-box then-branch-box else-branch-box)
       (match (tc-borrow-check-expr-id ctx env locals borrowed cond-box)
-        [(OkTcBorrowCheck borrowedc)
+        [(TcBorrowCheckResult.Ok borrowedc)
           (match (tc-borrow-check-expr-id
             ctx
             env
             (tc-moved-clone locals)
             (tc-moved-clone borrowedc)
             then-branch-box)
-            [(OkTcBorrowCheck borrowedt)
+            [(TcBorrowCheckResult.Ok borrowedt)
               (match (tc-borrow-check-expr-id
                 ctx
                 env
                 (tc-moved-clone locals)
                 (tc-moved-clone borrowedc)
                 else-branch-box)
-                [(OkTcBorrowCheck borrowede)
-                  (OkTcBorrowCheck (tc-moved-union borrowedt borrowede))]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+                [(TcBorrowCheckResult.Ok borrowede)
+                  (TcBorrowCheckResult.Ok (tc-moved-union borrowedt borrowede))]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
@@ -38381,7 +38422,7 @@
             (tc-moved-clone locals)
             (tc-moved-clone borrowed)
             bindings)
-            [(OkTcBorrowCheckBindings env2 locals2 borrowed2)
+            [(TcBorrowCheckBindings.Ok env2 locals2 borrowed2)
               (match (tc-borrow-check-expr-with-protected-id
                 ctx
                 env2
@@ -38389,9 +38430,11 @@
                 borrowed2
                 borrowed
                 body-box)
-                [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheckBindings message) (ErrTcBorrowCheck message)])])]
+                [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed)]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckBindings.Err message)
+              (TcBorrowCheckResult.Err message)])])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params _ body-box)
@@ -38401,8 +38444,9 @@
             (tc-move-params-locals params (tc-moved-clone locals))
             (tc-moved-empty)
             body-box)
-            [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])])]
+            [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed)]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])])]
     [(AstExpr.Tuple exprs)
       (match (tc-body-type-fact-expr-list-types
         "borrow.tuple_list"
@@ -38417,9 +38461,9 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed inner)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Array exprs)
       (match (tc-body-type-fact-expr-list-types
         "borrow.array_list"
@@ -38439,116 +38483,127 @@
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed array)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-expr ctx env locals borrowed1 index)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (tc-borrow-check-place-read-conflict locals borrowed2 expr expr)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArraySet array-box index-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [index : AstExpr (ast-node-get index-box)]
         [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed array)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-expr ctx env locals borrowed1 index)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-expr-id
                   ctx
                   env
                   locals
                   borrowed2
                   value-box)
-                  [(OkTcBorrowCheck borrowed3)
+                  [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-after-bind-id
                       ctx
                       env
                       locals
                       borrowed3
                       value-box)
-                      [(OkTcBorrowCheck borrowed4)
+                      [(TcBorrowCheckResult.Ok borrowed4)
                         (match (tc-borrow-check-array-set-conflict
                           locals
                           borrowed4
                           array
                           index
                           array)
-                          [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed4)]
+                          [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed4)]
                           [(ResultTcUnit.Err message)
-                            (ErrTcBorrowCheck message)])]
-                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                            (TcBorrowCheckResult.Err message)])]
+                      [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed receiver)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-after-bind-id
                   ctx
                   env
                   locals
                   borrowed2
                   value-box)
-                  [(OkTcBorrowCheck borrowed3)
+                  [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-struct-set-conflict
                       locals
                       borrowed3
                       receiver
                       (intern-str field)
                       receiver)
-                      [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed3)]
-                      [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                      [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed3)]
+                      [(ResultTcUnit.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
         [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed array)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-after-bind-id
                   ctx
                   env
                   locals
                   borrowed2
                   value-box)
-                  [(OkTcBorrowCheck borrowed3)
+                  [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-root-mutation-conflict
                       locals
                       borrowed3
                       array
                       array)
-                      [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed3)]
-                      [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+                      [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed3)]
+                      [(ResultTcUnit.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.StringRef str-box index-box)
       (let
         [str : AstExpr (ast-node-get str-box)]
         [index : AstExpr (ast-node-get index-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed str)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-expr ctx env locals borrowed1 index)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (tc-borrow-check-place-read-conflict locals borrowed2 expr expr)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.While cond-box body-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [body : AstExpr (ast-node-get body-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed cond)
-          [(OkTcBorrowCheck borrowedc)
+          [(TcBorrowCheckResult.Ok borrowedc)
             (match (tc-borrow-check-expr-loop
               ctx
               env
@@ -38557,15 +38612,16 @@
               (tc-moved-clone borrowedc)
               borrowedc
               body)
-              [(OkTcBorrowCheck body-borrowed)
-                (OkTcBorrowCheck
+              [(TcBorrowCheckResult.Ok body-borrowed)
+                (TcBorrowCheckResult.Ok
                   (tc-borrow-check-loop-visible-body-borrows
                     ctx
                     env
                     borrowedc
                     body-borrowed))]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Begin exprs)
       (tc-borrow-check-exprs ctx env locals borrowed exprs)]
     [(AstExpr.Unsafe exprs)
@@ -38583,25 +38639,28 @@
                 locals
                 borrowed
                 (ast-node-get virtual-id))]
-            [(ResultTcExprId.Err message) (ErrTcBorrowCheck message)])
+            [(ResultTcExprId.Err message) (TcBorrowCheckResult.Err message)])
           (match (tc-borrow-check-expr-id ctx env locals borrowed rhs-box)
-            [(OkTcBorrowCheck borrowed1)
+            [(TcBorrowCheckResult.Ok borrowed1)
               (match (tc-borrow-check-after-bind-id
                 ctx
                 env
                 locals
                 borrowed1
                 rhs-box)
-                [(OkTcBorrowCheck borrowed2)
+                [(TcBorrowCheckResult.Ok borrowed2)
                   (match (tc-borrow-check-assignment
                     locals
                     borrowed2
                     name-text
                     rhs)
-                    [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed2)]
-                    [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])))]
+                    [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed2)]
+                    [(ResultTcUnit.Err message)
+                      (TcBorrowCheckResult.Err message)])]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -38615,7 +38674,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (if (= (tc-moved-len borrowed) 0)
           (match (tc-borrow-check-expr ctx env locals borrowed inner)
-            [(OkTcBorrowCheck borrowed1)
+            [(TcBorrowCheckResult.Ok borrowed1)
               (match (tc-borrow-place ctx env inner)
                 [(ResultTcBorrowPlace.Ok _)
                   (tc-borrow-check-add-place-with-mutability
@@ -38624,16 +38683,18 @@
                     mutable
                     inner
                     inner)]
-                [(ResultTcBorrowPlace.Err message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])
+                [(ResultTcBorrowPlace.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])
           (match (tc-borrow-check-place-read-conflict
             locals
             borrowed
             inner
             expr)
-            [(OkTcBorrowCheck borrowed0)
+            [(TcBorrowCheckResult.Ok borrowed0)
               (match (tc-borrow-check-expr ctx env locals borrowed0 inner)
-                [(OkTcBorrowCheck borrowed1)
+                [(TcBorrowCheckResult.Ok borrowed1)
                   (match (tc-borrow-place ctx env inner)
                     [(ResultTcBorrowPlace.Ok _)
                       (tc-borrow-check-add-place-with-mutability
@@ -38643,16 +38704,18 @@
                         inner
                         inner)]
                     [(ResultTcBorrowPlace.Err message)
-                      (ErrTcBorrowCheck message)])]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])))]
+                      (TcBorrowCheckResult.Err message)])]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResult.Err message)
+              (TcBorrowCheckResult.Err message)])))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrut-box arms)
           (let
             [scrut : AstExpr (ast-node-get scrut-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed scrut)
-              [(OkTcBorrowCheck borroweds)
+              [(TcBorrowCheckResult.Ok borroweds)
                 (match (tc-body-type-fact-expr-id
                   "borrow.match_scrutinee"
                   ctx
@@ -38666,8 +38729,9 @@
                       borroweds
                       scrut-ty
                       arms)]
-                  [(ResultTcType.Err message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+                  [(ResultTcType.Err message) (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start-box end-box body-box)
@@ -38676,9 +38740,9 @@
             [end : AstExpr (ast-node-get end-box)]
             [body : AstExpr (ast-node-get body-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed start)
-              [(OkTcBorrowCheck borrowed1)
+              [(TcBorrowCheckResult.Ok borrowed1)
                 (match (tc-borrow-check-expr ctx env locals borrowed1 end)
-                  [(OkTcBorrowCheck borrowed2)
+                  [(TcBorrowCheckResult.Ok borrowed2)
                     (let
                       [index-name : String (intern-str index)]
                       [body-env : TcTypeEnv
@@ -38697,8 +38761,8 @@
                         body-entry
                         body-entry
                         body)
-                        [(OkTcBorrowCheck body-borrowed)
-                          (OkTcBorrowCheck
+                        [(TcBorrowCheckResult.Ok body-borrowed)
+                          (TcBorrowCheckResult.Ok
                             (tc-borrow-check-loop-visible-body-borrows
                               ctx
                               env
@@ -38706,9 +38770,12 @@
                               (tc-borrow-check-remove-root-state
                                 body-borrowed
                                 index-name)))]
-                        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+                        [(TcBorrowCheckResult.Err message)
+                          (TcBorrowCheckResult.Err message)]))]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ a-box b-box c-box d-box)
@@ -38718,15 +38785,18 @@
             [c : AstExpr (ast-node-get c-box)]
             [d : AstExpr (ast-node-get d-box)]
             (match (tc-borrow-check-expr ctx env locals borrowed a)
-              [(OkTcBorrowCheck borrowed1)
+              [(TcBorrowCheckResult.Ok borrowed1)
                 (match (tc-borrow-check-expr ctx env locals borrowed1 b)
-                  [(OkTcBorrowCheck borrowed2)
+                  [(TcBorrowCheckResult.Ok borrowed2)
                     (match (tc-borrow-check-expr ctx env locals borrowed2 c)
-                      [(OkTcBorrowCheck borrowed3)
+                      [(TcBorrowCheckResult.Ok borrowed3)
                         (tc-borrow-check-expr ctx env locals borrowed3 d)]
-                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+                      [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -38757,11 +38827,11 @@
             [body-locals : TcMovedSet
               (tc-moved-add (tc-moved-clone value-locals) prefix-name)]
             (match (tc-borrow-check-expr ctx env locals borrowed start)
-              [(OkTcBorrowCheck borrowed1)
+              [(TcBorrowCheckResult.Ok borrowed1)
                 (match (tc-borrow-check-expr ctx env locals borrowed1 end)
-                  [(OkTcBorrowCheck borrowed2)
+                  [(TcBorrowCheckResult.Ok borrowed2)
                     (match (tc-borrow-check-expr ctx env locals borrowed2 init)
-                      [(OkTcBorrowCheck borrowed3)
+                      [(TcBorrowCheckResult.Ok borrowed3)
                         (match (tc-borrow-check-expr-loop
                           ctx
                           value-env
@@ -38774,7 +38844,7 @@
                             (tc-moved-clone borrowed3)
                             index-name)
                           value)
-                          [(OkTcBorrowCheck borrowed4)
+                          [(TcBorrowCheckResult.Ok borrowed4)
                             (let
                               [body-entry : TcMovedSet
                                 (tc-borrow-check-remove-root-state
@@ -38790,8 +38860,8 @@
                                 body-entry
                                 body-entry
                                 body)
-                                [(OkTcBorrowCheck body-borrowed)
-                                  (OkTcBorrowCheck
+                                [(TcBorrowCheckResult.Ok body-borrowed)
+                                  (TcBorrowCheckResult.Ok
                                     (tc-borrow-check-loop-visible-body-borrows
                                       ctx
                                       env
@@ -38801,36 +38871,39 @@
                                           body-borrowed
                                           index-name)
                                         prefix-name)))]
-                                [(ErrTcBorrowCheck message)
-                                  (ErrTcBorrowCheck message)]))]
-                          [(ErrTcBorrowCheck message)
-                            (ErrTcBorrowCheck message)])]
-                      [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))])]
+                                [(TcBorrowCheckResult.Err message)
+                                  (TcBorrowCheckResult.Err message)]))]
+                          [(TcBorrowCheckResult.Err message)
+                            (TcBorrowCheckResult.Err message)])]
+                      [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)]))])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed value)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 lane)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         [lane : AstExpr (ast-node-get lane-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed value)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 lane)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.StructGet inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed inner)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.WithRegion _ exprs)
       (match (tc-borrow-check-exprs
         ctx
@@ -38838,22 +38911,23 @@
         locals
         (tc-moved-clone borrowed)
         exprs)
-        [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+        [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed)]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.WithEscape scratch-box exprs)
       (let
         [scratch : AstExpr (ast-node-get scratch-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed scratch)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-exprs
               ctx
               env
               locals
               (tc-moved-clone borrowed1)
               exprs)
-              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+              [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed1)]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.WithScratch exprs)
       (match (tc-borrow-check-exprs
         ctx
@@ -38861,22 +38935,23 @@
         locals
         (tc-moved-clone borrowed)
         exprs)
-        [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-        [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
+        [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed)]
+        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
     [(AstExpr.InArena arena-box exprs)
       (let
         [arena : AstExpr (ast-node-get arena-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed arena)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-exprs
               ctx
               env
               locals
               (tc-moved-clone borrowed1)
               exprs)
-              [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed1)]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+              [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed1)]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings exprs)
@@ -38886,7 +38961,7 @@
             locals
             (tc-moved-clone borrowed)
             bindings)
-            [(OkTcBorrowCheckResourceBindings
+            [(TcBorrowCheckResourceBindings.Ok
                 body-env
                 body-locals
                 body-borrowed)
@@ -38897,10 +38972,11 @@
                 body-borrowed
                 borrowed
                 exprs)
-                [(OkTcBorrowCheck _) (OkTcBorrowCheck borrowed)]
-                [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-            [(ErrTcBorrowCheckResourceBindings message)
-              (ErrTcBorrowCheck message)])])]
+                [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed)]
+                [(TcBorrowCheckResult.Err message)
+                  (TcBorrowCheckResult.Err message)])]
+            [(TcBorrowCheckResourceBindings.Err message)
+              (TcBorrowCheckResult.Err message)])])]
     [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -38909,14 +38985,14 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed inner)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-place-read-conflict locals borrowed1 expr expr)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.BoxTake inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed inner)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-expr ctx env inner)
               [(ResultTcType.Ok box-ty)
                 (tc-borrow-check-after-consuming-value
@@ -38925,43 +39001,46 @@
                   borrowed1
                   inner
                   box-ty)]
-              [(ResultTcType.Err _) (OkTcBorrowCheck borrowed1)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+              [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.BoxSet box-box value-box)
       (let
         [box-expr : AstExpr (ast-node-get box-box)]
         [_value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed box-expr)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-borrow-check-expr-id ctx env locals borrowed1 value-box)
-              [(OkTcBorrowCheck borrowed2)
+              [(TcBorrowCheckResult.Ok borrowed2)
                 (match (tc-borrow-check-after-bind-id
                   ctx
                   env
                   locals
                   borrowed2
                   value-box)
-                  [(OkTcBorrowCheck borrowed3)
+                  [(TcBorrowCheckResult.Ok borrowed3)
                     (match (tc-borrow-check-root-mutation-conflict
                       locals
                       borrowed3
                       (ast-node-get (ast-expr-box-get box-box))
                       box-expr)
-                      [(ResultTcUnit.Ok) (OkTcBorrowCheck borrowed3)]
-                      [(ResultTcUnit.Err message) (ErrTcBorrowCheck message)])]
-                  [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-              [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-    [(AstExpr.TypeLiteral _) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.Init _) (OkTcBorrowCheck borrowed)]
+                      [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed3)]
+                      [(ResultTcUnit.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(AstExpr.TypeLiteral _) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.Init _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
-    [(AstExpr.Quote _) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.Quasiquote _) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.Unquote _) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.UnquoteSplicing _) (OkTcBorrowCheck borrowed)]
+    [(AstExpr.Quote _) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.Quasiquote _) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.Unquote _) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.UnquoteSplicing _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -38970,7 +39049,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed inner)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (match (tc-current-return-type env)
               [(ResultTcType.Ok return-ty)
                 (tc-borrow-check-after-consuming-value
@@ -38979,14 +39058,14 @@
                   borrowed1
                   inner
                   return-ty)]
-              [(ResultTcType.Err _) (OkTcBorrowCheck borrowed1)])]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
-    [(AstExpr.PtrNull _) (OkTcBorrowCheck borrowed)]
+              [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(AstExpr.PtrNull _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
-    [(AstExpr.PtrAddrOf _) (OkTcBorrowCheck borrowed)]
+    [(AstExpr.PtrAddrOf _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.PtrRead inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -38996,17 +39075,17 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [value : AstExpr (ast-node-get value-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed ptr)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 value)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         [offset : AstExpr (ast-node-get offset-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed ptr)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 offset)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.PtrCast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -39028,51 +39107,51 @@
         [ptr : AstExpr (ast-node-get ptr-box)]
         [len : AstExpr (ast-node-get len-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed ptr)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 len)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.ArrayData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
-    [(AstExpr.BinaryData _) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.SpmdProgramIndex) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.SpmdProgramCount) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.ProgramArgc) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.ProgramArgv) (OkTcBorrowCheck borrowed)]
-    [(AstExpr.ProgramEnvp) (OkTcBorrowCheck borrowed)]
+    [(AstExpr.BinaryData _) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.SpmdProgramIndex) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.SpmdProgramCount) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.ProgramArgc) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.ProgramArgv) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.ProgramEnvp) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed leaf)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed leaf)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed leaf)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (let
         [leaf : AstExpr (ast-node-get leaf-box)]
         [subleaf : AstExpr (ast-node-get subleaf-box)]
         (match (tc-borrow-check-expr ctx env locals borrowed leaf)
-          [(OkTcBorrowCheck borrowed1)
+          [(TcBorrowCheckResult.Ok borrowed1)
             (tc-borrow-check-expr ctx env locals borrowed1 subleaf)]
-          [(ErrTcBorrowCheck message) (ErrTcBorrowCheck message)]))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
     [(AstExpr.Xgetbv index-box)
       (let
         [index : AstExpr (ast-node-get index-box)]
@@ -39092,8 +39171,8 @@
     (tc-moved-empty)
     (tc-moved-empty)
     body)
-    [(OkTcBorrowCheck _) ResultTcUnit.Ok]
-    [(ErrTcBorrowCheck message) (ResultTcUnit.Err message)]))
+    [(TcBorrowCheckResult.Ok _) ResultTcUnit.Ok]
+    [(TcBorrowCheckResult.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-borrow-check-body-id
   [ctx : TcContext]
@@ -39107,8 +39186,8 @@
     (tc-moved-empty)
     (tc-moved-empty)
     body-id)
-    [(OkTcBorrowCheck _) ResultTcUnit.Ok]
-    [(ErrTcBorrowCheck message) (ResultTcUnit.Err message)]))
+    [(TcBorrowCheckResult.Ok _) ResultTcUnit.Ok]
+    [(TcBorrowCheckResult.Err message) (ResultTcUnit.Err message)]))
 
 ;; --- macro expansion phase (#1139) ------------------------------------------
 ;;
@@ -44647,14 +44726,14 @@
     [(AstExpr.Var name)
       (if (tc-hygiene-global-name? (intern-str name))
         (match (tc-hygiene-global-decode (intern-str name))
-          [(TcHygieneLegacyGlobal lookup-name)
+          [(TcHygieneGlobalName.Legacy lookup-name)
             (macro-call-decl-from-hygiene-name
               ctx
               decls
               (tc-context-module ctx)
               lookup-name
               call-expr)]
-          [(TcHygieneContextGlobal module lookup-name)
+          [(TcHygieneGlobalName.Context module lookup-name)
             (macro-call-decl-from-hygiene-name
               ctx
               decls
@@ -48897,8 +48976,8 @@
       (TcMaybeString.Some
         (if (tc-hygiene-global-name? (intern-str name))
           (match (tc-hygiene-global-decode (intern-str name))
-            [(TcHygieneLegacyGlobal lookup-name) lookup-name]
-            [(TcHygieneContextGlobal _ lookup-name) lookup-name])
+            [(TcHygieneGlobalName.Legacy lookup-name) lookup-name]
+            [(TcHygieneGlobalName.Context _ lookup-name) lookup-name])
           (intern-str name)))]
     [_ (TcMaybeString.No)]))
 

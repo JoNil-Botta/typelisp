@@ -17579,7 +17579,7 @@
   [func : AstExpr]
   [args : AstExprList]
   [params : AstTypeList]
-  [ret : AstType]) : ResultTcUnit
+  [ret : AstType]) : ResultTcStringList
   (match (tc-thread-safe-spawn-call-name ctx env func)
     [(TcMaybeString.Some source-name)
       (let
@@ -17594,65 +17594,32 @@
             [(AstExprList.Cons arg rest)
               (match (box-get rest)
                 [(AstExprList.Nil)
-                  (tc-check-thread-safe-spawn-direct-lambda
+                  (match (tc-check-thread-safe-spawn-direct-lambda
                     source-name
                     ctx
                     env
-                    (ast-node-get arg))]
+                    (ast-node-get arg))
+                    [(ResultTcUnit.Ok)
+                      (ResultTcStringList.Ok
+                        (tc-thread-safe-spawn-direct-lambda-owner-regions
+                          env
+                          (ast-node-get arg)))]
+                    [(ResultTcUnit.Err message)
+                      (ResultTcStringList.Err message)])]
                 [_
-                  (ResultTcUnit.Err
+                  (ResultTcStringList.Err
                     (str_cat.str-cat
                       "typecheck: "
                       source-name
                       " expects one argument"))])]
             [(AstExprList.Nil)
-              (ResultTcUnit.Err
+              (ResultTcStringList.Err
                 (str_cat.str-cat
                   "typecheck: "
                   source-name
                   " expects one argument"))])
-          ResultTcUnit.Ok))]
-    [(TcMaybeString.No) ResultTcUnit.Ok]))
-
-(define (tc-thread-safe-spawn-call-owner-regions
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : AstExpr]
-  [args : AstExprList]
-  [params : AstTypeList]
-  [ret : AstType]) : TcStringList
-  (match (tc-thread-safe-spawn-call-name ctx env func)
-    [(TcMaybeString.Some source-name)
-      (let
-        [lookup-name : String (tc-thread-spawn-lookup-name ctx env source-name)]
-        (if (tc-thread-safe-spawn-signature?
-          ctx
-          source-name
-          lookup-name
-          params
-          ret)
-          (match args
-            [(AstExprList.Cons arg rest)
-              (match (box-get rest)
-                [(AstExprList.Nil)
-                  (tc-thread-safe-spawn-direct-lambda-owner-regions
-                    env
-                    (ast-node-get arg))]
-                [_ TcStringList.Nil])]
-            [(AstExprList.Nil) TcStringList.Nil])
-          TcStringList.Nil))]
-    [(TcMaybeString.No) TcStringList.Nil]))
-
-(define (tc-thread-safe-spawn-tagged-return
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : AstExpr]
-  [args : AstExprList]
-  [params : AstTypeList]
-  [ret : AstType]) : AstType
-  (tc-tag-regions
-    (tc-thread-safe-spawn-call-owner-regions ctx env func args params ret)
-    (tc-tag-active-region env ret)))
+          (ResultTcStringList.Ok TcStringList.Nil)))]
+    [(TcMaybeString.No) (ResultTcStringList.Ok TcStringList.Nil)]))
 
 (define (tc-thread-channel-send-message
   [send-name : String]
@@ -17782,7 +17749,7 @@
                         args
                         params
                         ret)
-                        [(ResultTcUnit.Ok)
+                        [(ResultTcStringList.Ok spawn-owner-regions)
                           (match (tc-check-thread-channel-send-call
                             ctx
                             env
@@ -17792,16 +17759,13 @@
                             ret)
                             [(ResultTcUnit.Ok)
                               (ResultTcType.Ok
-                                (tc-thread-safe-spawn-tagged-return
-                                  ctx
-                                  env
-                                  func
-                                  args
-                                  params
-                                  ret))]
+                                (tc-tag-regions
+                                  spawn-owner-regions
+                                  (tc-tag-active-region env ret)))]
                             [(ResultTcUnit.Err message)
                               (ResultTcType.Err message)])]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                        [(ResultTcStringList.Err message)
+                          (ResultTcType.Err message)])]
                     [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
                 [_
                   (tc-call-lifetime-function-type

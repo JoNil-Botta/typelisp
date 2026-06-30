@@ -8,6 +8,10 @@
   (city String))
 
 (import (serialize.serialize toy Address) as address_ser)
+(import (serialize.serialize toy i64) as i64_ser)
+(import (serialize.serialize toy (Array i64 3)) as fixed_i64_ser)
+(import (serialize.serialize toy (Array i64)) as dyn_i64_ser)
+(import (serialize.serialize toy (Array Address 2)) as address_array_ser)
 
 (defstruct Person
   (name String)
@@ -265,6 +269,47 @@
       [(address_ser.Ok parsed) (serialize-address-ok? parsed)]
       [(address_ser.Err _) false])))
 
+(define (serialize-i64-root-roundtrip-ok?) : bool
+  (let
+    [encoded : toy.Value (i64_ser.encode 42)]
+    (and
+      (match encoded
+        [(toy.Int found) (= found 42)]
+        [_ false])
+      (match (i64_ser.decode encoded)
+        [(i64_ser.Ok parsed) (= parsed 42)]
+        [(i64_ser.Err _) false]))))
+
+(define (serialize-fixed-array-root-roundtrip-ok?) : bool
+  (let
+    [scores : (Array i64 3) (array 4 5 6)]
+    [encoded : toy.Value (fixed_i64_ser.encode scores)]
+    (and
+      (serialize-scores-value-ok? encoded)
+      (match (fixed_i64_ser.decode encoded)
+        [(fixed_i64_ser.Ok parsed) (serialize-scores-ok? parsed)]
+        [(fixed_i64_ser.Err _) false]))))
+
+(define (serialize-dyn-array-root-roundtrip-ok?) : bool
+  (let
+    [samples : (Array i64) (serialize-make-samples)]
+    [encoded : toy.Value (dyn_i64_ser.encode samples)]
+    (and
+      (serialize-samples-value-ok? encoded)
+      (match (dyn_i64_ser.decode encoded)
+        [(dyn_i64_ser.Ok parsed) (serialize-samples-ok? parsed)]
+        [(dyn_i64_ser.Err _) false]))))
+
+(define (serialize-address-array-root-roundtrip-ok?) : bool
+  (let
+    [previous : (Array Address 2) (serialize-previous-addresses)]
+    [encoded : toy.Value (address_array_ser.encode previous)]
+    (and
+      (serialize-previous-value-ok? encoded)
+      (match (address_array_ser.decode encoded)
+        [(address_array_ser.Ok parsed) (serialize-previous-ok? parsed)]
+        [(address_array_ser.Err _) false]))))
+
 (define (serialize-missing-field-value) : toy.Value
   (toy.Object (box (toy.FieldCons "name" (toy.Text "Ada") (box toy.FieldNil)))))
 
@@ -338,4 +383,8 @@
     (unless (serialize-missing-field-ok?) (return 4))
     (unless (serialize-wrong-kind-ok?) (return 5))
     (unless (serialize-address-roundtrip-ok?) (return 6))
+    (unless (serialize-i64-root-roundtrip-ok?) (return 7))
+    (unless (serialize-fixed-array-root-roundtrip-ok?) (return 8))
+    (unless (serialize-dyn-array-root-roundtrip-ok?) (return 9))
+    (unless (serialize-address-array-root-roundtrip-ok?) (return 10))
     42))

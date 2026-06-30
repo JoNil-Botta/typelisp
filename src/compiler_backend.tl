@@ -20525,30 +20525,37 @@
     [(= pos 6) "%r9"]
     [else "%rax"]))
 
-;; SysV register allocation keeps TypeLisp values in callee-saved homes
-;; (%rbx/%r12-%r15) or stack slots, which do not overlap the Linux syscall
-;; operand registers. Load operands directly into the kernel ABI registers.
-(define (compiler-backend-emit-syscall-loads
-  [assignments : CompilerRegAssignmentList]
+;; Build the syscall operand -> kernel-arg-register parallel move list. The Linux
+;; syscall registers (%rdi/%rsi/%rdx/%r10/%r8/%r9 for args, %rax for the number)
+;; are allocator-pooled, so a source operand can already live in a kernel register
+;; that a DIFFERENT operand must be moved into. Reuse the call path's BackendArgMove
+;; representation so the same sound parallel-move solver
+;; (compiler-backend-emit-arg-move-list) resolves any source/dest conflict. The arg
+;; positions (1..n) come FIRST and the number (position 0 -> %rax) LAST, matching
+;; the prior "number-last" order: with no register source/dest conflict the solver
+;; emits the moves in this list order through the same emit-load-value-with-plan the
+;; old naive path used, so every conflict-free site stays byte-identical.
+(define (compiler-backend-syscall-arg-moves-build-from
   [args : CompilerIrCallArgs]
   [index : i64]
-  [count : i64]) : ResultCompilerBackend
+  [count : i64]) : CompilerBackendArgMoveList
   (if (>= index count)
-    (OkCompilerBackend "")
-    (match (compiler-backend-emit-load-value-with-plan
-      assignments
-      (compiler-backend-call-arg-at args index)
-      (compiler-backend-syscall-reg index))
-      [(OkCompilerBackend load-asm)
-        (match (compiler-backend-emit-syscall-loads
-          assignments
-          args
-          (+ index 1)
-          count)
-          [(OkCompilerBackend rest-asm)
-            (OkCompilerBackend (string.string-append load-asm rest-asm))]
-          [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+    ;; Number-last: position 0 -> %rax is the final move in the list.
+    (BackendArgMoveCons
+      (BackendArgMove
+        (compiler-backend-syscall-reg 0)
+        (BackendArgMoveValue (compiler-backend-call-arg-at args 0)))
+      (box BackendArgMoveNil))
+    (BackendArgMoveCons
+      (BackendArgMove
+        (compiler-backend-syscall-reg index)
+        (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
+      (box (compiler-backend-syscall-arg-moves-build-from args (+ index 1) count)))))
+
+(define (compiler-backend-syscall-arg-moves-build
+  [args : CompilerIrCallArgs]
+  [count : i64]) : CompilerBackendArgMoveList
+  (compiler-backend-syscall-arg-moves-build-from args 1 count))
 
 ;; `syscall` clobbers %rcx/%r11 and uses Linux syscall arg registers. The primary
 ;; integer pool is callee-saved, and the scalar caller-saved extension rejects
@@ -20556,6 +20563,14 @@
 ;; raw kernel result lands in %rax -> dst. The raw `syscall` instruction and its
 ;; register ABI are Linux x86_64 only; emitting it for any other target would
 ;; silently miscompile, so reject it instead.
+;;
+;; The operand -> kernel-register setup goes through the SAME parallel-move solver
+;; the call path uses. Now that the kernel arg registers are pooled, an operand can
+;; be homed in a kernel register that is another operand's destination (incl. the
+;; number's %rax). A naive ascending emit could clobber such a source before it is
+;; read (audit #95: the same aliasing/overwrite hazard fixed for call args in
+;; #43/#47/#48); the solver emits the moves in a safe order and breaks true cycles
+;; with a scavenged temp. Conflict-free sites stay byte-identical (see the builder).
 (define (compiler-backend-emit-syscall
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
@@ -20569,31 +20584,20 @@
           "backend: syscall is only supported on the linux-x86_64 target")))
     (let
       [count : i64 (compiler-backend-call-args-count args)]
-      ;; Syscall-number-last: load the args (positions 1..n) into their kernel ABI
-      ;; registers FIRST, then the syscall number into %rax LAST. Now that %rax is
-      ;; pooled an arg value may be homed in %rax; loading the number (position 0)
-      ;; first would clobber it before it reaches its arg register -- e.g. access:
-      ;; `movl $21,%eax` overwriting a path homed in %rax, so %rdi got 21 -> ENOSYS.
-      (match (compiler-backend-emit-syscall-loads assignments args 1 count)
-        [(OkCompilerBackend args-asm)
-          (match (compiler-backend-emit-load-value-with-plan
-            assignments
-            (compiler-backend-call-arg-at args 0)
-            "%rax")
-            [(OkCompilerBackend num-asm)
-              (OkCompilerBackend
-                (string.string-append
-                  args-asm
-                  (string.string-append
-                    num-asm
-                    (string.string-append
-                      "    syscall\n"
-                      (compiler-backend-emit-store-typed-var-with-plan
-                        assignments
-                        dst
-                        "%rax"
-                        (AstTyI64))))))]
-            [(ErrCompilerBackend message) (ErrCompilerBackend message)])]
+      (match (compiler-backend-emit-arg-move-list
+        assignments
+        (compiler-backend-syscall-arg-moves-build args count))
+        [(OkCompilerBackend setup-asm)
+          (OkCompilerBackend
+            (string.string-append
+              setup-asm
+              (string.string-append
+                "    syscall\n"
+                (compiler-backend-emit-store-typed-var-with-plan
+                  assignments
+                  dst
+                  "%rax"
+                  (AstTyI64)))))]
         [(ErrCompilerBackend message) (ErrCompilerBackend message)]))))
 
 (define (compiler-backend-switch-phi-target-message) : String

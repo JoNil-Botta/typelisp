@@ -31,6 +31,7 @@ c_abi_sysv_enum_aggregate|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|
 arena_escape_stress|tests/integration/arena_escape_stress.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 argv|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl
 arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl
+syscall_arg_alias|tests/integration/syscall_arg_alias.tl|42|ABCDEFGHI|-|stdlib/io.tl
 call_spanning_split|tests/integration/call_spanning_split.tl|42|-|-|stdlib/io.tl
 call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|-|stdlib/io.tl
 loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl

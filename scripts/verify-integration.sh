@@ -336,6 +336,7 @@ compile_windows_c_deps() {
 # (kept covered on Linux via native-linux.manifest):
 #   arena_poison_*            Linux-only poison-on-reclaim debug mode
 #   c_abi_sysv_*              Linux System V C ABI fixtures
+#   syscall_arg_alias         raw Linux syscall (rejected on the Windows target)
 windows_integration_non_applicable_cases() {
     cat <<'EOF'
 arena_poison_clone_survives
@@ -345,6 +346,7 @@ c_abi_sysv_memory_aggregate
 c_abi_sysv_enum_aggregate
 c_abi_sysv_tag_only_enum
 c_abi_sysv_two_register_return
+syscall_arg_alias
 EOF
 }
 

@@ -10458,17 +10458,19 @@
       (compiler-reg-function-moves func false)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
-    ;; Backend caller-clobber points (call sites + ops that clobber caller-saved
-    ;; registers). Hoisted so same-value filtering, integer greedy allocation, and
-    ;; the existing caller-saved spill rescue share one computation.
+    ;; Same-value overlap-coalescing exclusion points. This is the KIND-0
+    ;; (call-like: call/syscall/cpuid/xgetbv) point set, NOT the coarse merged
+    ;; caller-clobber set. A value that spans only a div/mod or shift is safely
+    ;; handled by the greedy's per-register forbidden-regs (div -> {rax,rdx},
+    ;; shift -> {rcx}): the coalesced root inherits the union interval and the
+    ;; greedy forbids exactly those registers, so the value keeps every other
+    ;; register and is never clobbered. Excluding such div/shift-spanning
+    ;; same-values from coalescing (as the merged set did) needlessly inflated
+    ;; register pressure. Bounds-check and Pack are already absent from both sets
+    ;; (clobber-point-instr? returns false for them), so only div/shift differ.
     [clobber-points
       : CompilerLiveI64Set
-      ;; Unconditional: the greedy now allocates the integer (both opt2 and SIMD)
-      ;; AND float->XMM classes, all of which use clobber-points for call-clobber
-      ;; interference. On the SIMD-integer path caller-saved-count=0 makes every
-      ;; pool register callee-saved, so the clobber test never restricts there; on
-      ;; the XMM path call-spanning floats are already excluded pre-allocation.
-      (compiler-reg-backend-caller-clobber-points func)]
+      (compiler-reg-clobber-kind-points func 0)]
     ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
     ;; identical value and may coalesce even when their live segments overlap.
     ;; Vars spanning a modeled caller-clobber point stay out of the same-value
@@ -17745,7 +17747,7 @@
               func
               (compiler-reg-same-value-eligible-vars
                 interval-index
-                (compiler-reg-backend-caller-clobber-points func)))]
+                (compiler-reg-clobber-kind-points func 0)))]
           (not (compiler-reg-same-value-class? parents 0 2)))])))
 
 (define (compiler-reg-coalesce-ok?) : bool

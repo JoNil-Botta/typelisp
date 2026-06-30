@@ -30,7 +30,6 @@
 (import "inspect_cli_core.tl")
 (import "repl_cli_core.tl")
 (import "scaffold_cli_core.tl")
-(import "lsp_vector_families.tl")
 (import "lsp_frame_core.tl")
 (import stdlib.string)
 

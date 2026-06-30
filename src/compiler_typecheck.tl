@@ -6928,6 +6928,18 @@
 (import (tuple-module (Tuple i64 bool)) as reflected)
 (define (main) : i64 (+ (tuple-decl-score) (reflected.tuple-score)))")
 
+(define (compiler-typecheck-reflection-array-length-macro-source) : String
+  "(import stdlib.comptime)
+(defmacro (fixed-length [T : type]) : i64
+  (comptime.expr-int (array-length T)))
+(define (main) : i64 (fixed-length (Array i64 3)))")
+
+(define (compiler-typecheck-reflection-array-length-dynamic-source) : String
+  "(import stdlib.comptime)
+(defmacro (fixed-length [T : type]) : i64
+  (comptime.expr-int (array-length T)))
+(define (main) : i64 (fixed-length (Array i64)))")
+
 (define (compiler-typecheck-reflection-runtime-source) : String
   "(define (main) : String (type-kind (type i64)))")
 
@@ -6955,6 +6967,11 @@
     (compiler-typecheck-ok? (compiler-typecheck-reflection-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-reflection-tuple-generator-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-reflection-array-length-macro-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-reflection-array-length-dynamic-source)
+      "array-length requires fixed array type")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-reflection-runtime-source)
       "typecheck: type-kind is compile-time only; wrap it in (comptime ...)")

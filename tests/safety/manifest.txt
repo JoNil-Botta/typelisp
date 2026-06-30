@@ -218,8 +218,11 @@ arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_u
 arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
 arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
 arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
-arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena.phase requires a direct ordinary arena owner
-arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena.phase requires a direct ordinary arena owner
+arena_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_atomic_destroy_after_channel_send_reject|check-fail|tests/safety/arena_atomic_destroy_after_channel_send_reject.tl|-|cannot prove atomic arena `owner` is released after an owner-tagged value was sent to a channel
+arena_atomic_destroy_value_use_after_reject|check-fail|tests/safety/arena_atomic_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena.phase requires a direct arena owner
+arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena.phase requires a direct arena owner
 arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena.rewind-safe! cannot run inside the arena it rewinds
 arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
 arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`

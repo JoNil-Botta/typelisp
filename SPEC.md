@@ -4509,19 +4509,22 @@ that first-class arena owner identity. Ordinary `arena.make` owners still do not
 prove thread-spanning lifetime; only `arena.make-atomic` owner tags can satisfy
 the task-thread transfer/share owner proof in section 6.5.
 
-**Ordinary arena phase tokens:** `stdlib.arena` exposes `arena.ArenaPhase`,
+**Arena phase tokens:** `stdlib.arena` exposes `arena.ArenaPhase`,
 `arena.phase`, `arena.rewind-safe!`, and `arena.destroy-safe!` as the safe
-non-lexical invalidation surface for ordinary first-class arenas. The checker
-recognizes these calls only for direct local owners initialized by `arena.make`;
-atomic owners remain separate. `arena.phase` records the runtime mark and
+non-lexical invalidation surface for direct first-class arena owners. The
+checker recognizes these calls only for direct local owners initialized by
+`arena.make` or `arena.make-atomic`. `arena.phase` records the runtime mark and
 advances the checker's generation for later `(in-arena owner ...)` allocations.
 `arena.rewind-safe!` consumes a direct local phase token and is accepted only
 when no live value, reference, borrow, closure capture, or container slot can
-reach an allocation from the token's generation. `arena.destroy-safe!` consumes
-the direct local ordinary owner and is accepted only when no live value can
-reach any generation owned by that arena. Both calls are rejected while executing
-inside the same owner through `in-arena`, because the active allocation target
-would be invalidated by the operation.
+reach an allocation from the token's generation. For atomic owners, the checker
+also requires every checker-visible thread user of the owner to have been joined
+or otherwise moved through an accepted release point before the rewind.
+`arena.destroy-safe!` consumes the direct local owner and is accepted only when
+no live value can reach any generation owned by that arena; atomic owners require
+the same joined-user proof. Both calls are rejected while executing inside the
+same owner through `in-arena`, because the active allocation target would be
+invalidated by the operation.
 
 ### 5.17 Comptime type reflection (specified, selfhost v1 implemented)
 
@@ -6018,20 +6021,24 @@ safe non-lexical reclamation:
 
 The recognized safe surface is deliberately narrow: the owner argument to
 `arena.phase` and `arena.destroy-safe!` must be a direct local binding
-initialized by `arena.make`, and the argument to `arena.rewind-safe!` must be a
-direct local `arena.ArenaPhase` returned by `arena.phase`. Creating a phase token
-stores the current runtime mark and records a checker generation for subsequent
-`in-arena` allocations through that owner. Rewinding consumes the token and
-causes values allocated in that phase generation to be treated as moved. Using
-the token again, using a phase value after rewind, using the owner after safe
-destroy, or using any value owned by a destroyed arena is rejected.
+initialized by `arena.make` or `arena.make-atomic`, and the argument to
+`arena.rewind-safe!` must be a direct local `arena.ArenaPhase` returned by
+`arena.phase`. Creating a phase token stores the current runtime mark and
+records a checker generation for subsequent `in-arena` allocations through that
+owner. Rewinding consumes the token and causes values allocated in that phase
+generation to be treated as moved. Using the token again, using a phase value
+after rewind, using the owner after safe destroy, or using any value owned by a
+destroyed arena is rejected.
 
-The safe phase-token proof is for ordinary single-thread arenas only. It does
-not make an ordinary arena a spanning task-thread owner, and it does not cover
-atomic arena reset/destroy. `arena.rewind-safe!` and `arena.destroy-safe!` are
-also rejected while the same owner is the active allocation target through
-`in-arena`; a program must leave the dynamic allocation extent before
-invalidating it.
+The safe phase-token proof does not make an ordinary arena a spanning
+task-thread owner. Atomic arenas remain spanning owners only for values accepted
+by the section 6.5 transfer/share classifier; safe reset or destroy requires all
+checker-visible users to be joined or released first. Values moved into
+synchronization state whose release cannot be proven, such as an owner-tagged
+channel message, do not satisfy the proof. `arena.rewind-safe!` and
+`arena.destroy-safe!` are also rejected while the same owner is the active
+allocation target through `in-arena`; a program must leave the dynamic
+allocation extent before invalidating it.
 
 #### Atomic arena allocation target
 
@@ -6068,12 +6075,16 @@ property and must not be used as a concurrent allocation target.
 
 Resetting or destroying an atomic arena while any worker can still allocate into
 it or hold a value owned by it is rejected by safe code. The v1 proof shape is
-"join all users before reset/destroy" unless a later checker slice provides an
-equivalent ownership proof. Until that proof is implemented, `arena.rewind` and
-`arena.destroy` on atomic arenas remain unsafe-only operations, matching the
-ordinary manual arena helpers. The runtime helpers have no permission to make
-use-after-reset deterministic for unsafe misuse; the no-UB guarantee is enforced
-by rejecting the safe program before lowering.
+"join all users before reset/destroy": safe `arena.rewind-safe!` and
+`arena.destroy-safe!` accept direct atomic owners only after every
+checker-visible thread user carrying that owner has been consumed by join or an
+equivalent release point, and after no live owner-tagged value or borrow remains
+usable after invalidation. Values moved into synchronization state whose release
+cannot be proven, such as an owner-tagged channel message, block the proof. The
+lower-level `arena.rewind` and `arena.destroy` helpers remain unsafe-only manual
+operations. The runtime helpers have no permission to make use-after-reset
+deterministic for unsafe misuse; the no-UB guarantee is enforced by rejecting the
+safe program before lowering.
 
 #### Scoped non-memory resources - `with`
 
@@ -6116,8 +6127,8 @@ wrappers over the raw runtime handles. `arena.make`, `arena.make-atomic`, and
 `arena.current` safely create or read an `arena.Arena`; `arena.mark` safely
 records an `arena.ArenaMark` for the active arena; `arena.phase`,
 `arena.rewind-safe!`, and `arena.destroy-safe!` are safe only under the
-ordinary direct-owner checker proof above. Raw `i64` values do not satisfy the
-public arena helper signatures, and an `arena.Arena` cannot be passed where an
+direct-owner checker proofs above. Raw `i64` values do not satisfy the public
+arena helper signatures, and an `arena.Arena` cannot be passed where an
 `arena.ArenaMark` or `arena.ArenaPhase` is required. By themselves,
 `arena.Arena` and `arena.ArenaMark` values do not switch the active arena, free
 arena chains, rewind allocation, or invalidate live safe handles.

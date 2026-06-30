@@ -2963,20 +2963,38 @@
           types
           limit))]))
 
-;; SIMD/AVX register planning keeps the original (pre-#perf) ineligibility: every
-;; value live across a call is ineligible (the vector/mask/XMM pools are
-;; caller-saved and the backend has no callee-saved save/restore for them), and
-;; only CPU scalars/pointers — not aggregate handles — are register eligible.
-;; This keeps the AVX backend golden output byte-identical.
+;; SIMD/AVX register planning shares the integer GP allocation quality of the
+;; scalar path: a value live across a call is NOT force-spilled. The SIMD integer
+;; pool is the 5 callee-saved GP registers (compiler-reg-sysv-integer-registers)
+;; with caller-saved-count=0, so a call-spanning integer that wins one of them is
+;; preserved across the call by the callee (TypeLisp prologue/epilogue, or a
+;; runtime helper that push/pops the callee-saved set) -- exactly as on the scalar
+;; path, where the same callee-saved-only argument keeps call-spanning integers
+;; register-homed. Only call-spanning FLOATS must stay ineligible: SysV has no
+;; callee-saved XMM register, so a float crossing a call cannot be kept in one.
+;; compiler-reg-mark-float-spanning marks PRECISELY those (the same exclusion the
+;; scalar planner applies), replacing the old blanket compiler-reg-call-live-blocks
+;; that pinned EVERY value live across a call to a stack slot. Aggregate handles,
+;; vectors, and masks remain ineligible via compiler-reg-ineligible-non-scalars
+;; (false), so only CPU scalars/pointers are register eligible -- unchanged. The
+;; caller-saved call-spanning RESCUE is deliberately NOT enabled here: the
+;; backend's call-save rewrite (compiler-reg-caller-save-rewrite-blocks, which
+;; materialises the save/restore around calls) is gated to scalar mode only
+;; (call-save-enabled = false for AVX), so rehoming a spilled call-spanning value
+;; into a caller-saved register would leave it unsaved across the call. Spilled
+;; call-spanning integers therefore stay in memory (still correct), exactly as a
+;; non-rescued scalar spill would.
 (define (compiler-reg-ineligible-vars-simd
   [func : CompilerIrFunction]
-  [liveness : CompilerFunctionLiveness]
-  [types : CompilerRegVarTypeList]) : CompilerLiveI64Set
+  [type-info : CompilerRegVarTypes]
+  [types : CompilerRegVarTypeList]
+  [intervals : CompilerRegIntervalList]) : CompilerLiveI64Set
   (match func
     [(IrFunction _ params _ _ blocks)
-      (compiler-reg-call-live-blocks
-        blocks
-        liveness
+      (compiler-reg-mark-float-spanning
+        intervals
+        type-info
+        (compiler-reg-call-points func)
         (compiler-reg-ineligible-memory
           blocks
           (compiler-reg-ineligible-params
@@ -10756,7 +10774,7 @@
     [intervals : CompilerRegIntervalList
       (compiler-reg-live-intervals func liveness)]
     [ineligible : CompilerLiveI64Set
-      (compiler-reg-ineligible-vars-simd func liveness types)]
+      (compiler-reg-ineligible-vars-simd func type-info types intervals)]
     [vars : i64
       (match func
         [(IrFunction _ _ _ function-vars _) function-vars])]
@@ -14695,16 +14713,20 @@
           (compiler-reg-assignment-lookup assignments 4)
           (compiler-reg-stack-slot-offset 4)))]))
 
+;; SIMD plan (#perf): an integer value live across a call now keeps a callee-saved
+;; register home (the SIMD integer pool is the 5 callee-saved registers, which the
+;; callee preserves), exactly like the scalar plan -- it is no longer force-spilled.
+;; The unit call result (var 1) stays ineligible (non-scalar).
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
     [(CompilerRegPlan assignments ineligible _ _ _)
       (and
-        (compiler-live-set-contains? ineligible 0)
+        (not (compiler-live-set-contains? ineligible 0))
         (compiler-live-set-contains? ineligible 1)
-        (compiler-reg-unassigned? assignments 0)
-        (compiler-reg-location-register?
-          (compiler-reg-assignment-lookup assignments 2)
-          "%r12"))]))
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 0))
+        (compiler-reg-location-any-register?
+          (compiler-reg-assignment-lookup assignments 2)))]))
 
 ;; Scalar plan (#perf): the same function, but an integer value live across a
 ;; call now keeps a callee-saved register home (the integer pool is call-safe),

@@ -148,11 +148,12 @@
 (define (mark) : ArenaMark
   (ArenaMark (tl_region_mark)))
 
-;: Start a safe phase for an ordinary direct-local arena owner.
+;: Start a safe phase for a direct-local arena owner.
 ;:
 ;: The compiler recognizes this call when the argument is a direct local
-;: `make` owner. It records a checker generation for later `in-arena`
-;: allocations and returns a token that can be consumed by `rewind-safe!`.
+;: `make` or `make-atomic` owner. It records a checker generation for later
+;: `in-arena` allocations and returns a token that can be consumed by
+;: `rewind-safe!`.
 (define (phase [arena : Arena]) : ArenaPhase
   (let
     [home : Arena (current)]
@@ -209,10 +210,11 @@
     (unsafe
       (tl_region_reset (mark-raw-handle mark)))))
 
-;: Safely rewind an ordinary direct-local arena owner to a phase mark.
+;: Safely rewind a direct-local arena owner to a phase mark.
 ;:
 ;: The compiler consumes `phase` and rejects later use of values allocated in
-;: the phase generation. Atomic arena release/destroy proofs are separate.
+;: the phase generation. Atomic owners additionally require all checker-visible
+;: thread users to be joined or released before the rewind.
 (define (rewind-safe! [phase : ArenaPhase]) : unit
   (let
     [home : Arena (current)]
@@ -222,10 +224,11 @@
         (tl_region_reset (mark-raw-handle (struct-get phase mark)))
         (tl_arena_set (raw-handle home))))))
 
-;: Safely destroy an ordinary direct-local arena owner after its values are dead.
+;: Safely destroy a direct-local arena owner after its values are dead.
 ;:
 ;: The compiler consumes the owner handle and rejects later use of that owner or
-;: values tagged with any of its generations.
+;: values tagged with any of its generations. Atomic owners additionally require
+;: all checker-visible thread users to be joined or released before destruction.
 (define (destroy-safe! [arena : Arena]) : unit
   (unsafe
     (tl_arena_destroy (raw-handle arena))))

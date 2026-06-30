@@ -2,6 +2,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define (env-api-assert-true [condition : bool] [message : String]) : unit
   (if condition
@@ -63,7 +64,7 @@
   [message : String]) : unit
   (match value
     [(env.EnvSomeStringVec items)
-      (env-api-assert-i64-eq (vector.string-vec-len items) 0 message)]
+      (env-api-assert-i64-eq (svec.len (& items)) 0 message)]
     [(env.EnvNoStringVec) (io.panic message)]))
 
 (define (env-api-assert-list3
@@ -123,28 +124,19 @@
     [_ (io.panic message)]))
 
 (define (env-api-assert-vec3
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (begin
-    (env-api-assert-i64-eq (vector.string-vec-len items) 3 message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 0 "missing")
-      first
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 1 "missing")
-      second
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 2 "missing")
-      third
-      message)))
+    (env-api-assert-i64-eq (svec.len (& items)) 3 message)
+    (env-api-assert-string-eq (svec.get (& items) 0 "missing") first message)
+    (env-api-assert-string-eq (svec.get (& items) 1 "missing") second message)
+    (env-api-assert-string-eq (svec.get (& items) 2 "missing") third message)))
 
 (define (env-api-assert-vec5
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]
   [third : String]
@@ -152,27 +144,12 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (env-api-assert-i64-eq (vector.string-vec-len items) 5 message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 0 "missing")
-      first
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 1 "missing")
-      second
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 2 "missing")
-      third
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 3 "missing")
-      fourth
-      message)
-    (env-api-assert-string-eq
-      (vector.string-vec-get items 4 "missing")
-      fifth
-      message)))
+    (env-api-assert-i64-eq (svec.len (& items)) 5 message)
+    (env-api-assert-string-eq (svec.get (& items) 0 "missing") first message)
+    (env-api-assert-string-eq (svec.get (& items) 1 "missing") second message)
+    (env-api-assert-string-eq (svec.get (& items) 2 "missing") third message)
+    (env-api-assert-string-eq (svec.get (& items) 3 "missing") fourth message)
+    (env-api-assert-string-eq (svec.get (& items) 4 "missing") fifth message)))
 
 (define (env-api-assert-path3
   [value : env.EnvMaybeStringList]

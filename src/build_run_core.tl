@@ -10,6 +10,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 (import sym_i64_env)
 
 (defenum SourceToolCommandStatus
@@ -543,12 +544,12 @@
 
 (define (source-tool-find-command-on-path
   [tool : String]
-  [paths : vector.StringVec]
+  [paths : (& paths svec.Vec)]
   [index : i64]) : String
-  (if (>= index (vector.string-vec-len paths))
+  (if (>= index (svec.len paths))
     tool
     (let
-      [dir : String (vector.string-vec-get paths index "")]
+      [dir : String (svec.get paths index "")]
       [candidate : String (source-tool-path-entry-command dir tool)]
       (if (source-tool-path-command-exists? candidate)
         candidate
@@ -567,7 +568,7 @@
       [name : String "PATH"]
       (match (env.path-list-vec (& name))
         [(env.EnvSomeStringVec paths)
-          (source-tool-find-command-on-path tool paths 0)]
+          (source-tool-find-command-on-path tool (& paths) 0)]
         [(env.EnvNoStringVec) tool]))))
 
 (define (source-tool-env-command-or-default

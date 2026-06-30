@@ -194,6 +194,40 @@
   (unsafe
     (string-runtime-copy-bytes! (ptr-offset dst doff) src n)))
 
+;: Copy `n` bytes from owned `chunk` into `dst` at byte offset `start`.
+(define (str-copy-owned-bytes-into
+  [chunk : String]
+  [dst : (MutPtr u8)]
+  [start : i64]
+  [n : i64]) : unit
+  (let
+    [src : (Ptr u8)
+      (unsafe
+        (string-data (& chunk)))]
+    [words : i64 (/ n 8)]
+    [src64 : (Ptr i64)
+      (unsafe
+        (ptr-cast src : (Ptr i64)))]
+    [dst64 : (MutPtr i64)
+      (unsafe
+        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
+    [w : i64 0]
+    [b : i64 (* words 8)]
+    (begin
+      (while (< w words)
+        (begin
+          (unsafe
+            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+          (set! w (+ w 1))))
+      (while (< b n)
+        (begin
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ start b))
+              (ptr-read (ptr-offset src b))))
+          (set! b (+ b 1))))
+      unit)))
+
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
   (let
@@ -292,11 +326,47 @@
 
 ;: Return a fresh active-arena String by concatenating three owned strings.
 (define (concat3 [a : String] [b : String] [c : String]) : String
-  (concat5 a b c "" ""))
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [total-len : i64 (+ a-len (+ b-len c-len))]
+    (if (= total-len 0)
+      ""
+      (let
+        [buf : (Array u8) (array.make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        (begin
+          (str-copy-owned-bytes-into a dst 0 a-len)
+          (str-copy-owned-bytes-into b dst a-len b-len)
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Return a fresh active-arena String by concatenating four owned strings.
 (define (concat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (concat5 a b c d ""))
+  (let
+    [a-len : i64 (__tl_string_length a)]
+    [b-len : i64 (__tl_string_length b)]
+    [c-len : i64 (__tl_string_length c)]
+    [d-len : i64 (__tl_string_length d)]
+    [total-len : i64 (+ a-len (+ b-len (+ c-len d-len)))]
+    (if (= total-len 0)
+      ""
+      (let
+        [buf : (Array u8) (array.make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        (begin
+          (str-copy-owned-bytes-into a dst 0 a-len)
+          (str-copy-owned-bytes-into b dst a-len b-len)
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Return a fresh active-arena String by concatenating five owned strings.
 (define (concat5
@@ -312,48 +382,25 @@
     [d-len : i64 (__tl_string_length d)]
     [e-len : i64 (__tl_string_length e)]
     [total-len : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
-    [buf : (Array u8) (array.make-array u8 total-len)]
-    [dst : (MutPtr u8)
-      (unsafe
-        (array-data buf))]
-    [off : i64 0]
-    (begin
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& a)))
-        dst
-        off
-        a-len)
-      (set! off (+ off a-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& b)))
-        dst
-        off
-        b-len)
-      (set! off (+ off b-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& c)))
-        dst
-        off
-        c-len)
-      (set! off (+ off c-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& d)))
-        dst
-        off
-        d-len)
-      (set! off (+ off d-len))
-      (str-copy-bytes-into
-        (unsafe
-          (string-data (& e)))
-        dst
-        off
-        e-len)
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
+    (if (= total-len 0)
+      ""
+      (let
+        [buf : (Array u8) (array.make-array u8 total-len)]
+        [dst : (MutPtr u8)
+          (unsafe
+            (array-data buf))]
+        (begin
+          (str-copy-owned-bytes-into a dst 0 a-len)
+          (str-copy-owned-bytes-into b dst a-len b-len)
+          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+          (str-copy-owned-bytes-into
+            e
+            dst
+            (+ a-len (+ b-len (+ c-len d-len)))
+            e-len)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
 ;: Stage0 bootstrap compatibility for str-cat fast-path output.
 ;; lint-allow: redundant-function-name

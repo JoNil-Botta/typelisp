@@ -669,81 +669,6 @@
     (struct-get collections uses-avx512-i64-lane-id)
     true))
 
-;; Concatenate fixed string groups with one allocation and one linear copy per
-;; piece, instead of the right-nested `string.append` chain that reallocates and
-;; recopies each growing suffix. Output is byte-identical; this only removes the
-;; quadratic copy amplification and the intermediate allocations.
-(define (backend-cat3 [a : String] [b : String] [c : String]) : String
-  (let
-    [la : i64 (string.string-length a)]
-    [lb : i64 (string.string-length b)]
-    [lc : i64 (string.string-length c)]
-    [total : i64 (+ la (+ lb lc))]
-    (if (= total 0)
-      ""
-      (let
-        [out : (Array u8) (array.make-array u8 total)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data out))]
-        (begin
-          (text_buf.copy-chunk-into (& a) dst 0)
-          (text_buf.copy-chunk-into (& b) dst la)
-          (text_buf.copy-chunk-into (& c) dst (+ la lb))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
-
-(define (backend-cat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (let
-    [la : i64 (string.string-length a)]
-    [lb : i64 (string.string-length b)]
-    [lc : i64 (string.string-length c)]
-    [ld : i64 (string.string-length d)]
-    [total : i64 (+ la (+ lb (+ lc ld)))]
-    (if (= total 0)
-      ""
-      (let
-        [out : (Array u8) (array.make-array u8 total)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data out))]
-        (begin
-          (text_buf.copy-chunk-into (& a) dst 0)
-          (text_buf.copy-chunk-into (& b) dst la)
-          (text_buf.copy-chunk-into (& c) dst (+ la lb))
-          (text_buf.copy-chunk-into (& d) dst (+ la (+ lb lc)))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
-
-(define (backend-cat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (let
-    [la : i64 (string.string-length a)]
-    [lb : i64 (string.string-length b)]
-    [lc : i64 (string.string-length c)]
-    [ld : i64 (string.string-length d)]
-    [le : i64 (string.string-length e)]
-    [total : i64 (+ la (+ lb (+ lc (+ ld le))))]
-    (if (= total 0)
-      ""
-      (let
-        [out : (Array u8) (array.make-array u8 total)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data out))]
-        (begin
-          (text_buf.copy-chunk-into (& a) dst 0)
-          (text_buf.copy-chunk-into (& b) dst la)
-          (text_buf.copy-chunk-into (& c) dst (+ la lb))
-          (text_buf.copy-chunk-into (& d) dst (+ la (+ lb lc)))
-          (text_buf.copy-chunk-into (& e) dst (+ la (+ lb (+ lc ld))))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
-
 (define (backend-and4 [a : bool] [b : bool] [c : bool] [d : bool]) : bool
   (and a b c d))
 
@@ -3767,7 +3692,7 @@
   (let
     [forward-src : i64 (compiler-backend-forwarded-addr-of-src var-id)]
     (if (>= forward-src 0)
-      (backend-cat5
+      (str_cat.str-cat
         "    leaq "
         (compiler-backend-slot forward-src)
         ", "
@@ -19855,14 +19780,12 @@
                         base-save
                         (string.append
                           func-asm
-                          (backend-cat5
+                          (str_cat.str-cat
                             "    call *%rax\n"
                             (compiler-backend-emit-c-abi-return-stores
                               call-space
                               slots)
-                            (compiler-backend-emit-call-space-add total-space)
-                            ""
-                            ""))))))]
+                            (compiler-backend-emit-call-space-add total-space)))))))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err
                   (box

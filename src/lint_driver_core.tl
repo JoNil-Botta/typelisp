@@ -1662,15 +1662,15 @@
     [(ResultAstProgramDiagnostic.Err _) scan]))
 
 (define (selfhost-lint-package-dead-scan-files
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [index : i64]
   [visible-root : bool]
   [reportable : bool]
   [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (if (>= index (vector.string-vec-len sources))
+  (if (>= index (package-source-list-len sources))
     scan
     (let
-      [path : String (vector.string-vec-get sources index "")]
+      [path : String (package-source-list-get sources index "")]
       (selfhost-lint-package-dead-scan-files
         sources
         (+ index 1)
@@ -1773,7 +1773,7 @@
     [(CompilerPkgKindLib) scan]))
 
 (define (selfhost-lint-package-dead-code
-  [sources : vector.StringVec]
+  [sources : PackageSourceList]
   [kind : CompilerPkgKind]) : SelfhostLintDeadDecls
   (let
     [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
@@ -2013,7 +2013,7 @@
     status))
 
 (define (selfhost-lint-package-files-from
-  [input-paths : vector.StringVec]
+  [input-paths : PackageSourceList]
   [index : i64]
   [stdlib-roots : vector.StringVec]
   [enforcing : bool]
@@ -2022,10 +2022,10 @@
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (vector.string-vec-len input-paths))
+  (if (>= index (package-source-list-len input-paths))
     status
     (let
-      [input-path : String (vector.string-vec-get input-paths index "")]
+      [input-path : String (package-source-list-get input-paths index "")]
       [file-status : i64
         (begin
           (if print-headers
@@ -2053,7 +2053,7 @@
           status)))))
 
 (define (selfhost-lint-package-files
-  [input-paths : vector.StringVec]
+  [input-paths : PackageSourceList]
   [stdlib-roots : vector.StringVec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
@@ -2086,7 +2086,7 @@
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (let
-        [sources : vector.StringVec (struct-get source-set sources)]
+        [sources : PackageSourceList (struct-get source-set sources)]
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [dead-decls : SelfhostLintDeadDecls
           (selfhost-lint-package-dead-code sources (struct-get manifest kind))]
@@ -2097,7 +2097,7 @@
           deprecated-string-concat
           redundant-function-name
           dead-decls
-          (> (vector.string-vec-len sources) 1)
+          (> (package-source-list-len sources) 1)
           0))]))
 
 ;; Run the `lint` command over arguments starting at `start`.

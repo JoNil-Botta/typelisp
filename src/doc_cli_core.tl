@@ -10,6 +10,7 @@
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import stdlib.io)
 (import stdlib.vector)
+(import (vector String) as svec)
 (import "doc_render.tl")
 (import "doc_html.tl")
 (import "doc_test.tl")
@@ -73,18 +74,16 @@
     [(DocModuleList.Nil) 0]
     [(DocModuleList.Cons _ rest) (+ 1 (doc-module-list-count (box-get rest)))]))
 
-(define (doc-modules-from-string-vec-from
-  [paths : vector.StringVec]
-  [index : i64]) : DocModuleList
-  (if (>= index (vector.string-vec-len paths))
+(define (doc-modules-from-string-vec-from [paths : svec.Vec] [index : i64]) : DocModuleList
+  (if (>= index (svec.len (& paths)))
     DocModuleList.Nil
     (let
-      [path : String (vector.string-vec-get paths index "")]
+      [path : String (svec.get (& paths) index "")]
       (doc-cli-module-cons
         (DocModule.Module path (doc-extract-file path))
         (doc-modules-from-string-vec-from paths (+ index 1))))))
 
-(define (doc-modules-from-string-vec [paths : vector.StringVec]) : DocModuleList
+(define (doc-modules-from-string-vec [paths : svec.Vec]) : DocModuleList
   (doc-modules-from-string-vec-from paths 0))
 
 (define (doc-modules-from-paths
@@ -446,14 +445,14 @@
   (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
 
 (define (doc-test-package-files-from
-  [input-paths : vector.StringVec]
+  [input-paths : svec.Vec]
   [index : i64]
   [stdlib-roots : vector.StringVec]
   [status : i64]) : i64
-  (if (>= index (vector.string-vec-len input-paths))
+  (if (>= index (svec.len (& input-paths)))
     status
     (let
-      [input-path : String (vector.string-vec-get input-paths index "")]
+      [input-path : String (svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
           (io.print-string
@@ -468,7 +467,7 @@
           status)))))
 
 (define (doc-test-package-files
-  [input-paths : vector.StringVec]
+  [input-paths : svec.Vec]
   [stdlib-roots : vector.StringVec]
   [status : i64]) : i64
   (doc-test-package-files-from input-paths 0 stdlib-roots status))

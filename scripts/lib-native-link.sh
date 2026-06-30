@@ -18,12 +18,12 @@
 # compiler needs a generous stack to self-compile on Windows. #2357: making
 # local struct/enum aggregates inline-by-value enlarged the per-frame footprint
 # of those recursive descents. #2599 moved the largest declaration walks out of
-# native recursion, but the stage1 selfhost compile manifest still needs more
-# than 64MB on Windows for compiler-sized sources such as src/doc_test.tl.
-# Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
+# native recursion, but full selfhost source graphs still need more than 64MB on
+# Windows as the generated compiler grows. Match the integration Windows link
+# helpers' 256MB reserve. Override with TYPELISP_WINDOWS_STACK_RESERVE (bytes).
 
 HEARTBEAT_SECONDS=${TYPELISP_BOOTSTRAP_HEARTBEAT_SECONDS:-30}
-NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-134217728}
+NL_WINDOWS_STACK_RESERVE=${TYPELISP_WINDOWS_STACK_RESERVE:-268435456}
 TYPELISP_WINDOWS_LINK_POSIX=
 TYPELISP_WINDOWS_CLANG_POSIX=
 

@@ -5,6 +5,7 @@
 
 (define (dynamic-array-clear-high-bit) : i64
   (let
+    ;; lint-allow: single-element-array-cell
     [items : (Array u64) (array.make-array u64 1)]
     (begin
       (array.array-set! items 0 (cast 0x6666666666666667 : u64))
@@ -14,6 +15,7 @@
 
 (define (fixed-array-clear-high-bit) : i64
   (let
+    ;; lint-allow: single-element-array-cell
     [items : (Array u64 1) (array (cast 0x6666666666666667 : u64))]
     (if (>= (array.array-ref items 0) (threshold))
       2
@@ -21,6 +23,7 @@
 
 (define (dynamic-array-set-high-bit) : i64
   (let
+    ;; lint-allow: single-element-array-cell
     [items : (Array u64) (array.make-array u64 1)]
     (begin
       (array.array-set! items 0 (threshold))
@@ -30,6 +33,7 @@
 
 (define (fixed-array-set-high-bit) : i64
   (let
+    ;; lint-allow: single-element-array-cell
     [items : (Array u64 1) (array (threshold))]
     (if (>= (array.array-ref items 0) (threshold))
       42

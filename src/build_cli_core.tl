@@ -1204,7 +1204,7 @@
     [path-text : String path]
     (match (fs.try-file-metadata (& path-text))
       [(fs.OkFsMetadata metadata)
-        (if (fs.fs-file-kind-regular? (fs.fs-metadata-kind metadata))
+        (if (fs.file-kind-regular? (fs.metadata-kind metadata))
           (BuildPackageArtifactState.Clean)
           (BuildPackageArtifactState.Stale "not a regular file"))]
       [(fs.ErrFsMetadata _) (BuildPackageArtifactState.Missing)])))
@@ -1375,7 +1375,7 @@
               "build: cannot read package lock '"
               path
               "': "
-              (io.io-error-message error)))]
+              (io.error-message error)))]
         [(io.OkIoString source)
           (match (package-lock-parse source)
             [(ResultPackageLockFile.Err message)
@@ -1406,7 +1406,7 @@
             "build: cannot write package lock '"
             path
             "': "
-            (io.io-error-message error)))])))
+            (io.error-message error)))])))
 
 (define (build-package-lock-entry-matches?
   [entry : PackageLockEntry]
@@ -1648,7 +1648,7 @@
   [error : io.IoError]) : String
   (build-git-dep-error
     alias
-    (str_cat.str-cat action ": " (io.io-error-message error))))
+    (str_cat.str-cat action ": " (io.error-message error))))
 
 (define (build-package-cache-staging-path
   [alias : String]
@@ -2465,12 +2465,12 @@
 
 (define (build-mkdir-ok? [path : (& path str)]) : bool
   (let
-    [status : i64 (fs.fs-mkdir-status path)]
+    [status : i64 (fs.mkdir-status path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
 (define (build-mkdir-ok-owned? [path : String]) : bool
   (let
-    [status : i64 (fs.fs-mkdir-status-owned path)]
+    [status : i64 (fs.mkdir-status-owned path)]
     (or (= status build-status-ok) (= status build-status-already-exists))))
 
 (define (build-ensure-package-output-dirs
@@ -3125,7 +3125,7 @@
               (SourceToolCommandStatus.Err
                 (str_cat.str-cat
                   "build: failed to write package assembly: "
-                  (io.io-error-message error)))])
+                  (io.error-message error)))])
           SourceToolCommandStatus.Ok))]))
 
 (define (build-package-finish-artifacts
@@ -3885,7 +3885,7 @@
                       (build-package-kind-entry? kind)))]))]))]))
 
 (define (build-package-async-process-supported?) : bool
-  (not (string.string-eq (env.env-path-list-separator) ";")))
+  (not (string.string-eq (env.path-list-separator) ";")))
 
 (define (build-package-deps-built?
   [manifest-dir : String]

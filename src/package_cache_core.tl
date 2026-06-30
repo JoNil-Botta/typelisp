@@ -215,31 +215,30 @@
 (define (package-cache-unversioned-root [package-root : (& package-root str)]) : String
   (let
     [target : String
-      (fs.fs-path-join-owned-pair (string.string-copy package-root) "target")]
-    [typelisp : String (fs.fs-path-join-owned-pair target "typelisp")]
-    [cache : String (fs.fs-path-join-owned-pair typelisp "cache")]
-    (fs.fs-path-join-owned-pair cache "packages")))
+      (fs.path-join-owned-pair (string.string-copy package-root) "target")]
+    [typelisp : String (fs.path-join-owned-pair target "typelisp")]
+    [cache : String (fs.path-join-owned-pair typelisp "cache")]
+    (fs.path-join-owned-pair cache "packages")))
 
 (define (package-cache-default-root [package-root : (& package-root str)]) : String
   (let
     [root : String (package-cache-unversioned-root package-root)]
-    (fs.fs-path-join-owned-pair root package-cache-version)))
+    (fs.path-join-owned-pair root package-cache-version)))
 
 (define (package-cache-entry-url-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
-    [git-dir : String
-      (fs.fs-path-join-owned-pair (string.string-copy root) "git")]
+    [git-dir : String (fs.path-join-owned-pair (string.string-copy root) "git")]
     [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
-    (fs.fs-path-join-owned-pair git-dir url-dir)))
+    (fs.path-join-owned-pair git-dir url-dir)))
 
 (define (package-cache-entry-rev-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
     [url-dir : String (package-cache-entry-url-dir root key)]
-    (fs.fs-path-join-owned-pair url-dir "rev")))
+    (fs.path-join-owned-pair url-dir "rev")))
 
 (define (package-cache-entry-path
   [root : (& root str)]
@@ -248,26 +247,26 @@
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     [commit-dir : String
       (package-cache-escape-component (& (struct-get key commit)))]
-    (fs.fs-path-join-owned-pair rev-dir commit-dir)))
+    (fs.path-join-owned-pair rev-dir commit-dir)))
 
 (define (package-cache-staging-root [root : (& root str)]) : String
-  (fs.fs-path-join-owned-pair (string.string-copy root) "_staging"))
+  (fs.path-join-owned-pair (string.string-copy root) "_staging"))
 
 (define (package-cache-staging-url-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
     [staging-root : String (package-cache-staging-root root)]
-    [git-dir : String (fs.fs-path-join-owned-pair staging-root "git")]
+    [git-dir : String (fs.path-join-owned-pair staging-root "git")]
     [url-dir : String (package-cache-escape-component (& (struct-get key url)))]
-    (fs.fs-path-join-owned-pair git-dir url-dir)))
+    (fs.path-join-owned-pair git-dir url-dir)))
 
 (define (package-cache-staging-rev-dir
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : String
   (let
     [url-dir : String (package-cache-staging-url-dir root key)]
-    (fs.fs-path-join-owned-pair url-dir "rev")))
+    (fs.path-join-owned-pair url-dir "rev")))
 
 (define (package-cache-staging-path
   [root : (& root str)]
@@ -281,15 +280,15 @@
       (string.string-append
         commit-dir
         (string.string-append ".tmp." (string.int->string attempt)))]
-    (fs.fs-path-join-owned-pair rev-dir staged-name)))
+    (fs.path-join-owned-pair rev-dir staged-name)))
 
 (define (package-cache-metadata-path [entry-path : (& entry_path str)]) : String
-  (fs.fs-path-join-owned-pair
+  (fs.path-join-owned-pair
     (string.string-copy entry-path)
     package-cache-metadata-name))
 
 (define (package-cache-complete-marker-path [entry-path : (& entry_path str)]) : String
-  (fs.fs-path-join-owned-pair
+  (fs.path-join-owned-pair
     (string.string-copy entry-path)
     package-cache-complete-marker-name))
 
@@ -338,7 +337,7 @@
               (string.string-copy entry-path)
               (string.string-append
                 "metadata read failed: "
-                (io.io-error-message error)))]
+                (io.error-message error)))]
           [(io.OkIoString metadata)
             (if (not
               (string.string-eq metadata (package-cache-metadata-content key)))
@@ -351,7 +350,7 @@
                     (string.string-copy entry-path)
                     (string.string-append
                       "completion marker read failed: "
-                      (io.io-error-message error)))]
+                      (io.error-message error)))]
                 [(io.OkIoString marker)
                   (if (string.string-eq
                     marker
@@ -376,8 +375,7 @@
   [root : (& root str)]
   [key : (& key PackageCacheKey)]) : io.ResultIoUnit
   (let
-    [git-dir : String
-      (fs.fs-path-join-owned-pair (string.string-copy root) "git")]
+    [git-dir : String (fs.path-join-owned-pair (string.string-copy root) "git")]
     [url-dir : String (package-cache-entry-url-dir root key)]
     [rev-dir : String (package-cache-entry-rev-dir root key)]
     (package-cache-then-mkdir
@@ -401,7 +399,7 @@
   (let
     [staging-root : String (package-cache-staging-root root)]
     [git-dir : String
-      (fs.fs-path-join-owned-pair (string.string-copy (& staging-root)) "git")]
+      (fs.path-join-owned-pair (string.string-copy (& staging-root)) "git")]
     [url-dir : String (package-cache-staging-url-dir root key)]
     [rev-dir : String (package-cache-staging-rev-dir root key)]
     (package-cache-then-mkdir
@@ -482,7 +480,7 @@
   (match result
     [(io.OkIoUnit) unit]
     [(io.ErrIoUnit error)
-      (io.panic (string.string-append message (io.io-error-message error)))]))
+      (io.panic (string.string-append message (io.error-message error)))]))
 
 (define (package-cache-expect-temp [result : io.ResultIoString]) : String
   (match result
@@ -491,7 +489,7 @@
       (io.panic
         (string.string-append
           "package-cache: temp dir failed: "
-          (io.io-error-message error)))]))
+          (io.error-message error)))]))
 
 (define (package-cache-pure-self-test-ok?) : bool
   (let

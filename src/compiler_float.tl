@@ -27,20 +27,20 @@
   (CompilerFiniteCastResultF32 f64))
 
 (define (compiler-float-decimal-syntax? [text : String]) : bool
-  (match (io.io-float-parse-decimal text)
+  (match (io.float-parse-decimal text)
     [(IoFloatSomeDecimal _ _ _) true]
     [(io.IoFloatNoDecimal) false]))
 
 (define (compiler-float-parse-f64 [text : String]) : CompilerFloatMaybeF64
-  (match (io.io-float-parse-f64 text)
+  (match (io.float-parse-f64 text)
     [(io.IoFloatSomeF64 value) (CompilerFloatSomeF64 value)]
     [(io.IoFloatNoF64) (CompilerFloatNoF64)]))
 
 (define (compiler-float-f64-from-bits [bits : u64]) : f64
-  (io.io-float-f64-from-bits bits))
+  (io.float-f64-from-bits bits))
 
 (define (compiler-float-f64-bits [value : f64]) : u64
-  (io.io-float-f64-bits value))
+  (io.float-f64-bits value))
 
 (define (compiler-float-f32-from-bits [bits : u32]) : f32
   (let
@@ -51,7 +51,7 @@
         (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
 
 (define (compiler-float-f32-bits [value : f32]) : u32
-  (io.io-float-f32-bits value))
+  (io.float-f32-bits value))
 
 (define (compiler-float-f32-bits-from-f64 [value : f64]) : u32
   (compiler-float-f32-bits (cast value : f32)))
@@ -60,10 +60,10 @@
   (cast (compiler-float-f32-from-bits (cast bits : u32)) : f64))
 
 (define (compiler-float-f64-finite? [value : f64]) : bool
-  (io.io-float-f64-finite? value))
+  (io.float-f64-finite? value))
 
 (define (compiler-float-round-f32-as-f64 [value : f64]) : f64
-  (io.io-float-round-f32-as-f64 value))
+  (io.float-round-f32-as-f64 value))
 
 (define (compiler-finite-cast-integer-type? [ty : AstType]) : bool
   (match ty
@@ -295,7 +295,7 @@
       (CompilerFiniteCastNoResult))))
 
 (define (compiler-float-format-f64 [value : f64]) : String
-  (io.io-format-float-core value))
+  (io.format-float-core value))
 
 (define (compiler-float-parse-f64-bits [text : String]) : CompilerFloatMaybeBits
   (match (compiler-float-parse-f64 text)

@@ -30,7 +30,7 @@
     (string.string-eq value "windows_x86_64")))
 
 (define (host-plan-default-target) : String
-  (if (string.string-eq (env.env-path-separator) ";")
+  (if (string.string-eq (env.path-separator) ";")
     "windows-x86_64"
     "linux-x86_64"))
 

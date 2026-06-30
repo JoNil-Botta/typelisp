@@ -26,7 +26,7 @@ PowerShell workers use the same non-Rust invocation:
 typelisp run tools/work-queue-chooser/chooser.tl --stdlib-root stdlib
 ```
 
-The chooser always uses `random-system-seed`; if host entropy is unavailable,
+The chooser always uses `system-seed`; if host entropy is unavailable,
 the command exits with an error.
 
 `fixtures/chooser-queue.json` is a normalized live-queue snapshot used by

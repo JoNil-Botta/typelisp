@@ -43325,14 +43325,14 @@
         (__tl_string_length (io.read-stdin-bytes count)))))")
 
 (define (compiler-lower-env-builtin-source) : String
-  "(define (env-var-exists? [name : String]) : bool true)
-(define (env-var-value [name : String]) : String name)
-(define (env-path-separator) : String \":\")
+  "(define (var-exists? [name : String]) : bool true)
+(define (var-value [name : String]) : String name)
+(define (path-separator) : String \":\")
 (define (main [name : String]) : i64
   (let
-    [separator : String (env-path-separator)]
-    [value : String (env-var-value name)]
-    (if (env-var-exists? name)
+    [separator : String (path-separator)]
+    [value : String (var-value name)]
+    (if (var-exists? name)
       (+ (__tl_string_length value) (__tl_string_length separator))
       (__tl_string_length separator))))")
 
@@ -43390,33 +43390,33 @@
                    (io.file-close-status handle))))))))))")
 
 (define (compiler-lower-fs-status-source) : String
-  "(define (fs-current-dir-status) : i64 0)
-(define (fs-current-dir) : String \".\")
-(define (fs-process-id) : i64 1)
-(define (fs-mkdir-status [path : String]) : i64 0)
-(define (fs-remove-file-status [path : String]) : i64 0)
-(define (fs-remove-dir-status [path : String]) : i64 0)
-(define (fs-rename-status [source : String] [destination : String]) : i64 0)
-(define (fs-read-dir-status [path : String]) : i64 0)
-(define (fs-read-dir [path : String]) : String path)
-(define (fs-file-kind-status [path : String]) : i64 0)
-(define (fs-file-size-status [path : String]) : i64 0)
-(define (fs-file-size [path : String]) : i64 (__tl_string_length path))
+  "(define (current-dir-status) : i64 0)
+(define (current-dir) : String \".\")
+(define (process-id) : i64 1)
+(define (mkdir-status [path : String]) : i64 0)
+(define (remove-file-status [path : String]) : i64 0)
+(define (remove-dir-status [path : String]) : i64 0)
+(define (rename-status [source : String] [destination : String]) : i64 0)
+(define (read-dir-status [path : String]) : i64 0)
+(define (read-dir [path : String]) : String path)
+(define (file-kind-status [path : String]) : i64 0)
+(define (file-size-status [path : String]) : i64 0)
+(define (file-size [path : String]) : i64 (__tl_string_length path))
 (define (main) : i64
-  (+ (fs-current-dir-status)
-    (+ (__tl_string_length (fs-current-dir))
-      (+ (fs-process-id)
-        (+ (fs-mkdir-status \"target/typelisp-fs\")
-          (+ (fs-remove-file-status \"target/typelisp-fs/artifact.o\")
-            (+ (fs-remove-dir-status \"target/typelisp-fs\")
-              (+ (fs-rename-status
+  (+ (current-dir-status)
+    (+ (__tl_string_length (current-dir))
+      (+ (process-id)
+        (+ (mkdir-status \"target/typelisp-fs\")
+          (+ (remove-file-status \"target/typelisp-fs/artifact.o\")
+            (+ (remove-dir-status \"target/typelisp-fs\")
+              (+ (rename-status
                   \"target/typelisp-fs/from name\"
                   \"target/typelisp-fs/to name\")
-                (+ (fs-read-dir-status \"target/typelisp-fs\")
-                  (+ (__tl_string_length (fs-read-dir \"target/typelisp-fs\"))
-                    (+ (fs-file-kind-status \"target/typelisp-fs\")
-                      (+ (fs-file-size-status \"target/typelisp-fs\")
-                        (fs-file-size \"target/typelisp-fs\")))))))))))))")
+                (+ (read-dir-status \"target/typelisp-fs\")
+                  (+ (__tl_string_length (read-dir \"target/typelisp-fs\"))
+                    (+ (file-kind-status \"target/typelisp-fs\")
+                      (+ (file-size-status \"target/typelisp-fs\")
+                        (file-size \"target/typelisp-fs\")))))))))))))")
 
 (define (compiler-lower-raw-pointer-ops-source) : String
   "(extern (raw-make) : (MutPtr i64))
@@ -50040,72 +50040,56 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "fs-mkdir-status")
+                (lower-test-functions-call-count functions "mkdir-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "fs-remove-file-status")
+                (lower-test-functions-call-count functions "remove-file-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "fs-remove-dir-status")
+                (lower-test-functions-call-count functions "remove-dir-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "fs-rename-status")
+                (lower-test-functions-call-count functions "rename-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "fs-read-dir-status")
+                (lower-test-functions-call-count functions "read-dir-status")
+                1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "read-dir") 1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "file-kind-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count functions "fs-read-dir")
+                (lower-test-functions-call-count functions "file-size-status")
+                1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "file-size") 1)
+                unit
+                (set! ok false))
+              (if (= (lower-test-functions-call-count functions "process-id") 1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-call-count functions "current-dir-status")
                 1)
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "fs-file-kind-status")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "fs-file-size-status")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "fs-file-size")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "fs-process-id")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  "fs-current-dir-status")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count functions "fs-current-dir")
+                (lower-test-functions-call-count functions "current-dir")
                 1)
                 unit
                 (set! ok false))
@@ -51999,23 +51983,19 @@
                 unit
                 (set! ok false))
               (if (=
-                (lower-test-functions-direct-call-count
-                  functions
-                  "env-var-exists?")
+                (lower-test-functions-direct-call-count functions "var-exists?")
+                1)
+                unit
+                (set! ok false))
+              (if (=
+                (lower-test-functions-direct-call-count functions "var-value")
                 1)
                 unit
                 (set! ok false))
               (if (=
                 (lower-test-functions-direct-call-count
                   functions
-                  "env-var-value")
-                1)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-direct-call-count
-                  functions
-                  "env-path-separator")
+                  "path-separator")
                 1)
                 unit
                 (set! ok false))
@@ -52045,8 +52025,8 @@
       (when
         (lower-bootstrap-runtime-builtin? "file-open-status")
         (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "fs-process-id") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "fs-current-dir") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "process-id") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "current-dir") (set! ok false))
       (when
         (lower-bootstrap-runtime-builtin? "read-stdin-line")
         (set! ok false))
@@ -52055,13 +52035,9 @@
         (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "stdin-eof?") (set! ok false))
       (when (lower-bootstrap-runtime-builtin? "flush-stdout") (set! ok false))
-      (when
-        (lower-bootstrap-runtime-builtin? "env-var-exists?")
-        (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "env-var-value") (set! ok false))
-      (when
-        (lower-bootstrap-runtime-builtin? "env-path-separator")
-        (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "var-exists?") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "var-value") (set! ok false))
+      (when (lower-bootstrap-runtime-builtin? "path-separator") (set! ok false))
       (when
         (lower-bootstrap-runtime-builtin? "string.int->string")
         (set! ok false))

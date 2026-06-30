@@ -1,64 +1,64 @@
 ;; stdlib_json.tl - Integration witness for canonical stdlib JSON support.
 (import stdlib.array)
-(import "stdlib/json.tl")
+(import stdlib.json)
 (import "stdlib/string.tl")
 
-(define (json-test-name [doc : Json]) : bool
+(define (json-test-name [doc : json.Json]) : bool
   (let
     [key : String "name"]
-    (match (json-object-get doc (& key))
-      [(JsonFound value)
+    (match (json.object-get doc (& key))
+      [(json.JsonFound value)
         (match value
-          [(JsonString text) (eq text "tl")]
+          [(json.JsonString text) (eq text "tl")]
           [_ false])]
-      [(JsonMissing) false])))
+      [(json.JsonMissing) false])))
 
-(define (json-test-items [doc : Json]) : bool
+(define (json-test-items [doc : json.Json]) : bool
   (let
     [key : String "items"]
-    (match (json-object-get doc (& key))
-      [(JsonFound value)
+    (match (json.object-get doc (& key))
+      [(json.JsonFound value)
         (match value
-          [(JsonArray items) (= (json-list-count (box-get items)) 5)]
+          [(json.JsonArray items) (= (json.list-count (box-get items)) 5)]
           [_ false])]
-      [(JsonMissing) false])))
+      [(json.JsonMissing) false])))
 
-(define (json-test-escaped [doc : Json]) : bool
+(define (json-test-escaped [doc : json.Json]) : bool
   (let
     [key : String "escaped"]
-    (match (json-object-get doc (& key))
-      [(JsonFound value)
+    (match (json.object-get doc (& key))
+      [(json.JsonFound value)
         (match value
-          [(JsonString text) (eq text "a\nb")]
+          [(json.JsonString text) (eq text "a\nb")]
           [_ false])]
-      [(JsonMissing) false])))
+      [(json.JsonMissing) false])))
 
-(define (json-test-stringify [doc : Json]) : bool
+(define (json-test-stringify [doc : json.Json]) : bool
   (eq
-    (json-stringify doc)
+    (json.stringify doc)
     "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"escaped\":\"a\\nb\"}"))
 
 (define (json-test-string-escapes) : bool
-  (eq (json-stringify (JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
+  (eq (json.stringify (json.JsonString "a\n\"\\")) "\"a\\n\\\"\\\\\""))
 
 (define (json-test-invalid) : bool
   (let
     [text : String "{\"bad\":[1,]}"]
-    (match (json-parse (& text))
-      [(OkJson _) false]
-      [(ErrJson _) true])))
+    (match (json.parse (& text))
+      [(json.OkJson _) false]
+      [(json.ErrJson _) true])))
 
 (define (json-test-float-parse) : bool
   (let
     [text : String "-2.5e3"]
-    (match (json-number->f64 (& text))
-      [(OkJsonNumberF64 value) (= value -2500.0)]
-      [(ErrJsonNumberF64 _) false])))
+    (match (json.number->f64 (& text))
+      [(json.OkJsonNumberF64 value) (= value -2500.0)]
+      [(json.ErrJsonNumberF64 _) false])))
 
 (define (json-test-float-render) : bool
-  (match (json-f64->number-text 0.125)
-    [(OkJsonNumberText text) (eq text "0.125")]
-    [(ErrJsonNumberText _) false]))
+  (match (json.f64->number-text 0.125)
+    [(json.OkJsonNumberText text) (eq text "0.125")]
+    [(json.ErrJsonNumberText _) false]))
 
 (define (json-test-i64-parse) : bool
   (let
@@ -66,15 +66,15 @@
     [frac-text : String "1.5"]
     [range-text : String "9223372036854775808"]
     (and
-      (match (json-number->i64 (& ok-text))
-        [(OkJsonNumberI64 value) (= value -42)]
-        [(ErrJsonNumberI64 _) false])
-      (match (json-number->i64 (& frac-text))
-        [(OkJsonNumberI64 _) false]
-        [(ErrJsonNumberI64 _) true])
-      (match (json-number->i64 (& range-text))
-        [(OkJsonNumberI64 _) false]
-        [(ErrJsonNumberI64 _) true]))))
+      (match (json.number->i64 (& ok-text))
+        [(json.OkJsonNumberI64 value) (= value -42)]
+        [(json.ErrJsonNumberI64 _) false])
+      (match (json.number->i64 (& frac-text))
+        [(json.OkJsonNumberI64 _) false]
+        [(json.ErrJsonNumberI64 _) true])
+      (match (json.number->i64 (& range-text))
+        [(json.OkJsonNumberI64 _) false]
+        [(json.ErrJsonNumberI64 _) true]))))
 
 (define (json-test-f64-from-bits [bits : u64]) : f64
   (let
@@ -94,26 +94,26 @@
 
 (define (json-test-nonfinite-render) : bool
   (and
-    (match (json-f64->number-text (json-test-f64-from-bits 0x7ff0000000000000))
-      [(ErrJsonNumberText _) true]
-      [(OkJsonNumberText _) false])
-    (match (json-f32->number-text (json-test-f32-from-bits 0x7f800000))
-      [(ErrJsonNumberText _) true]
-      [(OkJsonNumberText _) false])))
+    (match (json.f64->number-text (json-test-f64-from-bits 0x7ff0000000000000))
+      [(json.ErrJsonNumberText _) true]
+      [(json.OkJsonNumberText _) false])
+    (match (json.f32->number-text (json-test-f32-from-bits 0x7f800000))
+      [(json.ErrJsonNumberText _) true]
+      [(json.OkJsonNumberText _) false])))
 
 (define (json-test-document-code) : i64
   (let
     [text : String
       " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } "]
-    (match (json-parse (& text))
-      [(OkJson doc)
+    (match (json.parse (& text))
+      [(json.OkJson doc)
         (begin
           (unless (json-test-name doc) (return 1))
           (unless (json-test-items doc) (return 2))
           (unless (json-test-escaped doc) (return 3))
           (unless (json-test-stringify doc) (return 4))
           42)]
-      [(ErrJson _) 7])))
+      [(json.ErrJson _) 7])))
 
 (define (main) : i64
   (let

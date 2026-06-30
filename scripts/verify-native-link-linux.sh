@@ -658,28 +658,28 @@ verify_compiler_driver_stdlib_json() {
     _src="$_dir/input.tl"
     _asm="$_dir/output.s"
     cat > "$_src" <<'EOF'
-(import "stdlib/json.tl")
+(import stdlib.json)
 (import stdlib.string)
 
 (define (main) : i64
   (let
     [text : String "{\"ok\":true,\"values\":[1,2,null]}"]
-    (match (json-parse (& text))
-      [(OkJson value)
+    (match (json.parse (& text))
+      [(json.OkJson value)
         (if (string.eq
-          (json-stringify value)
+          (json.stringify value)
           "{\"ok\":true,\"values\":[1,2,null]}")
           42
           2)]
-      [(ErrJson _) 1])))
+      [(json.ErrJson _) 1])))
 EOF
 
     echo "[selfhost-native] compiler_driver stdlib JSON import graph"
     run_compiler_driver "$_driver" compiler-driver-stdlib-json "$_src" "$_asm"
     for _snippet in \
-        "_tl_stdlib_json_stdlib_json_json_parse" \
-        "_tl_stdlib_json_stdlib_json_json_stringify" \
-        "_tl_stdlib_json_stdlib_json_json_parse_object"
+        "_tl_stdlib_json_stdlib_json_parse" \
+        "_tl_stdlib_json_stdlib_json_stringify" \
+        "_tl_stdlib_json_stdlib_json_parse_object"
     do
         assert_contains "$_asm" "$_snippet" compiler-driver-stdlib-json
     done

@@ -568,8 +568,9 @@
 ;; or a fat-string descriptor pointer). Their VALUES are register-sized, so a var
 ;; of one of these types can live in a callee-saved register exactly like a raw
 ;; pointer — the backend already moves them with a plain movq. Values whose
-;; address is taken (AddrOf/Gep/Alloc) stay on the stack via the memory rule, so
-;; register homing here is safe. Zero-sized AstTyExpr/AstTyExprList are excluded.
+;; address is taken (AddrOf source) or that name a stack object (Alloc) stay on
+;; the stack via the memory rule, so register homing here is safe. Zero-sized
+;; AstTyExpr/AstTyExprList are excluded.
 (define (compiler-reg-handle-type? [ty : AstType]) : bool
   (match ty
     [(AstTyString) true]
@@ -666,6 +667,11 @@
         types
         dst
         (compiler-reg-addr-of-result-type))]
+    [(IrInstrGep dst _ _ _)
+      (compiler-reg-var-type-insert
+        types
+        dst
+        (compiler-reg-addr-of-result-type))]
     [(IrInstrLoad dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(IrInstrCast dst _ _ to-ty) (compiler-reg-var-type-insert types dst to-ty)]
     [(IrInstrBitcast dst _ _ to-ty)
@@ -729,6 +735,12 @@
     [(IrInstrMov dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
     [(IrInstrAddrOf dst _)
+      (compiler-reg-var-type-array-set!
+        present
+        types
+        dst
+        (compiler-reg-addr-of-result-type))]
+    [(IrInstrGep dst _ _ _)
       (compiler-reg-var-type-array-set!
         present
         types
@@ -2464,7 +2476,14 @@
   (match instr
     [(IrInstrAlloc dst _) (compiler-live-set-insert set dst)]
     [(IrInstrAddrOf _ src) (compiler-live-set-insert set src)]
-    [(IrInstrGep dst _ _ _) (compiler-live-set-insert set dst)]
+    ;; A GEP result is a computed scalar pointer (mut-ptr U8); like an AddrOf
+    ;; *destination* it is register-eligible. It only needs a memory home if its
+    ;; own address is taken, which the AddrOf arm above already covers (it marks
+    ;; the AddrOf *source* ineligible). Unconditionally pinning every GEP result
+    ;; to a stack slot left the backend's register-home GEP fast path dead and
+    ;; forced a reload-into-%r10 per dereference (the #1 movq destination in the
+    ;; mov census). A register-homed GEP is computed straight into its home with
+    ;; a single leaq and dereferenced directly, so it is left eligible here.
     [_ set]))
 
 (define (compiler-reg-ineligible-instr-seq

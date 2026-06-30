@@ -12191,47 +12191,57 @@
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]) : ResultCompilerBackend
+  ;; vreg-model: when the source pointer (e.g. a register-homed GEP result) is
+  ;; already in a register, dereference it straight from that home rather than
+  ;; staging it through a scratch register (the old reload-into-%r10 per deref).
+  ;; compiler-backend-emit-address-base returns the register home directly when
+  ;; available, falling back to loading the pointer into the scavenged base. This
+  ;; mirrors the store path (compiler-backend-emit-store-ptr).
   (let
-    [base : String
+    [src-home : String (compiler-backend-value-register-home assignments src)]
+    [scav-base : String
       (compiler-backend-scavenge-reg-here
-        (compiler-backend-addr-scavenge-exclude)
-        0
+        (compiler-backend-one-exclude src-home)
+        1
         "%r10")]
-    [base-mem : String (compiler-backend-base-deref base)]
-    (match (compiler-backend-emit-load-value-with-plan assignments src base)
-      [(OkCompilerBackend ptr-asm)
-        (OkCompilerBackend
-          (if (compiler-backend-float-type? ty)
-            (let
-              [dst-home : String
-                (compiler-backend-var-register-home assignments dst)]
-              [load-reg : String
-                (if (string-eq dst-home "")
-                  (let
-                    [no-exclude : (Array String) (make-array String 0)]
-                    (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
-                  dst-home)]
+    (match (compiler-backend-emit-address-base assignments src scav-base)
+      [(OkCompilerBackendAddressBase base-plan)
+        (let
+          [ptr-asm : String (struct-get base-plan asm)]
+          [base : String (struct-get base-plan reg)]
+          [base-mem : String (compiler-backend-base-deref base)]
+          (OkCompilerBackend
+            (if (compiler-backend-float-type? ty)
+              (let
+                [dst-home : String
+                  (compiler-backend-var-register-home assignments dst)]
+                [load-reg : String
+                  (if (string-eq dst-home "")
+                    (let
+                      [no-exclude : (Array String) (make-array String 0)]
+                      (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))
+                    dst-home)]
+                (string-append
+                  ptr-asm
+                  (string-append
+                    (compiler-backend-emit-load-float-memory base-mem load-reg ty)
+                    (if (string-eq dst-home "")
+                      (compiler-backend-emit-store-float-var-with-plan
+                        assignments
+                        dst
+                        load-reg
+                        ty)
+                      ""))))
               (string-append
                 ptr-asm
-                (string-append
-                  (compiler-backend-emit-load-float-memory base-mem load-reg ty)
-                  (if (string-eq dst-home "")
-                    (compiler-backend-emit-store-float-var-with-plan
-                      assignments
-                      dst
-                      load-reg
-                      ty)
-                    ""))))
-            (string-append
-              ptr-asm
-              (compiler-backend-emit-load-scalar-address-to-var
-                assignments
-                dst
-                base-mem
-                ty
-                (compiler-backend-one-exclude base)
-                1))))]
-      [(ErrCompilerBackend message) (ErrCompilerBackend message)])))
+                (compiler-backend-emit-load-scalar-address-to-var
+                  assignments
+                  dst
+                  base-mem
+                  ty
+                  (compiler-backend-one-exclude base)
+                  1)))))]
+      [(ErrCompilerBackendAddressBase message) (ErrCompilerBackend message)])))
 
 (define (compiler-backend-emit-load-float-address-to-var
   [assignments : CompilerRegAssignmentList]

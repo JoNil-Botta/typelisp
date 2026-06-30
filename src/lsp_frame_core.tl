@@ -4362,16 +4362,16 @@
                   (match (lsp-file-uri-to-path uri)
                     [(LspUriPath.Ok path)
                       (match (fs.try-read-dir-vec (& path))
-                        [(fs.OkIoStringVec entries)
+                        [(fs.OkIoStringVector entries)
                           (let
-                            [n : i64 (vector.string-vec-len entries)]
+                            [n : i64 (fs.fs-string-vector-len entries)]
                             [i : i64 0]
                             [results : json.JsonList json.JsonListNil]
                             (begin
                               (while (< i n)
                                 (let
                                   [entry : String
-                                    (vector.string-vec-get entries i "")]
+                                    (fs.fs-string-vector-get entries i "")]
                                   (begin
                                     (if (lsp-tl-source-file-name? entry)
                                       (let
@@ -4409,7 +4409,7 @@
                                   "results"
                                   (lsp-json-array results)))
                               (LspHandleResult.Continue docs)))]
-                        [(fs.ErrIoStringVec message)
+                        [(fs.ErrIoStringVector message)
                           (begin
                             (lsp-write-error
                               id

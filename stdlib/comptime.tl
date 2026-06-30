@@ -506,8 +506,8 @@
     (comptime-error "expr-list-head expects non-empty ExprList")))
 
 ;: Return all but the first item from a non-empty expression list.
-;# Intrinsic until CTFE has a public dense slicing operation that preserves
-;# syntax provenance.
+;: This remains intrinsic until CTFE has public dense slicing that preserves
+;: syntax provenance.
 (define (expr-list-tail [items : ExprList]) : ExprList
   (expr-list-tail items))
 
@@ -544,8 +544,8 @@
     (comptime-error "expr-clause-list-head expects non-empty ExprClauseList")))
 
 ;: Return all but the first item from a non-empty clause list.
-;# Intrinsic until CTFE has a public dense slicing operation that preserves
-;# syntax provenance.
+;: This remains intrinsic until CTFE has public dense slicing that preserves
+;: syntax provenance.
 (define (expr-clause-list-tail [items : ExprClauseList]) : ExprClauseList
   (expr-clause-list-tail items))
 
@@ -558,8 +558,8 @@
       (__tl_array-ref (struct-get items items) index))))
 
 ;: Convert clause first expressions into an expression list.
-;# Intrinsic because conversion rebuilds bracket-clause syntax expressions with
-;# compiler-owned provenance.
+;: This remains intrinsic because conversion rebuilds bracket-clause syntax
+;: expressions with compiler-owned provenance.
 (define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
   (expr-clause-list->expr-list items))
 
@@ -595,8 +595,8 @@
       "expr-binding-clause-list-head expects non-empty ExprBindingClauseList")))
 
 ;: Return all but the first item from a non-empty binding-clause list.
-;# Intrinsic until CTFE has a public dense slicing operation that preserves
-;# syntax provenance.
+;: This remains intrinsic until CTFE has public dense slicing that preserves
+;: syntax provenance.
 (define (expr-binding-clause-list-tail [items : ExprBindingClauseList]) : ExprBindingClauseList
   (expr-binding-clause-list-tail items))
 
@@ -611,7 +611,7 @@
       (__tl_array-ref (struct-get items items) index))))
 
 ;: Convert binding clauses back into bracket-clause operand syntax.
-;# Intrinsic because conversion rebuilds bracket-clause syntax expressions with
-;# compiler-owned provenance.
+;: This remains intrinsic because conversion rebuilds bracket-clause syntax
+;: expressions with compiler-owned provenance.
 (define (expr-binding-clause-list->expr-list [items : ExprBindingClauseList]) : ExprList
   (expr-binding-clause-list->expr-list items))

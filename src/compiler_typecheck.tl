@@ -9061,16 +9061,16 @@
       (tc-moved-add-origin (tc-moved-empty) "origin-root" origin-a)]
     [origin-whole-id : i64
       (match (tc-moved-conflict origin-whole "origin-root")
-        [(TcSomeMoveConflict key origin-id)
+        [(TcMoveConflict.Some key origin-id)
           (if (string.eq key "origin-root")
             origin-id
             (tc-moved-no-origin-id))]
-        [TcNoMoveConflict (tc-moved-no-origin-id)])]
+        [TcMoveConflict.No (tc-moved-no-origin-id)])]
     [origin-whole-ok : bool (not (= origin-whole-id (tc-moved-no-origin-id)))]
     [origin-clone-ok : bool
       (match (tc-moved-conflict (tc-moved-clone origin-whole) "origin-root")
-        [(TcSomeMoveConflict _ origin-id) (= origin-id origin-whole-id)]
-        [TcNoMoveConflict false])]
+        [(TcMoveConflict.Some _ origin-id) (= origin-id origin-whole-id)]
+        [TcMoveConflict.No false])]
     [partial : TcMovedSet
       (tc-moved-add-projection-path
         (tc-moved-add-projection-path
@@ -9083,21 +9083,21 @@
         origin-b)]
     [partial-exact-conflict : bool
       (match (tc-moved-path-conflict partial "items.#array.0")
-        [(TcSomeMoveConflict key origin-id)
+        [(TcMoveConflict.Some key origin-id)
           (and
             (string.eq key (tc-moved-path-key "items.#array.0"))
             (not (= origin-id (tc-moved-no-origin-id))))]
-        [TcNoMoveConflict false])]
+        [TcMoveConflict.No false])]
     [partial-parent-conflict : bool
       (match (tc-moved-path-conflict partial "items")
-        [(TcSomeMoveConflict _ origin-id)
+        [(TcMoveConflict.Some _ origin-id)
           (not (= origin-id (tc-moved-no-origin-id)))]
-        [TcNoMoveConflict false])]
+        [TcMoveConflict.No false])]
     [partial-root-conflict : bool
       (match (tc-moved-root-conflict partial "items")
-        [(TcSomeMoveConflict _ origin-id)
+        [(TcMoveConflict.Some _ origin-id)
           (not (= origin-id (tc-moved-no-origin-id)))]
-        [TcNoMoveConflict false])]
+        [TcMoveConflict.No false])]
     [partial-one : TcMovedSet
       (tc-moved-remove-exact-path
         (tc-moved-clone partial)
@@ -9129,8 +9129,8 @@
       (match (tc-moved-conflict
         (tc-moved-union union-left union-right)
         "shared")
-        [(TcSomeMoveConflict _ origin-id) (= origin-id 101)]
-        [TcNoMoveConflict false])]
+        [(TcMoveConflict.Some _ origin-id) (= origin-id 101)]
+        [TcMoveConflict.No false])]
     (and
       (= (tc-moved-len (tc-moved-empty)) 0)
       (= (tc-moved-len dupe) 1)

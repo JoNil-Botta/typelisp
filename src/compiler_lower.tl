@@ -1132,8 +1132,8 @@
 (define (lower-hygiene-source-name [name : String]) : String
   (if (tc-hygiene-global-name? name)
     (match (tc-hygiene-global-decode name)
-      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
-      [(TcHygieneContextGlobal module lookup-name)
+      [(TcHygieneGlobalName.Legacy lookup-name) lookup-name]
+      [(TcHygieneGlobalName.Context module lookup-name)
         (if (tc-name-qualified? lookup-name)
           lookup-name
           (compiler-symbol-module-key module lookup-name))])
@@ -1142,8 +1142,8 @@
 (define (lower-hygiene-fallback-source-name [name : String]) : TcMaybeString
   (if (tc-hygiene-global-name? name)
     (match (tc-hygiene-global-decode name)
-      [(TcHygieneLegacyGlobal _) (TcMaybeString.No)]
-      [(TcHygieneContextGlobal module lookup-name)
+      [(TcHygieneGlobalName.Legacy _) (TcMaybeString.No)]
+      [(TcHygieneGlobalName.Context module lookup-name)
         (if (and
           (> (string.string-length module) 0)
           (not (tc-name-qualified? lookup-name)))
@@ -1173,8 +1173,8 @@
   [name : String]) : String
   (if (tc-hygiene-global-name? name)
     (match (tc-hygiene-global-decode name)
-      [(TcHygieneLegacyGlobal lookup-name) lookup-name]
-      [(TcHygieneContextGlobal module lookup-name)
+      [(TcHygieneGlobalName.Legacy lookup-name) lookup-name]
+      [(TcHygieneGlobalName.Context module lookup-name)
         (lower-hygiene-context-source-name ctx type-env module lookup-name)])
     name))
 

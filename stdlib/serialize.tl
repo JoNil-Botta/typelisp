@@ -1,6 +1,6 @@
-;# Format-generic struct serialization macros.
+;# Format-generic value serialization macros.
 ;#
-;# `serialize` emits a generated module for a concrete struct type and a format
+;# `serialize` emits a generated module for a concrete value type and a format
 ;# strategy module:
 ;#
 ;# ```lisp test=ignore name=serialize-strategy-sketch reason="sketch uses an application-provided format module"
@@ -28,13 +28,13 @@
 ;#   `decode-float(T: type, value: Expr, err-ctor: Expr) -> Expr`,
 ;#   `encode-string(value: String) -> Value`, and
 ;#   `decode-string(value: Expr, err-ctor: Expr) -> Expr`.
-;# - Object hooks for every derived struct:
+;# - Object hooks for every struct root or nested struct:
 ;#   `object-empty() -> FieldList`,
 ;#   `object-field(name: Expr, value: Expr, rest: Expr) -> FieldList`,
 ;#   `object-finish(fields: Expr) -> Value`,
 ;#   `expect-object(value: Expr, type-name: Expr, err-ctor: Expr) -> unit`, and
 ;#   `field-value(object: Expr, name: Expr, err-ctor: Expr) -> Expr`.
-;# - Sequence hooks when any serialized field is a fixed array, dynamic array,
+;# - Sequence hooks when any serialized value is a fixed array, dynamic array,
 ;#   or tuple:
 ;#   `sequence-empty() -> ValueList`,
 ;#   `sequence-element(index: Expr, value: Expr, rest: Expr) -> ValueList`,
@@ -762,10 +762,32 @@
       (comptime.comptime-error
         "serialize: nested import index must be an integer literal")]))
 
-;: Emit generic encode/decode helpers for struct type `T` and strategy `format`.
+;: Emit generic encode/decode helpers for type `T` and strategy `format`.
 (defmacro (serialize [format : Module] [T : type]) : Module
-  (match (type-kind T)
-    ["struct"
+  (let
+    [root-key : String (type-key T)]
+    [root-kind : String (type-kind T)]
+    [root-supported : bool
+      (match root-key
+        ["bool" true]
+        ["String" true]
+        ["i64" true]
+        ["i32" true]
+        ["i16" true]
+        ["i8" true]
+        ["u64" true]
+        ["u32" true]
+        ["u16" true]
+        ["u8" true]
+        ["f64" true]
+        ["f32" true]
+        [_
+          (if (string.eq root-kind "struct")
+            true
+            (if (string.eq root-kind "array")
+              true
+              (string.eq root-kind "dyn-array")))])]
+    (if root-supported
       (let
         [format-name : String (comptime.module-name format)]
         [module-name-text : String
@@ -773,7 +795,7 @@
             (comptime.string-append
               (comptime.string-append "stdlib.serialize.generated." format-name)
               ".")
-            (type-key T))]
+            root-key)]
         [module-name-expr : comptime.Expr (comptime.expr-var module-name-text)]
         [format-module-expr : comptime.Expr (comptime.expr-var format-name)]
         [value-type : comptime.Expr
@@ -782,56 +804,104 @@
           (comptime.expr-var (comptime.string-append module-name-text ".Ok"))]
         [err-ctor : comptime.Expr
           (comptime.expr-var (comptime.string-append module-name-text ".Err"))]
-        [object-finish-hook : comptime.Expr
-          (comptime.module-hook format "object-finish")]
-        [expect-object-hook : comptime.Expr
-          (comptime.module-hook format "expect-object")]
-        [extra-decls-hook : comptime.Expr
-          (comptime.module-hook format "extra-decls")]
-        [type-name : String (type-nominal-name T)]
-        `(begin
-          (module ,module-name-expr)
-          (import stdlib.serialize)
-          (import ,format-module-expr as __serialize_format)
-          (stdlib.serialize.nested-imports ,format-module-expr ,T 0)
-          (defenum Result
-            (Ok ,T)
-            (Err String))
-          (define (is-ok? [result : Result]) : bool
-            (match result
-              [(Ok _) true]
-              [(Err _) false]))
-          (define (value-or [result : Result] [fallback : ,T]) : ,T
-            (match result
-              [(Ok value) value]
-              [(Err _) fallback]))
-          (define (error-or [result : Result] [fallback : String]) : String
-            (match result
-              [(Ok _) fallback]
-              [(Err message) message]))
-          (define (encode [value : ,T]) : ,value-type
-            (,object-finish-hook
-              (stdlib.serialize.encode-fields ,format-module-expr ,T 0 value)))
-          (define (decode [value : ,value-type]) : Result
-            (begin
-              (,expect-object-hook
-                value
-                ,(comptime.expr-string type-name)
-                ,err-ctor)
-              (let
-                [__serialize_out : ,T (init : ,T)]
-                (begin
-                  (stdlib.serialize.decode-fields
+        (match root-kind
+          ["struct"
+            (let
+              [object-finish-hook : comptime.Expr
+                (comptime.module-hook format "object-finish")]
+              [expect-object-hook : comptime.Expr
+                (comptime.module-hook format "expect-object")]
+              [extra-decls-hook : comptime.Expr
+                (comptime.module-hook format "extra-decls")]
+              [type-name : String (type-nominal-name T)]
+              `(begin
+                (module ,module-name-expr)
+                (import stdlib.serialize)
+                (import ,format-module-expr as __serialize_format)
+                (stdlib.serialize.nested-imports ,format-module-expr ,T 0)
+                (defenum Result
+                  (Ok ,T)
+                  (Err String))
+                (define (is-ok? [result : Result]) : bool
+                  (match result
+                    [(Ok _) true]
+                    [(Err _) false]))
+                (define (value-or [result : Result] [fallback : ,T]) : ,T
+                  (match result
+                    [(Ok value) value]
+                    [(Err _) fallback]))
+                (define (error-or [result : Result] [fallback : String]) : String
+                  (match result
+                    [(Ok _) fallback]
+                    [(Err message) message]))
+                (define (encode [value : ,T]) : ,value-type
+                  (,object-finish-hook
+                    (stdlib.serialize.encode-fields
+                      ,format-module-expr
+                      ,T
+                      0
+                      value)))
+                (define (decode [value : ,value-type]) : Result
+                  (begin
+                    (,expect-object-hook
+                      value
+                      ,(comptime.expr-string type-name)
+                      ,err-ctor)
+                    (let
+                      [__serialize_out : ,T (init : ,T)]
+                      (begin
+                        (stdlib.serialize.decode-fields
+                          ,format-module-expr
+                          ,T
+                          0
+                          value
+                          __serialize_out
+                          ,err-ctor)
+                        (,ok-ctor __serialize_out)))))
+                (,extra-decls-hook ,T)))]
+          [_
+            (let
+              [root-alias : comptime.Expr
+                (comptime.expr-var "__serialize_root")]
+              [extra-decls-hook : comptime.Expr
+                (comptime.module-hook format "extra-decls")]
+              `(begin
+                (module ,module-name-expr)
+                (import stdlib.serialize)
+                (import ,format-module-expr as __serialize_format)
+                (stdlib.serialize.nested-import-for-type
+                  ,format-module-expr
+                  ,T
+                  ,root-alias)
+                (defenum Result
+                  (Ok ,T)
+                  (Err String))
+                (define (is-ok? [result : Result]) : bool
+                  (match result
+                    [(Ok _) true]
+                    [(Err _) false]))
+                (define (value-or [result : Result] [fallback : ,T]) : ,T
+                  (match result
+                    [(Ok value) value]
+                    [(Err _) fallback]))
+                (define (error-or [result : Result] [fallback : String]) : String
+                  (match result
+                    [(Ok _) fallback]
+                    [(Err message) message]))
+                (define (encode [value : ,T]) : ,value-type
+                  (stdlib.serialize.encode-value
                     ,format-module-expr
                     ,T
-                    0
-                    value
-                    __serialize_out
-                    ,err-ctor)
-                  (,ok-ctor __serialize_out)))))
-          (,extra-decls-hook ,T)))]
-    [_
+                    ,root-alias
+                    value))
+                (define (decode [value : ,value-type]) : Result
+                  (,ok-ctor
+                    (stdlib.serialize.decode-value
+                      ,format-module-expr
+                      ,T
+                      ,root-alias
+                      value
+                      ,err-ctor)))
+                (,extra-decls-hook ,T)))]))
       (comptime.comptime-error
-        (comptime.string-append
-          "serialize: expected struct type, got "
-          (type-key T)))]))
+        (comptime.string-append "serialize: unsupported root type " root-key)))))

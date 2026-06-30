@@ -8,6 +8,10 @@
   (city String))
 
 (import (serialize.serialize json Address) as address_json)
+(import (serialize.serialize json i64) as i64_json)
+(import (serialize.serialize json (Array i64 3)) as fixed_i64_json)
+(import (serialize.serialize json (Array i64)) as dyn_i64_json)
+(import (serialize.serialize json (Array Address 2)) as address_array_json)
 
 (defstruct Person
   (name String)
@@ -267,6 +271,51 @@
       [(address_json.Ok parsed) (serialize-json-address-ok? parsed)]
       [(address_json.Err _) false])))
 
+(define (serialize-json-i64-root-roundtrip-ok?) : bool
+  (let
+    [json : json.Json (i64_json.to-json 42)]
+    [encoded : String (stdlib.json.json-stringify json)]
+    (and
+      (string.eq encoded "42")
+      (match (i64_json.from-json json)
+        [(i64_json.Ok parsed) (= parsed 42)]
+        [(i64_json.Err _) false]))))
+
+(define (serialize-json-fixed-array-root-roundtrip-ok?) : bool
+  (let
+    [scores : (Array i64 3) (array 4 5 6)]
+    [json : json.Json (fixed_i64_json.to-json scores)]
+    [encoded : String (stdlib.json.json-stringify json)]
+    (and
+      (string.eq encoded "[4,5,6]")
+      (match (fixed_i64_json.from-json json)
+        [(fixed_i64_json.Ok parsed) (serialize-json-scores-ok? parsed)]
+        [(fixed_i64_json.Err _) false]))))
+
+(define (serialize-json-dyn-array-root-roundtrip-ok?) : bool
+  (let
+    [samples : (Array i64) (serialize-json-make-samples)]
+    [json : json.Json (dyn_i64_json.to-json samples)]
+    [encoded : String (stdlib.json.json-stringify json)]
+    (and
+      (string.eq encoded "[7,8]")
+      (match (dyn_i64_json.from-json json)
+        [(dyn_i64_json.Ok parsed) (serialize-json-samples-ok? parsed)]
+        [(dyn_i64_json.Err _) false]))))
+
+(define (serialize-json-address-array-root-roundtrip-ok?) : bool
+  (let
+    [previous : (Array Address 2) (serialize-json-previous-addresses)]
+    [json : json.Json (address_array_json.to-json previous)]
+    [encoded : String (stdlib.json.json-stringify json)]
+    (and
+      (string.eq
+        encoded
+        "[{\"zip\":111,\"city\":\"Oxford\"},{\"zip\":222,\"city\":\"Paris\"}]")
+      (match (address_array_json.from-json json)
+        [(address_array_json.Ok parsed) (serialize-json-previous-ok? parsed)]
+        [(address_array_json.Err _) false]))))
+
 (define (serialize-json-missing-field-ok?) : bool
   (match (person_json.from-json (serialize-json-person-missing-age))
     [(person_json.Ok _) false]
@@ -298,4 +347,8 @@
     (unless (serialize-json-wrong-kind-ok?) (return 4))
     (unless (serialize-json-invalid-integer-ok?) (return 5))
     (unless (serialize-json-address-roundtrip-ok?) (return 6))
+    (unless (serialize-json-i64-root-roundtrip-ok?) (return 7))
+    (unless (serialize-json-fixed-array-root-roundtrip-ok?) (return 8))
+    (unless (serialize-json-dyn-array-root-roundtrip-ok?) (return 9))
+    (unless (serialize-json-address-array-root-roundtrip-ok?) (return 10))
     42))

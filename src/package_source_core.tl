@@ -238,28 +238,28 @@
     (io.panic "package-source: vector insert self-test mismatch")))
 
 (define (package-source-sort-entries-from
-  [entries : vector.StringVec]
+  [entries : fs.FsStringVector]
   [index : i64]
   [acc : svec.Vec]) : svec.Vec
-  (if (>= index (vector.string-vec-len entries))
+  (if (>= index (fs.fs-string-vector-len entries))
     acc
     (package-source-sort-entries-from
       entries
       (+ index 1)
-      (package-source-vec-insert acc (vector.string-vec-get entries index "")))))
+      (package-source-vec-insert acc (fs.fs-string-vector-get entries index "")))))
 
-(define (package-source-sort-entries [entries : vector.StringVec]) : svec.Vec
+(define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.Vec
   (package-source-sort-entries-from entries 0 (svec.new)))
 
 (define (package-source-sort-entries-self-test?) : bool
   (let
+    [entries : svec.Vec (svec.new)]
     [items : svec.Vec
-      (package-source-sort-entries
-        (vector.string-vec-push
-          (vector.string-vec-push
-            (vector.string-vec-push (vector.string-vec-new) "zeta")
-            "alpha")
-          "middle"))]
+      (begin
+        (svec.push (&mut entries) "zeta")
+        (svec.push (&mut entries) "alpha")
+        (svec.push (&mut entries) "middle")
+        (package-source-sort-entries (fs.FsStringVector entries)))]
     (match items
       [_
         (and
@@ -328,9 +328,9 @@
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
-      [(fs.ErrIoStringVec error)
+      [(fs.ErrIoStringVector error)
         (package-source-read-dir-error command dir error)]
-      [(fs.OkIoStringVec entries)
+      [(fs.OkIoStringVector entries)
         (package-source-scan-entries
           command
           root
@@ -346,11 +346,11 @@
   (let
     [dir : String (package-source-root-join root relative)]
     (match (fs.try-read-dir (& dir))
-      [(fs.ErrIoStringVec error)
+      [(fs.ErrIoStringVector error)
         (if (or (io.error-not-found? error) (io.error-unsupported? error))
           (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
           (package-source-read-dir-error command dir error))]
-      [(fs.OkIoStringVec entries)
+      [(fs.OkIoStringVector entries)
         (package-source-scan-entries
           command
           root
@@ -364,11 +364,11 @@
   (let
     [root : String (struct-get source-set manifest-dir)]
     (match (fs.try-read-dir (& root))
-      [(fs.ErrIoStringVec error)
+      [(fs.ErrIoStringVector error)
         (if (io.error-unsupported? error)
           (ResultPackageSourceList.Ok (package-source-entry-list source-set))
           (package-source-read-dir-error command root error))]
-      [(fs.OkIoStringVec entries)
+      [(fs.OkIoStringVector entries)
         (package-source-scan-entries
           command
           root

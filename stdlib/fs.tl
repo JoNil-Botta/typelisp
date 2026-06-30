@@ -28,11 +28,31 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
+
+;: Generated string-vector wrapper returned by filesystem vector APIs.
+(defstruct FsStringVector
+  (items svec.Vec))
 
 ;: Result type for directory-listing APIs.
-(defenum ResultIoStringVec
-  (OkIoStringVec vector.StringVec)
-  (ErrIoStringVec io.IoError))
+(defenum ResultIoStringVector
+  (OkIoStringVector FsStringVector)
+  (ErrIoStringVector io.IoError))
+
+;: Return the number of strings in a filesystem string vector.
+(define (fs-string-vector-len [items : FsStringVector]) : i64
+  (svec.len (& (struct-get items items))))
+
+;: Return the string at `index`, or `fallback` when out of bounds.
+(define (fs-string-vector-get
+  [items : FsStringVector]
+  [index : i64]
+  [fallback : String]) : String
+  (svec.get (& (struct-get items items)) index fallback))
+
+;: Return true when a filesystem string vector contains `needle`.
+(define (fs-string-vector-contains? [items : FsStringVector] [needle : String]) : bool
+  (svec.contains? (& (struct-get items items)) needle))
 
 ;: Linux `mkdir` via the `mkdir` syscall (number 83).
 (define (linux-syscall-mkdir [path : (Ptr u8)] [mode : i64]) : i64
@@ -961,13 +981,13 @@
 
 ;: Render normalized path segments using `/` separators.
 (define (path-segment-vec-render-from
-  [segments : vector.StringVec]
+  [segments : (& segments svec.Vec)]
   [index : i64]
   [prefix : String]) : String
-  (if (>= index (vector.string-vec-len segments))
+  (if (>= index (svec.len segments))
     prefix
     (let
-      [segment : String (vector.string-vec-get segments index "")]
+      [segment : String (svec.get segments index "")]
       [next-prefix : String
         (if (= (string-length prefix) 0)
           segment
@@ -975,29 +995,38 @@
       (stdlib.fs.path-segment-vec-render-from segments (+ index 1) next-prefix))))
 
 ;: Render normalized path segments using `/` separators.
-(define (path-segment-vec-render [segments : vector.StringVec]) : String
-  (stdlib.fs.path-segment-vec-render-from segments 0 ""))
+(define (path-segment-vec-render [segments : svec.Vec]) : String
+  (stdlib.fs.path-segment-vec-render-from (& segments) 0 ""))
 
 ;: Fold one lexical path segment into the normalized segment stack.
 (define (path-normalize-segment
   [segment : String]
-  [segments : vector.StringVec]
-  [rooted : bool]) : vector.StringVec
+  [segments : svec.Vec]
+  [rooted : bool]) : svec.Vec
   (cond
     [(string.eq segment "") segments]
     [(string.eq segment ".") segments]
-    [(not (string.eq segment "..")) (vector.string-vec-push segments segment)]
-    [(<= (vector.string-vec-len segments) 0)
+    [(not (string.eq segment ".."))
+      (begin
+        (svec.push (&mut segments) segment)
+        segments)]
+    [(<= (svec.len (& segments)) 0)
       (if rooted
         segments
-        (vector.string-vec-push segments segment))]
+        (begin
+          (svec.push (&mut segments) segment)
+          segments))]
     [else
       (let
-        [top : String (vector.string-vec-last segments "")]
+        [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
-          (vector.string-vec-push segments segment)
-          (vector.string-vec-pop-rest-or
-            (vector.string-vec-pop segments)
+          (begin
+            (svec.push (&mut segments) segment)
+            segments)
+          (begin
+            (match (svec.pop (&mut segments))
+              [(svec.Pop.Ok _) unit]
+              [svec.Pop.Empty unit])
             segments)))]))
 
 ;: Lexically normalize `path` without resolving symlinks or touching the host FS.
@@ -1029,7 +1058,7 @@
           1
           0))]
     [segment-start : i64 i]
-    [segments : vector.StringVec (vector.string-vec-new)]
+    [segments : svec.Vec (svec.new)]
     (begin
       (while (< i n)
         (begin
@@ -1371,10 +1400,10 @@
             (OkFsMetadata (FsMetadata kind 0)))]))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
-(define (read-dir-split-vec [entries : String]) : vector.StringVec
+(define (read-dir-split-vec [entries : String]) : FsStringVector
   (let
     [n : i64 (string-length entries)]
-    [items : vector.StringVec (vector.string-vec-new)]
+    [items : svec.Vec (svec.new)]
     [start : i64 0]
     [i : i64 0]
     (begin
@@ -1382,42 +1411,39 @@
         (if (string.char-eq (string-ref entries i) '\n')
           (begin
             (if (> i start)
-              (set!
-                items
-                (vector.string-vec-push
-                  items
-                  (string.substring entries start (- i start))))
+              (svec.push
+                (&mut items)
+                (string.substring entries start (- i start)))
               unit)
             (set! start (+ i 1))
             (set! i (+ i 1)))
           (set! i (+ i 1))))
       (if (< start n)
-        (vector.string-vec-push
-          items
-          (string.substring entries start (- n start)))
-        items))))
+        (svec.push (&mut items) (string.substring entries start (- n start)))
+        unit)
+      (FsStringVector items))))
 
-;: Read one directory and return entry names as a `StringVec`.
+;: Read one directory and return entry names as a generated String vector.
 ;:
 ;: Entries are names only, not joined paths. The runtime filters `.` and `..`.
 ;: Host directory order is preserved and not guaranteed to be stable; callers
 ;: that need stable ordering should sort the returned vector. The returned
 ;: vector storage and entry strings allocate in the active arena.
-(define (try-read-dir [path : (& path str)]) : ResultIoStringVec
+(define (try-read-dir [path : (& path str)]) : ResultIoStringVector
   (let
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
-      (ErrIoStringVec (io.invalid-path-error path))
+      (ErrIoStringVector (io.invalid-path-error path))
       (let
         [status : i64 (stdlib.fs.read-dir-status path-text)]
         (if (= status io.io-status-ok)
-          (OkIoStringVec
+          (OkIoStringVector
             (stdlib.fs.read-dir-split-vec (stdlib.fs.read-dir path-text)))
-          (ErrIoStringVec (io.error-from-status path status)))))))
+          (ErrIoStringVector (io.error-from-status path status)))))))
 
 ;: Compatibility spelling for callers already migrated to the explicit vector
 ;: name before `try-read-dir` became vector-backed.
-(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVec
+(define (try-read-dir-vec [path : (& path str)]) : ResultIoStringVector
   (try-read-dir path))
 
 ;: Remove a file if present. Missing paths are considered already cleaned.
@@ -1700,39 +1726,39 @@
 
 (cfg
   test
-  (define (fs-test-expect-ok-string-vec
-    [result : ResultIoStringVec]
-    [message : String]) : vector.StringVec
+  (define (fs-test-expect-ok-string-vector
+    [result : ResultIoStringVector]
+    [message : String]) : FsStringVector
     (match result
-      [(OkIoStringVec value) value]
-      [(ErrIoStringVec error) (io.panic message)])))
+      [(OkIoStringVector value) value]
+      [(ErrIoStringVector error) (io.panic message)])))
 
 (cfg
   test
-  (define (fs-test-assert-not-found-string-vec
-    [result : ResultIoStringVec]
+  (define (fs-test-assert-not-found-string-vector
+    [result : ResultIoStringVector]
     [message : String]) : unit
     (match result
-      [(OkIoStringVec _) (io.panic message)]
-      [(ErrIoStringVec error) unit])))
+      [(OkIoStringVector _) (io.panic message)]
+      [(ErrIoStringVector error) unit])))
 
 (cfg
   test
-  (define (fs-test-assert-invalid-string-vec
-    [result : ResultIoStringVec]
+  (define (fs-test-assert-invalid-string-vector
+    [result : ResultIoStringVector]
     [message : String]) : unit
     (match result
-      [(OkIoStringVec _) (io.panic message)]
-      [(ErrIoStringVec error) unit])))
+      [(OkIoStringVector _) (io.panic message)]
+      [(ErrIoStringVector error) unit])))
 
 (cfg
   test
-  (define (fs-test-assert-error-string-vec
-    [result : ResultIoStringVec]
+  (define (fs-test-assert-error-string-vector
+    [result : ResultIoStringVector]
     [message : String]) : unit
     (match result
-      [(OkIoStringVec _) (io.panic message)]
-      [(ErrIoStringVec _) unit])))
+      [(OkIoStringVector _) (io.panic message)]
+      [(ErrIoStringVector _) unit])))
 
 (cfg
   test
@@ -1848,12 +1874,12 @@
 
 (cfg
   test
-  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringVec
+  (define (fs-api-test-try-read-dir [path : String]) : ResultIoStringVector
     (stdlib.fs.try-read-dir (& path))))
 
 (cfg
   test
-  (define (fs-api-test-try-read-dir-vec [path : String]) : ResultIoStringVec
+  (define (fs-api-test-try-read-dir-vec [path : String]) : ResultIoStringVector
     (stdlib.fs.try-read-dir-vec (& path))))
 
 (cfg
@@ -2075,24 +2101,24 @@
 
 (cfg
   test
-  (define (fs-test-assert-string-vec3
-    [items : vector.StringVec]
+  (define (fs-test-assert-string-vector3
+    [items : FsStringVector]
     [first : String]
     [second : String]
     [third : String]
     [message : String]) : unit
     (begin
-      (fs-test-assert-i64-eq (vector.string-vec-len items) 3 message)
+      (fs-test-assert-i64-eq (stdlib.fs.fs-string-vector-len items) 3 message)
       (fs-test-assert-owned-string-eq
-        (vector.string-vec-get items 0 "missing")
+        (stdlib.fs.fs-string-vector-get items 0 "missing")
         first
         message)
       (fs-test-assert-owned-string-eq
-        (vector.string-vec-get items 1 "missing")
+        (stdlib.fs.fs-string-vector-get items 1 "missing")
         second
         message)
       (fs-test-assert-owned-string-eq
-        (vector.string-vec-get items 2 "missing")
+        (stdlib.fs.fs-string-vector-get items 2 "missing")
         third
         message))))
 
@@ -2271,52 +2297,52 @@
           (fs-api-test-try-mkdir child-dir)
           "read-dir child dir: ")
         (let
-          [entries : vector.StringVec
-            (fs-test-expect-ok-string-vec
+          [entries : FsStringVector
+            (fs-test-expect-ok-string-vector
               (fs-api-test-try-read-dir root)
               "read dir: ")]
-          [entries-vec : vector.StringVec
-            (fs-test-expect-ok-string-vec
+          [entries-vec : FsStringVector
+            (fs-test-expect-ok-string-vector
               (fs-api-test-try-read-dir-vec root)
               "read dir vec: ")]
           (begin
             (fs-test-assert-true
-              (vector.string-vec-contains? entries "alpha.txt")
+              (stdlib.fs.fs-string-vector-contains? entries "alpha.txt")
               "read-dir includes first file name")
             (fs-test-assert-true
-              (vector.string-vec-contains? entries "beta data.txt")
+              (stdlib.fs.fs-string-vector-contains? entries "beta data.txt")
               "read-dir includes second file name")
             (fs-test-assert-true
-              (vector.string-vec-contains? entries "child-dir")
+              (stdlib.fs.fs-string-vector-contains? entries "child-dir")
               "read-dir includes subdirectory name")
             (fs-test-assert-false
-              (vector.string-vec-contains? entries ".")
+              (stdlib.fs.fs-string-vector-contains? entries ".")
               "read-dir filters dot")
             (fs-test-assert-false
-              (vector.string-vec-contains? entries "..")
+              (stdlib.fs.fs-string-vector-contains? entries "..")
               "read-dir filters dotdot")
             (fs-test-assert-true
-              (vector.string-vec-contains? entries-vec "alpha.txt")
+              (stdlib.fs.fs-string-vector-contains? entries-vec "alpha.txt")
               "read-dir vec includes first file name")
             (fs-test-assert-true
-              (vector.string-vec-contains? entries-vec "beta data.txt")
+              (stdlib.fs.fs-string-vector-contains? entries-vec "beta data.txt")
               "read-dir vec includes second file name")
             (fs-test-assert-true
-              (vector.string-vec-contains? entries-vec "child-dir")
+              (stdlib.fs.fs-string-vector-contains? entries-vec "child-dir")
               "read-dir vec includes subdirectory name")
             (fs-test-assert-false
-              (vector.string-vec-contains? entries-vec ".")
+              (stdlib.fs.fs-string-vector-contains? entries-vec ".")
               "read-dir vec filters dot")
             (fs-test-assert-false
-              (vector.string-vec-contains? entries-vec "..")
+              (stdlib.fs.fs-string-vector-contains? entries-vec "..")
               "read-dir vec filters dotdot")
-            (fs-test-assert-not-found-string-vec
+            (fs-test-assert-not-found-string-vector
               (fs-api-test-try-read-dir missing)
               "read-dir missing path reports not found")
-            (fs-test-assert-error-string-vec
+            (fs-test-assert-error-string-vector
               (fs-api-test-try-read-dir file-a)
               "read-dir file path reports an IoError")
-            (fs-test-assert-invalid-string-vec
+            (fs-test-assert-invalid-string-vector
               (fs-api-test-try-read-dir "")
               "read-dir empty path invalid")
             (fs-test-assert-ok-unit
@@ -2420,7 +2446,7 @@
             "left/right"
             (string.append (stdlib.fs.path-separator) "leaf"))
           "path join many avoids duplicate separator")
-        (fs-test-assert-string-vec3
+        (fs-test-assert-string-vector3
           (stdlib.fs.read-dir-split-vec "first\nsecond\nthird\n")
           "first"
           "second"

@@ -113,11 +113,18 @@
 (define (clone-name-set-map [names : CloneNameSet]) : hashmap.StringI64Map
   (struct-get names map))
 
+(define (clone-name-set-map-ref [names : (& names CloneNameSet)]) : (&
+    names
+    hashmap.StringI64Map)
+  (& (struct-get names map)))
+
 (define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
   (CloneNameSet (hashmap.string-i64-map-put (clone-name-set-map names) name 1)))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
-  (hashmap.string-i64-map-contains? (clone-name-set-map names) name))
+  (hashmap.string-i64-map-contains-borrowed-ref?
+    (clone-name-set-map-ref (& names))
+    (& name)))
 
 (define (clone-name-set-contains-canonical?
   [names : CloneNameSet]

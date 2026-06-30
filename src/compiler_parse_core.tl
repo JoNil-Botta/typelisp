@@ -1366,8 +1366,10 @@
 (define (ast-binop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
-(define (ast-nary-bitwise-tag? [tag : i64]) : bool
+(define (ast-left-fold-binop-tag? [tag : i64]) : bool
   (or
+    (= tag (compiler-parse-tag-bin-add))
+    (= tag (compiler-parse-tag-bin-mul))
     (= tag (compiler-parse-tag-bin-bit-and))
     (= tag (compiler-parse-tag-bin-bit-or))
     (= tag (compiler-parse-tag-bin-bit-xor))))
@@ -5330,7 +5332,7 @@
             [(ast-unop-tag? tag)
               (parse-ast-unary dispatch pools (ast-unop-from-tag tag) rest)]
             [(ast-binop-tag? tag)
-              (if (ast-nary-bitwise-tag? tag)
+              (if (ast-left-fold-binop-tag? tag)
                 (parse-ast-binary-left-fold
                   dispatch
                   pools
@@ -10173,6 +10175,8 @@
     (compiler-parse-ok?
       "(define (main [a : i64] [b : i64]) : i64 (begin (+ a b) (- a b) (* a b) (< a b) (<= a b) (> a b) (>= a b) (= a b) (!= a b)))")
     (compiler-parse-ok?
+      "(define (main [a : i64] [b : i64] [c : i64] [d : i64]) : i64 (begin (+ a b c d) (* a b c d)))")
+    (compiler-parse-ok?
       "(define (main [a : i64] [b : i64] [p : bool]) : i64 (begin (bit-and a b) (bit-or a b) (bit-xor a b) (shl a b) (shr a b) (if (not p) 1 0)))")
     (compiler-parse-ok?
       "(define (main [a : i64] [b : i64] [c : i64] [d : i64]) : i64 (begin (bit-and a b c d) (bit-or a b c d) (bit-xor a b c d)))")
@@ -10181,6 +10185,15 @@
       "parse: malformed unary expression")
     (compiler-parse-error-ok?
       "(define (main [a : i64]) : i64 (+ a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (+))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main [a : i64]) : i64 (* a))"
+      "parse: malformed binary expression")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (*))"
       "parse: malformed binary expression")
     (compiler-parse-error-ok?
       "(define (main [a : i64]) : i64 (bit-and a))"

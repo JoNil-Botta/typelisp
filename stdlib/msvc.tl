@@ -23,6 +23,7 @@
 (import stdlib.process)
 (import stdlib.string)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 
 ;: Resolved MSVC tool: executable path plus the command-environment overrides.
 (defstruct MsvcTool
@@ -258,28 +259,27 @@
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-vec-owned-from
-  [dirs : vector.StringVec]
+  [dirs : (& dirs svec.Vec)]
   [index : i64]
   [tool : String]) : MsvcMaybeString
-  (if (>= index (vector.string-vec-len dirs))
+  (if (>= index (svec.len dirs))
     (MsvcNoString)
     (let
-      [candidate : String
-        (msvc-path-join (vector.string-vec-get dirs index "") tool)]
+      [candidate : String (msvc-path-join (svec.get dirs index "") tool)]
       (if (msvc-path-exists-owned? candidate)
         (MsvcSomeString candidate)
         (msvc-search-dirs-vec-owned-from dirs (+ index 1) tool)))))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
-(define (msvc-search-dirs-vec-owned [dirs : vector.StringVec] [tool : String]) : MsvcMaybeString
-  (msvc-search-dirs-vec-owned-from dirs 0 tool))
+(define (msvc-search-dirs-vec-owned [dirs : svec.Vec] [tool : String]) : MsvcMaybeString
+  (msvc-search-dirs-vec-owned-from (& dirs) 0 tool))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
 (define (msvc-search-dirs-owned [dirs : env.EnvStringList] [tool : String]) : MsvcMaybeString
   (msvc-search-dirs-vec-owned (env.string-list-to-vec dirs) tool))
 
 ;: Search PATH directories for `tool`, returning the first existing candidate.
-(define (msvc-search-dirs-vec [dirs : vector.StringVec] [tool : (& tool str)]) : MsvcMaybeString
+(define (msvc-search-dirs-vec [dirs : svec.Vec] [tool : (& tool str)]) : MsvcMaybeString
   (let
     [tool-text : String (string.copy tool)]
     (msvc-search-dirs-vec-owned dirs tool-text)))
@@ -495,51 +495,42 @@
     "VC"
     "Tools/MSVC"))
 
+;: Copy a legacy filesystem directory listing into the generated string-vector
+;: buffer used by MSVC discovery internals.
+(define (msvc-string-vec-from-legacy-into
+  [items : vector.StringVec]
+  [index : i64]
+  [out : (&mut out svec.Vec)]) : unit
+  (if (>= index (vector.string-vec-len items))
+    unit
+    (begin
+      (svec.push out (vector.string-vec-get items index ""))
+      (msvc-string-vec-from-legacy-into items (+ index 1) out))))
+
+;: Copy a legacy filesystem directory listing into a generated string vector.
+(define (msvc-string-vec-from-legacy [items : vector.StringVec]) : svec.Vec
+  (let
+    [out : svec.Vec (svec.with-capacity (vector.string-vec-len items))]
+    (begin
+      (msvc-string-vec-from-legacy-into items 0 (&mut out))
+      out)))
+
 ;: Candidate Visual Studio / Build Tools toolset parent directories.
-(define (msvc-toolset-parent-candidates) : vector.StringVec
+(define (msvc-toolset-parent-candidates) : svec.Vec
   (let
     [pf : String (msvc-program-files)]
     [pfx : String (msvc-program-files-x86)]
-    [items : vector.StringVec (vector.string-vec-with-capacity 8)]
+    [items : svec.Vec (svec.with-capacity 8)]
     (begin
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pf "2022" "Enterprise")))
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pf "2022" "Professional")))
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pf "2022" "Community")))
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pfx "2022" "BuildTools")))
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pf "2019" "Enterprise")))
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pf "2019" "Professional")))
-      (set!
-        items
-        (vector.string-vec-push
-          items
-          (msvc-vs-toolset-parent pf "2019" "Community")))
-      (vector.string-vec-push
-        items
-        (msvc-vs-toolset-parent pfx "2019" "BuildTools")))))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pf "2022" "Enterprise"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pf "2022" "Professional"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pf "2022" "Community"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pfx "2022" "BuildTools"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pf "2019" "Enterprise"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pf "2019" "Professional"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pf "2019" "Community"))
+      (svec.push (&mut items) (msvc-vs-toolset-parent pfx "2019" "BuildTools"))
+      items)))
 
 ;: Return the bin directory for host x64 -> target x64 tools.
 (define (msvc-toolset-bin-dir [toolset-root : String]) : String
@@ -551,19 +542,19 @@
 
 ;: Scan one VC Tools/MSVC parent for the newest version containing `tool`.
 (define (msvc-toolset-scan-entries
-  [entries : vector.StringVec]
+  [entries : (& entries svec.Vec)]
   [index : i64]
   [parent : String]
   [tool : String]
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeToolset
-  (if (>= index (vector.string-vec-len entries))
+  (if (>= index (svec.len entries))
     (if has-best
       (MsvcSomeToolset (MsvcToolset best-root best-version))
       (MsvcNoToolset))
     (let
-      [version : String (vector.string-vec-get entries index "")]
+      [version : String (svec.get entries index "")]
       [toolset-root : String (msvc-path-join parent version)]
       [tool-path : String (msvc-toolset-tool-path toolset-root tool)]
       [usable : bool (msvc-path-exists-owned? tool-path)]
@@ -597,9 +588,18 @@
       ;; Keep the explicit result local until aggregate match-arm returns are fixed (#3524).
       (match (fs.try-read-dir-vec (& parent))
         [(fs.OkIoStringVec entries)
-          (set!
-            result
-            (msvc-toolset-scan-entries entries 0 parent tool "" "" false))]
+          (let
+            [entry-vec : svec.Vec (msvc-string-vec-from-legacy entries)]
+            (set!
+              result
+              (msvc-toolset-scan-entries
+                (& entry-vec)
+                0
+                parent
+                tool
+                ""
+                ""
+                false)))]
         [(fs.ErrIoStringVec _) (set! result (MsvcNoToolset))])
       result)))
 
@@ -614,18 +614,18 @@
 
 ;: Scan standard Visual Studio locations for the newest toolset containing `tool`.
 (define (msvc-find-toolset-parents
-  [parents : vector.StringVec]
+  [parents : (& parents svec.Vec)]
   [index : i64]
   [tool : String]
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeToolset
-  (if (>= index (vector.string-vec-len parents))
+  (if (>= index (svec.len parents))
     (if has-best
       (MsvcSomeToolset (MsvcToolset best-root best-version))
       (MsvcNoToolset))
     (let
-      [parent : String (vector.string-vec-get parents index "")]
+      [parent : String (svec.get parents index "")]
       (match (msvc-find-toolset-in-parent parent tool)
         [(MsvcNoToolset)
           (msvc-find-toolset-parents
@@ -654,29 +654,24 @@
 
 ;: Find the newest installed VC toolset containing `tool`.
 (define (msvc-find-toolset [tool : String]) : MsvcMaybeToolset
-  (msvc-find-toolset-parents
-    (msvc-toolset-parent-candidates)
-    0
-    tool
-    ""
-    ""
-    false))
+  (let
+    [parents : svec.Vec (msvc-toolset-parent-candidates)]
+    (msvc-find-toolset-parents (& parents) 0 tool "" "" false)))
 
 ;: Candidate Windows SDK roots.
-(define (msvc-sdk-root-candidates) : vector.StringVec
+(define (msvc-sdk-root-candidates) : svec.Vec
   (let
     [env-root : String (msvc-env-or-empty-owned "WindowsSdkDir")]
     [pfx : String (msvc-program-files-x86)]
     [pf : String (msvc-program-files)]
-    [items : vector.StringVec (vector.string-vec-with-capacity 3)]
+    [items : svec.Vec (svec.with-capacity 3)]
     (begin
       (if (string.eq env-root "")
         unit
-        (set! items (vector.string-vec-push items env-root)))
-      (set!
-        items
-        (vector.string-vec-push items (msvc-path-join3 pfx "Windows Kits" "10")))
-      (vector.string-vec-push items (msvc-path-join3 pf "Windows Kits" "10")))))
+        (svec.push (&mut items) env-root))
+      (svec.push (&mut items) (msvc-path-join3 pfx "Windows Kits" "10"))
+      (svec.push (&mut items) (msvc-path-join3 pf "Windows Kits" "10"))
+      items)))
 
 ;: Return the root for one Windows SDK version.
 (define (msvc-sdk-version-root [sdk-root : String] [version : String]) : String
@@ -729,17 +724,17 @@
 
 ;: Scan one Windows SDK root for the newest usable version.
 (define (msvc-sdk-scan-entries
-  [entries : vector.StringVec]
+  [entries : (& entries svec.Vec)]
   [index : i64]
   [sdk-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeSdk
-  (if (>= index (vector.string-vec-len entries))
+  (if (>= index (svec.len entries))
     (if has-best
       (MsvcSomeSdk (MsvcSdk sdk-root best-version))
       (MsvcNoSdk))
     (let
-      [version : String (vector.string-vec-get entries index "")]
+      [version : String (svec.get entries index "")]
       [usable : bool (msvc-sdk-version-usable? sdk-root version)]
       (if (if usable
         (if has-best
@@ -760,7 +755,9 @@
     [lib-dir : String (msvc-path-join sdk-root "Lib")]
     (match (fs.try-read-dir-vec (& lib-dir))
       [(fs.OkIoStringVec entries)
-        (msvc-sdk-scan-entries entries 0 sdk-root "" false)]
+        (let
+          [entry-vec : svec.Vec (msvc-string-vec-from-legacy entries)]
+          (msvc-sdk-scan-entries (& entry-vec) 0 sdk-root "" false))]
       [(fs.ErrIoStringVec _) (MsvcNoSdk)])))
 
 ;: Return true when `candidate` should replace the current best SDK.
@@ -774,17 +771,17 @@
 
 ;: Scan standard Windows SDK roots.
 (define (msvc-find-sdk-roots
-  [roots : vector.StringVec]
+  [roots : (& roots svec.Vec)]
   [index : i64]
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeSdk
-  (if (>= index (vector.string-vec-len roots))
+  (if (>= index (svec.len roots))
     (if has-best
       (MsvcSomeSdk (MsvcSdk best-root best-version))
       (MsvcNoSdk))
     (let
-      [root : String (vector.string-vec-get roots index "")]
+      [root : String (svec.get roots index "")]
       (match (msvc-find-sdk-in-root root)
         [(MsvcNoSdk)
           (msvc-find-sdk-roots
@@ -810,7 +807,9 @@
 
 ;: Find the newest usable Windows SDK.
 (define (msvc-find-sdk) : MsvcMaybeSdk
-  (msvc-find-sdk-roots (msvc-sdk-root-candidates) 0 "" "" false))
+  (let
+    [roots : svec.Vec (msvc-sdk-root-candidates)]
+    (msvc-find-sdk-roots (& roots) 0 "" "" false)))
 
 ;: Build an auto-discovered MSVC tool result from a toolset and SDK.
 (define (msvc-auto-result
@@ -1025,9 +1024,9 @@
 
 ;: Inline test: verify the default toolset parent candidate list.
 (define (msvc-test-candidates-main) : unit
-  (msvc-test-assert-i64-eq
-    (vector.string-vec-len (msvc-toolset-parent-candidates))
-    8))
+  (let
+    [items : svec.Vec (msvc-toolset-parent-candidates)]
+    (msvc-test-assert-i64-eq (svec.len (& items)) 8)))
 
 ;: Inline test: scan a minimal fake toolset parent directory.
 (define (msvc-test-toolset-scan-main) : unit
@@ -1094,10 +1093,12 @@
       (msvc-test-make-toolset-version toolset-parent "14.99.0" false)
       (match (fs.try-read-dir-vec (& toolset-parent))
         [(fs.OkIoStringVec entries)
-          (begin
-            (msvc-test-assert (vector.string-vec-contains? entries "14.10.0"))
-            (msvc-test-assert (vector.string-vec-contains? entries "14.20.0"))
-            (msvc-test-assert (vector.string-vec-contains? entries "14.99.0")))]
+          (let
+            [entry-vec : svec.Vec (msvc-string-vec-from-legacy entries)]
+            (begin
+              (msvc-test-assert (svec.contains? (& entry-vec) "14.10.0"))
+              (msvc-test-assert (svec.contains? (& entry-vec) "14.20.0"))
+              (msvc-test-assert (svec.contains? (& entry-vec) "14.99.0"))))]
         [(fs.ErrIoStringVec _) (msvc-test-fail)]))))
 
 ;: Inline test: scan already-read fake toolset entries.
@@ -1118,24 +1119,26 @@
           (msvc-test-make-toolset-version toolset-parent "14.99.0" false)]
         (match (fs.try-read-dir-vec (& toolset-parent))
           [(fs.OkIoStringVec entries)
-            (match (msvc-toolset-scan-entries
-              entries
-              0
-              toolset-parent
-              "link.exe"
-              ""
-              ""
-              false)
-              [(MsvcSomeToolset toolset)
-                (begin
-                  (msvc-test-assert-string-eq
-                    (struct-get toolset version)
-                    "14.20.0")
-                  (msvc-test-assert-string-eq
-                    (struct-get toolset root)
-                    new-root)
-                  (msvc-test-assert (not (string.eq old-root new-root))))]
-              [(MsvcNoToolset) (msvc-test-fail)])]
+            (let
+              [entry-vec : svec.Vec (msvc-string-vec-from-legacy entries)]
+              (match (msvc-toolset-scan-entries
+                (& entry-vec)
+                0
+                toolset-parent
+                "link.exe"
+                ""
+                ""
+                false)
+                [(MsvcSomeToolset toolset)
+                  (begin
+                    (msvc-test-assert-string-eq
+                      (struct-get toolset version)
+                      "14.20.0")
+                    (msvc-test-assert-string-eq
+                      (struct-get toolset root)
+                      new-root)
+                    (msvc-test-assert (not (string.eq old-root new-root))))]
+                [(MsvcNoToolset) (msvc-test-fail)]))]
           [(fs.ErrIoStringVec _) (msvc-test-fail)])))))
 
 ;: Inline test: choose the newest complete fake Windows SDK version.

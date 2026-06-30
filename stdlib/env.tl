@@ -17,6 +17,9 @@
 (module stdlib.env)
 
 (import stdlib.array)
+(import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector String) as svec)
 
 ;: Windows kernel32 `GetEnvironmentStringsA` binding (#2142 follow-up). Returns
 ;: the process environment block: NUL-separated `NAME=VALUE` entries terminated
@@ -228,10 +231,11 @@
   (EnvSomeStringList EnvStringList))
 
 ;: Optional PATH-style vector result. Missing variables use `EnvNoStringVec`;
-;: present empty variables use `EnvSomeStringVec` with an empty `StringVec`.
+;: present empty variables use `EnvSomeStringVec` with an empty generated string
+;: vector.
 (defenum EnvMaybeStringVec
   (EnvNoStringVec)
-  (EnvSomeStringVec vector.StringVec))
+  (EnvSomeStringVec svec.Vec))
 
 ;: Return a present environment string result.
 (define (some-string [value : String]) : EnvMaybeString
@@ -242,7 +246,7 @@
   (EnvSomeStringList value))
 
 ;: Return a present PATH-style string-vector result.
-(define (some-string-vec [value : vector.StringVec]) : EnvMaybeStringVec
+(define (some-string-vec [value : svec.Vec]) : EnvMaybeStringVec
   (EnvSomeStringVec value))
 
 ;: Return an empty environment string list.
@@ -264,12 +268,9 @@
 (define (string-list-reverse [items : EnvStringList]) : EnvStringList
   (string-list-reverse-onto items EnvStringNil))
 
-(import stdlib.string)
-(import stdlib.vector)
-
 ;: Build an environment string list from `items`, preserving vector order.
 (define (string-list-from-vec-from
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [index : i64]
   [acc : EnvStringList]) : EnvStringList
   (if (< index 0)
@@ -277,27 +278,30 @@
     (string-list-from-vec-from
       items
       (- index 1)
-      (string-list-cons (vector.string-vec-get items index "") acc))))
+      (string-list-cons (svec.get items index "") acc))))
 
 ;: Build an environment string list from `items`, preserving vector order.
-(define (string-list-from-vec [items : vector.StringVec]) : EnvStringList
-  (string-list-from-vec-from
-    items
-    (- (vector.string-vec-len items) 1)
-    EnvStringNil))
+(define (string-list-from-vec [items : svec.Vec]) : EnvStringList
+  (string-list-from-vec-from (& items) (- (svec.len (& items)) 1) EnvStringNil))
 
 ;: Copy `items` into `out`, preserving list order.
 (define (string-list-to-vec-into
   [items : EnvStringList]
-  [out : vector.StringVec]) : vector.StringVec
+  [out : (&mut out svec.Vec)]) : unit
   (match items
-    [(EnvStringNil) out]
+    [(EnvStringNil) unit]
     [(EnvStringCons head rest)
-      (string-list-to-vec-into (box-get rest) (vector.string-vec-push out head))]))
+      (begin
+        (svec.push out head)
+        (string-list-to-vec-into (box-get rest) out))]))
 
-;: Copy `items` into a fresh `StringVec`, preserving list order.
-(define (string-list-to-vec [items : EnvStringList]) : vector.StringVec
-  (string-list-to-vec-into items (vector.string-vec-new)))
+;: Copy `items` into a fresh generated string vector, preserving list order.
+(define (string-list-to-vec [items : EnvStringList]) : svec.Vec
+  (let
+    [out : svec.Vec (svec.new)]
+    (begin
+      (string-list-to-vec-into items (&mut out))
+      out)))
 
 ;: Return the current platform PATH-list separator as a one-byte String.
 (define (path-list-separator) : String
@@ -314,31 +318,28 @@
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (path-split-with-separator-vec
   [value : (& value str)]
-  [separator : (& separator str)]) : vector.StringVec
+  [separator : (& separator str)]) : svec.Vec
   (let
     [n : i64 (string-length value)]
     (if (= n 0)
-      (vector.string-vec-new)
+      (svec.new)
       (let
         [sep : char (string-ref separator 0)]
-        [items : vector.StringVec (vector.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         [start : i64 0]
         [i : i64 0]
         (begin
           (while (< i n)
             (if (string.char-eq (string-ref value i) sep)
               (begin
-                (set!
-                  items
-                  (vector.string-vec-push
-                    items
-                    (string.substring value start (- i start))))
+                (svec.push
+                  (&mut items)
+                  (string.substring value start (- i start)))
                 (set! start (+ i 1))
                 (set! i (+ i 1)))
               (set! i (+ i 1))))
-          (vector.string-vec-push
-            items
-            (string.substring value start (- n start))))))))
+          (svec.push (&mut items) (string.substring value start (- n start)))
+          items)))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (path-split-with-separator
@@ -347,7 +348,7 @@
   (string-list-from-vec (path-split-with-separator-vec value separator)))
 
 ;: Split a PATH-style string using the current platform separator.
-(define (path-split-vec [value : (& value str)]) : vector.StringVec
+(define (path-split-vec [value : (& value str)]) : svec.Vec
   (let
     [separator : String (path-list-separator)]
     (path-split-with-separator-vec value (& separator))))
@@ -386,31 +387,29 @@
 ;: Join PATH-style items using the supplied separator.
 (define (path-join-vec-tail
   [acc : String]
-  [items : vector.StringVec]
+  [items : (& items svec.Vec)]
   [index : i64]
   [separator : (& separator str)]) : String
-  (if (>= index (vector.string-vec-len items))
+  (if (>= index (svec.len items))
     acc
     (path-join-vec-tail
       (let
         [acc-with-separator : String (string.append (& acc) separator)]
-        (string.append
-          acc-with-separator
-          (vector.string-vec-get items index "")))
+        (string.append acc-with-separator (svec.get items index "")))
       items
       (+ index 1)
       separator)))
 
 ;: Join PATH-style items using the supplied separator.
 (define (path-join-vec-with-separator
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [separator : (& separator str)]) : String
-  (if (<= (vector.string-vec-len items) 0)
+  (if (<= (svec.len (& items)) 0)
     ""
-    (path-join-vec-tail (vector.string-vec-get items 0 "") items 1 separator)))
+    (path-join-vec-tail (svec.get (& items) 0 "") (& items) 1 separator)))
 
 ;: Join PATH-style items using the current platform separator.
-(define (path-join-vec [items : vector.StringVec]) : String
+(define (path-join-vec [items : svec.Vec]) : String
   (let
     [separator : String (path-list-separator)]
     (path-join-vec-with-separator items (& separator))))
@@ -495,7 +494,7 @@
   [message : String]) : unit
   (match value
     [(EnvSomeStringVec items)
-      (test-assert-i64-eq (vector.string-vec-len items) 0 message)]
+      (test-assert-i64-eq (svec.len (& items)) 0 message)]
     [(EnvNoStringVec) (test-fail)]))
 
 ;: Assert that an environment string list contains exactly three strings.
@@ -558,29 +557,23 @@
 
 ;: Assert that a string vector contains exactly three strings.
 (define (test-assert-vec3
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]
   [third : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (vector.string-vec-len items) 3 message)
+    (test-assert-i64-eq (svec.len (& items)) 3 message)
+    (test-assert-owned-string-eq (svec.get (& items) 0 "missing") first message)
     (test-assert-owned-string-eq
-      (vector.string-vec-get items 0 "missing")
-      first
-      message)
-    (test-assert-owned-string-eq
-      (vector.string-vec-get items 1 "missing")
+      (svec.get (& items) 1 "missing")
       second
       message)
-    (test-assert-owned-string-eq
-      (vector.string-vec-get items 2 "missing")
-      third
-      message)))
+    (test-assert-owned-string-eq (svec.get (& items) 2 "missing") third message)))
 
 ;: Assert that a string vector contains exactly five strings.
 (define (test-assert-vec5
-  [items : vector.StringVec]
+  [items : svec.Vec]
   [first : String]
   [second : String]
   [third : String]
@@ -588,27 +581,18 @@
   [fifth : String]
   [message : String]) : unit
   (begin
-    (test-assert-i64-eq (vector.string-vec-len items) 5 message)
+    (test-assert-i64-eq (svec.len (& items)) 5 message)
+    (test-assert-owned-string-eq (svec.get (& items) 0 "missing") first message)
     (test-assert-owned-string-eq
-      (vector.string-vec-get items 0 "missing")
-      first
-      message)
-    (test-assert-owned-string-eq
-      (vector.string-vec-get items 1 "missing")
+      (svec.get (& items) 1 "missing")
       second
       message)
+    (test-assert-owned-string-eq (svec.get (& items) 2 "missing") third message)
     (test-assert-owned-string-eq
-      (vector.string-vec-get items 2 "missing")
-      third
-      message)
-    (test-assert-owned-string-eq
-      (vector.string-vec-get items 3 "missing")
+      (svec.get (& items) 3 "missing")
       fourth
       message)
-    (test-assert-owned-string-eq
-      (vector.string-vec-get items 4 "missing")
-      fifth
-      message)))
+    (test-assert-owned-string-eq (svec.get (& items) 4 "missing") fifth message)))
 
 ;: Assert that a present path-list lookup contains exactly three strings.
 (define (test-assert-path3

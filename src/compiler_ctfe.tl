@@ -4299,6 +4299,9 @@
       [(string.eq lookup-name "int->string") "int->string"]
       [(ctfe-stdlib-string-helper-name? lookup-name "int->string")
         "int->string"]
+      [(ctfe-stdlib-string-helper-name? lookup-name ">int") "string->int"]
+      [(ctfe-stdlib-string-helper-name? lookup-name "string->int")
+        "string->int"]
       [(ctfe-comptime-error-helper-name? name) "comptime-error"]
       [(string.eq lookup-name "comptime-error") "comptime-error"]
       [else name])))

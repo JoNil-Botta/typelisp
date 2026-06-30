@@ -226,6 +226,10 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_fol
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.fixed_point_followup_module_placeholders|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.move.call_func|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.reinfer.borrow.call_arg.calls|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.misses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
 
 echo "[compile-profile] check named vector Decls macro fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_named_vector_decls.tl \

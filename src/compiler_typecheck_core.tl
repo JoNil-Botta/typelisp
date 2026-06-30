@@ -8667,7 +8667,6 @@
     (ctfe-comptime-source-helper-name? name)
     (ctfe-expr-list-inspector-name? name)
     (ctfe-expr-clause-list-inspector-name? name)
-    (ctfe-expr-binding-clause-inspector-name? name)
     (ctfe-expr-binding-clause-list-inspector-name? name)
     (string.string-eq name "comptime-error")))
 
@@ -30820,7 +30819,6 @@
       [(string.string-eq call-name "type-info") true]
       [(ctfe-expr-list-inspector-name? call-name) true]
       [(ctfe-expr-clause-list-inspector-name? call-name) true]
-      [(ctfe-expr-binding-clause-inspector-name? call-name) true]
       [(ctfe-expr-binding-clause-list-inspector-name? call-name) true]
       [(string.string-eq call-name "comptime-error") true]
       [else false])))

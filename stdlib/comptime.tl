@@ -6,11 +6,12 @@
 ;# and treats the syntax types as aliases for that internal representation while
 ;# the CTFE value migration lands.
 ;#
-;# CTFE still intercepts constructor, sequence, and reflection helper calls
-;# because it cannot yet interpret arbitrary stdlib function calls and several
-;# constructors attach compiler provenance. Simple `Expr`/`ExprClause`
-;# inspectors below are ordinary source bodies so macro code can migrate toward
-;# public pattern matching without growing the bridge surface.
+;# CTFE still intercepts constructors, reflection helpers, and sequence
+;# operations that must rebuild provenance-carrying syntax, because it cannot yet
+;# interpret arbitrary stdlib function calls and several constructors attach
+;# compiler provenance. Simple `Expr`/`ExprClause` inspectors and dense sequence
+;# accessors below are ordinary source bodies so macro code can migrate toward
+;# public field and array access without growing the bridge surface.
 (module stdlib.comptime)
 
 ;# `feature-plain-comptime-well-known` is the end-state source surface. The
@@ -492,23 +493,31 @@
 
 ;: Return true when an expression list has no items.
 (define (expr-list-empty? [items : ExprList]) : bool
-  (expr-list-empty? items))
+  (= (struct-get items len) 0))
 
 ;: Return the number of items in an expression list.
 (define (expr-list-length [items : ExprList]) : i64
-  (expr-list-length items))
+  (struct-get items len))
 
 ;: Return the first item in a non-empty expression list.
 (define (expr-list-head [items : ExprList]) : Expr
-  (expr-list-head items))
+  (if (> (struct-get items len) 0)
+    (__tl_array-ref (struct-get items items) 0)
+    (comptime-error "expr-list-head expects non-empty ExprList")))
 
 ;: Return all but the first item from a non-empty expression list.
+;# Intrinsic until CTFE has a public dense slicing operation that preserves
+;# syntax provenance.
 (define (expr-list-tail [items : ExprList]) : ExprList
   (expr-list-tail items))
 
 ;: Return an expression list item by index.
 (define (expr-list-nth [items : ExprList] [index : i64]) : Expr
-  (expr-list-nth items index))
+  (if (< index 0)
+    (comptime-error "expr-list-nth index out of range")
+    (if (>= index (struct-get items len))
+      (comptime-error "expr-list-nth index out of range")
+      (__tl_array-ref (struct-get items items) index))))
 
 ;: Return the first expression from a clause.
 (define (expr-clause-first [clause : ExprClause]) : Expr
@@ -522,57 +531,72 @@
 
 ;: Return true when a clause list has no items.
 (define (expr-clause-list-empty? [items : ExprClauseList]) : bool
-  (expr-clause-list-empty? items))
+  (= (struct-get items len) 0))
 
 ;: Return the number of clauses in a clause list.
 (define (expr-clause-list-length [items : ExprClauseList]) : i64
-  (expr-clause-list-length items))
+  (struct-get items len))
 
 ;: Return the first item in a non-empty clause list.
 (define (expr-clause-list-head [items : ExprClauseList]) : ExprClause
-  (expr-clause-list-head items))
+  (if (> (struct-get items len) 0)
+    (__tl_array-ref (struct-get items items) 0)
+    (comptime-error "expr-clause-list-head expects non-empty ExprClauseList")))
 
 ;: Return all but the first item from a non-empty clause list.
+;# Intrinsic until CTFE has a public dense slicing operation that preserves
+;# syntax provenance.
 (define (expr-clause-list-tail [items : ExprClauseList]) : ExprClauseList
   (expr-clause-list-tail items))
 
 ;: Return a clause list item by index.
 (define (expr-clause-list-nth [items : ExprClauseList] [index : i64]) : ExprClause
-  (expr-clause-list-nth items index))
+  (if (< index 0)
+    (comptime-error "expr-clause-list-nth index out of range")
+    (if (>= index (struct-get items len))
+      (comptime-error "expr-clause-list-nth index out of range")
+      (__tl_array-ref (struct-get items items) index))))
 
 ;: Convert clause first expressions into an expression list.
+;# Intrinsic because conversion rebuilds bracket-clause syntax expressions with
+;# compiler-owned provenance.
 (define (expr-clause-list->expr-list [items : ExprClauseList]) : ExprList
   (expr-clause-list->expr-list items))
 
 ;: Return the user-facing binding name from a binding clause.
 (define (expr-binding-clause-name [clause : ExprBindingClause]) : String
-  (expr-binding-clause-name clause))
+  (struct-get clause name))
 
 ;: Return true when a binding clause includes an explicit type annotation.
 (define (expr-binding-clause-has-type? [clause : ExprBindingClause]) : bool
-  (expr-binding-clause-has-type? clause))
+  (struct-get clause has-type))
 
 ;: Return the explicit type annotation syntax from a typed binding clause.
 (define (expr-binding-clause-type [clause : ExprBindingClause]) : Expr
-  (expr-binding-clause-type clause))
+  (struct-get clause ty))
 
 ;: Return the initializer expression from a binding clause.
 (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
-  (expr-binding-clause-init clause))
+  (struct-get clause init))
 
 ;: Return true when a binding-clause list has no items.
 (define (expr-binding-clause-list-empty? [items : ExprBindingClauseList]) : bool
-  (expr-binding-clause-list-empty? items))
+  (= (struct-get items len) 0))
 
 ;: Return the number of binding clauses in a binding-clause list.
 (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
-  (expr-binding-clause-list-length items))
+  (struct-get items len))
 
 ;: Return the first item in a non-empty binding-clause list.
 (define (expr-binding-clause-list-head [items : ExprBindingClauseList]) : ExprBindingClause
-  (expr-binding-clause-list-head items))
+  (if (> (struct-get items len) 0)
+    (__tl_array-ref (struct-get items items) 0)
+    (comptime-error
+      "expr-binding-clause-list-head expects non-empty ExprBindingClauseList")))
 
 ;: Return all but the first item from a non-empty binding-clause list.
+;# Intrinsic until CTFE has a public dense slicing operation that preserves
+;# syntax provenance.
 (define (expr-binding-clause-list-tail [items : ExprBindingClauseList]) : ExprBindingClauseList
   (expr-binding-clause-list-tail items))
 
@@ -580,8 +604,14 @@
 (define (expr-binding-clause-list-nth
   [items : ExprBindingClauseList]
   [index : i64]) : ExprBindingClause
-  (expr-binding-clause-list-nth items index))
+  (if (< index 0)
+    (comptime-error "expr-binding-clause-list-nth index out of range")
+    (if (>= index (struct-get items len))
+      (comptime-error "expr-binding-clause-list-nth index out of range")
+      (__tl_array-ref (struct-get items items) index))))
 
 ;: Convert binding clauses back into bracket-clause operand syntax.
+;# Intrinsic because conversion rebuilds bracket-clause syntax expressions with
+;# compiler-owned provenance.
 (define (expr-binding-clause-list->expr-list [items : ExprBindingClauseList]) : ExprList
   (expr-binding-clause-list->expr-list items))

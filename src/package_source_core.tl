@@ -10,7 +10,7 @@
 (import stdlib.io)
 (import stdlib.array)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import stdlib.string)
 (import stdlib.str_cat)
 (import "compiler_diagnostic.tl")

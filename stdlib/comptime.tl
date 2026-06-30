@@ -370,6 +370,10 @@
 (define (expr-struct-get [target : Expr] [field : String]) : Expr
   (expr-struct-get target field))
 
+;: Build a tuple element access expression during macro CTFE.
+(define (expr-tuple-ref [target : Expr] [index : i64]) : Expr
+  (expr-tuple-ref target index))
+
 ;: Build a struct field assignment expression during macro CTFE.
 (define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
   (expr-struct-set target field value))

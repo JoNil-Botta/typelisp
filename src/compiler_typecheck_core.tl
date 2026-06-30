@@ -5637,6 +5637,13 @@
           out
           "expr-struct-get"
           (tc-fn2 expr (AstTyString) expr)))
+      (set! out (tc-bind out "expr-tuple-ref" (tc-fn2 expr (AstTyI64) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-tuple-ref"
+          (tc-fn2 expr (AstTyI64) expr)))
       (set!
         out
         (tc-bind out "expr-struct-set" (tc-fn3 expr (AstTyString) expr expr)))
@@ -8871,6 +8878,7 @@
     (string.string-eq name "expr-string")
     (string.string-eq name "expr-var")
     (string.string-eq name "expr-struct-get")
+    (string.string-eq name "expr-tuple-ref")
     (string.string-eq name "expr-struct-set")
     (string.string-eq name "expr-splice")
     (string.string-eq name "expr-if")
@@ -31302,6 +31310,7 @@
       [(string.string-eq call-name "expr-string") true]
       [(string.string-eq call-name "expr-var") true]
       [(string.string-eq call-name "expr-struct-get") true]
+      [(string.string-eq call-name "expr-tuple-ref") true]
       [(string.string-eq call-name "expr-struct-set") true]
       [(string.string-eq call-name "expr-splice") true]
       [(string.string-eq call-name "expr-if") true]
@@ -50945,7 +50954,7 @@
     (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-fixed-point-limit) : i64
-  8)
+  16)
 
 ;; Generated modules can introduce their own import placeholders for the next
 ;; pass. Keep a fixed guard, but scale it with loaded placeholder volume so

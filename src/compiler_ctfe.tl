@@ -4251,6 +4251,34 @@
       [(string.string-eq lookup-name "expr-if-else") "expr-if-else"]
       [(string.string-eq lookup-name "expr-clause-first") "expr-clause-first"]
       [(string.string-eq lookup-name "expr-clause-second") "expr-clause-second"]
+      [(string.string-eq lookup-name "expr-list-empty?") "expr-list-empty?"]
+      [(string.string-eq lookup-name "expr-list-length") "expr-list-length"]
+      [(string.string-eq lookup-name "expr-list-head") "expr-list-head"]
+      [(string.string-eq lookup-name "expr-list-nth") "expr-list-nth"]
+      [(string.string-eq lookup-name "expr-clause-list-empty?")
+        "expr-clause-list-empty?"]
+      [(string.string-eq lookup-name "expr-clause-list-length")
+        "expr-clause-list-length"]
+      [(string.string-eq lookup-name "expr-clause-list-head")
+        "expr-clause-list-head"]
+      [(string.string-eq lookup-name "expr-clause-list-nth")
+        "expr-clause-list-nth"]
+      [(string.string-eq lookup-name "expr-binding-clause-name")
+        "expr-binding-clause-name"]
+      [(string.string-eq lookup-name "expr-binding-clause-has-type?")
+        "expr-binding-clause-has-type?"]
+      [(string.string-eq lookup-name "expr-binding-clause-type")
+        "expr-binding-clause-type"]
+      [(string.string-eq lookup-name "expr-binding-clause-init")
+        "expr-binding-clause-init"]
+      [(string.string-eq lookup-name "expr-binding-clause-list-empty?")
+        "expr-binding-clause-list-empty?"]
+      [(string.string-eq lookup-name "expr-binding-clause-list-length")
+        "expr-binding-clause-list-length"]
+      [(string.string-eq lookup-name "expr-binding-clause-list-head")
+        "expr-binding-clause-list-head"]
+      [(string.string-eq lookup-name "expr-binding-clause-list-nth")
+        "expr-binding-clause-list-nth"]
       [else name])))
 
 (define (ctfe-comptime-source-helper-name? [name : String]) : bool
@@ -4262,7 +4290,23 @@
     (string.string-eq name "expr-if-then")
     (string.string-eq name "expr-if-else")
     (string.string-eq name "expr-clause-first")
-    (string.string-eq name "expr-clause-second")))
+    (string.string-eq name "expr-clause-second")
+    (string.string-eq name "expr-list-empty?")
+    (string.string-eq name "expr-list-length")
+    (string.string-eq name "expr-list-head")
+    (string.string-eq name "expr-list-nth")
+    (string.string-eq name "expr-clause-list-empty?")
+    (string.string-eq name "expr-clause-list-length")
+    (string.string-eq name "expr-clause-list-head")
+    (string.string-eq name "expr-clause-list-nth")
+    (string.string-eq name "expr-binding-clause-name")
+    (string.string-eq name "expr-binding-clause-has-type?")
+    (string.string-eq name "expr-binding-clause-type")
+    (string.string-eq name "expr-binding-clause-init")
+    (string.string-eq name "expr-binding-clause-list-empty?")
+    (string.string-eq name "expr-binding-clause-list-length")
+    (string.string-eq name "expr-binding-clause-list-head")
+    (string.string-eq name "expr-binding-clause-list-nth")))
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (let
@@ -5007,308 +5051,19 @@
         (box (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg")))]))
 
 (define (ctfe-expr-list-inspector-name? [name : String]) : bool
-  (or
-    (string.string-eq name "expr-list-empty?")
-    (string.string-eq name "expr-list-length")
-    (string.string-eq name "expr-list-head")
-    (string.string-eq name "expr-list-tail")
-    (string.string-eq name "expr-list-nth")))
+  (string.string-eq name "expr-list-tail"))
 
 (define (ctfe-expr-clause-list-inspector-name? [name : String]) : bool
   (or
-    (string.string-eq name "expr-clause-list-empty?")
-    (string.string-eq name "expr-clause-list-length")
-    (string.string-eq name "expr-clause-list-head")
     (string.string-eq name "expr-clause-list-tail")
-    (string.string-eq name "expr-clause-list-nth")
     (string.string-eq name "expr-clause-list->expr-list")))
-
-(define (ctfe-expr-binding-clause-inspector-name? [name : String]) : bool
-  (or
-    (string.string-eq name "expr-binding-clause-name")
-    (string.string-eq name "expr-binding-clause-has-type?")
-    (string.string-eq name "expr-binding-clause-type")
-    (string.string-eq name "expr-binding-clause-init")))
 
 (define (ctfe-expr-binding-clause-list-inspector-name? [name : String]) : bool
   (or
-    (string.string-eq name "expr-binding-clause-list-empty?")
-    (string.string-eq name "expr-binding-clause-list-length")
-    (string.string-eq name "expr-binding-clause-list-head")
     (string.string-eq name "expr-binding-clause-list-tail")
-    (string.string-eq name "expr-binding-clause-list-nth")
     (string.string-eq name "expr-binding-clause-list->expr-list")))
 
-(define (ctfe-eval-expr-list-nth-call
-  [list-arg : AstExpr]
-  [index-arg : AstExpr]
-  [rest : AstExprList]
-  [expr : AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (match rest
-    [(AstExprList.Nil)
-      (match (compiler-ctfe-eval list-arg env fuel)
-        [(ResultCtfe.Ok value list-fuel)
-          (match value
-            [(CompilerCtfeValue.ExprList nodes)
-              (match (ctfe-eval-i64-arg
-                index-arg
-                expr
-                env
-                list-fuel
-                "expr-list-nth")
-                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-                [(ResultCtfeI64Arg.Ok index index-fuel)
-                  (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "expr-list-nth index out of range")))
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.Expr
-                        (ctfe-expr-list-nth nodes index)
-                        (ctfe-untyped-expr-type))
-                      index-fuel))])]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-list-nth expects ExprList")))])]
-        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
-    [_
-      (ResultCtfe.Err
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "expr-list-nth expects exactly two args")))]))
-
 (define (ctfe-eval-expr-list-inspector-call
-  [name : String]
-  [args : AstExprList]
-  [expr : AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (match args
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ctfe-ast-get env arg)]
-        [rest : AstExprList (box-get rest)]
-        (if (string.string-eq name "expr-list-nth")
-          (match rest
-            [(AstExprList.Cons index-arg nth-rest)
-              (ctfe-eval-expr-list-nth-call
-                arg
-                (ctfe-ast-get env index-arg)
-                (box-get nth-rest)
-                expr
-                env
-                fuel)]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-list-nth expects exactly two args")))])
-          (match rest
-            [(AstExprList.Nil)
-              (match (compiler-ctfe-eval arg env fuel)
-                [(ResultCtfe.Ok value arg-fuel)
-                  (match value
-                    [(CompilerCtfeValue.ExprList nodes)
-                      (cond
-                        [(string.string-eq name "expr-list-empty?")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.Bool
-                              (ctfe-expr-list-empty? nodes))
-                            arg-fuel)]
-                        [(string.string-eq name "expr-list-length")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.I64
-                              (ctfe-expr-list-length nodes))
-                            arg-fuel)]
-                        [(ctfe-expr-list-empty? nodes)
-                          (ResultCtfe.Err
-                            (box
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                (string.string-append
-                                  name
-                                  " expects non-empty ExprList"))))]
-                        [(string.string-eq name "expr-list-head")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.Expr
-                              (ctfe-expr-list-head nodes)
-                              (ctfe-untyped-expr-type))
-                            arg-fuel)]
-                        [(string.string-eq name "expr-list-tail")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprList
-                              (ctfe-expr-list-tail nodes))
-                            arg-fuel)]
-                        [else (ctfe-unsupported-form expr)])]
-                    [_
-                      (ResultCtfe.Err
-                        (box
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            (string.string-append name " expects ExprList"))))])]
-                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    (string.string-append name " expects exactly one arg"))))])))]
-    [_
-      (ResultCtfe.Err
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            (string.string-append name " expects exactly one arg"))))]))
-
-(define (ctfe-eval-expr-clause-list-nth-call
-  [list-arg : AstExpr]
-  [index-arg : AstExpr]
-  [rest : AstExprList]
-  [expr : AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (match rest
-    [(AstExprList.Nil)
-      (match (compiler-ctfe-eval list-arg env fuel)
-        [(ResultCtfe.Ok value list-fuel)
-          (match value
-            [(CompilerCtfeValue.ExprClauseList clauses)
-              (match (ctfe-eval-i64-arg
-                index-arg
-                expr
-                env
-                list-fuel
-                "expr-clause-list-nth")
-                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-                [(ResultCtfeI64Arg.Ok index index-fuel)
-                  (if (or
-                    (< index 0)
-                    (>= index (ctfe-expr-clause-list-length clauses)))
-                    (ResultCtfe.Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "expr-clause-list-nth index out of range")))
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.ExprClause
-                        (ctfe-expr-clause-list-nth clauses index))
-                      index-fuel))])]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-clause-list-nth expects ExprClauseList")))])]
-        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
-    [_
-      (ResultCtfe.Err
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            "expr-clause-list-nth expects exactly two args")))]))
-
-(define (ctfe-eval-expr-clause-list-inspector-call
-  [name : String]
-  [args : AstExprList]
-  [expr : AstExpr]
-  [env : CtfeEnv]
-  [fuel : i64]) : ResultCtfe
-  (match args
-    [(AstExprList.Cons arg rest)
-      (let
-        [arg : AstExpr (ctfe-ast-get env arg)]
-        [rest : AstExprList (box-get rest)]
-        (if (string.string-eq name "expr-clause-list-nth")
-          (match rest
-            [(AstExprList.Cons index-arg nth-rest)
-              (ctfe-eval-expr-clause-list-nth-call
-                arg
-                (ctfe-ast-get env index-arg)
-                (box-get nth-rest)
-                expr
-                env
-                fuel)]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-clause-list-nth expects exactly two args")))])
-          (match rest
-            [(AstExprList.Nil)
-              (match (compiler-ctfe-eval arg env fuel)
-                [(ResultCtfe.Ok value arg-fuel)
-                  (match value
-                    [(CompilerCtfeValue.ExprClauseList clauses)
-                      (cond
-                        [(string.string-eq name "expr-clause-list-empty?")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.Bool
-                              (ctfe-expr-clause-list-empty? clauses))
-                            arg-fuel)]
-                        [(string.string-eq name "expr-clause-list-length")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.I64
-                              (ctfe-expr-clause-list-length clauses))
-                            arg-fuel)]
-                        [(string.string-eq name "expr-clause-list->expr-list")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprList
-                              (ctfe-expr-clause-list->expr-list-in-env
-                                env
-                                clauses))
-                            arg-fuel)]
-                        [(ctfe-expr-clause-list-empty? clauses)
-                          (ResultCtfe.Err
-                            (box
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                (string.string-append
-                                  name
-                                  " expects non-empty ExprClauseList"))))]
-                        [(string.string-eq name "expr-clause-list-head")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprClause
-                              (ctfe-expr-clause-list-head clauses))
-                            arg-fuel)]
-                        [(string.string-eq name "expr-clause-list-tail")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprClauseList
-                              (ctfe-expr-clause-list-tail clauses))
-                            arg-fuel)]
-                        [else (ctfe-unsupported-form expr)])]
-                    [_
-                      (ResultCtfe.Err
-                        (box
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            (string.string-append
-                              name
-                              " expects ExprClauseList"))))])]
-                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    (string.string-append name " expects exactly one arg"))))])))]
-    [_
-      (ResultCtfe.Err
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            (string.string-append name " expects exactly one arg"))))]))
-
-(define (ctfe-eval-expr-binding-clause-inspector-call
   [name : String]
   [args : AstExprList]
   [expr : AstExpr]
@@ -5324,45 +5079,24 @@
             (match (compiler-ctfe-eval arg env fuel)
               [(ResultCtfe.Ok value arg-fuel)
                 (match value
-                  [(CompilerCtfeValue.ExprBindingClause clause)
-                    (cond
-                      [(string.string-eq name "expr-binding-clause-name")
-                        (ResultCtfe.Ok
-                          (CompilerCtfeValue.String
-                            (ctfe-expr-binding-clause-name clause))
-                          arg-fuel)]
-                      [(string.string-eq name "expr-binding-clause-has-type?")
-                        (ResultCtfe.Ok
-                          (CompilerCtfeValue.Bool
-                            (ctfe-expr-binding-clause-has-type? clause))
-                          arg-fuel)]
-                      [(string.string-eq name "expr-binding-clause-type")
-                        (if (ctfe-expr-binding-clause-has-type? clause)
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.Expr
-                              (ctfe-expr-binding-clause-type clause)
-                              (ctfe-untyped-expr-type))
-                            arg-fuel)
-                          (ResultCtfe.Err
-                            (box
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                "expr-binding-clause-type expects typed ExprBindingClause"))))]
-                      [(string.string-eq name "expr-binding-clause-init")
-                        (ResultCtfe.Ok
-                          (CompilerCtfeValue.Expr
-                            (ctfe-expr-binding-clause-init clause)
-                            (ctfe-untyped-expr-type))
-                          arg-fuel)]
-                      [else (ctfe-unsupported-form expr)])]
+                  [(CompilerCtfeValue.ExprList nodes)
+                    (if (ctfe-expr-list-empty? nodes)
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            (string.string-append
+                              name
+                              " expects non-empty ExprList"))))
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.ExprList (ctfe-expr-list-tail nodes))
+                        arg-fuel))]
                   [_
                     (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
-                          (string.string-append
-                            name
-                            " expects ExprBindingClause"))))])]
+                          (string.string-append name " expects ExprList"))))])]
               [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
           [_
             (ResultCtfe.Err
@@ -5377,52 +5111,59 @@
             expr
             (string.string-append name " expects exactly one arg"))))]))
 
-(define (ctfe-eval-expr-binding-clause-list-nth-call
-  [list-arg : AstExpr]
-  [index-arg : AstExpr]
-  [rest : AstExprList]
+(define (ctfe-eval-expr-clause-list-inspector-call
+  [name : String]
+  [args : AstExprList]
   [expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match rest
-    [(AstExprList.Nil)
-      (match (compiler-ctfe-eval list-arg env fuel)
-        [(ResultCtfe.Ok value list-fuel)
-          (match value
-            [(CompilerCtfeValue.ExprBindingClauseList clauses)
-              (match (ctfe-eval-i64-arg
-                index-arg
-                expr
-                env
-                list-fuel
-                "expr-binding-clause-list-nth")
-                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-                [(ResultCtfeI64Arg.Ok index index-fuel)
-                  (if (or
-                    (< index 0)
-                    (>= index (ctfe-expr-binding-clause-list-length clauses)))
+  (match args
+    [(AstExprList.Cons arg rest)
+      (let
+        [arg : AstExpr (ctfe-ast-get env arg)]
+        [rest : AstExprList (box-get rest)]
+        (match rest
+          [(AstExprList.Nil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(ResultCtfe.Ok value arg-fuel)
+                (match value
+                  [(CompilerCtfeValue.ExprClauseList clauses)
+                    (if (string.string-eq name "expr-clause-list->expr-list")
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.ExprList
+                          (ctfe-expr-clause-list->expr-list-in-env env clauses))
+                        arg-fuel)
+                      (if (ctfe-expr-clause-list-empty? clauses)
+                        (ResultCtfe.Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              (string.string-append
+                                name
+                                " expects non-empty ExprClauseList"))))
+                        (ResultCtfe.Ok
+                          (CompilerCtfeValue.ExprClauseList
+                            (ctfe-expr-clause-list-tail clauses))
+                          arg-fuel)))]
+                  [_
                     (ResultCtfe.Err
                       (box
                         (ctfe-diagnostic-at-expr
                           expr
-                          "expr-binding-clause-list-nth index out of range")))
-                    (ResultCtfe.Ok
-                      (CompilerCtfeValue.ExprBindingClause
-                        (ctfe-expr-binding-clause-list-nth clauses index))
-                      index-fuel))])]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-binding-clause-list-nth expects ExprBindingClauseList")))])]
-        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+                          (string.string-append name " expects ExprClauseList"))))])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+          [_
+            (ResultCtfe.Err
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (string.string-append name " expects exactly one arg"))))]))]
     [_
       (ResultCtfe.Err
         (box
           (ctfe-diagnostic-at-expr
             expr
-            "expr-binding-clause-list-nth expects exactly two args")))]))
+            (string.string-append name " expects exactly one arg"))))]))
 
 (define (ctfe-eval-expr-binding-clause-list-inspector-call
   [name : String]
@@ -5435,86 +5176,48 @@
       (let
         [arg : AstExpr (ctfe-ast-get env arg)]
         [rest : AstExprList (box-get rest)]
-        (if (string.string-eq name "expr-binding-clause-list-nth")
-          (match rest
-            [(AstExprList.Cons index-arg nth-rest)
-              (ctfe-eval-expr-binding-clause-list-nth-call
-                arg
-                (ctfe-ast-get env index-arg)
-                (box-get nth-rest)
-                expr
-                env
-                fuel)]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    "expr-binding-clause-list-nth expects exactly two args")))])
-          (match rest
-            [(AstExprList.Nil)
-              (match (compiler-ctfe-eval arg env fuel)
-                [(ResultCtfe.Ok value arg-fuel)
-                  (match value
-                    [(CompilerCtfeValue.ExprBindingClauseList clauses)
-                      (cond
-                        [(string.string-eq
+        (match rest
+          [(AstExprList.Nil)
+            (match (compiler-ctfe-eval arg env fuel)
+              [(ResultCtfe.Ok value arg-fuel)
+                (match value
+                  [(CompilerCtfeValue.ExprBindingClauseList clauses)
+                    (if (string.string-eq
+                      name
+                      "expr-binding-clause-list->expr-list")
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.ExprList
+                          (ctfe-expr-binding-clause-list->expr-list-in-env
+                            env
+                            clauses))
+                        arg-fuel)
+                      (if (ctfe-expr-binding-clause-list-empty? clauses)
+                        (ResultCtfe.Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              (string.string-append
+                                name
+                                " expects non-empty ExprBindingClauseList"))))
+                        (ResultCtfe.Ok
+                          (CompilerCtfeValue.ExprBindingClauseList
+                            (ctfe-expr-binding-clause-list-tail clauses))
+                          arg-fuel)))]
+                  [_
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          (string.string-append
                             name
-                            "expr-binding-clause-list-empty?")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.Bool
-                              (ctfe-expr-binding-clause-list-empty? clauses))
-                            arg-fuel)]
-                        [(string.string-eq
-                            name
-                            "expr-binding-clause-list-length")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.I64
-                              (ctfe-expr-binding-clause-list-length clauses))
-                            arg-fuel)]
-                        [(string.string-eq
-                            name
-                            "expr-binding-clause-list->expr-list")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprList
-                              (ctfe-expr-binding-clause-list->expr-list-in-env
-                                env
-                                clauses))
-                            arg-fuel)]
-                        [(ctfe-expr-binding-clause-list-empty? clauses)
-                          (ResultCtfe.Err
-                            (box
-                              (ctfe-diagnostic-at-expr
-                                expr
-                                (string.string-append
-                                  name
-                                  " expects non-empty ExprBindingClauseList"))))]
-                        [(string.string-eq name "expr-binding-clause-list-head")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprBindingClause
-                              (ctfe-expr-binding-clause-list-head clauses))
-                            arg-fuel)]
-                        [(string.string-eq name "expr-binding-clause-list-tail")
-                          (ResultCtfe.Ok
-                            (CompilerCtfeValue.ExprBindingClauseList
-                              (ctfe-expr-binding-clause-list-tail clauses))
-                            arg-fuel)]
-                        [else (ctfe-unsupported-form expr)])]
-                    [_
-                      (ResultCtfe.Err
-                        (box
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            (string.string-append
-                              name
-                              " expects ExprBindingClauseList"))))])]
-                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
-            [_
-              (ResultCtfe.Err
-                (box
-                  (ctfe-diagnostic-at-expr
-                    expr
-                    (string.string-append name " expects exactly one arg"))))])))]
+                            " expects ExprBindingClauseList"))))])]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+          [_
+            (ResultCtfe.Err
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  (string.string-append name " expects exactly one arg"))))]))]
     [_
       (ResultCtfe.Err
         (box
@@ -6035,6 +5738,106 @@
 (define (ctfe-source-helper-bool [env : CtfeEnv] [value : bool]) : i64
   (ctfe-ast-push env (AstExpr.Literal (AstLitBool value))))
 
+(define (ctfe-source-helper-i64 [env : CtfeEnv] [value : i64]) : i64
+  (ctfe-ast-push env (AstExpr.Literal (ast-lit-int value))))
+
+(define (ctfe-source-helper-string [env : CtfeEnv] [value : String]) : i64
+  (ctfe-ast-push env (AstExpr.Literal (AstLitString value))))
+
+(define (ctfe-source-helper-struct-get
+  [env : CtfeEnv]
+  [target : i64]
+  [field : String]) : i64
+  (ast-expr-struct-get-with-pools (ctfe-env-pools env) target field))
+
+(define (ctfe-source-helper-array-ref
+  [env : CtfeEnv]
+  [target : i64]
+  [index : i64]) : i64
+  (ast-expr-array-ref-with-pools (ctfe-env-pools env) target index))
+
+(define (ctfe-source-helper-binary
+  [env : CtfeEnv]
+  [op : AstBinOp]
+  [left : i64]
+  [right : i64]) : i64
+  (ast-expr-binary-with-pools (ctfe-env-pools env) op left right))
+
+(define (ctfe-source-helper-if
+  [env : CtfeEnv]
+  [cond : i64]
+  [then-expr : i64]
+  [else-expr : i64]) : i64
+  (ast-expr-if-with-pools (ctfe-env-pools env) cond then-expr else-expr))
+
+(define (ctfe-source-helper-call1 [env : CtfeEnv] [name : String] [arg : i64]) : i64
+  (ast-expr-call-with-pools
+    (ctfe-env-pools env)
+    (ctfe-source-helper-var env name)
+    (ast-expr-cons arg AstExprList.Nil)))
+
+(define (ctfe-source-helper-comptime-error [env : CtfeEnv] [message : String]) : i64
+  (ctfe-source-helper-call1
+    env
+    "comptime-error"
+    (ctfe-source-helper-string env message)))
+
+(define (ctfe-source-helper-sequence-len [env : CtfeEnv] [items : i64]) : i64
+  (ctfe-source-helper-struct-get env items "len"))
+
+(define (ctfe-source-helper-sequence-items [env : CtfeEnv] [items : i64]) : i64
+  (ctfe-source-helper-struct-get env items "items"))
+
+(define (ctfe-source-helper-sequence-empty? [env : CtfeEnv] [items : i64]) : i64
+  (ctfe-source-helper-binary
+    env
+    (AstBinEq)
+    (ctfe-source-helper-sequence-len env items)
+    (ctfe-source-helper-i64 env 0)))
+
+(define (ctfe-source-helper-sequence-head
+  [env : CtfeEnv]
+  [items : i64]
+  [message : String]) : i64
+  (let
+    [zero : i64 (ctfe-source-helper-i64 env 0)]
+    [has-items : i64
+      (ctfe-source-helper-binary
+        env
+        (AstBinGt)
+        (ctfe-source-helper-sequence-len env items)
+        zero)]
+    [head : i64
+      (ctfe-source-helper-array-ref
+        env
+        (ctfe-source-helper-sequence-items env items)
+        zero)]
+    [err : i64 (ctfe-source-helper-comptime-error env message)]
+    (ctfe-source-helper-if env has-items head err)))
+
+(define (ctfe-source-helper-sequence-nth
+  [env : CtfeEnv]
+  [items : i64]
+  [index : i64]
+  [message : String]) : i64
+  (let
+    [zero : i64 (ctfe-source-helper-i64 env 0)]
+    [negative : i64 (ctfe-source-helper-binary env (AstBinLt) index zero)]
+    [too-large : i64
+      (ctfe-source-helper-binary
+        env
+        (AstBinGe)
+        index
+        (ctfe-source-helper-sequence-len env items))]
+    [value : i64
+      (ctfe-source-helper-array-ref
+        env
+        (ctfe-source-helper-sequence-items env items)
+        index)]
+    [err : i64 (ctfe-source-helper-comptime-error env message)]
+    [non-negative : i64 (ctfe-source-helper-if env too-large err value)]
+    (ctfe-source-helper-if env negative err non-negative)))
+
 (define (ctfe-source-helper-match-with-fallback
   [env : CtfeEnv]
   [scrutinee : i64]
@@ -6082,12 +5885,42 @@
     "ExprClause"
     (ast-pattern-cons first (ast-pattern-cons second AstPatternList.Nil))))
 
+(define (ctfe-comptime-source-helper-nth-name? [name : String]) : bool
+  (or
+    (string.string-eq name "expr-list-nth")
+    (string.string-eq name "expr-clause-list-nth")
+    (string.string-eq name "expr-binding-clause-list-nth")))
+
+(define (ctfe-comptime-source-helper-arity [name : String]) : i64
+  (if (ctfe-comptime-source-helper-nth-name? name)
+    2
+    1))
+
 (define (ctfe-comptime-source-helper-param-name [name : String]) : String
-  (if (or
-    (string.string-eq name "expr-clause-first")
-    (string.string-eq name "expr-clause-second"))
-    "clause"
-    "value"))
+  (cond
+    [(or
+        (string.string-eq name "expr-clause-first")
+        (string.string-eq name "expr-clause-second")
+        (string.string-eq name "expr-binding-clause-name")
+        (string.string-eq name "expr-binding-clause-has-type?")
+        (string.string-eq name "expr-binding-clause-type")
+        (string.string-eq name "expr-binding-clause-init"))
+      "clause"]
+    [(or
+        (string.string-eq name "expr-list-empty?")
+        (string.string-eq name "expr-list-length")
+        (string.string-eq name "expr-list-head")
+        (string.string-eq name "expr-list-nth")
+        (string.string-eq name "expr-clause-list-empty?")
+        (string.string-eq name "expr-clause-list-length")
+        (string.string-eq name "expr-clause-list-head")
+        (string.string-eq name "expr-clause-list-nth")
+        (string.string-eq name "expr-binding-clause-list-empty?")
+        (string.string-eq name "expr-binding-clause-list-length")
+        (string.string-eq name "expr-binding-clause-list-head")
+        (string.string-eq name "expr-binding-clause-list-nth"))
+      "items"]
+    [else "value"]))
 
 (define (ctfe-comptime-source-helper-body [name : String] [env : CtfeEnv]) : i64
   (let
@@ -6164,7 +5997,109 @@
             AstPattern.Wildcard
             (ast-pat-binding "second"))
           (ctfe-source-helper-var env "second"))]
+      [(string.string-eq name "expr-list-empty?")
+        (ctfe-source-helper-sequence-empty? env scrutinee)]
+      [(string.string-eq name "expr-list-length")
+        (ctfe-source-helper-sequence-len env scrutinee)]
+      [(string.string-eq name "expr-list-head")
+        (ctfe-source-helper-sequence-head
+          env
+          scrutinee
+          "expr-list-head expects non-empty ExprList")]
+      [(string.string-eq name "expr-list-nth")
+        (ctfe-source-helper-sequence-nth
+          env
+          scrutinee
+          (ctfe-source-helper-var env "index")
+          "expr-list-nth index out of range")]
+      [(string.string-eq name "expr-clause-list-empty?")
+        (ctfe-source-helper-sequence-empty? env scrutinee)]
+      [(string.string-eq name "expr-clause-list-length")
+        (ctfe-source-helper-sequence-len env scrutinee)]
+      [(string.string-eq name "expr-clause-list-head")
+        (ctfe-source-helper-sequence-head
+          env
+          scrutinee
+          "expr-clause-list-head expects non-empty ExprClauseList")]
+      [(string.string-eq name "expr-clause-list-nth")
+        (ctfe-source-helper-sequence-nth
+          env
+          scrutinee
+          (ctfe-source-helper-var env "index")
+          "expr-clause-list-nth index out of range")]
+      [(string.string-eq name "expr-binding-clause-name")
+        (ctfe-source-helper-struct-get env scrutinee "name")]
+      [(string.string-eq name "expr-binding-clause-has-type?")
+        (ctfe-source-helper-struct-get env scrutinee "has-type")]
+      [(string.string-eq name "expr-binding-clause-type")
+        (ctfe-source-helper-struct-get env scrutinee "ty")]
+      [(string.string-eq name "expr-binding-clause-init")
+        (ctfe-source-helper-struct-get env scrutinee "init")]
+      [(string.string-eq name "expr-binding-clause-list-empty?")
+        (ctfe-source-helper-sequence-empty? env scrutinee)]
+      [(string.string-eq name "expr-binding-clause-list-length")
+        (ctfe-source-helper-sequence-len env scrutinee)]
+      [(string.string-eq name "expr-binding-clause-list-head")
+        (ctfe-source-helper-sequence-head
+          env
+          scrutinee
+          "expr-binding-clause-list-head expects non-empty ExprBindingClauseList")]
+      [(string.string-eq name "expr-binding-clause-list-nth")
+        (ctfe-source-helper-sequence-nth
+          env
+          scrutinee
+          (ctfe-source-helper-var env "index")
+          "expr-binding-clause-list-nth index out of range")]
       [else scrutinee])))
+
+(define (ctfe-comptime-source-helper-arity-message [name : String]) : String
+  (if (= (ctfe-comptime-source-helper-arity name) 1)
+    (string.string-append name " expects exactly one arg")
+    (string.string-append name " expects exactly two args")))
+
+(define (ctfe-comptime-source-helper-arity-error
+  [name : String]
+  [expr : AstExpr]) : ResultCtfe
+  (ResultCtfe.Err
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        (ctfe-comptime-source-helper-arity-message name)))))
+
+(define (ctfe-eval-comptime-source-helper-body
+  [name : String]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (let
+    [body : i64 (ctfe-comptime-source-helper-body name env)]
+    (compiler-ctfe-eval (ctfe-ast-get env body) env fuel)))
+
+(define (ctfe-eval-comptime-source-helper-index
+  [name : String]
+  [rest : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [arg-env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match rest
+    [(AstExprList.Cons index-arg done)
+      (let
+        [index-arg : AstExpr (ctfe-ast-get env index-arg)]
+        [done : AstExprList (box-get done)]
+        (match done
+          [(AstExprList.Nil)
+            (match (compiler-ctfe-eval index-arg env fuel)
+              [(ResultCtfe.Ok index-value index-fuel)
+                (let
+                  [body-env : CtfeEnv
+                    (ctfe-env-extend arg-env "index" index-value)]
+                  (ctfe-eval-comptime-source-helper-body
+                    name
+                    body-env
+                    index-fuel))]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+          [_ (ctfe-comptime-source-helper-arity-error name expr)]))]
+    [_ (ctfe-comptime-source-helper-arity-error name expr)]))
 
 (define (ctfe-eval-comptime-source-helper-call
   [name : String]
@@ -6175,36 +6110,34 @@
   (match args
     [(AstExprList.Cons arg rest)
       (let
+        [arity : i64 (ctfe-comptime-source-helper-arity name)]
         [arg : AstExpr (ctfe-ast-get env arg)]
         [rest : AstExprList (box-get rest)]
-        (match rest
-          [(AstExprList.Nil)
-            (match (compiler-ctfe-eval arg env fuel)
-              [(ResultCtfe.Ok value arg-fuel)
-                (let
-                  [body-env : CtfeEnv
-                    (ctfe-env-extend
-                      env
-                      (ctfe-comptime-source-helper-param-name name)
-                      value)]
-                  [body : i64 (ctfe-comptime-source-helper-body name body-env)]
-                  (compiler-ctfe-eval
-                    (ctfe-ast-get body-env body)
-                    body-env
-                    arg-fuel))]
-              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
-          [_
-            (ResultCtfe.Err
-              (box
-                (ctfe-diagnostic-at-expr
+        (match (compiler-ctfe-eval arg env fuel)
+          [(ResultCtfe.Ok value arg-fuel)
+            (let
+              [arg-env : CtfeEnv
+                (ctfe-env-extend
+                  env
+                  (ctfe-comptime-source-helper-param-name name)
+                  value)]
+              (if (= arity 1)
+                (match rest
+                  [(AstExprList.Nil)
+                    (ctfe-eval-comptime-source-helper-body
+                      name
+                      arg-env
+                      arg-fuel)]
+                  [_ (ctfe-comptime-source-helper-arity-error name expr)])
+                (ctfe-eval-comptime-source-helper-index
+                  name
+                  rest
                   expr
-                  (string.string-append name " expects exactly one arg"))))]))]
-    [_
-      (ResultCtfe.Err
-        (box
-          (ctfe-diagnostic-at-expr
-            expr
-            (string.string-append name " expects exactly one arg"))))]))
+                  env
+                  arg-env
+                  arg-fuel)))]
+          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))]
+    [_ (ctfe-comptime-source-helper-arity-error name expr)]))
 
 ;; Dispatch a comptime call. Layout and reflection queries are compile-time-only
 ;; compiler metadata; selected String and Expr helpers make that metadata usable
@@ -6315,13 +6248,6 @@
             (ctfe-eval-expr-list-inspector-call call-name args expr env fuel)]
           [(ctfe-expr-clause-list-inspector-name? call-name)
             (ctfe-eval-expr-clause-list-inspector-call
-              call-name
-              args
-              expr
-              env
-              fuel)]
-          [(ctfe-expr-binding-clause-inspector-name? call-name)
-            (ctfe-eval-expr-binding-clause-inspector-call
               call-name
               args
               expr

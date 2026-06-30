@@ -274,7 +274,7 @@
 (define (serialize-json-i64-root-roundtrip-ok?) : bool
   (let
     [json : json.Json (i64_json.to-json 42)]
-    [encoded : String (stdlib.json.json-stringify json)]
+    [encoded : String (stdlib.json.stringify json)]
     (and
       (string.eq encoded "42")
       (match (i64_json.from-json json)
@@ -285,7 +285,7 @@
   (let
     [scores : (Array i64 3) (array 4 5 6)]
     [json : json.Json (fixed_i64_json.to-json scores)]
-    [encoded : String (stdlib.json.json-stringify json)]
+    [encoded : String (stdlib.json.stringify json)]
     (and
       (string.eq encoded "[4,5,6]")
       (match (fixed_i64_json.from-json json)
@@ -296,7 +296,7 @@
   (let
     [samples : (Array i64) (serialize-json-make-samples)]
     [json : json.Json (dyn_i64_json.to-json samples)]
-    [encoded : String (stdlib.json.json-stringify json)]
+    [encoded : String (stdlib.json.stringify json)]
     (and
       (string.eq encoded "[7,8]")
       (match (dyn_i64_json.from-json json)
@@ -307,7 +307,7 @@
   (let
     [previous : (Array Address 2) (serialize-json-previous-addresses)]
     [json : json.Json (address_array_json.to-json previous)]
-    [encoded : String (stdlib.json.json-stringify json)]
+    [encoded : String (stdlib.json.stringify json)]
     (and
       (string.eq
         encoded

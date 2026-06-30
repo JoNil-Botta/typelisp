@@ -1810,6 +1810,18 @@
 (define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : vector.StringVec
   (vector.string-vec-push (vector.string-vec-new) root))
 
+(define (compiler-typecheck-smoke-paths-contain?
+  [paths : AstDeclPathList]
+  [needle : String]) : bool
+  (match paths
+    [(AstDeclPathList.Nil) false]
+    [(AstDeclPathList.Cons path rest)
+      (or
+        (compiler-load-string-contains?
+          (compiler-load-normalize-path path)
+          needle)
+        (compiler-typecheck-smoke-paths-contain? (box-get rest) needle))]))
+
 (define (compiler-typecheck-smoke-prefix-cache-check-cfg
   [src : String]
   [entry-path : String]
@@ -2445,6 +2457,32 @@
 (import stdlib.vector as vec)
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-smoke-lazy-import-stdlib-array-source) : String
+  "(module main)
+(import stdlib.array)
+(define (main) : i64
+  (let
+    [items : (Array i64) (stdlib.array.make-array i64 0)]
+    (begin
+      (stdlib.array.push! items 41)
+      (+ (stdlib.array.ref items 0) (stdlib.array.length items)))))")
+
+(define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source) : String
+  "(module main)
+(import stdlib.array)
+(define (main) : i64
+  (let
+    [items : (Array i64) (array.make-array i64 0)]
+    (begin
+      (array.push! items 41)
+      (+ (array.ref items 0) (array.length items)))))")
+
+(define (compiler-typecheck-smoke-lazy-import-str-cat-source) : String
+  "(module main)
+(import stdlib.str_cat)
+(define (main) : String
+  (str_cat.str-cat \"a\" \"b\" \"c\" \"d\" \"e\"))")
+
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?) : bool
   (let
     [ok : bool
@@ -2536,6 +2574,88 @@
       (compiler-load-surface-summaries-reset!)
       ok)))
 
+(define (compiler-typecheck-smoke-lazy-import-stdlib-array-macro-ok?) : bool
+  (let
+    [ok : bool
+      (begin
+        (compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
+        (io.write-file
+          "target/tc_lazy_stdlib_array/canonical.tl"
+          (compiler-typecheck-smoke-lazy-import-stdlib-array-source))
+        (match (compiler-load-file-with-paths
+          "target/tc_lazy_stdlib_array/canonical.tl"
+          (sym_i64_env.sym-i64-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (let
+              [array-materialized : bool
+                (compiler-typecheck-smoke-paths-contain?
+                  paths
+                  "stdlib/array.tl")]
+              (match (typecheck-compiler-program-with-paths-checked
+                (ast-program decls)
+                paths)
+                [(ResultCompilerTypecheckChecked.Ok _ _ _)
+                  (if array-materialized
+                    (io.panic
+                      "typecheck: lazy import stdlib.array materialized")
+                    true)]
+                [(ResultCompilerTypecheckChecked.Err diag)
+                  (let
+                    [message : String
+                      (compiler-diagnostic-message (box-get diag))]
+                    (begin
+                      (io.stderr-write (& message))
+                      (io.panic
+                        "typecheck: lazy import stdlib.array nested typecheck failed")))]))]
+          [(ResultCompilerLoadWithPaths.Err _)
+            (io.panic "typecheck: lazy import stdlib.array load failed")]))]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
+(define (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?) : bool
+  (let
+    [ok : bool
+      (begin
+        (compiler-load-test-mkdir "target/tc_lazy_stdlib_array")
+        (io.write-file
+          "target/tc_lazy_stdlib_array/alias.tl"
+          (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-source))
+        (match (compiler-load-file-with-paths
+          "target/tc_lazy_stdlib_array/alias.tl"
+          (sym_i64_env.sym-i64-empty))
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (let
+              [skip-count : i64 (compiler-load-lazy-import-skip-count)]
+              (match (typecheck-compiler-program-with-paths-checked
+                (ast-program decls)
+                paths)
+                [(ResultCompilerTypecheckChecked.Ok _ _ _) (= skip-count 0)]
+                [(ResultCompilerTypecheckChecked.Err _) false]))]
+          [(ResultCompilerLoadWithPaths.Err _) false]))]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
+(define (compiler-typecheck-smoke-lazy-import-str-cat-macro-ok?) : bool
+  (let
+    [ok : bool
+      (match (typecheck-compiler-source-load
+        (compiler-typecheck-smoke-lazy-import-str-cat-source))
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          (match (typecheck-compiler-program-with-paths-checked
+            (ast-program decls)
+            paths)
+            [(ResultCompilerTypecheckChecked.Ok _ _ _) true]
+            [(ResultCompilerTypecheckChecked.Err _) false])]
+        [(ResultCompilerLoadWithPaths.Err _) false])]
+    (begin
+      (compiler-typecheck-reset-file-state!)
+      (compiler-load-surface-summaries-reset!)
+      ok)))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
@@ -2581,6 +2701,15 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?)
       (io.panic "typecheck: lazy import summary smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-stdlib-array-macro-ok?)
+      (io.panic "typecheck: lazy import stdlib.array macro smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-stdlib-array-alias-ok?)
+      (io.panic "typecheck: lazy import stdlib.array alias smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-lazy-import-str-cat-macro-ok?)
+      (io.panic "typecheck: lazy import str-cat macro smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-summary-macro-unused-ok?)
       (io.panic "typecheck: lazy summary macro unused smoke failed"))

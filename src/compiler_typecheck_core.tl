@@ -14105,13 +14105,16 @@
                                 (set! message step-message)
                                 (set! ok false))])
                           (begin
-                            (tc-lazy-import-stub-record!
-                              cur-module-id
-                              alias-key
-                              target-module
-                              (tc-import-alias-summary-backed?
-                                summary-index
-                                target-module))
+                            (let
+                              [summary-backed : bool
+                                (tc-import-alias-summary-backed?
+                                  summary-index
+                                  target-module)]
+                              (tc-lazy-import-stub-record!
+                                cur-module-id
+                                alias-key
+                                target-module
+                                summary-backed))
                             (set! cur rest))))))]
                 [_ (set! cur rest)]))]))
       (if (string.eq message "")
@@ -47008,9 +47011,12 @@
 (define (macro-array-fast-path-base-known? [base : String]) : bool
   (or
     (string.eq base "make-array")
+    (string.eq base "length")
     (string.eq base "array-length")
+    (string.eq base "ref")
     (string.eq base "array-ref")
     (string.eq base "array-set!")
+    (string.eq base "push!")
     (string.eq base "array-push!")))
 
 (define (macro-array-fast-path?
@@ -47316,7 +47322,25 @@
           args
           depth
           call-expr)]
+      [(string.eq base "length")
+        (macro-array-fast-array-length
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
       [(string.eq base "array-ref")
+        (macro-array-fast-array-ref
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
+      [(string.eq base "ref")
         (macro-array-fast-array-ref
           ctx
           type-env
@@ -47327,6 +47351,15 @@
           call-expr)]
       [(string.eq base "array-set!")
         (macro-array-fast-array-set
+          ctx
+          type-env
+          decls
+          macro-name
+          args
+          depth
+          call-expr)]
+      [(string.eq base "push!")
+        (macro-array-fast-array-push
           ctx
           type-env
           decls
@@ -50128,6 +50161,7 @@
                   (not (tc-macro-result-decls? ret))
                   (not (tc-macro-result-module? ret))
                   (or
+                    (macro-array-fast-path? macro-name definition-module)
                     (and
                       (macro-core-prelude-module? definition-module)
                       (macro-core-fast-path-base-known?

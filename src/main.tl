@@ -37,10 +37,17 @@
 (cfg
   stage0-build-version
   (include-str cli-build-git-hash "../target/build-stage0/git-hash.txt"))
+(cfg
+  stage0-build-version
+  (include-str cli-build-date "../target/build-stage0/build-date.txt"))
 
 (cfg
   (not stage0-build-version)
   (define cli-build-git-hash : String
+    "unknown"))
+(cfg
+  (not stage0-build-version)
+  (define cli-build-date : String
     "unknown"))
 
 (define (cli-argc) : i64
@@ -87,7 +94,7 @@ Commands:
 
 Global Options:
     --help, -h                     Show root or command help
-    --version                      Show the compiler build git hash
+    --version                      Show the compiler build git hash and date
 
 Common Command Options:
     --target <target>              linux-x86_64 or windows-x86_64
@@ -322,7 +329,12 @@ Options:
 
 (define (cli-print-version) : i64
   (begin
-    (io.print-string (cli-cat "typelisp " (cli-cat cli-build-git-hash "\n")))
+    (io.print-string
+      (cli-cat
+        "typelisp "
+        (cli-cat
+          cli-build-git-hash
+          (cli-cat " built " (cli-cat cli-build-date "\n")))))
     0))
 
 ;; A stage0 command listed in the help but not yet wired into the selfhost CLI.

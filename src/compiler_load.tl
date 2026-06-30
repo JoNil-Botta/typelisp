@@ -1767,7 +1767,7 @@
   [contents : String]) : AstDecl
   (ast-decl-def
     name
-    (AstSomeType (AstTyString))
+    (AstMaybeType.Some (AstType.String))
     (ast-node-pool-context-expr-push
       pools
       (AstExpr.Literal (AstLitString contents)))))
@@ -1787,7 +1787,7 @@
   [contents : String]) : AstDecl
   (ast-decl-def
     name
-    (AstSomeType (ast-ty-dyn-array-with-pools pools (AstTyU8)))
+    (AstMaybeType.Some (ast-ty-dyn-array-with-pools pools (AstType.U8)))
     (ast-node-pool-context-expr-push pools (AstExpr.BinaryData contents))))
 
 (define (compiler-load-include-str-read-error
@@ -2528,7 +2528,7 @@
   [source : String]
   [start : i64]) : bool
   (match variant
-    [(AstVariantDef name _ _)
+    [(AstVariantDef.Def name _ _)
       (compiler-load-source-has-name-token-from? source (intern-str name) start)]))
 
 (define (compiler-load-lazy-variant-list-name-used?
@@ -2536,8 +2536,8 @@
   [source : String]
   [start : i64]) : bool
   (match variants
-    [(AstVariantDefNil) false]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) false]
+    [(AstVariantDefList.Cons variant rest)
       (or
         (compiler-load-lazy-variant-name-used? variant source start)
         (compiler-load-lazy-variant-list-name-used? (box-get rest) source start))]))
@@ -2665,8 +2665,8 @@
 
 (define (compiler-load-surface-macro-result-kind [ret : AstType]) : CompilerLoadSurfaceMacroResultKind
   (match ret
-    [(AstTyExpr) (CompilerLoadSurfaceMacroExpr)]
-    [(AstTyVar name)
+    [(AstType.Expr) (CompilerLoadSurfaceMacroExpr)]
+    [(AstType.Var name)
       (cond
         [(or (= name (intern "Expr")) (= name (intern "expr")))
           (CompilerLoadSurfaceMacroExpr)]
@@ -2685,8 +2685,8 @@
 
 (define (compiler-load-surface-fn-export? [export : AstFnExport]) : bool
   (match export
-    [(AstFnNoExport) false]
-    [(AstFnExport _) true]))
+    [(AstFnExport.No) false]
+    [(AstFnExport.Export _) true]))
 
 (define (compiler-load-surface-generated-meta? [meta : AstGeneratedDeclMeta]) : bool
   (match meta
@@ -2695,12 +2695,12 @@
 
 (define (compiler-load-surface-field-list-cleanup? [fields : AstFieldDefList]) : bool
   (match fields
-    [(AstFieldDefNil) false]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) false]
+    [(AstFieldDefList.Cons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
-          [(AstFieldDef _ _ cleanup)
+          [(AstFieldDef.Def _ _ cleanup)
             (or
               (ast-field-cleanup? cleanup)
               (compiler-load-surface-field-list-cleanup? rest))]))]))
@@ -2708,8 +2708,8 @@
 (define (compiler-load-surface-variant-payload-cleanup?
   [cleanups : AstVariantPayloadCleanupList]) : bool
   (match cleanups
-    [(AstVariantPayloadCleanupNil) false]
-    [(AstVariantPayloadCleanupCons cleanup rest)
+    [(AstVariantPayloadCleanupList.Nil) false]
+    [(AstVariantPayloadCleanupList.Cons cleanup rest)
       (or
         (ast-variant-payload-cleanup? cleanup)
         (compiler-load-surface-variant-payload-cleanup? (box-get rest)))]))
@@ -2717,12 +2717,12 @@
 (define (compiler-load-surface-variant-list-cleanup?
   [variants : AstVariantDefList]) : bool
   (match variants
-    [(AstVariantDefNil) false]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) false]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ _ cleanups)
+          [(AstVariantDef.Def _ _ cleanups)
             (or
               (compiler-load-surface-variant-payload-cleanup? cleanups)
               (compiler-load-surface-variant-list-cleanup? rest))]))]))
@@ -2853,7 +2853,7 @@
             (intern-str name)
             module-id
             (CompilerLoadSurfaceStructSignature
-              AstLifetimeNil
+              AstLifetimeList.Nil
               repr
               cleanup
               fields)
@@ -2902,7 +2902,10 @@
             (CompilerLoadSurfaceEnum)
             (intern-str name)
             module-id
-            (CompilerLoadSurfaceEnumSignature AstLifetimeNil cleanup variants)
+            (CompilerLoadSurfaceEnumSignature
+              AstLifetimeList.Nil
+              cleanup
+              variants)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
             false
@@ -5014,12 +5017,12 @@
 
 (define (compiler-load-param-type-list [params : AstParamList]) : AstTypeList
   (match params
-    [(AstParamNil) AstTypeNil]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) AstTypeList.Nil]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (match param
-          [(AstParam _ ty _)
+          [(AstParam.Param _ ty _)
             (ast-type-cons ty (compiler-load-param-type-list rest))]))]))
 
 (define (compiler-load-package-def-fn-extern
@@ -5043,11 +5046,11 @@
       (compiler-load-package-decl-logical-name "" logical-path module name-str)]
     (AstDecl.Extern
       name
-      (AstExternFunction)
-      (AstExternMetadata
-        (AstExternAbiC)
+      (AstExternKind.Function)
+      (AstExternMetadata.Metadata
+        (AstExternAbi.C)
         (compiler-load-package-user-symbol logical)
-        AstExternLinkInputNil
+        AstExternLinkInputList.Nil
         false)
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
@@ -6050,7 +6053,7 @@
   [want : String]) : bool
   (match decls
     [(AstDeclList.Cons
-        (AstDecl.Def got (AstSomeType (AstTyString)) value-box)
+        (AstDecl.Def got (AstMaybeType.Some (AstType.String)) value-box)
         _)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -6073,7 +6076,10 @@
 (define (compiler-load-first-bin-def? [decls : AstDeclList] [name : String]) : bool
   (match decls
     [(AstDeclList.Cons
-        (AstDecl.Def got (AstSomeType (AstTyDynArray elem-id)) value-box)
+        (AstDecl.Def
+          got
+          (AstMaybeType.Some (AstType.DynArray elem-id))
+          value-box)
         _)
       (let
         [value : AstExpr (ast-node-get value-box)]
@@ -6083,7 +6089,7 @@
             (and
               (string.eq (intern-str got) name)
               (match elem
-                [(AstTyU8) true]
+                [(AstType.U8) true]
                 [_ false])
               (compiler-load-binary-payload-ok? text))]
           [_ false]))]
@@ -7384,8 +7390,8 @@
     [inner : AstDecl
       (ast-decl-def-fn
         "generated-fn"
-        AstParamNil
-        (AstTyI64)
+        AstParamList.Nil
+        (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     [decl : AstDecl (ast-decl-comptime-decl-with-meta meta inner)]
     (match (compiler-load-package-transform-decl
@@ -7675,9 +7681,7 @@
 ;; a configured `--stdlib-root` (root fallback) (#1074).
 (define (compiler-load-stdlib-root-fallback-ok?) : bool
   (begin
-    (io.write-file
-      "target/cl_srf_mod.tl"
-      "(module srf.mod)
+    (io.write-file "target/cl_srf_mod.tl" "(module srf.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_srf_entry.tl"
@@ -7696,9 +7700,7 @@
 ;; candidate wins, so a missing leading root is skipped (#1074).
 (define (compiler-load-stdlib-searched-root-ok?) : bool
   (begin
-    (io.write-file
-      "target/cl_ssr_mod.tl"
-      "(module ssr.mod)
+    (io.write-file "target/cl_ssr_mod.tl" "(module ssr.mod)
 (define v : i64 1)")
     (io.write-file
       "target/cl_ssr_entry.tl"
@@ -9702,20 +9704,20 @@
     [runtime-decl : AstDecl
       (ast-decl-def-fn
         "runtime-helper"
-        AstParamNil
-        (AstTyI64)
+        AstParamList.Nil
+        (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "helper"
-        AstParamNil
-        (AstTyI64)
+        AstParamList.Nil
+        (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 2))))]
     [main-decl : AstDecl
       (ast-decl-def-fn
         "main"
-        AstParamNil
-        (AstTyI64)
+        AstParamList.Nil
+        (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 0))))]
     [decls : AstDeclList
       (ast-decl-cons
@@ -9778,8 +9780,8 @@
         "C:/dep/src/lib.tl"
         ""
         (intern "helper")
-        AstParamNil
-        (AstTyI64))]
+        AstParamList.Nil
+        (AstType.I64))]
     (match decl
       [(AstDecl.Extern _ _ metadata _)
         (string.eq

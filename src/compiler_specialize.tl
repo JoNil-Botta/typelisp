@@ -176,15 +176,15 @@
 
 (define (spec-param-comptime? [param : AstParam]) : bool
   (match param
-    [(AstParam _ _ is-comptime) is-comptime]))
+    [(AstParam.Param _ _ is-comptime) is-comptime]))
 
 (define (spec-param-name [param : AstParam]) : String
   (match param
-    [(AstParam name _ _) (intern-str name)]))
+    [(AstParam.Param name _ _) (intern-str name)]))
 
 (define (spec-param-type [param : AstParam]) : AstType
   (match param
-    [(AstParam _ ty _) ty]))
+    [(AstParam.Param _ ty _) ty]))
 
 (define (spec-state-ctfe-env [state : SpecState]) : CtfeEnv
   (match state
@@ -210,13 +210,13 @@
 
 (define (spec-type-kind? [ty : AstType]) : bool
   (match ty
-    [(AstTyVar name) (= name (intern "type"))]
+    [(AstType.Var name) (= name (intern "type"))]
     [_ false]))
 
 (define (spec-param-list-has-comptime? [params : AstParamList]) : bool
   (match params
-    [(AstParamNil) false]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) false]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (if (spec-param-comptime? param)
@@ -305,8 +305,8 @@
   [templates : SpecTemplateEnv]
   [params : AstParamList]) : SpecTemplateEnv
   (match params
-    [(AstParamNil) templates]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) templates]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (spec-template-env-shadow-params
@@ -446,8 +446,8 @@
 
 (define (spec-type-list-key [types : AstTypeList]) : String
   (match types
-    [(AstTypeNil) "nil"]
-    [(AstTypeCons head rest)
+    [(AstTypeList.Nil) "nil"]
+    [(AstTypeList.Cons head rest)
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
@@ -457,87 +457,89 @@
 
 (define (spec-lifetime-list-key [lifetimes : AstLifetimeList]) : String
   (match lifetimes
-    [(AstLifetimeNil) "nil"]
-    [(AstLifetimeCons head rest)
+    [(AstLifetimeList.Nil) "nil"]
+    [(AstLifetimeList.Cons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
         (string.append head (string.append "_" (spec-lifetime-list-key rest))))]))
 
 (define (spec-type-key [ty : AstType]) : String
   (match ty
-    [(AstTyI64) "i64"]
-    [(AstTyI32) "i32"]
-    [(AstTyI16) "i16"]
-    [(AstTyI8) "i8"]
-    [(AstTyU64) "u64"]
-    [(AstTyU32) "u32"]
-    [(AstTyU16) "u16"]
-    [(AstTyU8) "u8"]
-    [(AstTyF64) "f64"]
-    [(AstTyF32) "f32"]
-    [(AstTyBool) "bool"]
-    [(AstTyChar) "char"]
-    [(AstTyString) "String"]
-    [(AstTyStr) "str"]
-    [(AstTyBytes) "bytes"]
-    [(AstTyUnit) "unit"]
-    [(AstTyNever) "never"]
-    [(AstTyExpr) "Expr"]
-    [(AstTyExprList) "ExprList"]
-    [(AstTyFunc args ret)
+    [(AstType.I64) "i64"]
+    [(AstType.I32) "i32"]
+    [(AstType.I16) "i16"]
+    [(AstType.I8) "i8"]
+    [(AstType.U64) "u64"]
+    [(AstType.U32) "u32"]
+    [(AstType.U16) "u16"]
+    [(AstType.U8) "u8"]
+    [(AstType.F64) "f64"]
+    [(AstType.F32) "f32"]
+    [(AstType.Bool) "bool"]
+    [(AstType.Char) "char"]
+    [(AstType.String) "String"]
+    [(AstType.Str) "str"]
+    [(AstType.Bytes) "bytes"]
+    [(AstType.Unit) "unit"]
+    [(AstType.Never) "never"]
+    [(AstType.Expr) "Expr"]
+    [(AstType.ExprList) "ExprList"]
+    [(AstType.Func args ret)
       (string.append
         "fn_"
         (string.append
           (spec-type-list-key (box-get args))
           (string.append "_to_" (spec-type-key (ty-node-get ret)))))]
-    [(AstTyTuple elems)
+    [(AstType.Tuple elems)
       (string.append "tuple_" (spec-type-list-key (box-get elems)))]
-    [(AstTyArray elem count)
+    [(AstType.Array elem count)
       (string.append
         "array_"
         (string.append
           (spec-type-key (ty-node-get elem))
           (string.append "_" (spec-int-key count))))]
-    [(AstTyDynArray elem)
+    [(AstType.DynArray elem)
       (string.append "dynarray_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyBox elem) (string.append "box_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyPtr elem) (string.append "ptr_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyMutPtr elem)
+    [(AstType.Box elem)
+      (string.append "box_" (spec-type-key (ty-node-get elem)))]
+    [(AstType.Ptr elem)
+      (string.append "ptr_" (spec-type-key (ty-node-get elem)))]
+    [(AstType.MutPtr elem)
       (string.append "mutptr_" (spec-type-key (ty-node-get elem)))]
-    [(AstTyRef region inner)
+    [(AstType.Ref region inner)
       (string.append
         "ref_"
         (string.append
           region
           (string.append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstTyMutRef region inner)
+    [(AstType.MutRef region inner)
       (string.append
         "mutref_"
         (string.append
           region
           (string.append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstTyRegion region inner)
+    [(AstType.Region region inner)
       (string.append
         "region_"
         (string.append
           region
           (string.append "_" (spec-type-key (ty-node-get inner)))))]
-    [(AstTyEnum name) (string.append "enum_" (intern-str name))]
-    [(AstTyEnumArgs name lifetimes)
+    [(AstType.Enum name) (string.append "enum_" (intern-str name))]
+    [(AstType.EnumArgs name lifetimes)
       (string.append
         "enumargs_"
         (string.append
           (intern-str name)
           (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
-    [(AstTyStruct name) (string.append "struct_" (intern-str name))]
-    [(AstTyStructArgs name lifetimes)
+    [(AstType.Struct name) (string.append "struct_" (intern-str name))]
+    [(AstType.StructArgs name lifetimes)
       (string.append
         "structargs_"
         (string.append
           (intern-str name)
           (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
-    [(AstTyVar name) (string.append "var_" (intern-str name))]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.Var name) (string.append "var_" (intern-str name))]
+    [(AstType.VarArgs name lifetimes)
       (string.append
         "varargs_"
         (string.append
@@ -677,13 +679,13 @@
 
 (define (gen-maybe-type-eq? [a : AstMaybeType] [b : AstMaybeType]) : bool
   (match a
-    [(AstNoType)
+    [(AstMaybeType.No)
       (match b
-        [(AstNoType) true]
+        [(AstMaybeType.No) true]
         [_ false])]
-    [(AstSomeType a-ty)
+    [(AstMaybeType.Some a-ty)
       (match b
-        [(AstSomeType b-ty) (ctfe-type-eq a-ty b-ty)]
+        [(AstMaybeType.Some b-ty) (ctfe-type-eq a-ty b-ty)]
         [_ false])]))
 
 (define (gen-expr-eq? [a : AstExpr] [b : AstExpr]) : bool
@@ -691,9 +693,9 @@
 
 (define (gen-param-eq? [a : AstParam] [b : AstParam]) : bool
   (match a
-    [(AstParam a-name a-ty a-comptime)
+    [(AstParam.Param a-name a-ty a-comptime)
       (match b
-        [(AstParam b-name b-ty b-comptime)
+        [(AstParam.Param b-name b-ty b-comptime)
           (and
             (= a-name b-name)
             (ctfe-type-eq a-ty b-ty)
@@ -701,15 +703,15 @@
 
 (define (gen-param-list-eq? [a : AstParamList] [b : AstParamList]) : bool
   (match a
-    [(AstParamNil)
+    [(AstParamList.Nil)
       (match b
-        [(AstParamNil) true]
+        [(AstParamList.Nil) true]
         [_ false])]
-    [(AstParamCons a-head a-rest)
+    [(AstParamList.Cons a-head a-rest)
       (let
         [a-rest : AstParamList (box-get a-rest)]
         (match b
-          [(AstParamCons b-head b-rest)
+          [(AstParamList.Cons b-head b-rest)
             (let
               [b-rest : AstParamList (box-get b-rest)]
               (and
@@ -719,9 +721,9 @@
 
 (define (gen-macro-param-eq? [a : AstMacroParam] [b : AstMacroParam]) : bool
   (match a
-    [(AstMacroParam a-name a-ty a-variadic)
+    [(AstMacroParam.Param a-name a-ty a-variadic)
       (match b
-        [(AstMacroParam b-name b-ty b-variadic)
+        [(AstMacroParam.Param b-name b-ty b-variadic)
           (and
             (= a-name b-name)
             (ctfe-type-eq a-ty b-ty)
@@ -731,15 +733,15 @@
   [a : AstMacroParamList]
   [b : AstMacroParamList]) : bool
   (match a
-    [(AstMacroParamNil)
+    [(AstMacroParamList.Nil)
       (match b
-        [(AstMacroParamNil) true]
+        [(AstMacroParamList.Nil) true]
         [_ false])]
-    [(AstMacroParamCons a-head a-rest)
+    [(AstMacroParamList.Cons a-head a-rest)
       (let
         [a-rest : AstMacroParamList (box-get a-rest)]
         (match b
-          [(AstMacroParamCons b-head b-rest)
+          [(AstMacroParamList.Cons b-head b-rest)
             (let
               [b-rest : AstMacroParamList (box-get b-rest)]
               (and
@@ -749,24 +751,24 @@
 
 (define (gen-field-cleanup-eq? [a : AstFieldCleanup] [b : AstFieldCleanup]) : bool
   (match a
-    [(AstFieldNoCleanup)
+    [(AstFieldCleanup.No)
       (match b
-        [(AstFieldNoCleanup) true]
+        [(AstFieldCleanup.No) true]
         [_ false])]
-    [(AstFieldCleanupFn a-name)
+    [(AstFieldCleanup.Fn a-name)
       (match b
-        [(AstFieldCleanupFn b-name) (= a-name b-name)]
+        [(AstFieldCleanup.Fn b-name) (= a-name b-name)]
         [_ false])]
-    [(AstFieldOwnedCleanup)
+    [(AstFieldCleanup.Owned)
       (match b
-        [(AstFieldOwnedCleanup) true]
+        [(AstFieldCleanup.Owned) true]
         [_ false])]))
 
 (define (gen-field-def-eq? [a : AstFieldDef] [b : AstFieldDef]) : bool
   (match a
-    [(AstFieldDef a-name a-ty a-cleanup)
+    [(AstFieldDef.Def a-name a-ty a-cleanup)
       (match b
-        [(AstFieldDef b-name b-ty b-cleanup)
+        [(AstFieldDef.Def b-name b-ty b-cleanup)
           (and
             (= a-name b-name)
             (ctfe-type-eq a-ty b-ty)
@@ -774,15 +776,15 @@
 
 (define (gen-field-list-eq? [a : AstFieldDefList] [b : AstFieldDefList]) : bool
   (match a
-    [(AstFieldDefNil)
+    [(AstFieldDefList.Nil)
       (match b
-        [(AstFieldDefNil) true]
+        [(AstFieldDefList.Nil) true]
         [_ false])]
-    [(AstFieldDefCons a-head a-rest)
+    [(AstFieldDefList.Cons a-head a-rest)
       (let
         [a-rest : AstFieldDefList (box-get a-rest)]
         (match b
-          [(AstFieldDefCons b-head b-rest)
+          [(AstFieldDefList.Cons b-head b-rest)
             (let
               [b-rest : AstFieldDefList (box-get b-rest)]
               (and
@@ -792,67 +794,67 @@
 
 (define (gen-struct-repr-eq? [a : AstStructRepr] [b : AstStructRepr]) : bool
   (match a
-    [(AstStructReprDefault)
+    [(AstStructRepr.Default)
       (match b
-        [(AstStructReprDefault) true]
+        [(AstStructRepr.Default) true]
         [_ false])]
-    [(AstStructReprC)
+    [(AstStructRepr.C)
       (match b
-        [(AstStructReprC) true]
+        [(AstStructRepr.C) true]
         [_ false])]))
 
 (define (gen-struct-cleanup-eq? [a : AstStructCleanup] [b : AstStructCleanup]) : bool
   (match a
-    [(AstStructNoCleanup)
+    [(AstStructCleanup.No)
       (match b
-        [(AstStructNoCleanup) true]
+        [(AstStructCleanup.No) true]
         [_ false])]
-    [(AstStructCleanupFn a-name)
+    [(AstStructCleanup.Fn a-name)
       (match b
-        [(AstStructCleanupFn b-name) (= a-name b-name)]
+        [(AstStructCleanup.Fn b-name) (= a-name b-name)]
         [_ false])]))
 
 (define (gen-enum-cleanup-eq? [a : AstEnumCleanup] [b : AstEnumCleanup]) : bool
   (match a
-    [(AstEnumNoCleanup)
+    [(AstEnumCleanup.No)
       (match b
-        [(AstEnumNoCleanup) true]
+        [(AstEnumCleanup.No) true]
         [_ false])]
-    [(AstEnumCleanupFn a-name)
+    [(AstEnumCleanup.Fn a-name)
       (match b
-        [(AstEnumCleanupFn b-name) (= a-name b-name)]
+        [(AstEnumCleanup.Fn b-name) (= a-name b-name)]
         [_ false])]))
 
 (define (gen-variant-payload-cleanup-eq?
   [a : AstVariantPayloadCleanup]
   [b : AstVariantPayloadCleanup]) : bool
   (match a
-    [(AstVariantPayloadNoCleanup)
+    [(AstVariantPayloadCleanup.No)
       (match b
-        [(AstVariantPayloadNoCleanup) true]
+        [(AstVariantPayloadCleanup.No) true]
         [_ false])]
-    [(AstVariantPayloadCleanupFn a-name)
+    [(AstVariantPayloadCleanup.Fn a-name)
       (match b
-        [(AstVariantPayloadCleanupFn b-name) (= a-name b-name)]
+        [(AstVariantPayloadCleanup.Fn b-name) (= a-name b-name)]
         [_ false])]
-    [(AstVariantPayloadOwnedCleanup)
+    [(AstVariantPayloadCleanup.Owned)
       (match b
-        [(AstVariantPayloadOwnedCleanup) true]
+        [(AstVariantPayloadCleanup.Owned) true]
         [_ false])]))
 
 (define (gen-variant-payload-cleanup-list-eq?
   [a : AstVariantPayloadCleanupList]
   [b : AstVariantPayloadCleanupList]) : bool
   (match a
-    [(AstVariantPayloadCleanupNil)
+    [(AstVariantPayloadCleanupList.Nil)
       (match b
-        [(AstVariantPayloadCleanupNil) true]
+        [(AstVariantPayloadCleanupList.Nil) true]
         [_ false])]
-    [(AstVariantPayloadCleanupCons a-head a-rest)
+    [(AstVariantPayloadCleanupList.Cons a-head a-rest)
       (let
         [a-rest : AstVariantPayloadCleanupList (box-get a-rest)]
         (match b
-          [(AstVariantPayloadCleanupCons b-head b-rest)
+          [(AstVariantPayloadCleanupList.Cons b-head b-rest)
             (let
               [b-rest : AstVariantPayloadCleanupList (box-get b-rest)]
               (and
@@ -862,9 +864,9 @@
 
 (define (gen-variant-def-eq? [a : AstVariantDef] [b : AstVariantDef]) : bool
   (match a
-    [(AstVariantDef a-name a-payloads a-cleanups)
+    [(AstVariantDef.Def a-name a-payloads a-cleanups)
       (match b
-        [(AstVariantDef b-name b-payloads b-cleanups)
+        [(AstVariantDef.Def b-name b-payloads b-cleanups)
           (and
             (= a-name b-name)
             (ctfe-type-list-eq a-payloads b-payloads)
@@ -872,15 +874,15 @@
 
 (define (gen-variant-list-eq? [a : AstVariantDefList] [b : AstVariantDefList]) : bool
   (match a
-    [(AstVariantDefNil)
+    [(AstVariantDefList.Nil)
       (match b
-        [(AstVariantDefNil) true]
+        [(AstVariantDefList.Nil) true]
         [_ false])]
-    [(AstVariantDefCons a-head a-rest)
+    [(AstVariantDefList.Cons a-head a-rest)
       (let
         [a-rest : AstVariantDefList (box-get a-rest)]
         (match b
-          [(AstVariantDefCons b-head b-rest)
+          [(AstVariantDefList.Cons b-head b-rest)
             (let
               [b-rest : AstVariantDefList (box-get b-rest)]
               (and
@@ -890,13 +892,13 @@
 
 (define (gen-fn-export-eq? [a : AstFnExport] [b : AstFnExport]) : bool
   (match a
-    [(AstFnNoExport)
+    [(AstFnExport.No)
       (match b
-        [(AstFnNoExport) true]
+        [(AstFnExport.No) true]
         [_ false])]
-    [(AstFnExport a-symbol)
+    [(AstFnExport.Export a-symbol)
       (match b
-        [(AstFnExport b-symbol) (= a-symbol b-symbol)]
+        [(AstFnExport.Export b-symbol) (= a-symbol b-symbol)]
         [_ false])]))
 
 (define (gen-import-kind-eq? [a : AstImportKind] [b : AstImportKind]) : bool
@@ -1476,32 +1478,32 @@
   [value : CompilerCtfeValue]
   [ty : AstType]) : bool
   (match value
-    [(CompilerCtfeValue.I64 _) (ctfe-type-eq ty (AstTyI64))]
-    [(CompilerCtfeValue.F64 _) (ctfe-type-eq ty (AstTyF64))]
-    [(CompilerCtfeValue.F32 _) (ctfe-type-eq ty (AstTyF32))]
-    [(CompilerCtfeValue.Bool _) (ctfe-type-eq ty (AstTyBool))]
-    [(CompilerCtfeValue.Char _) (ctfe-type-eq ty (AstTyChar))]
-    [(CompilerCtfeValue.String _) (ctfe-type-eq ty (AstTyString))]
-    [(CompilerCtfeValue.Unit) (ctfe-type-eq ty (AstTyUnit))]
+    [(CompilerCtfeValue.I64 _) (ctfe-type-eq ty (AstType.I64))]
+    [(CompilerCtfeValue.F64 _) (ctfe-type-eq ty (AstType.F64))]
+    [(CompilerCtfeValue.F32 _) (ctfe-type-eq ty (AstType.F32))]
+    [(CompilerCtfeValue.Bool _) (ctfe-type-eq ty (AstType.Bool))]
+    [(CompilerCtfeValue.Char _) (ctfe-type-eq ty (AstType.Char))]
+    [(CompilerCtfeValue.String _) (ctfe-type-eq ty (AstType.String))]
+    [(CompilerCtfeValue.Unit) (ctfe-type-eq ty (AstType.Unit))]
     [(CompilerCtfeValue.Type _) false]
-    [(CompilerCtfeValue.Expr _ _) (ctfe-type-eq ty (AstTyExpr))]
-    [(CompilerCtfeValue.ExprList _) (ctfe-type-eq ty (AstTyExprList))]
+    [(CompilerCtfeValue.Expr _ _) (ctfe-type-eq ty (AstType.Expr))]
+    [(CompilerCtfeValue.ExprList _) (ctfe-type-eq ty (AstType.ExprList))]
     [(CompilerCtfeValue.ExprClause _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprClause")))]
+      (ctfe-type-eq ty (AstType.Var (intern "ExprClause")))]
     [(CompilerCtfeValue.ExprClauseList _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprClauseList")))]
+      (ctfe-type-eq ty (AstType.Var (intern "ExprClauseList")))]
     [(CompilerCtfeValue.ExprBindingClause _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClause")))]
+      (ctfe-type-eq ty (AstType.Var (intern "ExprBindingClause")))]
     [(CompilerCtfeValue.ExprBindingClauseList _)
-      (ctfe-type-eq ty (AstTyVar (intern "ExprBindingClauseList")))]
+      (ctfe-type-eq ty (AstType.Var (intern "ExprBindingClauseList")))]
     [(CompilerCtfeValue.Pattern _)
-      (ctfe-type-eq ty (AstTyVar (intern "Pattern")))]
+      (ctfe-type-eq ty (AstType.Var (intern "Pattern")))]
     [(CompilerCtfeValue.PatternList _)
-      (ctfe-type-eq ty (AstTyVar (intern "PatternList")))]
+      (ctfe-type-eq ty (AstType.Var (intern "PatternList")))]
     [(CompilerCtfeValue.MatchArm _)
-      (ctfe-type-eq ty (AstTyVar (intern "MatchArm")))]
+      (ctfe-type-eq ty (AstType.Var (intern "MatchArm")))]
     [(CompilerCtfeValue.MatchArmList _)
-      (ctfe-type-eq ty (AstTyVar (intern "MatchArmList")))]
+      (ctfe-type-eq ty (AstType.Var (intern "MatchArmList")))]
     [(CompilerCtfeValue.TypeInfo _) false]
     [(CompilerCtfeValue.TypeInfoBox _) false]
     [(CompilerCtfeValue.TypeInfoList _) false]
@@ -1552,7 +1554,7 @@
 
 (define (spec-type-subst-type [subs : SpecTypeSubst] [name : String]) : AstType
   (match subs
-    [(SpecTypeSubst.Nil) (AstTyVar (intern name))]
+    [(SpecTypeSubst.Nil) (AstType.Var (intern name))]
     [(SpecTypeSubst.Cons key ty rest)
       (if (string.eq key name)
         ty
@@ -1589,8 +1591,8 @@
   [subs : SpecValueSubst]
   [params : AstParamList]) : SpecValueSubst
   (match params
-    [(AstParamNil) subs]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) subs]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (spec-value-subst-remove-params
@@ -1658,8 +1660,8 @@
   [subs : SpecTypeSubst]
   [params : AstParamList]) : SpecTypeSubst
   (match params
-    [(AstParamNil) subs]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) subs]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (spec-type-subst-remove-params
@@ -1714,36 +1716,37 @@
 
 (define (spec-substitute-type [ty : AstType] [subs : SpecTypeSubst]) : AstType
   (match ty
-    [(AstTyFunc args ret)
+    [(AstType.Func args ret)
       (ast-ty-func
         (spec-substitute-type-list (box-get args) subs)
         (spec-substitute-type (ty-node-get ret) subs))]
-    [(AstTyTuple elems)
+    [(AstType.Tuple elems)
       (ast-ty-tuple (spec-substitute-type-list (box-get elems) subs))]
-    [(AstTyArray elem count)
+    [(AstType.Array elem count)
       (ast-ty-array (spec-substitute-type (ty-node-get elem) subs) count)]
-    [(AstTyDynArray elem)
+    [(AstType.DynArray elem)
       (ast-ty-dyn-array (spec-substitute-type (ty-node-get elem) subs))]
-    [(AstTyBox elem)
+    [(AstType.Box elem)
       (ast-ty-box (spec-substitute-type (ty-node-get elem) subs))]
-    [(AstTyPtr elem)
+    [(AstType.Ptr elem)
       (ast-ty-ptr (spec-substitute-type (ty-node-get elem) subs))]
-    [(AstTyMutPtr elem)
+    [(AstType.MutPtr elem)
       (ast-ty-mut-ptr (spec-substitute-type (ty-node-get elem) subs))]
-    [(AstTyRef region inner)
+    [(AstType.Ref region inner)
       (ast-ty-ref region (spec-substitute-type (ty-node-get inner) subs))]
-    [(AstTyMutRef region inner)
+    [(AstType.MutRef region inner)
       (ast-ty-mut-ref region (spec-substitute-type (ty-node-get inner) subs))]
-    [(AstTyRegion region inner)
+    [(AstType.Region region inner)
       (ast-ty-region region (spec-substitute-type (ty-node-get inner) subs))]
-    [(AstTyEnumArgs name lifetimes) (ast-ty-enum-args name (box-get lifetimes))]
-    [(AstTyStructArgs name lifetimes)
+    [(AstType.EnumArgs name lifetimes)
+      (ast-ty-enum-args name (box-get lifetimes))]
+    [(AstType.StructArgs name lifetimes)
       (ast-ty-struct-args name (box-get lifetimes))]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.VarArgs name lifetimes)
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecMaybeString.Some _) (spec-type-subst-type subs (intern-str name))]
         [(SpecMaybeString.None) (ast-ty-var-args name (box-get lifetimes))])]
-    [(AstTyVar name)
+    [(AstType.Var name)
       (match (spec-type-subst-lookup subs (intern-str name))
         [(SpecMaybeString.Some _) (spec-type-subst-type subs (intern-str name))]
         [(SpecMaybeString.None) ty])]
@@ -1751,8 +1754,8 @@
 
 (define (spec-substitute-type-list [types : AstTypeList] [subs : SpecTypeSubst]) : AstTypeList
   (match types
-    [(AstTypeNil) AstTypeNil]
-    [(AstTypeCons head rest)
+    [(AstTypeList.Nil) AstTypeList.Nil]
+    [(AstTypeList.Cons head rest)
       (let
         [head : AstType (ty-node-get head)]
         [rest : AstTypeList (box-get rest)]
@@ -1762,21 +1765,22 @@
 
 (define (spec-substitute-maybe-type [ty : AstMaybeType] [subs : SpecTypeSubst]) : AstMaybeType
   (match ty
-    [(AstNoType) AstNoType]
-    [(AstSomeType inner) (AstSomeType (spec-substitute-type inner subs))]))
+    [(AstMaybeType.No) AstMaybeType.No]
+    [(AstMaybeType.Some inner)
+      (AstMaybeType.Some (spec-substitute-type inner subs))]))
 
 (define (spec-substitute-param-types
   [params : AstParamList]
   [subs : SpecTypeSubst]) : AstParamList
   (match params
-    [(AstParamNil) AstParamNil]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) AstParamList.Nil]
+    [(AstParamList.Cons param rest)
       (let
         [rest : AstParamList (box-get rest)]
         (match param
-          [(AstParam name ty _)
+          [(AstParam.Param name ty _)
             (ast-param-cons
-              (AstParam name (spec-substitute-type ty subs) false)
+              (AstParam.Param name (spec-substitute-type ty subs) false)
               (spec-substitute-param-types rest subs))]))]))
 
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
@@ -1794,7 +1798,7 @@
             (AstExpr.Literal
               (AstLitFloat
                 (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))))
-          (AstTyF32)))]
+          (AstType.F32)))]
     [(CompilerCtfeValue.Bool b)
       (ResultSpecSubExpr.Ok (ast-node-push (AstExpr.Literal (AstLitBool b))))]
     [(CompilerCtfeValue.Char c)
@@ -2047,14 +2051,14 @@
   [state : SpecState]
   [fn-name : String]) : ResultSpecArgs
   (match params
-    [(AstParamNil)
+    [(AstParamList.Nil)
       (match args
         [(AstExprList.Nil)
           (ResultSpecArgs.Ok SpecValueList.Nil AstExprList.Nil state)]
         [_
           (ResultSpecArgs.Err
             (box (compiler-diagnostic-at-start "" "specialize: arity mismatch")))])]
-    [(AstParamCons param rest-params)
+    [(AstParamList.Cons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
         (match args
@@ -2063,7 +2067,7 @@
               [arg : AstExpr (ast-node-get arg)]
               [rest-args : AstExprList (box-get rest-args)]
               (match param
-                [(AstParam param-name param-ty is-comptime)
+                [(AstParam.Param param-name param-ty is-comptime)
                   (if is-comptime
                     (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
                       [(ResultCtfe.Ok value _)
@@ -2161,18 +2165,21 @@
   [params : AstParamList]
   [values : SpecValueList]) : ResultSpecBuild
   (match params
-    [(AstParamNil)
+    [(AstParamList.Nil)
       (match values
         [(SpecValueList.Nil)
-          (ResultSpecBuild.Ok AstParamNil SpecValueSubst.Nil SpecTypeSubst.Nil)]
+          (ResultSpecBuild.Ok
+            AstParamList.Nil
+            SpecValueSubst.Nil
+            SpecTypeSubst.Nil)]
         [_
           (ResultSpecBuild.Err
             (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])]
-    [(AstParamCons param rest-params)
+    [(AstParamList.Cons param rest-params)
       (let
         [rest-params : AstParamList (box-get rest-params)]
         (match param
-          [(AstParam name ty is-comptime)
+          [(AstParam.Param name ty is-comptime)
             (if is-comptime
               (match values
                 [(SpecValueList.Cons value rest-values)
@@ -2213,7 +2220,7 @@
               (match (spec-build-specialization rest-params values)
                 [(ResultSpecBuild.Ok runtime value-subs type-subs)
                   (ResultSpecBuild.Ok
-                    (ast-param-cons (AstParam name ty false) runtime)
+                    (ast-param-cons (AstParam.Param name ty false) runtime)
                     value-subs
                     type-subs)]
                 [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)]))]))]))
@@ -5022,15 +5029,15 @@
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
     [subs : SpecTypeSubst
-      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubst.Nil)]
+      (spec-type-subst-cons "T" (AstType.I64) SpecTypeSubst.Nil)]
     (and
-      (string.eq (spec-type-key (ast-ty-ptr (AstTyI64))) "ptr_i64")
+      (string.eq (spec-type-key (ast-ty-ptr (AstType.I64))) "ptr_i64")
       (string.eq
-        (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
+        (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstType.U8))))
         "mutptr_ptr_u8")
       (ctfe-type-eq
-        (spec-substitute-type (ast-ty-mut-ptr (AstTyVar (intern "T"))) subs)
-        (ast-ty-mut-ptr (AstTyI64))))))
+        (spec-substitute-type (ast-ty-mut-ptr (AstType.Var (intern "T"))) subs)
+        (ast-ty-mut-ptr (AstType.I64))))))
 
 ;: Deterministic specialized name + stable specialization key (#1043, mirrors
 ;: src/specialize.rs deterministic-names / stable-keys coverage). The mangling
@@ -5041,12 +5048,16 @@
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : SpecValueList
-      (spec-value-cons (CompilerCtfeValue.Type (AstTyI64)) (SpecValueList.Nil))]
+      (spec-value-cons
+        (CompilerCtfeValue.Type (AstType.I64))
+        (SpecValueList.Nil))]
     [vals-bool : SpecValueList
-      (spec-value-cons (CompilerCtfeValue.Type (AstTyBool)) (SpecValueList.Nil))]
+      (spec-value-cons
+        (CompilerCtfeValue.Type (AstType.Bool))
+        (SpecValueList.Nil))]
     [vals-multi : SpecValueList
       (spec-value-cons
-        (CompilerCtfeValue.Type (AstTyI64))
+        (CompilerCtfeValue.Type (AstType.I64))
         (spec-value-cons (CompilerCtfeValue.I64 5) (SpecValueList.Nil)))]
     [vals-string : SpecValueList
       (spec-value-cons (CompilerCtfeValue.String "a b") (SpecValueList.Nil))]
@@ -5174,29 +5185,31 @@
 (define (compiler-specialize-subst-ok?) : bool
   (let
     [subs : SpecTypeSubst
-      (spec-type-subst-cons "T" (AstTyI64) SpecTypeSubst.Nil)]
+      (spec-type-subst-cons "T" (AstType.I64) SpecTypeSubst.Nil)]
     (and
       (string.eq
-        (spec-type-key (spec-substitute-type (AstTyVar (intern "T")) subs))
+        (spec-type-key (spec-substitute-type (AstType.Var (intern "T")) subs))
         "i64")
       (string.eq
         (spec-type-key
-          (spec-substitute-type (ast-ty-ptr (AstTyVar (intern "T"))) subs))
+          (spec-substitute-type (ast-ty-ptr (AstType.Var (intern "T"))) subs))
         "ptr_i64")
       (string.eq
         (spec-type-key
-          (spec-substitute-type (ast-ty-dyn-array (AstTyVar (intern "T"))) subs))
+          (spec-substitute-type
+            (ast-ty-dyn-array (AstType.Var (intern "T")))
+            subs))
         "dynarray_i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
             (ast-ty-func
-              (ast-type-cons (AstTyVar (intern "T")) AstTypeNil)
-              (AstTyVar (intern "T")))
+              (ast-type-cons (AstType.Var (intern "T")) AstTypeList.Nil)
+              (AstType.Var (intern "T")))
             subs))
         "fn_i64_nil_to_i64")
       (string.eq
-        (spec-type-key (spec-substitute-type (AstTyVar (intern "U")) subs))
+        (spec-type-key (spec-substitute-type (AstType.Var (intern "U")) subs))
         "var_U"))))
 
 ;: Value (comptime-argument) substitution (#1043, mirrors src/specialize.rs
@@ -5257,14 +5270,14 @@
       (spec-template-cons
         (SpecTemplate.Item
           "first"
-          AstParamNil
-          (AstTyI64)
+          AstParamList.Nil
+          (AstType.I64)
           (AstExpr.Literal (ast-lit-int 1)))
         (spec-template-cons
           (SpecTemplate.Item
             "second"
-            AstParamNil
-            (AstTyBool)
+            AstParamList.Nil
+            (AstType.Bool)
             (AstExpr.Literal (AstLitBool true)))
           SpecTemplateList.Nil))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
@@ -5291,8 +5304,8 @@
     [type-subs : SpecTypeSubst
       (spec-type-subst-cons
         "T"
-        (AstTyI64)
-        (spec-type-subst-cons "U" (AstTyBool) SpecTypeSubst.Nil))]
+        (AstType.I64)
+        (spec-type-subst-cons "U" (AstType.Bool) SpecTypeSubst.Nil))]
     (and
       (match (spec-template-lookup template-env "second")
         [(SpecMaybeTemplate.Some template)
@@ -5306,7 +5319,7 @@
       (match (spec-value-subst-value value-subs "flag")
         [(CompilerCtfeValue.Bool flag) flag]
         [_ false])
-      (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstTyBool)))))
+      (ctfe-type-eq (spec-type-subst-type type-subs "U") (AstType.Bool)))))
 
 (define (compiler-specialize-reflection-string-param-source) : String
   "(defstruct Point (x i64))
@@ -5541,9 +5554,9 @@
     [decl : AstDecl
       (ast-decl-def-struct
         "RegistryBox"
-        AstStructReprDefault
-        AstStructNoCleanup
-        AstFieldDefNil)]
+        AstStructRepr.Default
+        AstStructCleanup.No
+        AstFieldDefList.Nil)]
     [registry : GenRegistry
       (gen-registry-insert (gen-registry-empty) "generated-key" decl)]
     (match (gen-registry-lookup registry "generated-key")

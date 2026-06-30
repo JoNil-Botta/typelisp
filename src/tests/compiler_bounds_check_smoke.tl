@@ -14,11 +14,11 @@
       (CompilerIrFunction.Function
         "main"
         (compiler-ir-param-cons
-          (CompilerIrParam.Param "index" (AstTyI64) 0)
+          (CompilerIrParam.Param "index" (AstType.I64) 0)
           (compiler-ir-param-cons
-            (CompilerIrParam.Param "length" (AstTyI64) 1)
+            (CompilerIrParam.Param "length" (AstType.I64) 1)
             IrParamNil))
-        (AstTyI64)
+        (AstType.I64)
         4
         (compiler-ir-block-cons
           (compiler-ir-block

@@ -99,14 +99,14 @@
 
 (define (opt-switch-test-params) : CompilerIrParamList
   (compiler-ir-param-cons
-    (CompilerIrParam.Param "tag" (AstTyI64) 0)
+    (CompilerIrParam.Param "tag" (AstType.I64) 0)
     (IrParamNil)))
 
 (define (opt-switch-test-function [blocks : CompilerIrBlockList]) : CompilerIrFunction
   (CompilerIrFunction.Function
     "switch_form"
     (opt-switch-test-params)
-    (AstTyI64)
+    (AstType.I64)
     16
     blocks))
 
@@ -124,7 +124,7 @@
         CompilerIrBinOp.Eq
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 tag)
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch
           (CompilerIrValue.Var eq-var)
@@ -146,9 +146,9 @@
         CompilerIrBinOp.Eq
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 tag)
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 99) (AstTyI64))
+        (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 99) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Branch
             (CompilerIrValue.Var eq-var)
@@ -313,33 +313,41 @@
 
 (define (smoke-noop-int-cast-mov-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
-    (CompilerIrInstr.Cast 50 (CompilerIrValue.Var 10) (AstTyU8) (AstTyChar))
+    (CompilerIrInstr.Cast
+      50
+      (CompilerIrValue.Var 10)
+      (AstType.U8)
+      (AstType.Char))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Cast 51 (CompilerIrValue.Var 11) (AstTyU16) (AstTyU8))
+      (CompilerIrInstr.Cast
+        51
+        (CompilerIrValue.Var 11)
+        (AstType.U16)
+        (AstType.U8))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Cast
           52
           (CompilerIrValue.Var 12)
-          (AstTyU16)
-          (AstTyChar))
+          (AstType.U16)
+          (AstType.Char))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Cast
             53
             (CompilerIrValue.Var 13)
-            (AstTyU8)
-            (AstTyI64))
+            (AstType.U8)
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Cast
               54
               (CompilerIrValue.Var 14)
-              (AstTyI16)
-              (AstTyU32))
+              (AstType.I16)
+              (AstType.U32))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Cast
                 55
                 (CompilerIrValue.Var 15)
-                (AstTyI64)
-                (AstTyU64))
+                (AstType.I64)
+                (AstType.U64))
               (CompilerIrInstrList.Nil))))))))
 
 (define (smoke-noop-int-cast-mov-self-test) : i64
@@ -348,11 +356,15 @@
       (opt-fold-instrs (OptConstEnv.Nil) (smoke-noop-int-cast-mov-instrs))]
     (begin
       (unless (= (opt-count-cast-instrs rewritten) 3) (return 1))
-      (unless (smoke-mov-dst-var-type? rewritten 50 10 (AstTyChar)) (return 2))
-      (unless (smoke-mov-dst-var-type? rewritten 51 11 (AstTyU8)) (return 3))
-      (unless (smoke-mov-dst-var-type? rewritten 52 12 (AstTyChar)) (return 4))
       (unless
-        (smoke-cast-dst-var-types? rewritten 55 15 (AstTyI64) (AstTyU64))
+        (smoke-mov-dst-var-type? rewritten 50 10 (AstType.Char))
+        (return 2))
+      (unless (smoke-mov-dst-var-type? rewritten 51 11 (AstType.U8)) (return 3))
+      (unless
+        (smoke-mov-dst-var-type? rewritten 52 12 (AstType.Char))
+        (return 4))
+      (unless
+        (smoke-cast-dst-var-types? rewritten 55 15 (AstType.I64) (AstType.U64))
         (return 5))
       42)))
 
@@ -369,13 +381,16 @@
   (compiler-ir-instr-cons
     (CompilerIrInstr.Gep ptr-var object offset slot-ty)
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Load length-var (CompilerIrValue.Var ptr-var) (AstTyI64))
+      (CompilerIrInstr.Load
+        length-var
+        (CompilerIrValue.Var ptr-var)
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Cast
           cast-var
           (CompilerIrValue.Var length-var)
-          (AstTyI64)
-          (AstTyU64))
+          (AstType.I64)
+          (AstType.U64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.BoundsCheck
             index
@@ -414,18 +429,18 @@
     12
     (CompilerIrValue.Var 1)
     (CompilerIrValue.I64 1)
-    (AstTyI64)
+    (AstType.I64)
     (CompilerIrValue.Var 0)
     "bounds_ok.0"
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Call 30 "touch" (CompilerIrCallArgs.Nil) (AstTyUnit))
+      (CompilerIrInstr.Call 30 "touch" (CompilerIrCallArgs.Nil) (AstType.Unit))
       (smoke-bounds-object-length-check-fragment
         20
         21
         22
         (CompilerIrValue.Var 1)
         (CompilerIrValue.I64 1)
-        (AstTyI64)
+        (AstType.I64)
         (CompilerIrValue.Var 0)
         "bounds_ok.1"
         (CompilerIrInstrList.Nil)))))
@@ -442,18 +457,18 @@
     12
     (CompilerIrValue.Var 1)
     (CompilerIrValue.I64 1)
-    (AstTyI64)
+    (AstType.I64)
     (CompilerIrValue.Var 0)
     "bounds_ok.0"
     (compiler-ir-instr-cons
-      (CompilerIrInstr.StorePtr store-ptr (CompilerIrValue.I64 7) (AstTyI64))
+      (CompilerIrInstr.StorePtr store-ptr (CompilerIrValue.I64 7) (AstType.I64))
       (smoke-bounds-object-length-check-fragment
         20
         21
         22
         (CompilerIrValue.Var 1)
         (CompilerIrValue.I64 1)
-        (AstTyI64)
+        (AstType.I64)
         (CompilerIrValue.Var 0)
         "bounds_ok.1"
         (CompilerIrInstrList.Nil)))))
@@ -467,7 +482,7 @@
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 1)
           (CompilerIrValue.I64 1)
-          (AstTyI64)))]
+          (AstType.I64)))]
     [object-string : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsFacts.Nil)
@@ -475,7 +490,7 @@
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 1)
           (CompilerIrValue.I64 8)
-          (AstTyU8)))]
+          (AstType.U8)))]
     [object-mismatch : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsFacts.Nil)
@@ -483,7 +498,7 @@
         (smoke-bounds-object-pair
           (CompilerIrValue.Var 2)
           (CompilerIrValue.I64 1)
-          (AstTyI64)))]
+          (AstType.I64)))]
     [object-call : CompilerIrInstrList
       (opt-bounds-instrs
         (OptBoundsFacts.Nil)
@@ -516,11 +531,11 @@
         3
         (CompilerIrValue.Var 2)
         (CompilerIrValue.I64 1)
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstTyI64))
+        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstTyI64))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstType.I64))
           (if with-nonnegative
             (compiler-ir-instr-cons
               (CompilerIrInstr.BinOp
@@ -528,7 +543,7 @@
                 (CompilerIrBinOp.Ge)
                 (CompilerIrValue.Var 0)
                 (CompilerIrValue.I64 0)
-                (AstTyBool))
+                (AstType.Bool))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Branch (CompilerIrValue.Var 14) "lt" "exit")
                 (CompilerIrInstrList.Nil)))
@@ -545,7 +560,7 @@
         op
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var length-var)
-        (AstTyBool))
+        (AstType.Bool))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch (CompilerIrValue.Var 15) "body" "exit")
         (CompilerIrInstrList.Nil)))))
@@ -565,7 +580,7 @@
   (compiler-ir-block
     "body"
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstTyI64))
+      (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstType.I64))
       (opt-loop-bce-string-test-ref-instrs
         2
         30
@@ -635,11 +650,11 @@
 
 (define (smoke-ssa-iv-bce-params) : CompilerIrParamList
   (compiler-ir-param-cons
-    (CompilerIrParam.Param "text" (AstTyString) 2)
+    (CompilerIrParam.Param "text" (AstType.String) 2)
     (compiler-ir-param-cons
-      (CompilerIrParam.Param "other" (AstTyString) 20)
+      (CompilerIrParam.Param "other" (AstType.String) 20)
       (compiler-ir-param-cons
-        (CompilerIrParam.Param "start" (AstTyI64) 30)
+        (CompilerIrParam.Param "start" (AstType.I64) 30)
         (IrParamNil)))))
 
 (define (smoke-ssa-iv-bce-entry) : CompilerIrBlock
@@ -650,9 +665,9 @@
         3
         (CompilerIrValue.Var 2)
         (CompilerIrValue.I64 1)
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstTyI64))
+        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Jump "header")
           (CompilerIrInstrList.Nil))))))
@@ -674,14 +689,14 @@
             (CompilerIrValue.Var next-var)
             "body"
             (CompilerIrPhiInputList.Nil)))
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.BinOp
           4
           op
           (CompilerIrValue.Var 0)
           (CompilerIrValue.Var upper-var)
-          (AstTyBool))
+          (AstType.Bool))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Branch (CompilerIrValue.Var 4) "body" "exit")
           (CompilerIrInstrList.Nil))))))
@@ -705,7 +720,7 @@
               (CompilerIrBinOp.Add)
               (CompilerIrValue.Var 0)
               (CompilerIrValue.I64 step)
-              (AstTyI64))
+              (AstType.I64))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Jump "header")
               (CompilerIrInstrList.Nil))))]
@@ -716,12 +731,12 @@
               80
               "touch"
               (CompilerIrCallArgs.One (CompilerIrValue.Var object-var))
-              (AstTyUnit))
+              (AstType.Unit))
             tail)
           tail)]
       (if redefine-index
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstTyI64))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstType.I64))
           after-call)
         after-call))))
 
@@ -875,7 +890,7 @@
         op
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 40)
-        (AstTyBool))
+        (AstType.Bool))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
         (CompilerIrInstrList.Nil)))))
@@ -894,7 +909,7 @@
             (CompilerIrInstrList.Nil)))]
       (if redefine-bound
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 40 (CompilerIrValue.I64 0) (AstTyI64))
+          (CompilerIrInstr.Mov 40 (CompilerIrValue.I64 0) (AstType.I64))
           tail)
         tail))))
 
@@ -954,32 +969,32 @@
       base
       (CompilerIrValue.Var object-var)
       (CompilerIrValue.I64 0)
-      (AstTyU8))
+      (AstType.U8))
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Load (+ base 1) (CompilerIrValue.Var base) (AstTyU64))
+      (CompilerIrInstr.Load (+ base 1) (CompilerIrValue.Var base) (AstType.U64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Gep
           (+ base 2)
           (CompilerIrValue.Var object-var)
           (CompilerIrValue.I64 8)
-          (AstTyU8))
+          (AstType.U8))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Load
             (+ base 3)
             (CompilerIrValue.Var (+ base 2))
-            (AstTyI64))
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Cast
               (+ base 4)
               (CompilerIrValue.Var (+ base 3))
-              (AstTyI64)
-              (AstTyU64))
+              (AstType.I64)
+              (AstType.U64))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Cast
                 (+ base 5)
                 (CompilerIrValue.Var index-var)
-                (AstTyI64)
-                (AstTyU64))
+                (AstType.I64)
+                (AstType.U64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BoundsCheck
                   (CompilerIrValue.Var (+ base 5))
@@ -990,12 +1005,12 @@
                     (+ base 6)
                     (CompilerIrValue.Var (+ base 1))
                     (CompilerIrValue.Var index-var)
-                    (AstTyChar))
+                    (AstType.Char))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Load
                       (+ base 7)
                       (CompilerIrValue.Var (+ base 6))
-                      (AstTyChar))
+                      (AstType.Char))
                     tail))))))))))
 
 (define (smoke-additive-entry [with-nonnegative : bool] [upper-offset : i64]) : CompilerIrBlock
@@ -1006,18 +1021,18 @@
         3
         (CompilerIrValue.Var 2)
         (CompilerIrValue.I64 1)
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstTyI64))
+        (CompilerIrInstr.Load 1 (CompilerIrValue.Var 3) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstTyI64))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               40
               (CompilerIrBinOp.Sub)
               (CompilerIrValue.Var 1)
               (CompilerIrValue.I64 upper-offset)
-              (AstTyI64))
+              (AstType.I64))
             (if with-nonnegative
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
@@ -1025,7 +1040,7 @@
                   (CompilerIrBinOp.Ge)
                   (CompilerIrValue.Var 0)
                   (CompilerIrValue.I64 0)
-                  (AstTyBool))
+                  (AstType.Bool))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Branch
                     (CompilerIrValue.Var 42)
@@ -1045,7 +1060,7 @@
         op
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var upper-var)
-        (AstTyBool))
+        (AstType.Bool))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
         (CompilerIrInstrList.Nil)))))
@@ -1061,7 +1076,7 @@
             (CompilerIrBinOp.Add)
             (CompilerIrValue.Var 0)
             (CompilerIrValue.I64 offset)
-            (AstTyI64))
+            (AstType.I64))
           (smoke-additive-ref-index-instrs
             2
             50
@@ -1072,7 +1087,7 @@
               (CompilerIrInstrList.Nil))))]
       (if redefine-index
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstTyI64))
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 (- 0 1)) (AstType.I64))
           tail)
         tail))))
 
@@ -1114,23 +1129,27 @@
   (compiler-ir-block
     "entry"
     (compiler-ir-instr-cons
-      (CompilerIrInstr.Call 1 "unknown_len" (CompilerIrCallArgs.Nil) (AstTyI64))
+      (CompilerIrInstr.Call
+        1
+        "unknown_len"
+        (CompilerIrCallArgs.Nil)
+        (AstType.I64))
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstTyI64))
+        (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 0) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.BinOp
             40
             (CompilerIrBinOp.Sub)
             (CompilerIrValue.Var 1)
             (CompilerIrValue.I64 1)
-            (AstTyI64))
+            (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.BinOp
               42
               (CompilerIrBinOp.Ge)
               (CompilerIrValue.Var 0)
               (CompilerIrValue.I64 0)
-              (AstTyBool))
+              (AstType.Bool))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Branch (CompilerIrValue.Var 42) "header" "exit")
               (CompilerIrInstrList.Nil))))))))
@@ -1144,7 +1163,7 @@
         (CompilerIrBinOp.Lt)
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 40)
-        (AstTyBool))
+        (AstType.Bool))
       (compiler-ir-instr-cons
         (CompilerIrInstr.Branch (CompilerIrValue.Var 43) "body" "exit")
         (CompilerIrInstrList.Nil)))))
@@ -1158,7 +1177,7 @@
         (CompilerIrBinOp.Add)
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 1)
-        (AstTyI64))
+        (AstType.I64))
       (compiler-ir-instr-cons
         (CompilerIrInstr.BoundsCheck
           (CompilerIrValue.Var 50)

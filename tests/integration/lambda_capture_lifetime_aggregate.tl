@@ -1,9 +1,9 @@
 ; #1867 + #2356 follow-up: capturing lifetime-parameterized inline aggregates
-; (`AstTyStructArgs` / `AstTyEnumArgs`) in closure environments. The default
+; (`AstType.StructArgs` / `AstType.EnumArgs`) in closure environments. The default
 ; inline-aggregate flip stores struct/enum values inline; a closure that
 ; captures such a value must snapshot it into the closure environment. The
 ; capture-support classifier, slot typing, and snapshot dispatch matched only
-; the bare `AstTyStruct` / `AstTyEnum` forms, so a parameterized aggregate fell
+; the bare `AstType.Struct` / `AstType.Enum` forms, so a parameterized aggregate fell
 ; through -- `lower-supported-capture-type?` rejected it and the program failed
 ; to compile. Each case reads a scalar out of a captured parameterized
 ; aggregate; `main` yields 42 only if every case holds.

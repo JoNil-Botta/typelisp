@@ -639,7 +639,7 @@
         (ast-expr-cast
           (ast-node-push
             (AstExpr.Literal (ast-lit-int (string.string-length text))))
-          (AstTyI32))
+          (AstType.I32))
         AstExprList.Nil))))
 
 (define (tltest-call-expr [name : String]) : i64
@@ -671,10 +671,10 @@
 
 (define (tltest-print-runtime-write-params) : AstParamList
   (ast-param-cons
-    (ast-param "fd" (AstTyI32) false)
+    (ast-param "fd" (AstType.I32) false)
     (ast-param-cons
-      (ast-param "buf" (ast-ty-ptr (AstTyU8)) false)
-      (ast-param-cons (ast-param "n" (AstTyI32) false) AstParamNil))))
+      (ast-param "buf" (ast-ty-ptr (AstType.U8)) false)
+      (ast-param-cons (ast-param "n" (AstType.I32) false) AstParamList.Nil))))
 
 (define (tltest-linux-write-ptr-arg) : i64
   (ast-node-push
@@ -682,7 +682,7 @@
       (ast-expr-cons
         (ast-expr-cast
           (ast-expr-ptr-to-int (ast-node-push (AstExpr.Var (intern "buf"))))
-          (AstTyI64))
+          (AstType.I64))
         AstExprList.Nil))))
 
 (define (tltest-linux-write-syscall) : i64
@@ -695,13 +695,13 @@
             (ast-expr-cons
               (ast-expr-cast
                 (ast-node-push (AstExpr.Var (intern "fd")))
-                (AstTyI64))
+                (AstType.I64))
               (ast-expr-cons
                 (tltest-linux-write-ptr-arg)
                 (ast-expr-cons
                   (ast-expr-cast
                     (ast-node-push (AstExpr.Var (intern "n")))
-                    (AstTyI64))
+                    (AstType.I64))
                   AstExprList.Nil)))))
         AstExprList.Nil))))
 
@@ -709,36 +709,40 @@
   (ast-decl-def-fn
     "__tl_test_write"
     (tltest-print-runtime-write-params)
-    (AstTyI32)
-    (ast-expr-cast (tltest-linux-write-syscall) (AstTyI32))))
+    (AstType.I32)
+    (ast-expr-cast (tltest-linux-write-syscall) (AstType.I32))))
 
 (define (tltest-windows-get-std-handle-decl) : AstDecl
   (ast-decl-extern
     "__tl_test_get_std_handle"
-    (AstExternFunction)
-    (AstExternMetadata
-      (AstExternAbiC)
+    (AstExternKind.Function)
+    (AstExternMetadata.Metadata
+      (AstExternAbi.C)
       "GetStdHandle"
-      AstExternLinkInputNil
+      AstExternLinkInputList.Nil
       true)
-    (ast-ty-func (ast-type-cons (AstTyI32) AstTypeNil) (AstTyI64))))
+    (ast-ty-func (ast-type-cons (AstType.I32) AstTypeList.Nil) (AstType.I64))))
 
 (define (tltest-windows-write-file-decl) : AstDecl
   (ast-decl-extern
     "__tl_test_write_file"
-    (AstExternFunction)
-    (AstExternMetadata (AstExternAbiC) "WriteFile" AstExternLinkInputNil true)
+    (AstExternKind.Function)
+    (AstExternMetadata.Metadata
+      (AstExternAbi.C)
+      "WriteFile"
+      AstExternLinkInputList.Nil
+      true)
     (ast-ty-func
       (ast-type-cons
-        (AstTyI64)
+        (AstType.I64)
         (ast-type-cons
-          (ast-ty-ptr (AstTyU8))
+          (ast-ty-ptr (AstType.U8))
           (ast-type-cons
-            (AstTyI32)
+            (AstType.I32)
             (ast-type-cons
-              (ast-ty-mut-ptr (AstTyI32))
-              (ast-type-cons (AstTyI64) AstTypeNil)))))
-      (AstTyI32))))
+              (ast-ty-mut-ptr (AstType.I32))
+              (ast-type-cons (AstType.I64) AstTypeList.Nil)))))
+      (AstType.I32))))
 
 (define (tltest-windows-get-stderr-handle-expr) : i64
   (ast-expr-call
@@ -746,7 +750,7 @@
     (ast-expr-cons
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int -12)))
-        (AstTyI32))
+        (AstType.I32))
       AstExprList.Nil)))
 
 (define (tltest-windows-write-file-call) : i64
@@ -759,7 +763,7 @@
         (ast-expr-cons
           (ast-node-push (AstExpr.Var (intern "n")))
           (ast-expr-cons
-            (ast-node-push (AstExpr.PtrNull (ast-ty-mut-ptr (AstTyI32))))
+            (ast-node-push (AstExpr.PtrNull (ast-ty-mut-ptr (AstType.I32))))
             (ast-expr-cons
               (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
               AstExprList.Nil)))))))
@@ -769,12 +773,12 @@
     (ast-let-binding-cons
       (ast-let-binding
         "handle"
-        (AstSomeType (AstTyI64))
+        (AstMaybeType.Some (AstType.I64))
         (tltest-windows-get-stderr-handle-expr))
       (ast-let-binding-cons
         (ast-let-binding
           "ok"
-          (AstSomeType (AstTyI32))
+          (AstMaybeType.Some (AstType.I32))
           (tltest-windows-write-file-call))
         AstLetBindingList.Nil))
     (ast-expr-if
@@ -783,17 +787,17 @@
         (ast-node-push (AstExpr.Var (intern "ok")))
         (ast-expr-cast
           (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
-          (AstTyI32)))
+          (AstType.I32)))
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int -1)))
-        (AstTyI32))
+        (AstType.I32))
       (ast-node-push (AstExpr.Var (intern "n"))))))
 
 (define (tltest-windows-print-runtime-write-decl) : AstDecl
   (ast-decl-def-fn
     "__tl_test_write"
     (tltest-print-runtime-write-params)
-    (AstTyI32)
+    (AstType.I32)
     (tltest-windows-write-body)))
 
 (define (tltest-print-runtime-write-decl [target : CompilerBackendTarget]) : AstDecl
@@ -803,8 +807,8 @@
 
 (define (tltest-print-param-list) : AstParamList
   (ast-param-cons
-    (ast-param "text" (AstTyString) false)
-    (ast-param-cons (ast-param "n" (AstTyI32) false) AstParamNil)))
+    (ast-param "text" (AstType.String) false)
+    (ast-param-cons (ast-param "n" (AstType.I32) false) AstParamList.Nil)))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
@@ -812,7 +816,7 @@
     (ast-expr-cons
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int 2)))
-        (AstTyI32))
+        (AstType.I32))
       (ast-expr-cons
         (ast-node-push
           (AstExpr.Unsafe
@@ -828,7 +832,7 @@
   (ast-decl-def-fn
     "__tl_test_print_error"
     (tltest-print-param-list)
-    (AstTyUnit)
+    (AstType.Unit)
     (ast-node-push
       (AstExpr.Begin
         (ast-expr-cons
@@ -922,7 +926,11 @@
             tests
             (- index 1)
             (ast-decl-cons
-              (ast-decl-def-fn private-name AstParamNil (AstTyUnit) body)
+              (ast-decl-def-fn
+                private-name
+                AstParamList.Nil
+                (AstType.Unit)
+                body)
               out))]))))
 
 (define (tltest-test-paths-onto
@@ -943,8 +951,8 @@
 (define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
   (ast-decl-def-fn
     "main"
-    AstParamNil
-    (AstTyI64)
+    AstParamList.Nil
+    (AstType.I64)
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
 (define (tltest-empty-main-decl) : AstDecl
@@ -1536,31 +1544,32 @@
   [cleanup : AstStructCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstStructCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
-    [(AstStructNoCleanup) names]))
+    [(AstStructCleanup.Fn name)
+      (tltest-reach-mark-name names (intern-str name))]
+    [(AstStructCleanup.No) names]))
 
 (define (tltest-reach-mark-enum-cleanup
   [cleanup : AstEnumCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstEnumCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
-    [(AstEnumNoCleanup) names]))
+    [(AstEnumCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstEnumCleanup.No) names]))
 
 (define (tltest-reach-mark-field-cleanup
   [cleanup : AstFieldCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstFieldCleanupFn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstFieldCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
     [_ names]))
 
 (define (tltest-reach-mark-field-cleanups
   [fields : AstFieldDefList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match fields
-    [(AstFieldDefNil) names]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) names]
+    [(AstFieldDefList.Cons field rest)
       (match field
-        [(AstFieldDef _ _ cleanup)
+        [(AstFieldDef.Def _ _ cleanup)
           (tltest-reach-mark-field-cleanups
             (box-get rest)
             (tltest-reach-mark-field-cleanup cleanup names))])]))
@@ -1569,7 +1578,7 @@
   [cleanup : AstVariantPayloadCleanup]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanup
-    [(AstVariantPayloadCleanupFn name)
+    [(AstVariantPayloadCleanup.Fn name)
       (tltest-reach-mark-name names (intern-str name))]
     [_ names]))
 
@@ -1577,8 +1586,8 @@
   [cleanups : AstVariantPayloadCleanupList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match cleanups
-    [(AstVariantPayloadCleanupNil) names]
-    [(AstVariantPayloadCleanupCons cleanup rest)
+    [(AstVariantPayloadCleanupList.Nil) names]
+    [(AstVariantPayloadCleanupList.Cons cleanup rest)
       (tltest-reach-mark-variant-payload-cleanups
         (box-get rest)
         (tltest-reach-mark-variant-payload-cleanup cleanup names))]))
@@ -1587,10 +1596,10 @@
   [variants : AstVariantDefList]
   [names : hashmap.StringI64Map]) : hashmap.StringI64Map
   (match variants
-    [(AstVariantDefNil) names]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) names]
+    [(AstVariantDefList.Cons variant rest)
       (match variant
-        [(AstVariantDef _ _ cleanups)
+        [(AstVariantDef.Def _ _ cleanups)
           (tltest-reach-mark-variant-cleanups
             (box-get rest)
             (tltest-reach-mark-variant-payload-cleanups cleanups names))])]))
@@ -1607,11 +1616,11 @@
       (let
         [body : AstExpr (ast-node-get body-box)]
         (match export
-          [(AstFnExport _)
+          [(AstFnExport.Export _)
             (tltest-reach-mark-expr
               body
               (tltest-reach-mark-name names (intern-str name)))]
-          [(AstFnNoExport)
+          [(AstFnExport.No)
             (if (tltest-reachable-name-marked? names (intern-str name))
               (tltest-reach-mark-expr body names)
               names)]))]
@@ -1712,8 +1721,8 @@
         [name-str : String (intern-str name)]
         [marked : bool (tltest-reachable-name-marked? names name-str)]
         (match export
-          [(AstFnExport _) true]
-          [(AstFnNoExport) marked]))]
+          [(AstFnExport.Export _) true]
+          [(AstFnExport.No) marked]))]
     [(AstDecl.Extern name _ _ _)
       (let
         [name-str : String (intern-str name)]
@@ -2122,8 +2131,8 @@
     [dep-fn : AstDecl
       (ast-decl-def-fn
         "eq"
-        AstParamNil
-        (AstTyBool)
+        AstParamList.Nil
+        (AstType.Bool)
         (ast-node-push (AstExpr.Literal (AstLitBool true))))]
     [source-import : AstDecl
       (AstDecl.Import
@@ -2175,8 +2184,8 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLitUnit))))]
     [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
     [second-span : AstSourceSpan (AstSourceSpan 22 1 22 1)]
@@ -2225,9 +2234,17 @@
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
     [substring-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-substring"
+        AstParamList.Nil
+        (AstType.Unit)
+        unit-expr)]
     [str-view-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-str-view" AstParamNil (AstTyUnit) unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-str-view"
+        AstParamList.Nil
+        (AstType.Unit)
+        unit-expr)]
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
@@ -2239,8 +2256,8 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_runtime_helper"
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 17 1 17 1)]
     [decls : AstDeclList
@@ -2292,8 +2309,13 @@
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
     [substring-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
-    [lambda-expr : i64 (ast-expr-lambda AstParamNil AstNoType unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-substring"
+        AstParamList.Nil
+        (AstType.Unit)
+        unit-expr)]
+    [lambda-expr : i64
+      (ast-expr-lambda AstParamList.Nil AstMaybeType.No unit-expr)]
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
@@ -2301,8 +2323,8 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_lambda_helper"
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 18 1 18 1)]
     [decls : AstDeclList
@@ -2347,7 +2369,11 @@
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLitUnit)))]
     [substring-decl : AstDecl
-      (ast-decl-def-fn "tl-runtime-substring" AstParamNil (AstTyUnit) unit-expr)]
+      (ast-decl-def-fn
+        "tl-runtime-substring"
+        AstParamList.Nil
+        (AstType.Unit)
+        unit-expr)]
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
@@ -2357,8 +2383,8 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         "__tl_generated_substring_helper"
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         helper-body)]
     [span : AstSourceSpan (AstSourceSpan 19 1 19 1)]
     [decls : AstDeclList
@@ -2405,8 +2431,8 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLitUnit))))]
     [owned-span : AstSourceSpan (AstSourceSpan 5 1 5 1)]
     [imported-span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
@@ -2510,26 +2536,26 @@
     [dep-decl : AstDecl
       (ast-decl-def-fn
         dep-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLitUnit))))]
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (tltest-call-expr dep-name))]
     [eq-dep-decl : AstDecl
       (ast-decl-def-fn
         eq-dep-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLitUnit))))]
     [eq-decl : AstDecl
       (ast-decl-def-fn
         eq-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (tltest-call-expr eq-dep-name))]
     [span : AstSourceSpan (AstSourceSpan 13 1 13 1)]
     [decls : AstDeclList
@@ -2591,24 +2617,24 @@
         dep-name
         (ast-decl-def-fn
           dep-name
-          AstParamNil
-          (AstTyUnit)
+          AstParamList.Nil
+          (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLitUnit)))))]
     [live-decl : AstDecl
       (tltest-generated-wrapper
         live-name
         (ast-decl-def-fn
           live-name
-          AstParamNil
-          (AstTyUnit)
+          AstParamList.Nil
+          (AstType.Unit)
           (tltest-call-expr dep-name)))]
     [dead-decl : AstDecl
       (tltest-generated-wrapper
         dead-name
         (ast-decl-def-fn
           dead-name
-          AstParamNil
-          (AstTyUnit)
+          AstParamList.Nil
+          (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLitUnit)))))]
     [span : AstSourceSpan (AstSourceSpan 23 1 23 1)]
     [decls : AstDeclList
@@ -2659,14 +2685,14 @@
         dead-name
         (ast-decl-def-fn
           dead-name
-          AstParamNil
-          (AstTyUnit)
+          AstParamList.Nil
+          (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLitUnit)))))]
     [ordinary-decl : AstDecl
       (ast-decl-def-fn
         ordinary-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLitUnit))))]
     [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
     [decls : AstDeclList
@@ -2710,14 +2736,14 @@
     [helper-decl : AstDecl
       (ast-decl-def-fn
         helper-name
-        AstParamNil
-        (AstTyUnit)
+        AstParamList.Nil
+        (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLitUnit))))]
     [macro-decl : AstDecl
       (ast-decl-def-macro
         macro-name
-        AstMacroParamNil
-        (AstTyExpr)
+        AstMacroParamList.Nil
+        (AstType.Expr)
         (ast-expr-quasiquote (tltest-call-expr helper-name)))]
     [span : AstSourceSpan (AstSourceSpan 31 1 31 1)]
     [decls : AstDeclList

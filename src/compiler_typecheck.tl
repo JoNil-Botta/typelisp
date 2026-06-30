@@ -1265,9 +1265,9 @@
         meta
         (ast-decl-def-struct
           "GeneratedStruct"
-          (AstStructReprDefault)
-          (AstStructNoCleanup)
-          AstFieldDefNil))]
+          (AstStructRepr.Default)
+          (AstStructCleanup.No)
+          AstFieldDefList.Nil))]
     [diag : CompilerDiagnostic (tc-decl-diag decl "typecheck: policy fallback")]
     [message-ok : bool
       (string.eq
@@ -2033,7 +2033,7 @@
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (ast-ty-tuple (tc-type-list2 (AstTyU8) (AstTyI32))))
+                    (ast-ty-tuple (tc-type-list2 (AstType.U8) (AstType.I32))))
                     [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
@@ -2044,7 +2044,7 @@
                   (match (tc-inline-aggregate-type-layout
                     ctx
                     (ast-ty-array
-                      (ast-ty-tuple (tc-type-list2 (AstTyU8) (AstTyI32)))
+                      (ast-ty-tuple (tc-type-list2 (AstType.U8) (AstType.I32)))
                       2))
                     [(ResultTcLayoutInfo.Ok info)
                       (if (and
@@ -2055,7 +2055,7 @@
                     [(ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (ast-ty-box (AstTyStruct (intern "InlinePacket"))))
+                    (ast-ty-box (AstType.Struct (intern "InlinePacket"))))
                     [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
@@ -2065,7 +2065,7 @@
                     [(ResultTcLayoutInfo.Err _) (set! ok false)])
                   (match (tc-inline-aggregate-type-layout
                     ctx
-                    (ast-ty-dyn-array (AstTyStruct (intern "InlinePacket"))))
+                    (ast-ty-dyn-array (AstType.Struct (intern "InlinePacket"))))
                     [(ResultTcLayoutInfo.Ok info)
                       (if (and
                         (= (tc-layout-info-size info) 8)
@@ -2130,10 +2130,10 @@
   (slots (Array CtfeLayoutInfo))
   (len i64))
 (defenum AstType
-  (AstTyI64))
+  (AstType.I64))
 (defenum AstTypeList
-  (AstTypeNil)
-  (AstTypeCons (Box AstType) (Box AstTypeList)))
+  (AstTypeList.Nil)
+  (AstTypeList.Cons (Box AstType) (Box AstTypeList)))
 (defstruct CtfeReflectField
   (name String)
   (ty AstType))
@@ -2169,13 +2169,13 @@
 
 (define (compiler-typecheck-inline-boxed-ast-list-source) : String
   "(defenum AstType
-  (AstTyI64)
-  (AstTyFunc (Box AstTypeList) i64)
-  (AstTyTuple (Box AstTypeList))
-  (AstTyBox (Box AstType)))
+  (AstType.I64)
+  (AstType.Func (Box AstTypeList) i64)
+  (AstType.Tuple (Box AstTypeList))
+  (AstType.Box (Box AstType)))
 (defenum AstTypeList
-  (AstTypeNil)
-  (AstTypeCons (Box AstType) (Box AstTypeList)))
+  (AstTypeList.Nil)
+  (AstTypeList.Cons (Box AstType) (Box AstTypeList)))
 (defenum AstPattern
   (AstPattern.Wildcard)
   (AstPattern.Tuple (Box AstPatternList)))
@@ -2825,12 +2825,14 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string.eq (tc-type-render (ast-ty-box (AstTyI64))) "(Box i64)")
+    (string.eq (tc-type-render (ast-ty-box (AstType.I64))) "(Box i64)")
     (tc-type-eq
-      (ast-ty-box (ast-ty-region "r" (AstTyI64)))
-      (ast-ty-box (AstTyI64)))
-    (tc-type-contains-region (ast-ty-box (ast-ty-region "r" (AstTyString))) "r")
-    (tc-type-move-only? (ast-ty-box (AstTyI64)))))
+      (ast-ty-box (ast-ty-region "r" (AstType.I64)))
+      (ast-ty-box (AstType.I64)))
+    (tc-type-contains-region
+      (ast-ty-box (ast-ty-region "r" (AstType.String)))
+      "r")
+    (tc-type-move-only? (ast-ty-box (AstType.I64)))))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
   (and
@@ -3254,11 +3256,11 @@
     (ast-decl-cons
       (ast-decl-def-struct
         "Bad"
-        (AstStructReprC)
+        (AstStructRepr.C)
         (ast-struct-cleanup-fn "cleanup-bad")
         (ast-field-def-cons
-          (ast-field-def "fd" (AstTyI64) (AstFieldNoCleanup))
-          AstFieldDefNil))
+          (ast-field-def "fd" (AstType.I64) (AstFieldCleanup.No))
+          AstFieldDefList.Nil))
       AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : AstProgram
@@ -3266,11 +3268,11 @@
     (ast-decl-cons
       (ast-decl-def-struct
         "Bad"
-        (AstStructReprDefault)
-        (AstStructNoCleanup)
+        (AstStructRepr.Default)
+        (AstStructCleanup.No)
         (ast-field-def-cons
-          (ast-field-def "fd" (AstTyI64) (ast-field-cleanup-fn "close-fd"))
-          AstFieldDefNil))
+          (ast-field-def "fd" (AstType.I64) (ast-field-cleanup-fn "close-fd"))
+          AstFieldDefList.Nil))
       AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-struct-tests-ok?) : bool
@@ -3368,15 +3370,15 @@
     (ast-decl-cons
       (ast-decl-def-enum
         "Bad"
-        (AstEnumNoCleanup)
+        (AstEnumCleanup.No)
         (ast-variant-def-cons
           (ast-variant-def
             "A"
-            (ast-type-cons (AstTyI64) AstTypeNil)
+            (ast-type-cons (AstType.I64) AstTypeList.Nil)
             (ast-variant-payload-cleanup-cons
               (ast-variant-payload-cleanup-fn "close-fd")
-              AstVariantPayloadCleanupNil))
-          AstVariantDefNil))
+              AstVariantPayloadCleanupList.Nil))
+          AstVariantDefList.Nil))
       AstDeclList.Nil)))
 
 (define (compiler-typecheck-cleanup-enum-tests-ok?) : bool
@@ -3440,45 +3442,51 @@
 
 (define (compiler-typecheck-move-kind-copyable-tests-ok?) : bool
   (and
-    (tc-type-copyable? (AstTyI64))
-    (tc-type-copyable? (AstTyI32))
-    (tc-type-copyable? (AstTyF64))
-    (tc-type-copyable? (AstTyF32))
-    (tc-type-copyable? (AstTyBool))
-    (tc-type-copyable? (AstTyChar))
-    (tc-type-copyable? (AstTyUnit))
-    (tc-type-copyable? (AstTyNever))
-    (tc-type-copyable? (ast-ty-func AstTypeNil (AstTyI64)))
-    (tc-type-copyable? (ast-ty-ptr (ast-ty-region "inner" (AstTyString))))
-    (tc-type-copyable? (ast-ty-mut-ptr (ast-ty-dyn-array (AstTyI64))))
-    (tc-type-copyable? (ast-ty-ref "r" (AstTyString)))))
+    (tc-type-copyable? (AstType.I64))
+    (tc-type-copyable? (AstType.I32))
+    (tc-type-copyable? (AstType.F64))
+    (tc-type-copyable? (AstType.F32))
+    (tc-type-copyable? (AstType.Bool))
+    (tc-type-copyable? (AstType.Char))
+    (tc-type-copyable? (AstType.Unit))
+    (tc-type-copyable? (AstType.Never))
+    (tc-type-copyable? (ast-ty-func AstTypeList.Nil (AstType.I64)))
+    (tc-type-copyable? (ast-ty-ptr (ast-ty-region "inner" (AstType.String))))
+    (tc-type-copyable? (ast-ty-mut-ptr (ast-ty-dyn-array (AstType.I64))))
+    (tc-type-copyable? (ast-ty-ref "r" (AstType.String)))))
 
 (define (compiler-typecheck-move-kind-move-only-tests-ok?) : bool
   (and
-    (tc-type-move-only? (AstTyString))
-    (tc-type-move-only? (ast-ty-dyn-array (AstTyI64)))
-    (tc-type-move-only? (ast-ty-array (AstTyI64) 4))
-    (tc-type-move-only?
-      (ast-ty-tuple
-        (ast-type-cons (AstTyI64) (ast-type-cons (AstTyBool) AstTypeNil))))
-    (tc-type-move-only? (AstTyStruct (intern "Box")))
-    (tc-type-move-only? (ast-ty-box (AstTyI64)))
-    (tc-type-move-only? (AstTyEnum (intern "MoveOnlyEnum")))
-    (tc-type-move-only? (ast-ty-mut-ref "phase" (AstTyI64)))
+    (tc-type-move-only? (AstType.String))
+    (tc-type-move-only? (ast-ty-dyn-array (AstType.I64)))
+    (tc-type-move-only? (ast-ty-array (AstType.I64) 4))
     (tc-type-move-only?
       (ast-ty-tuple
         (ast-type-cons
-          (AstTyStruct (intern "Box"))
-          (ast-type-cons (ast-ty-dyn-array (AstTyI64)) AstTypeNil))))))
+          (AstType.I64)
+          (ast-type-cons (AstType.Bool) AstTypeList.Nil))))
+    (tc-type-move-only? (AstType.Struct (intern "Box")))
+    (tc-type-move-only? (ast-ty-box (AstType.I64)))
+    (tc-type-move-only? (AstType.Enum (intern "MoveOnlyEnum")))
+    (tc-type-move-only? (ast-ty-mut-ref "phase" (AstType.I64)))
+    (tc-type-move-only?
+      (ast-ty-tuple
+        (ast-type-cons
+          (AstType.Struct (intern "Box"))
+          (ast-type-cons (ast-ty-dyn-array (AstType.I64)) AstTypeList.Nil))))))
 
 (define (compiler-typecheck-move-kind-region-tests-ok?) : bool
   (and
-    (tc-type-copyable? (ast-ty-region "r" (AstTyI64)))
-    (tc-type-copyable? (ast-ty-region "r" (ast-ty-ref "inner" (AstTyString))))
-    (tc-type-move-only? (ast-ty-region "r" (AstTyString)))
+    (tc-type-copyable? (ast-ty-region "r" (AstType.I64)))
+    (tc-type-copyable?
+      (ast-ty-region "r" (ast-ty-ref "inner" (AstType.String))))
+    (tc-type-move-only? (ast-ty-region "r" (AstType.String)))
     (tc-type-move-only?
-      (ast-ty-region "r" (ast-ty-tuple (ast-type-cons (AstTyI64) AstTypeNil))))
-    (tc-type-move-only? (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstTyI64))))))
+      (ast-ty-region
+        "r"
+        (ast-ty-tuple (ast-type-cons (AstType.I64) AstTypeList.Nil))))
+    (tc-type-move-only?
+      (ast-ty-region "r" (ast-ty-mut-ref "phase" (AstType.I64))))))
 
 (define (compiler-typecheck-move-kind-tests-ok?) : bool
   (and
@@ -3494,15 +3502,15 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
-    (string.eq (tc-type-render (ast-ty-ptr (AstTyI64))) "(Ptr i64)")
+    (string.eq (tc-type-render (ast-ty-ptr (AstType.I64))) "(Ptr i64)")
     (string.eq
-      (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstTyU8))))
+      (tc-type-render (ast-ty-mut-ptr (ast-ty-ptr (AstType.U8))))
       "(MutPtr (Ptr u8))")
-    (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-ptr (AstTyI64)))
-    (not (tc-type-eq (ast-ty-ptr (AstTyI64)) (ast-ty-mut-ptr (AstTyI64))))
+    (tc-type-eq (ast-ty-ptr (AstType.I64)) (ast-ty-ptr (AstType.I64)))
+    (not (tc-type-eq (ast-ty-ptr (AstType.I64)) (ast-ty-mut-ptr (AstType.I64))))
     (tc-type-eq
-      (ast-ty-ptr (ast-ty-region "r" (AstTyI64)))
-      (ast-ty-ptr (AstTyI64)))))
+      (ast-ty-ptr (ast-ty-region "r" (AstType.I64)))
+      (ast-ty-ptr (AstType.I64)))))
 
 (define (compiler-typecheck-raw-pointer-ops-source) : String
   "(extern (raw-make) : (MutPtr i64))
@@ -4214,59 +4222,69 @@
 (define (compiler-typecheck-reference-render-ok?) : bool
   (let
     [string-ref-render-ok : bool
-      (string.eq (tc-type-render (ast-ty-ref "r" (AstTyString))) "(& r String)")]
+      (string.eq
+        (tc-type-render (ast-ty-ref "r" (AstType.String)))
+        "(& r String)")]
     [str-ref-render-ok : bool
-      (string.eq (tc-type-render (ast-ty-ref "r" (AstTyStr))) "(& r str)")]
+      (string.eq (tc-type-render (ast-ty-ref "r" (AstType.Str))) "(& r str)")]
     [bytes-ref-render-ok : bool
-      (string.eq (tc-type-render (ast-ty-ref "r" (AstTyBytes))) "(& r bytes)")]
+      (string.eq
+        (tc-type-render (ast-ty-ref "r" (AstType.Bytes)))
+        "(& r bytes)")]
     [bytes-mut-ref-render-ok : bool
       (string.eq
-        (tc-type-render (ast-ty-mut-ref "r" (AstTyBytes)))
+        (tc-type-render (ast-ty-mut-ref "r" (AstType.Bytes)))
         "(&mut r bytes)")]
     [mut-ref-render-ok : bool
       (string.eq
-        (tc-type-render (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstTyI64))))
+        (tc-type-render
+          (ast-ty-mut-ref "phase" (ast-ty-dyn-array (AstType.I64))))
         "(&mut phase (Array i64))")]
     [nominal-lifetime-render-ok : bool
       (string.eq
         (tc-type-render
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "n" AstLifetimeNil)))
+            (ast-lifetime-cons "n" AstLifetimeList.Nil)))
         "(RefBox n)")]
-    [str-eq-ok : bool (tc-type-eq (AstTyStr) (AstTyStr))]
-    [str-distinct-ok : bool (not (tc-type-eq (AstTyStr) (AstTyString)))]
-    [bytes-eq-ok : bool (tc-type-eq (AstTyBytes) (AstTyBytes))]
-    [bytes-distinct-ok : bool (not (tc-type-eq (AstTyBytes) (AstTyStr)))]
+    [str-eq-ok : bool (tc-type-eq (AstType.Str) (AstType.Str))]
+    [str-distinct-ok : bool (not (tc-type-eq (AstType.Str) (AstType.String)))]
+    [bytes-eq-ok : bool (tc-type-eq (AstType.Bytes) (AstType.Bytes))]
+    [bytes-distinct-ok : bool (not (tc-type-eq (AstType.Bytes) (AstType.Str)))]
     [nominal-lifetime-distinct-ok : bool
       (not
         (tc-type-eq
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "n" AstLifetimeNil))
+            (ast-lifetime-cons "n" AstLifetimeList.Nil))
           (ast-ty-struct-args
             (intern "RefBox")
-            (ast-lifetime-cons "m" AstLifetimeNil))))]
-    [str-move-kind-ok : bool (tc-type-move-only? (AstTyStr))]
-    [bytes-move-kind-ok : bool (tc-type-move-only? (AstTyBytes))]
+            (ast-lifetime-cons "m" AstLifetimeList.Nil))))]
+    [str-move-kind-ok : bool (tc-type-move-only? (AstType.Str))]
+    [bytes-move-kind-ok : bool (tc-type-move-only? (AstType.Bytes))]
     [str-ref-move-kind-ok : bool
-      (tc-type-copyable? (ast-ty-ref "r" (AstTyStr)))]
+      (tc-type-copyable? (ast-ty-ref "r" (AstType.Str)))]
     [bytes-ref-move-kind-ok : bool
-      (tc-type-copyable? (ast-ty-ref "r" (AstTyBytes)))]
+      (tc-type-copyable? (ast-ty-ref "r" (AstType.Bytes)))]
     [region-erased-eq-ok : bool
       (tc-type-eq
-        (ast-ty-ref "r" (ast-ty-region "inner" (AstTyI64)))
-        (ast-ty-ref "r" (AstTyI64)))]
+        (ast-ty-ref "r" (ast-ty-region "inner" (AstType.I64)))
+        (ast-ty-ref "r" (AstType.I64)))]
     [region-distinct-ok : bool
-      (not (tc-type-eq (ast-ty-ref "r" (AstTyI64)) (ast-ty-ref "s" (AstTyI64))))]
+      (not
+        (tc-type-eq
+          (ast-ty-ref "r" (AstType.I64))
+          (ast-ty-ref "s" (AstType.I64))))]
     [mut-distinct-ok : bool
       (not
-        (tc-type-eq (ast-ty-ref "r" (AstTyI64)) (ast-ty-mut-ref "r" (AstTyI64))))]
+        (tc-type-eq
+          (ast-ty-ref "r" (AstType.I64))
+          (ast-ty-mut-ref "r" (AstType.I64))))]
     [region-contains-ok : bool
-      (tc-type-contains-region (ast-ty-ref "r" (AstTyI64)) "r")]
+      (tc-type-contains-region (ast-ty-ref "r" (AstType.I64)) "r")]
     [inner-region-contains-ok : bool
       (tc-type-contains-region
-        (ast-ty-mut-ref "phase" (ast-ty-region "inner" (AstTyString)))
+        (ast-ty-mut-ref "phase" (ast-ty-region "inner" (AstType.String)))
         "inner")]
     (and
       string-ref-render-ok
@@ -7403,6 +7421,25 @@
 (gen)
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-decls-macro-runtime-raw-storage-source) : String
+  "(defmacro (gen) : Decls
+  `(define (generated-copy [text : String] [items : (Array u8)]) : String
+     (unsafe
+       (let
+         [text-ptr : (Ptr u8) (string-data text)]
+         [text-len : i64 (__tl_string_length text)]
+         [copied : String (string-from-bytes text-ptr text-len)]
+         [items-ptr : (MutPtr u8) (array-data items)]
+         [items-ro : (Ptr u8) (ptr-cast items-ptr : (Ptr u8))]
+         [addr : u64 (ptr->int items-ro)]
+         [roundtrip : (Ptr u8) (int->ptr addr : (Ptr u8))]
+         [first : u8 (ptr-read (ptr-offset roundtrip 0))]
+         (begin
+           (ptr-write! (ptr-offset items-ptr 0) first)
+           copied)))))
+(gen)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-decls-macro-runtime-unsafe-missing-source) : String
   "(defmacro (gen) : Decls
   `(define (generated-read [p : (Ptr i64)]) : i64 (ptr-read p)))
@@ -7751,6 +7788,8 @@
       (compiler-typecheck-decls-macro-runtime-unsafe-decl-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-decls-macro-runtime-unsafe-helper-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-decls-macro-runtime-raw-storage-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-decls-macro-runtime-unsafe-missing-source)
       "typecheck: ptr-read requires unsafe context")

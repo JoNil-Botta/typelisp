@@ -786,12 +786,12 @@
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
   (match variants
-    [(AstVariantDefNil) (ResultCompilerSymbols.Ok symbols)]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) (ResultCompilerSymbols.Ok symbols)]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _ _)
+          [(AstVariantDef.Def name _ _)
             (match (compiler-symbols-add-variant-value-in-module
               symbols
               module
@@ -1024,8 +1024,8 @@
   [cleanup : AstStructCleanup]
   [index : i64]) : ResultCompilerSymbols
   (match cleanup
-    [(AstStructNoCleanup) (ResultCompilerSymbols.Ok symbols)]
-    [(AstStructCleanupFn cleanup-name)
+    [(AstStructCleanup.No) (ResultCompilerSymbols.Ok symbols)]
+    [(AstStructCleanup.Fn cleanup-name)
       (compiler-symbols-add-value-in-module
         symbols
         module
@@ -1040,8 +1040,8 @@
   [cleanup : AstEnumCleanup]
   [index : i64]) : ResultCompilerSymbols
   (match cleanup
-    [(AstEnumNoCleanup) (ResultCompilerSymbols.Ok symbols)]
-    [(AstEnumCleanupFn cleanup-name)
+    [(AstEnumCleanup.No) (ResultCompilerSymbols.Ok symbols)]
+    [(AstEnumCleanup.Fn cleanup-name)
       (compiler-symbols-add-value-in-module
         symbols
         module
@@ -1239,8 +1239,8 @@
   [cleanup : AstStructCleanup]
   [index : i64]) : ResultCompilerSymbols
   (match cleanup
-    [(AstStructNoCleanup) (ResultCompilerSymbols.Ok symbols)]
-    [(AstStructCleanupFn cleanup-name)
+    [(AstStructCleanup.No) (ResultCompilerSymbols.Ok symbols)]
+    [(AstStructCleanup.Fn cleanup-name)
       (compiler-symbols-add-local-value-in-module
         symbols
         module
@@ -1255,8 +1255,8 @@
   [cleanup : AstEnumCleanup]
   [index : i64]) : ResultCompilerSymbols
   (match cleanup
-    [(AstEnumNoCleanup) (ResultCompilerSymbols.Ok symbols)]
-    [(AstEnumCleanupFn cleanup-name)
+    [(AstEnumCleanup.No) (ResultCompilerSymbols.Ok symbols)]
+    [(AstEnumCleanup.Fn cleanup-name)
       (compiler-symbols-add-local-value-in-module
         symbols
         module
@@ -1285,12 +1285,12 @@
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerSymbols
   (match variants
-    [(AstVariantDefNil) (ResultCompilerSymbols.Ok symbols)]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) (ResultCompilerSymbols.Ok symbols)]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _ _)
+          [(AstVariantDef.Def name _ _)
             (match (compiler-symbols-add-local-variant-value-in-module
               symbols
               module
@@ -1465,12 +1465,12 @@
   [enum-index : i64]
   [variant-index : i64]) : CompilerSymbols
   (match variants
-    [(AstVariantDefNil) symbols]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) symbols]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _ _)
+          [(AstVariantDef.Def name _ _)
             (let
               [variant-name : String (intern-str name)]
               [qualified-name : String
@@ -1500,8 +1500,8 @@
   [cleanup : AstStructCleanup]
   [index : i64]) : CompilerSymbols
   (match cleanup
-    [(AstStructNoCleanup) symbols]
-    [(AstStructCleanupFn cleanup-name)
+    [(AstStructCleanup.No) symbols]
+    [(AstStructCleanup.Fn cleanup-name)
       (compiler-symbols-add-value-alias
         symbols
         (compiler-symbol-module-key alias (intern-str cleanup-name))
@@ -1515,8 +1515,8 @@
   [cleanup : AstEnumCleanup]
   [index : i64]) : CompilerSymbols
   (match cleanup
-    [(AstEnumNoCleanup) symbols]
-    [(AstEnumCleanupFn cleanup-name)
+    [(AstEnumCleanup.No) symbols]
+    [(AstEnumCleanup.Fn cleanup-name)
       (compiler-symbols-add-value-alias
         symbols
         (compiler-symbol-module-key alias (intern-str cleanup-name))
@@ -2501,12 +2501,12 @@
   [enum-index : i64]
   [variant-index : i64]) : CompilerRegistries
   (match variants
-    [(AstVariantDefNil) registries]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) registries]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _ _)
+          [(AstVariantDef.Def name _ _)
             (let
               [variant-name : String (intern-str name)]
               [qualified-name : String
@@ -2537,12 +2537,12 @@
   [struct-index : i64]
   [field-index : i64]) : CompilerRegistries
   (match fields
-    [(AstFieldDefNil) registries]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) registries]
+    [(AstFieldDefList.Cons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
-          [(AstFieldDef name _ _)
+          [(AstFieldDef.Def name _ _)
             (compiler-registries-add-field-aliases-list
               (compiler-registries-add-field-alias
                 registries
@@ -2727,12 +2727,12 @@
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
   (match variants
-    [(AstVariantDefNil) (ResultCompilerRegistries.Ok registries)]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) (ResultCompilerRegistries.Ok registries)]
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef name _ _)
+          [(AstVariantDef.Def name _ _)
             (match (compiler-registries-add-variant-in-module
               registries
               module
@@ -2759,12 +2759,12 @@
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
   (match fields
-    [(AstFieldDefNil) (ResultCompilerRegistries.Ok registries)]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) (ResultCompilerRegistries.Ok registries)]
+    [(AstFieldDefList.Cons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
-          [(AstFieldDef name _ _)
+          [(AstFieldDef.Def name _ _)
             (if (sym_i64_env.sym-i64-contains-id seen name)
               (ResultCompilerRegistries.Err
                 (compiler-registries-duplicate-field-message
@@ -3070,13 +3070,13 @@
   [target : i64]
   [index : i64]) : ResultAstTypeList
   (match variants
-    [(AstVariantDefNil)
+    [(AstVariantDefList.Nil)
       (ResultAstTypeList.Err "symbols: variant index not found")]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Cons variant rest)
       (let
         [rest : AstVariantDefList (box-get rest)]
         (match variant
-          [(AstVariantDef _ fields _)
+          [(AstVariantDef.Def _ fields _)
             (if (= target index)
               (ResultAstTypeList.Ok fields)
               (compiler-variant-types-at-index rest target (+ index 1)))]))]))
@@ -3086,12 +3086,12 @@
   [target : i64]
   [index : i64]) : ResultAstType
   (match fields
-    [(AstFieldDefNil) (ResultAstType.Err "symbols: field index not found")]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) (ResultAstType.Err "symbols: field index not found")]
+    [(AstFieldDefList.Cons field rest)
       (let
         [rest : AstFieldDefList (box-get rest)]
         (match field
-          [(AstFieldDef _ ty _)
+          [(AstFieldDef.Def _ ty _)
             (if (= target index)
               (ResultAstType.Ok ty)
               (compiler-field-type-at-index rest target (+ index 1)))]))]))
@@ -3234,12 +3234,12 @@
   (match found
     [(ResultAstTypeList.Ok types)
       (match types
-        [(AstTypeCons ty rest)
+        [(AstTypeList.Cons ty rest)
           (let
             [ty : AstType (ty-node-get ty)]
             [rest : AstTypeList (box-get rest)]
             (match rest
-              [(AstTypeNil)
+              [(AstTypeList.Nil)
                 (if (= (ast-type-tag ty) want-tag)
                   1
                   0)]
@@ -3353,14 +3353,14 @@
                 [(option_i64.Some handle)
                   (compiler-type-result-tag-score
                     (compiler-registries-struct-field-type program handle)
-                    (ast-type-tag (AstTyI64)))]
+                    (ast-type-tag (AstType.I64)))]
                 [(option_i64.None) 0])
               (+
                 (match some
                   [(option_i64.Some handle)
                     (compiler-type-list-single-tag-score
                       (compiler-registries-variant-fields program handle)
-                      (ast-type-tag (AstTyI64)))]
+                      (ast-type-tag (AstType.I64)))]
                   [(option_i64.None) 0])
                 (+
                   (compiler-symbols-miss-score

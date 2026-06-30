@@ -544,7 +544,7 @@
 (define (compiler-backend-float-key [ty : AstType] [bits : u64]) : String
   (str_cat.str-cat
     (match ty
-      [(AstTyF32) "f32"]
+      [(AstType.F32) "f32"]
       [_ "f64"])
     ":"
     (string.int->string
@@ -934,16 +934,16 @@
 
 (define (compiler-backend-avx2-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
   (match elem-ty
-    [(AstTyI64) (= lanes 4)]
-    [(AstTyU64) (= lanes 4)]
-    [(AstTyF64) (= lanes 4)]
-    [(AstTyF32) (= lanes 8)]
-    [(AstTyI32) (= lanes 8)]
-    [(AstTyU32) (= lanes 8)]
-    [(AstTyI16) (= lanes 16)]
-    [(AstTyU16) (= lanes 16)]
-    [(AstTyI8) (= lanes 32)]
-    [(AstTyU8) (= lanes 32)]
+    [(AstType.I64) (= lanes 4)]
+    [(AstType.U64) (= lanes 4)]
+    [(AstType.F64) (= lanes 4)]
+    [(AstType.F32) (= lanes 8)]
+    [(AstType.I32) (= lanes 8)]
+    [(AstType.U32) (= lanes 8)]
+    [(AstType.I16) (= lanes 16)]
+    [(AstType.U16) (= lanes 16)]
+    [(AstType.I8) (= lanes 32)]
+    [(AstType.U8) (= lanes 32)]
     [_ false]))
 
 (define (compiler-backend-avx2-shape-diagnostic
@@ -1094,8 +1094,8 @@
 
 (define (compiler-backend-avx2-vector-move [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyF64) "vmovupd"]
-    [(AstTyF32) "vmovups"]
+    [(AstType.F64) "vmovupd"]
+    [(AstType.F32) "vmovups"]
     [_ "vmovdqu"]))
 
 (define (compiler-backend-avx2-vector-binop-mnemonic
@@ -1104,71 +1104,71 @@
   (match op
     [(CompilerIrBinOp.Add)
       (match elem-ty
-        [(AstTyI64) "vpaddq"]
-        [(AstTyU64) "vpaddq"]
-        [(AstTyI32) "vpaddd"]
-        [(AstTyU32) "vpaddd"]
-        [(AstTyI16) "vpaddw"]
-        [(AstTyU16) "vpaddw"]
-        [(AstTyI8) "vpaddb"]
-        [(AstTyU8) "vpaddb"]
-        [(AstTyF64) "vaddpd"]
-        [(AstTyF32) "vaddps"]
+        [(AstType.I64) "vpaddq"]
+        [(AstType.U64) "vpaddq"]
+        [(AstType.I32) "vpaddd"]
+        [(AstType.U32) "vpaddd"]
+        [(AstType.I16) "vpaddw"]
+        [(AstType.U16) "vpaddw"]
+        [(AstType.I8) "vpaddb"]
+        [(AstType.U8) "vpaddb"]
+        [(AstType.F64) "vaddpd"]
+        [(AstType.F32) "vaddps"]
         [_ ""])]
     [(CompilerIrBinOp.Sub)
       (match elem-ty
-        [(AstTyI64) "vpsubq"]
-        [(AstTyU64) "vpsubq"]
-        [(AstTyI32) "vpsubd"]
-        [(AstTyU32) "vpsubd"]
-        [(AstTyI16) "vpsubw"]
-        [(AstTyU16) "vpsubw"]
-        [(AstTyI8) "vpsubb"]
-        [(AstTyU8) "vpsubb"]
-        [(AstTyF64) "vsubpd"]
-        [(AstTyF32) "vsubps"]
+        [(AstType.I64) "vpsubq"]
+        [(AstType.U64) "vpsubq"]
+        [(AstType.I32) "vpsubd"]
+        [(AstType.U32) "vpsubd"]
+        [(AstType.I16) "vpsubw"]
+        [(AstType.U16) "vpsubw"]
+        [(AstType.I8) "vpsubb"]
+        [(AstType.U8) "vpsubb"]
+        [(AstType.F64) "vsubpd"]
+        [(AstType.F32) "vsubps"]
         [_ ""])]
     [(CompilerIrBinOp.Mul)
       (match elem-ty
-        [(AstTyI32) "vpmulld"]
-        [(AstTyU32) "vpmulld"]
-        [(AstTyI16) "vpmullw"]
-        [(AstTyU16) "vpmullw"]
-        [(AstTyF64) "vmulpd"]
-        [(AstTyF32) "vmulps"]
+        [(AstType.I32) "vpmulld"]
+        [(AstType.U32) "vpmulld"]
+        [(AstType.I16) "vpmullw"]
+        [(AstType.U16) "vpmullw"]
+        [(AstType.F64) "vmulpd"]
+        [(AstType.F32) "vmulps"]
         [_ ""])]
     [(CompilerIrBinOp.BitAnd)
       (match elem-ty
-        [(AstTyI64) "vpand"]
-        [(AstTyU64) "vpand"]
-        [(AstTyI32) "vpand"]
-        [(AstTyU32) "vpand"]
-        [(AstTyI16) "vpand"]
-        [(AstTyU16) "vpand"]
-        [(AstTyI8) "vpand"]
-        [(AstTyU8) "vpand"]
+        [(AstType.I64) "vpand"]
+        [(AstType.U64) "vpand"]
+        [(AstType.I32) "vpand"]
+        [(AstType.U32) "vpand"]
+        [(AstType.I16) "vpand"]
+        [(AstType.U16) "vpand"]
+        [(AstType.I8) "vpand"]
+        [(AstType.U8) "vpand"]
         [_ ""])]
     [(CompilerIrBinOp.BitOr)
       (match elem-ty
-        [(AstTyI64) "vpor"]
-        [(AstTyU64) "vpor"]
-        [(AstTyI32) "vpor"]
-        [(AstTyU32) "vpor"]
-        [(AstTyI16) "vpor"]
-        [(AstTyU16) "vpor"]
-        [(AstTyI8) "vpor"]
-        [(AstTyU8) "vpor"]
+        [(AstType.I64) "vpor"]
+        [(AstType.U64) "vpor"]
+        [(AstType.I32) "vpor"]
+        [(AstType.U32) "vpor"]
+        [(AstType.I16) "vpor"]
+        [(AstType.U16) "vpor"]
+        [(AstType.I8) "vpor"]
+        [(AstType.U8) "vpor"]
         [_ ""])]
     [(CompilerIrBinOp.BitXor)
       (match elem-ty
-        [(AstTyI64) "vpxor"]
-        [(AstTyU64) "vpxor"]
-        [(AstTyI32) "vpxor"]
-        [(AstTyU32) "vpxor"]
-        [(AstTyI16) "vpxor"]
-        [(AstTyU16) "vpxor"]
-        [(AstTyI8) "vpxor"]
-        [(AstTyU8) "vpxor"]
+        [(AstType.I64) "vpxor"]
+        [(AstType.U64) "vpxor"]
+        [(AstType.I32) "vpxor"]
+        [(AstType.U32) "vpxor"]
+        [(AstType.I16) "vpxor"]
+        [(AstType.U16) "vpxor"]
+        [(AstType.I8) "vpxor"]
+        [(AstType.U8) "vpxor"]
         [_ ""])]
     [_ ""]))
 
@@ -1178,8 +1178,8 @@
   (match op
     [(CompilerIrBinOp.Mul)
       (match elem-ty
-        [(AstTyI64) true]
-        [(AstTyU64) true]
+        [(AstType.I64) true]
+        [(AstType.U64) true]
         [_ false])]
     [_ false]))
 
@@ -1189,17 +1189,17 @@
   (match op
     [(CompilerIrVectorReduceOp.Sum)
       (match elem-ty
-        [(AstTyI64) "vpaddq"]
-        [(AstTyI32) "vpaddd"]
-        [(AstTyF64) "vaddpd"]
+        [(AstType.I64) "vpaddq"]
+        [(AstType.I32) "vpaddd"]
+        [(AstType.F64) "vaddpd"]
         [_ ""])]
     [(CompilerIrVectorReduceOp.Min)
       (match elem-ty
-        [(AstTyI32) "vpminsd"]
+        [(AstType.I32) "vpminsd"]
         [_ ""])]
     [(CompilerIrVectorReduceOp.Max)
       (match elem-ty
-        [(AstTyI32) "vpmaxsd"]
+        [(AstType.I32) "vpmaxsd"]
         [_ ""])]))
 
 (define (compiler-backend-simd-rax-offset-address [disp : i64]) : String
@@ -1407,14 +1407,14 @@
 
 (define (compiler-backend-splat-memory-mnemonic [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyF64) "vbroadcastsd"]
-    [(AstTyF32) "vbroadcastss"]
-    [(AstTyI32) "vpbroadcastd"]
-    [(AstTyU32) "vpbroadcastd"]
-    [(AstTyI16) "vpbroadcastw"]
-    [(AstTyU16) "vpbroadcastw"]
-    [(AstTyI8) "vpbroadcastb"]
-    [(AstTyU8) "vpbroadcastb"]
+    [(AstType.F64) "vbroadcastsd"]
+    [(AstType.F32) "vbroadcastss"]
+    [(AstType.I32) "vpbroadcastd"]
+    [(AstType.U32) "vpbroadcastd"]
+    [(AstType.I16) "vpbroadcastw"]
+    [(AstType.U16) "vpbroadcastw"]
+    [(AstType.I8) "vpbroadcastb"]
+    [(AstType.U8) "vpbroadcastb"]
     [_ "vpbroadcastq"]))
 
 (define (compiler-backend-splat-memory-load
@@ -1440,7 +1440,7 @@
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (match elem-ty
-        [(AstTyF64)
+        [(AstType.F64)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             value
@@ -1450,7 +1450,7 @@
               (ResultCompilerBackend.Ok
                 (string.append asm "    vbroadcastsd %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyF32)
+        [(AstType.F32)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             value
@@ -1460,7 +1460,7 @@
               (ResultCompilerBackend.Ok
                 (string.append asm "    vbroadcastss %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyI32)
+        [(AstType.I32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1471,7 +1471,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyU32)
+        [(AstType.U32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1482,7 +1482,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastd %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyI16)
+        [(AstType.I16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1493,7 +1493,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyU16)
+        [(AstType.U16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1504,7 +1504,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyI8)
+        [(AstType.I8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1515,7 +1515,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyU8)
+        [(AstType.U8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1786,16 +1786,16 @@
 
 (define (compiler-backend-avx512-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
   (match elem-ty
-    [(AstTyI64) (= lanes 8)]
-    [(AstTyU64) (= lanes 8)]
-    [(AstTyF64) (= lanes 8)]
-    [(AstTyF32) (= lanes 16)]
-    [(AstTyI32) (= lanes 16)]
-    [(AstTyU32) (= lanes 16)]
-    [(AstTyI16) (= lanes 32)]
-    [(AstTyU16) (= lanes 32)]
-    [(AstTyI8) (= lanes 64)]
-    [(AstTyU8) (= lanes 64)]
+    [(AstType.I64) (= lanes 8)]
+    [(AstType.U64) (= lanes 8)]
+    [(AstType.F64) (= lanes 8)]
+    [(AstType.F32) (= lanes 16)]
+    [(AstType.I32) (= lanes 16)]
+    [(AstType.U32) (= lanes 16)]
+    [(AstType.I16) (= lanes 32)]
+    [(AstType.U16) (= lanes 32)]
+    [(AstType.I8) (= lanes 64)]
+    [(AstType.U8) (= lanes 64)]
     [_ false]))
 
 (define (compiler-backend-avx512-shape-diagnostic
@@ -1836,16 +1836,16 @@
 
 (define (compiler-backend-avx512-vector-move [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyF64) "vmovupd"]
-    [(AstTyF32) "vmovups"]
-    [(AstTyI64) "vmovdqu64"]
-    [(AstTyU64) "vmovdqu64"]
-    [(AstTyI32) "vmovdqu32"]
-    [(AstTyU32) "vmovdqu32"]
-    [(AstTyI16) "vmovdqu16"]
-    [(AstTyU16) "vmovdqu16"]
-    [(AstTyI8) "vmovdqu8"]
-    [(AstTyU8) "vmovdqu8"]
+    [(AstType.F64) "vmovupd"]
+    [(AstType.F32) "vmovups"]
+    [(AstType.I64) "vmovdqu64"]
+    [(AstType.U64) "vmovdqu64"]
+    [(AstType.I32) "vmovdqu32"]
+    [(AstType.U32) "vmovdqu32"]
+    [(AstType.I16) "vmovdqu16"]
+    [(AstType.U16) "vmovdqu16"]
+    [(AstType.I8) "vmovdqu8"]
+    [(AstType.U8) "vmovdqu8"]
     [_ ""]))
 
 (define (compiler-backend-avx512-vector-binop-mnemonic
@@ -1854,88 +1854,88 @@
   (match op
     [(CompilerIrBinOp.Add)
       (match elem-ty
-        [(AstTyI64) "vpaddq"]
-        [(AstTyU64) "vpaddq"]
-        [(AstTyI32) "vpaddd"]
-        [(AstTyU32) "vpaddd"]
-        [(AstTyI16) "vpaddw"]
-        [(AstTyU16) "vpaddw"]
-        [(AstTyI8) "vpaddb"]
-        [(AstTyU8) "vpaddb"]
-        [(AstTyF64) "vaddpd"]
-        [(AstTyF32) "vaddps"]
+        [(AstType.I64) "vpaddq"]
+        [(AstType.U64) "vpaddq"]
+        [(AstType.I32) "vpaddd"]
+        [(AstType.U32) "vpaddd"]
+        [(AstType.I16) "vpaddw"]
+        [(AstType.U16) "vpaddw"]
+        [(AstType.I8) "vpaddb"]
+        [(AstType.U8) "vpaddb"]
+        [(AstType.F64) "vaddpd"]
+        [(AstType.F32) "vaddps"]
         [_ ""])]
     [(CompilerIrBinOp.Sub)
       (match elem-ty
-        [(AstTyI64) "vpsubq"]
-        [(AstTyU64) "vpsubq"]
-        [(AstTyI32) "vpsubd"]
-        [(AstTyU32) "vpsubd"]
-        [(AstTyI16) "vpsubw"]
-        [(AstTyU16) "vpsubw"]
-        [(AstTyI8) "vpsubb"]
-        [(AstTyU8) "vpsubb"]
-        [(AstTyF64) "vsubpd"]
-        [(AstTyF32) "vsubps"]
+        [(AstType.I64) "vpsubq"]
+        [(AstType.U64) "vpsubq"]
+        [(AstType.I32) "vpsubd"]
+        [(AstType.U32) "vpsubd"]
+        [(AstType.I16) "vpsubw"]
+        [(AstType.U16) "vpsubw"]
+        [(AstType.I8) "vpsubb"]
+        [(AstType.U8) "vpsubb"]
+        [(AstType.F64) "vsubpd"]
+        [(AstType.F32) "vsubps"]
         [_ ""])]
     [(CompilerIrBinOp.Mul)
       (match elem-ty
-        [(AstTyI64) "vpmullq"]
-        [(AstTyU64) "vpmullq"]
-        [(AstTyI32) "vpmulld"]
-        [(AstTyU32) "vpmulld"]
-        [(AstTyI16) "vpmullw"]
-        [(AstTyU16) "vpmullw"]
-        [(AstTyF64) "vmulpd"]
-        [(AstTyF32) "vmulps"]
+        [(AstType.I64) "vpmullq"]
+        [(AstType.U64) "vpmullq"]
+        [(AstType.I32) "vpmulld"]
+        [(AstType.U32) "vpmulld"]
+        [(AstType.I16) "vpmullw"]
+        [(AstType.U16) "vpmullw"]
+        [(AstType.F64) "vmulpd"]
+        [(AstType.F32) "vmulps"]
         [_ ""])]
     [(CompilerIrBinOp.BitAnd)
       (match elem-ty
-        [(AstTyI64) "vpandq"]
-        [(AstTyU64) "vpandq"]
-        [(AstTyI32) "vpandd"]
-        [(AstTyU32) "vpandd"]
-        [(AstTyI16) "vpandd"]
-        [(AstTyU16) "vpandd"]
-        [(AstTyI8) "vpandd"]
-        [(AstTyU8) "vpandd"]
+        [(AstType.I64) "vpandq"]
+        [(AstType.U64) "vpandq"]
+        [(AstType.I32) "vpandd"]
+        [(AstType.U32) "vpandd"]
+        [(AstType.I16) "vpandd"]
+        [(AstType.U16) "vpandd"]
+        [(AstType.I8) "vpandd"]
+        [(AstType.U8) "vpandd"]
         [_ ""])]
     [(CompilerIrBinOp.BitOr)
       (match elem-ty
-        [(AstTyI64) "vporq"]
-        [(AstTyU64) "vporq"]
-        [(AstTyI32) "vpord"]
-        [(AstTyU32) "vpord"]
-        [(AstTyI16) "vpord"]
-        [(AstTyU16) "vpord"]
-        [(AstTyI8) "vpord"]
-        [(AstTyU8) "vpord"]
+        [(AstType.I64) "vporq"]
+        [(AstType.U64) "vporq"]
+        [(AstType.I32) "vpord"]
+        [(AstType.U32) "vpord"]
+        [(AstType.I16) "vpord"]
+        [(AstType.U16) "vpord"]
+        [(AstType.I8) "vpord"]
+        [(AstType.U8) "vpord"]
         [_ ""])]
     [(CompilerIrBinOp.BitXor)
       (match elem-ty
-        [(AstTyI64) "vpxorq"]
-        [(AstTyU64) "vpxorq"]
-        [(AstTyI32) "vpxord"]
-        [(AstTyU32) "vpxord"]
-        [(AstTyI16) "vpxord"]
-        [(AstTyU16) "vpxord"]
-        [(AstTyI8) "vpxord"]
-        [(AstTyU8) "vpxord"]
+        [(AstType.I64) "vpxorq"]
+        [(AstType.U64) "vpxorq"]
+        [(AstType.I32) "vpxord"]
+        [(AstType.U32) "vpxord"]
+        [(AstType.I16) "vpxord"]
+        [(AstType.U16) "vpxord"]
+        [(AstType.I8) "vpxord"]
+        [(AstType.U8) "vpxord"]
         [_ ""])]
     [_ ""]))
 
 (define (compiler-backend-avx512-vector-compare-mnemonic [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyI64) "vpcmpq"]
-    [(AstTyU64) "vpcmpuq"]
-    [(AstTyI32) "vpcmpd"]
-    [(AstTyU32) "vpcmpud"]
-    [(AstTyI16) "vpcmpw"]
-    [(AstTyU16) "vpcmpuw"]
-    [(AstTyI8) "vpcmpb"]
-    [(AstTyU8) "vpcmpub"]
-    [(AstTyF64) "vcmppd"]
-    [(AstTyF32) "vcmpps"]
+    [(AstType.I64) "vpcmpq"]
+    [(AstType.U64) "vpcmpuq"]
+    [(AstType.I32) "vpcmpd"]
+    [(AstType.U32) "vpcmpud"]
+    [(AstType.I16) "vpcmpw"]
+    [(AstType.U16) "vpcmpuw"]
+    [(AstType.I8) "vpcmpb"]
+    [(AstType.U8) "vpcmpub"]
+    [(AstType.F64) "vcmppd"]
+    [(AstType.F32) "vcmpps"]
     [_ ""]))
 
 (define (compiler-backend-avx512-compare-predicate-separator
@@ -1957,7 +1957,7 @@
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (match elem-ty
-        [(AstTyF64)
+        [(AstType.F64)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             value
@@ -1967,7 +1967,7 @@
               (ResultCompilerBackend.Ok
                 (string.append asm "    vbroadcastsd %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyF32)
+        [(AstType.F32)
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             value
@@ -1977,7 +1977,7 @@
               (ResultCompilerBackend.Ok
                 (string.append asm "    vbroadcastss %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyI32)
+        [(AstType.I32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1986,7 +1986,7 @@
               (ResultCompilerBackend.Ok
                 (string.append asm "    vpbroadcastd %eax, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyU32)
+        [(AstType.U32)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -1995,7 +1995,7 @@
               (ResultCompilerBackend.Ok
                 (string.append asm "    vpbroadcastd %eax, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyI16)
+        [(AstType.I16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -2006,7 +2006,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyU16)
+        [(AstType.U16)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -2017,7 +2017,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastw %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyI8)
+        [(AstType.I8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -2028,7 +2028,7 @@
                   asm
                   "    vmovd %eax, %xmm0\n    vpbroadcastb %xmm0, "))]
             [(ResultCompilerBackend.Err diag) (ResultCompilerBackend.Err diag)])]
-        [(AstTyU8)
+        [(AstType.U8)
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             value
@@ -2055,11 +2055,11 @@
   (match op
     [(CompilerIrVectorReduceOp.Min)
       (match elem-ty
-        [(AstTyI64) "vpminsq"]
+        [(AstType.I64) "vpminsq"]
         [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
     [(CompilerIrVectorReduceOp.Max)
       (match elem-ty
-        [(AstTyI64) "vpmaxsq"]
+        [(AstType.I64) "vpmaxsq"]
         [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)])]
     [_ (compiler-backend-avx2-vector-reduce-op-mnemonic op elem-ty)]))
 
@@ -2139,16 +2139,16 @@
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match elem-ty
-    [(AstTyI64) (= lanes 8)]
-    [(AstTyU64) (= lanes 8)]
+    [(AstType.I64) (= lanes 8)]
+    [(AstType.U64) (= lanes 8)]
     [_ false]))
 
 (define (compiler-backend-lane-id-avx2-i64-shape-ok?
   [elem-ty : AstType]
   [lanes : i64]) : bool
   (match elem-ty
-    [(AstTyI64) (= lanes 4)]
-    [(AstTyU64) (= lanes 4)]
+    [(AstType.I64) (= lanes 4)]
+    [(AstType.U64) (= lanes 4)]
     [_ false]))
 
 (define (compiler-backend-avx512-i64-lane-id-data) : String
@@ -2932,7 +2932,7 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
     (match (compiler-backend-mask-var-reg assignments dst "tail mask dst")
       [(ResultBackendReg.Ok dst-reg)
         (match index
@@ -2983,7 +2983,7 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match elem-ty
-    [(AstTyBool)
+    [(AstType.Bool)
       (compiler-backend-emit-avx512-mask-load
         assignments
         dst
@@ -3051,7 +3051,7 @@
   [elem-ty : AstType]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match elem-ty
-    [(AstTyBool)
+    [(AstType.Bool)
       (compiler-backend-emit-avx512-mask-store
         assignments
         base
@@ -3117,7 +3117,7 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyBool) lanes)
+    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.Bool) lanes)
     (match (compiler-backend-mask-var-reg assignments dst "mask load dst")
       [(ResultBackendReg.Ok dst-reg)
         (match (compiler-backend-avx512-mask-value-reg
@@ -3129,7 +3129,7 @@
               assignments
               base
               index
-              (AstTyBool))
+              (AstType.Bool))
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
@@ -3169,7 +3169,7 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyBool) lanes)
+    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.Bool) lanes)
     (match (compiler-backend-avx512-mask-value-reg
       assignments
       value
@@ -3184,7 +3184,7 @@
               assignments
               base
               index
-              (AstTyBool))
+              (AstType.Bool))
               [(ResultCompilerBackendSimdIndexedAddress.Ok addr-plan)
                 (let
                   [addr-asm : String (struct-get addr-plan asm)]
@@ -3233,7 +3233,7 @@
   [lanes : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (= (compiler-backend-avx512-lane-mask lanes) 0)
-    (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+    (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
     (match (compiler-backend-avx512-mask-value-reg assignments lhs "lhs")
       [(ResultBackendReg.Ok lhs-reg)
         (match (compiler-backend-avx512-mask-value-reg assignments rhs "rhs")
@@ -3288,7 +3288,7 @@
     [mask-gpr : String (compiler-backend-avx512-mask-gpr lanes)]
     [mov-imm : String (compiler-backend-avx512-mask-mov-imm-mnemonic lanes)]
     (if (= full-mask 0)
-      (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+      (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
       (match (compiler-backend-avx512-mask-value-reg
         assignments
         src
@@ -3346,7 +3346,7 @@
     [kortest-op : String (compiler-backend-avx512-mask-kortest-mnemonic lanes)]
     [cmp-op : String (compiler-backend-avx512-mask-cmp-mnemonic lanes)]
     (if (= full-mask 0)
-      (compiler-backend-avx512-shape-diagnostic instr-diag (AstTyI64) lanes)
+      (compiler-backend-avx512-shape-diagnostic instr-diag (AstType.I64) lanes)
       (match (compiler-backend-avx512-mask-value-reg
         assignments
         src
@@ -3726,18 +3726,18 @@
 
 (define (compiler-backend-float-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyF64) true]
-    [(AstTyF32) true]
+    [(AstType.F64) true]
+    [(AstType.F32) true]
     [_ false]))
 
 (define (compiler-backend-float-move [ty : AstType]) : String
   (match ty
-    [(AstTyF32) "movss"]
+    [(AstType.F32) "movss"]
     [_ "movsd"]))
 
 (define (compiler-backend-float-type-name [ty : AstType]) : String
   (match ty
-    [(AstTyF32) "f32"]
+    [(AstType.F32) "f32"]
     [_ "f64"]))
 
 (define (compiler-backend-emit-store-float-var
@@ -3749,7 +3749,7 @@
     (string.append (compiler-backend-slot var-id) "\n")))
 
 (define (compiler-backend-emit-store-xmm-var [var-id : i64] [reg : String]) : String
-  (compiler-backend-emit-store-float-var var-id reg (AstTyF64)))
+  (compiler-backend-emit-store-float-var var-id reg (AstType.F64)))
 
 (define (compiler-backend-forwarded-addr-of-src [var-id : i64]) : i64
   (if compiler-backend-addr-of-forwarding-enabled
@@ -3883,7 +3883,7 @@
   (compiler-backend-emit-load-float-var-with-plan
     assignments
     var-id
-    (AstTyF64)
+    (AstType.F64)
     reg))
 
 (define (compiler-backend-emit-store-float-var-with-plan
@@ -3924,7 +3924,7 @@
     assignments
     var-id
     reg
-    (AstTyF64)))
+    (AstType.F64)))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : CompilerRegAssignmentList]
@@ -4479,68 +4479,68 @@
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
-    [(AstTyI64) 8]
-    [(AstTyU64) 8]
-    [(AstTyF64) 8]
-    [(AstTyI32) 4]
-    [(AstTyU32) 4]
-    [(AstTyF32) 4]
-    [(AstTyI16) 2]
-    [(AstTyU16) 2]
-    [(AstTyI8) 1]
-    [(AstTyU8) 1]
-    [(AstTyBool) 1]
-    [(AstTyChar) 1]
-    [(AstTyUnit) 0]
-    [(AstTyNever) 0]
-    [(AstTyExpr) 0]
-    [(AstTyExprList) 0]
-    [(AstTyFunc _ _) 8]
-    [(AstTyTuple _) 8]
-    [(AstTyArray _ _) 8]
-    [(AstTyDynArray _) 8]
-    [(AstTyBox _) 8]
-    [(AstTyPtr _) 8]
-    [(AstTyMutPtr _) 8]
-    [(AstTyRef _ _) 8]
-    [(AstTyMutRef _ _) 8]
-    [(AstTyRegion _ inner)
+    [(AstType.I64) 8]
+    [(AstType.U64) 8]
+    [(AstType.F64) 8]
+    [(AstType.I32) 4]
+    [(AstType.U32) 4]
+    [(AstType.F32) 4]
+    [(AstType.I16) 2]
+    [(AstType.U16) 2]
+    [(AstType.I8) 1]
+    [(AstType.U8) 1]
+    [(AstType.Bool) 1]
+    [(AstType.Char) 1]
+    [(AstType.Unit) 0]
+    [(AstType.Never) 0]
+    [(AstType.Expr) 0]
+    [(AstType.ExprList) 0]
+    [(AstType.Func _ _) 8]
+    [(AstType.Tuple _) 8]
+    [(AstType.Array _ _) 8]
+    [(AstType.DynArray _) 8]
+    [(AstType.Box _) 8]
+    [(AstType.Ptr _) 8]
+    [(AstType.MutPtr _) 8]
+    [(AstType.Ref _ _) 8]
+    [(AstType.MutRef _ _) 8]
+    [(AstType.Region _ inner)
       (compiler-backend-type-size (ast-node-pool-reader-type-get inner))]
-    [(AstTyEnum _) 8]
-    [(AstTyEnumArgs _ _) 8]
-    [(AstTyStruct _) 8]
-    [(AstTyStructArgs _ _) 8]
-    [(AstTyString) 8]
-    [(AstTyStr) 8]
-    [(AstTyBytes) 8]
-    [(AstTyVar _) 8]
-    [(AstTyVarArgs _ _) 8]))
+    [(AstType.Enum _) 8]
+    [(AstType.EnumArgs _ _) 8]
+    [(AstType.Struct _) 8]
+    [(AstType.StructArgs _ _) 8]
+    [(AstType.String) 8]
+    [(AstType.Str) 8]
+    [(AstType.Bytes) 8]
+    [(AstType.Var _) 8]
+    [(AstType.VarArgs _ _) 8]))
 
 (define (compiler-backend-f64-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyF64) true]
+    [(AstType.F64) true]
     [_ false]))
 
 (define (compiler-backend-type-signed? [ty : AstType]) : bool
   (match ty
-    [(AstTyI64) true]
-    [(AstTyI32) true]
-    [(AstTyI16) true]
-    [(AstTyI8) true]
+    [(AstType.I64) true]
+    [(AstType.I32) true]
+    [(AstType.I16) true]
+    [(AstType.I8) true]
     [_ false]))
 
 (define (compiler-backend-intlike-scalar-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyI64) true]
-    [(AstTyU64) true]
-    [(AstTyI32) true]
-    [(AstTyU32) true]
-    [(AstTyI16) true]
-    [(AstTyU16) true]
-    [(AstTyI8) true]
-    [(AstTyU8) true]
-    [(AstTyBool) true]
-    [(AstTyChar) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
+    [(AstType.I32) true]
+    [(AstType.U32) true]
+    [(AstType.I16) true]
+    [(AstType.U16) true]
+    [(AstType.I8) true]
+    [(AstType.U8) true]
+    [(AstType.Bool) true]
+    [(AstType.Char) true]
     [_ false]))
 
 (define (compiler-backend-hex-digit [n : i64]) : String
@@ -4708,15 +4708,15 @@
   (str_cat.str-cat
     ".L_tl_"
     (match ty
-      [(AstTyF32) "f32_"]
+      [(AstType.F32) "f32_"]
       [_ "f64_"])
     (compiler-backend-string-label-suffix (compiler-backend-float-key ty bits))))
 
 (define (compiler-backend-f64-label [bits : u64]) : String
-  (compiler-backend-float-label (AstTyF64) bits))
+  (compiler-backend-float-label (AstType.F64) bits))
 
 (define (compiler-backend-f32-label [bits : u64]) : String
-  (compiler-backend-float-label (AstTyF32) bits))
+  (compiler-backend-float-label (AstType.F32) bits))
 
 (define (compiler-backend-f64-sign-bit-label) : String
   ".L_tl_f64_sign_bit")
@@ -4774,7 +4774,7 @@
   (compiler-backend-emit-load-float-value-with-plan
     assignments
     value
-    (AstTyF64)
+    (AstType.F64)
     reg))
 
 ;; #2997: prefer compact 32-bit encodings for small non-negative immediates.
@@ -5001,7 +5001,7 @@
     "\n"))
 
 (define (compiler-backend-emit-load-f64-memory [addr : String] [reg : String]) : String
-  (compiler-backend-emit-load-float-memory addr reg (AstTyF64)))
+  (compiler-backend-emit-load-float-memory addr reg (AstType.F64)))
 
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
   (cond
@@ -5308,9 +5308,9 @@
 
 (define (compiler-backend-avx2-vector-reduce-move-scalar [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyI32) "    vmovd %xmm0, %eax\n"]
-    [(AstTyU32) "    vmovd %xmm0, %eax\n"]
-    [(AstTyF64) ""]
+    [(AstType.I32) "    vmovd %xmm0, %eax\n"]
+    [(AstType.U32) "    vmovd %xmm0, %eax\n"]
+    [(AstType.F64) ""]
     [_ "    vmovq %xmm0, %rax\n"]))
 
 (define (compiler-backend-vector-reduce-result-reg [elem-ty : AstType]) : String
@@ -5320,8 +5320,8 @@
 
 (define (compiler-backend-i64-u64-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyI64) true]
-    [(AstTyU64) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
     [_ false]))
 
 (define (compiler-backend-emit-vmovq-xmm0-to-var-with-plan
@@ -5365,7 +5365,7 @@
   [xmm : String]
   [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyF64)
+    [(AstType.F64)
       (string.append
         (str_cat.str-cat
           "    vextractf128 $1, "
@@ -5376,7 +5376,7 @@
           xmm
           ", %xmm0\n")
         "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
-    [(AstTyI64)
+    [(AstType.I64)
       (string.append
         (str_cat.str-cat
           "    vextracti128 $1, "
@@ -5391,7 +5391,7 @@
           mnemonic
           " %xmm1, %xmm0, %xmm0\n"
           ""))]
-    [(AstTyI32)
+    [(AstType.I32)
       (string.append
         (str_cat.str-cat
           "    vextracti128 $1, "
@@ -5479,7 +5479,7 @@
   [ymm : String]
   [elem-ty : AstType]) : String
   (match elem-ty
-    [(AstTyF64)
+    [(AstType.F64)
       (string.append
         (string.append
           (str_cat.str-cat
@@ -5496,7 +5496,7 @@
             " %xmm1, %xmm0, %xmm0\n"
             ""))
         "    vunpckhpd %xmm0, %xmm0, %xmm1\n    vaddsd %xmm1, %xmm0, %xmm0\n")]
-    [(AstTyI64)
+    [(AstType.I64)
       (string.append
         (string.append
           (str_cat.str-cat
@@ -5517,7 +5517,7 @@
           mnemonic
           " %xmm1, %xmm0, %xmm0\n"
           ""))]
-    [(AstTyI32)
+    [(AstType.I32)
       (string.append
         (string.append
           (string.append
@@ -5650,7 +5650,7 @@
     (compiler-backend-emit-load-float-value-with-plan
       assignments
       word
-      (AstTyF64)
+      (AstType.F64)
       reg)
     (compiler-backend-emit-load-value-with-plan assignments word reg)))
 
@@ -5665,7 +5665,7 @@
     (CompilerBackendMaybeAsm.No)
     (if (compiler-backend-pack-word-dst-register? dst)
       (compiler-backend-emit-load-immediate-to-reg word dst)
-      (compiler-backend-emit-store-immediate-to-memory word dst (AstTyI64)))))
+      (compiler-backend-emit-store-immediate-to-memory word dst (AstType.I64)))))
 
 (define (compiler-backend-emit-load-pack-word-unless-immediate
   [assignments : CompilerRegAssignmentList]
@@ -6479,10 +6479,10 @@
 
 (define (compiler-backend-unsigned-rel-ty? [ty : AstType]) : bool
   (match ty
-    [(AstTyU64) true]
-    [(AstTyU32) true]
-    [(AstTyU16) true]
-    [(AstTyU8) true]
+    [(AstType.U64) true]
+    [(AstType.U32) true]
+    [(AstType.U16) true]
+    [(AstType.U8) true]
     [_ false]))
 
 (define (compiler-backend-global-type-lookup
@@ -6505,18 +6505,18 @@
     [types : CompilerBackendGlobalTypeList
       (CompilerBackendGlobalTypeList.Cons
         "left"
-        (AstTyI64)
+        (AstType.I64)
         (box
           (CompilerBackendGlobalTypeList.Cons
             "right"
-            (AstTyBool)
+            (AstType.Bool)
             (box CompilerBackendGlobalTypeList.Nil))))]
     (and
       (match (compiler-backend-global-type-lookup types "left")
-        [(CompilerRegMaybeType.Some (AstTyI64)) true]
+        [(CompilerRegMaybeType.Some (AstType.I64)) true]
         [_ false])
       (match (compiler-backend-global-type-lookup types "right")
-        [(CompilerRegMaybeType.Some (AstTyBool)) true]
+        [(CompilerRegMaybeType.Some (AstType.Bool)) true]
         [_ false])
       (match (compiler-backend-global-type-lookup types "missing")
         [(CompilerRegMaybeType.No) true]
@@ -6566,15 +6566,15 @@
     [(CompilerIrValue.Var id) (compiler-reg-var-type-lookup types id)]
     [(CompilerIrValue.Global name)
       (compiler-backend-global-type-lookup global-types name)]
-    [(CompilerIrValue.GlobalAddr _) (CompilerRegMaybeType.Some (AstTyU64))]
-    [(CompilerIrValue.I64 _) (CompilerRegMaybeType.Some (AstTyI64))]
-    [(CompilerIrValue.Bool _) (CompilerRegMaybeType.Some (AstTyBool))]
-    [(CompilerIrValue.Char _) (CompilerRegMaybeType.Some (AstTyChar))]
-    [(CompilerIrValue.F64 _) (CompilerRegMaybeType.Some (AstTyF64))]
-    [(CompilerIrValue.String _) (CompilerRegMaybeType.Some (AstTyString))]
+    [(CompilerIrValue.GlobalAddr _) (CompilerRegMaybeType.Some (AstType.U64))]
+    [(CompilerIrValue.I64 _) (CompilerRegMaybeType.Some (AstType.I64))]
+    [(CompilerIrValue.Bool _) (CompilerRegMaybeType.Some (AstType.Bool))]
+    [(CompilerIrValue.Char _) (CompilerRegMaybeType.Some (AstType.Char))]
+    [(CompilerIrValue.F64 _) (CompilerRegMaybeType.Some (AstType.F64))]
+    [(CompilerIrValue.String _) (CompilerRegMaybeType.Some (AstType.String))]
     [(CompilerIrValue.Bytes _)
-      (CompilerRegMaybeType.Some (ast-ty-dyn-array (AstTyU8)))]
-    [(CompilerIrValue.Function _) (CompilerRegMaybeType.Some (AstTyU64))]
+      (CompilerRegMaybeType.Some (ast-ty-dyn-array (AstType.U8)))]
+    [(CompilerIrValue.Function _) (CompilerRegMaybeType.Some (AstType.U64))]
     [_ (CompilerRegMaybeType.No)]))
 
 (define (compiler-backend-binop-compare-result? [op : CompilerIrBinOp]) : bool
@@ -6598,7 +6598,7 @@
 
 (define (compiler-backend-missing-compare-operand-ty [result-ty : AstType]) : AstType
   (match result-ty
-    [(AstTyBool) (AstTyI64)]
+    [(AstType.Bool) (AstType.I64)]
     [_ result-ty]))
 
 (define (compiler-backend-binop-operand-ty
@@ -6850,18 +6850,18 @@
 
 (define (compiler-backend-normalized-signed-immediate [n : i64] [ty : AstType]) : i64
   (match ty
-    [(AstTyI8) (cast (cast n : i8) : i64)]
-    [(AstTyI16) (cast (cast n : i16) : i64)]
-    [(AstTyI32) (cast (cast n : i32) : i64)]
+    [(AstType.I8) (cast (cast n : i8) : i64)]
+    [(AstType.I16) (cast (cast n : i16) : i64)]
+    [(AstType.I32) (cast (cast n : i32) : i64)]
     [_ n]))
 
 (define (compiler-backend-normalized-unsigned-immediate
   [n : i64]
   [ty : AstType]) : u64
   (match ty
-    [(AstTyU8) (cast (cast n : u8) : u64)]
-    [(AstTyU16) (cast (cast n : u16) : u64)]
-    [(AstTyU32) (cast (cast n : u32) : u64)]
+    [(AstType.U8) (cast (cast n : u8) : u64)]
+    [(AstType.U16) (cast (cast n : u16) : u64)]
+    [(AstType.U32) (cast (cast n : u32) : u64)]
     [_ (cast n : u64)]))
 
 (define (compiler-backend-divmod-safe-literal-i64? [n : i64] [ty : AstType]) : bool
@@ -7661,7 +7661,7 @@
               "backend: unsupported f64 binary op")))])))
 
 (define (compiler-backend-f64-binop-asm [op : CompilerIrBinOp]) : ResultCompilerBackend
-  (compiler-backend-float-binop-asm op (AstTyF64)))
+  (compiler-backend-float-binop-asm op (AstType.F64)))
 
 (define (compiler-backend-f64-unop-asm [op : CompilerIrUnOp]) : ResultCompilerBackend
   (match op
@@ -9128,7 +9128,7 @@
       (compiler-backend-call-arg-space
         target
         (CompilerIrCallArgs.Nil)
-        AstTypeNil
+        AstTypeList.Nil
         false
         program-index)]
     [ok-symbol : String (compiler-backend-asm-label function ok-label)]
@@ -9518,10 +9518,10 @@
 
 (define (compiler-backend-copy-chunk-type [chunk : i64]) : AstType
   (cond
-    [(= chunk 8) (AstTyU64)]
-    [(= chunk 4) (AstTyU32)]
-    [(= chunk 2) (AstTyU16)]
-    [else (AstTyU8)]))
+    [(= chunk 8) (AstType.U64)]
+    [(= chunk 4) (AstType.U32)]
+    [(= chunk 2) (AstType.U16)]
+    [else (AstType.U8)]))
 
 (define (compiler-backend-emit-copy-bytes-chunks
   [dst-reg : String]
@@ -10153,24 +10153,24 @@
   [from-ty : AstType]
   [to-ty : AstType]) : String
   (match from-ty
-    [(AstTyF64)
+    [(AstType.F64)
       (match to-ty
-        [(AstTyF32) "    cvtsd2ss %xmm0, %xmm0\n"]
+        [(AstType.F32) "    cvtsd2ss %xmm0, %xmm0\n"]
         [_ ""])]
-    [(AstTyF32)
+    [(AstType.F32)
       (match to-ty
-        [(AstTyF64) "    cvtss2sd %xmm0, %xmm0\n"]
+        [(AstType.F64) "    cvtss2sd %xmm0, %xmm0\n"]
         [_ ""])]
     [_ ""]))
 
 (define (compiler-backend-int-to-float-cast-asm [to-ty : AstType]) : String
   (match to-ty
-    [(AstTyF32) "    cvtsi2ssq %rax, %xmm0\n"]
+    [(AstType.F32) "    cvtsi2ssq %rax, %xmm0\n"]
     [_ "    cvtsi2sdq %rax, %xmm0\n"]))
 
 (define (compiler-backend-u64-to-float-cast-op [to-ty : AstType]) : String
   (match to-ty
-    [(AstTyF32) "ss"]
+    [(AstType.F32) "ss"]
     [_ "sd"]))
 
 (define (compiler-backend-u64-to-float-cast-label
@@ -10223,7 +10223,7 @@
 
 (define (compiler-backend-float-to-int-cast-asm [from-ty : AstType]) : String
   (match from-ty
-    [(AstTyF32) "    cvttss2siq %xmm0, %rax\n"]
+    [(AstType.F32) "    cvttss2siq %xmm0, %rax\n"]
     [_ "    cvttsd2siq %xmm0, %rax\n"]))
 
 (define (compiler-backend-emit-float-to-float-cast
@@ -10269,7 +10269,7 @@
         (str_cat.str-cat
           load
           (match from-ty
-            [(AstTyU64)
+            [(AstType.U64)
               (compiler-backend-u64-to-float-cast-asm
                 function
                 current-label
@@ -10427,30 +10427,30 @@
 
 (define (compiler-backend-bitcast-width [ty : AstType]) : i64
   (match ty
-    [(AstTyF32) 4]
-    [(AstTyI32) 4]
-    [(AstTyU32) 4]
-    [(AstTyF64) 8]
-    [(AstTyI64) 8]
-    [(AstTyU64) 8]
+    [(AstType.F32) 4]
+    [(AstType.I32) 4]
+    [(AstType.U32) 4]
+    [(AstType.F64) 8]
+    [(AstType.I64) 8]
+    [(AstType.U64) 8]
     [_ 0]))
 
 (define (compiler-backend-bitcast-int-type? [ty : AstType]) : bool
   (match ty
-    [(AstTyI32) true]
-    [(AstTyU32) true]
-    [(AstTyI64) true]
-    [(AstTyU64) true]
+    [(AstType.I32) true]
+    [(AstType.U32) true]
+    [(AstType.I64) true]
+    [(AstType.U64) true]
     [_ false]))
 
 (define (compiler-backend-float-to-int-bitcast-asm [from-ty : AstType]) : String
   (match from-ty
-    [(AstTyF32) "    movd %xmm0, %eax\n"]
+    [(AstType.F32) "    movd %xmm0, %eax\n"]
     [_ "    movq %xmm0, %rax\n"]))
 
 (define (compiler-backend-int-to-float-bitcast-asm [to-ty : AstType]) : String
   (match to-ty
-    [(AstTyF32) "    movd %eax, %xmm0\n"]
+    [(AstType.F32) "    movd %eax, %xmm0\n"]
     [_ "    movq %rax, %xmm0\n"]))
 
 (define (compiler-backend-bitcast-compatible?
@@ -10743,7 +10743,7 @@
 
 (define (compiler-backend-param-type-list [params : CompilerIrParamList]) : AstTypeList
   (match params
-    [(IrParamNil) AstTypeNil]
+    [(IrParamNil) AstTypeList.Nil]
     [(IrParamCons param rest)
       (match param
         [(CompilerIrParam.Param _ ty _)
@@ -10751,8 +10751,8 @@
 
 (define (compiler-backend-type-list-count [types : AstTypeList]) : i64
   (match types
-    [(AstTypeNil) 0]
-    [(AstTypeCons _ rest)
+    [(AstTypeList.Nil) 0]
+    [(AstTypeList.Cons _ rest)
       (let
         [rest : AstTypeList (box-get rest)]
         (+ 1 (compiler-backend-type-list-count rest)))]))
@@ -10761,8 +10761,8 @@
   [types : AstTypeList]
   [idx : i64]) : CompilerIrParamList
   (match types
-    [(AstTypeNil) IrParamNil]
-    [(AstTypeCons ty rest)
+    [(AstTypeList.Nil) IrParamNil]
+    [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
@@ -10784,7 +10784,7 @@
   [functions : CompilerIrFunctionList]
   [name : String]) : AstTypeList
   (match functions
-    [(CompilerIrFunctionList.Nil) AstTypeNil]
+    [(CompilerIrFunctionList.Nil) AstTypeList.Nil]
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function fname params _ _ _)
@@ -10800,14 +10800,14 @@
   [externs : CompilerIrExternList]
   [name : String]) : AstTypeList
   (match externs
-    [(CompilerIrExternList.Nil) AstTypeNil]
+    [(CompilerIrExternList.Nil) AstTypeList.Nil]
     [(CompilerIrExternList.Cons item rest)
       (match item
         [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
           (if (string.eq extern-name name)
             (match ty
-              [(AstTyFunc args _) (box-get args)]
-              [_ AstTypeNil])
+              [(AstType.Func args _) (box-get args)]
+              [_ AstTypeList.Nil])
             (compiler-backend-extern-param-types (box-get rest) name))])]))
 
 (define (compiler-backend-function-signature
@@ -10838,7 +10838,7 @@
         [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
           (if (string.eq extern-name name)
             (match ty
-              [(AstTyFunc args ret-ty)
+              [(AstType.Func args ret-ty)
                 (CompilerBackendMaybeSignature.Some
                   (box-get args)
                   (ast-node-pool-reader-type-get ret-ty))]
@@ -10909,7 +10909,7 @@
 
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
-    [(AstTyFunc args ret-ty)
+    [(AstType.Func args ret-ty)
       (CompilerBackendMaybeSignature.Some
         (box-get args)
         (ast-node-pool-reader-type-get ret-ty))]
@@ -10992,11 +10992,11 @@
 ;; type-name -> word-count map). Empty for non-aggregate types.
 (define (compiler-backend-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstTyStruct name) (ci.intern-str name)]
-    [(AstTyStructArgs name _) (ci.intern-str name)]
-    [(AstTyEnum name) (ci.intern-str name)]
-    [(AstTyEnumArgs name _) (ci.intern-str name)]
-    [(AstTyRegion _ inner)
+    [(AstType.Struct name) (ci.intern-str name)]
+    [(AstType.StructArgs name _) (ci.intern-str name)]
+    [(AstType.Enum name) (ci.intern-str name)]
+    [(AstType.EnumArgs name _) (ci.intern-str name)]
+    [(AstType.Region _ inner)
       (compiler-backend-aggregate-type-name
         (ast-node-pool-reader-type-get inner))]
     [_ ""]))
@@ -11331,8 +11331,8 @@
   [ty : AstType]
   [word-index : i64]) : AstType
   (if (compiler-backend-group-word-sse? index ty word-index)
-    (AstTyF64)
-    (AstTyI64)))
+    (AstType.F64)
+    (AstType.I64)))
 
 ;; Every indexed name is interned at index-build time (see
 ;; compiler-backend-program-index-bind-name), so a name the intern table has
@@ -11659,18 +11659,20 @@
     [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
     (cond
       [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
-        (ast-type-cons (AstTyChar) AstTypeNil)]
+        (ast-type-cons (AstType.Char) AstTypeList.Nil)]
       [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
-        (ast-type-cons (AstTyF64) AstTypeNil)]
+        (ast-type-cons (AstType.F64) AstTypeList.Nil)]
       [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
         (ast-type-cons
-          (ast-ty-mut-ptr (AstTyU8))
-          (ast-type-cons (AstTyI64) (ast-type-cons (AstTyU64) AstTypeNil)))]
+          (ast-ty-mut-ptr (AstType.U8))
+          (ast-type-cons
+            (AstType.I64)
+            (ast-type-cons (AstType.U64) AstTypeList.Nil)))]
       [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
         (ast-type-cons
-          (ast-ty-mut-ptr (AstTyU8))
-          (ast-type-cons (AstTyI64) AstTypeNil))]
-      [else AstTypeNil])))
+          (ast-ty-mut-ptr (AstType.U8))
+          (ast-type-cons (AstType.I64) AstTypeList.Nil))]
+      [else AstTypeList.Nil])))
 
 (define (compiler-backend-call-param-types
   [name : String]
@@ -11683,7 +11685,7 @@
 
 (define (compiler-backend-extern-fixed-param-count [ty : AstType]) : i64
   (match ty
-    [(AstTyFunc args _) (compiler-backend-type-list-count (box-get args))]
+    [(AstType.Func args _) (compiler-backend-type-list-count (box-get args))]
     [_ -1]))
 
 (define (compiler-backend-extern-varargs-fixed-param-count
@@ -11707,8 +11709,8 @@
   [float-idx : i64]
   [count : i64]) : i64
   (match types
-    [(AstTypeNil) count]
-    [(AstTypeCons ty rest)
+    [(AstTypeList.Nil) count]
+    [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
@@ -11736,8 +11738,8 @@
   [fixed-count : i64]
   [position : i64]) : String
   (match types
-    [(AstTypeNil) ""]
-    [(AstTypeCons ty rest)
+    [(AstTypeList.Nil) ""]
+    [(AstTypeList.Cons ty rest)
       (let
         [ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest : AstTypeList (box-get rest)]
@@ -11795,7 +11797,7 @@
   [value : CompilerIrValue]) : AstType
   (match (compiler-backend-value-type types global-types value)
     [(CompilerRegMaybeType.Some ty) ty]
-    [(CompilerRegMaybeType.No) (AstTyI64)]))
+    [(CompilerRegMaybeType.No) (AstType.I64)]))
 
 (define (compiler-backend-call-actual-param-types-from
   [types : CompilerRegVarTypeList]
@@ -11805,10 +11807,10 @@
   [fixed-count : i64]
   [index : i64]) : AstTypeList
   (if (>= index (compiler-backend-call-args-count args))
-    AstTypeNil
+    AstTypeList.Nil
     (if (< index fixed-count)
       (match fixed-types
-        [(AstTypeCons ty rest)
+        [(AstTypeList.Cons ty rest)
           (ast-type-cons
             (ast-node-pool-reader-type-get ty)
             (compiler-backend-call-actual-param-types-from
@@ -11818,7 +11820,7 @@
               (box-get rest)
               fixed-count
               (+ index 1)))]
-        [(AstTypeNil)
+        [(AstTypeList.Nil)
           (ast-type-cons
             (compiler-backend-call-actual-type
               types
@@ -11828,7 +11830,7 @@
               types
               global-types
               args
-              AstTypeNil
+              AstTypeList.Nil
               fixed-count
               (+ index 1)))])
       (ast-type-cons
@@ -11852,7 +11854,7 @@
     types
     global-types
     args
-    AstTypeNil
+    AstTypeList.Nil
     0
     0))
 
@@ -11866,7 +11868,7 @@
       types
       global-types
       (compiler-backend-call-arg-at args index))
-    (AstTyI64)))
+    (AstType.I64)))
 
 (define (compiler-backend-call-c-abi-param-types-from
   [types : CompilerRegVarTypeList]
@@ -11876,9 +11878,9 @@
   [arg-index : i64]
   [program-index : CompilerBackendProgramIndex]) : AstTypeList
   (if (>= arg-index (compiler-backend-call-args-count args))
-    AstTypeNil
+    AstTypeList.Nil
     (match declared-types
-      [(AstTypeCons declared rest)
+      [(AstTypeList.Cons declared rest)
         (let
           [declared-ty : AstType (ast-node-pool-reader-type-get declared)]
           [rest-declared : AstTypeList (box-get rest)]
@@ -11893,9 +11895,9 @@
             (ast-type-cons
               declared-ty
               (ast-type-cons
-                (AstTyI64)
+                (AstType.I64)
                 (ast-type-cons
-                  (AstTyUnit)
+                  (AstType.Unit)
                   (compiler-backend-call-c-abi-param-types-from
                     types
                     global-types
@@ -11939,12 +11941,12 @@
                   rest-declared
                   (+ arg-index 1)
                   program-index)))))]
-      [(AstTypeNil)
+      [(AstTypeList.Nil)
         (compiler-backend-call-actual-param-types-from
           types
           global-types
           args
-          AstTypeNil
+          AstTypeList.Nil
           0
           arg-index)])))
 
@@ -11964,8 +11966,8 @@
 
 (define (compiler-backend-type-list-has-aggregate? [types : AstTypeList]) : bool
   (match types
-    [(AstTypeNil) false]
-    [(AstTypeCons ty rest)
+    [(AstTypeList.Nil) false]
+    [(AstTypeList.Cons ty rest)
       (or
         (not
           (string.eq
@@ -11985,7 +11987,7 @@
           (if (or (string.eq name extern-name) (string.eq name link-symbol))
             (if (ast-extern-abi-c? abi)
               (match ty
-                [(AstTyFunc args _)
+                [(AstType.Func args _)
                   (compiler-backend-type-list-has-aggregate? (box-get args))]
                 [_ false])
               false)
@@ -12069,11 +12071,11 @@
 
 (define (compiler-backend-skip-c-memory-marker-types [types : AstTypeList]) : AstTypeList
   (match types
-    [(AstTypeCons _ rest-size)
+    [(AstTypeList.Cons _ rest-size)
       (match (box-get rest-size)
-        [(AstTypeCons _ rest-sentinel) (box-get rest-sentinel)]
-        [(AstTypeNil) AstTypeNil])]
-    [(AstTypeNil) AstTypeNil]))
+        [(AstTypeList.Cons _ rest-sentinel) (box-get rest-sentinel)]
+        [(AstTypeList.Nil) AstTypeList.Nil])]
+    [(AstTypeList.Nil) AstTypeList.Nil]))
 
 ;; Count the OUTGOING arguments that must be passed on the stack (#750). Walks
 ;; the args in order, tracking the integer/float/position banks exactly as
@@ -12095,15 +12097,15 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeNil) (AstTyI64)])]
+          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
+          [(AstTypeList.Nil) (AstType.I64)])]
       [rest-types : AstTypeList
         (match types
-          [(AstTypeCons _ tail)
+          [(AstTypeList.Cons _ tail)
             (let
               [tail : AstTypeList (box-get tail)]
               tail)]
-          [(AstTypeNil) AstTypeNil])]
+          [(AstTypeList.Nil) AstTypeList.Nil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [memory-aggregate? : bool
         (compiler-backend-c-memory-aggregate-type? target c-abi? arg-ty)]
@@ -12213,8 +12215,8 @@
   [stack-count : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
   (match types
-    [(AstTypeNil) stack-count]
-    [(AstTypeCons ty rest)
+    [(AstTypeList.Nil) stack-count]
+    [(AstTypeList.Cons ty rest)
       (let
         [arg-ty : AstType (ast-node-pool-reader-type-get ty)]
         [rest-types : AstTypeList (box-get rest)]
@@ -12309,8 +12311,8 @@
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
   (match types
-    [(AstTypeNil) false]
-    [(AstTypeCons ty rest)
+    [(AstTypeList.Nil) false]
+    [(AstTypeList.Cons ty rest)
       (if (compiler-backend-group-type?
         program-index
         (ast-node-pool-reader-type-get ty))
@@ -12375,15 +12377,15 @@
     (match params
       [(IrParamNil)
         (match target-types
-          [(AstTypeNil) true]
+          [(AstTypeList.Nil) true]
           [_ false])]
       [_ false])
     (match params
       [(IrParamNil) false]
       [(IrParamCons param rest)
         (match target-types
-          [(AstTypeNil) false]
-          [(AstTypeCons target-ty target-rest)
+          [(AstTypeList.Nil) false]
+          [(AstTypeList.Cons target-ty target-rest)
             (match param
               [(CompilerIrParam.Param _ source-ty var-id)
                 (let
@@ -12576,12 +12578,12 @@
     (let
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeNil) (AstTyI64)])]
+          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
+          [(AstTypeList.Nil) (AstType.I64)])]
       [rest-types : AstTypeList
         (match types
-          [(AstTypeCons _ tail) (box-get tail)]
-          [(AstTypeNil) AstTypeNil])]
+          [(AstTypeList.Cons _ tail) (box-get tail)]
+          [(AstTypeList.Nil) AstTypeList.Nil])]
       (if (compiler-backend-group-type? program-index arg-ty)
         (compiler-backend-windows-stack-word-count
           args
@@ -12835,15 +12837,15 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeNil) (AstTyI64)])]
+          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
+          [(AstTypeList.Nil) (AstType.I64)])]
       [rest-types : AstTypeList
         (match types
-          [(AstTypeCons _ tail)
+          [(AstTypeList.Cons _ tail)
             (let
               [tail : AstTypeList (box-get tail)]
               tail)]
-          [(AstTypeNil) AstTypeNil])]
+          [(AstTypeList.Nil) AstTypeList.Nil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [next-int : i64
         (if is-float
@@ -13193,15 +13195,15 @@
       [value : CompilerIrValue (compiler-backend-call-arg-at args arg-index)]
       [arg-ty : AstType
         (match types
-          [(AstTypeCons ty _) (ast-node-pool-reader-type-get ty)]
-          [(AstTypeNil) (AstTyI64)])]
+          [(AstTypeList.Cons ty _) (ast-node-pool-reader-type-get ty)]
+          [(AstTypeList.Nil) (AstType.I64)])]
       [rest-types : AstTypeList
         (match types
-          [(AstTypeCons _ tail)
+          [(AstTypeList.Cons _ tail)
             (let
               [tail : AstTypeList (box-get tail)]
               tail)]
-          [(AstTypeNil) AstTypeNil])]
+          [(AstTypeList.Nil) AstTypeList.Nil])]
       [is-float : bool (compiler-backend-float-type? arg-ty)]
       [next-int : i64
         (if is-float
@@ -15833,7 +15835,7 @@
                         assignments
                         dst
                         "%rax"
-                        (AstTyI64))))))))]
+                        (AstType.I64))))))))]
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)])]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
@@ -15853,7 +15855,7 @@
               assignments
               dst
               "%rax"
-              (AstTyI64)))))]
+              (AstType.I64)))))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
 ;; Linux syscall argument register for operand position: 0=number, 1..6=args.
@@ -15924,7 +15926,7 @@
                   assignments
                   dst
                   "%rax"
-                  (AstTyI64)))))]
+                  (AstType.I64)))))]
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)]))))
 
@@ -16580,19 +16582,19 @@
           assignments
           dst
           ".L_tl_argc"
-          (AstTyI64))]
+          (AstType.I64))]
       [(CompilerIrInstr.EntryArgv dst)
         (compiler-backend-emit-entry-load
           assignments
           dst
           ".L_tl_argv"
-          (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
+          (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
       [(CompilerIrInstr.EntryEnvp dst)
         (compiler-backend-emit-entry-load
           assignments
           dst
           ".L_tl_envp"
-          (ast-ty-ptr (ast-ty-ptr (AstTyU8))))]
+          (ast-ty-ptr (ast-ty-ptr (AstType.U8))))]
       [(CompilerIrInstr.CpuId dst leaf subleaf reg-index)
         (compiler-backend-emit-cpuid assignments dst leaf subleaf reg-index)]
       [(CompilerIrInstr.Xgetbv dst index)
@@ -19256,7 +19258,7 @@
     [(CompilerIrValue.Function name)
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types _) param-types]
-        [(CompilerBackendMaybeSignature.No) AstTypeNil])]
+        [(CompilerBackendMaybeSignature.No) AstTypeList.Nil])]
     [_
       (match (compiler-backend-value-type
         types
@@ -19264,9 +19266,9 @@
         func)
         [(CompilerRegMaybeType.Some ty)
           (match ty
-            [(AstTyFunc param-types _) (box-get param-types)]
-            [_ AstTypeNil])]
-        [(CompilerRegMaybeType.No) AstTypeNil])]))
+            [(AstType.Func param-types _) (box-get param-types)]
+            [_ AstTypeList.Nil])]
+        [(CompilerRegMaybeType.No) AstTypeList.Nil])]))
 
 (define (compiler-backend-indirect-tail-call-register-only?
   [target : CompilerBackendTarget]
@@ -23433,7 +23435,7 @@
   (CompilerIrFunction.Function
     "main"
     IrParamNil
-    (AstTyI64)
+    (AstType.I64)
     1
     (compiler-ir-block-list-compact
       (compiler-ir-block-cons
@@ -23909,8 +23911,11 @@
   [collections : CompilerBackendProgramCollections]
   [bits : u64]) : CompilerBackendProgramCollections
   (compiler-backend-program-collections-add-float
-    (compiler-backend-program-collections-add-float collections (AstTyF64) bits)
-    (AstTyF32)
+    (compiler-backend-program-collections-add-float
+      collections
+      (AstType.F64)
+      bits)
+    (AstType.F32)
     bits))
 
 (define (compiler-backend-collect-lane-id-collections
@@ -24519,7 +24524,7 @@
   (match value
     [(CompilerIrValue.Unit)
       (match ty
-        [(AstTyUnit) false]
+        [(AstType.Unit) false]
         [_ true])]
     [_ false]))
 
@@ -32771,13 +32776,13 @@ tl_memchr:
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (compiler-ir-extern-cons
-    (compiler-ir-extern-default "tl_alloc" (AstTyI64))
+    (compiler-ir-extern-default "tl_alloc" (AstType.I64))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_substring" (AstTyI64))
+      (compiler-ir-extern-default "tl_substring" (AstType.I64))
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_string_concat" (AstTyI64))
+        (compiler-ir-extern-default "tl_string_concat" (AstType.I64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_int_to_string" (AstTyString))
+          (compiler-ir-extern-default "tl_int_to_string" (AstType.String))
           CompilerIrExternList.Nil)))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
@@ -32787,7 +32792,7 @@ tl_memchr:
       (CompilerIrFunction.Function
         "main"
         IrParamNil
-        (AstTyI64)
+        (AstType.I64)
         4
         (compiler-ir-block-cons
           (compiler-ir-block
@@ -32797,7 +32802,7 @@ tl_memchr:
                 0
                 "tl_alloc"
                 (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
-                (AstTyI64))
+                (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   1
@@ -32810,7 +32815,7 @@ tl_memchr:
                         (compiler-ir-value-cons
                           (CompilerIrValue.I64 0)
                           IrValueNil))))
-                  (AstTyI64))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     2
@@ -32825,7 +32830,7 @@ tl_memchr:
                             (compiler-ir-value-cons
                               (CompilerIrValue.I64 0)
                               IrValueNil)))))
-                    (AstTyI64))
+                    (AstType.I64))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.I64 42)))
@@ -33014,7 +33019,7 @@ tl_memchr:
       (CompilerIrFunction.Function
         "stdlib/runtime.tl::tl-runtime-str-view"
         IrParamNil
-        (AstTyI64)
+        (AstType.I64)
         0
         (compiler-ir-block-cons
           (compiler-ir-block
@@ -33028,7 +33033,7 @@ tl_memchr:
         (CompilerIrFunction.Function
           "main"
           IrParamNil
-          (AstTyI64)
+          (AstType.I64)
           0
           (compiler-ir-block-cons
             (compiler-ir-block
@@ -33040,7 +33045,7 @@ tl_memchr:
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_str_view" (AstTyI64))
+      (compiler-ir-extern-default "tl_str_view" (AstType.I64))
       CompilerIrExternList.Nil)))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
@@ -33201,7 +33206,7 @@ tl_memchr:
       (CompilerIrFunction.Function
         "tl_alloc"
         IrParamNil
-        (AstTyI64)
+        (AstType.I64)
         0
         (compiler-ir-block-cons
           (compiler-ir-block
@@ -33215,7 +33220,7 @@ tl_memchr:
         (CompilerIrFunction.Function
           "main"
           IrParamNil
-          (AstTyI64)
+          (AstType.I64)
           1
           (compiler-ir-block-cons
             (compiler-ir-block
@@ -33225,7 +33230,7 @@ tl_memchr:
                   0
                   "tl_alloc"
                   (CompilerIrCallArgs.Nil)
-                  (AstTyI64))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -33255,7 +33260,7 @@ tl_memchr:
       (CompilerIrFunction.Function
         "tl_alloc"
         IrParamNil
-        (AstTyI64)
+        (AstType.I64)
         0
         (compiler-ir-block-cons
           (compiler-ir-block
@@ -33269,7 +33274,7 @@ tl_memchr:
         (CompilerIrFunction.Function
           "main"
           IrParamNil
-          (AstTyI64)
+          (AstType.I64)
           2
           (compiler-ir-block-cons
             (compiler-ir-block
@@ -33279,7 +33284,7 @@ tl_memchr:
                   0
                   "tl_alloc"
                   (CompilerIrCallArgs.Nil)
-                  (AstTyI64))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     1
@@ -33292,7 +33297,7 @@ tl_memchr:
                           (compiler-ir-value-cons
                             (CompilerIrValue.I64 0)
                             IrValueNil))))
-                    (AstTyI64))
+                    (AstType.I64))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Return
                       (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
@@ -33300,7 +33305,7 @@ tl_memchr:
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_substring" (AstTyI64))
+      (compiler-ir-extern-default "tl_substring" (AstType.I64))
       CompilerIrExternList.Nil)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
@@ -33328,7 +33333,7 @@ tl_memchr:
       (CompilerIrFunction.Function
         "lib.tl::helper"
         IrParamNil
-        (AstTyI64)
+        (AstType.I64)
         0
         (compiler-ir-block-cons
           (compiler-ir-block
@@ -33342,7 +33347,7 @@ tl_memchr:
         (CompilerIrFunction.Function
           "main"
           IrParamNil
-          (AstTyI64)
+          (AstType.I64)
           1
           (compiler-ir-block-cons
             (compiler-ir-block
@@ -33352,7 +33357,7 @@ tl_memchr:
                   0
                   "lib.tl::helper"
                   (CompilerIrCallArgs.Nil)
-                  (AstTyI64))
+                  (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))

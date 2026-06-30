@@ -1334,7 +1334,7 @@
     [(CompilerLiveMaybeBlock.No) (compiler-live-set-empty)]))
 
 (define (compiler-live-i64-ty) : AstType
-  (AstTyI64))
+  (AstType.I64))
 
 (define (compiler-live-straight-function) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -1518,7 +1518,7 @@
                   4
                   (CompilerIrValue.Var 3)
                   (compiler-live-i64-ty)
-                  (AstTyI32))
+                  (AstType.I32))
                 CompilerIrInstrList.Nil)))))))
     [(CompilerLiveUseDef.Def uses defs)
       (and

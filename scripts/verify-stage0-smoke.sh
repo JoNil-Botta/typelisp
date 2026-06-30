@@ -58,6 +58,11 @@ if ! grep -F -- "typelisp " "$VERSION_OUT" >/dev/null; then
     sed 's/^/  /' "$VERSION_OUT" >&2 || true
     exit 1
 fi
+if ! grep -F -- " built " "$VERSION_OUT" >/dev/null; then
+    echo "stage0 --version did not report a build date field" >&2
+    sed 's/^/  /' "$VERSION_OUT" >&2 || true
+    exit 1
+fi
 if [ -s "$VERSION_ERR" ]; then
     echo "stage0 --version wrote unexpected stderr" >&2
     sed 's/^/  /' "$VERSION_ERR" >&2 || true

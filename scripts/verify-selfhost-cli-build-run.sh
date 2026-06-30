@@ -847,6 +847,7 @@ set -e
 assert_status root-package-version "$status" 0
 assert_empty root-package-version "$WORKDIR/root-package-version.err"
 assert_contains root-package-version "$WORKDIR/root-package-version.out" "typelisp "
+assert_contains root-package-version "$WORKDIR/root-package-version.out" " built "
 
 set +e
 "$ROOT_PKG_EXE" build --help > "$WORKDIR/root-package-build-help.out" 2> "$WORKDIR/root-package-build-help.err"

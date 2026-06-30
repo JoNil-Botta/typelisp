@@ -2491,7 +2491,7 @@
     (build-package-link-add-libs
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkLib (vector.string-vec-get vec idx "")))
+        (AstExternLinkInput.Lib (vector.string-vec-get vec idx "")))
       vec
       (+ idx 1))))
 
@@ -2505,7 +2505,7 @@
     (build-package-link-add-search-paths
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkSearch
+        (AstExternLinkInput.Search
           (build-package-link-resolve-search-path
             manifest-dir
             (vector.string-vec-get vec idx ""))))
@@ -2522,7 +2522,7 @@
     (build-package-link-add-args
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkArg (vector.string-vec-get vec idx "")))
+        (AstExternLinkInput.Arg (vector.string-vec-get vec idx "")))
       vec
       (+ idx 1))))
 

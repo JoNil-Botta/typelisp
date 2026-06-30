@@ -14,19 +14,19 @@
 
 (define (compiler-ast-state-type-i64? [pool : AstTypeNodePoolState] [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyI64) true]
+    [(AstType.I64) true]
     [_ false]))
 
 (define (compiler-ast-state-type-string?
   [pool : AstTypeNodePoolState]
   [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyString) true]
+    [(AstType.String) true]
     [_ false]))
 
 (define (compiler-ast-state-type-char? [pool : AstTypeNodePoolState] [id : i64]) : bool
   (match (ast-type-node-pool-state-get pool id)
-    [(AstTyChar) true]
+    [(AstType.Char) true]
     [_ false]))
 
 (define (compiler-ast-state-expr-push-pool
@@ -80,22 +80,22 @@
     [a0 : AstTypeNodePoolState (ast-type-node-pool-state-create 1)]
     [aid0 : i64 (ast-type-node-pool-state-mark a0)]
     [a1 : AstTypeNodePoolState
-      (compiler-ast-state-type-push-pool a0 (AstTyI64))]
+      (compiler-ast-state-type-push-pool a0 (AstType.I64))]
     [aid1 : i64 (ast-type-node-pool-state-mark a1)]
     [a2 : AstTypeNodePoolState
-      (compiler-ast-state-type-push-pool a1 (AstTyString))]
+      (compiler-ast-state-type-push-pool a1 (AstType.String))]
     [b0 : AstTypeNodePoolState (ast-type-node-pool-state-create 1)]
     [bmark : i64 (ast-type-node-pool-state-mark b0)]
     [bid0 : i64 (ast-type-node-pool-state-mark b0)]
     [b1 : AstTypeNodePoolState
-      (compiler-ast-state-type-push-pool b0 (AstTyBool))]
+      (compiler-ast-state-type-push-pool b0 (AstType.Bool))]
     [breset : AstTypeNodePoolState
       (ast-type-node-pool-state-reset-to-mark b1 bmark)]
     [bid1 : i64 (ast-type-node-pool-state-mark breset)]
     [b2 : AstTypeNodePoolState
-      (compiler-ast-state-type-push-pool breset (AstTyI64))]
+      (compiler-ast-state-type-push-pool breset (AstType.I64))]
     [b3 : AstTypeNodePoolState
-      (ast-type-node-pool-state-set! b2 bid1 (AstTyChar))]
+      (ast-type-node-pool-state-set! b2 bid1 (AstType.Char))]
     (and
       (= aid0 0)
       (= aid1 1)
@@ -111,9 +111,9 @@
 (define (compiler-ast-state-owned-type-dedup-reuse-smoke?) : bool
   (match (ast-type-node-pool-state-push
     (ast-type-node-pool-state-create 1)
-    (AstTyI64))
+    (AstType.I64))
     [(AstTypeNodePoolPushOk p1 first-id)
-      (match (ast-type-node-pool-state-push p1 (AstTyI64))
+      (match (ast-type-node-pool-state-push p1 (AstType.I64))
         [(AstTypeNodePoolPushOk p2 second-id)
           (and
             (= first-id 0)
@@ -124,15 +124,15 @@
 (define (compiler-ast-state-owned-type-dedup-isolated-smoke?) : bool
   (match (ast-type-node-pool-state-push
     (ast-type-node-pool-state-create 1)
-    (AstTyI64))
+    (AstType.I64))
     [(AstTypeNodePoolPushOk a1 a-id)
       (match (ast-type-node-pool-state-push
         (ast-type-node-pool-state-create 1)
-        (AstTyI64))
+        (AstType.I64))
         [(AstTypeNodePoolPushOk b1 b-id)
-          (match (ast-type-node-pool-state-push a1 (AstTyI64))
+          (match (ast-type-node-pool-state-push a1 (AstType.I64))
             [(AstTypeNodePoolPushOk a2 a-dupe-id)
-              (match (ast-type-node-pool-state-push b1 (AstTyI64))
+              (match (ast-type-node-pool-state-push b1 (AstType.I64))
                 [(AstTypeNodePoolPushOk b2 b-dupe-id)
                   (and
                     (= a-id 0)
@@ -147,14 +147,14 @@
 (define (compiler-ast-state-owned-type-dedup-reset-smoke?) : bool
   (match (ast-type-node-pool-state-push
     (ast-type-node-pool-state-create 1)
-    (AstTyI64))
+    (AstType.I64))
     [(AstTypeNodePoolPushOk p1 i64-id)
-      (match (ast-type-node-pool-state-push p1 (AstTyString))
+      (match (ast-type-node-pool-state-push p1 (AstType.String))
         [(AstTypeNodePoolPushOk p2 string-id)
           (let
             [reset : AstTypeNodePoolState
               (ast-type-node-pool-state-reset-to-mark p2 1)]
-            (match (ast-type-node-pool-state-push reset (AstTyString))
+            (match (ast-type-node-pool-state-push reset (AstType.String))
               [(AstTypeNodePoolPushOk p3 string-id2)
                 (and
                   (= i64-id 0)
@@ -222,9 +222,9 @@
           false)]
       [_ false])
     (match (ty-node-get ptr-ty-id)
-      [(AstTyPtr inner)
+      [(AstType.Ptr inner)
         (match (ty-node-get inner)
-          [(AstTyI64) true]
+          [(AstType.I64) true]
           [_ false])]
       [_ false])))
 
@@ -255,19 +255,19 @@
                           source-lit
                           source-span)
                         (match maybe-ty
-                          [(AstSomeType ty)
+                          [(AstMaybeType.Some ty)
                             (match ty
-                              [(AstTyArray ptr-id count)
+                              [(AstType.Array ptr-id count)
                                 (and
                                   (= count 4)
                                   (match (ast-node-pool-context-type-get
                                     pools
                                     ptr-id)
-                                    [(AstTyPtr inner)
+                                    [(AstType.Ptr inner)
                                       (match (ast-node-pool-context-type-get
                                         pools
                                         inner)
-                                        [(AstTyI64) true]
+                                        [(AstType.I64) true]
                                         [_ false])]
                                     [_ false]))]
                               [_ false])]
@@ -296,12 +296,12 @@
         source-pools
         (AstExpr.Literal (ast-lit-int 999)))]
     [source-decoy-ty : i64
-      (ast-node-pool-context-type-push source-pools (AstTyChar))]
+      (ast-node-pool-context-type-push source-pools (AstType.Char))]
     [source-i64-ty : i64
-      (ast-node-pool-context-type-push source-pools (AstTyI64))]
+      (ast-node-pool-context-type-push source-pools (AstType.I64))]
     [source-ptr-ty : i64
-      (ast-node-pool-context-type-push source-pools (AstTyPtr source-i64-ty))]
-    [array-ty : AstType (AstTyArray source-ptr-ty 4)]
+      (ast-node-pool-context-type-push source-pools (AstType.Ptr source-i64-ty))]
+    [array-ty : AstType (AstType.Array source-ptr-ty 4)]
     [source-lit : i64
       (ast-node-pool-context-expr-push
         source-pools
@@ -317,7 +317,7 @@
     [program : AstProgram
       (ast-program
         (ast-decl-cons
-          (ast-decl-def "value" (AstSomeType array-ty) source-body)
+          (ast-decl-def "value" (AstMaybeType.Some array-ty) source-body)
           (ast-decl-cons
             (ast-decl-test "same" source-body (AstSourceSpan 5 6 7 8))
             AstDeclList.Nil)))]
@@ -326,7 +326,7 @@
         dest-pools
         (AstExpr.Literal (ast-lit-int 1234)))]
     [dest-decoy-ty : i64
-      (ast-node-pool-context-type-push dest-pools (AstTyBool))]
+      (ast-node-pool-context-type-push dest-pools (AstType.Bool))]
     [compacted : AstProgramCompaction
       (ast-program-compact-with-pools source-pools dest-pools program)]
     (match compacted
@@ -352,9 +352,9 @@
                     (match first
                       [(AstDecl.Def _ maybe-ty body)
                         (match maybe-ty
-                          [(AstSomeType ty)
+                          [(AstMaybeType.Some ty)
                             (match ty
-                              [(AstTyArray ptr-id _)
+                              [(AstType.Array ptr-id _)
                                 (begin
                                   (ast-node-pool-context-install! out-pools)
                                   (compiler-ast-global-shared-binary?

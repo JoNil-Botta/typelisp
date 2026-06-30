@@ -209,141 +209,139 @@
   (AstReduceAny))
 
 (defenum AstType
-  (AstTyI64)
-  (AstTyI32)
-  (AstTyI16)
-  (AstTyI8)
-  (AstTyU64)
-  (AstTyU32)
-  (AstTyU16)
-  (AstTyU8)
-  (AstTyF64)
-  (AstTyF32)
-  (AstTyBool)
-  (AstTyChar)
-  (AstTyString)
-  (AstTyStr)
-  (AstTyBytes)
-  (AstTyUnit)
-  (AstTyNever)
+  (I64)
+  (I32)
+  (I16)
+  (I8)
+  (U64)
+  (U32)
+  (U16)
+  (U8)
+  (F64)
+  (F32)
+  (Bool)
+  (Char)
+  (String)
+  (Str)
+  (Bytes)
+  (Unit)
+  (Never)
   ;; User-facing macro code-as-data type (#1135). This is a single concrete
   ;; compile-time-only type; the produced runtime type is tracked internally by
   ;; CTFE values, not as a source-level type parameter.
-  (AstTyExpr)
-  (AstTyExprList)
-  (AstTyFunc (Box AstTypeList) i64)
-  (AstTyTuple (Box AstTypeList))
-  (AstTyArray i64 i64)
-  (AstTyDynArray i64)
-  (AstTyBox i64)
-  (AstTyRegion String i64)
-  (AstTyRef String i64)
-  (AstTyMutRef String i64)
-  (AstTyEnum i64)
-  (AstTyEnumArgs i64 (Box AstLifetimeList))
-  (AstTyStruct i64)
-  (AstTyStructArgs i64 (Box AstLifetimeList))
-  (AstTyVar i64)
-  (AstTyVarArgs i64 (Box AstLifetimeList))
-  (AstTyPtr i64)
-  (AstTyMutPtr i64))
+  (Expr)
+  (ExprList)
+  (Func (Box AstTypeList) i64)
+  (Tuple (Box AstTypeList))
+  (Array i64 i64)
+  (DynArray i64)
+  (Box i64)
+  (Region String i64)
+  (Ref String i64)
+  (MutRef String i64)
+  (Enum i64)
+  (EnumArgs i64 (Box AstLifetimeList))
+  (Struct i64)
+  (StructArgs i64 (Box AstLifetimeList))
+  (Var i64)
+  (VarArgs i64 (Box AstLifetimeList))
+  (Ptr i64)
+  (MutPtr i64))
 
 (defenum AstTypeList
-  (AstTypeNil)
-  (AstTypeCons i64 (Box AstTypeList)))
+  (Nil)
+  (Cons i64 (Box AstTypeList)))
 
 (defenum AstLifetimeList
-  (AstLifetimeNil)
-  (AstLifetimeCons String (Box AstLifetimeList)))
+  (Nil)
+  (Cons String (Box AstLifetimeList)))
 
 (defenum AstMaybeType
-  (AstNoType)
-  (AstSomeType AstType))
+  (No)
+  (Some AstType))
 
 (defenum AstBorrowLifetime
-  (AstBorrowLifetimeInferred)
-  (AstBorrowLifetimeNamed String))
+  (Inferred)
+  (Named String))
 
 (defenum AstParam
-  (AstParam i64 AstType bool))
+  (Param i64 AstType bool))
 
 (defenum AstParamList
-  (AstParamNil)
-  (AstParamCons AstParam (Box AstParamList)))
+  (Nil)
+  (Cons AstParam (Box AstParamList)))
 
 (defenum AstMacroParam
-  (AstMacroParam i64 AstType bool))
+  (Param i64 AstType bool))
 
 (defenum AstMacroParamList
-  (AstMacroParamNil)
-  (AstMacroParamCons AstMacroParam (Box AstMacroParamList)))
+  (Nil)
+  (Cons AstMacroParam (Box AstMacroParamList)))
 
 (defenum AstFieldCleanup
-  (AstFieldNoCleanup)
-  (AstFieldCleanupFn i64)
-  (AstFieldOwnedCleanup))
+  (No)
+  (Fn i64)
+  (Owned))
 
 (defenum AstFieldDef
-  (AstFieldDef i64 AstType AstFieldCleanup))
+  (Def i64 AstType AstFieldCleanup))
 
 (defenum AstFieldDefList
-  (AstFieldDefNil)
-  (AstFieldDefCons AstFieldDef (Box AstFieldDefList)))
+  (Nil)
+  (Cons AstFieldDef (Box AstFieldDefList)))
 
 (defenum AstStructRepr
-  (AstStructReprDefault)
-  (AstStructReprC))
+  (Default)
+  (C))
 
 (defenum AstExternAbi
-  (AstExternAbiC)
-  (AstExternAbiCVarargsOpen)
-  (AstExternAbiCVarargsTyped AstType))
+  (C)
+  (CVarargsOpen)
+  (CVarargsTyped AstType))
 
 (defenum AstExternKind
-  (AstExternValue)
-  (AstExternFunction))
+  (Value)
+  (Function))
 
 (defenum AstExternLinkInput
-  (AstExternLinkLib String)
-  (AstExternLinkSearch String)
-  (AstExternLinkArg String))
+  (Lib String)
+  (Search String)
+  (Arg String))
 
 (defenum AstExternLinkInputList
-  (AstExternLinkInputNil)
-  (AstExternLinkInputCons AstExternLinkInput (Box AstExternLinkInputList)))
+  (Nil)
+  (Cons AstExternLinkInput (Box AstExternLinkInputList)))
 
 (defenum AstFnExport
-  (AstFnNoExport)
-  (AstFnExport i64))
+  (No)
+  (Export i64))
 
 (defenum AstExternMetadata
-  (AstExternMetadata AstExternAbi String AstExternLinkInputList bool))
+  (Metadata AstExternAbi String AstExternLinkInputList bool))
 
 (defenum AstStructCleanup
-  (AstStructNoCleanup)
-  (AstStructCleanupFn i64))
+  (No)
+  (Fn i64))
 
 (defenum AstEnumCleanup
-  (AstEnumNoCleanup)
-  (AstEnumCleanupFn i64))
+  (No)
+  (Fn i64))
 
 (defenum AstVariantPayloadCleanup
-  (AstVariantPayloadNoCleanup)
-  (AstVariantPayloadCleanupFn i64)
-  (AstVariantPayloadOwnedCleanup))
+  (No)
+  (Fn i64)
+  (Owned))
 
 (defenum AstVariantPayloadCleanupList
-  (AstVariantPayloadCleanupNil)
-  (AstVariantPayloadCleanupCons
-    AstVariantPayloadCleanup
-    (Box AstVariantPayloadCleanupList)))
+  (Nil)
+  (Cons AstVariantPayloadCleanup (Box AstVariantPayloadCleanupList)))
 
 (defenum AstVariantDef
-  (AstVariantDef i64 AstTypeList AstVariantPayloadCleanupList))
+  (Def i64 AstTypeList AstVariantPayloadCleanupList))
 
 (defenum AstVariantDefList
-  (AstVariantDefNil)
-  (AstVariantDefCons AstVariantDef (Box AstVariantDefList)))
+  (Nil)
+  (Cons AstVariantDef (Box AstVariantDefList)))
 
 (defenum AstPattern
   (Var i64 AstMaybeType)
@@ -470,8 +468,8 @@
   (BoxSet i64 i64)
   ;; Compile-time-only type value literal: `(type T)`.
   (TypeLiteral AstType)
-  ;; Zero/identity initialization. `(init : T)` carries `AstSomeType T`;
-  ;; contextual `(init)` carries `AstNoType` until type checking/lowering sees
+  ;; Zero/identity initialization. `(init : T)` carries `AstMaybeType.Some T`;
+  ;; contextual `(init)` carries `AstMaybeType.No` until type checking/lowering sees
   ;; an expected type.
   (Init AstMaybeType)
   ;; Reserved compile-time evaluation form `(comptime expr)` (#718). Parsed and
@@ -844,35 +842,41 @@
 
 (define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
   (match items
-    [(AstLifetimeNil) AstLifetimeNil]
-    [(AstLifetimeCons name rest)
-      (AstLifetimeCons
+    [(AstLifetimeList.Nil) AstLifetimeList.Nil]
+    [(AstLifetimeList.Cons name rest)
+      (AstLifetimeList.Cons
         (ty-node-persist-string name)
         (box (ty-node-persist-lifetimes (box-get rest))))]))
 
 (define (ty-node-persist-type-list [items : AstTypeList]) : AstTypeList
   (match items
-    [(AstTypeNil) AstTypeNil]
-    [(AstTypeCons id rest)
-      (AstTypeCons id (box (ty-node-persist-type-list (box-get rest))))]))
+    [(AstTypeList.Nil) AstTypeList.Nil]
+    [(AstTypeList.Cons id rest)
+      (AstTypeList.Cons id (box (ty-node-persist-type-list (box-get rest))))]))
 
 (define (ty-node-persist [node : AstType]) : AstType
   (match node
-    [(AstTyFunc args ret)
-      (AstTyFunc (box (ty-node-persist-type-list (box-get args))) ret)]
-    [(AstTyTuple args)
-      (AstTyTuple (box (ty-node-persist-type-list (box-get args))))]
-    [(AstTyRegion name inner) (AstTyRegion (ty-node-persist-string name) inner)]
-    [(AstTyRef name inner) (AstTyRef (ty-node-persist-string name) inner)]
-    [(AstTyMutRef name inner) (AstTyMutRef (ty-node-persist-string name) inner)]
-    [(AstTyEnumArgs name lifetimes)
-      (AstTyEnumArgs name (box (ty-node-persist-lifetimes (box-get lifetimes))))]
-    [(AstTyStructArgs name lifetimes)
-      (AstTyStructArgs
+    [(AstType.Func args ret)
+      (AstType.Func (box (ty-node-persist-type-list (box-get args))) ret)]
+    [(AstType.Tuple args)
+      (AstType.Tuple (box (ty-node-persist-type-list (box-get args))))]
+    [(AstType.Region name inner)
+      (AstType.Region (ty-node-persist-string name) inner)]
+    [(AstType.Ref name inner) (AstType.Ref (ty-node-persist-string name) inner)]
+    [(AstType.MutRef name inner)
+      (AstType.MutRef (ty-node-persist-string name) inner)]
+    [(AstType.EnumArgs name lifetimes)
+      (AstType.EnumArgs
         name
         (box (ty-node-persist-lifetimes (box-get lifetimes))))]
-    [(AstTyVarArgs name lifetimes)
-      (AstTyVarArgs name (box (ty-node-persist-lifetimes (box-get lifetimes))))]
+    [(AstType.StructArgs name lifetimes)
+      (AstType.StructArgs
+        name
+        (box (ty-node-persist-lifetimes (box-get lifetimes))))]
+    [(AstType.VarArgs name lifetimes)
+      (AstType.VarArgs
+        name
+        (box (ty-node-persist-lifetimes (box-get lifetimes))))]
     [_ node]))
 
 ;; State-owned type node pools mirror the global type-node backing store while
@@ -1195,72 +1199,72 @@
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
   (match items
-    [(AstLifetimeNil) (hash.combine seed 11)]
-    [(AstLifetimeCons name rest)
+    [(AstLifetimeList.Nil) (hash.combine seed 11)]
+    [(AstLifetimeList.Cons name rest)
       (ty-lifetime-list-hash
         (box-get rest)
         (hash.combine seed (hash.string-key (& name))))]))
 
 (define (ty-type-list-hash [items : AstTypeList] [seed : i64]) : i64
   (match items
-    [(AstTypeNil) (hash.combine seed 13)]
-    [(AstTypeCons id rest)
+    [(AstTypeList.Nil) (hash.combine seed 13)]
+    [(AstTypeList.Cons id rest)
       (ty-type-list-hash (box-get rest) (hash.combine seed id))]))
 
 (define (ty-node-hash-value [node : AstType]) : i64
   (match node
-    [(AstTyI64) 1]
-    [(AstTyI32) 2]
-    [(AstTyI16) 3]
-    [(AstTyI8) 4]
-    [(AstTyU64) 5]
-    [(AstTyU32) 6]
-    [(AstTyU16) 7]
-    [(AstTyU8) 8]
-    [(AstTyF64) 9]
-    [(AstTyF32) 10]
-    [(AstTyBool) 11]
-    [(AstTyChar) 12]
-    [(AstTyString) 13]
-    [(AstTyStr) 14]
-    [(AstTyBytes) 35]
-    [(AstTyUnit) 15]
-    [(AstTyNever) 16]
-    [(AstTyExpr) 17]
-    [(AstTyExprList) 18]
-    [(AstTyFunc args ret)
+    [(AstType.I64) 1]
+    [(AstType.I32) 2]
+    [(AstType.I16) 3]
+    [(AstType.I8) 4]
+    [(AstType.U64) 5]
+    [(AstType.U32) 6]
+    [(AstType.U16) 7]
+    [(AstType.U8) 8]
+    [(AstType.F64) 9]
+    [(AstType.F32) 10]
+    [(AstType.Bool) 11]
+    [(AstType.Char) 12]
+    [(AstType.String) 13]
+    [(AstType.Str) 14]
+    [(AstType.Bytes) 35]
+    [(AstType.Unit) 15]
+    [(AstType.Never) 16]
+    [(AstType.Expr) 17]
+    [(AstType.ExprList) 18]
+    [(AstType.Func args ret)
       (hash.combine (ty-type-list-hash (box-get args) 19) ret)]
-    [(AstTyTuple elems) (ty-type-list-hash (box-get elems) 20)]
-    [(AstTyArray elem count) (hash.combine (hash.combine 21 elem) count)]
-    [(AstTyDynArray elem) (hash.combine 22 elem)]
-    [(AstTyBox inner) (hash.combine 23 inner)]
-    [(AstTyRegion name inner)
+    [(AstType.Tuple elems) (ty-type-list-hash (box-get elems) 20)]
+    [(AstType.Array elem count) (hash.combine (hash.combine 21 elem) count)]
+    [(AstType.DynArray elem) (hash.combine 22 elem)]
+    [(AstType.Box inner) (hash.combine 23 inner)]
+    [(AstType.Region name inner)
       (hash.combine (hash.combine 24 (hash.string-key (& name))) inner)]
-    [(AstTyRef name inner)
+    [(AstType.Ref name inner)
       (hash.combine (hash.combine 25 (hash.string-key (& name))) inner)]
-    [(AstTyMutRef name inner)
+    [(AstType.MutRef name inner)
       (hash.combine (hash.combine 26 (hash.string-key (& name))) inner)]
-    [(AstTyEnum name) (hash.combine 27 name)]
-    [(AstTyEnumArgs name lifetimes)
+    [(AstType.Enum name) (hash.combine 27 name)]
+    [(AstType.EnumArgs name lifetimes)
       (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 28 name))]
-    [(AstTyStruct name) (hash.combine 29 name)]
-    [(AstTyStructArgs name lifetimes)
+    [(AstType.Struct name) (hash.combine 29 name)]
+    [(AstType.StructArgs name lifetimes)
       (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 30 name))]
-    [(AstTyVar name) (hash.combine 31 name)]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.Var name) (hash.combine 31 name)]
+    [(AstType.VarArgs name lifetimes)
       (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 32 name))]
-    [(AstTyPtr inner) (hash.combine 33 inner)]
-    [(AstTyMutPtr inner) (hash.combine 34 inner)]))
+    [(AstType.Ptr inner) (hash.combine 33 inner)]
+    [(AstType.MutPtr inner) (hash.combine 34 inner)]))
 
 (define (ty-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a
-    [(AstLifetimeNil)
+    [(AstLifetimeList.Nil)
       (match b
-        [(AstLifetimeNil) true]
+        [(AstLifetimeList.Nil) true]
         [_ false])]
-    [(AstLifetimeCons a-name a-rest)
+    [(AstLifetimeList.Cons a-name a-rest)
       (match b
-        [(AstLifetimeCons b-name b-rest)
+        [(AstLifetimeList.Cons b-name b-rest)
           (and
             (string.eq a-name b-name)
             (ty-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
@@ -1268,13 +1272,13 @@
 
 (define (ty-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
-    [(AstTypeNil)
+    [(AstTypeList.Nil)
       (match b
-        [(AstTypeNil) true]
+        [(AstTypeList.Nil) true]
         [_ false])]
-    [(AstTypeCons a-id a-rest)
+    [(AstTypeList.Cons a-id a-rest)
       (match b
-        [(AstTypeCons b-id b-rest)
+        [(AstTypeList.Cons b-id b-rest)
           (and
             (= a-id b-id)
             (ty-type-list-eq? (box-get a-rest) (box-get b-rest)))]
@@ -1284,162 +1288,162 @@
 ;; ids compare as plain integers because children are themselves deduplicated.
 (define (ty-node-shallow-value-eq? [a : AstType] [b : AstType]) : bool
   (match a
-    [(AstTyI64)
+    [(AstType.I64)
       (match b
-        [(AstTyI64) true]
+        [(AstType.I64) true]
         [_ false])]
-    [(AstTyI32)
+    [(AstType.I32)
       (match b
-        [(AstTyI32) true]
+        [(AstType.I32) true]
         [_ false])]
-    [(AstTyI16)
+    [(AstType.I16)
       (match b
-        [(AstTyI16) true]
+        [(AstType.I16) true]
         [_ false])]
-    [(AstTyI8)
+    [(AstType.I8)
       (match b
-        [(AstTyI8) true]
+        [(AstType.I8) true]
         [_ false])]
-    [(AstTyU64)
+    [(AstType.U64)
       (match b
-        [(AstTyU64) true]
+        [(AstType.U64) true]
         [_ false])]
-    [(AstTyU32)
+    [(AstType.U32)
       (match b
-        [(AstTyU32) true]
+        [(AstType.U32) true]
         [_ false])]
-    [(AstTyU16)
+    [(AstType.U16)
       (match b
-        [(AstTyU16) true]
+        [(AstType.U16) true]
         [_ false])]
-    [(AstTyU8)
+    [(AstType.U8)
       (match b
-        [(AstTyU8) true]
+        [(AstType.U8) true]
         [_ false])]
-    [(AstTyF64)
+    [(AstType.F64)
       (match b
-        [(AstTyF64) true]
+        [(AstType.F64) true]
         [_ false])]
-    [(AstTyF32)
+    [(AstType.F32)
       (match b
-        [(AstTyF32) true]
+        [(AstType.F32) true]
         [_ false])]
-    [(AstTyBool)
+    [(AstType.Bool)
       (match b
-        [(AstTyBool) true]
+        [(AstType.Bool) true]
         [_ false])]
-    [(AstTyChar)
+    [(AstType.Char)
       (match b
-        [(AstTyChar) true]
+        [(AstType.Char) true]
         [_ false])]
-    [(AstTyString)
+    [(AstType.String)
       (match b
-        [(AstTyString) true]
+        [(AstType.String) true]
         [_ false])]
-    [(AstTyStr)
+    [(AstType.Str)
       (match b
-        [(AstTyStr) true]
+        [(AstType.Str) true]
         [_ false])]
-    [(AstTyBytes)
+    [(AstType.Bytes)
       (match b
-        [(AstTyBytes) true]
+        [(AstType.Bytes) true]
         [_ false])]
-    [(AstTyUnit)
+    [(AstType.Unit)
       (match b
-        [(AstTyUnit) true]
+        [(AstType.Unit) true]
         [_ false])]
-    [(AstTyNever)
+    [(AstType.Never)
       (match b
-        [(AstTyNever) true]
+        [(AstType.Never) true]
         [_ false])]
-    [(AstTyExpr)
+    [(AstType.Expr)
       (match b
-        [(AstTyExpr) true]
+        [(AstType.Expr) true]
         [_ false])]
-    [(AstTyExprList)
+    [(AstType.ExprList)
       (match b
-        [(AstTyExprList) true]
+        [(AstType.ExprList) true]
         [_ false])]
-    [(AstTyFunc a-args a-ret)
+    [(AstType.Func a-args a-ret)
       (match b
-        [(AstTyFunc b-args b-ret)
+        [(AstType.Func b-args b-ret)
           (and
             (= a-ret b-ret)
             (ty-type-list-eq? (box-get a-args) (box-get b-args)))]
         [_ false])]
-    [(AstTyTuple a-elems)
+    [(AstType.Tuple a-elems)
       (match b
-        [(AstTyTuple b-elems)
+        [(AstType.Tuple b-elems)
           (ty-type-list-eq? (box-get a-elems) (box-get b-elems))]
         [_ false])]
-    [(AstTyArray a-elem a-count)
+    [(AstType.Array a-elem a-count)
       (match b
-        [(AstTyArray b-elem b-count)
+        [(AstType.Array b-elem b-count)
           (and (= a-elem b-elem) (= a-count b-count))]
         [_ false])]
-    [(AstTyDynArray a-elem)
+    [(AstType.DynArray a-elem)
       (match b
-        [(AstTyDynArray b-elem) (= a-elem b-elem)]
+        [(AstType.DynArray b-elem) (= a-elem b-elem)]
         [_ false])]
-    [(AstTyBox a-inner)
+    [(AstType.Box a-inner)
       (match b
-        [(AstTyBox b-inner) (= a-inner b-inner)]
+        [(AstType.Box b-inner) (= a-inner b-inner)]
         [_ false])]
-    [(AstTyRegion a-name a-inner)
+    [(AstType.Region a-name a-inner)
       (match b
-        [(AstTyRegion b-name b-inner)
+        [(AstType.Region b-name b-inner)
           (and (= a-inner b-inner) (string.eq a-name b-name))]
         [_ false])]
-    [(AstTyRef a-name a-inner)
+    [(AstType.Ref a-name a-inner)
       (match b
-        [(AstTyRef b-name b-inner)
+        [(AstType.Ref b-name b-inner)
           (and (= a-inner b-inner) (string.eq a-name b-name))]
         [_ false])]
-    [(AstTyMutRef a-name a-inner)
+    [(AstType.MutRef a-name a-inner)
       (match b
-        [(AstTyMutRef b-name b-inner)
+        [(AstType.MutRef b-name b-inner)
           (and (= a-inner b-inner) (string.eq a-name b-name))]
         [_ false])]
-    [(AstTyEnum a-name)
+    [(AstType.Enum a-name)
       (match b
-        [(AstTyEnum b-name) (= a-name b-name)]
+        [(AstType.Enum b-name) (= a-name b-name)]
         [_ false])]
-    [(AstTyEnumArgs a-name a-lifetimes)
+    [(AstType.EnumArgs a-name a-lifetimes)
       (match b
-        [(AstTyEnumArgs b-name b-lifetimes)
+        [(AstType.EnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
             (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
-    [(AstTyStruct a-name)
+    [(AstType.Struct a-name)
       (match b
-        [(AstTyStruct b-name) (= a-name b-name)]
+        [(AstType.Struct b-name) (= a-name b-name)]
         [_ false])]
-    [(AstTyStructArgs a-name a-lifetimes)
+    [(AstType.StructArgs a-name a-lifetimes)
       (match b
-        [(AstTyStructArgs b-name b-lifetimes)
+        [(AstType.StructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
             (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
-    [(AstTyVar a-name)
+    [(AstType.Var a-name)
       (match b
-        [(AstTyVar b-name) (= a-name b-name)]
+        [(AstType.Var b-name) (= a-name b-name)]
         [_ false])]
-    [(AstTyVarArgs a-name a-lifetimes)
+    [(AstType.VarArgs a-name a-lifetimes)
       (match b
-        [(AstTyVarArgs b-name b-lifetimes)
+        [(AstType.VarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
             (ty-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
-    [(AstTyPtr a-inner)
+    [(AstType.Ptr a-inner)
       (match b
-        [(AstTyPtr b-inner) (= a-inner b-inner)]
+        [(AstType.Ptr b-inner) (= a-inner b-inner)]
         [_ false])]
-    [(AstTyMutPtr a-inner)
+    [(AstType.MutPtr a-inner)
       (match b
-        [(AstTyMutPtr b-inner) (= a-inner b-inner)]
+        [(AstType.MutPtr b-inner) (= a-inner b-inner)]
         [_ false])]))
 
 (define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
@@ -1805,189 +1809,189 @@
   (Program (Box AstDeclList)))
 
 (define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
-  (AstTypeCons (ast-node-pool-reader-type-push head) (box rest)))
+  (AstTypeList.Cons (ast-node-pool-reader-type-push head) (box rest)))
 
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
-  (AstTyFunc (box args) (ast-node-pool-reader-type-push ret)))
+  (AstType.Func (box args) (ast-node-pool-reader-type-push ret)))
 
 (define (ast-ty-tuple [elems : AstTypeList]) : AstType
-  (AstTyTuple (box elems)))
+  (AstType.Tuple (box elems)))
 
 (define (ast-ty-enum-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
-  (AstTyEnumArgs name (box lifetimes)))
+  (AstType.EnumArgs name (box lifetimes)))
 
 (define (ast-ty-struct-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
-  (AstTyStructArgs name (box lifetimes)))
+  (AstType.StructArgs name (box lifetimes)))
 
 (define (ast-ty-var-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
-  (AstTyVarArgs name (box lifetimes)))
+  (AstType.VarArgs name (box lifetimes)))
 
 (define (ast-ty-array [elem : AstType] [count : i64]) : AstType
-  (AstTyArray (ast-node-pool-reader-type-push elem) count))
+  (AstType.Array (ast-node-pool-reader-type-push elem) count))
 
 (define (ast-ty-dyn-array [elem : AstType]) : AstType
-  (AstTyDynArray (ast-node-pool-reader-type-push elem)))
+  (AstType.DynArray (ast-node-pool-reader-type-push elem)))
 
 (define (ast-ty-box [elem : AstType]) : AstType
-  (AstTyBox (ast-node-pool-reader-type-push elem)))
+  (AstType.Box (ast-node-pool-reader-type-push elem)))
 
 (define (ast-ty-region [region : String] [inner : AstType]) : AstType
-  (AstTyRegion region (ast-node-pool-reader-type-push inner)))
+  (AstType.Region region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-ref [region : String] [inner : AstType]) : AstType
-  (AstTyRef region (ast-node-pool-reader-type-push inner)))
+  (AstType.Ref region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-mut-ref [region : String] [inner : AstType]) : AstType
-  (AstTyMutRef region (ast-node-pool-reader-type-push inner)))
+  (AstType.MutRef region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-ptr [elem : AstType]) : AstType
-  (AstTyPtr (ast-node-pool-reader-type-push elem)))
+  (AstType.Ptr (ast-node-pool-reader-type-push elem)))
 
 (define (ast-ty-mut-ptr [elem : AstType]) : AstType
-  (AstTyMutPtr (ast-node-pool-reader-type-push elem)))
+  (AstType.MutPtr (ast-node-pool-reader-type-push elem)))
 
 (define (ast-type-cons-with-pools
   [pools : AstNodePoolContext]
   [head : AstType]
   [rest : AstTypeList]) : AstTypeList
-  (AstTypeCons (ast-node-pool-context-type-push pools head) (box rest)))
+  (AstTypeList.Cons (ast-node-pool-context-type-push pools head) (box rest)))
 
 (define (ast-ty-func-with-pools
   [pools : AstNodePoolContext]
   [args : AstTypeList]
   [ret : AstType]) : AstType
-  (AstTyFunc (box args) (ast-node-pool-context-type-push pools ret)))
+  (AstType.Func (box args) (ast-node-pool-context-type-push pools ret)))
 
 (define (ast-ty-array-with-pools
   [pools : AstNodePoolContext]
   [elem : AstType]
   [count : i64]) : AstType
-  (AstTyArray (ast-node-pool-context-type-push pools elem) count))
+  (AstType.Array (ast-node-pool-context-type-push pools elem) count))
 
 (define (ast-ty-dyn-array-with-pools
   [pools : AstNodePoolContext]
   [elem : AstType]) : AstType
-  (AstTyDynArray (ast-node-pool-context-type-push pools elem)))
+  (AstType.DynArray (ast-node-pool-context-type-push pools elem)))
 
 (define (ast-ty-box-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
-  (AstTyBox (ast-node-pool-context-type-push pools elem)))
+  (AstType.Box (ast-node-pool-context-type-push pools elem)))
 
 (define (ast-ty-region-with-pools
   [pools : AstNodePoolContext]
   [region : String]
   [inner : AstType]) : AstType
-  (AstTyRegion region (ast-node-pool-context-type-push pools inner)))
+  (AstType.Region region (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-ref-with-pools
   [pools : AstNodePoolContext]
   [region : String]
   [inner : AstType]) : AstType
-  (AstTyRef region (ast-node-pool-context-type-push pools inner)))
+  (AstType.Ref region (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-mut-ref-with-pools
   [pools : AstNodePoolContext]
   [region : String]
   [inner : AstType]) : AstType
-  (AstTyMutRef region (ast-node-pool-context-type-push pools inner)))
+  (AstType.MutRef region (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-ptr-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
-  (AstTyPtr (ast-node-pool-context-type-push pools elem)))
+  (AstType.Ptr (ast-node-pool-context-type-push pools elem)))
 
 (define (ast-ty-mut-ptr-with-pools
   [pools : AstNodePoolContext]
   [elem : AstType]) : AstType
-  (AstTyMutPtr (ast-node-pool-context-type-push pools elem)))
+  (AstType.MutPtr (ast-node-pool-context-type-push pools elem)))
 
 (define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
-  (AstLifetimeCons head (box rest)))
+  (AstLifetimeList.Cons head (box rest)))
 
 (define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam (ci.intern name) ty is-comptime))
+  (AstParam.Param (ci.intern name) ty is-comptime))
 
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam name ty is-comptime))
+  (AstParam.Param name ty is-comptime))
 
 (define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
-  (AstParamCons head (box rest)))
+  (AstParamList.Cons head (box rest)))
 
 (define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
-  (AstMacroParam (ci.intern name) ty variadic))
+  (AstMacroParam.Param (ci.intern name) ty variadic))
 
 (define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
-  (AstMacroParam name ty variadic))
+  (AstMacroParam.Param name ty variadic))
 
 (define (ast-macro-param-cons [head : AstMacroParam] [rest : AstMacroParamList]) : AstMacroParamList
-  (AstMacroParamCons head (box rest)))
+  (AstMacroParamList.Cons head (box rest)))
 
 (define (ast-field-cleanup-fn [name : String]) : AstFieldCleanup
-  (AstFieldCleanupFn (ci.intern name)))
+  (AstFieldCleanup.Fn (ci.intern name)))
 
 (define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
-  (AstFieldCleanupFn name))
+  (AstFieldCleanup.Fn name))
 
 (define (ast-field-def
   [name : String]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (AstFieldDef (ci.intern name) ty cleanup))
+  (AstFieldDef.Def (ci.intern name) ty cleanup))
 
 (define (ast-field-def-id
   [name : i64]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (AstFieldDef name ty cleanup))
+  (AstFieldDef.Def name ty cleanup))
 
 (define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
-  (AstFieldDefCons head (box rest)))
+  (AstFieldDefList.Cons head (box rest)))
 
 (define (ast-extern-link-input-cons
   [head : AstExternLinkInput]
   [rest : AstExternLinkInputList]) : AstExternLinkInputList
-  (AstExternLinkInputCons head (box rest)))
+  (AstExternLinkInputList.Cons head (box rest)))
 
 (define (ast-fn-export [name : String]) : AstFnExport
-  (AstFnExport (ci.intern name)))
+  (AstFnExport.Export (ci.intern name)))
 
 (define (ast-fn-export-id [name : i64]) : AstFnExport
-  (AstFnExport name))
+  (AstFnExport.Export name))
 
 (define (ast-struct-cleanup-fn [name : String]) : AstStructCleanup
-  (AstStructCleanupFn (ci.intern name)))
+  (AstStructCleanup.Fn (ci.intern name)))
 
 (define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
-  (AstStructCleanupFn name))
+  (AstStructCleanup.Fn name))
 
 (define (ast-enum-cleanup-fn [name : String]) : AstEnumCleanup
-  (AstEnumCleanupFn (ci.intern name)))
+  (AstEnumCleanup.Fn (ci.intern name)))
 
 (define (ast-enum-cleanup-fn-id [name : i64]) : AstEnumCleanup
-  (AstEnumCleanupFn name))
+  (AstEnumCleanup.Fn name))
 
 (define (ast-variant-payload-cleanup-fn [name : String]) : AstVariantPayloadCleanup
-  (AstVariantPayloadCleanupFn (ci.intern name)))
+  (AstVariantPayloadCleanup.Fn (ci.intern name)))
 
 (define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
-  (AstVariantPayloadCleanupFn name))
+  (AstVariantPayloadCleanup.Fn name))
 
 (define (ast-variant-def
   [name : String]
   [fields : AstTypeList]
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
-  (AstVariantDef (ci.intern name) fields cleanups))
+  (AstVariantDef.Def (ci.intern name) fields cleanups))
 
 (define (ast-variant-def-id
   [name : i64]
   [fields : AstTypeList]
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
-  (AstVariantDef name fields cleanups))
+  (AstVariantDef.Def name fields cleanups))
 
 (define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
-  (AstVariantDefCons head (box rest)))
+  (AstVariantDefList.Cons head (box rest)))
 
 (define (ast-variant-payload-cleanup-cons
   [head : AstVariantPayloadCleanup]
   [rest : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
-  (AstVariantPayloadCleanupCons head (box rest)))
+  (AstVariantPayloadCleanupList.Cons head (box rest)))
 
 (define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
   (AstPatternList.Cons (box head) (box rest)))
@@ -2286,10 +2290,10 @@
   (ast-node-push (AstExpr.Init maybe-ty)))
 
 (define (ast-expr-init [ty : AstType]) : i64
-  (ast-expr-init-maybe (AstSomeType ty)))
+  (ast-expr-init-maybe (AstMaybeType.Some ty)))
 
 (define (ast-expr-init-contextual) : i64
-  (ast-expr-init-maybe AstNoType))
+  (ast-expr-init-maybe AstMaybeType.No))
 
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (AstExpr.Comptime inner)))
@@ -2698,10 +2702,10 @@
   (ast-node-pool-context-expr-push pools (AstExpr.Init maybe-ty)))
 
 (define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
-  (ast-expr-init-maybe-with-pools pools (AstSomeType ty)))
+  (ast-expr-init-maybe-with-pools pools (AstMaybeType.Some ty)))
 
 (define (ast-expr-init-contextual-with-pools [pools : AstNodePoolContext]) : i64
-  (ast-expr-init-maybe-with-pools pools AstNoType))
+  (ast-expr-init-maybe-with-pools pools AstMaybeType.No))
 
 (define (ast-expr-comptime-with-pools
   [pools : AstNodePoolContext]
@@ -2850,14 +2854,14 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefFn (ci.intern name) params ret body AstFnNoExport))
+  (AstDecl.DefFn (ci.intern name) params ret body AstFnExport.No))
 
 (define (ast-decl-def-fn-id
   [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefFn name params ret body AstFnNoExport))
+  (AstDecl.DefFn name params ret body AstFnExport.No))
 
 (define (ast-decl-def-fn-export
   [name : String]
@@ -3027,9 +3031,9 @@
 
 (define (ast-compaction-remap-lifetime-list [lifetimes : AstLifetimeList]) : AstLifetimeList
   (match lifetimes
-    [(AstLifetimeNil) AstLifetimeNil]
-    [(AstLifetimeCons name rest)
-      (AstLifetimeCons
+    [(AstLifetimeList.Nil) AstLifetimeList.Nil]
+    [(AstLifetimeList.Cons name rest)
+      (AstLifetimeList.Cons
         name
         (box (ast-compaction-remap-lifetime-list (box-get rest))))]))
 
@@ -3037,9 +3041,9 @@
   [remap : AstProgramCompactionRemap]
   [types : AstTypeList]) : AstTypeList
   (match types
-    [(AstTypeNil) AstTypeNil]
-    [(AstTypeCons head rest)
-      (AstTypeCons
+    [(AstTypeList.Nil) AstTypeList.Nil]
+    [(AstTypeList.Cons head rest)
+      (AstTypeList.Cons
         (ast-compaction-remap-type-id remap head)
         (box (ast-compaction-remap-type-list remap (box-get rest))))]))
 
@@ -3047,59 +3051,61 @@
   [remap : AstProgramCompactionRemap]
   [ty : AstType]) : AstType
   (match ty
-    [(AstTyI64) (AstTyI64)]
-    [(AstTyI32) (AstTyI32)]
-    [(AstTyI16) (AstTyI16)]
-    [(AstTyI8) (AstTyI8)]
-    [(AstTyU64) (AstTyU64)]
-    [(AstTyU32) (AstTyU32)]
-    [(AstTyU16) (AstTyU16)]
-    [(AstTyU8) (AstTyU8)]
-    [(AstTyF64) (AstTyF64)]
-    [(AstTyF32) (AstTyF32)]
-    [(AstTyBool) (AstTyBool)]
-    [(AstTyChar) (AstTyChar)]
-    [(AstTyString) (AstTyString)]
-    [(AstTyStr) (AstTyStr)]
-    [(AstTyBytes) (AstTyBytes)]
-    [(AstTyUnit) (AstTyUnit)]
-    [(AstTyNever) (AstTyNever)]
-    [(AstTyExpr) (AstTyExpr)]
-    [(AstTyExprList) (AstTyExprList)]
-    [(AstTyFunc args ret)
-      (AstTyFunc
+    [(AstType.I64) (AstType.I64)]
+    [(AstType.I32) (AstType.I32)]
+    [(AstType.I16) (AstType.I16)]
+    [(AstType.I8) (AstType.I8)]
+    [(AstType.U64) (AstType.U64)]
+    [(AstType.U32) (AstType.U32)]
+    [(AstType.U16) (AstType.U16)]
+    [(AstType.U8) (AstType.U8)]
+    [(AstType.F64) (AstType.F64)]
+    [(AstType.F32) (AstType.F32)]
+    [(AstType.Bool) (AstType.Bool)]
+    [(AstType.Char) (AstType.Char)]
+    [(AstType.String) (AstType.String)]
+    [(AstType.Str) (AstType.Str)]
+    [(AstType.Bytes) (AstType.Bytes)]
+    [(AstType.Unit) (AstType.Unit)]
+    [(AstType.Never) (AstType.Never)]
+    [(AstType.Expr) (AstType.Expr)]
+    [(AstType.ExprList) (AstType.ExprList)]
+    [(AstType.Func args ret)
+      (AstType.Func
         (box (ast-compaction-remap-type-list remap (box-get args)))
         (ast-compaction-remap-type-id remap ret))]
-    [(AstTyTuple elems)
-      (AstTyTuple (box (ast-compaction-remap-type-list remap (box-get elems))))]
-    [(AstTyArray elem count)
-      (AstTyArray (ast-compaction-remap-type-id remap elem) count)]
-    [(AstTyDynArray elem)
-      (AstTyDynArray (ast-compaction-remap-type-id remap elem))]
-    [(AstTyBox elem) (AstTyBox (ast-compaction-remap-type-id remap elem))]
-    [(AstTyRegion region inner)
-      (AstTyRegion region (ast-compaction-remap-type-id remap inner))]
-    [(AstTyRef region inner)
-      (AstTyRef region (ast-compaction-remap-type-id remap inner))]
-    [(AstTyMutRef region inner)
-      (AstTyMutRef region (ast-compaction-remap-type-id remap inner))]
-    [(AstTyEnum name) (AstTyEnum name)]
-    [(AstTyEnumArgs name lifetimes)
-      (AstTyEnumArgs
+    [(AstType.Tuple elems)
+      (AstType.Tuple
+        (box (ast-compaction-remap-type-list remap (box-get elems))))]
+    [(AstType.Array elem count)
+      (AstType.Array (ast-compaction-remap-type-id remap elem) count)]
+    [(AstType.DynArray elem)
+      (AstType.DynArray (ast-compaction-remap-type-id remap elem))]
+    [(AstType.Box elem) (AstType.Box (ast-compaction-remap-type-id remap elem))]
+    [(AstType.Region region inner)
+      (AstType.Region region (ast-compaction-remap-type-id remap inner))]
+    [(AstType.Ref region inner)
+      (AstType.Ref region (ast-compaction-remap-type-id remap inner))]
+    [(AstType.MutRef region inner)
+      (AstType.MutRef region (ast-compaction-remap-type-id remap inner))]
+    [(AstType.Enum name) (AstType.Enum name)]
+    [(AstType.EnumArgs name lifetimes)
+      (AstType.EnumArgs
         name
         (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
-    [(AstTyStruct name) (AstTyStruct name)]
-    [(AstTyStructArgs name lifetimes)
-      (AstTyStructArgs
+    [(AstType.Struct name) (AstType.Struct name)]
+    [(AstType.StructArgs name lifetimes)
+      (AstType.StructArgs
         name
         (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
-    [(AstTyVar name) (AstTyVar name)]
-    [(AstTyVarArgs name lifetimes)
-      (AstTyVarArgs
+    [(AstType.Var name) (AstType.Var name)]
+    [(AstType.VarArgs name lifetimes)
+      (AstType.VarArgs
         name
         (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
-    [(AstTyPtr elem) (AstTyPtr (ast-compaction-remap-type-id remap elem))]
-    [(AstTyMutPtr elem) (AstTyMutPtr (ast-compaction-remap-type-id remap elem))]))
+    [(AstType.Ptr elem) (AstType.Ptr (ast-compaction-remap-type-id remap elem))]
+    [(AstType.MutPtr elem)
+      (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]))
 
 (define (ast-compaction-remap-type-id
   [remap : AstProgramCompactionRemap]
@@ -3125,23 +3131,24 @@
   [remap : AstProgramCompactionRemap]
   [maybe-ty : AstMaybeType]) : AstMaybeType
   (match maybe-ty
-    [(AstNoType) AstNoType]
-    [(AstSomeType ty) (AstSomeType (ast-compaction-remap-type remap ty))]))
+    [(AstMaybeType.No) AstMaybeType.No]
+    [(AstMaybeType.Some ty)
+      (AstMaybeType.Some (ast-compaction-remap-type remap ty))]))
 
 (define (ast-compaction-remap-param
   [remap : AstProgramCompactionRemap]
   [param : AstParam]) : AstParam
   (match param
-    [(AstParam name ty is-comptime)
-      (AstParam name (ast-compaction-remap-type remap ty) is-comptime)]))
+    [(AstParam.Param name ty is-comptime)
+      (AstParam.Param name (ast-compaction-remap-type remap ty) is-comptime)]))
 
 (define (ast-compaction-remap-param-list
   [remap : AstProgramCompactionRemap]
   [params : AstParamList]) : AstParamList
   (match params
-    [(AstParamNil) AstParamNil]
-    [(AstParamCons param rest)
-      (AstParamCons
+    [(AstParamList.Nil) AstParamList.Nil]
+    [(AstParamList.Cons param rest)
+      (AstParamList.Cons
         (ast-compaction-remap-param remap param)
         (box (ast-compaction-remap-param-list remap (box-get rest))))]))
 
@@ -3149,16 +3156,16 @@
   [remap : AstProgramCompactionRemap]
   [param : AstMacroParam]) : AstMacroParam
   (match param
-    [(AstMacroParam name ty variadic)
-      (AstMacroParam name (ast-compaction-remap-type remap ty) variadic)]))
+    [(AstMacroParam.Param name ty variadic)
+      (AstMacroParam.Param name (ast-compaction-remap-type remap ty) variadic)]))
 
 (define (ast-compaction-remap-macro-param-list
   [remap : AstProgramCompactionRemap]
   [params : AstMacroParamList]) : AstMacroParamList
   (match params
-    [(AstMacroParamNil) AstMacroParamNil]
-    [(AstMacroParamCons param rest)
-      (AstMacroParamCons
+    [(AstMacroParamList.Nil) AstMacroParamList.Nil]
+    [(AstMacroParamList.Cons param rest)
+      (AstMacroParamList.Cons
         (ast-compaction-remap-macro-param remap param)
         (box (ast-compaction-remap-macro-param-list remap (box-get rest))))]))
 
@@ -3166,25 +3173,25 @@
   [remap : AstProgramCompactionRemap]
   [field : AstFieldDef]) : AstFieldDef
   (match field
-    [(AstFieldDef name ty cleanup)
-      (AstFieldDef
+    [(AstFieldDef.Def name ty cleanup)
+      (AstFieldDef.Def
         name
         (ast-compaction-remap-type remap ty)
         (ast-compaction-remap-field-cleanup cleanup))]))
 
 (define (ast-compaction-remap-field-cleanup [cleanup : AstFieldCleanup]) : AstFieldCleanup
   (match cleanup
-    [(AstFieldNoCleanup) AstFieldNoCleanup]
-    [(AstFieldCleanupFn name) (AstFieldCleanupFn name)]
-    [(AstFieldOwnedCleanup) AstFieldOwnedCleanup]))
+    [(AstFieldCleanup.No) AstFieldCleanup.No]
+    [(AstFieldCleanup.Fn name) (AstFieldCleanup.Fn name)]
+    [(AstFieldCleanup.Owned) AstFieldCleanup.Owned]))
 
 (define (ast-compaction-remap-field-def-list
   [remap : AstProgramCompactionRemap]
   [fields : AstFieldDefList]) : AstFieldDefList
   (match fields
-    [(AstFieldDefNil) AstFieldDefNil]
-    [(AstFieldDefCons field rest)
-      (AstFieldDefCons
+    [(AstFieldDefList.Nil) AstFieldDefList.Nil]
+    [(AstFieldDefList.Cons field rest)
+      (AstFieldDefList.Cons
         (ast-compaction-remap-field-def remap field)
         (box (ast-compaction-remap-field-def-list remap (box-get rest))))]))
 
@@ -3192,23 +3199,23 @@
   [remap : AstProgramCompactionRemap]
   [abi : AstExternAbi]) : AstExternAbi
   (match abi
-    [(AstExternAbiC) AstExternAbiC]
-    [(AstExternAbiCVarargsOpen) AstExternAbiCVarargsOpen]
-    [(AstExternAbiCVarargsTyped ty)
-      (AstExternAbiCVarargsTyped (ast-compaction-remap-type remap ty))]))
+    [(AstExternAbi.C) AstExternAbi.C]
+    [(AstExternAbi.CVarargsOpen) AstExternAbi.CVarargsOpen]
+    [(AstExternAbi.CVarargsTyped ty)
+      (AstExternAbi.CVarargsTyped (ast-compaction-remap-type remap ty))]))
 
 (define (ast-compaction-remap-extern-link-input [input : AstExternLinkInput]) : AstExternLinkInput
   (match input
-    [(AstExternLinkLib name) (AstExternLinkLib name)]
-    [(AstExternLinkSearch dir) (AstExternLinkSearch dir)]
-    [(AstExternLinkArg arg) (AstExternLinkArg arg)]))
+    [(AstExternLinkInput.Lib name) (AstExternLinkInput.Lib name)]
+    [(AstExternLinkInput.Search dir) (AstExternLinkInput.Search dir)]
+    [(AstExternLinkInput.Arg arg) (AstExternLinkInput.Arg arg)]))
 
 (define (ast-compaction-remap-extern-link-input-list
   [inputs : AstExternLinkInputList]) : AstExternLinkInputList
   (match inputs
-    [(AstExternLinkInputNil) AstExternLinkInputNil]
-    [(AstExternLinkInputCons input rest)
-      (AstExternLinkInputCons
+    [(AstExternLinkInputList.Nil) AstExternLinkInputList.Nil]
+    [(AstExternLinkInputList.Cons input rest)
+      (AstExternLinkInputList.Cons
         (ast-compaction-remap-extern-link-input input)
         (box (ast-compaction-remap-extern-link-input-list (box-get rest))))]))
 
@@ -3216,8 +3223,8 @@
   [remap : AstProgramCompactionRemap]
   [metadata : AstExternMetadata]) : AstExternMetadata
   (match metadata
-    [(AstExternMetadata abi symbol links no-mangle)
-      (AstExternMetadata
+    [(AstExternMetadata.Metadata abi symbol links no-mangle)
+      (AstExternMetadata.Metadata
         (ast-compaction-remap-extern-abi remap abi)
         symbol
         (ast-compaction-remap-extern-link-input-list links)
@@ -3226,16 +3233,16 @@
 (define (ast-compaction-remap-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
   (match cleanup
-    [(AstVariantPayloadNoCleanup) AstVariantPayloadNoCleanup]
-    [(AstVariantPayloadCleanupFn name) (AstVariantPayloadCleanupFn name)]
-    [(AstVariantPayloadOwnedCleanup) AstVariantPayloadOwnedCleanup]))
+    [(AstVariantPayloadCleanup.No) AstVariantPayloadCleanup.No]
+    [(AstVariantPayloadCleanup.Fn name) (AstVariantPayloadCleanup.Fn name)]
+    [(AstVariantPayloadCleanup.Owned) AstVariantPayloadCleanup.Owned]))
 
 (define (ast-compaction-remap-variant-payload-cleanup-list
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
   (match cleanups
-    [(AstVariantPayloadCleanupNil) AstVariantPayloadCleanupNil]
-    [(AstVariantPayloadCleanupCons cleanup rest)
-      (AstVariantPayloadCleanupCons
+    [(AstVariantPayloadCleanupList.Nil) AstVariantPayloadCleanupList.Nil]
+    [(AstVariantPayloadCleanupList.Cons cleanup rest)
+      (AstVariantPayloadCleanupList.Cons
         (ast-compaction-remap-variant-payload-cleanup cleanup)
         (box (ast-compaction-remap-variant-payload-cleanup-list (box-get rest))))]))
 
@@ -3243,8 +3250,8 @@
   [remap : AstProgramCompactionRemap]
   [variant : AstVariantDef]) : AstVariantDef
   (match variant
-    [(AstVariantDef name fields cleanups)
-      (AstVariantDef
+    [(AstVariantDef.Def name fields cleanups)
+      (AstVariantDef.Def
         name
         (ast-compaction-remap-type-list remap fields)
         (ast-compaction-remap-variant-payload-cleanup-list cleanups))]))
@@ -3253,21 +3260,21 @@
   [remap : AstProgramCompactionRemap]
   [variants : AstVariantDefList]) : AstVariantDefList
   (match variants
-    [(AstVariantDefNil) AstVariantDefNil]
-    [(AstVariantDefCons variant rest)
-      (AstVariantDefCons
+    [(AstVariantDefList.Nil) AstVariantDefList.Nil]
+    [(AstVariantDefList.Cons variant rest)
+      (AstVariantDefList.Cons
         (ast-compaction-remap-variant-def remap variant)
         (box (ast-compaction-remap-variant-def-list remap (box-get rest))))]))
 
 (define (ast-compaction-remap-struct-cleanup [cleanup : AstStructCleanup]) : AstStructCleanup
   (match cleanup
-    [(AstStructNoCleanup) AstStructNoCleanup]
-    [(AstStructCleanupFn name) (AstStructCleanupFn name)]))
+    [(AstStructCleanup.No) AstStructCleanup.No]
+    [(AstStructCleanup.Fn name) (AstStructCleanup.Fn name)]))
 
 (define (ast-compaction-remap-enum-cleanup [cleanup : AstEnumCleanup]) : AstEnumCleanup
   (match cleanup
-    [(AstEnumNoCleanup) AstEnumNoCleanup]
-    [(AstEnumCleanupFn name) (AstEnumCleanupFn name)]))
+    [(AstEnumCleanup.No) AstEnumCleanup.No]
+    [(AstEnumCleanup.Fn name) (AstEnumCleanup.Fn name)]))
 
 (define (ast-compaction-remap-import-kind [kind : AstImportKind]) : AstImportKind
   (match kind
@@ -3839,41 +3846,41 @@
 
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty
-    [(AstTyI64) 1]
-    [(AstTyI32) 2]
-    [(AstTyI16) 3]
-    [(AstTyI8) 4]
-    [(AstTyU64) 5]
-    [(AstTyU32) 6]
-    [(AstTyU16) 7]
-    [(AstTyU8) 8]
-    [(AstTyF64) 9]
-    [(AstTyF32) 10]
-    [(AstTyBool) 11]
-    [(AstTyChar) 12]
-    [(AstTyString) 13]
-    [(AstTyStr) 30]
-    [(AstTyBytes) 35]
-    [(AstTyUnit) 14]
-    [(AstTyNever) 15]
-    [(AstTyExpr) 16]
-    [(AstTyExprList) 29]
-    [(AstTyFunc _ _) 17]
-    [(AstTyTuple _) 18]
-    [(AstTyArray _ _) 19]
-    [(AstTyDynArray _) 20]
-    [(AstTyRegion _ _) 21]
-    [(AstTyRef _ _) 22]
-    [(AstTyMutRef _ _) 23]
-    [(AstTyEnum _) 24]
-    [(AstTyStruct _) 25]
-    [(AstTyVar _) 26]
-    [(AstTyPtr _) 27]
-    [(AstTyMutPtr _) 28]
-    [(AstTyBox _) 31]
-    [(AstTyEnumArgs _ _) 32]
-    [(AstTyStructArgs _ _) 33]
-    [(AstTyVarArgs _ _) 34]))
+    [(AstType.I64) 1]
+    [(AstType.I32) 2]
+    [(AstType.I16) 3]
+    [(AstType.I8) 4]
+    [(AstType.U64) 5]
+    [(AstType.U32) 6]
+    [(AstType.U16) 7]
+    [(AstType.U8) 8]
+    [(AstType.F64) 9]
+    [(AstType.F32) 10]
+    [(AstType.Bool) 11]
+    [(AstType.Char) 12]
+    [(AstType.String) 13]
+    [(AstType.Str) 30]
+    [(AstType.Bytes) 35]
+    [(AstType.Unit) 14]
+    [(AstType.Never) 15]
+    [(AstType.Expr) 16]
+    [(AstType.ExprList) 29]
+    [(AstType.Func _ _) 17]
+    [(AstType.Tuple _) 18]
+    [(AstType.Array _ _) 19]
+    [(AstType.DynArray _) 20]
+    [(AstType.Region _ _) 21]
+    [(AstType.Ref _ _) 22]
+    [(AstType.MutRef _ _) 23]
+    [(AstType.Enum _) 24]
+    [(AstType.Struct _) 25]
+    [(AstType.Var _) 26]
+    [(AstType.Ptr _) 27]
+    [(AstType.MutPtr _) 28]
+    [(AstType.Box _) 31]
+    [(AstType.EnumArgs _ _) 32]
+    [(AstType.StructArgs _ _) 33]
+    [(AstType.VarArgs _ _) 34]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -3989,45 +3996,45 @@
 
 (define (ast-struct-repr-c? [repr : AstStructRepr]) : bool
   (match repr
-    [(AstStructReprC) true]
-    [(AstStructReprDefault) false]))
+    [(AstStructRepr.C) true]
+    [(AstStructRepr.Default) false]))
 
 (define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiC) true]
-    [(AstExternAbiCVarargsOpen) true]
-    [(AstExternAbiCVarargsTyped _) true]))
+    [(AstExternAbi.C) true]
+    [(AstExternAbi.CVarargsOpen) true]
+    [(AstExternAbi.CVarargsTyped _) true]))
 
 (define (ast-extern-abi-c-varargs? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiC) false]
-    [(AstExternAbiCVarargsOpen) true]
-    [(AstExternAbiCVarargsTyped _) true]))
+    [(AstExternAbi.C) false]
+    [(AstExternAbi.CVarargsOpen) true]
+    [(AstExternAbi.CVarargsTyped _) true]))
 
 (define (ast-extern-abi-c-varargs-open? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiCVarargsOpen) true]
+    [(AstExternAbi.CVarargsOpen) true]
     [_ false]))
 
 (define (ast-extern-abi-c-varargs-typed? [abi : AstExternAbi]) : bool
   (match abi
-    [(AstExternAbiCVarargsTyped _) true]
+    [(AstExternAbi.CVarargsTyped _) true]
     [_ false]))
 
 (define (ast-extern-abi-varargs-tail-type [abi : AstExternAbi]) : AstType
   (match abi
-    [(AstExternAbiCVarargsTyped ty) ty]
-    [_ (AstTyUnit)]))
+    [(AstExternAbi.CVarargsTyped ty) ty]
+    [_ (AstType.Unit)]))
 
 (define (ast-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (match a
-    [(AstLifetimeNil)
+    [(AstLifetimeList.Nil)
       (match b
-        [(AstLifetimeNil) true]
+        [(AstLifetimeList.Nil) true]
         [_ false])]
-    [(AstLifetimeCons a-head a-rest)
+    [(AstLifetimeList.Cons a-head a-rest)
       (match b
-        [(AstLifetimeCons b-head b-rest)
+        [(AstLifetimeList.Cons b-head b-rest)
           (and
             (string.eq a-head b-head)
             (ast-lifetime-list-eq? (box-get a-rest) (box-get b-rest)))]
@@ -4035,13 +4042,13 @@
 
 (define (ast-type-list-eq? [a : AstTypeList] [b : AstTypeList]) : bool
   (match a
-    [(AstTypeNil)
+    [(AstTypeList.Nil)
       (match b
-        [(AstTypeNil) true]
+        [(AstTypeList.Nil) true]
         [_ false])]
-    [(AstTypeCons a-head a-rest)
+    [(AstTypeList.Cons a-head a-rest)
       (match b
-        [(AstTypeCons b-head b-rest)
+        [(AstTypeList.Cons b-head b-rest)
           (and
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-head)
@@ -4051,189 +4058,189 @@
 
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
   (match a
-    [(AstTyI64)
+    [(AstType.I64)
       (match b
-        [(AstTyI64) true]
+        [(AstType.I64) true]
         [_ false])]
-    [(AstTyI32)
+    [(AstType.I32)
       (match b
-        [(AstTyI32) true]
+        [(AstType.I32) true]
         [_ false])]
-    [(AstTyI16)
+    [(AstType.I16)
       (match b
-        [(AstTyI16) true]
+        [(AstType.I16) true]
         [_ false])]
-    [(AstTyI8)
+    [(AstType.I8)
       (match b
-        [(AstTyI8) true]
+        [(AstType.I8) true]
         [_ false])]
-    [(AstTyU64)
+    [(AstType.U64)
       (match b
-        [(AstTyU64) true]
+        [(AstType.U64) true]
         [_ false])]
-    [(AstTyU32)
+    [(AstType.U32)
       (match b
-        [(AstTyU32) true]
+        [(AstType.U32) true]
         [_ false])]
-    [(AstTyU16)
+    [(AstType.U16)
       (match b
-        [(AstTyU16) true]
+        [(AstType.U16) true]
         [_ false])]
-    [(AstTyU8)
+    [(AstType.U8)
       (match b
-        [(AstTyU8) true]
+        [(AstType.U8) true]
         [_ false])]
-    [(AstTyF64)
+    [(AstType.F64)
       (match b
-        [(AstTyF64) true]
+        [(AstType.F64) true]
         [_ false])]
-    [(AstTyF32)
+    [(AstType.F32)
       (match b
-        [(AstTyF32) true]
+        [(AstType.F32) true]
         [_ false])]
-    [(AstTyBool)
+    [(AstType.Bool)
       (match b
-        [(AstTyBool) true]
+        [(AstType.Bool) true]
         [_ false])]
-    [(AstTyChar)
+    [(AstType.Char)
       (match b
-        [(AstTyChar) true]
+        [(AstType.Char) true]
         [_ false])]
-    [(AstTyString)
+    [(AstType.String)
       (match b
-        [(AstTyString) true]
+        [(AstType.String) true]
         [_ false])]
-    [(AstTyStr)
+    [(AstType.Str)
       (match b
-        [(AstTyStr) true]
+        [(AstType.Str) true]
         [_ false])]
-    [(AstTyBytes)
+    [(AstType.Bytes)
       (match b
-        [(AstTyBytes) true]
+        [(AstType.Bytes) true]
         [_ false])]
-    [(AstTyUnit)
+    [(AstType.Unit)
       (match b
-        [(AstTyUnit) true]
+        [(AstType.Unit) true]
         [_ false])]
-    [(AstTyNever)
+    [(AstType.Never)
       (match b
-        [(AstTyNever) true]
+        [(AstType.Never) true]
         [_ false])]
-    [(AstTyExpr)
+    [(AstType.Expr)
       (match b
-        [(AstTyExpr) true]
+        [(AstType.Expr) true]
         [_ false])]
-    [(AstTyExprList)
+    [(AstType.ExprList)
       (match b
-        [(AstTyExprList) true]
+        [(AstType.ExprList) true]
         [_ false])]
-    [(AstTyFunc a-args a-ret)
+    [(AstType.Func a-args a-ret)
       (match b
-        [(AstTyFunc b-args b-ret)
+        [(AstType.Func b-args b-ret)
           (and
             (ast-type-list-eq? (box-get a-args) (box-get b-args))
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-ret)
               (ast-node-pool-reader-type-get b-ret)))]
         [_ false])]
-    [(AstTyTuple a-elems)
+    [(AstType.Tuple a-elems)
       (match b
-        [(AstTyTuple b-elems)
+        [(AstType.Tuple b-elems)
           (ast-type-list-eq? (box-get a-elems) (box-get b-elems))]
         [_ false])]
-    [(AstTyArray a-elem a-len)
+    [(AstType.Array a-elem a-len)
       (match b
-        [(AstTyArray b-elem b-len)
+        [(AstType.Array b-elem b-len)
           (and
             (= a-len b-len)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-elem)
               (ast-node-pool-reader-type-get b-elem)))]
         [_ false])]
-    [(AstTyDynArray a-elem)
+    [(AstType.DynArray a-elem)
       (match b
-        [(AstTyDynArray b-elem)
+        [(AstType.DynArray b-elem)
           (ast-type-eq?
             (ast-node-pool-reader-type-get a-elem)
             (ast-node-pool-reader-type-get b-elem))]
         [_ false])]
-    [(AstTyBox a-elem)
+    [(AstType.Box a-elem)
       (match b
-        [(AstTyBox b-elem)
+        [(AstType.Box b-elem)
           (ast-type-eq?
             (ast-node-pool-reader-type-get a-elem)
             (ast-node-pool-reader-type-get b-elem))]
         [_ false])]
-    [(AstTyRegion a-region a-inner)
+    [(AstType.Region a-region a-inner)
       (match b
-        [(AstTyRegion b-region b-inner)
+        [(AstType.Region b-region b-inner)
           (and
             (string.eq a-region b-region)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-inner)
               (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
-    [(AstTyRef a-lifetime a-inner)
+    [(AstType.Ref a-lifetime a-inner)
       (match b
-        [(AstTyRef b-lifetime b-inner)
+        [(AstType.Ref b-lifetime b-inner)
           (and
             (string.eq a-lifetime b-lifetime)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-inner)
               (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
-    [(AstTyMutRef a-lifetime a-inner)
+    [(AstType.MutRef a-lifetime a-inner)
       (match b
-        [(AstTyMutRef b-lifetime b-inner)
+        [(AstType.MutRef b-lifetime b-inner)
           (and
             (string.eq a-lifetime b-lifetime)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-inner)
               (ast-node-pool-reader-type-get b-inner)))]
         [_ false])]
-    [(AstTyEnum a-name)
+    [(AstType.Enum a-name)
       (match b
-        [(AstTyEnum b-name) (= a-name b-name)]
+        [(AstType.Enum b-name) (= a-name b-name)]
         [_ false])]
-    [(AstTyEnumArgs a-name a-lifetimes)
+    [(AstType.EnumArgs a-name a-lifetimes)
       (match b
-        [(AstTyEnumArgs b-name b-lifetimes)
+        [(AstType.EnumArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
             (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
-    [(AstTyStruct a-name)
+    [(AstType.Struct a-name)
       (match b
-        [(AstTyStruct b-name) (= a-name b-name)]
+        [(AstType.Struct b-name) (= a-name b-name)]
         [_ false])]
-    [(AstTyStructArgs a-name a-lifetimes)
+    [(AstType.StructArgs a-name a-lifetimes)
       (match b
-        [(AstTyStructArgs b-name b-lifetimes)
+        [(AstType.StructArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
             (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
-    [(AstTyVar a-name)
+    [(AstType.Var a-name)
       (match b
-        [(AstTyVar b-name) (= a-name b-name)]
+        [(AstType.Var b-name) (= a-name b-name)]
         [_ false])]
-    [(AstTyVarArgs a-name a-lifetimes)
+    [(AstType.VarArgs a-name a-lifetimes)
       (match b
-        [(AstTyVarArgs b-name b-lifetimes)
+        [(AstType.VarArgs b-name b-lifetimes)
           (and
             (= a-name b-name)
             (ast-lifetime-list-eq? (box-get a-lifetimes) (box-get b-lifetimes)))]
         [_ false])]
-    [(AstTyPtr a-elem)
+    [(AstType.Ptr a-elem)
       (match b
-        [(AstTyPtr b-elem)
+        [(AstType.Ptr b-elem)
           (ast-type-eq?
             (ast-node-pool-reader-type-get a-elem)
             (ast-node-pool-reader-type-get b-elem))]
         [_ false])]
-    [(AstTyMutPtr a-elem)
+    [(AstType.MutPtr a-elem)
       (match b
-        [(AstTyMutPtr b-elem)
+        [(AstType.MutPtr b-elem)
           (ast-type-eq?
             (ast-node-pool-reader-type-get a-elem)
             (ast-node-pool-reader-type-get b-elem))]
@@ -4241,49 +4248,49 @@
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
   (match a
-    [(AstExternAbiC)
+    [(AstExternAbi.C)
       (match b
-        [(AstExternAbiC) true]
+        [(AstExternAbi.C) true]
         [_ false])]
-    [(AstExternAbiCVarargsOpen)
+    [(AstExternAbi.CVarargsOpen)
       (match b
-        [(AstExternAbiCVarargsOpen) true]
+        [(AstExternAbi.CVarargsOpen) true]
         [_ false])]
-    [(AstExternAbiCVarargsTyped aty)
+    [(AstExternAbi.CVarargsTyped aty)
       (match b
-        [(AstExternAbiCVarargsTyped bty) (ast-type-eq? aty bty)]
+        [(AstExternAbi.CVarargsTyped bty) (ast-type-eq? aty bty)]
         [_ false])]))
 
 (define (ast-extern-link-input-eq?
   [a : AstExternLinkInput]
   [b : AstExternLinkInput]) : bool
   (match a
-    [(AstExternLinkLib aname)
+    [(AstExternLinkInput.Lib aname)
       (match b
-        [(AstExternLinkLib bname) (string.eq aname bname)]
+        [(AstExternLinkInput.Lib bname) (string.eq aname bname)]
         [_ false])]
-    [(AstExternLinkSearch adir)
+    [(AstExternLinkInput.Search adir)
       (match b
-        [(AstExternLinkSearch bdir) (string.eq adir bdir)]
+        [(AstExternLinkInput.Search bdir) (string.eq adir bdir)]
         [_ false])]
-    [(AstExternLinkArg aarg)
+    [(AstExternLinkInput.Arg aarg)
       (match b
-        [(AstExternLinkArg barg) (string.eq aarg barg)]
+        [(AstExternLinkInput.Arg barg) (string.eq aarg barg)]
         [_ false])]))
 
 (define (ast-extern-link-input-list-eq?
   [a : AstExternLinkInputList]
   [b : AstExternLinkInputList]) : bool
   (match a
-    [(AstExternLinkInputNil)
+    [(AstExternLinkInputList.Nil)
       (match b
-        [(AstExternLinkInputNil) true]
+        [(AstExternLinkInputList.Nil) true]
         [_ false])]
-    [(AstExternLinkInputCons ahead arest)
+    [(AstExternLinkInputList.Cons ahead arest)
       (let
         [arest : AstExternLinkInputList (box-get arest)]
         (match b
-          [(AstExternLinkInputCons bhead brest)
+          [(AstExternLinkInputList.Cons bhead brest)
             (let
               [brest : AstExternLinkInputList (box-get brest)]
               (and
@@ -4295,9 +4302,9 @@
   [items : AstExternLinkInputList]
   [item : AstExternLinkInput]) : AstExternLinkInputList
   (match items
-    [(AstExternLinkInputNil)
-      (ast-extern-link-input-cons item AstExternLinkInputNil)]
-    [(AstExternLinkInputCons head rest)
+    [(AstExternLinkInputList.Nil)
+      (ast-extern-link-input-cons item AstExternLinkInputList.Nil)]
+    [(AstExternLinkInputList.Cons head rest)
       (let
         [rest : AstExternLinkInputList (box-get rest)]
         (ast-extern-link-input-cons
@@ -4305,45 +4312,49 @@
           (ast-extern-link-input-list-append rest item)))]))
 
 (define (ast-extern-default-metadata [name : String]) : AstExternMetadata
-  (AstExternMetadata (AstExternAbiC) name AstExternLinkInputNil false))
+  (AstExternMetadata.Metadata
+    (AstExternAbi.C)
+    name
+    AstExternLinkInputList.Nil
+    false))
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
   (match metadata
-    [(AstExternMetadata _ symbol _ _) symbol]))
+    [(AstExternMetadata.Metadata _ symbol _ _) symbol]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
   (match metadata
-    [(AstExternMetadata abi _ _ _) abi]))
+    [(AstExternMetadata.Metadata abi _ _ _) abi]))
 
 (define (ast-extern-metadata-link-inputs [metadata : AstExternMetadata]) : AstExternLinkInputList
   (match metadata
-    [(AstExternMetadata _ _ link-inputs _) link-inputs]))
+    [(AstExternMetadata.Metadata _ _ link-inputs _) link-inputs]))
 
 (define (ast-extern-metadata-explicit-abi? [metadata : AstExternMetadata]) : bool
   (match metadata
-    [(AstExternMetadata _ _ _ explicit-abi) explicit-abi]))
+    [(AstExternMetadata.Metadata _ _ _ explicit-abi) explicit-abi]))
 
 (define (ast-struct-cleanup? [cleanup : AstStructCleanup]) : bool
   (match cleanup
-    [(AstStructCleanupFn _) true]
-    [(AstStructNoCleanup) false]))
+    [(AstStructCleanup.Fn _) true]
+    [(AstStructCleanup.No) false]))
 
 (define (ast-enum-cleanup? [cleanup : AstEnumCleanup]) : bool
   (match cleanup
-    [(AstEnumCleanupFn _) true]
-    [(AstEnumNoCleanup) false]))
+    [(AstEnumCleanup.Fn _) true]
+    [(AstEnumCleanup.No) false]))
 
 (define (ast-field-cleanup? [cleanup : AstFieldCleanup]) : bool
   (match cleanup
-    [(AstFieldCleanupFn _) true]
-    [(AstFieldOwnedCleanup) true]
-    [(AstFieldNoCleanup) false]))
+    [(AstFieldCleanup.Fn _) true]
+    [(AstFieldCleanup.Owned) true]
+    [(AstFieldCleanup.No) false]))
 
 (define (ast-variant-payload-cleanup? [cleanup : AstVariantPayloadCleanup]) : bool
   (match cleanup
-    [(AstVariantPayloadCleanupFn _) true]
-    [(AstVariantPayloadOwnedCleanup) true]
-    [(AstVariantPayloadNoCleanup) false]))
+    [(AstVariantPayloadCleanup.Fn _) true]
+    [(AstVariantPayloadCleanup.Owned) true]
+    [(AstVariantPayloadCleanup.No) false]))
 
 (define (compiler-ast-begin-expr? [expr : AstExpr]) : bool
   (match expr
@@ -4479,7 +4490,7 @@
         (AstExpr.Begin (ast-expr-cons one (ast-expr-cons two AstExprList.Nil))))]
     [bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "x" (AstNoType) begin-expr)
+        (ast-let-binding "x" (AstMaybeType.No) begin-expr)
         AstLetBindingList.Nil)]
     [tuple-pattern : AstPattern
       (ast-pat-tuple
@@ -4538,12 +4549,12 @@
     [generated : AstDecl
       (ast-decl-def
         "generated"
-        (AstSomeType (AstTyI64))
+        (AstMaybeType.Some (AstType.I64))
         (ast-node-push (AstExpr.Literal (ast-lit-int 7))))]
     [runtime : AstDecl
       (ast-decl-def
         "runtime"
-        (AstSomeType (AstTyI64))
+        (AstMaybeType.Some (AstType.I64))
         (ast-node-push (AstExpr.Literal (ast-lit-int 9))))]
     [nested : AstDecl (ast-decl-unsafe (ast-decl-comptime-decl generated))]
     [program : AstProgram
@@ -4581,7 +4592,7 @@
       (ty-node-pool-reset!)
       (ty-node-pool-truncate! capacity)
       (let
-        [id : i64 (ty-node-push (AstTyI64))]
+        [id : i64 (ty-node-push (AstType.I64))]
         [len : i64 (ty-node-pool-len)]
         [exhausted : bool (ty-node-pool-exhausted?)]
         [grew : bool (> (ty-node-pool-capacity) capacity)]
@@ -4593,19 +4604,19 @@
   (begin
     (ty-node-pool-reset!)
     (let
-      [first-i64 : i64 (ty-node-push (AstTyI64))]
+      [first-i64 : i64 (ty-node-push (AstType.I64))]
       [first-len : i64 (ty-node-pool-len)]
-      [second-i64 : i64 (ty-node-push (AstTyI64))]
+      [second-i64 : i64 (ty-node-push (AstType.I64))]
       [second-len : i64 (ty-node-pool-len)]
-      [first-array : i64 (ty-node-push (ast-ty-array (AstTyI64) 4))]
+      [first-array : i64 (ty-node-push (ast-ty-array (AstType.I64) 4))]
       [array-len : i64 (ty-node-pool-len)]
-      [second-array : i64 (ty-node-push (ast-ty-array (AstTyI64) 4))]
+      [second-array : i64 (ty-node-push (ast-ty-array (AstType.I64) 4))]
       [final-len : i64 (ty-node-pool-len)]
-      [first-bytes : i64 (ty-node-push (AstTyBytes))]
+      [first-bytes : i64 (ty-node-push (AstType.Bytes))]
       [bytes-len : i64 (ty-node-pool-len)]
-      [second-bytes : i64 (ty-node-push (AstTyBytes))]
+      [second-bytes : i64 (ty-node-push (AstType.Bytes))]
       [second-bytes-len : i64 (ty-node-pool-len)]
-      [str-ty : i64 (ty-node-push (AstTyStr))]
+      [str-ty : i64 (ty-node-push (AstType.Str))]
       [str-len : i64 (ty-node-pool-len)]
       [ok : bool
         (and
@@ -4626,27 +4637,27 @@
 
 (define (compiler-ast-smoke) : i64
   (let
-    [i64-ty : AstType (AstTyI64)]
-    [string-ty : AstType (AstTyString)]
+    [i64-ty : AstType (AstType.I64)]
+    [string-ty : AstType (AstType.String)]
     [arg-tys : AstTypeList
-      (ast-type-cons i64-ty (ast-type-cons string-ty AstTypeNil))]
+      (ast-type-cons i64-ty (ast-type-cons string-ty AstTypeList.Nil))]
     [ret-ty : AstType (ast-ty-ref "r" (ast-ty-ptr (ast-ty-array i64-ty 4)))]
     [fn-ty : AstType (ast-ty-func arg-tys ret-ty)]
     [nested-ty-ok? : bool
       (match fn-ty
-        [(AstTyFunc _ ret)
+        [(AstType.Func _ ret)
           (match (ty-node-get ret)
-            [(AstTyRef region ptr)
+            [(AstType.Ref region ptr)
               (and
                 (string.eq region "r")
                 (match (ty-node-get ptr)
-                  [(AstTyPtr array)
+                  [(AstType.Ptr array)
                     (match (ty-node-get array)
-                      [(AstTyArray elem count)
+                      [(AstType.Array elem count)
                         (and
                           (= count 4)
                           (match (ty-node-get elem)
-                            [(AstTyI64) true]
+                            [(AstType.I64) true]
                             [_ false]))]
                       [_ false])]
                   [_ false]))]
@@ -4661,7 +4672,7 @@
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
     [param : AstParam (ast-param "x" i64-ty false)]
-    [params : AstParamList (ast-param-cons param AstParamNil)]
+    [params : AstParamList (ast-param-cons param AstParamList.Nil)]
     [decl : AstDecl (ast-decl-def-fn "main" params i64-ty expr)]
     [program : AstProgram (ast-program (ast-decl-cons decl AstDeclList.Nil))]
     (match program

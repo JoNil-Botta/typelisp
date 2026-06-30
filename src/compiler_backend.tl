@@ -9,7 +9,7 @@
 (import stdlib.text_buf)
 (import "compiler_object.tl")
 (import compiler_intern as ci)
-(import "sym_i64_env.tl")
+(import sym_i64_env)
 (import stdlib.array)
 (import stdlib.hash)
 (import stdlib.hashmap)
@@ -32205,7 +32205,7 @@ tl_memchr:
     [(ResultCompilerBackendBuffer.Err message)
       (ResultCompilerBackend.Err message)]))
 
-(define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : SymI64Env
+(define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (match target
     [(CompilerBackendTarget.Linux)
       (compiler-cfg-enable

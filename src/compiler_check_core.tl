@@ -4,6 +4,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
+(import sym_i64_env)
 
 (defenum ResultCompilerCheck
   (Ok CompilerTypecheckSummary)
@@ -38,7 +39,7 @@
                 (- (profile.now-ms) compiler-check-profile-start-ms))
               "|0|0|0\n")))))))
 
-(define (compiler-check-language-cfgs) : SymI64Env
+(define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable
@@ -195,7 +196,7 @@
       path
       (vector.string-vec-new)
       (compiler-load-core-macro-prelude-with-roots-cfg
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (vector.string-vec-new)
         (compiler-check-language-cfgs)))))
 
@@ -209,7 +210,7 @@
       path
       stdlib-roots
       (compiler-load-core-macro-prelude-with-roots-cfg
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         stdlib-roots
         (compiler-check-language-cfgs)))))
 
@@ -222,7 +223,7 @@
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-package-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
       deps
@@ -263,7 +264,7 @@
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-package-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
       deps
@@ -334,7 +335,7 @@
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-new)
       (compiler-check-language-cfgs))
       [(ResultCompilerLoadWithPaths.Ok
@@ -370,7 +371,7 @@
     (compiler-check-reset-pools!)
     (cfg compile-profile (compiler-check-profile-start))
     (match (compiler-load-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       stdlib-roots
       (compiler-check-language-cfgs))
       [(ResultCompilerLoadWithPaths.Ok
@@ -563,7 +564,7 @@
   (match (compiler-load-source-with-paths
     "src/virtual_entry.tl"
     (compiler-check-virtual-import-source)
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (let
         [program : AstProgram (ast-program decls)]
@@ -714,7 +715,10 @@
   (match (compiler-load-source
     "src/already_loaded.tl"
     "(define answer : i64 1)"
-    (sym-i64-bind (sym-i64-empty) "src.already_loaded" 1))
+    (sym_i64_env.sym-i64-bind
+      (sym_i64_env.sym-i64-empty)
+      "src.already_loaded"
+      1))
     [(ResultCompilerLoad.Ok decls _)
       (match decls
         [(AstDeclList.Nil) true]

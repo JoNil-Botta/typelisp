@@ -11,6 +11,7 @@
 (import "compiler_load.tl")
 (import "compiler_optimize.tl")
 (import stdlib.text_buf)
+(import sym_i64_env)
 
 (defenum ResultCompilerDriver
   (Ok String)
@@ -263,7 +264,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]) : unit
+  [seen : sym_i64_env.SymI64Env]) : unit
   (compiler-load-runtime-prelude-cache-store key decls paths modules seen))
 
 (define (compiler-driver-runtime-prelude-cache-store-with-pools
@@ -271,7 +272,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (compiler-load-runtime-prelude-cache-store-with-pools
     key
@@ -468,19 +469,19 @@
         [(CompilerBackendTarget.Linux) (CompilerLowerLinuxScalar)]
         [(CompilerBackendTarget.Windows) (CompilerLowerWindowsScalar)])]))
 
-(define (compiler-driver-enable-linux-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-driver-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable (compiler-cfg-enable cfgs "linux") "unix")
       "target-linux")
     "os-linux"))
 
-(define (compiler-driver-enable-windows-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-driver-enable-windows-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
     "os-windows"))
 
-(define (compiler-driver-enable-language-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-driver-enable-language-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
       (compiler-cfg-enable
@@ -499,7 +500,7 @@
 
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
-  [cfgs : SymI64Env]) : SymI64Env
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-driver-enable-language-cfgs
     (match target
       [(CompilerBackendTarget.Linux) (compiler-driver-enable-linux-cfgs cfgs)]
@@ -967,10 +968,10 @@
 ;; dedup against it before the decls/paths/modules are concatenated.
 (define (compiler-driver-load-runtime-prelude-cold
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg
     "stdlib/runtime.tl"
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -1002,7 +1003,7 @@
 (define (compiler-driver-load-runtime-prelude-cache-miss
   [key : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [loaded : ResultCompilerLoadWithPaths
@@ -1030,7 +1031,7 @@
 
 (define (compiler-driver-load-runtime-prelude
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
       [key : String
@@ -1048,7 +1049,7 @@
 (define (compiler-driver-load-file-with-runtime
   [input-path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   ;; Prepend the implicit prelude (runtime + core macros), then load the entry.
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -1082,7 +1083,7 @@
   [input-path : String]
   [source : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok
         prelude-decls
@@ -1115,9 +1116,9 @@
 (define (compiler-driver-load-file-for-pic-image
   [input-path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok
@@ -1149,11 +1150,11 @@
 
 (define (compiler-driver-load-runtime-prelude-cold-with-pools
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-file-with-paths-and-roots-cfg-with-pools
     "stdlib/runtime.tl"
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs
     pools)
@@ -1187,7 +1188,7 @@
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-pools
   [key : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
@@ -1220,7 +1221,7 @@
 
 (define (compiler-driver-load-runtime-prelude-with-pools
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (if (compiler-load-session-cache-enabled?)
     (let
@@ -1243,7 +1244,7 @@
 (define (compiler-driver-load-file-with-runtime-with-pools
   [input-path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-pools
     stdlib-roots
@@ -1281,7 +1282,7 @@
   [input-path : String]
   [source : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-runtime-prelude-with-pools
     stdlib-roots
@@ -1320,10 +1321,10 @@
 (define (compiler-driver-load-file-for-pic-image-with-pools
   [input-path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs
     pools)
@@ -1360,7 +1361,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-with-runtime input-path stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
@@ -1403,7 +1404,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (match (compiler-driver-load-file-for-pic-image input-path stdlib-roots cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (begin
@@ -1447,7 +1448,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     (match (compiler-driver-load-file-with-runtime-with-pools
@@ -1501,7 +1502,7 @@
   [target : CompilerBackendTarget]
   [stdlib-roots : vector.StringVec]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     (match (compiler-driver-load-file-for-pic-image-with-pools
@@ -1609,7 +1610,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
     input-path
     target
@@ -1645,7 +1646,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriver
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
@@ -1674,7 +1675,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
@@ -1698,7 +1699,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [crt-entry : bool]) : ResultCompilerDriverObject
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
@@ -1724,7 +1725,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverPic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
@@ -1750,7 +1751,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverBuffer
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
@@ -1776,7 +1777,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriverPic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverPic
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
@@ -1946,7 +1947,7 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-runtime-cfg
     input-path
     stdlib-roots
@@ -2007,7 +2008,7 @@
   [package-owner : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-driver-load-package-file-with-runtime-cfg
     input-path
     stdlib-roots
@@ -2186,7 +2187,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   ;; Emit-IR needs the macro prelude but must remain runtime-free so
   ;; target parity checks compare user IR rather than OS-specific runtime IR.
   (compiler-driver-emit-ir-summary-lowered-result-with-level
@@ -2205,7 +2206,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-lowered-result-with-level
     (compiler-driver-load-and-lower-pic-image-with-state
       state
@@ -2220,7 +2221,7 @@
   [input-path : String]
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
-  [cfgs : SymI64Env]) : ResultCompilerDriver
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriver
   (compiler-driver-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
     input-path
     (CompilerBackendTarget.Linux)
@@ -2366,7 +2367,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (compiler-driver-write-buffer-result
     (compiler-driver-emit-file-buffer-with-target-roots-level-mode-and-cfg
       input-path
@@ -2386,7 +2387,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (compiler-driver-write-pic-result
     (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
       input-path
@@ -2525,7 +2526,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (compiler-driver-compile-file-with-target-roots-level-mode-cfg
     input-path
     output-path

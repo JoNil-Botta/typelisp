@@ -16,6 +16,7 @@
 (import "lsp_vector_families.tl")
 (import stdlib.string)
 (import token)
+(import sym_i64_env)
 
 (define (lsp-str2 [a : String] [b : String]) : String
   (string.concat3 a b ""))
@@ -2553,7 +2554,7 @@
     [(ResultSpannedTokens.Ok toks)
       (let
         [cur : (Array i64) (make-array i64 1)]
-        [dispatch : SymI64Env (compiler-parse-dispatch-env)]
+        [dispatch : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
         [done : bool false]
         [result : LspValidationResult LspValidationResult.Valid]
         (begin

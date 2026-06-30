@@ -3,7 +3,7 @@
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import "compiler_diagnostic.tl")
-(import "sym_i64_env.tl")
+(import sym_i64_env)
 (import stdlib.env)
 (import stdlib.fs)
 (import stdlib.hashmap)
@@ -14,11 +14,11 @@
 (import token)
 
 (defenum ResultCompilerLoad
-  (Ok AstDeclList SymI64Env)
+  (Ok AstDeclList sym_i64_env.SymI64Env)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerLoadWithPaths
-  (Ok AstDeclList AstDeclPathList AstDeclModuleList SymI64Env)
+  (Ok AstDeclList AstDeclPathList AstDeclModuleList sym_i64_env.SymI64Env)
   (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerLoadMaybePath
@@ -187,7 +187,7 @@
     AstDeclList
     AstDeclPathList
     AstDeclModuleList
-    SymI64Env))
+    sym_i64_env.SymI64Env))
 
 (defenum CompilerLoadPreludeCacheSlot
   (CompilerLoadPreludeCacheEmpty)
@@ -196,7 +196,7 @@
     AstDeclList
     AstDeclPathList
     AstDeclModuleList
-    SymI64Env))
+    sym_i64_env.SymI64Env))
 
 (defenum CompilerLoadProgramCacheLookup
   (CompilerLoadProgramCacheMiss)
@@ -806,7 +806,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)
     unit
@@ -839,7 +839,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]) : unit
+  [seen : sym_i64_env.SymI64Env]) : unit
   (begin
     (compiler-load-runtime-prelude-cache-ensure!)
     (compiler-load-runtime-prelude-cache-store-at
@@ -856,7 +856,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [modules : AstDeclModuleList]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
   (begin
     (compiler-load-runtime-prelude-cache-ensure!)
@@ -892,10 +892,12 @@
 (define (compiler-load-roots-cache-key [roots : vector.StringVec]) : String
   (compiler-load-roots-cache-key-from roots 0 (vector.string-vec-len roots) ""))
 
-(define (compiler-load-cfg-cache-key-from [cfgs : SymI64Env] [out : String]) : String
+(define (compiler-load-cfg-cache-key-from
+  [cfgs : sym_i64_env.SymI64Env]
+  [out : String]) : String
   (match cfgs
-    [(SymI64Nil) out]
-    [(SymI64Bind key value rest)
+    [(sym_i64_env.SymI64Nil) out]
+    [(sym_i64_env.SymI64Bind key value rest)
       (compiler-load-cfg-cache-key-from
         (box-get rest)
         (str_cat.str-cat
@@ -905,13 +907,13 @@
           (string.int->string value)
           ";"))]))
 
-(define (compiler-load-cfg-cache-key [cfgs : SymI64Env]) : String
+(define (compiler-load-cfg-cache-key [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-cfg-cache-key-from cfgs ""))
 
 (define (compiler-load-prelude-cache-key
   [kind : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : String
+  [cfgs : sym_i64_env.SymI64Env]) : String
   (let
     [effective-roots : vector.StringVec
       (compiler-load-roots-with-env stdlib-roots)]
@@ -925,7 +927,7 @@
 (define (compiler-load-program-cache-key
   [kind : String]
   [path : String]
-  [cfgs : SymI64Env]) : String
+  [cfgs : sym_i64_env.SymI64Env]) : String
   (let
     [normalized : String (compiler-load-normalize-path path)]
     (str_cat.str-cat
@@ -1302,9 +1304,9 @@
   [path : String]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]) : SymI64Env
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [private-cfgs : SymI64Env
+    [private-cfgs : sym_i64_env.SymI64Env
       (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
         cfgs
         (match expected-module
@@ -2048,9 +2050,9 @@
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg
       compiler-load-core-macro-prelude-path
@@ -2059,9 +2061,9 @@
       cfgs)))
 
 (define (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-file-with-paths-and-roots-cfg-with-pools
@@ -2072,7 +2074,7 @@
       pools)))
 
 (define (compiler-load-core-macro-prelude-with-roots
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
   (compiler-load-core-macro-prelude-with-roots-cfg
     seen
@@ -2320,7 +2322,7 @@
   [path : String]
   [module-id : String]
   [decls : AstDeclList]
-  [seen : SymI64Env]) : ResultCompilerLoadWithPaths
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-decl-list-has-module? decls)
     (ResultCompilerLoadWithPaths.Ok
       (ast-decl-cons (ast-decl-module module-id) AstDeclList.Nil)
@@ -2383,7 +2385,7 @@
 (define (compiler-load-duplicate-dotted-import-alias-loop
   [decls : AstDeclList]
   [current-module : String]
-  [seen : SymI64Env]) : CompilerLoadMaybeString
+  [seen : sym_i64_env.SymI64Env]) : CompilerLoadMaybeString
   (match decls
     [(AstDeclList.Nil) (CompilerLoadNoString)]
     [(AstDeclList.Cons decl rest)
@@ -2405,12 +2407,12 @@
             (let
               [key : String
                 (compiler-load-dotted-import-alias-key current-module alias)]
-              (if (sym-i64-contains seen key)
+              (if (sym_i64_env.sym-i64-contains seen key)
                 (CompilerLoadSomeString alias)
                 (compiler-load-duplicate-dotted-import-alias-loop
                   rest
                   current-module
-                  (sym-i64-bind seen key 1))))]
+                  (sym_i64_env.sym-i64-bind seen key 1))))]
           [_
             (compiler-load-duplicate-dotted-import-alias-loop
               rest
@@ -2424,7 +2426,7 @@
   (match (compiler-load-duplicate-dotted-import-alias-loop
     decls
     source-module
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(CompilerLoadNoString) (ResultCompilerLoadAliasCheck.Ok)]
     [(CompilerLoadSomeString alias)
       (ResultCompilerLoadAliasCheck.Err
@@ -3074,7 +3076,7 @@
 (define (compiler-load-surface-summary-from-decls
   [path : String]
   [root-id : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [module-id : String]
   [decls : AstDeclList]) : CompilerLoadSurfaceSummary
   (let
@@ -3096,7 +3098,7 @@
 (define (compiler-load-surface-summary-build
   [path : String]
   [root-id : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [program : AstProgram]) : ResultCompilerLoadSurfaceSummary
   (match program
     [(AstProgram.Program decls-box)
@@ -3125,7 +3127,7 @@
 (define (compiler-load-decls-with-paths
   [decls : AstDeclList]
   [importer-path : String]
-  [seen : SymI64Env]) : ResultCompilerLoadWithPaths
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-paths-and-roots
     decls
     importer-path
@@ -3218,7 +3220,7 @@
   [importer-path : String]
   [importer-module : String]
   [importer-source-module : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg
     decls
@@ -3234,9 +3236,9 @@
   [importer-path : String]
   [importer-module : String]
   [importer-source-module : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg-root
     decls
     importer-path
@@ -3252,9 +3254,9 @@
   [importer-path : String]
   [importer-module : String]
   [importer-source-module : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
     decls
@@ -3272,10 +3274,10 @@
   [importer-path : String]
   [importer-module : String]
   [importer-source-module : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclList.Nil)
@@ -3344,7 +3346,7 @@
                             resolved
                             alias
                             span)]
-                        [after-import-seen : SymI64Env
+                        [after-import-seen : sym_i64_env.SymI64Env
                           (if lazy-skip
                             seen
                             import-seen)]
@@ -3525,10 +3527,10 @@
   [importer-path : String]
   [importer-module : String]
   [importer-source-module : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [import-root : String]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
@@ -3549,7 +3551,7 @@
 (define (compiler-load-decls-with-paths-and-roots
   [decls : AstDeclList]
   [importer-path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
   (compiler-load-decls-with-paths-and-roots-cfg
     decls
@@ -3561,12 +3563,12 @@
 (define (compiler-load-decls-with-paths-and-roots-cfg
   [decls : AstDeclList]
   [importer-path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
     [(ResultCompilerLoadModuleId.Ok module-id)
-      (if (sym-i64-contains seen module-id)
+      (if (sym_i64_env.sym-i64-contains seen module-id)
         (ResultCompilerLoadWithPaths.Ok
           AstDeclList.Nil
           AstDeclPathList.Nil
@@ -3577,7 +3579,7 @@
           importer-path
           module-id
           (compiler-load-decls-source-module decls)
-          (sym-i64-bind seen module-id 1)
+          (sym_i64_env.sym-i64-bind seen module-id 1)
           stdlib-roots
           cfgs))]
     [(ResultCompilerLoadModuleId.Err diag)
@@ -3586,13 +3588,13 @@
 (define (compiler-load-decls-with-paths-and-roots-cfg-with-pools
   [decls : AstDeclList]
   [importer-path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-decls-module-id importer-path decls)
     [(ResultCompilerLoadModuleId.Ok module-id)
-      (if (sym-i64-contains seen module-id)
+      (if (sym_i64_env.sym-i64-contains seen module-id)
         (ResultCompilerLoadWithPaths.Ok
           AstDeclList.Nil
           AstDeclPathList.Nil
@@ -3603,7 +3605,7 @@
           importer-path
           module-id
           (compiler-load-decls-source-module decls)
-          (sym-i64-bind seen module-id 1)
+          (sym_i64_env.sym-i64-bind seen module-id 1)
           stdlib-roots
           cfgs
           pools))]
@@ -3613,14 +3615,14 @@
 (define (compiler-load-decls
   [decls : AstDeclList]
   [importer-path : String]
-  [seen : SymI64Env]) : ResultCompilerLoad
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-decls-with-paths decls importer-path seen)))
 
 (define (compiler-load-decls-with-roots
   [decls : AstDeclList]
   [importer-path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-decls-with-paths-and-roots
@@ -3632,7 +3634,7 @@
 (define (compiler-load-program-with-paths
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]) : ResultCompilerLoadWithPaths
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots
     path
     program
@@ -3642,7 +3644,7 @@
 (define (compiler-load-program-with-paths-and-roots
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect
     path
@@ -3654,7 +3656,7 @@
 (define (compiler-load-program-with-paths-and-roots-expect
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg
@@ -3668,10 +3670,10 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root
     path
     program
@@ -3684,10 +3686,10 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-with-pools
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
     path
@@ -3702,11 +3704,11 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-with-pools
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
     path
@@ -3723,11 +3725,11 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
@@ -3754,7 +3756,7 @@
                   expected-module
                   module-id)
                   [(ResultCompilerLoadModuleId.Ok _)
-                    (if (sym-i64-contains seen module-id)
+                    (if (sym_i64_env.sym-i64-contains seen module-id)
                       (compiler-load-seen-module-with-paths
                         path
                         module-id
@@ -3778,7 +3780,7 @@
                               path
                               module-id
                               source-module
-                              (sym-i64-bind seen module-id 1)
+                              (sym_i64_env.sym-i64-bind seen module-id 1)
                               stdlib-roots
                               import-root
                               cfgs
@@ -3796,11 +3798,11 @@
 (define (compiler-load-program-with-paths-and-roots-expect-cfg-root
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultCompilerLoadWithPaths
@@ -3820,14 +3822,14 @@
 (define (compiler-load-program
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]) : ResultCompilerLoad
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-program-with-paths path program seen)))
 
 (define (compiler-load-program-with-roots
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-program-with-paths-and-roots path program seen stdlib-roots)))
@@ -3835,7 +3837,7 @@
 (define (compiler-load-source-with-paths
   [path : String]
   [source : String]
-  [seen : SymI64Env]) : ResultCompilerLoadWithPaths
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots
     path
     source
@@ -3845,7 +3847,7 @@
 (define (compiler-load-source-with-paths-and-roots
   [path : String]
   [source : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect
     path
@@ -3857,9 +3859,9 @@
 (define (compiler-load-source-with-paths-and-roots-cfg
   [path : String]
   [source : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect-cfg
     path
     source
@@ -3871,7 +3873,7 @@
 (define (compiler-load-source-with-paths-and-roots-expect
   [path : String]
   [source : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-source-with-paths-and-roots-expect-cfg
@@ -3896,26 +3898,26 @@
 (define (compiler-load-parse-source-diagnostic-escaping
   [path : String]
   [source : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path source cfgs))
 
 (define (compiler-load-parse-source-diagnostic-escaping-with-pools
   [path : String]
   [source : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg-and-pools path source cfgs pools))
 
 (define (compiler-load-parse-file-diagnostic-escaping
   [path : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [source : String (io.read-file path)]
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
 (define (compiler-load-parse-file-diagnostic-escaping-with-pools
   [path : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
     [source : String (io.read-file path)]
@@ -3955,7 +3957,7 @@
 (define (compiler-load-parse-file-diagnostic-cache-miss
   [key : String]
   [path : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
@@ -3977,7 +3979,7 @@
 (define (compiler-load-parse-file-diagnostic-cache-miss-with-pools
   [key : String]
   [path : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
@@ -4012,7 +4014,7 @@
 (define (compiler-load-parse-file-diagnostic-cache-miss-local
   [key : String]
   [path : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
       [start-nodes : i64 (ast-node-pool-len)]
@@ -4029,7 +4031,7 @@
 (define (compiler-load-parse-file-diagnostic-cache-miss-local-with-pools
   [key : String]
   [path : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
@@ -4054,7 +4056,7 @@
 (define (compiler-load-parse-file-diagnostic-admit-only
   [key : String]
   [path : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [parsed : ResultAstProgramDiagnostic
       (compiler-load-parse-file-diagnostic-escaping path cfgs)]
@@ -4070,7 +4072,7 @@
 (define (compiler-load-parse-file-diagnostic-admit-only-with-pools
   [key : String]
   [path : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
     [parsed : ResultAstProgramDiagnostic
@@ -4087,7 +4089,7 @@
 (define (compiler-load-parse-file-diagnostic-session
   [path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
     (compiler-load-session-program-cache-enabled?)
@@ -4119,7 +4121,7 @@
 (define (compiler-load-parse-file-diagnostic-session-with-pools
   [path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
@@ -4162,7 +4164,7 @@
   [key : String]
   [path : String]
   [source : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
       [prev-arena : i64 (arena.tl_arena_current)]
@@ -4185,7 +4187,7 @@
   [key : String]
   [path : String]
   [source : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (compiler-load-program-cache-can-store key)
     (let
@@ -4219,7 +4221,7 @@
 (define (compiler-load-parse-embedded-source-diagnostic-session
   [path : String]
   [source : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
     (compiler-load-session-program-cache-enabled?))
@@ -4243,7 +4245,7 @@
 (define (compiler-load-parse-embedded-source-diagnostic-session-with-pools
   [path : String]
   [source : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (if (and
     (compiler-load-session-cache-enabled?)
@@ -4273,10 +4275,10 @@
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]
   [source : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match (compiler-load-parse-source-diagnostic-escaping path source cfgs)
     [(ResultAstProgramDiagnostic.Ok program)
       (compiler-load-program-with-paths-and-roots-expect-cfg
@@ -4292,10 +4294,10 @@
 (define (compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
   [path : String]
   [source : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (match (compiler-load-parse-source-diagnostic-escaping-with-pools
     path
@@ -4317,23 +4319,25 @@
 (define (compiler-load-source
   [path : String]
   [source : String]
-  [seen : SymI64Env]) : ResultCompilerLoad
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-source-with-paths path source seen)))
 
 (define (compiler-load-source-with-roots
   [path : String]
   [source : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-source-with-paths-and-roots path source seen stdlib-roots)))
 
-(define (compiler-load-file-with-paths [path : String] [seen : SymI64Env]) : ResultCompilerLoadWithPaths
+(define (compiler-load-file-with-paths
+  [path : String]
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots path seen (vector.string-vec-new)))
 
 (define (compiler-load-file-with-paths-and-roots
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect
     path
@@ -4343,9 +4347,9 @@
 
 (define (compiler-load-file-with-paths-and-roots-cfg
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg
     path
     seen
@@ -4355,9 +4359,9 @@
 
 (define (compiler-load-file-with-paths-and-roots-cfg-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
     path
@@ -4369,7 +4373,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg
@@ -4390,17 +4394,17 @@
         paths
         modules
         (if path-dedup
-          (sym-i64-bind loaded-seen path-key 1)
+          (sym_i64_env.sym-i64-bind loaded-seen path-key 1)
           loaded-seen))]
     [(ResultCompilerLoadWithPaths.Err diag)
       (ResultCompilerLoadWithPaths.Err diag)]))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root
     path
     seen
@@ -4411,10 +4415,10 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
     path
@@ -4427,11 +4431,11 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
     path
     seen
@@ -4443,11 +4447,11 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
     path
@@ -4461,13 +4465,13 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [kind : AstImportKind]
   [import-path : String]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [context-module : String]) : ResultCompilerLoadWithPaths
   (let
@@ -4495,23 +4499,23 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]) : ResultCompilerLoadWithPaths
   (let
     [path-key : String (compiler-load-seen-path-key path)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
-    (if (and path-dedup (sym-i64-contains seen path-key))
+    (if (and path-dedup (sym_i64_env.sym-i64-contains seen path-key))
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
         AstDeclModuleList.Nil
         seen)
       (let
-        [parse-cfgs : SymI64Env
+        [parse-cfgs : sym_i64_env.SymI64Env
           (compiler-load-stdlib-private-cfgs
             path
             stdlib-roots
@@ -4572,11 +4576,11 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
@@ -4594,11 +4598,11 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]
   [pools : AstNodePoolContext]
   [path-key : String]
@@ -4606,14 +4610,14 @@
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
-    (if (and path-dedup (sym-i64-contains seen path-key))
+    (if (and path-dedup (sym_i64_env.sym-i64-contains seen path-key))
       (ResultCompilerLoadWithPaths.Ok
         AstDeclList.Nil
         AstDeclPathList.Nil
         AstDeclModuleList.Nil
         seen)
       (let
-        [parse-cfgs : SymI64Env
+        [parse-cfgs : sym_i64_env.SymI64Env
           (compiler-load-stdlib-private-cfgs
             path
             stdlib-roots
@@ -4686,10 +4690,10 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
@@ -4713,9 +4717,9 @@
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current
     path
     seen
@@ -4727,9 +4731,9 @@
 
 (define (compiler-load-entry-file-with-paths-and-roots-cfg-with-pools
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
   (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
     path
@@ -4741,12 +4745,12 @@
     false
     pools))
 
-(define (compiler-load-file [path : String] [seen : SymI64Env]) : ResultCompilerLoad
+(define (compiler-load-file [path : String] [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))
 
 (define (compiler-load-file-with-roots
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]) : ResultCompilerLoad
   (compiler-load-drop-paths
     (compiler-load-file-with-paths-and-roots path seen stdlib-roots)))
@@ -5210,7 +5214,7 @@
   [stdlib-roots : vector.StringVec]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [module : String]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclList.Nil)
@@ -5304,10 +5308,10 @@
 
 (define (compiler-load-package-externs-from-import
   [resolved : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (match (compiler-load-package-entry-for-source resolved)
@@ -5390,11 +5394,11 @@
   [importer-path : String]
   [importer-module : String]
   [importer-source-module : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (match decls
     [(AstDeclList.Nil)
       (ResultCompilerLoadWithPaths.Ok
@@ -5492,7 +5496,7 @@
                                 resolved
                                 alias
                                 span))]
-                          [after-import-seen : SymI64Env
+                          [after-import-seen : sym_i64_env.SymI64Env
                             (if lazy-skip
                               seen
                               import-seen)]
@@ -5673,12 +5677,12 @@
 (define (compiler-load-package-program-with-paths-and-roots-expect-fallback
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
@@ -5704,7 +5708,7 @@
                   expected-module
                   module-id)
                   [(ResultCompilerLoadModuleId.Ok _)
-                    (if (sym-i64-contains seen module-id)
+                    (if (sym_i64_env.sym-i64-contains seen module-id)
                       (compiler-load-seen-module-with-paths
                         path
                         module-id
@@ -5728,7 +5732,7 @@
                               path
                               module-id
                               source-module
-                              (sym-i64-bind seen module-id 1)
+                              (sym_i64_env.sym-i64-bind seen module-id 1)
                               stdlib-roots
                               manifest-dir
                               deps
@@ -5746,12 +5750,12 @@
 (define (compiler-load-package-program-with-paths-and-roots-expect
   [path : String]
   [program : AstProgram]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-program-with-paths-and-roots-expect-fallback
     path
     program
@@ -5766,17 +5770,17 @@
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]
   [module-id-fallback : String]
   [source-module-fallback : String]) : ResultCompilerLoadWithPaths
   (let
-    [parse-cfgs : SymI64Env
+    [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
     (if (io.file-exists? path)
       (match (if cache-current
@@ -5833,12 +5837,12 @@
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-current : bool]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
     path
@@ -5854,12 +5858,12 @@
 
 (define (compiler-load-package-file-with-paths-and-roots-expect
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [expected-module : AstMaybeModuleName]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect-cache-current
     path
     seen
@@ -5872,7 +5876,7 @@
 
 (define (compiler-load-package-file-with-paths-and-roots
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerLoadWithPaths
@@ -5887,11 +5891,11 @@
 
 (define (compiler-load-package-file-with-paths-and-roots-cfg
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect
     path
     seen
@@ -5903,11 +5907,11 @@
 
 (define (compiler-load-package-entry-file-with-paths-and-roots-cfg
   [path : String]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect-cache-current
     path
     seen
@@ -5919,11 +5923,11 @@
     false))
 
 (define (compiler-load-package-core-macro-prelude-with-roots-cfg
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (compiler-load-append-root-module-marker
     (compiler-load-package-file-with-paths-and-roots-cfg
       compiler-load-core-macro-prelude-path
@@ -5939,11 +5943,11 @@
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [emit-entry : bool]
-  [cfgs : SymI64Env]) : ResultCompilerLoadWithPaths
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if emit-entry
     (match (compiler-load-package-file-with-paths-and-roots-cfg
       "stdlib/runtime.tl"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
       deps
@@ -5998,7 +6002,7 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (ResultCompilerLoadWithPaths.Err diag)])
     (match (compiler-load-package-core-macro-prelude-with-roots-cfg
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       stdlib-roots
       manifest-dir
       deps
@@ -6455,7 +6459,8 @@
 
 (define (compiler-load-surface-summary-smoke-ok?) : bool
   (let
-    [cfgs : SymI64Env (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+    [cfgs : sym_i64_env.SymI64Env
+      (compiler-cfg-enable (compiler-cfg-empty) "feature")]
     (match (compiler-load-parse-source-diagnostic-escaping
       "src\\summary.tl"
       (compiler-load-surface-summary-smoke-source)
@@ -6503,12 +6508,12 @@
     "src/./main.tl"
     "(module app.main)
 (define answer : i64 42)"
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
       (and
         (= (compiler-load-decl-list-count decls) 2)
         (compiler-load-two-modules? modules "app.main")
-        (sym-i64-contains seen "app.main"))]
+        (sym_i64_env.sym-i64-contains seen "app.main"))]
     [(ResultCompilerLoadWithPaths.Err _) false]))
 
 (define (compiler-load-entry-moduled-main-ok?) : bool
@@ -6541,7 +6546,7 @@
     "src/lib.tl"
     "(module lib.actual)
 (define value : i64 1)"
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     (vector.string-vec-new)
     (AstMaybeModuleName.Some "lib.want"))
     [(ResultCompilerLoadWithPaths.Err diag)
@@ -6556,7 +6561,7 @@
     "(module dup.one)
 (module dup.two)
 (define value : i64 1)"
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
         (compiler-diagnostic-message (box-get diag))
@@ -6568,7 +6573,7 @@
     "src/other.tl"
     "(module seen.module)
 (define value : i64 1)"
-    (sym-i64-bind (sym-i64-empty) "seen.module" 1))
+    (sym_i64_env.sym-i64-bind (sym_i64_env.sym-i64-empty) "seen.module" 1))
     [(ResultCompilerLoad.Ok decls _)
       (compiler-load-decl-list-has-module? decls)]
     [(ResultCompilerLoad.Err _) false]))
@@ -6583,13 +6588,13 @@
       "(module cfg.entry.active)
 (cfg feature (import \"definitely_missing.tl\"))
 (define value : i64 1)"]
-    [feature-cfg : SymI64Env
+    [feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable (compiler-cfg-empty) "feature")]
     (and
       (match (compiler-load-source-with-paths-and-roots-cfg
         "src/main.tl"
         source
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (vector.string-vec-new)
         (compiler-cfg-empty))
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -6598,7 +6603,7 @@
       (match (compiler-load-source-with-paths-and-roots-cfg
         "src/main.tl"
         enabled-source
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (vector.string-vec-new)
         feature-cfg)
         [(ResultCompilerLoadWithPaths.Err _) true]
@@ -6619,13 +6624,13 @@
 (define (main) : i64 dep)")
     (match (compiler-load-file-with-paths
       "target/compiler_load_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 11)
           (compiler-load-entry-cycle-modules? modules)
-          (sym-i64-contains seen "smoke.entry")
-          (sym-i64-contains seen "smoke.dep"))]
+          (sym_i64_env.sym-i64-contains seen "smoke.entry")
+          (sym_i64_env.sym-i64-contains seen "smoke.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-module-restore-ok?) : bool
@@ -6640,7 +6645,7 @@
 (define (main) : i64 42)")
     (match (compiler-load-file-with-paths
       "target/cl_restore_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-unmoduled-import-restored-decls? decls)]
       [(ResultCompilerLoadWithPaths.Err _) false])))
@@ -6657,12 +6662,15 @@
 (define (main) : i64 legacy-dep)")
     (match (compiler-load-file-with-paths
       "target/compiler_load_legacy_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ modules seen)
         (and
           (= (compiler-load-decl-list-count decls) 2)
-          (sym-i64-contains seen "target.compiler_load_legacy_dep")
-          (not (sym-i64-contains seen "target/compiler_load_legacy_dep.tl")))]
+          (sym_i64_env.sym-i64-contains seen "target.compiler_load_legacy_dep")
+          (not
+            (sym_i64_env.sym-i64-contains
+              seen
+              "target/compiler_load_legacy_dep.tl")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-import-alias-preserved-ok?) : bool
@@ -6678,7 +6686,7 @@
 (define (main) : i64 (dep.get))")
     (match (compiler-load-file-with-paths
       "target/cl_alias_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "alias.dep" "dep")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
@@ -6695,7 +6703,7 @@
 (define (main) : i64 (get))")
     (match (compiler-load-file-with-paths
       "target/cl_legacy_module_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "legacy.dep" "")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
@@ -6717,7 +6725,7 @@
 (define (main) : i64 (get))")
     (match (compiler-load-file-with-paths
       "target/cl_seen_legacy_module_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (compiler-load-decl-list-has-import-alias? decls "seen.legacy.dep" "")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
@@ -6734,7 +6742,7 @@
 (define (main) : i64 (get))")
     (match (compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_legacy_module_entry.tl"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-new)
       "target"
       (compiler-pkg-deps-empty))
@@ -6759,7 +6767,7 @@
 (define (main) : i64 (get))")
     (match (compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_seen_legacy_module_entry.tl"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-new)
       "target"
       (compiler-pkg-deps-empty))
@@ -6777,7 +6785,7 @@
 (import pkg.one)
 (import other.one)
 (define (main) : i64 0)"
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
         (compiler-diagnostic-message (box-get diag))
@@ -6844,7 +6852,7 @@
         (begin
           (if (match (compiler-load-file-with-paths-and-roots
             "target/cl_cache_entry_a.tl"
-            (sym-i64-empty)
+            (sym_i64_env.sym-i64-empty)
             roots)
             [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
             [(ResultCompilerLoadWithPaths.Err _) false])
@@ -6853,7 +6861,7 @@
               (compiler-load-session-reset-interns!)
               (match (compiler-load-file-with-paths-and-roots
                 "target/cl_cache_entry_b.tl"
-                (sym-i64-empty)
+                (sym_i64_env.sym-i64-empty)
                 roots)
                 [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
                   (set!
@@ -6905,7 +6913,7 @@
         (begin
           (if (match (compiler-load-file-with-paths-and-roots
             "target/cl_cache_root_entry_a.tl"
-            (sym-i64-empty)
+            (sym_i64_env.sym-i64-empty)
             roots-a)
             [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
             [(ResultCompilerLoadWithPaths.Err _) false])
@@ -6914,7 +6922,7 @@
               (compiler-load-session-reset-interns!)
               (match (compiler-load-file-with-paths-and-roots
                 "target/cl_cache_root_entry_b.tl"
-                (sym-i64-empty)
+                (sym_i64_env.sym-i64-empty)
                 roots-b)
                 [(ResultCompilerLoadWithPaths.Ok _ _ _ _) (set! ok true)]
                 [(ResultCompilerLoadWithPaths.Err _) (set! ok false)]))
@@ -6935,7 +6943,7 @@
       (begin
         (if (match (compiler-load-entry-file-with-paths-and-roots-cfg
           "target/cl_cache_cold_entry.tl"
-          (sym-i64-empty)
+          (sym_i64_env.sym-i64-empty)
           (vector.string-vec-new)
           (compiler-cfg-empty))
           [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
@@ -6945,7 +6953,7 @@
             (compiler-load-session-reset-interns!)
             (match (compiler-load-entry-file-with-paths-and-roots-cfg
               "target/cl_cache_cold_entry.tl"
-              (sym-i64-empty)
+              (sym_i64_env.sym-i64-empty)
               (vector.string-vec-new)
               (compiler-cfg-empty))
               [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
@@ -7033,7 +7041,7 @@
         (begin
           (if (match (compiler-load-entry-file-with-paths-and-roots-cfg
             entry-a
-            (sym-i64-empty)
+            (sym_i64_env.sym-i64-empty)
             (vector.string-vec-new)
             (compiler-cfg-empty))
             [(ResultCompilerLoadWithPaths.Ok _ _ _ _) true]
@@ -7043,7 +7051,7 @@
               (compiler-load-session-reset-interns!)
               (match (compiler-load-entry-file-with-paths-and-roots-cfg
                 entry-b
-                (sym-i64-empty)
+                (sym_i64_env.sym-i64-empty)
                 (vector.string-vec-new)
                 (compiler-cfg-empty))
                 [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
@@ -7052,7 +7060,7 @@
                     (compiler-load-session-reset-interns!)
                     (match (compiler-load-entry-file-with-paths-and-roots-cfg
                       entry-c
-                      (sym-i64-empty)
+                      (sym_i64_env.sym-i64-empty)
                       (vector.string-vec-new)
                       (compiler-cfg-empty))
                       [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
@@ -7107,7 +7115,7 @@
         (begin
           (if (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
             entry-a
-            (sym-i64-empty)
+            (sym_i64_env.sym-i64-empty)
             (vector.string-vec-new)
             root
             deps
@@ -7119,7 +7127,7 @@
               (compiler-load-session-reset-interns!)
               (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
                 entry-b
-                (sym-i64-empty)
+                (sym_i64_env.sym-i64-empty)
                 (vector.string-vec-new)
                 root
                 deps
@@ -7130,7 +7138,7 @@
                     (compiler-load-session-reset-interns!)
                     (match (compiler-load-package-entry-file-with-paths-and-roots-cfg
                       entry-c
-                      (sym-i64-empty)
+                      (sym_i64_env.sym-i64-empty)
                       (vector.string-vec-new)
                       root
                       deps
@@ -7169,12 +7177,12 @@
 (define (main) : i64 dep-val)")
     (match (compiler-load-file-with-paths
       "target/cl_dotted_src/entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
-          (sym-i64-contains seen "dotted.entry")
-          (sym-i64-contains seen "nested.dep")
-          (sym-i64-contains seen "root_leaf"))]
+          (sym_i64_env.sym-i64-contains seen "dotted.entry")
+          (sym_i64_env.sym-i64-contains seen "nested.dep")
+          (sym_i64_env.sym-i64-contains seen "root_leaf"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-moduleless-dotted-source-root-ok?) : bool
@@ -7195,14 +7203,14 @@
 (define (main) : i64 dep.dep-val)")
     (match (compiler-load-file-with-paths
       "target/cl_moduleless_dotted_src/entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (compiler-load-decl-list-has-module-name? decls "root_leaf")
           (compiler-load-decl-list-has-module-name? decls "nested.dep")
           (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
-          (sym-i64-contains seen "root_leaf")
-          (sym-i64-contains seen "nested.dep"))]
+          (sym_i64_env.sym-i64-contains seen "root_leaf")
+          (sym_i64_env.sym-i64-contains seen "nested.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-dotted-source-root-fallback-ok?) : bool
@@ -7232,13 +7240,13 @@
 (define (main) : i64 mid-val)")
       (match (compiler-load-file-with-paths-and-roots
         entry
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         roots)
         [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
-            (sym-i64-contains seen "fallback.entry")
-            (sym-i64-contains seen "mid")
-            (sym-i64-contains seen "leaf"))]
+            (sym_i64_env.sym-i64-contains seen "fallback.entry")
+            (sym_i64_env.sym-i64-contains seen "mid")
+            (sym_i64_env.sym-i64-contains seen "leaf"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-dotted-after-path-import-ok?) : bool
@@ -7263,11 +7271,11 @@
         entry
         "(import \"../provider.tl\")
 (define (main) : i64 value)")
-      (match (compiler-load-file-with-paths entry (sym-i64-empty))
+      (match (compiler-load-file-with-paths entry (sym_i64_env.sym-i64-empty))
         [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
-            (sym-i64-contains seen "provider")
-            (sym-i64-contains seen "helper"))]
+            (sym_i64_env.sym-i64-contains seen "provider")
+            (sym_i64_env.sym-i64-contains seen "helper"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-package-dotted-import-resolution-ok?) : bool
@@ -7356,7 +7364,7 @@
 (define (main) : i64 0)")
       (match (compiler-load-package-file-with-paths-and-roots
         entry
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (vector.string-vec-new)
         app-root
         deps)
@@ -7365,8 +7373,8 @@
             (compiler-load-decl-list-has-extern-symbol?
               decls
               "_tl_math_src_add_add")
-            (sym-i64-contains seen "math.src.add")
-            (not (sym-i64-contains seen dep)))]
+            (sym_i64_env.sym-i64-contains seen "math.src.add")
+            (not (sym_i64_env.sym-i64-contains seen dep)))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-load-generated-meta-preserved-ok?) : bool
@@ -7436,14 +7444,14 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_diamond_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 17)
-          (sym-i64-contains seen "diamond.c")
-          (sym-i64-contains seen "diamond.a")
-          (sym-i64-contains seen "diamond.b")
-          (sym-i64-contains seen "diamond.entry"))]
+          (sym_i64_env.sym-i64-contains seen "diamond.c")
+          (sym_i64_env.sym-i64-contains seen "diamond.a")
+          (sym_i64_env.sym-i64-contains seen "diamond.b")
+          (sym_i64_env.sym-i64-contains seen "diamond.entry"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; Transitive import dedup (#1074 / #1041): entry imports A, A imports B, B
@@ -7470,14 +7478,14 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_tr_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
           (= (compiler-load-decl-list-count decls) 14)
-          (sym-i64-contains seen "tr.c")
-          (sym-i64-contains seen "tr.b")
-          (sym-i64-contains seen "tr.a")
-          (sym-i64-contains seen "tr.entry"))]
+          (sym_i64_env.sym-i64-contains seen "tr.c")
+          (sym_i64_env.sym-i64-contains seen "tr.b")
+          (sym_i64_env.sym-i64-contains seen "tr.a")
+          (sym_i64_env.sym-i64-contains seen "tr.entry"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; An `(import ...)` of a path that does not resolve to a readable file reports
@@ -7487,7 +7495,7 @@
     "src/app.tl"
     "(import \"no_such_module_xyz.tl\")
 (define value : i64 1)"
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
         (compiler-diagnostic-message (box-get diag))
@@ -7503,7 +7511,7 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_include_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
           (= (compiler-load-decl-list-count decls) 2)
@@ -7517,7 +7525,7 @@
       "src/include_entry.tl"
       "(include-str embedded \"stdlib/cl_include_root_payload.txt\")
 (define (main) : i64 0)"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-push (vector.string-vec-new) "target"))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
@@ -7530,7 +7538,7 @@
     "src/app.tl"
     "(include-str missing \"no_such_resource_xyz.txt\")
 (define value : i64 1)"
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
         (compiler-diagnostic-message (box-get diag))
@@ -7550,7 +7558,7 @@
 (define (main) : i64 0)")
       (match (compiler-load-file-with-paths
         "target/cl_include_raw_entry.tl"
-        (sym-i64-empty))
+        (sym_i64_env.sym-i64-empty))
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (and
             (= (compiler-load-decl-list-count decls) 2)
@@ -7568,7 +7576,7 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_include_bin_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
         (and
           (= (compiler-load-decl-list-count decls) 2)
@@ -7580,7 +7588,7 @@
     "src/app.tl"
     "(include-bin missing \"no_such_resource_xyz.bin\")
 (define value : i64 1)"
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Err diag)
       (string.eq
         (compiler-diagnostic-message (box-get diag))
@@ -7593,7 +7601,7 @@
       (match (compiler-load-source-with-paths-and-roots
         "stdlib/string.tl"
         source
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (vector.string-vec-new))
         [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (> (compiler-load-decl-list-count decls) 0)]
@@ -7625,7 +7633,7 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_ipe_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.eq
@@ -7652,7 +7660,7 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths
       "target/cl_idm_entry.tl"
-      (sym-i64-empty))
+      (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Err diag)
         (and
           (string.eq
@@ -7676,10 +7684,10 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_srf_entry.tl"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-push (vector.string-vec-new) "target"))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
-        (sym-i64-contains seen "srf.mod")]
+        (sym_i64_env.sym-i64-contains seen "srf.mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; `--stdlib-root` resolution searches roots in order; the first existing
@@ -7695,14 +7703,14 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_ssr_entry.tl"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-push
         (vector.string-vec-push
           (vector.string-vec-new)
           "target/cl_ssr_absent_root")
         "target"))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
-        (sym-i64-contains seen "ssr.mod")]
+        (sym_i64_env.sym-i64-contains seen "ssr.mod")]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 ;; A `stdlib/<x>` import found in no configured root reports a cannot-read
@@ -7716,7 +7724,7 @@
 (define (main) : i64 0)")
     (match (compiler-load-file-with-paths-and-roots
       "target/cl_sur_entry.tl"
-      (sym-i64-empty)
+      (sym_i64_env.sym-i64-empty)
       (vector.string-vec-push (vector.string-vec-new) "target"))
       [(ResultCompilerLoadWithPaths.Err diag)
         (string.eq
@@ -7744,7 +7752,7 @@
 (define (main) : i64 0)")
       (match (compiler-load-file-with-paths-and-roots
         "target/cl_sre_entry_dir/entry.tl"
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         (vector.string-vec-push (vector.string-vec-new) "target/cl_sre_root"))
         [(ResultCompilerLoadWithPaths.Err _) true]
         [(ResultCompilerLoadWithPaths.Ok _ _ _ _) false]))))

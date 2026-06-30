@@ -25,6 +25,7 @@
 (import "test_cli_core.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import sym_i64_env)
 
 ;; Pair-shaped batch entries stay as a list until aggregate-element vector
 ;; support makes a generated entry vector cleaner than parallel StringVecs.
@@ -665,7 +666,7 @@
 (define (compile-cli-cfg-names-to-env-from
   [cfg-names : vector.StringVec]
   [index : i64]
-  [env : SymI64Env]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (if (>= index (vector.string-vec-len cfg-names))
     env
     (compile-cli-cfg-names-to-env-from
@@ -673,7 +674,7 @@
       (+ index 1)
       (compiler-cfg-enable env (vector.string-vec-get cfg-names index "")))))
 
-(define (compile-cli-cfg-names-to-env [cfg-names : vector.StringVec]) : SymI64Env
+(define (compile-cli-cfg-names-to-env [cfg-names : vector.StringVec]) : sym_i64_env.SymI64Env
   (compile-cli-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
 
 (define (compile-cli-typecheck-doctests
@@ -713,7 +714,7 @@
         [inline-test-status : i64
           (if inline-preflight
             (let
-              [preflight-cfgs : SymI64Env
+              [preflight-cfgs : sym_i64_env.SymI64Env
                 (compile-cli-cfg-names-to-env cfg-names)]
               (tltest-inline-typecheck-file-with-cfg
                 input-path
@@ -725,7 +726,8 @@
           (begin
             (compiler-driver-state-reset-file-state! state)
             (let
-              [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
+              [cfgs : sym_i64_env.SymI64Env
+                (compile-cli-cfg-names-to-env cfg-names)]
               [status : i64
                 (if emit-ir
                   (compiler-driver-write-result
@@ -776,7 +778,7 @@
     [(CompileCliBatchEntryList.Nil) 0]
     [(CompileCliBatchEntryList.Cons input-path _ rest)
       (let
-        [cfgs : SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
+        [cfgs : sym_i64_env.SymI64Env (compile-cli-cfg-names-to-env cfg-names)]
         [status : i64
           (tltest-inline-typecheck-file-with-cfg
             input-path

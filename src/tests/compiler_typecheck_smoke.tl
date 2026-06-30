@@ -3,6 +3,7 @@
 (import stdlib.vector)
 (import "../compiler_typecheck.tl")
 (import stdlib.string)
+(import sym_i64_env)
 
 (define (compiler-typecheck-reference-nested-local-source) : String
   "(define (main [x : i64]) : unit
@@ -1814,7 +1815,7 @@
   [entry-path : String]
   [paths : AstDeclPathList]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : bool
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
     [(ResultAstProgramDiagnostic.Ok program)
       (match (typecheck-compiler-program-with-paths-cache
@@ -1943,10 +1944,10 @@
 (define (compiler-typecheck-smoke-prefix-cache-file-check
   [entry-path : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : bool
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (compiler-load-file-with-paths-and-roots-cfg
     entry-path
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -1968,7 +1969,7 @@
     [entry-a : String "target/tc_prefix_local_entry_a.tl"]
     [entry-b : String "target/tc_prefix_local_entry_b.tl"]
     [roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
       (io.write-file
@@ -2009,7 +2010,7 @@
     [entry-a : String "target/tc_prefix_flat_entry_a.tl"]
     [entry-b : String "target/tc_prefix_flat_entry_b.tl"]
     [roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
       (io.write-file dep "(define (flat-helper [x : i64]) : i64 (+ x 1))")
@@ -2048,7 +2049,7 @@
     [root-then-named : String "target/tc_4004_root_then_named.tl"]
     [named-then-root : String "target/tc_4004_named_then_root.tl"]
     [roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
       (io.write-file
@@ -2106,7 +2107,7 @@
     [entry : String (compiler-load-join-root-path base "entry.tl")]
     [roots : vector.StringVec
       (vector.string-vec-push (vector.string-vec-new) stdlib-root)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (compiler-load-test-mkdir base)
       (compiler-load-test-mkdir stdlib-root)
@@ -2125,7 +2126,7 @@
     [dep : String (compiler-load-join-root-path dir "dep.tl")]
     [entry : String (compiler-load-join-root-path dir "entry.tl")]
     [roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (compiler-load-test-mkdir dir)
       (io.write-file dep "(define imported : i64 true)")
@@ -2136,7 +2137,7 @@
 (define (main) : i64 0)")
       (match (compiler-load-file-with-paths-and-roots-cfg
         entry
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
         [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -2177,7 +2178,7 @@
     [provider : String "target/tc_macro_context_provider.tl"]
     [entry : String "target/tc_macro_context_entry.tl"]
     [roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (io.write-file
         helper
@@ -2206,7 +2207,7 @@
     [provider : String "target/tc_surface_macro_provider.tl"]
     [entry : String "target/tc_surface_macro_entry.tl"]
     [roots : vector.StringVec (vector.string-vec-new)]
-    [cfgs : SymI64Env (compiler-cfg-empty)]
+    [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (io.write-file
         provider
@@ -2218,7 +2219,7 @@
       (compiler-load-session-reset-interns!)
       (match (compiler-load-file-with-paths-and-roots-cfg
         entry
-        (sym-i64-empty)
+        (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
         [(ResultCompilerLoadWithPaths.Ok _ _ _ _)

@@ -1,6 +1,7 @@
 ;; compiler_typecheck_core.tl - Specialization-free scalar typechecker core (#1436).
 (import stdlib.io)
 (import stdlib.arena)
+(import stdlib.array)
 (import stdlib.hashmap)
 (import "compiler_symbols.tl")
 (import "compiler_load.tl")
@@ -17,6 +18,7 @@
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
+(import sym_i64_env)
 
 ;; TcTypeEnv.Cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
@@ -1118,7 +1120,7 @@
     [start-live : i64]) : unit
     (let
       [index : i64 (compiler-tc-reinfer-profile-site-index site)]
-      (if (< index 0)
+      (if (or (< index 0) (>= index compiler-tc-reinfer-profile-site-count))
         unit
         (begin
           (array-set!
@@ -1565,6 +1567,18 @@
 
 (cfg
   compile-profile
+  (define (tc-lp-index-valid? [index : i64]) : bool
+    (and (>= index 0) (< index 15))))
+
+(cfg
+  compile-profile
+  (define (tc-lp-count [index : i64]) : i64
+    (if (tc-lp-index-valid? index)
+      (array.array-ref tc-lp-counts index)
+      0)))
+
+(cfg
+  compile-profile
   (define (tc-lp-reset [index : i64]) : unit
     (if (< index 15)
       (begin
@@ -1575,7 +1589,9 @@
 (cfg
   compile-profile
   (define (tc-lp-note [index : i64]) : unit
-    (array-set! tc-lp-counts index (+ (array-ref tc-lp-counts index) 1))))
+    (if (tc-lp-index-valid? index)
+      (array-set! tc-lp-counts index (+ (tc-lp-count index) 1))
+      unit)))
 
 (cfg
   compile-profile
@@ -1925,7 +1941,7 @@
         (string.append
           phase
           (string.append
-            (compiler-tc-profile-field (array-ref tc-lp-counts index))
+            (compiler-tc-profile-field (tc-lp-count index))
             "|0|0|0\n"))))))
 
 (cfg
@@ -2757,18 +2773,37 @@
   (tc-binding-unsafe-id? env (tc-name-id name)))
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
-  (match env
-    [(TcTypeEnv.Nil) 0]
-    [(TcTypeEnv.Bind _ _ rest) (+ 1 (tc-env-cache-count (box-get rest)))]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (tc-env-cache-count (box-get rest))]))
+  (let
+    [cur : TcTypeEnv env]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Nil) (set! done true)]
+          [(TcTypeEnv.Bind _ _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! cur (box-get rest)))]
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
+      count)))
 
 (define (tc-env-cache-count-prefix [env : TcTypeEnv] [remaining : i64]) : i64
-  (if (<= remaining 0)
-    0
-    (match env
-      [(TcTypeEnv.Bind _ _ rest)
-        (+ 1 (tc-env-cache-count-prefix (box-get rest) (- remaining 1)))]
-      [_ 0])))
+  (let
+    [cur : TcTypeEnv env]
+    [left : i64 remaining]
+    [count : i64 0]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> left 0))
+        (match cur
+          [(TcTypeEnv.Bind _ _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! left (- left 1))
+              (set! cur (box-get rest)))]
+          [_ (set! done true)]))
+      count)))
 
 (define (tc-env-cache-capacity [count : i64]) : i64
   (if (< count 4)
@@ -2831,43 +2866,42 @@
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : hashmap.I64I64Map
-  (match env
-    [(TcTypeEnv.Nil) ids]
-    [(TcTypeEnv.Bind name-id ty rest)
-      (let
-        ;; The boundary bind itself and everything below it are not default
-        ;; shadows.
-        [still-above : bool
-          (if above-boundary
-            (not (= name-id (tc-default-boundary-id)))
-            false)]
-        (tc-env-cache-fill
-          (box-get rest)
-          (tc-env-cache-add
-            ids
-            values
-            unsafe-flags
-            c-abi-fnptr-flags
-            shadow-flags
-            name-id
-            ty
-            (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
-            (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
-            still-above)
-          values
-          unsafe-flags
-          c-abi-fnptr-flags
-          shadow-flags
-          still-above))]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-env-cache-fill
-        (box-get rest)
-        ids
-        values
-        unsafe-flags
-        c-abi-fnptr-flags
-        shadow-flags
-        above-boundary)]))
+  (let
+    [cur : TcTypeEnv env]
+    [cur-ids : hashmap.I64I64Map ids]
+    [cur-above-boundary : bool above-boundary]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Nil) (set! done true)]
+          [(TcTypeEnv.Bind name-id ty rest)
+            (let
+              [rest-env : TcTypeEnv (box-get rest)]
+              ;; The boundary bind itself and everything below it are not
+              ;; default shadows.
+              [still-above : bool
+                (if cur-above-boundary
+                  (not (= name-id (tc-default-boundary-id)))
+                  false)]
+              (begin
+                (set!
+                  cur-ids
+                  (tc-env-cache-add
+                    cur-ids
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    name-id
+                    ty
+                    (tc-binding-unsafe-marker-head-id? rest-env name-id)
+                    (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+                    still-above))
+                (set! cur rest-env)
+                (set! cur-above-boundary still-above)))]
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
+      cur-ids)))
 
 (define (tc-env-cache-fill-prefix
   [env : TcTypeEnv]
@@ -2878,50 +2912,56 @@
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [above-boundary : bool]) : hashmap.I64I64Map
-  (if (<= remaining 0)
-    ids
-    (match env
-      [(TcTypeEnv.Bind name-id ty rest)
-        (let
-          [rest-env : TcTypeEnv (box-get rest)]
-          [still-above : bool
-            (if above-boundary
-              (not (= name-id (tc-default-boundary-id)))
-              false)]
-          (tc-env-cache-fill-prefix
-            rest-env
-            (- remaining 1)
-            (tc-env-cache-add
-              ids
-              values
-              unsafe-flags
-              c-abi-fnptr-flags
-              shadow-flags
-              name-id
-              ty
-              (tc-binding-unsafe-marker-head-id? rest-env name-id)
-              (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-              still-above)
-            values
-            unsafe-flags
-            c-abi-fnptr-flags
-            shadow-flags
-            still-above))]
-      [_ ids])))
+  (let
+    [cur : TcTypeEnv env]
+    [left : i64 remaining]
+    [cur-ids : hashmap.I64I64Map ids]
+    [cur-above-boundary : bool above-boundary]
+    [done : bool false]
+    (begin
+      (while (and (not done) (> left 0))
+        (match cur
+          [(TcTypeEnv.Bind name-id ty rest)
+            (let
+              [rest-env : TcTypeEnv (box-get rest)]
+              [still-above : bool
+                (if cur-above-boundary
+                  (not (= name-id (tc-default-boundary-id)))
+                  false)]
+              (begin
+                (set!
+                  cur-ids
+                  (tc-env-cache-add
+                    cur-ids
+                    values
+                    unsafe-flags
+                    c-abi-fnptr-flags
+                    shadow-flags
+                    name-id
+                    ty
+                    (tc-binding-unsafe-marker-head-id? rest-env name-id)
+                    (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+                    still-above))
+                (set! left (- left 1))
+                (set! cur rest-env)
+                (set! cur-above-boundary still-above)))]
+          [_ (set! done true)]))
+      cur-ids)))
 
 (define (tc-env-with-cache-mode [env : TcTypeEnv] [scan-through : bool]) : TcTypeEnv
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [count : i64 (tc-env-cache-count env)]
-      [values : (Array AstType) (make-array AstType count)]
-      [unsafe-flags : (Array i64) (make-array i64 count)]
-      [c-abi-fnptr-flags : (Array i64) (make-array i64 count)]
-      [shadow-flags : (Array i64) (make-array i64 count)]
+      [capacity : i64 (tc-env-cache-capacity count)]
+      [values : (Array AstType) (array.make-array AstType capacity)]
+      [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
+      [shadow-flags : (Array i64) (array.make-array i64 capacity)]
       [ids : hashmap.I64I64Map
         (tc-env-cache-fill
           env
-          (hashmap.i64-i64-map-with-capacity (tc-env-cache-capacity count))
+          (hashmap.i64-i64-map-with-capacity capacity)
           values
           unsafe-flags
           c-abi-fnptr-flags
@@ -2943,15 +2983,16 @@
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
       [count : i64 (tc-env-cache-count-prefix env (tc-local-cache-threshold))]
-      [values : (Array AstType) (make-array AstType count)]
-      [unsafe-flags : (Array i64) (make-array i64 count)]
-      [c-abi-fnptr-flags : (Array i64) (make-array i64 count)]
-      [shadow-flags : (Array i64) (make-array i64 count)]
+      [capacity : i64 (tc-env-cache-capacity count)]
+      [values : (Array AstType) (array.make-array AstType capacity)]
+      [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
+      [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
+      [shadow-flags : (Array i64) (array.make-array i64 capacity)]
       [ids : hashmap.I64I64Map
         (tc-env-cache-fill-prefix
           env
           (tc-local-cache-threshold)
-          (hashmap.i64-i64-map-with-capacity (tc-env-cache-capacity count))
+          (hashmap.i64-i64-map-with-capacity capacity)
           values
           unsafe-flags
           c-abi-fnptr-flags
@@ -3068,20 +3109,24 @@
       (tc-name-id (compiler-symbol-module-key module (intern-str name)))
       ty)))
 
-(define tc-unqualified-import-owner-modules : SymI64Env
-  (sym-i64-empty))
-(define tc-unqualified-import-ambiguous-first-modules : SymI64Env
-  (sym-i64-empty))
-(define tc-unqualified-import-ambiguous-second-modules : SymI64Env
-  (sym-i64-empty))
+(define tc-unqualified-import-owner-modules : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define tc-unqualified-import-ambiguous-first-modules : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define tc-unqualified-import-ambiguous-second-modules : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
 (define tc-unqualified-import-has-ambiguity : bool
   false)
 
 (define (tc-unqualified-import-ambiguity-reset!) : unit
   (begin
-    (set! tc-unqualified-import-owner-modules (sym-i64-empty))
-    (set! tc-unqualified-import-ambiguous-first-modules (sym-i64-empty))
-    (set! tc-unqualified-import-ambiguous-second-modules (sym-i64-empty))
+    (set! tc-unqualified-import-owner-modules (sym_i64_env.sym-i64-empty))
+    (set!
+      tc-unqualified-import-ambiguous-first-modules
+      (sym_i64_env.sym-i64-empty))
+    (set!
+      tc-unqualified-import-ambiguous-second-modules
+      (sym_i64_env.sym-i64-empty))
     (set! tc-unqualified-import-has-ambiguity false)))
 
 (define (tc-unqualified-import-key-id
@@ -3105,14 +3150,14 @@
       [source-id : i64 (intern source-module)]
       [binding-id : i64 (tc-module-name-id alias name-id)]
       [owner-id : i64
-        (sym-i64-lookup-id-or
+        (sym_i64_env.sym-i64-lookup-id-or
           tc-unqualified-import-owner-modules
           key-id
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? owner-id)
         (if (= owner-id source-id)
           unit
-          (if (sym-i64-contains-id
+          (if (sym_i64_env.sym-i64-contains-id
             tc-unqualified-import-ambiguous-first-modules
             key-id)
             unit
@@ -3120,13 +3165,13 @@
               (set! tc-unqualified-import-has-ambiguity true)
               (set!
                 tc-unqualified-import-ambiguous-first-modules
-                (sym-i64-bind-id
+                (sym_i64_env.sym-i64-bind-id
                   tc-unqualified-import-ambiguous-first-modules
                   key-id
                   owner-id))
               (set!
                 tc-unqualified-import-ambiguous-second-modules
-                (sym-i64-bind-id
+                (sym_i64_env.sym-i64-bind-id
                   tc-unqualified-import-ambiguous-second-modules
                   key-id
                   source-id)))))
@@ -3134,7 +3179,7 @@
           unit
           (set!
             tc-unqualified-import-owner-modules
-            (sym-i64-bind-id
+            (sym_i64_env.sym-i64-bind-id
               tc-unqualified-import-owner-modules
               key-id
               source-id)))))
@@ -5841,7 +5886,7 @@
   [key-id : i64]) : TcMaybeString
   (let
     [first-module : i64
-      (sym-i64-lookup-id-or
+      (sym_i64_env.sym-i64-lookup-id-or
         tc-unqualified-import-ambiguous-first-modules
         key-id
         (compiler-symbols-missing-handle))]
@@ -5851,7 +5896,7 @@
         (TcMaybeString.No)
         (let
           [second-module : i64
-            (sym-i64-lookup-id-or
+            (sym_i64_env.sym-i64-lookup-id-or
               tc-unqualified-import-ambiguous-second-modules
               key-id
               (compiler-symbols-missing-handle))]
@@ -13746,7 +13791,9 @@
                   cached-env
                   "")
                   [(ResultTcEnv.Ok aliases)
-                    (ResultTcEnv.Ok (tc-env-with-cache aliases))]
+                    (let
+                      [out : TcTypeEnv (tc-env-with-cache aliases)]
+                      (ResultTcEnv.Ok out))]
                   [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
             [(ResultTcEnv.Err message)
               (begin
@@ -41633,13 +41680,13 @@
 
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]
-  [definition-module : String]) : SymI64Env
+  [definition-module : String]) : sym_i64_env.SymI64Env
   (if (macro-stdlib-private-dynamic-buffer-macro? macro-name definition-module)
     (compiler-parse-dispatch-private-types (compiler-parse-dispatch-env))
     (compiler-parse-dispatch-env)))
 
 (define (macro-parse-decl-sexpr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [form : SpannedSexpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (parse-ast-decl-maybe dispatch form)
@@ -41652,7 +41699,7 @@
         (box (macro-output-syntax-diag origin message)))]))
 
 (define (macro-parse-decls-from-one-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (let
@@ -41674,7 +41721,7 @@
           (ResultMacroParsedDecls.Err diag))])))
 
 (define (macro-parse-decls-from-exprs
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [exprs : AstExprList]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match exprs
@@ -41694,7 +41741,7 @@
           [(ResultMacroParsedDecls.Err diag) (ResultMacroParsedDecls.Err diag)]))]))
 
 (define (macro-parse-decls-from-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [expr : AstExpr]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (ast-expr-unspan expr)
@@ -41713,7 +41760,7 @@
 (define (macro-module-decls-from-ctfe-value
   [value : CompilerCtfeValue]
   [origin : AstExpr]
-  [dispatch : SymI64Env]) : ResultMacroParsedDecls
+  [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
@@ -41727,7 +41774,7 @@
 (define (macro-decls-from-ctfe-value
   [value : CompilerCtfeValue]
   [origin : AstExpr]
-  [dispatch : SymI64Env]) : ResultMacroParsedDecls
+  [dispatch : sym_i64_env.SymI64Env]) : ResultMacroParsedDecls
   (match value
     [(CompilerCtfeValue.Expr node _)
       (macro-parse-decls-from-expr dispatch (ast-node-get node) origin)]
@@ -47795,7 +47842,7 @@
                                   call-expr)
                                   [(ResultMacroValueEnv.Ok value macro-env)
                                     (let
-                                      [parse-dispatch : SymI64Env
+                                      [parse-dispatch : sym_i64_env.SymI64Env
                                         (macro-parse-dispatch-for-macro
                                           macro-name
                                           definition-module)]
@@ -47951,7 +47998,7 @@
                                       call-expr)
                                       [(ResultMacroValueEnv.Ok value macro-env)
                                         (let
-                                          [parse-dispatch : SymI64Env
+                                          [parse-dispatch : sym_i64_env.SymI64Env
                                             (macro-parse-dispatch-for-macro
                                               macro-name
                                               definition-module)]
@@ -50360,7 +50407,7 @@
     AstDecl))
 
 (defenum ResultMacroMaterializeImport
-  (Ok AstDeclList AstDeclPathList SymI64Env MacroFollowupWorkList)
+  (Ok AstDeclList AstDeclPathList sym_i64_env.SymI64Env MacroFollowupWorkList)
   (Err (Box CompilerDiagnostic)))
 
 (define (macro-generated-normal-import [decl : AstDecl]) : MacroMaybeGeneratedNormalImport
@@ -50391,8 +50438,8 @@
 (define (macro-materialize-seen-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [seen : SymI64Env]
-  [module : String]) : SymI64Env
+  [seen : sym_i64_env.SymI64Env]
+  [module : String]) : sym_i64_env.SymI64Env
   (match decls
     [(AstDeclList.Nil) seen]
     [(AstDeclList.Cons decl rest-box)
@@ -50413,20 +50460,20 @@
           (match decl
             [(AstDecl.Module name) (intern-str name)]
             [_ module])]
-        [seen-path : SymI64Env
+        [seen-path : sym_i64_env.SymI64Env
           (if (> (string.string-length decl-path) 0)
-            (sym-i64-bind
+            (sym_i64_env.sym-i64-bind
               seen
               (compiler-load-seen-path-key-in-module decl-path module)
               1)
             seen)]
-        [seen-decl : SymI64Env
+        [seen-decl : sym_i64_env.SymI64Env
           (match decl
             [(AstDecl.Module name)
               (let
                 [module-name : String (intern-str name)]
                 (if (> (string.string-length module-name) 0)
-                  (sym-i64-bind seen-path module-name 1)
+                  (sym_i64_env.sym-i64-bind seen-path module-name 1)
                   seen-path))]
             [_ seen-path])]
         (macro-materialize-seen-from rest rest-paths seen-decl next-module))]))
@@ -50443,9 +50490,9 @@
   [decl-path : String]
   [module : String]
   [decl-index : i64]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match (macro-generated-normal-import decl)
     [(MacroMaybeGeneratedNormalImport.No)
@@ -50539,11 +50586,11 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (let
-    [seen : SymI64Env
-      (macro-materialize-seen-from decls paths (sym-i64-empty) "")]
+    [seen : sym_i64_env.SymI64Env
+      (macro-materialize-seen-from decls paths (sym_i64_env.sym-i64-empty) "")]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String ""]
@@ -50667,7 +50714,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match program
     [(AstProgram.Program decls-box)
@@ -51141,7 +51188,7 @@
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [fuel : i64]) : ResultMacroExpand
   (if (< fuel 0)
     (ResultMacroExpand.Err
@@ -51248,7 +51295,7 @@
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]) : ResultMacroExpand
+  [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-reset-loop-counters))
     (tc-stdlib-comptime-macro-surface-ok-reset!)

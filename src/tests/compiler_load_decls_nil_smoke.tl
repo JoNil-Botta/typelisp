@@ -1,6 +1,7 @@
 ;; compiler_load_decls_nil_smoke.tl - Regression for #3172.
 (import stdlib.vector)
 (import "../compiler_load.tl")
+(import sym_i64_env)
 
 (define (main) : i64
   (match (compiler-load-decls-with-module-and-roots-cfg-root
@@ -8,7 +9,7 @@
     "src/tests/compiler_load_decls_nil_smoke.tl"
     ""
     ""
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     (vector.string-vec-new)
     "src/tests"
     (compiler-cfg-empty))

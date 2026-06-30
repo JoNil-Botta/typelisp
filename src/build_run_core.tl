@@ -10,6 +10,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
+(import sym_i64_env)
 
 (defenum SourceToolCommandStatus
   (Ok)
@@ -48,7 +49,7 @@
 (define (source-tool-cfg-names-to-env-from
   [cfg-names : vector.StringVec]
   [index : i64]
-  [env : SymI64Env]) : SymI64Env
+  [env : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (if (>= index (vector.string-vec-len cfg-names))
     env
     (source-tool-cfg-names-to-env-from
@@ -56,7 +57,7 @@
       (+ index 1)
       (compiler-cfg-enable env (vector.string-vec-get cfg-names index "")))))
 
-(define (source-tool-cfg-names-to-env [cfg-names : vector.StringVec]) : SymI64Env
+(define (source-tool-cfg-names-to-env [cfg-names : vector.StringVec]) : sym_i64_env.SymI64Env
   (source-tool-cfg-names-to-env-from cfg-names 0 (compiler-cfg-empty)))
 
 (define (source-tool-target-name [target : CompilerBackendTarget]) : String
@@ -463,11 +464,11 @@
 (define (source-tool-link-inputs-for-source
   [source : String]
   [stdlib-roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [explicit-inputs : SourceToolLinkInputs]) : ResultSourceToolLinkInputs
   (match (compiler-load-file-with-paths-and-roots-cfg
     source
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
@@ -696,7 +697,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match (source-tool-try-read-file source)
     [(io.ErrIoString error)
@@ -817,7 +818,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
     [(CompilerBackendTarget.Linux)
@@ -979,7 +980,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]) : ResultSourceToolString
   (match target
     [(CompilerBackendTarget.Linux)
@@ -1608,7 +1609,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
@@ -1641,7 +1642,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [obj-path : String]
   [bin-path : String]) : SourceToolDirectObjectStatus
@@ -1754,7 +1755,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [asm-path : String]
   [obj-path : String]
@@ -1785,7 +1786,7 @@
   [stdlib-roots : vector.StringVec]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [link-inputs : SourceToolLinkInputs]
   [asm-path : String]
   [obj-path : String]

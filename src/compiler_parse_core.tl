@@ -4,11 +4,12 @@
 ;; compile_smoke AST. It stays parser-only: later #27 work can reuse the
 ;; parsed `AstProgram` for typechecking/lowering once those selfhost passes
 ;; exist.
+(import stdlib.array)
 (import stdlib.io)
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
 (import "read.tl")
-(import "sym_i64_env.tl")
+(import sym_i64_env)
 (import stdlib.string)
 (import stdlib.option)
 (import token)
@@ -257,32 +258,38 @@
 (define (compiler-cfg-private-dynamic-buffer-key) : String
   "cfg:feature-compiler-private-dynamic-buffer")
 
-(define (compiler-cfg-empty) : SymI64Env
-  (sym-i64-empty))
+(define (compiler-cfg-empty) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
 
-(define (compiler-cfg-enable [cfgs : SymI64Env] [name : String]) : SymI64Env
-  (sym-i64-bind cfgs (compiler-cfg-key name) 1))
+(define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind cfgs (compiler-cfg-key name) 1))
 
-(define (compiler-cfg-enable-private-dynamic-buffer [cfgs : SymI64Env]) : SymI64Env
-  (sym-i64-bind cfgs (compiler-cfg-private-dynamic-buffer-key) 1))
+(define (compiler-cfg-enable-private-dynamic-buffer
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind cfgs (compiler-cfg-private-dynamic-buffer-key) 1))
 
-(define (compiler-cfg-merge [base : SymI64Env] [cfgs : SymI64Env]) : SymI64Env
+(define (compiler-cfg-merge
+  [base : sym_i64_env.SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match cfgs
-    [(SymI64Nil) base]
-    [(SymI64Bind name-id value rest)
-      (sym-i64-bind
+    [(sym_i64_env.SymI64Nil) base]
+    [(sym_i64_env.SymI64Bind name-id value rest)
+      (sym_i64_env.sym-i64-bind
         (compiler-cfg-merge base (box-get rest))
         (intern-str name-id)
         value)]))
 
-(define (compiler-cfg-enabled? [dispatch : SymI64Env] [name : String]) : bool
-  (sym-i64-contains dispatch (compiler-cfg-key name)))
+(define (compiler-cfg-enabled?
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : String]) : bool
+  (sym_i64_env.sym-i64-contains dispatch (compiler-cfg-key name)))
 
-(define (compiler-cfg-private-dynamic-buffer-enabled? [cfgs : SymI64Env]) : bool
-  (sym-i64-contains cfgs (compiler-cfg-private-dynamic-buffer-key)))
+(define (compiler-cfg-private-dynamic-buffer-enabled?
+  [cfgs : sym_i64_env.SymI64Env]) : bool
+  (sym_i64_env.sym-i64-contains cfgs (compiler-cfg-private-dynamic-buffer-key)))
 
 (define (compiler-cfg-eval-list-all
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [predicates : SpannedSexpr]) : ResultCompilerCfg
   (match predicates
     [(SpannedSexpr.Nil _) (ResultCompilerCfg.Ok true)]
@@ -296,7 +303,7 @@
     [_ (ResultCompilerCfg.Err "parse: cfg all expects predicates")]))
 
 (define (compiler-cfg-eval-list-any
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [predicates : SpannedSexpr]) : ResultCompilerCfg
   (match predicates
     [(SpannedSexpr.Nil _) (ResultCompilerCfg.Ok false)]
@@ -310,7 +317,7 @@
     [_ (ResultCompilerCfg.Err "parse: cfg any expects predicates")]))
 
 (define (compiler-cfg-eval-not
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [predicates : SpannedSexpr]) : ResultCompilerCfg
   (match predicates
     [(SpannedSexpr.Cons pred tail _)
@@ -324,7 +331,9 @@
           (ResultCompilerCfg.Err "parse: cfg not expects exactly one predicate")])]
     [_ (ResultCompilerCfg.Err "parse: cfg not expects exactly one predicate")]))
 
-(define (compiler-cfg-eval [dispatch : SymI64Env] [predicate : SpannedSexpr]) : ResultCompilerCfg
+(define (compiler-cfg-eval
+  [dispatch : sym_i64_env.SymI64Env]
+  [predicate : SpannedSexpr]) : ResultCompilerCfg
   (match predicate
     [(SpannedSexpr.Sym name _)
       (ResultCompilerCfg.Ok (compiler-cfg-enabled? dispatch name))]
@@ -781,299 +790,557 @@
 (define (compiler-parse-tag-decl-defdispatch) : i64
   411)
 
-(define (compiler-parse-dispatch-binops [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-binops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
-    [e2 : SymI64Env (sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))]
-    [e3 : SymI64Env (sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))]
-    [e4 : SymI64Env (sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))]
-    [e5 : SymI64Env (sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))]
-    [e6 : SymI64Env (sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))]
-    [e7 : SymI64Env (sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))]
-    [e8 : SymI64Env (sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))]
-    [e9 : SymI64Env (sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
-    [e10 : SymI64Env (sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
-    [e11 : SymI64Env (sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
-    [e12 : SymI64Env
-      (sym-i64-bind e11 "bit-and" (compiler-parse-tag-bin-bit-and))]
-    [e13 : SymI64Env
-      (sym-i64-bind e12 "bit-or" (compiler-parse-tag-bin-bit-or))]
-    [e14 : SymI64Env
-      (sym-i64-bind e13 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
-    [e15 : SymI64Env (sym-i64-bind e14 "shl" (compiler-parse-tag-bin-shl))]
-    (sym-i64-bind e15 "shr" (compiler-parse-tag-bin-shr))))
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "+" (compiler-parse-tag-bin-add))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "-" (compiler-parse-tag-bin-sub))]
+    [e3 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e2 "*" (compiler-parse-tag-bin-mul))]
+    [e4 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e3 "/" (compiler-parse-tag-bin-div))]
+    [e5 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e4 "%" (compiler-parse-tag-bin-mod))]
+    [e6 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e5 "=" (compiler-parse-tag-bin-eq))]
+    [e7 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e6 "!=" (compiler-parse-tag-bin-ne))]
+    [e8 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e7 "<" (compiler-parse-tag-bin-lt))]
+    [e9 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e8 "<=" (compiler-parse-tag-bin-le))]
+    [e10 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e9 ">" (compiler-parse-tag-bin-gt))]
+    [e11 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e10 ">=" (compiler-parse-tag-bin-ge))]
+    [e12 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e11 "bit-and" (compiler-parse-tag-bin-bit-and))]
+    [e13 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e12 "bit-or" (compiler-parse-tag-bin-bit-or))]
+    [e14 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e13 "bit-xor" (compiler-parse-tag-bin-bit-xor))]
+    [e15 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e14 "shl" (compiler-parse-tag-bin-shl))]
+    (sym_i64_env.sym-i64-bind e15 "shr" (compiler-parse-tag-bin-shr))))
 
-(define (compiler-parse-dispatch-unops [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-unops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "not" (compiler-parse-tag-un-not))]
-    [e2 : SymI64Env (sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))]
-    (sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not))))
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "not" (compiler-parse-tag-un-not))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "neg" (compiler-parse-tag-un-neg))]
+    (sym_i64_env.sym-i64-bind e2 "bit-not" (compiler-parse-tag-un-bit-not))))
 
-(define (compiler-parse-dispatch-types [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [out : SymI64Env e]
+    [out : sym_i64_env.SymI64Env e]
     (begin
-      (set! out (sym-i64-bind out "i64" (compiler-parse-tag-ty-i64)))
-      (set! out (sym-i64-bind out "i32" (compiler-parse-tag-ty-i32)))
-      (set! out (sym-i64-bind out "i16" (compiler-parse-tag-ty-i16)))
-      (set! out (sym-i64-bind out "i8" (compiler-parse-tag-ty-i8)))
-      (set! out (sym-i64-bind out "u64" (compiler-parse-tag-ty-u64)))
-      (set! out (sym-i64-bind out "u32" (compiler-parse-tag-ty-u32)))
-      (set! out (sym-i64-bind out "u16" (compiler-parse-tag-ty-u16)))
-      (set! out (sym-i64-bind out "u8" (compiler-parse-tag-ty-u8)))
-      (set! out (sym-i64-bind out "f64" (compiler-parse-tag-ty-f64)))
-      (set! out (sym-i64-bind out "f32" (compiler-parse-tag-ty-f32)))
-      (set! out (sym-i64-bind out "bool" (compiler-parse-tag-ty-bool)))
-      (set! out (sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
-      (set! out (sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
-      (set! out (sym-i64-bind out "str" (compiler-parse-tag-ty-str)))
-      (set! out (sym-i64-bind out "bytes" (compiler-parse-tag-ty-bytes)))
-      (set! out (sym-i64-bind out "unit" (compiler-parse-tag-unit)))
-      (set! out (sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
-      (set! out (sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
-      (set! out (sym-i64-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
-      (set! out (sym-i64-bind out "Array" (compiler-parse-tag-ty-array)))
-      (set! out (sym-i64-bind out "in" (compiler-parse-tag-ty-region)))
-      (set! out (sym-i64-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
-      (set! out (sym-i64-bind out "MutPtr" (compiler-parse-tag-ty-mut-ptr)))
-      (set! out (sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
-      (set! out (sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
-      (set! out (sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
       (set!
         out
-        (sym-i64-bind out "__tl_dyn-array" (compiler-parse-tag-ty-dyn-array)))
+        (sym_i64_env.sym-i64-bind out "i64" (compiler-parse-tag-ty-i64)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "i32" (compiler-parse-tag-ty-i32)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "i16" (compiler-parse-tag-ty-i16)))
+      (set! out (sym_i64_env.sym-i64-bind out "i8" (compiler-parse-tag-ty-i8)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "u64" (compiler-parse-tag-ty-u64)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "u32" (compiler-parse-tag-ty-u32)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "u16" (compiler-parse-tag-ty-u16)))
+      (set! out (sym_i64_env.sym-i64-bind out "u8" (compiler-parse-tag-ty-u8)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "f64" (compiler-parse-tag-ty-f64)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "f32" (compiler-parse-tag-ty-f32)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "bool" (compiler-parse-tag-ty-bool)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "char" (compiler-parse-tag-ty-char)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "String" (compiler-parse-tag-ty-string)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "str" (compiler-parse-tag-ty-str)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "bytes" (compiler-parse-tag-ty-bytes)))
+      (set! out (sym_i64_env.sym-i64-bind out "unit" (compiler-parse-tag-unit)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "never" (compiler-parse-tag-ty-never)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "->" (compiler-parse-tag-ty-func)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Tuple" (compiler-parse-tag-ty-tuple)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Array" (compiler-parse-tag-ty-array)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "in" (compiler-parse-tag-ty-region)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Ptr" (compiler-parse-tag-ty-ptr)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "MutPtr" (compiler-parse-tag-ty-mut-ptr)))
+      (set! out (sym_i64_env.sym-i64-bind out "&" (compiler-parse-tag-ty-ref)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "&mut" (compiler-parse-tag-ty-mut-ref)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "Box" (compiler-parse-tag-ty-box)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_dyn-array"
+          (compiler-parse-tag-ty-dyn-array)))
       out)))
 
-(define (compiler-parse-dispatch-private-types [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-private-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable-private-dynamic-buffer e))
 
-(define (compiler-parse-dispatch-exprs [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-exprs [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [out : SymI64Env e]
+    [out : sym_i64_env.SymI64Env e]
     (begin
-      (set! out (sym-i64-bind out "if" (compiler-parse-tag-expr-if)))
-      (set! out (sym-i64-bind out "let" (compiler-parse-tag-expr-let)))
-      (set! out (sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
-      (set! out (sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
-      (set! out (sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
-      (set! out (sym-i64-bind out "unsafe" (compiler-parse-tag-expr-unsafe)))
-      (set! out (sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
-      (set! out (sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
-      (set! out (sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
-      (set! out (sym-i64-bind out "tuple" (compiler-parse-tag-expr-tuple)))
       (set!
         out
-        (sym-i64-bind out "tuple-ref" (compiler-parse-tag-expr-tuple-ref)))
-      (set! out (sym-i64-bind out "array" (compiler-parse-tag-expr-array)))
+        (sym_i64_env.sym-i64-bind out "if" (compiler-parse-tag-expr-if)))
       (set!
         out
-        (sym-i64-bind out "make-array" (compiler-parse-tag-expr-make-array)))
+        (sym_i64_env.sym-i64-bind out "let" (compiler-parse-tag-expr-let)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind out "lambda" (compiler-parse-tag-expr-lambda)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "while" (compiler-parse-tag-expr-while)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "begin" (compiler-parse-tag-expr-begin)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "unsafe" (compiler-parse-tag-expr-unsafe)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "set!" (compiler-parse-tag-expr-set)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "ann" (compiler-parse-tag-expr-ann)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "cast" (compiler-parse-tag-expr-cast)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "tuple" (compiler-parse-tag-expr-tuple)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "tuple-ref"
+          (compiler-parse-tag-expr-tuple-ref)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "array" (compiler-parse-tag-expr-array)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "make-array"
+          (compiler-parse-tag-expr-make-array)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "__tl_make-array"
           (compiler-parse-tag-expr-make-array)))
       (set!
         out
-        (sym-i64-bind out "array-ref" (compiler-parse-tag-expr-array-ref)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-ref"
+          (compiler-parse-tag-expr-array-ref)))
       (set!
         out
-        (sym-i64-bind out "__tl_array-ref" (compiler-parse-tag-expr-array-ref)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_array-ref"
+          (compiler-parse-tag-expr-array-ref)))
       (set!
         out
-        (sym-i64-bind out "array-set!" (compiler-parse-tag-expr-array-set)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-set!"
+          (compiler-parse-tag-expr-array-set)))
       (set!
         out
-        (sym-i64-bind out "__tl_array-set!" (compiler-parse-tag-expr-array-set)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_array-set!"
+          (compiler-parse-tag-expr-array-set)))
       (set!
         out
-        (sym-i64-bind out "array-push!" (compiler-parse-tag-expr-array-push)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-push!"
+          (compiler-parse-tag-expr-array-push)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
           out
           "__tl_array-push!"
           (compiler-parse-tag-expr-array-push)))
-      (set! out (sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
-      (set! out (sym-i64-bind out "foreach" (compiler-parse-tag-expr-foreach)))
       (set!
         out
-        (sym-i64-bind out "spmd-reduce" (compiler-parse-tag-expr-spmd-reduce)))
+        (sym_i64_env.sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
       (set!
         out
-        (sym-i64-bind out "spmd-scan" (compiler-parse-tag-expr-spmd-scan)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "foreach"
+          (compiler-parse-tag-expr-foreach)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
+          out
+          "spmd-reduce"
+          (compiler-parse-tag-expr-spmd-reduce)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "spmd-scan"
+          (compiler-parse-tag-expr-spmd-scan)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "spmd-broadcast"
           (compiler-parse-tag-expr-spmd-broadcast)))
       (set!
         out
-        (sym-i64-bind out "spmd-shuffle" (compiler-parse-tag-expr-spmd-shuffle)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "spmd-shuffle"
+          (compiler-parse-tag-expr-spmd-shuffle)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
           out
           "program-index"
           (compiler-parse-tag-expr-spmd-program-index)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
           out
           "program-count"
           (compiler-parse-tag-expr-spmd-program-count)))
       (set!
         out
-        (sym-i64-bind out "struct-get" (compiler-parse-tag-expr-struct-get)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "struct-get"
+          (compiler-parse-tag-expr-struct-get)))
       (set!
         out
-        (sym-i64-bind out "comptime" (compiler-parse-tag-expr-comptime)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "comptime"
+          (compiler-parse-tag-expr-comptime)))
       ;; `with-arena` is the canonical scoped-arena spelling (#801, #1118).
       (set!
         out
-        (sym-i64-bind out "with-arena" (compiler-parse-tag-expr-with-region)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "with-arena"
+          (compiler-parse-tag-expr-with-region)))
       (set!
         out
-        (sym-i64-bind out "with-escape" (compiler-parse-tag-expr-with-escape)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "with-escape"
+          (compiler-parse-tag-expr-with-escape)))
       (set!
         out
-        (sym-i64-bind out "with-scratch" (compiler-parse-tag-expr-with-scratch)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "with-scratch"
+          (compiler-parse-tag-expr-with-scratch)))
       (set!
         out
-        (sym-i64-bind out "in-arena" (compiler-parse-tag-expr-in-arena)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "in-arena"
+          (compiler-parse-tag-expr-in-arena)))
       (set!
         out
-        (sym-i64-bind out "type" (compiler-parse-tag-expr-type-literal)))
-      (set! out (sym-i64-bind out "init" (compiler-parse-tag-expr-init)))
-      (set! out (sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
-      (set! out (sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "type"
+          (compiler-parse-tag-expr-type-literal)))
       (set!
         out
-        (sym-i64-bind out "ptr-null" (compiler-parse-tag-expr-ptr-null)))
+        (sym_i64_env.sym-i64-bind out "init" (compiler-parse-tag-expr-init)))
       (set!
         out
-        (sym-i64-bind out "ptr-null?" (compiler-parse-tag-expr-ptr-null-check)))
+        (sym_i64_env.sym-i64-bind out "try" (compiler-parse-tag-expr-try)))
       (set!
         out
-        (sym-i64-bind out "ptr-read" (compiler-parse-tag-expr-ptr-read)))
+        (sym_i64_env.sym-i64-bind out "return" (compiler-parse-tag-expr-return)))
       (set!
         out
-        (sym-i64-bind out "ptr-write!" (compiler-parse-tag-expr-ptr-write)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-null"
+          (compiler-parse-tag-expr-ptr-null)))
       (set!
         out
-        (sym-i64-bind out "ptr-offset" (compiler-parse-tag-expr-ptr-offset)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-null?"
+          (compiler-parse-tag-expr-ptr-null-check)))
       (set!
         out
-        (sym-i64-bind out "ptr-cast" (compiler-parse-tag-expr-ptr-cast)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-read"
+          (compiler-parse-tag-expr-ptr-read)))
       (set!
         out
-        (sym-i64-bind out "ptr->int" (compiler-parse-tag-expr-ptr-to-int)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-write!"
+          (compiler-parse-tag-expr-ptr-write)))
       (set!
         out
-        (sym-i64-bind out "int->ptr" (compiler-parse-tag-expr-int-to-ptr)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-offset"
+          (compiler-parse-tag-expr-ptr-offset)))
       (set!
         out
-        (sym-i64-bind out "ptr-addr-of" (compiler-parse-tag-expr-ptr-addr-of)))
-      (set! out (sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
-      (set! out (sym-i64-bind out "box-get" (compiler-parse-tag-expr-box-get)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-cast"
+          (compiler-parse-tag-expr-ptr-cast)))
       (set!
         out
-        (sym-i64-bind out "box-take" (compiler-parse-tag-expr-box-take)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr->int"
+          (compiler-parse-tag-expr-ptr-to-int)))
       (set!
         out
-        (sym-i64-bind out "string-data" (compiler-parse-tag-expr-string-data)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "int->ptr"
+          (compiler-parse-tag-expr-int-to-ptr)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
+          out
+          "ptr-addr-of"
+          (compiler-parse-tag-expr-ptr-addr-of)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "box" (compiler-parse-tag-expr-box)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "box-get"
+          (compiler-parse-tag-expr-box-get)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "box-take"
+          (compiler-parse-tag-expr-box-take)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "string-data"
+          (compiler-parse-tag-expr-string-data)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "string-from-bytes"
           (compiler-parse-tag-expr-string-from-bytes)))
       (set!
         out
-        (sym-i64-bind out "array-data" (compiler-parse-tag-expr-array-data)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-data"
+          (compiler-parse-tag-expr-array-data)))
       (set!
         out
-        (sym-i64-bind out "program-argc" (compiler-parse-tag-expr-program-argc)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "program-argc"
+          (compiler-parse-tag-expr-program-argc)))
       (set!
         out
-        (sym-i64-bind out "program-argv" (compiler-parse-tag-expr-program-argv)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "program-argv"
+          (compiler-parse-tag-expr-program-argv)))
       (set!
         out
-        (sym-i64-bind out "program-envp" (compiler-parse-tag-expr-program-envp)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "program-envp"
+          (compiler-parse-tag-expr-program-envp)))
       (set!
         out
-        (sym-i64-bind out "cpuid-eax" (compiler-parse-tag-expr-cpuid-eax)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-eax"
+          (compiler-parse-tag-expr-cpuid-eax)))
       (set!
         out
-        (sym-i64-bind out "cpuid-ebx" (compiler-parse-tag-expr-cpuid-ebx)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-ebx"
+          (compiler-parse-tag-expr-cpuid-ebx)))
       (set!
         out
-        (sym-i64-bind out "cpuid-ecx" (compiler-parse-tag-expr-cpuid-ecx)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-ecx"
+          (compiler-parse-tag-expr-cpuid-ecx)))
       (set!
         out
-        (sym-i64-bind out "cpuid-edx" (compiler-parse-tag-expr-cpuid-edx)))
-      (set! out (sym-i64-bind out "xgetbv" (compiler-parse-tag-expr-xgetbv)))
-      (set! out (sym-i64-bind out "syscall" (compiler-parse-tag-expr-syscall)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "cpuid-edx"
+          (compiler-parse-tag-expr-cpuid-edx)))
       (set!
         out
-        (sym-i64-bind out "with" (compiler-parse-tag-expr-with-resource)))
-      (set! out (sym-i64-bind out "quote" (compiler-parse-tag-expr-quote)))
+        (sym_i64_env.sym-i64-bind out "xgetbv" (compiler-parse-tag-expr-xgetbv)))
       (set!
         out
-        (sym-i64-bind out "quasiquote" (compiler-parse-tag-expr-quasiquote)))
-      (set! out (sym-i64-bind out "unquote" (compiler-parse-tag-expr-unquote)))
+        (sym_i64_env.sym-i64-bind
+          out
+          "syscall"
+          (compiler-parse-tag-expr-syscall)))
       (set!
         out
-        (sym-i64-bind
+        (sym_i64_env.sym-i64-bind
+          out
+          "with"
+          (compiler-parse-tag-expr-with-resource)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind out "quote" (compiler-parse-tag-expr-quote)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "quasiquote"
+          (compiler-parse-tag-expr-quasiquote)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "unquote"
+          (compiler-parse-tag-expr-unquote)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
           out
           "unquote-splicing"
           (compiler-parse-tag-expr-unquote-splicing)))
       out)))
 
-(define (compiler-parse-dispatch-patterns [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-patterns [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "true" (compiler-parse-tag-lit-true))]
-    [e2 : SymI64Env (sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))]
-    (sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard))))
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "true" (compiler-parse-tag-lit-true))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "false" (compiler-parse-tag-lit-false))]
+    (sym_i64_env.sym-i64-bind e2 "_" (compiler-parse-tag-pattern-wildcard))))
 
-(define (compiler-parse-dispatch-decls [e : SymI64Env]) : SymI64Env
+(define (compiler-parse-dispatch-decls [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
-    [e1 : SymI64Env (sym-i64-bind e "define" (compiler-parse-tag-decl-define))]
-    [e2 : SymI64Env (sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))]
-    [e3 : SymI64Env
-      (sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))]
-    [e4 : SymI64Env
-      (sym-i64-bind e3 "defstruct" (compiler-parse-tag-decl-defstruct))]
-    [e5 : SymI64Env (sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
-    [e6 : SymI64Env
-      (sym-i64-bind e5 "comptime-decl" (compiler-parse-tag-decl-comptime-decl))]
-    [e7 : SymI64Env
-      (sym-i64-bind
+    [e1 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e "define" (compiler-parse-tag-decl-define))]
+    [e2 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e1 "extern" (compiler-parse-tag-decl-extern))]
+    [e3 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e2 "defenum" (compiler-parse-tag-decl-defenum))]
+    [e4 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e3
+        "defstruct"
+        (compiler-parse-tag-decl-defstruct))]
+    [e5 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e4 "import" (compiler-parse-tag-decl-import))]
+    [e6 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e5
+        "comptime-decl"
+        (compiler-parse-tag-decl-comptime-decl))]
+    [e7 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
         e6
         "comptime-decls"
         (compiler-parse-tag-decl-comptime-decls))]
-    [e8 : SymI64Env (sym-i64-bind e7 "module" (compiler-parse-tag-decl-module))]
-    [e9 : SymI64Env (sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
-    [e10 : SymI64Env
-      (sym-i64-bind e9 "defmacro" (compiler-parse-tag-decl-defmacro))]
-    [e12 : SymI64Env
-      (sym-i64-bind e10 "include-str" (compiler-parse-tag-decl-include-str))]
-    [e13 : SymI64Env
-      (sym-i64-bind e12 "include-bin" (compiler-parse-tag-decl-include-bin))]
-    (sym-i64-bind e13 "defdispatch" (compiler-parse-tag-decl-defdispatch))))
+    [e8 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e7 "module" (compiler-parse-tag-decl-module))]
+    [e9 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind e8 "test" (compiler-parse-tag-decl-test))]
+    [e10 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e9
+        "defmacro"
+        (compiler-parse-tag-decl-defmacro))]
+    [e12 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e10
+        "include-str"
+        (compiler-parse-tag-decl-include-str))]
+    [e13 : sym_i64_env.SymI64Env
+      (sym_i64_env.sym-i64-bind
+        e12
+        "include-bin"
+        (compiler-parse-tag-decl-include-bin))]
+    (sym_i64_env.sym-i64-bind
+      e13
+      "defdispatch"
+      (compiler-parse-tag-decl-defdispatch))))
 
-(define (compiler-parse-dispatch-env) : SymI64Env
+(define (compiler-parse-dispatch-env) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-decls
     (compiler-parse-dispatch-patterns
       (compiler-parse-dispatch-exprs
         (compiler-parse-dispatch-types
           (compiler-parse-dispatch-unops
-            (compiler-parse-dispatch-binops (sym-i64-empty))))))))
+            (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty))))))))
 
-(define (compiler-parse-dispatch-tag [dispatch : SymI64Env] [name : String]) : i64
-  (match (sym-i64-lookup dispatch name)
+(define (compiler-parse-dispatch-tag
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : String]) : i64
+  (match (sym_i64_env.sym-i64-lookup dispatch name)
     [(option_i64.Some tag) tag]
     [(option_i64.None) (compiler-parse-tag-unknown)]))
 
@@ -1096,7 +1363,7 @@
     (= tag (compiler-parse-tag-bin-shl))
     (= tag (compiler-parse-tag-bin-shr))))
 
-(define (ast-binop? [dispatch : SymI64Env] [name : String]) : bool
+(define (ast-binop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
   (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-nary-bitwise-tag? [tag : i64]) : bool
@@ -1124,7 +1391,7 @@
     [(= tag (compiler-parse-tag-bin-shl)) (AstBinShl)]
     [else (AstBinShr)]))
 
-(define (ast-binop-from-name [dispatch : SymI64Env] [name : String]) : AstBinOp
+(define (ast-binop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstBinOp
   (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-tag? [tag : i64]) : bool
@@ -1134,7 +1401,7 @@
       true
       (= tag (compiler-parse-tag-un-bit-not)))))
 
-(define (ast-unop? [dispatch : SymI64Env] [name : String]) : bool
+(define (ast-unop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
   (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
 
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
@@ -1144,11 +1411,11 @@
       (AstUnNeg)
       (AstUnBitNot))))
 
-(define (ast-unop-from-name [dispatch : SymI64Env] [name : String]) : AstUnOp
+(define (ast-unop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstUnOp
   (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (parse-ast-type-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstTypeList
   (match s
@@ -1164,7 +1431,9 @@
         [(ResultAstType.Err message) (ResultAstTypeList.Err message)])]
     [_ (ResultAstTypeList.Err "parse: malformed type list")]))
 
-(define (parse-ast-lifetime-name? [dispatch : SymI64Env] [name : String]) : bool
+(define (parse-ast-lifetime-name?
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : String]) : bool
   (let
     [tag : i64 (compiler-parse-dispatch-tag dispatch name)]
     (not
@@ -1177,7 +1446,7 @@
           (<= tag (compiler-parse-tag-ty-dyn-array)))))))
 
 (define (parse-ast-lifetime-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [message : String]) : ResultAstLifetimeList
@@ -1202,7 +1471,7 @@
     [_ (ResultAstLifetimeList.Err message)]))
 
 (define (parse-ast-lifetime-list-nonempty
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [message : String]) : ResultAstLifetimeList
@@ -1211,7 +1480,7 @@
     [_ (parse-ast-lifetime-list dispatch pools s message)]))
 
 (define (parse-ast-func-type-parts
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstFuncTypeParts
   (match s
@@ -1246,7 +1515,7 @@
   "__typelisp internal resolved enum type")
 
 (define (parse-ast-resolved-nominal-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : Sexpr]
   [is-struct : bool]) : ResultAstType
@@ -1273,7 +1542,7 @@
     [_ (ResultAstType.Err "parse: malformed internal resolved type")]))
 
 (define (parse-ast-reference-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : Sexpr]
   [mutable : bool]) : ResultAstType
@@ -1313,7 +1582,7 @@
           "parse: & expects lifetime and exactly one type"))]))
 
 (define (parse-ast-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstType
   (match s
@@ -1512,7 +1781,7 @@
     [_ (ResultAstType.Err "parse: expected type")]))
 
 (define (parse-ast-param
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstParam
   (match s
@@ -1587,7 +1856,7 @@
     [(AstMacroParam _ _ variadic) variadic]))
 
 (define (parse-ast-macro-param
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstMacroParam
   (match s
@@ -1644,7 +1913,7 @@
     [_ (ResultAstMacroParam.Err "parse: malformed macro operand")]))
 
 (define (parse-ast-macro-param-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstMacroParamList
   (match s
@@ -1671,7 +1940,7 @@
     [_ (ResultAstMacroParamList.Err "parse: malformed macro operand list")]))
 
 (define (parse-ast-param-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstParamList
   (match s
@@ -1772,7 +2041,7 @@
         "parse: malformed enum payload cleanup metadata")]))
 
 (define (parse-ast-field-def
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstFieldDef
@@ -1816,7 +2085,7 @@
     [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
 
 (define (parse-ast-field-def-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstFieldDefList
@@ -1842,7 +2111,7 @@
   (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':')))
 
 (define (parse-ast-aggregate-lifetimes-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tail : Sexpr]) : ResultAstLifetimeList
   (parse-ast-lifetime-list-nonempty
@@ -1903,7 +2172,7 @@
     [_ (ResultAstEnumCleanup.Err "parse: malformed defenum :cleanup metadata")]))
 
 (define (parse-ast-defstruct-field-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
@@ -1945,7 +2214,7 @@
     [(ResultAstFieldDef.Err message) (ResultAstStructDefParts.Err message)]))
 
 (define (parse-ast-defstruct-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [lifetimes : AstLifetimeList]
@@ -2113,7 +2382,7 @@
     [_ false]))
 
 (define (parse-ast-variant-payload-parts
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantPayloadParts
@@ -2191,7 +2460,7 @@
     [_ (ResultAstVariantPayloadParts.Err "parse: malformed enum payload list")]))
 
 (define (parse-ast-variant-def
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantDef
@@ -2219,7 +2488,7 @@
     [_ (ResultAstVariantDef.Err "parse: malformed variant definition")]))
 
 (define (parse-ast-variant-def-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]
   [allow-cleanup : bool]) : ResultAstVariantDefList
@@ -2303,7 +2572,7 @@
         "parse: malformed defdispatch variant list")]))
 
 (define (parse-ast-defenum-variant-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [tail : SpannedSexpr]
@@ -2336,7 +2605,7 @@
     [(ResultAstVariantDef.Err message) (ResultAstEnumDefParts.Err message)]))
 
 (define (parse-ast-defenum-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [lifetimes : AstLifetimeList]
@@ -2429,7 +2698,7 @@
     [_ (ResultAstEnumDefParts.Err "parse: malformed variant list")]))
 
 (define (parse-ast-pattern-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstPatternList
   (match s
@@ -2447,7 +2716,7 @@
     [_ (ResultAstPatternList.Err "parse: malformed pattern list")]))
 
 (define (parse-ast-pattern
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : Sexpr]) : ResultAstPattern
   (match s
@@ -2480,7 +2749,7 @@
     [_ (ResultAstPattern.Err "parse: expected pattern")]))
 
 (define (parse-ast-cfg-expr-maybe
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstMaybeExpr
   (match rest
@@ -2534,7 +2803,7 @@
         "parse: cfg expression expects predicate and expression")]))
 
 (define (parse-ast-cfg-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-cfg-expr-maybe dispatch pools rest)
@@ -2545,7 +2814,7 @@
     [(ResultAstMaybeExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-expr-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstExprList
   (match s
@@ -2614,7 +2883,7 @@
     [_ (ResultAstExprList.Err "parse: malformed expression list")]))
 
 (define (parse-ast-body-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]
   [missing-message : String]) : ResultAstExpr
@@ -2636,7 +2905,7 @@
         [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]))
 
 (define (parse-ast-call-bracket-clause
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]
   [items : SpannedSexpr]) : ResultAstExpr
@@ -2650,7 +2919,7 @@
     [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-call-arg-maybe
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]) : ResultAstMaybeExpr
   (match head
@@ -2680,7 +2949,7 @@
         [(ResultAstExpr.Err message) (ResultAstMaybeExpr.Err message)])]))
 
 (define (parse-ast-call-arg-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstExprList
   (match s
@@ -2698,7 +2967,7 @@
     [_ (ResultAstExprList.Err "parse: malformed call argument list")]))
 
 (define (parse-ast-binary
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstBinOp]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2731,7 +3000,7 @@
     [_ (ResultAstExpr.Err "parse: malformed binary expression")]))
 
 (define (parse-ast-binary-left-fold-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstBinOp]
   [acc : i64]
@@ -2751,7 +3020,7 @@
     [_ (ResultAstExpr.Err "parse: malformed binary expression")]))
 
 (define (parse-ast-binary-left-fold
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstBinOp]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2782,7 +3051,7 @@
     [_ (ResultAstExpr.Err "parse: malformed binary expression")]))
 
 (define (parse-ast-unary
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstUnOp]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2799,7 +3068,7 @@
     [_ (ResultAstExpr.Err "parse: malformed unary expression")]))
 
 (define (parse-ast-if
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -2842,7 +3111,7 @@
     [_ (ResultAstExpr.Err "parse: malformed if")]))
 
 (define (parse-ast-while
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -2862,7 +3131,7 @@
     [_ (ResultAstExpr.Err "parse: malformed while")]))
 
 (define (parse-ast-set
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -2920,7 +3189,7 @@
     [_ (ResultAstExpr.Err "parse: malformed set!")]))
 
 (define (parse-ast-ann-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [is-cast : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -2964,7 +3233,7 @@
     [_ (ResultAstExpr.Err "parse: malformed annotation")]))
 
 (define (parse-ast-let-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstLetBinding
   (match s
@@ -3024,7 +3293,7 @@
     [_ (ResultAstLetBinding.Err "parse: malformed let binding")]))
 
 (define (parse-ast-let-binding-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstLetBindingList
   (match s
@@ -3048,7 +3317,7 @@
     [_ false]))
 
 (define (parse-ast-let-flat-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstLetParts
   (match rest
@@ -3078,7 +3347,7 @@
     [_ (ResultAstLetParts.Err "parse: malformed let")]))
 
 (define (parse-ast-let-flat
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3105,7 +3374,7 @@
     [_ (ResultAstExpr.Err "parse: malformed let")]))
 
 (define (parse-ast-let
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3144,7 +3413,7 @@
     [_ (ResultAstExpr.Err "parse: malformed let")]))
 
 (define (parse-ast-lambda
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3202,7 +3471,7 @@
     [_ (ResultAstExpr.Err "parse: malformed lambda")]))
 
 (define (parse-ast-tuple-ref
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3227,7 +3496,7 @@
     [_ (ResultAstExpr.Err "parse: malformed tuple-ref")]))
 
 (define (parse-ast-make-array
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3258,7 +3527,7 @@
     [_ (ResultAstExpr.Err "parse: malformed make-array")]))
 
 (define (parse-ast-array-ref-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [is-string : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -3296,7 +3565,7 @@
     [_ (ResultAstExpr.Err "parse: malformed ref expression")]))
 
 (define (parse-ast-array-set
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3339,7 +3608,7 @@
     [_ (ResultAstExpr.Err "parse: malformed array-set!")]))
 
 (define (parse-ast-array-push
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3370,7 +3639,7 @@
     [_ (ResultAstExpr.Err "parse: malformed array-push!")]))
 
 (define (parse-ast-borrow
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [mutable : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -3417,7 +3686,7 @@
       (ResultAstExpr.Err "parse: borrow expects a place or lifetime and place")]))
 
 (define (parse-ast-struct-get
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3444,7 +3713,7 @@
 ;; `(comptime expr)` (#718) wraps exactly one inner expression for compile-time
 ;; evaluation; evaluation itself is reserved for #719.
 (define (parse-ast-comptime
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3460,7 +3729,7 @@
     [_ (ResultAstExpr.Err "parse: comptime expects exactly one expression")]))
 
 (define (parse-ast-type-literal
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3507,7 +3776,7 @@
           (string.append name "`; expected one of sum, min, max, all, any")))]))
 
 (define (parse-ast-spmd-reduce-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstReduceOp]
   [binding : SpannedSexpr]
@@ -3595,7 +3864,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")]))
 
 (define (parse-ast-spmd-reduce
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3640,7 +3909,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-reduce")]))
 
 (define (parse-ast-spmd-scan
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3689,7 +3958,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-scan")]))
 
 (define (parse-ast-spmd-scan-bindings
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstReduceOp]
   [range-binding : SpannedSexpr]
@@ -3757,7 +4026,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-scan range binding")]))
 
 (define (parse-ast-spmd-scan-prefix-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [op : AstReduceOp]
   [index : String]
@@ -3865,7 +4134,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-scan prefix binding")]))
 
 (define (parse-ast-spmd-broadcast
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3893,7 +4162,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-broadcast")]))
 
 (define (parse-ast-spmd-shuffle
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3921,7 +4190,7 @@
     [_ (ResultAstExpr.Err "parse: malformed spmd-shuffle")]))
 
 (define (parse-ast-try
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3936,7 +4205,7 @@
     [_ (ResultAstExpr.Err "parse: try expects exactly one expression")]))
 
 (define (parse-ast-return
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -3951,7 +4220,7 @@
     [_ (ResultAstExpr.Err "parse: return expects exactly one expression")]))
 
 (define (parse-ast-box-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [is-get : bool]
@@ -3988,7 +4257,7 @@
 ;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
 ;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
 (define (parse-ast-ptr-null
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4022,7 +4291,7 @@
 ;; `(init : T)` carries an explicit target type. Bare `(init)` is contextual
 ;; and must be checked/lowered in a position with an expected type.
 (define (parse-ast-init
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4049,7 +4318,7 @@
 
 ;; `(ptr-null? p)` - a single pointer operand.
 (define (parse-ast-ptr-null-check
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4066,7 +4335,7 @@
     [_ (ResultAstExpr.Err "parse: ptr-null? expects exactly one expression")]))
 
 (define (parse-ast-ptr-read
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4098,7 +4367,7 @@
     [_ (ResultAstExpr.Err "parse: ptr-addr-of expects exactly one local name")]))
 
 (define (parse-ast-ptr-write
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4133,7 +4402,7 @@
     [_ (ResultAstExpr.Err "parse: ptr-write! expects exactly two expressions")]))
 
 (define (parse-ast-ptr-offset
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4168,7 +4437,7 @@
     [_ (ResultAstExpr.Err "parse: ptr-offset expects exactly two expressions")]))
 
 (define (parse-ast-ptr-cast-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [is-int-to-ptr : bool]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -4220,7 +4489,7 @@
         "parse: pointer cast expects (form expr : pointer-type)")]))
 
 (define (parse-ast-ptr-to-int
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4236,7 +4505,7 @@
     [_ (ResultAstExpr.Err "parse: ptr->int expects exactly one expression")]))
 
 (define (parse-ast-one-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [name : String]) : ResultAstExpr
@@ -4257,7 +4526,7 @@
           (string.append name " expects exactly one expression")))]))
 
 (define (parse-ast-two-exprs
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [name : String]) : ResultAstExprPair
@@ -4299,7 +4568,7 @@
           (string.append name " expects exactly two expressions")))]))
 
 (define (parse-ast-string-data
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch pools rest "string-data")
@@ -4308,7 +4577,7 @@
     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-string-from-bytes
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-two-exprs dispatch pools rest "string-from-bytes")
@@ -4321,7 +4590,7 @@
     [(ResultAstExprPair.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-array-data
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch pools rest "array-data")
@@ -4340,7 +4609,7 @@
         (string.append "parse: " (string.append name " expects no arguments")))]))
 
 (define (parse-ast-cpuid-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tag : i64]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -4365,7 +4634,7 @@
     [(ResultAstExprPair.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-xgetbv
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-one-expr dispatch pools rest "xgetbv")
@@ -4382,7 +4651,7 @@
 ;; arguments (1 to 7 operands total). Typechecking requires an enclosing
 ;; `(unsafe ...)` context before this lowers to a raw `syscall` instruction.
 (define (parse-ast-syscall
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
@@ -4398,7 +4667,7 @@
     [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-with-region
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4432,7 +4701,7 @@
     [_ (ResultAstExpr.Err "parse: malformed with-arena")]))
 
 (define (parse-ast-with-escape
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4458,7 +4727,7 @@
     [_ (ResultAstExpr.Err "parse: malformed with-escape")]))
 
 (define (parse-ast-with-scratch
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4472,7 +4741,7 @@
     [_ (ResultAstExpr.Err "parse: malformed with-scratch")]))
 
 (define (parse-ast-in-arena
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4494,7 +4763,7 @@
     [_ (ResultAstExpr.Err "parse: malformed in-arena")]))
 
 (define (parse-ast-resource-binding-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]) : ResultAstResourceBinding
   (match items
@@ -4549,7 +4818,7 @@
     [_ (ResultAstResourceBinding.Err "parse: malformed with binding")]))
 
 (define (parse-ast-resource-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [binding : SpannedSexpr]) : ResultAstResourceBinding
   (match binding
@@ -4560,7 +4829,7 @@
         "parse: with binding must use bracket syntax")]))
 
 (define (parse-ast-resource-binding-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [bindings : SpannedSexpr]) : ResultAstResourceBindingList
   (match bindings
@@ -4583,7 +4852,7 @@
     [_ (ResultAstResourceBindingList.Err "parse: malformed with binding list")]))
 
 (define (parse-ast-with-resource
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4621,7 +4890,7 @@
     [_ (ResultAstExpr.Err "parse: malformed with")]))
 
 (define (parse-ast-match-arm
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstMatchArm
   (match s
@@ -4652,7 +4921,7 @@
     [_ (ResultAstMatchArm.Err "parse: malformed match arm")]))
 
 (define (parse-ast-match-arm-list
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstMatchArmList
   (match s
@@ -4670,7 +4939,7 @@
     [_ (ResultAstMatchArmList.Err "parse: malformed match arm list")]))
 
 (define (parse-ast-match
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4686,7 +4955,7 @@
     [_ (ResultAstExpr.Err "parse: malformed match")]))
 
 (define (parse-ast-foreach-binding
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [binding : SpannedSexpr]
   [body : SpannedSexpr]) : ResultAstExpr
@@ -4758,7 +5027,7 @@
     [_ (ResultAstExpr.Err "parse: malformed foreach binding")]))
 
 (define (parse-ast-foreach
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4783,7 +5052,7 @@
     [_ (ResultAstExpr.Err "parse: malformed foreach")]))
 
 (define (parse-ast-call
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -4797,7 +5066,7 @@
     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-begin
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
@@ -4810,7 +5079,7 @@
 ;; the same behavior as `begin`; it marks an unsafe context for later raw-pointer
 ;; ops (#955).
 (define (parse-ast-unsafe
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
@@ -4824,7 +5093,7 @@
         [(ResultAstExprList.Err message) (ResultAstExpr.Err message)])]))
 
 (define (parse-ast-tuple
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
@@ -4834,7 +5103,7 @@
     [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-array
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match (parse-ast-expr-list dispatch pools rest)
@@ -4844,7 +5113,7 @@
     [(ResultAstExprList.Err message) (ResultAstExpr.Err message)]))
 
 (define (parse-ast-quote-like
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tag : i64]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -4871,7 +5140,7 @@
     [_ (ResultAstExpr.Err "parse: quote form expects exactly one expression")]))
 
 (define (parse-ast-list-expr-tag
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [tag : i64]
   [head : SpannedSexpr]
@@ -5008,7 +5277,7 @@
     [else (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-list-expr
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstExpr
@@ -5057,7 +5326,7 @@
     [_ (parse-ast-call dispatch pools head rest)]))
 
 (define (parse-ast-expr-with-pools
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstExpr
   (match s
@@ -5156,7 +5425,7 @@
             [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])])]
     [_ (ResultAstExpr.Err "parse: malformed expression")]))
 
-(define (parse-ast-expr [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
+(define (parse-ast-expr [dispatch : sym_i64_env.SymI64Env] [s : SpannedSexpr]) : ResultAstExpr
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstExpr (parse-ast-expr-with-pools dispatch pools s)]
@@ -5165,7 +5434,7 @@
       result)))
 
 (define (parse-ast-define-value
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]
   [rest : SpannedSexpr]) : ResultAstDecl
@@ -5251,7 +5520,7 @@
         (ResultAstDecl.Ok (ast-decl-def-fn-export name params ret body export)))]))
 
 (define (parse-ast-define-fn-rest
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]
   [params : AstParamList]
@@ -5328,7 +5597,7 @@
     [_ (ResultAstDecl.Err "parse: malformed function definition")]))
 
 (define (parse-ast-define-fn
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]
   [params : SpannedSexpr]
@@ -5346,7 +5615,7 @@
     [(ResultAstParamList.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-define
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5368,7 +5637,7 @@
     [_ (ResultAstDecl.Err "parse: malformed define")]))
 
 (define (parse-ast-defmacro
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -5430,7 +5699,7 @@
     false))
 
 (define (parse-ast-extern-varargs-tail-type
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [name : String]) : ResultAstType
   (if (parse-ast-extern-varargs-typed-name? name)
@@ -5441,7 +5710,7 @@
     (ResultAstType.Err "parse: expected typed extern varargs tail")))
 
 (define (parse-ast-extern-head-fixed-param
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [item : SpannedSexpr]) : ResultAstExternHeadItem
   (match (parse-ast-param dispatch pools (spanned-sexpr-form item))
@@ -5455,7 +5724,7 @@
     [(ResultAstParam.Err message) (ResultAstExternHeadItem.Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [item : SpannedSexpr]
   [items : SpannedSexpr]) : ResultAstExternHeadItem
@@ -5496,7 +5765,7 @@
     [_ (parse-ast-extern-head-fixed-param dispatch pools item)]))
 
 (define (parse-ast-extern-head-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [item : SpannedSexpr]) : ResultAstExternHeadItem
   (match item
@@ -5516,7 +5785,7 @@
     [_ (ResultAstExternHeadItem.Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-head-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]) : ResultAstExternHeader
   (match items
@@ -5563,7 +5832,7 @@
     [_ (ResultAstExternHeader.Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-header
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]) : ResultAstExternHeader
   (match head
@@ -5662,7 +5931,7 @@
     (ResultAstExternAbi.Ok parsed)))
 
 (define (parse-ast-extern-items
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
@@ -5804,7 +6073,7 @@
     (ast-ty-func-with-pools pools param-types ret)))
 
 (define (parse-ast-extern-head-post-ret
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
@@ -5941,7 +6210,7 @@
     [_ (ResultAstExternParts.Err "parse: malformed extern")]))
 
 (define (parse-ast-extern-head-rest
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [items : SpannedSexpr]
   [abi : AstExternAbi]
@@ -6104,7 +6373,7 @@
     [_ (ResultAstExternParts.Err "parse: malformed extern")]))
 
 (define (parse-ast-extern-function-head
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [head : SpannedSexpr]
   [rest : SpannedSexpr]) : ResultAstDecl
@@ -6127,7 +6396,7 @@
     [(ResultAstExternHeader.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-extern
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6156,7 +6425,7 @@
     [_ (ResultAstDecl.Err "parse: malformed extern")]))
 
 (define (parse-ast-defenum
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6194,7 +6463,7 @@
     [_ (ResultAstDecl.Err "parse: malformed defenum")]))
 
 (define (parse-ast-defstruct
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6361,7 +6630,7 @@
     [_ (ResultAstDecl.Err "parse: malformed import")]))
 
 (define (parse-ast-import-macro-tail
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [call-form : SpannedSexpr]
   [tail : SpannedSexpr]
@@ -6475,7 +6744,7 @@
       [_ (ResultAstDecl.Err "parse: malformed import")])))
 
 (define (parse-ast-import
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [span : AstSourceSpan]) : ResultAstDecl
@@ -6563,7 +6832,7 @@
     [_ (ast-node-pool-context-expr-push pools (AstExpr.Begin exprs))]))
 
 (define (parse-ast-test
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]
   [form-span : AstSourceSpan]) : ResultAstDecl
@@ -6596,7 +6865,7 @@
   "parse: comptime-decls is removed; use a declaration-emitting macro instead")
 
 (define (parse-ast-generated-decl-meta
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [meta : SpannedSexpr]) : ResultAstGeneratedDeclMeta
   (match meta
@@ -6647,7 +6916,7 @@
         "parse: comptime-decl metadata must be :generated")]))
 
 (define (parse-ast-comptime-decl-payload
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [template : SpannedSexpr]) : ResultAstDecl
   (match template
@@ -6669,7 +6938,7 @@
     [_ (ResultAstDecl.Err (parse-ast-comptime-decl-payload-message))]))
 
 (define (parse-ast-comptime-decl-with-meta
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [meta : AstGeneratedDeclMeta]
   [template : SpannedSexpr]) : ResultAstDecl
@@ -6679,7 +6948,7 @@
     [(ResultAstDecl.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-comptime-decl
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6717,7 +6986,7 @@
         "parse: comptime-decl expects one template or generated metadata plus one template")]))
 
 (define (parse-ast-unsafe-decl
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
@@ -6743,7 +7012,7 @@
         "parse: unsafe declaration expects exactly one declaration")]))
 
 (define (parse-ast-module-macro-call
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [form : SpannedSexpr]) : ResultAstDecl
   (match (parse-ast-expr-with-pools dispatch pools form)
@@ -6762,7 +7031,7 @@
     [(ResultAstExpr.Err message) (ResultAstDecl.Err message)]))
 
 (define (parse-ast-decl
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstDecl
   (match s
@@ -6815,7 +7084,7 @@
     [_ (ResultAstDecl.Err "parse: malformed declaration")]))
 
 (define (parse-ast-decl-maybe-with-pools
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [s : SpannedSexpr]) : ResultAstMaybeDecl
   (match s
@@ -6862,7 +7131,9 @@
             [(ResultAstDecl.Err message) (ResultAstMaybeDecl.Err message)])])]
     [_ (ResultAstMaybeDecl.Err "parse: malformed declaration")]))
 
-(define (parse-ast-decl-maybe [dispatch : SymI64Env] [s : SpannedSexpr]) : ResultAstMaybeDecl
+(define (parse-ast-decl-maybe
+  [dispatch : sym_i64_env.SymI64Env]
+  [s : SpannedSexpr]) : ResultAstMaybeDecl
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstMaybeDecl
@@ -6970,7 +7241,7 @@
     AstDeclList.Nil))
 
 (define (parse-ast-program-forms-into-vec
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
@@ -7006,7 +7277,7 @@
           (ResultParseAstDeclVec.Err (token.source-error-message err))]))))
 
 (define (parse-ast-program-forms
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclList
@@ -7019,21 +7290,22 @@
         (ResultAstDeclList.Ok (parse-ast-decl-vec-to-list (& out)))]
       [(ResultParseAstDeclVec.Err message) (ResultAstDeclList.Err message)])))
 
-(define (parse-ast-program-dispatch) : SymI64Env
+(define (parse-ast-program-dispatch) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-env))
 
-(define (parse-ast-program-dispatch-with-cfg [cfgs : SymI64Env]) : SymI64Env
+(define (parse-ast-program-dispatch-with-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match cfgs
-    [(SymI64Nil) (compiler-parse-dispatch-env)]
+    [(sym_i64_env.SymI64Nil) (compiler-parse-dispatch-env)]
     [_ (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs)]))
 
 (define (parse-ast-program-with-cfg-and-pools
   [toks : (Array token.SpannedToken)]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (let
-    [cur : (Array i64) (make-array i64 1)]
-    [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
+    [cur : (Array i64) (array.make-array i64 1)]
+    [dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
       (array-set! cur 0 0)
@@ -7043,7 +7315,7 @@
 
 (define (parse-ast-program-with-cfg
   [toks : (Array token.SpannedToken)]
-  [cfgs : SymI64Env]) : ResultAstProgram
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgram
@@ -7060,7 +7332,7 @@
 
 (define (parse-ast-source-with-cfg-and-pools
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgram
   (match (lex-spanned-result src)
     [(ResultSpannedTokens.Ok toks)
@@ -7068,7 +7340,9 @@
     [(ResultSpannedTokens.Err err)
       (ResultAstProgram.Err (token.source-error-message err))]))
 
-(define (parse-ast-source-with-cfg [src : String] [cfgs : SymI64Env]) : ResultAstProgram
+(define (parse-ast-source-with-cfg
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgram
@@ -7090,7 +7364,7 @@
     [_ false]))
 
 (define (parse-ast-repl-expr-item
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [form : SpannedSexpr]) : ResultAstReplItem
   (match (parse-ast-expr-with-pools dispatch pools form)
@@ -7103,8 +7377,8 @@
   (match (lex-spanned-result src)
     [(ResultSpannedTokens.Ok toks)
       (let
-        [cur : (Array i64) (make-array i64 1)]
-        [dispatch : SymI64Env (parse-ast-program-dispatch)]
+        [cur : (Array i64) (array.make-array i64 1)]
+        [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
         (begin
           (sp-node-pool-reset!)
           (array-set! cur 0 0)
@@ -7142,7 +7416,7 @@
 
 (define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]
@@ -7205,7 +7479,7 @@
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]
-  [dispatch : SymI64Env]
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [toks : (Array token.SpannedToken)]
   [cur : (Array i64)]) : ResultAstDeclListDiagnostic
@@ -7233,11 +7507,12 @@
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
   [toks : (Array token.SpannedToken)]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (let
-    [cur : (Array i64) (make-array i64 1)]
-    [dispatch : SymI64Env (parse-ast-program-dispatch-with-cfg cfgs)]
+    [cur : (Array i64) (array.make-array i64 1)]
+    [dispatch : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
       (sp-node-pool-reset!)
       (array-set! cur 0 0)
@@ -7250,7 +7525,7 @@
 (define (parse-ast-program-diagnostic-with-cfg
   [path : String]
   [toks : (Array token.SpannedToken)]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgramDiagnostic
@@ -7265,7 +7540,7 @@
 (define (parse-ast-source-diagnostic-with-cfg-and-pools
   [path : String]
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
   (match (lex-spanned-result src)
     [(ResultSpannedTokens.Ok toks)
@@ -7279,7 +7554,7 @@
 (define (parse-ast-source-diagnostic-with-cfg
   [path : String]
   [src : String]
-  [cfgs : SymI64Env]) : ResultAstProgramDiagnostic
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [result : ResultAstProgramDiagnostic
@@ -7870,7 +8145,7 @@
 
 (define (compiler-parse-error-ok-with-cfg?
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [want : String]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
     [(ResultAstProgram.Err message) (string.eq message want)]
@@ -9632,14 +9907,16 @@
     [(ResultAstProgram.Ok _) true]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-ok-with-cfg? [src : String] [cfgs : SymI64Env]) : bool
+(define (compiler-parse-ok-with-cfg?
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
     [(ResultAstProgram.Ok _) true]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-cfg-decl-count-ok?
   [src : String]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [want : i64]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
@@ -9648,16 +9925,18 @@
         (= (ast-decl-list-count decls) want))]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-cfg-error? [src : String] [cfgs : SymI64Env]) : bool
+(define (compiler-parse-cfg-error?
+  [src : String]
+  [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parse-ast-source-with-cfg src cfgs)
     [(ResultAstProgram.Ok _) false]
     [(ResultAstProgram.Err _) true]))
 
 (define (compiler-parse-cfg-tests-ok?) : bool
   (let
-    [feature-cfg : SymI64Env
+    [feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable (compiler-cfg-empty) "feature")]
-    [windows-feature-cfg : SymI64Env
+    [windows-feature-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable feature-cfg "windows")]
     (and
       (compiler-parse-cfg-decl-count-ok?
@@ -9881,7 +10160,7 @@
 
 (define (compiler-parse-type-literal-tests-ok?) : bool
   (let
-    [private-cfg : SymI64Env
+    [private-cfg : sym_i64_env.SymI64Env
       (compiler-cfg-enable
         (compiler-cfg-empty)
         "feature-compiler-private-dynamic-buffer")]

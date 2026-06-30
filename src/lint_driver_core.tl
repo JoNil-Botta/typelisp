@@ -806,15 +806,15 @@
   [maybe-ty : AstMaybeType]
   [refs : vector.StringVec]) : vector.StringVec
   (match maybe-ty
-    [(AstNoType) refs]
-    [(AstSomeType ty) (selfhost-lint-dead-type-refs ty refs)]))
+    [(AstMaybeType.No) refs]
+    [(AstMaybeType.Some ty) (selfhost-lint-dead-type-refs ty refs)]))
 
 (define (selfhost-lint-dead-type-list-refs
   [types : AstTypeList]
   [refs : vector.StringVec]) : vector.StringVec
   (match types
-    [(AstTypeNil) refs]
-    [(AstTypeCons head rest)
+    [(AstTypeList.Nil) refs]
+    [(AstTypeList.Cons head rest)
       (selfhost-lint-dead-type-list-refs
         (box-get rest)
         (selfhost-lint-dead-type-refs (ty-node-get head) refs))]))
@@ -824,54 +824,54 @@
 
 (define (selfhost-lint-dead-type-refs [ty : AstType] [refs : vector.StringVec]) : vector.StringVec
   (match ty
-    [(AstTyI64) refs]
-    [(AstTyI32) refs]
-    [(AstTyI16) refs]
-    [(AstTyI8) refs]
-    [(AstTyU64) refs]
-    [(AstTyU32) refs]
-    [(AstTyU16) refs]
-    [(AstTyU8) refs]
-    [(AstTyF64) refs]
-    [(AstTyF32) refs]
-    [(AstTyBool) refs]
-    [(AstTyChar) refs]
-    [(AstTyString) refs]
-    [(AstTyStr) refs]
-    [(AstTyBytes) refs]
-    [(AstTyUnit) refs]
-    [(AstTyNever) refs]
-    [(AstTyExpr) refs]
-    [(AstTyExprList) refs]
-    [(AstTyFunc args ret)
+    [(AstType.I64) refs]
+    [(AstType.I32) refs]
+    [(AstType.I16) refs]
+    [(AstType.I8) refs]
+    [(AstType.U64) refs]
+    [(AstType.U32) refs]
+    [(AstType.U16) refs]
+    [(AstType.U8) refs]
+    [(AstType.F64) refs]
+    [(AstType.F32) refs]
+    [(AstType.Bool) refs]
+    [(AstType.Char) refs]
+    [(AstType.String) refs]
+    [(AstType.Str) refs]
+    [(AstType.Bytes) refs]
+    [(AstType.Unit) refs]
+    [(AstType.Never) refs]
+    [(AstType.Expr) refs]
+    [(AstType.ExprList) refs]
+    [(AstType.Func args ret)
       (selfhost-lint-dead-type-id-refs
         ret
         (selfhost-lint-dead-type-list-refs (box-get args) refs))]
-    [(AstTyTuple items)
+    [(AstType.Tuple items)
       (selfhost-lint-dead-type-list-refs (box-get items) refs)]
-    [(AstTyArray elem _) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(AstTyDynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(AstTyBox elem) (selfhost-lint-dead-type-id-refs elem refs)]
-    [(AstTyRegion _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstTyRef _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstTyMutRef _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstTyEnum name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstTyEnumArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstTyStruct name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstTyStructArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstTyVar name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstTyVarArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstTyPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstTyMutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]))
+    [(AstType.Array elem _) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(AstType.DynArray elem) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(AstType.Box elem) (selfhost-lint-dead-type-id-refs elem refs)]
+    [(AstType.Region _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(AstType.Ref _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(AstType.MutRef _ inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(AstType.Enum name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstType.EnumArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstType.Struct name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstType.StructArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstType.Var name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstType.VarArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstType.Ptr inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(AstType.MutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]))
 
 (define (selfhost-lint-dead-param-list-refs
   [params : AstParamList]
   [refs : vector.StringVec]) : vector.StringVec
   (match params
-    [(AstParamNil) refs]
-    [(AstParamCons param rest)
+    [(AstParamList.Nil) refs]
+    [(AstParamList.Cons param rest)
       (match param
-        [(AstParam _ ty _)
+        [(AstParam.Param _ ty _)
           (selfhost-lint-dead-param-list-refs
             (box-get rest)
             (selfhost-lint-dead-type-refs ty refs))])]))
@@ -880,10 +880,10 @@
   [params : AstMacroParamList]
   [refs : vector.StringVec]) : vector.StringVec
   (match params
-    [(AstMacroParamNil) refs]
-    [(AstMacroParamCons param rest)
+    [(AstMacroParamList.Nil) refs]
+    [(AstMacroParamList.Cons param rest)
       (match param
-        [(AstMacroParam _ ty _)
+        [(AstMacroParam.Param _ ty _)
           (selfhost-lint-dead-macro-param-list-refs
             (box-get rest)
             (selfhost-lint-dead-type-refs ty refs))])]))
@@ -1307,18 +1307,18 @@
   [cleanup : AstFieldCleanup]
   [refs : vector.StringVec]) : vector.StringVec
   (match cleanup
-    [(AstFieldNoCleanup) refs]
-    [(AstFieldCleanupFn name) (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstFieldOwnedCleanup) refs]))
+    [(AstFieldCleanup.No) refs]
+    [(AstFieldCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]
+    [(AstFieldCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-field-def-list-refs
   [fields : AstFieldDefList]
   [refs : vector.StringVec]) : vector.StringVec
   (match fields
-    [(AstFieldDefNil) refs]
-    [(AstFieldDefCons field rest)
+    [(AstFieldDefList.Nil) refs]
+    [(AstFieldDefList.Cons field rest)
       (match field
-        [(AstFieldDef _ ty cleanup)
+        [(AstFieldDef.Def _ ty cleanup)
           (selfhost-lint-dead-field-def-list-refs
             (box-get rest)
             (selfhost-lint-dead-field-cleanup-refs
@@ -1329,31 +1329,31 @@
   [cleanup : AstStructCleanup]
   [refs : vector.StringVec]) : vector.StringVec
   (match cleanup
-    [(AstStructNoCleanup) refs]
-    [(AstStructCleanupFn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(AstStructCleanup.No) refs]
+    [(AstStructCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
 
 (define (selfhost-lint-dead-enum-cleanup-refs
   [cleanup : AstEnumCleanup]
   [refs : vector.StringVec]) : vector.StringVec
   (match cleanup
-    [(AstEnumNoCleanup) refs]
-    [(AstEnumCleanupFn name) (selfhost-lint-dead-ref-add-id refs name)]))
+    [(AstEnumCleanup.No) refs]
+    [(AstEnumCleanup.Fn name) (selfhost-lint-dead-ref-add-id refs name)]))
 
 (define (selfhost-lint-dead-variant-cleanup-refs
   [cleanup : AstVariantPayloadCleanup]
   [refs : vector.StringVec]) : vector.StringVec
   (match cleanup
-    [(AstVariantPayloadNoCleanup) refs]
-    [(AstVariantPayloadCleanupFn name)
+    [(AstVariantPayloadCleanup.No) refs]
+    [(AstVariantPayloadCleanup.Fn name)
       (selfhost-lint-dead-ref-add-id refs name)]
-    [(AstVariantPayloadOwnedCleanup) refs]))
+    [(AstVariantPayloadCleanup.Owned) refs]))
 
 (define (selfhost-lint-dead-variant-cleanup-list-refs
   [items : AstVariantPayloadCleanupList]
   [refs : vector.StringVec]) : vector.StringVec
   (match items
-    [(AstVariantPayloadCleanupNil) refs]
-    [(AstVariantPayloadCleanupCons cleanup rest)
+    [(AstVariantPayloadCleanupList.Nil) refs]
+    [(AstVariantPayloadCleanupList.Cons cleanup rest)
       (selfhost-lint-dead-variant-cleanup-list-refs
         (box-get rest)
         (selfhost-lint-dead-variant-cleanup-refs cleanup refs))]))
@@ -1362,10 +1362,10 @@
   [variants : AstVariantDefList]
   [refs : vector.StringVec]) : vector.StringVec
   (match variants
-    [(AstVariantDefNil) refs]
-    [(AstVariantDefCons variant rest)
+    [(AstVariantDefList.Nil) refs]
+    [(AstVariantDefList.Cons variant rest)
       (match variant
-        [(AstVariantDef name payloads cleanups)
+        [(AstVariantDef.Def name payloads cleanups)
           (selfhost-lint-dead-variant-def-list-refs
             (box-get rest)
             (selfhost-lint-dead-variant-cleanup-list-refs
@@ -1390,16 +1390,16 @@
   [abi : AstExternAbi]
   [refs : vector.StringVec]) : vector.StringVec
   (match abi
-    [(AstExternAbiC) refs]
-    [(AstExternAbiCVarargsOpen) refs]
-    [(AstExternAbiCVarargsTyped tail-ty)
+    [(AstExternAbi.C) refs]
+    [(AstExternAbi.CVarargsOpen) refs]
+    [(AstExternAbi.CVarargsTyped tail-ty)
       (selfhost-lint-dead-type-refs tail-ty refs)]))
 
 (define (selfhost-lint-dead-extern-metadata-refs
   [meta : AstExternMetadata]
   [refs : vector.StringVec]) : vector.StringVec
   (match meta
-    [(AstExternMetadata abi _ _ _)
+    [(AstExternMetadata.Metadata abi _ _ _)
       (selfhost-lint-dead-extern-abi-refs abi refs)]))
 
 (define (selfhost-lint-dead-generated-meta-refs

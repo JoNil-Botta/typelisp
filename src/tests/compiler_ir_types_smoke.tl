@@ -24,7 +24,7 @@
   (let
     [entry-instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstTyI64))
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
             (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
@@ -35,9 +35,9 @@
           (compiler-ir-block "entry" entry-instrs)
           CompilerIrBlockList.Nil))]
     [first : CompilerIrFunction
-      (CompilerIrFunction.Function "first" IrParamNil (AstTyI64) 2 blocks)]
+      (CompilerIrFunction.Function "first" IrParamNil (AstType.I64) 2 blocks)]
     [second : CompilerIrFunction
-      (CompilerIrFunction.Function "second" IrParamNil (AstTyI64) 2 blocks)]
+      (CompilerIrFunction.Function "second" IrParamNil (AstType.I64) 2 blocks)]
     [functions : CompilerIrFunctionList
       (compiler-ir-function-cons
         first
@@ -66,12 +66,15 @@
   (let
     [args : CompilerIrSpmdCallArgList
       (ir-spmd-call-arg-cons
-        (IrSpmdCallArg (IrSpmdValueUniform) (CompilerIrValue.Var 21) (AstTyI64))
+        (IrSpmdCallArg
+          (IrSpmdValueUniform)
+          (CompilerIrValue.Var 21)
+          (AstType.I64))
         (ir-spmd-call-arg-cons
           (IrSpmdCallArg
             (IrSpmdValueVarying)
             (CompilerIrValue.Var 22)
-            (AstTyI64))
+            (AstType.I64))
           IrSpmdCallArgNil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call
@@ -80,7 +83,7 @@
         8
         (CompilerIrValue.Var 20)
         args
-        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (AstTyI64)))]
+        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (AstType.I64)))]
     [span : AstSourceSpan (AstSourceSpan 3 4 3 9)]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr

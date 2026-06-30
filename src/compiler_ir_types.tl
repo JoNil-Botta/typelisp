@@ -731,9 +731,9 @@
   (CompilerIrExtern.Extern
     name
     ty
-    (AstExternAbiC)
+    (AstExternAbi.C)
     name
-    AstExternLinkInputNil
+    AstExternLinkInputList.Nil
     false))
 
 (define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue
@@ -914,56 +914,56 @@
 ;; types) have no ty-pool ids, so the builtin clone is correct for them.
 (define (compiler-ir-clone-type [ty : AstType]) : AstType
   (match ty
-    [(AstTyFunc args ret)
-      (AstTyFunc
+    [(AstType.Func args ret)
+      (AstType.Func
         (box (compiler-ir-clone-type-list (box-get args)))
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get ret))))]
-    [(AstTyTuple elems)
-      (AstTyTuple (box (compiler-ir-clone-type-list (box-get elems))))]
-    [(AstTyArray elem len)
-      (AstTyArray
+    [(AstType.Tuple elems)
+      (AstType.Tuple (box (compiler-ir-clone-type-list (box-get elems))))]
+    [(AstType.Array elem len)
+      (AstType.Array
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get elem)))
         len)]
-    [(AstTyDynArray elem)
-      (AstTyDynArray
+    [(AstType.DynArray elem)
+      (AstType.DynArray
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
-    [(AstTyBox elem)
-      (AstTyBox
+    [(AstType.Box elem)
+      (AstType.Box
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
-    [(AstTyRegion region inner)
-      (AstTyRegion
+    [(AstType.Region region inner)
+      (AstType.Region
         (clone region)
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get inner))))]
-    [(AstTyRef region inner)
-      (AstTyRef
+    [(AstType.Ref region inner)
+      (AstType.Ref
         (clone region)
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get inner))))]
-    [(AstTyMutRef region inner)
-      (AstTyMutRef
+    [(AstType.MutRef region inner)
+      (AstType.MutRef
         (clone region)
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get inner))))]
-    [(AstTyPtr elem)
-      (AstTyPtr
+    [(AstType.Ptr elem)
+      (AstType.Ptr
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
-    [(AstTyMutPtr elem)
-      (AstTyMutPtr
+    [(AstType.MutPtr elem)
+      (AstType.MutPtr
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get elem))))]
     [_ (clone ty)]))
 
 (define (compiler-ir-clone-type-list [tys : AstTypeList]) : AstTypeList
   (match tys
-    [(AstTypeNil) (AstTypeNil)]
-    [(AstTypeCons head tail)
-      (AstTypeCons
+    [(AstTypeList.Nil) (AstTypeList.Nil)]
+    [(AstTypeList.Cons head tail)
+      (AstTypeList.Cons
         (ast-node-pool-reader-type-push
           (compiler-ir-clone-type (ast-node-pool-reader-type-get head)))
         (box (compiler-ir-clone-type-list (box-get tail))))]))
@@ -1499,27 +1499,27 @@
 
 (define (compiler-ir-type-list-render [types : AstTypeList]) : String
   (match types
-    [(AstTypeNil) ""]
-    [(AstTypeCons head rest)
+    [(AstTypeList.Nil) ""]
+    [(AstTypeList.Cons head rest)
       (let
         [head : AstType (ast-node-pool-reader-type-get head)]
         [rest : AstTypeList (box-get rest)]
         (str_cat.str-cat
           (compiler-ir-type-render head)
           (match rest
-            [(AstTypeNil) ""]
+            [(AstTypeList.Nil) ""]
             [_ (str_cat.str-cat " " (compiler-ir-type-list-render rest))])))]))
 
 (define (compiler-ir-lifetime-list-render [lifetimes : AstLifetimeList]) : String
   (match lifetimes
-    [(AstLifetimeNil) ""]
-    [(AstLifetimeCons head rest)
+    [(AstLifetimeList.Nil) ""]
+    [(AstLifetimeList.Cons head rest)
       (let
         [rest : AstLifetimeList (box-get rest)]
         (str_cat.str-cat
           head
           (match rest
-            [(AstLifetimeNil) ""]
+            [(AstLifetimeList.Nil) ""]
             [_ (str_cat.str-cat " " (compiler-ir-lifetime-list-render rest))])))]))
 
 (define (compiler-ir-nominal-lifetime-render
@@ -1534,96 +1534,96 @@
 
 (define (compiler-ir-type-render [ty : AstType]) : String
   (match ty
-    [(AstTyI64) "i64"]
-    [(AstTyI32) "i32"]
-    [(AstTyI16) "i16"]
-    [(AstTyI8) "i8"]
-    [(AstTyU64) "u64"]
-    [(AstTyU32) "u32"]
-    [(AstTyU16) "u16"]
-    [(AstTyU8) "u8"]
-    [(AstTyF64) "f64"]
-    [(AstTyF32) "f32"]
-    [(AstTyBool) "bool"]
-    [(AstTyChar) "char"]
-    [(AstTyString) "String"]
-    [(AstTyStr) "str"]
-    [(AstTyBytes) "bytes"]
-    [(AstTyUnit) "unit"]
-    [(AstTyNever) "never"]
-    [(AstTyExpr) "Expr"]
-    [(AstTyExprList) "ExprList"]
-    [(AstTyFunc args ret)
+    [(AstType.I64) "i64"]
+    [(AstType.I32) "i32"]
+    [(AstType.I16) "i16"]
+    [(AstType.I8) "i8"]
+    [(AstType.U64) "u64"]
+    [(AstType.U32) "u32"]
+    [(AstType.U16) "u16"]
+    [(AstType.U8) "u8"]
+    [(AstType.F64) "f64"]
+    [(AstType.F32) "f32"]
+    [(AstType.Bool) "bool"]
+    [(AstType.Char) "char"]
+    [(AstType.String) "String"]
+    [(AstType.Str) "str"]
+    [(AstType.Bytes) "bytes"]
+    [(AstType.Unit) "unit"]
+    [(AstType.Never) "never"]
+    [(AstType.Expr) "Expr"]
+    [(AstType.ExprList) "ExprList"]
+    [(AstType.Func args ret)
       (str_cat.str-cat
         "(-> "
         (compiler-ir-type-list-render (box-get args))
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get ret))
         ")")]
-    [(AstTyTuple elems)
+    [(AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple "
         (compiler-ir-type-list-render (box-get elems))
         ")")]
-    [(AstTyArray elem count)
+    [(AstType.Array elem count)
       (str_cat.str-cat
         "(Array "
         (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         " "
         (string.int->string count)
         ")")]
-    [(AstTyDynArray elem)
+    [(AstType.DynArray elem)
       (str_cat.str-cat
         "(Array "
         (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         ")")]
-    [(AstTyBox elem)
+    [(AstType.Box elem)
       (str_cat.str-cat
         "(Box "
         (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         ")")]
-    [(AstTyRegion region inner)
+    [(AstType.Region region inner)
       (str_cat.str-cat
         "(Region "
         region
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstTyRef region inner)
+    [(AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
         region
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstTyMutRef region inner)
+    [(AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
         region
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstTyEnum name) (intern-str name)]
-    [(AstTyEnumArgs name lifetimes)
+    [(AstType.Enum name) (intern-str name)]
+    [(AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyStruct name) (intern-str name)]
-    [(AstTyStructArgs name lifetimes)
+    [(AstType.Struct name) (intern-str name)]
+    [(AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyVar name) (intern-str name)]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.Var name) (intern-str name)]
+    [(AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyPtr elem)
+    [(AstType.Ptr elem)
       (str_cat.str-cat
         "(Ptr "
         (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
         ")")]
-    [(AstTyMutPtr elem)
+    [(AstType.MutPtr elem)
       (str_cat.str-cat
         "(MutPtr "
         (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
@@ -3114,8 +3114,8 @@
 
 (define (compiler-ir-type-list-name [types : AstTypeList]) : String
   (match types
-    [(AstTypeNil) ""]
-    [(AstTypeCons head tail)
+    [(AstTypeList.Nil) ""]
+    [(AstTypeList.Cons head tail)
       (let
         [head : AstType (ast-node-pool-reader-type-get head)]
         [tail : AstTypeList (box-get tail)]
@@ -3126,96 +3126,96 @@
 
 (define (compiler-ir-type-name [ty : AstType]) : String
   (match ty
-    [(AstTyI64) "i64"]
-    [(AstTyI32) "i32"]
-    [(AstTyI16) "i16"]
-    [(AstTyI8) "i8"]
-    [(AstTyU64) "u64"]
-    [(AstTyU32) "u32"]
-    [(AstTyU16) "u16"]
-    [(AstTyU8) "u8"]
-    [(AstTyF64) "f64"]
-    [(AstTyF32) "f32"]
-    [(AstTyBool) "bool"]
-    [(AstTyChar) "char"]
-    [(AstTyString) "String"]
-    [(AstTyStr) "str"]
-    [(AstTyBytes) "bytes"]
-    [(AstTyUnit) "unit"]
-    [(AstTyNever) "never"]
-    [(AstTyExpr) "Expr"]
-    [(AstTyExprList) "ExprList"]
-    [(AstTyFunc args ret)
+    [(AstType.I64) "i64"]
+    [(AstType.I32) "i32"]
+    [(AstType.I16) "i16"]
+    [(AstType.I8) "i8"]
+    [(AstType.U64) "u64"]
+    [(AstType.U32) "u32"]
+    [(AstType.U16) "u16"]
+    [(AstType.U8) "u8"]
+    [(AstType.F64) "f64"]
+    [(AstType.F32) "f32"]
+    [(AstType.Bool) "bool"]
+    [(AstType.Char) "char"]
+    [(AstType.String) "String"]
+    [(AstType.Str) "str"]
+    [(AstType.Bytes) "bytes"]
+    [(AstType.Unit) "unit"]
+    [(AstType.Never) "never"]
+    [(AstType.Expr) "Expr"]
+    [(AstType.ExprList) "ExprList"]
+    [(AstType.Func args ret)
       (str_cat.str-cat
         "(->"
         (compiler-ir-type-list-name (box-get args))
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get ret))
         ")")]
-    [(AstTyTuple elems)
+    [(AstType.Tuple elems)
       (str_cat.str-cat
         "(Tuple"
         (compiler-ir-type-list-name (box-get elems))
         ")")]
-    [(AstTyArray elem count)
+    [(AstType.Array elem count)
       (str_cat.str-cat
         "(Array "
         (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
         " "
         (string.int->string count)
         ")")]
-    [(AstTyDynArray elem)
+    [(AstType.DynArray elem)
       (str_cat.str-cat
         "(Array "
         (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
         ")")]
-    [(AstTyBox elem)
+    [(AstType.Box elem)
       (str_cat.str-cat
         "(Box "
         (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
         ")")]
-    [(AstTyRegion region inner)
+    [(AstType.Region region inner)
       (str_cat.str-cat
         "(in "
         region
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstTyRef region inner)
+    [(AstType.Ref region inner)
       (str_cat.str-cat
         "(& "
         region
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstTyMutRef region inner)
+    [(AstType.MutRef region inner)
       (str_cat.str-cat
         "(&mut "
         region
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstTyEnum name) (intern-str name)]
-    [(AstTyEnumArgs name lifetimes)
+    [(AstType.Enum name) (intern-str name)]
+    [(AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyStruct name) (intern-str name)]
-    [(AstTyStructArgs name lifetimes)
+    [(AstType.Struct name) (intern-str name)]
+    [(AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyVar name) (str_cat.str-cat "'" (intern-str name) "'")]
-    [(AstTyVarArgs name lifetimes)
+    [(AstType.Var name) (str_cat.str-cat "'" (intern-str name) "'")]
+    [(AstType.VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (intern-str name)
         (box-get lifetimes))]
-    [(AstTyPtr elem)
+    [(AstType.Ptr elem)
       (str_cat.str-cat
         "(Ptr "
         (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
         ")")]
-    [(AstTyMutPtr elem)
+    [(AstType.MutPtr elem)
       (str_cat.str-cat
         "(MutPtr "
         (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
@@ -3606,7 +3606,7 @@
 (define (compiler-ir-instruction-effects-ok?) : bool
   (and
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (AstTyI64))
+      (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 1) (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is? (CompilerIrInstr.AddrOf 1 0) CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
@@ -3614,10 +3614,14 @@
         2
         (CompilerIrValue.Var 1)
         (CompilerIrValue.I64 0)
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Cast 3 (CompilerIrValue.Var 2) (AstTyI64) (AstTyI32))
+      (CompilerIrInstr.Cast
+        3
+        (CompilerIrValue.Var 2)
+        (AstType.I64)
+        (AstType.I32))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (CompilerIrInstr.BinOp
@@ -3625,14 +3629,14 @@
         (CompilerIrBinOp.Add)
         (CompilerIrValue.Var 2)
         (CompilerIrValue.I64 1)
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (CompilerIrInstr.UnOp
         5
         (CompilerIrUnOp.Neg)
         (CompilerIrValue.Var 4)
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (CompilerIrInstr.Phi
@@ -3641,19 +3645,19 @@
           (CompilerIrValue.I64 1)
           "entry"
           (CompilerIrPhiInputList.Nil))
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Load 7 (CompilerIrValue.Var 1) (AstTyI64))
+      (CompilerIrInstr.Load 7 (CompilerIrValue.Var 1) (AstType.I64))
       CompilerIrEffect.MemoryRead)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Alloc 8 (AstTyI64))
+      (CompilerIrInstr.Alloc 8 (AstType.I64))
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
       (CompilerIrInstr.StorePtr
         (CompilerIrValue.Var 1)
         (CompilerIrValue.I64 2)
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
       (CompilerIrInstr.CopyBytes
@@ -3662,14 +3666,14 @@
         16)
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Store "global" (CompilerIrValue.I64 3) (AstTyI64))
+      (CompilerIrInstr.Store "global" (CompilerIrValue.I64 3) (AstType.I64))
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
       (CompilerIrInstr.Call
         9
         "tl_region_mark"
         (CompilerIrCallArgs.Nil)
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.MemoryRead)
     (compiler-ir-effect-is?
       (CompilerIrInstr.CpuId
@@ -3691,7 +3695,7 @@
       (CompilerIrInstr.TailCall
         "fact_loop"
         (CompilerIrCallArgs.Two (CompilerIrValue.Var 3) (CompilerIrValue.I64 1))
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.ControlFlow)
     (compiler-ir-effect-is?
       (CompilerIrInstr.Jump "done")
@@ -3717,10 +3721,10 @@
 (define (compiler-ir-vector-mask-effects-ok?) : bool
   (and
     (compiler-ir-effect-is?
-      (CompilerIrInstr.LaneId 20 4 (AstTyI64))
+      (CompilerIrInstr.LaneId 20 4 (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
-      (CompilerIrInstr.Splat 21 (CompilerIrValue.Var 0) 4 (AstTyI64))
+      (CompilerIrInstr.Splat 21 (CompilerIrValue.Var 0) 4 (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (ir-instr-vector-bin-op
@@ -3729,7 +3733,7 @@
         (CompilerIrValue.Var 20)
         (CompilerIrValue.Var 21)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (CompilerIrInstr.VectorReduce
@@ -3737,7 +3741,7 @@
         (CompilerIrVectorReduceOp.Sum)
         (CompilerIrValue.Var 22)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (ir-instr-vector-compare
@@ -3746,7 +3750,7 @@
         (CompilerIrValue.Var 20)
         (CompilerIrValue.Var 21)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (CompilerIrInstr.MaskBinOp
@@ -3773,7 +3777,7 @@
         (CompilerIrValue.Var 20)
         (CompilerIrValue.Var 21)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.Pure)
     (compiler-ir-effect-is?
       (CompilerIrInstr.TailMask
@@ -3788,7 +3792,7 @@
         (CompilerIrValue.Var 2)
         (CompilerIrValue.Var 0)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.MemoryRead)
     (compiler-ir-effect-is?
       (ir-instr-predicated-load
@@ -3797,7 +3801,7 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 29)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.MemoryRead)
     (compiler-ir-effect-is?
       (ir-instr-vector-store
@@ -3805,7 +3809,7 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.Var 22)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.MemoryWrite)
     (compiler-ir-effect-is?
       (ir-instr-predicated-store
@@ -3814,7 +3818,7 @@
         (CompilerIrValue.Var 22)
         (CompilerIrValue.Var 29)
         4
-        (AstTyI64))
+        (AstType.I64))
       CompilerIrEffect.MemoryWrite)))
 
 (define (compiler-ir-runtime-effects-ok?) : bool
@@ -3862,7 +3866,7 @@
 (define (compiler-ir-display-type-names-ok?) : bool
   (and
     (string.string-eq
-      (compiler-ir-vector-type-name (AstTyI32) 8)
+      (compiler-ir-vector-type-name (AstType.I32) 8)
       "(Vector i32 8)")
     (string.string-eq (compiler-ir-mask-type-name 8) "(Mask 8)")))
 
@@ -3895,13 +3899,13 @@
     [ok : bool true]
     (begin
       (if (string.string-eq
-        (compiler-ir-instr-describe (CompilerIrInstr.LaneId 0 4 (AstTyI64)))
+        (compiler-ir-instr-describe (CompilerIrInstr.LaneId 0 4 (AstType.I64)))
         "  %0 = lane_id 4 x i64")
         unit
         (set! ok false))
       (if (string.string-eq
         (compiler-ir-instr-describe
-          (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 7) 4 (AstTyI64)))
+          (CompilerIrInstr.Splat 1 (CompilerIrValue.I64 7) 4 (AstType.I64)))
         "  %1 = splat 7 : 4 x i64")
         unit
         (set! ok false))
@@ -3913,7 +3917,7 @@
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  %2 = vector_add %0, %1 : 4 x i64")
         unit
         (set! ok false))
@@ -3924,7 +3928,7 @@
             (CompilerIrVectorReduceOp.Sum)
             (CompilerIrValue.Var 2)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  %8 = vector_reduce_sum %2 : 4 x i64")
         unit
         (set! ok false))
@@ -3936,7 +3940,7 @@
             (CompilerIrValue.Var 0)
             (CompilerIrValue.Var 1)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  %3 = vector_cmp_lt %0, %1 : 4 x i64")
         unit
         (set! ok false))
@@ -3975,7 +3979,7 @@
             (CompilerIrValue.Var 2)
             (CompilerIrValue.Var 1)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  %6 = select %5, %2, %1 : 4 x i64")
         unit
         (set! ok false))
@@ -3986,7 +3990,7 @@
             (CompilerIrValue.Var 10)
             (CompilerIrValue.Var 11)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  %7 = vector_load %10, %11 : 4 x i64")
         unit
         (set! ok false))
@@ -3997,7 +4001,7 @@
             (CompilerIrValue.Var 11)
             (CompilerIrValue.Var 6)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  vector_store %12, %11, %6 : 4 x i64")
         unit
         (set! ok false))
@@ -4009,7 +4013,7 @@
             (CompilerIrValue.Var 6)
             (CompilerIrValue.Var 5)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  predicated_store %12, %11, %6, %5 : 4 x i64")
         unit
         (set! ok false))
@@ -4021,7 +4025,7 @@
             (CompilerIrValue.Var 11)
             (CompilerIrValue.Var 5)
             4
-            (AstTyI64)))
+            (AstType.I64)))
         "  %10 = predicated_load %12, %11, %5 : 4 x i64")
         unit
         (set! ok false))
@@ -4062,7 +4066,7 @@
       (CompilerIrInstr.TailCall
         "fact_loop"
         (CompilerIrCallArgs.Two (CompilerIrValue.Var 3) (CompilerIrValue.I64 1))
-        (AstTyI64)))
+        (AstType.I64)))
     "  tailcall fact_loop(%3, 1) : i64"))
 
 (define (compiler-ir-switch-render-ok?) : bool
@@ -4152,9 +4156,9 @@
   (let
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstTyI64))
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstTyI64))
+          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -4172,11 +4176,11 @@
   (let
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstTyI64))
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Alloc 9 (AstTyI64))
+          (CompilerIrInstr.Alloc 9 (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstTyI64))
+            (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
@@ -4209,9 +4213,9 @@
   (let
     [instrs : CompilerIrInstrList
       (compiler-ir-instr-cons
-        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstTyI64))
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64))
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstTyI64))
+          (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Return
               (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))

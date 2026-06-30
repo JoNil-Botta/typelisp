@@ -416,9 +416,9 @@
 (define (compiler-check-virtual-import-source) : String
   "(import \"compiler_ast_types.tl\")
 (import \"compiler_ast_types.tl\")
-(define selected : AstType (AstTyI64))
+(define selected : AstType (AstType.I64))
 (define (main) : i64
-  (match selected [(AstTyI64) 42] [_ 0]))")
+  (match selected [(AstType.I64) 42] [_ 0]))")
 
 (define (compiler-check-export-source) : String
   "(defstruct Pair (left i64))

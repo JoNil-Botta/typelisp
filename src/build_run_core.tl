@@ -353,21 +353,21 @@
   [inputs : SourceToolLinkInputs]
   [item : AstExternLinkInput]) : SourceToolLinkInputs
   (match item
-    [(AstExternLinkLib name)
+    [(AstExternLinkInput.Lib name)
       (SourceToolLinkInputs
         (source-tool-args-append-unique
           (source-tool-link-inputs-libs inputs)
           name)
         (source-tool-link-inputs-search-dirs inputs)
         (source-tool-link-inputs-raw-args inputs))]
-    [(AstExternLinkSearch dir)
+    [(AstExternLinkInput.Search dir)
       (SourceToolLinkInputs
         (source-tool-link-inputs-libs inputs)
         (source-tool-args-append-unique
           (source-tool-link-inputs-search-dirs inputs)
           dir)
         (source-tool-link-inputs-raw-args inputs))]
-    [(AstExternLinkArg arg-value)
+    [(AstExternLinkInput.Arg arg-value)
       (SourceToolLinkInputs
         (source-tool-link-inputs-libs inputs)
         (source-tool-link-inputs-search-dirs inputs)
@@ -379,8 +379,8 @@
   [inputs : SourceToolLinkInputs]
   [items : AstExternLinkInputList]) : SourceToolLinkInputs
   (match items
-    [(AstExternLinkInputNil) inputs]
-    [(AstExternLinkInputCons head rest)
+    [(AstExternLinkInputList.Nil) inputs]
+    [(AstExternLinkInputList.Cons head rest)
       (let
         [rest : AstExternLinkInputList (box-get rest)]
         (source-tool-link-inputs-add-ast-list
@@ -405,14 +405,14 @@
   (let
     [metadata-items : AstExternLinkInputList
       (ast-extern-link-input-cons
-        (AstExternLinkLib "m")
+        (AstExternLinkInput.Lib "m")
         (ast-extern-link-input-cons
-          (AstExternLinkLib "m")
+          (AstExternLinkInput.Lib "m")
           (ast-extern-link-input-cons
-            (AstExternLinkSearch "native")
+            (AstExternLinkInput.Search "native")
             (ast-extern-link-input-cons
-              (AstExternLinkArg "-Wl,a")
-              AstExternLinkInputNil))))]
+              (AstExternLinkInput.Arg "-Wl,a")
+              AstExternLinkInputList.Nil))))]
     [metadata-inputs : SourceToolLinkInputs
       (source-tool-link-inputs-add-ast-list
         (source-tool-link-inputs-empty)

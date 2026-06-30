@@ -533,7 +533,7 @@
     false)
     (begin
       (lsp-documents-shift-left! docs index)
-      (set! (struct-get docs len) (- (lsp-documents-len (& docs)) 1))
+      (lsp-documents-drop-last! (&mut docs))
       docs)
     docs))
 

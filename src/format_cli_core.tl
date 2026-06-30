@@ -5,12 +5,13 @@
 ;; can run the `fmt` command without duplicating a `main`.
 (import stdlib.io)
 (import stdlib.vector)
+(import (vector.vector String) as svec)
 (import "format_rules.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
 
 (defenum FmtConfig
-  (File bool vector.StringVec)
+  (File bool svec.Vec)
   (Package bool String bool))
 
 (defenum ResultFmtConfig
@@ -98,12 +99,19 @@
 (define (fmt-flag? [value : String]) : bool
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
+(define (fmt-svec-push [items : svec.Vec] [value : String]) : svec.Vec
+  (let
+    [out : svec.Vec items]
+    (begin
+      (svec.push (&mut out) value)
+      out)))
+
 (define (fmt-config-finish
   [check : bool]
-  [paths : vector.StringVec]
+  [paths : svec.Vec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
-  (if (vector.string-vec-is-empty? paths)
+  (if (svec.is-empty? (& paths))
     (ResultFmtConfig.Ok (FmtConfig.Package check manifest-path has-manifest))
     (if has-manifest
       (ResultFmtConfig.Err
@@ -114,7 +122,7 @@
   [idx : i64]
   [count : i64]
   [check : bool]
-  [paths : vector.StringVec]
+  [paths : svec.Vec]
   [manifest-path : String]
   [has-manifest : bool]) : ResultFmtConfig
   (if (>= idx count)
@@ -153,12 +161,12 @@
             (+ idx 1)
             count
             check
-            (vector.string-vec-push paths current)
+            (fmt-svec-push paths current)
             manifest-path
             has-manifest)]))))
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
-  (fmt-parse-args start count false (vector.string-vec-new) "" false))
+  (fmt-parse-args start count false (svec.new) "" false))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
   (let
@@ -183,13 +191,13 @@
 
 (define (fmt-files-from
   [check : bool]
-  [paths : vector.StringVec]
+  [paths : svec.Vec]
   [index : i64]
   [status : i64]) : i64
-  (if (>= index (vector.string-vec-len paths))
+  (if (>= index (svec.len (& paths)))
     status
     (let
-      [path : String (vector.string-vec-get paths index "")]
+      [path : String (svec.get (& paths) index "")]
       [file-status : i64 (fmt-format-file check path)]
       (fmt-files-from
         check
@@ -199,7 +207,7 @@
           file-status
           status)))))
 
-(define (fmt-files [check : bool] [paths : vector.StringVec] [status : i64]) : i64
+(define (fmt-files [check : bool] [paths : svec.Vec] [status : i64]) : i64
   (fmt-files-from check paths 0 status))
 
 (define (fmt-package-files-from

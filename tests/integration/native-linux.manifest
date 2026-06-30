@@ -214,6 +214,7 @@ register_group_phi_swap_cycle|tests/integration/register_group_phi_swap_cycle.tl
 register_group_borrowed_match|tests/integration/register_group_borrowed_match.tl|42|-|-|-
 register_group_try|tests/integration/register_group_try.tl|42|-|-|-
 register_resident_enum16|tests/integration/register_resident_enum16.tl|42|-|-|-
+selfloop_redef_writeback|tests/integration/selfloop_redef_writeback.tl|42|-|-|-
 register_resident_reference|tests/integration/register_resident_reference.tl|95|-|-|-
 register_float_aggregate_f64|tests/integration/register_float_aggregate_f64.tl|42|-|-|-
 register_float_aggregate_f32|tests/integration/register_float_aggregate_f32.tl|42|-|-|-

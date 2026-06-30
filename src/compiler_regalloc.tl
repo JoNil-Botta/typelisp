@@ -6801,6 +6801,84 @@
   (compiler-reg-loop-split-instr-list-has-phi?
     (compiler-ir-instr-seq-to-list instrs)))
 
+;; SplitKit step 1 (redefined write-back). Does any phi instruction in this block
+;; DEFINE `var`? Phi-defined loop-carried values are EXCLUDED from the redefined
+;; write-back path: rewriting a phi destination to the region register (and routing
+;; its back-edge input through that register) is the phi-correct step-2 work. A var
+;; that is redefined only by ordinary (non-phi) instructions has no such hazard --
+;; the region remap rewrites its def to the register and the internal self-back-edge
+;; carries it in-register.
+(define (compiler-reg-loop-split-phi-defines-var-list?
+  [instrs : CompilerIrInstrList]
+  [var : i64]) : bool
+  (match instrs
+    [(IrInstrNil) false]
+    [(IrInstrCons instr rest)
+      (match instr
+        [(IrInstrPhi dst _ _)
+          (if (= dst var)
+            true
+            (compiler-reg-loop-split-phi-defines-var-list? (box-get rest) var))]
+        [_ (compiler-reg-loop-split-phi-defines-var-list? (box-get rest) var)])]))
+
+(define (compiler-reg-loop-split-phi-defines-var?
+  [instrs : CompilerIrInstrSeq]
+  [var : i64]) : bool
+  (compiler-reg-loop-split-phi-defines-var-list?
+    (compiler-ir-instr-seq-to-list instrs)
+    var))
+
+;; SplitKit step 1. Is `block` a single-block self-loop -- i.e. does it list its own
+;; label among its successors (the loop body branches back to itself)? For such a
+;; block the back-edge is INTERNAL to the (single-block) region, so a value homed in
+;; a register stays in that register across iterations with NO boundary copy on the
+;; back-edge. This is the only loop shape where a REDEFINED value can be soundly
+;; homed with the existing single-block region machinery: a value carried across an
+;; EXTERNAL back-edge (body -> header) would be reloaded/written-back every iteration
+;; (no benefit) and, more importantly, would normally be phi-carried (step 2).
+(define (compiler-reg-loop-split-self-loop?
+  [block : CompilerLiveBlock]
+  [region-label : String]) : bool
+  (compiler-live-label-set-contains?
+    (compiler-reg-live-block-succs block)
+    region-label))
+
+;; SplitKit step 1. Is `var` its own coalesce root (parents[var] == var)? The
+;; redefined write-back path homes the WHOLE coalesced group, so it only accepts a
+;; root (a non-root member is reached via its root) -- that homes each group exactly
+;; once and keeps the slot/edge-copy bookkeeping anchored on the canonical var. A var
+;; with no coalesce entry (out of range) is a trivial singleton root.
+(define (compiler-reg-loop-split-coalesce-root?
+  [parents : (Array i64)]
+  [var : i64]) : bool
+  (if (or (< var 0) (>= var (array.array-length parents)))
+    true
+    (= (array.array-ref parents var) var)))
+
+;; SplitKit step 1. Point every coalesced member of `root` (every v with
+;; parents[v] == root, including root itself) at `new-var` in the region remap. The
+;; coalescer merged these vars because they are move-related and share one storage
+;; slot; redirecting them all to the homed register inside the region (with the
+;; INTO/OUT copies syncing that shared slot at the boundary) is the write-back that a
+;; root-only remap would have left half-done. For a singleton root this sets exactly
+;; remap[root] = new-var (byte-identical to the prior root-only remap).
+(define (compiler-reg-loop-split-remap-coalesced-group!
+  [remap : (Array i64)]
+  [parents : (Array i64)]
+  [root : i64]
+  [new-var : i64]) : unit
+  (let
+    [n : i64 (array.array-length remap)]
+    [v : i64 0]
+    (while (< v n)
+      (begin
+        (if (and
+              (< v (array.array-length parents))
+              (= (array.array-ref parents v) root))
+          (array.array-set! remap v new-var)
+          unit)
+        (set! v (+ v 1))))))
+
 (define (compiler-reg-loop-split-instr-mentions-var?
   [instr : CompilerIrInstr]
   [var : i64]) : bool
@@ -7429,9 +7507,30 @@
   (if (and
     (compiler-live-set-contains? (compiler-live-block-live-in block) var)
     (compiler-live-set-contains? (compiler-live-block-live-out block) var)
-    (not (compiler-live-set-contains? (compiler-live-block-defs block) var))
+    ;; SplitKit step 1: admit BOTH read-only loop invariants (var not written in the
+    ;; region) AND redefined values, but for redefinition only in the bounded sound
+    ;; case: a single-block self-loop where the redefinition is NOT phi-carried. The
+    ;; read-only path needs only an INTO copy; the redefined path additionally needs
+    ;; write-back (OUT copies), required below. `(not (defs-in-block))` used to
+    ;; hard-reject every redefined value.
+    (or
+      (not (compiler-live-set-contains? (compiler-live-block-defs block) var))
+      (and
+        (compiler-reg-loop-split-self-loop? block region-label)
+        (not (compiler-reg-loop-split-phi-defines-var? instrs var))))
     (compiler-reg-interval-index-var-has-segments? intervals var)
-    (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var)))
+    ;; Coalescing gate. A carried `(set! acc EXPR)` lowers to `tmp = EXPR; acc = tmp`,
+    ;; so the reg-alloc coalescer merges acc with tmp -- EVERY loop-carried redefined
+    ;; value is a non-singleton coalesce root. The READ-ONLY path keeps the original
+    ;; exclusion (region-remap rewrites only the homed var, so coalesced members would
+    ;; be left dangling). The REDEFINED self-loop path instead HOMES THE WHOLE COALESCED
+    ;; GROUP: apply-candidate remaps every move-related member to the region register
+    ;; and the INTO/OUT copies sync the shared slot at the region boundary -- so a
+    ;; coalesced ROOT is accepted (a non-root member is left for its root's turn, so the
+    ;; group is homed exactly once).
+    (if (compiler-live-set-contains? (compiler-live-block-defs block) var)
+      (compiler-reg-loop-split-coalesce-root? parents var)
+      (not (compiler-reg-coalesce-var-nonsingleton? parents merged-roots var))))
     (match (compiler-reg-assignment-lookup assignments var)
       [(CompilerRegSomeLocation location)
         (match location
@@ -7459,12 +7558,22 @@
                         [copy-count : i64
                           (compiler-reg-edge-copy-list-count copies)]
                         (if (and
-                          ;; Accept read-only loop invariants (into-region copy only,
-                          ;; no write-back -- sound because the `not (defs block var)`
-                          ;; gate above guarantees var is unwritten in the region) in
-                          ;; addition to bidirectional loop-carried vars. Still gated
-                          ;; by hot-benefit so only profitable hot vars are homed.
-                          (compiler-reg-loop-split-direction-present? copies true)
+                          ;; Read-only loop invariants are sound with an INTO copy
+                          ;; alone: the var is never written in the region, so its
+                          ;; slot stays authoritative for any out-of-region read.
+                          ;; REDEFINED values (var in defs block -- the SplitKit
+                          ;; step-1 case) instead REQUIRE write-back: an OUT copy must
+                          ;; store the region register back to the var's slot at every
+                          ;; region exit so out-of-region reads observe the current
+                          ;; value. The planner emits an OUT copy on every live exit
+                          ;; edge or REFUSES (critical edge -> handled above), so a
+                          ;; non-refused bidirectional plan write-backs every exit;
+                          ;; requiring at least one OUT (copies-bidirectional?) rejects
+                          ;; the degenerate no-exit redefinition that never writes back.
+                          (if (compiler-live-set-contains?
+                                (compiler-live-block-defs block) var)
+                            (compiler-reg-loop-split-copies-bidirectional? copies)
+                            (compiler-reg-loop-split-direction-present? copies true))
                           (compiler-reg-loop-split-hot-benefit?
                             mentions
                             depth
@@ -7696,7 +7805,8 @@
   [ty : AstType]
   [reg : String]
   [copies : CompilerRegEdgeCopyList]
-  [evicted-var : i64]) : CompilerRegCallSaveRewrite
+  [evicted-var : i64]
+  [parents : (Array i64)]) : CompilerRegCallSaveRewrite
   (let
     [remap : (Array i64) (compiler-reg-caller-save-remap vars)]
     [region-map : hashmap.StringI64Map
@@ -7721,6 +7831,11 @@
           CompilerRegAssignmentNil))]
     (begin
       (array.array-set! remap stack-var vars)
+      ;; Home the whole coalesced group (move-related members of `stack-var`), not
+      ;; just the root, so a redefined carried value's every alias inside the region
+      ;; resolves to the homed register. For a singleton root this re-sets exactly
+      ;; remap[stack-var] = vars (identical to the root-only remap above).
+      (compiler-reg-loop-split-remap-coalesced-group! remap parents stack-var vars)
       (match (compiler-reg-edge-copy-apply
         (compiler-reg-loop-split-region-remap-blocks blocks region-map remap)
         copies)
@@ -7834,7 +7949,8 @@
                           ty
                           reg
                           copies
-                          evicted)]
+                          evicted
+                          parents)]
                       (match applied
                         [(CompilerRegCallSaveRewrite
                             new-blocks

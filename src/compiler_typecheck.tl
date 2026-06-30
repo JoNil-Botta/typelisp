@@ -7415,6 +7415,25 @@
 (gen)
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-decls-macro-runtime-raw-storage-source) : String
+  "(defmacro (gen) : Decls
+  `(define (generated-copy [text : String] [items : (Array u8)]) : String
+     (unsafe
+       (let
+         [text-ptr : (Ptr u8) (string-data text)]
+         [text-len : i64 (__tl_string_length text)]
+         [copied : String (string-from-bytes text-ptr text-len)]
+         [items-ptr : (MutPtr u8) (array-data items)]
+         [items-ro : (Ptr u8) (ptr-cast items-ptr : (Ptr u8))]
+         [addr : u64 (ptr->int items-ro)]
+         [roundtrip : (Ptr u8) (int->ptr addr : (Ptr u8))]
+         [first : u8 (ptr-read (ptr-offset roundtrip 0))]
+         (begin
+           (ptr-write! (ptr-offset items-ptr 0) first)
+           copied)))))
+(gen)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-decls-macro-runtime-unsafe-missing-source) : String
   "(defmacro (gen) : Decls
   `(define (generated-read [p : (Ptr i64)]) : i64 (ptr-read p)))
@@ -7763,6 +7782,8 @@
       (compiler-typecheck-decls-macro-runtime-unsafe-decl-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-decls-macro-runtime-unsafe-helper-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-decls-macro-runtime-raw-storage-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-decls-macro-runtime-unsafe-missing-source)
       "typecheck: ptr-read requires unsafe context")

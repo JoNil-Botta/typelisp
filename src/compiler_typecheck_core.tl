@@ -9022,6 +9022,28 @@
 (define (tc-enum-qualified-variant-lookup-name? [name : String]) : bool
   (>= (tc-name-first-dot (tc-qualified-name-base name)) 0))
 
+(define (tc-enum-qualified-variant-lookup-handle
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : option_i64.Option
+  (if (tc-enum-qualified-variant-lookup-name? name)
+    (match ctx
+      [(TcContext _ _ registries module _)
+        (if (and
+          (> (string.string-length module) 0)
+          (not (tc-name-qualified? name)))
+          (let
+            [module-key-id : i64
+              (compiler-symbol-module-key-id-by-name-id module name-id)]
+            (match (compiler-registries-lookup-variant-key-id
+              registries
+              module-key-id)
+              [(option_i64.Some handle) (option_i64.Some handle)]
+              [(option_i64.None)
+                (compiler-registries-lookup-variant-id registries name-id)]))
+          (compiler-registries-lookup-variant-id registries name-id))])
+    option_i64.None))
+
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name? name)
     (let
@@ -26618,13 +26640,13 @@
       [(option_i64.Some handle)
         (tc-variant-constructor-type-for-handle ctx handle)]
       [(option_i64.None)
-        (match (tc-enum-qualified-variant-lookup-key ctx lookup-name)
-          [(ResultTcString.Ok variant-key)
-            (match (compiler-registries-lookup-variant registries variant-key)
-              [(option_i64.Some handle)
-                (tc-variant-constructor-type-for-handle ctx handle)]
-              [(option_i64.None) (ResultTcType.Err not-found-message)])]
-          [(ResultTcString.Err _) (ResultTcType.Err not-found-message)])])))
+        (match (tc-enum-qualified-variant-lookup-handle
+          ctx
+          lookup-name
+          lookup-id)
+          [(option_i64.Some handle)
+            (tc-variant-constructor-type-for-handle ctx handle)]
+          [(option_i64.None) (ResultTcType.Err not-found-message)])])))
 
 (define (tc-struct-field-type
   [ctx : TcContext]
@@ -27258,12 +27280,11 @@
   [args : AstPatternList]
   [payload-region : TcMaybeString]) : ResultTcEnv
   (let
-    [lookup-name : String
-      (tc-source-variant-name-for-enum ctx enum-name variant-name)]
     [handle : i64
-      (compiler-registries-lookup-variant-or
-        (tc-context-registries ctx)
-        lookup-name
+      (tc-source-variant-handle-for-enum-or
+        ctx
+        enum-name
+        variant-name
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (match (tc-variant-owner-name ctx handle)
@@ -27649,12 +27670,11 @@
   [enum-lifetimes : AstLifetimeList]
   [args : AstPatternList]) : ResultTcEnv
   (let
-    [lookup-name : String
-      (tc-source-variant-name-for-enum ctx enum-name variant-name)]
     [handle : i64
-      (compiler-registries-lookup-variant-or
-        (tc-context-registries ctx)
-        lookup-name
+      (tc-source-variant-handle-for-enum-or
+        ctx
+        enum-name
+        variant-name
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (match (tc-variant-owner-name ctx handle)
@@ -28085,6 +28105,18 @@
       (compiler-enum-qualified-variant-name enum-base variant-name)]
     (compiler-symbol-module-key module qualified-variant)))
 
+(define (tc-qualified-variant-key-id
+  [enum-name : String]
+  [variant-name : String]) : i64
+  (let
+    [enum-name-id : i64 (tc-name-id enum-name)]
+    [module-id : i64 (intern-qualified-module-id enum-name-id)]
+    [enum-base-id : i64 (intern-qualified-base-id enum-name-id)]
+    [variant-name-id : i64 (tc-name-id variant-name)]
+    [qualified-variant-id : i64
+      (compiler-enum-qualified-variant-name-id enum-base-id variant-name-id)]
+    (compiler-symbol-module-key-id-by-id module-id qualified-variant-id)))
+
 (define (tc-variant-name-for-enum [enum-name : String] [variant-name : String]) : String
   (if (tc-name-qualified? variant-name)
     variant-name
@@ -28119,6 +28151,71 @@
               (tc-qualified-variant-name enum-name variant-name)])
           (tc-qualified-variant-name enum-name variant-name))))))
 
+(define (tc-qualified-variant-handle-for-enum-or
+  [ctx : TcContext]
+  [enum-name : String]
+  [variant-name : String]
+  [fallback : i64]) : i64
+  (compiler-registries-lookup-variant-key-id-or
+    (tc-context-registries ctx)
+    (tc-qualified-variant-key-id enum-name variant-name)
+    fallback))
+
+(define (tc-source-variant-handle-for-enum-or
+  [ctx : TcContext]
+  [enum-name : String]
+  [variant-name : String]
+  [fallback : i64]) : i64
+  (let
+    [registries : CompilerRegistries (tc-context-registries ctx)]
+    [variant-name-id : i64 (tc-name-id variant-name)]
+    (if (tc-name-qualified? variant-name)
+      (compiler-registries-lookup-variant-id-or
+        registries
+        variant-name-id
+        fallback)
+      (if (>= (intern-first-dot variant-name-id) 0)
+        (match (tc-enum-qualified-variant-lookup-handle
+          ctx
+          variant-name
+          variant-name-id)
+          [(option_i64.Some handle) handle]
+          [(option_i64.None)
+            (match (tc-dotted-type-name-lookup-key ctx variant-name)
+              [(ResultTcString.Ok lookup-name)
+                (compiler-registries-lookup-variant-or
+                  registries
+                  lookup-name
+                  fallback)]
+              [(ResultTcString.Err _) fallback])])
+        (let
+          [handle : i64
+            (compiler-registries-lookup-variant-id-or
+              registries
+              variant-name-id
+              (compiler-symbols-missing-handle))]
+          (if (compiler-symbols-handle-found? handle)
+            (match (tc-variant-owner-name ctx handle)
+              [(ResultTcString.Ok owner)
+                (if (string.eq owner enum-name)
+                  handle
+                  (tc-qualified-variant-handle-for-enum-or
+                    ctx
+                    enum-name
+                    variant-name
+                    fallback))]
+              [(ResultTcString.Err _)
+                (tc-qualified-variant-handle-for-enum-or
+                  ctx
+                  enum-name
+                  variant-name
+                  fallback)])
+            (tc-qualified-variant-handle-for-enum-or
+              ctx
+              enum-name
+              variant-name
+              fallback)))))))
+
 (define (tc-variant-name-matches?
   [ctx : TcContext]
   [enum-name : String]
@@ -28131,19 +28228,17 @@
       (not (tc-name-qualified? pattern-name)))
       false
       (let
-        [pattern-key : String
-          (tc-source-variant-name-for-enum ctx enum-name pattern-name)]
-        [candidate-key : String
-          (tc-source-variant-name-for-enum ctx enum-name variant-name)]
         [pattern-handle : i64
-          (compiler-registries-lookup-variant-or
-            (tc-context-registries ctx)
-            pattern-key
+          (tc-source-variant-handle-for-enum-or
+            ctx
+            enum-name
+            pattern-name
             (compiler-symbols-missing-handle))]
         [candidate-handle : i64
-          (compiler-registries-lookup-variant-or
-            (tc-context-registries ctx)
-            candidate-key
+          (tc-source-variant-handle-for-enum-or
+            ctx
+            enum-name
+            variant-name
             (compiler-symbols-missing-handle))]
         (if (and
           (compiler-symbols-handle-found? pattern-handle)
@@ -28310,12 +28405,11 @@
   [variant-name : String]
   [args : AstPatternList]) : bool
   (let
-    [lookup-name : String
-      (tc-source-variant-name-for-enum ctx enum-name variant-name)]
     [handle : i64
-      (compiler-registries-lookup-variant-or
-        (tc-context-registries ctx)
-        lookup-name
+      (tc-source-variant-handle-for-enum-or
+        ctx
+        enum-name
+        variant-name
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (match (compiler-registries-variant-fields-indexed

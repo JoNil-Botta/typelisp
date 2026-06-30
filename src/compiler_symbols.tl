@@ -362,6 +362,14 @@
   [variant-name : String]) : String
   (string.append enum-name (string.append "." variant-name)))
 
+(define (compiler-enum-qualified-variant-name-id
+  [enum-name-id : i64]
+  [variant-name-id : i64]) : i64
+  (intern
+    (compiler-enum-qualified-variant-name
+      (intern-str enum-name-id)
+      (intern-str variant-name-id))))
+
 (define (compiler-qualified-name [module : String] [name : String]) : CompilerQualifiedName
   (CompilerQualifiedName (intern module) (intern name)))
 
@@ -2323,6 +2331,13 @@
         variants
         (compiler-symbol-name-id-key name-id))]))
 
+(define (compiler-registries-lookup-variant-key-id
+  [registries : CompilerRegistries]
+  [key-id : i64]) : option_i64.Option
+  (match registries
+    [(CompilerRegistries variants _)
+      (compiler-symbol-map-lookup-id variants key-id)]))
+
 (define (compiler-registries-lookup-struct-field
   [registries : CompilerRegistries]
   [struct-name : String]
@@ -2354,6 +2369,14 @@
   [fallback : i64]) : i64
   (compiler-symbols-option-or
     (compiler-registries-lookup-variant-id registries name-id)
+    fallback))
+
+(define (compiler-registries-lookup-variant-key-id-or
+  [registries : CompilerRegistries]
+  [key-id : i64]
+  [fallback : i64]) : i64
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-variant-key-id registries key-id)
     fallback))
 
 (define (compiler-registries-lookup-struct-field-or

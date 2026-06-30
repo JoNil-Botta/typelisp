@@ -2412,6 +2412,34 @@
         [(helper.Choice.Empty) 0]))))
 (define (main) : i64 (score (helper.Item 1)))")
 
+(define (compiler-typecheck-smoke-qualified-enum-variant-precedence-source) : String
+  "(module provider.enums)
+(defenum Choice (Empty) (Full i64))
+(module entry.enums)
+(import provider.enums as provider)
+(defenum Choice (Empty) (Full i64))
+(define (local-score [c : Choice]) : i64
+  (match c
+    [(Choice.Full n) n]
+    [(Choice.Empty) 0]))
+(define (provider-score [c : provider.Choice]) : i64
+  (match c
+    [(provider.Choice.Full n) n]
+    [(provider.Choice.Empty) 0]))
+(define (main) : i64
+  (+ (local-score (Choice.Full 5))
+     (provider-score (provider.Choice.Full 7))))")
+
+(define (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?) : bool
+  (compiler-typecheck-ok?
+    (compiler-typecheck-smoke-qualified-enum-variant-precedence-source)))
+
+(test
+  compiler-typecheck-qualified-enum-variant-precedence
+  (if (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
+    unit
+    (io.panic "typecheck: qualified enum variant precedence smoke failed")))
+
 (define (compiler-typecheck-smoke-lazy-import-stdlib-summary-source) : String
   "(module main)
 (import stdlib.vector as vec)
@@ -2547,6 +2575,9 @@
     (unless
       (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?)
       (io.panic "typecheck: lazy import alias fanout smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-qualified-enum-variant-precedence-ok?)
+      (io.panic "typecheck: qualified enum variant precedence smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-stdlib-summary-backed-ok?)
       (io.panic "typecheck: lazy import summary smoke failed"))

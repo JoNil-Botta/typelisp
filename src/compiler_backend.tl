@@ -532,6 +532,164 @@
 (define compiler-backend-identity-tail-forwarder-active : bool
   false)
 
+;; CFG-aware cross-block reload-elision (carry-safe label set).
+;; Holds the asm label strings (".L<scope>_<block>") of blocks across which the
+;; peephole's reg->slot owner map may be CARRIED (instead of reset). A block
+;; label is admitted ONLY when the block is reached exclusively by fall-through
+;; from its single, layout-adjacent predecessor (see
+;; compiler-backend-peephole-collect-carry-safe!). Populated per-function during
+;; emission from the FINAL emitted blocks; reset (epoch bump) at the top of each
+;; program emit. Read by the peephole. An empty set reproduces the old
+;; reset-at-every-label behavior, so any not-proven-safe label stays sound.
+;;
+;; Backed ENTIRELY by pointer-free globals: an open-addressing table of byte
+;; offsets/lengths (`(Array i64)`) into one flat `(Array u8)` key-byte arena.
+;; Pointer-free Array globals are the only globals that reliably survive a full
+;; program emission -- a `(Array String)`/`StringI64Map`/struct/box global has
+;; its element/slots pointers dropped by the GC root scan and dangles mid-
+;; peephole (observed SIGSEGV: contains? on a collected String cell). The intern
+;; TABLE is likewise torn down before the peephole runs, so interning is NOT used
+;; as the key: the bucket is `intern-hash` / `intern-hash-slice` (pure byte
+;; hashes, no table) and membership is confirmed by an EXACT byte compare against
+;; the arena, so a hash collision can never cause a wrong carry (it just probes
+;; on) -- soundness does not rely on hash uniqueness. offset -1 = empty slot.
+(define compiler-backend-peephole-carry-safe-capacity : i64
+  262144)
+(define compiler-backend-peephole-carry-safe-bytes-capacity : i64
+  16777216)
+(define compiler-backend-peephole-carry-safe-offsets : (Array i64)
+  (array.make-array i64 262144))
+(define compiler-backend-peephole-carry-safe-lengths : (Array i64)
+  (array.make-array i64 262144))
+(define compiler-backend-peephole-carry-safe-bytes : (Array u8)
+  (array.make-array u8 16777216))
+(define compiler-backend-peephole-carry-safe-bytes-count : i64
+  0)
+
+;; Clear the table: mark every slot empty (offset -1) and rewind the arena.
+(define (compiler-backend-peephole-carry-safe-reset!) : unit
+  (let
+    [cap : i64 compiler-backend-peephole-carry-safe-capacity]
+    [i : i64 0]
+    (begin
+      (while (< i cap)
+        (begin
+          (array.array-set! compiler-backend-peephole-carry-safe-offsets i -1)
+          (set! i (+ i 1))))
+      (set! compiler-backend-peephole-carry-safe-bytes-count 0)
+      unit)))
+
+;; True iff arena bytes [off,off+len) equal `klen` bytes read from `data` at
+;; `kstart` (byte-exact key comparison).
+(define (compiler-backend-peephole-carry-safe-bytes-eq?
+  [off : i64]
+  [len : i64]
+  [data : (Ptr u8)]
+  [kstart : i64]
+  [klen : i64]) : bool
+  (if (not (= len klen))
+    false
+    (let
+      [j : i64 0]
+      [ok : bool true]
+      (begin
+        (while (and ok (< j len))
+          (begin
+            (if (=
+              (cast
+                (array.array-ref compiler-backend-peephole-carry-safe-bytes (+ off j))
+                : i64)
+              (compiler-backend-peephole-byte-at data (+ kstart j)))
+              unit
+              (set! ok false))
+            (set! j (+ j 1))))
+        ok))))
+
+;; Insert the key given by `klen` bytes at `data`+`kstart` with byte hash `hash`.
+;; Reuses an empty (offset -1) slot; appends the key to the arena. A full table
+;; or arena silently drops the key (sound: a missed carry-safe label only forgoes
+;; one elision).
+(define (compiler-backend-peephole-carry-safe-insert-bytes!
+  [data : (Ptr u8)]
+  [kstart : i64]
+  [klen : i64]
+  [hash : i64]) : unit
+  (let
+    [cap : i64 compiler-backend-peephole-carry-safe-capacity]
+    [slot : i64 (bit-and hash (- cap 1))]
+    [walked : i64 0]
+    (begin
+      (while (< walked cap)
+        (let
+          [off : i64 (array.array-ref compiler-backend-peephole-carry-safe-offsets slot)]
+          (if (< off 0)
+            (let
+              [start : i64 compiler-backend-peephole-carry-safe-bytes-count]
+              (if (<= (+ start klen) compiler-backend-peephole-carry-safe-bytes-capacity)
+                (let
+                  [j : i64 0]
+                  (begin
+                    (while (< j klen)
+                      (begin
+                        (array.array-set!
+                          compiler-backend-peephole-carry-safe-bytes
+                          (+ start j)
+                          (cast (compiler-backend-peephole-byte-at data (+ kstart j)) : u8))
+                        (set! j (+ j 1))))
+                    (array.array-set! compiler-backend-peephole-carry-safe-offsets slot start)
+                    (array.array-set! compiler-backend-peephole-carry-safe-lengths slot klen)
+                    (set! compiler-backend-peephole-carry-safe-bytes-count (+ start klen))
+                    (return unit)))
+                (return unit)))
+            (if (compiler-backend-peephole-carry-safe-bytes-eq?
+              off
+              (array.array-ref compiler-backend-peephole-carry-safe-lengths slot)
+              data
+              kstart
+              klen)
+              (return unit)
+              (begin
+                (set! slot (if (>= (+ slot 1) cap) 0 (+ slot 1)))
+                (set! walked (+ walked 1)))))))
+      unit)))
+
+;; Insert a key String (used by the collector, which holds owned label Strings).
+(define (compiler-backend-peephole-carry-safe-insert! [key : String]) : unit
+  (compiler-backend-peephole-carry-safe-insert-bytes!
+    (unsafe (string-data key))
+    0
+    (string.string-length key)
+    (intern-hash key)))
+
+;; True iff the key given by `klen` bytes at `data`+`kstart` (byte hash `hash`)
+;; is in the set (exact byte match; an empty slot terminates the probe).
+(define (compiler-backend-peephole-carry-safe-contains-bytes?
+  [data : (Ptr u8)]
+  [kstart : i64]
+  [klen : i64]
+  [hash : i64]) : bool
+  (let
+    [cap : i64 compiler-backend-peephole-carry-safe-capacity]
+    [slot : i64 (bit-and hash (- cap 1))]
+    [walked : i64 0]
+    (begin
+      (while (< walked cap)
+        (let
+          [off : i64 (array.array-ref compiler-backend-peephole-carry-safe-offsets slot)]
+          (if (< off 0)
+            (return false)
+            (if (compiler-backend-peephole-carry-safe-bytes-eq?
+              off
+              (array.array-ref compiler-backend-peephole-carry-safe-lengths slot)
+              data
+              kstart
+              klen)
+              (return true)
+              (begin
+                (set! slot (if (>= (+ slot 1) cap) 0 (+ slot 1)))
+                (set! walked (+ walked 1)))))))
+      false)))
+
 (define (compiler-backend-string-list-contains?
   [items : BackendStringList]
   [needle : String]) : bool
@@ -29381,6 +29539,158 @@
             0)
           unit)))))
 
+;; Increment the predecessor count for every label in `labels` (a deduped CFG
+;; successor set for one block). Each block contributes at most once per
+;; successor, so the resulting count is the number of DISTINCT predecessor
+;; blocks -- exactly the "is this label a merge?" signal we need.
+(define (compiler-backend-peephole-predcount-bump
+  [counts : hashmap.StringI64Map]
+  [labels : OptLabelSet]) : hashmap.StringI64Map
+  (match labels
+    [(OptLabelNil) counts]
+    [(OptLabelCons label rest)
+      (compiler-backend-peephole-predcount-bump
+        (hashmap.string-i64-map-put
+          counts
+          label
+          (+
+            1
+            (match (hashmap.string-i64-map-get counts label)
+              [(hashmap.StringI64MapFound v) v]
+              [(hashmap.StringI64MapMissing) 0])))
+        (box-get rest))]))
+
+;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
+;; (explicit IrInstrJump / IrInstrBranch / IrInstrSwitch targets PLUS the
+;; implicit fall-through to the layout-next block), reusing the optimizer's own
+;; successor enumeration so jump-table (switch) case + default targets are all
+;; included. Under-counting an edge is the only way carry could go wrong, and
+;; this enumeration is complete (those are the only label-bearing terminators).
+(define (compiler-backend-peephole-predcount-build
+  [blocks : CompilerIrBlockList]
+  [counts : hashmap.StringI64Map]) : hashmap.StringI64Map
+  (match blocks
+    [(IrBlockNil) counts]
+    [(IrBlockArray seq)
+      (compiler-backend-peephole-predcount-build
+        (compiler-ir-block-seq-to-list seq)
+        counts)]
+    [(IrBlockCons block rest)
+      (compiler-backend-peephole-predcount-build
+        (box-get rest)
+        (compiler-backend-peephole-predcount-bump
+          counts
+          (opt-cfg-block-successors-with-next
+            block
+            (opt-cfg-entry-label (box-get rest)))))]))
+
+;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
+;; blocks. SOUNDNESS-CRITICAL: such a branch does NOT lower to a clean
+;; fall-through into its layout-next arm -- compiler-backend-emit-branch-with-phi-
+;; copies emits a SYNTHETIC edge-copy block (`<label>_branch_<suffix>`) on the
+;; fall-through path and reaches the layout-next arm via an explicit jcc. So the
+;; layout-next block is a JUMP target with foreign code (the other edge's copies)
+;; textually preceding it -- its running owner map is NOT this block's exit map,
+;; and carrying across it miscompiles (observed: a wrong reload reuse in the
+;; dominator fixpoint -> non-termination). A branch that needs NO phi copies
+;; lowers to `jcc <other-arm>` + clean fall-through (emit-compare-branch-jumps),
+;; which IS safe. Jump / Switch terminators never split this way (jump copies sit
+;; on the single fall-through edge; switches reject phi targets).
+(define (compiler-backend-peephole-prev-splits-edge?
+  [block : CompilerIrBlock]) : bool
+  (match block
+    [(IrBlock _ instrs)
+      (let
+        [n : i64 (struct-get instrs len)]
+        (if (= n 0)
+          false
+          (match (array.array-ref (struct-get instrs slots) (- n 1))
+            [(IrInstrBranch _ true-label false-label)
+              (compiler-backend-branch-needs-phi-copies? true-label false-label)]
+            [_ false])))]))
+
+;; Walk blocks in LAYOUT order (prev = the textually-preceding block). A block B
+;; is carry-safe -- the peephole may carry the owner map across B's label rather
+;; than reset -- iff ALL hold:
+;;   (1) B is not the function entry (the entry is reached by `call` with caller
+;;       register state, never by fall-through; it is `prev` here, never `cur`,
+;;       and is additionally guarded by entry-label);
+;;   (2) B has exactly ONE predecessor in the CFG (predcount == 1) -- so it is
+;;       not a merge / multi-pred branch/switch/jump-table target; and
+;;   (3) that single predecessor is `prev`, the layout-adjacent block (prev's
+;;       successor set contains B). (2)+(3) together prove B is reached ONLY by
+;;       continuing from prev, so the peephole's running owner map at B's label
+;;       equals prev's exit map. If B's lone predecessor were laid out elsewhere
+;;       (e.g. a far switch case), (3) fails and we reset -- the sound default;
+;;   (4) prev does NOT end in a phi-copy branch (compiler-backend-peephole-prev-
+;;       splits-edge?), which would insert a synthetic edge-copy block between
+;;       prev and B and reach B via an explicit jcc rather than fall-through --
+;;       so B's running map would be the OTHER edge's, not prev's exit.
+(define (compiler-backend-peephole-carry-safe-scan
+  [label-scope : String]
+  [entry-label : String]
+  [predcount : hashmap.StringI64Map]
+  [prev : CompilerIrBlock]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockArray seq)
+      (compiler-backend-peephole-carry-safe-scan
+        label-scope
+        entry-label
+        predcount
+        prev
+        (compiler-ir-block-seq-to-list seq))]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock cur-label _)
+          (begin
+            (if (and
+              (not (string.string-eq cur-label entry-label))
+              (and
+                (not (compiler-backend-peephole-prev-splits-edge? prev))
+                (and
+                  (=
+                    1
+                    (match (hashmap.string-i64-map-get predcount cur-label)
+                      [(hashmap.StringI64MapFound v) v]
+                      [(hashmap.StringI64MapMissing) 0]))
+                  (opt-label-contains
+                    (opt-cfg-block-successors-with-next prev cur-label)
+                    cur-label))))
+              (compiler-backend-peephole-carry-safe-insert!
+                (compiler-backend-asm-label label-scope cur-label))
+              unit)
+            (compiler-backend-peephole-carry-safe-scan
+              label-scope
+              entry-label
+              predcount
+              block
+              (box-get rest)))])]))
+
+;; Accumulate carry-safe block labels for one function's FINAL emitted blocks
+;; into the global peephole carry-safe set. `label-scope` MUST be the same value
+;; emit-blocks passes to compiler-backend-asm-label, so the keys match the
+;; emitted label lines exactly. Computed from the post-transform emit-blocks so
+;; the CFG it analyzes is the one actually emitted.
+(define (compiler-backend-peephole-collect-carry-safe!
+  [label-scope : String]
+  [blocks : CompilerIrBlockList]) : unit
+  (match (compiler-ir-block-list-force-cons blocks)
+    [(IrBlockNil) unit]
+    [(IrBlockArray _) unit]
+    [(IrBlockCons entry rest)
+      (match entry
+        [(IrBlock entry-label _)
+          (compiler-backend-peephole-carry-safe-scan
+            label-scope
+            entry-label
+            (compiler-backend-peephole-predcount-build
+              (compiler-ir-block-cons entry (box-get rest))
+              (hashmap.string-i64-map-with-capacity 64))
+            entry
+            (box-get rest))])]))
+
 (define (compiler-backend-emit-function
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
@@ -29639,6 +29949,10 @@
                 (let
                   [label-scope : String
                     (compiler-backend-function-label-scope program-index name)]
+                  [_carry-safe : unit
+                    (compiler-backend-peephole-collect-carry-safe!
+                      label-scope
+                      emit-blocks-list)]
                   [_addr-forward : unit
                     (compiler-backend-addr-of-forwarding-enable!
                       remat-vars
@@ -35258,6 +35572,7 @@ tl_memchr:
   [crt-entry : bool]) : ResultCompilerBackendBuffer
   (begin
     (compiler-backend-user-symbol-cache-reset!)
+    (compiler-backend-peephole-carry-safe-reset!)
     (cfg
       regalloc-census
       (begin
@@ -38942,33 +39257,88 @@ tl_memchr:
       (compiler-backend-peephole-range-eq? data i e "movswq")
       (compiler-backend-peephole-range-eq? data i e "movslq"))))
 
-;; Per-destination owner invalidation for a non-movq line. If the line is a
-;; whitelisted single-GP-dest q-op whose last operand is a tracked register, clear
-;; only that register's owner (everything else's reg<->slot mirror survives).
-;; Otherwise fall back to the conservative whole-map clear (line-clears-owners?).
+;; True iff the line [start,end) is a label (non-blank after leading spaces and
+;; ends in ':'). Mirrors the label arm of line-clears-owners?.
+(define (compiler-backend-peephole-line-is-label?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+        (set! i (+ i 1)))
+      (and
+        (< i end)
+        (= (compiler-backend-peephole-byte-at data (- end 1)) 58)))))
+
+;; True iff the label on line [start,end) (its name = first-non-space..':') is in
+;; the backend-collected carry-safe set -- i.e. a block reached only by
+;; fall-through from its single layout-adjacent predecessor, so the running owner
+;; map may be CARRIED across it. Any label absent from the set (every merge /
+;; branch / switch / jump-table target, every synthetic non-block label, and the
+;; function entry) is NOT carry-safe and must reset. `src` is the String the
+;; byte offsets index into (the asm buffer or a rewritten pending line). The
+;; label name is interned and looked up in the i64-id carry-safe set.
+(define (compiler-backend-peephole-label-carry-safe?
+  [src : String]
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
+        (set! i (+ i 1)))
+      (if (>= i (- end 1))
+        false
+        (let
+          [klen : i64 (- (- end 1) i)]
+          (compiler-backend-peephole-carry-safe-contains-bytes?
+            data
+            i
+            klen
+            (intern-hash-slice src i klen)))))))
+
+;; Per-destination owner invalidation for a non-movq line.
+;;  * A LABEL: reset the whole map UNLESS the label is carry-safe (a provably
+;;    single-pred fall-through block), in which case carry the map across it.
+;;    This is the cross-block reload-elision win; soundness rests entirely on the
+;;    carry-safe set (compiler-backend-peephole-collect-carry-safe!).
+;;  * A whitelisted single-GP-dest q-op whose last operand is a tracked register:
+;;    clear only that register's owner (everything else's reg<->slot mirror
+;;    survives).
+;;  * Otherwise fall back to the conservative whole-map clear.
 (define (compiler-backend-peephole-line-clobber-owners
   [owners : CompilerBackendPeepholeOwners]
+  [src : String]
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]) : CompilerBackendPeepholeOwners
-  (if (not (compiler-backend-peephole-line-clears-owners? data start end))
-    owners
-    (let
-      [i : i64 start]
-      (begin
-        (while (and
-          (< i end)
-          (= (compiler-backend-peephole-byte-at data i) 32))
-          (set! i (+ i 1)))
-        (let
-          [mlen : i64 (compiler-backend-peephole-token-len data i end)]
-          (if (compiler-backend-peephole-mnemonic-single-dest? data i mlen)
-            (let
-              [dreg : String (compiler-backend-peephole-last-operand-reg data start end)]
-              (if (string.string-eq dreg "")
-                (compiler-backend-peephole-owners-empty)
-                (compiler-backend-peephole-owners-set-reg owners dreg "")))
-            (compiler-backend-peephole-owners-empty)))))))
+  (cond
+    [(compiler-backend-peephole-line-is-label? data start end)
+      (if (compiler-backend-peephole-label-carry-safe? src data start end)
+        owners
+        (compiler-backend-peephole-owners-empty))]
+    [(not (compiler-backend-peephole-line-clears-owners? data start end))
+      owners]
+    [else
+      (let
+        [i : i64 start]
+        (begin
+          (while (and
+            (< i end)
+            (= (compiler-backend-peephole-byte-at data i) 32))
+            (set! i (+ i 1)))
+          (let
+            [mlen : i64 (compiler-backend-peephole-token-len data i end)]
+            (if (compiler-backend-peephole-mnemonic-single-dest? data i mlen)
+              (let
+                [dreg : String (compiler-backend-peephole-last-operand-reg data start end)]
+                (if (string.string-eq dreg "")
+                  (compiler-backend-peephole-owners-empty)
+                  (compiler-backend-peephole-owners-set-reg owners dreg "")))
+              (compiler-backend-peephole-owners-empty)))))]))
 
 (define (compiler-backend-peephole-emit-pending-line
   [out : text_buf.TextBuf]
@@ -39034,11 +39404,13 @@ tl_memchr:
           (if pending-owned?
             (compiler-backend-peephole-line-clobber-owners
               owners
+              pending-line
               (unsafe (string-data pending-line))
               0
               (string.string-length pending-line))
             (compiler-backend-peephole-line-clobber-owners
               owners
+              asm
               asm-data
               pending-start
               pending-end))]

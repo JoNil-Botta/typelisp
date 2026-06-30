@@ -4564,6 +4564,8 @@
       (compiler-backend-peephole-forward-frame-load-line
         "    movq %r8, -24(%rbp)"
         "    movq -24(%rbp), %r10")]
+    [_carry-safe-reset : unit
+      (compiler-backend-peephole-carry-safe-reset!)]
     [got : String (compiler-backend-peephole-asm input)]
     (and
       (string.string-eq direct "    movq %r8, %r10")

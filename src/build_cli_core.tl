@@ -24,6 +24,7 @@
 (import "compiler_driver_core.tl")
 (import "compiler_typecheck.tl")
 (import "tlci_core.tl")
+(import sym_i64_env)
 
 (defenum BuildConfig
   (Source String bool String bool String String String String)
@@ -3290,7 +3291,7 @@
   [manifest-dir : String]
   [name : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]) : i64
+  [cfgs : sym_i64_env.SymI64Env]) : i64
   (match (package-source-discover-for "build" manifest-path true)
     [(ResultPackageSourceSet.Err message)
       (begin

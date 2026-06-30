@@ -18,6 +18,7 @@
 (import "compiler_typecheck.tl")
 (import stdlib.string)
 (import stdlib.str_cat)
+(import sym_i64_env)
 
 (defenum TestMode
   (Run)
@@ -1818,7 +1819,7 @@
                   (ast-decl-path-cons source AstDeclPathList.Nil)))
               count))])]))
 
-(define (tltest-inline-typecheck-cfgs [cfgs : SymI64Env]) : SymI64Env
+(define (tltest-inline-typecheck-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable cfgs "test"))
 
 (define (tltest-inline-typecheck-program
@@ -1844,7 +1845,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (match (tltest-collect source decls paths)
     [(InlineCollect.Collect runtime-decls runtime-paths tests)
@@ -1912,7 +1913,7 @@
 (define (tltest-inline-typecheck-file-with-cfg
   [source : String]
   [roots : vector.StringVec]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (or
     (tltest-inline-stdlib-source? source roots)
@@ -1920,7 +1921,7 @@
     (not (tltest-source-has-inline-tests? source)))
     0
     (let
-      [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       (begin
         (tltest-inline-reset-load-state!)
         (match (compiler-driver-load-file-with-runtime source roots test-cfgs)
@@ -1945,11 +1946,11 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (tltest-source-has-inline-tests? source)
     (let
-      [test-cfgs : SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       (match (compiler-driver-load-package-file-with-runtime-owned-cfg
         source
         roots
@@ -1982,20 +1983,23 @@
   (Nil)
   (Cons String i64 (Box TltestCfgNameList)))
 
-(define (tltest-cfg-name-list-from-env [cfgs : SymI64Env]) : TltestCfgNameList
+(define (tltest-cfg-name-list-from-env [cfgs : sym_i64_env.SymI64Env]) : TltestCfgNameList
   (match cfgs
-    [(SymI64Nil) (TltestCfgNameList.Nil)]
-    [(SymI64Bind key value rest)
+    [(sym_i64_env.SymI64Nil) (TltestCfgNameList.Nil)]
+    [(sym_i64_env.SymI64Bind key value rest)
       (TltestCfgNameList.Cons
         (intern-str key)
         value
         (box (tltest-cfg-name-list-from-env (box-get rest))))]))
 
-(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : SymI64Env
+(define (tltest-cfg-name-list-to-env [names : TltestCfgNameList]) : sym_i64_env.SymI64Env
   (match names
-    [(TltestCfgNameList.Nil) (sym-i64-empty)]
+    [(TltestCfgNameList.Nil) (sym_i64_env.sym-i64-empty)]
     [(TltestCfgNameList.Cons name value rest)
-      (sym-i64-bind (tltest-cfg-name-list-to-env (box-get rest)) name value)]))
+      (sym_i64_env.sym-i64-bind
+        (tltest-cfg-name-list-to-env (box-get rest))
+        name
+        value)]))
 
 (define (tltest-inline-typecheck-package-sources-from
   [sources : vector.StringVec]
@@ -2004,7 +2008,7 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (let
     [count : i64 (vector.string-vec-len sources)]
@@ -2059,7 +2063,7 @@
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
-  [cfgs : SymI64Env]
+  [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (tltest-inline-typecheck-package-sources-from
     sources
@@ -2911,7 +2915,7 @@
   test-cli-enables-test-cfg
   (cfg test unit (io.panic "test CLI did not enable test cfg")))
 
-(define (tltest-cfgs [backend-target : CompilerBackendTarget]) : SymI64Env
+(define (tltest-cfgs [backend-target : CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))
     "test"))

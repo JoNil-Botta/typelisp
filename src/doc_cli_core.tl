@@ -16,6 +16,7 @@
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
+(import sym_i64_env)
 
 (defenum DocMaybeString
   (No)
@@ -86,17 +87,19 @@
 (define (doc-modules-from-string-vec [paths : vector.StringVec]) : DocModuleList
   (doc-modules-from-string-vec-from paths 0))
 
-(define (doc-modules-from-paths [paths : AstDeclPathList] [seen : SymI64Env]) : DocModuleList
+(define (doc-modules-from-paths
+  [paths : AstDeclPathList]
+  [seen : sym_i64_env.SymI64Env]) : DocModuleList
   (match paths
     [(AstDeclPathList.Nil) DocModuleList.Nil]
     [(AstDeclPathList.Cons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
-        (if (sym-i64-contains seen path)
+        (if (sym_i64_env.sym-i64-contains seen path)
           (doc-modules-from-paths rest seen)
           (doc-cli-module-cons
             (DocModule.Module path (doc-extract-file path))
-            (doc-modules-from-paths rest (sym-i64-bind seen path 1)))))]))
+            (doc-modules-from-paths rest (sym_i64_env.sym-i64-bind seen path 1)))))]))
 
 (define (doc-render-loaded-markdown
   [input-path : String]
@@ -105,7 +108,7 @@
     [modules : DocModuleList
       (doc-modules-from-paths
         (ast-decl-path-cons input-path paths)
-        (sym-i64-empty))]
+        (sym_i64_env.sym-i64-empty))]
     (if (> (doc-module-list-count modules) 1)
       (doc-render-module-graph-markdown modules)
       (doc-render-markdown (doc-extract-file input-path)))))
@@ -116,7 +119,7 @@
   [stdlib-roots : vector.StringVec]) : i64
   (match (compiler-load-file-with-paths-and-roots
     input-path
-    (sym-i64-empty)
+    (sym_i64_env.sym-i64-empty)
     stdlib-roots)
     [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
       (begin

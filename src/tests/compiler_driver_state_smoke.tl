@@ -7,6 +7,7 @@
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
+(import sym_i64_env)
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
@@ -136,7 +137,7 @@
         AstDeclList.Nil
         AstDeclPathList.Nil
         AstDeclModuleList.Nil
-        (sym-i64-empty))
+        (sym_i64_env.sym-i64-empty))
       (compiler-load-session-floors-set! 2 3 4)
       (compiler-driver-state-apply-session-flags! state-b)
       (unless (not (compiler-load-session-cache-enabled?)) (set! ok false))

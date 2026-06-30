@@ -31,6 +31,7 @@
 (import "compiler_load.tl")
 (import "build_run_core.tl")
 (import stdlib.string)
+(import sym_i64_env)
 
 (defenum ReplTypeCommand
   (No)
@@ -451,7 +452,7 @@
   (match (compiler-load-source
     (repl-session-source-path)
     session-source
-    (sym-i64-empty))
+    (sym_i64_env.sym-i64-empty))
     [(ResultCompilerLoad.Ok decls _) (ResultReplDeclList.Ok decls)]
     [(ResultCompilerLoad.Err diag)
       (ResultReplDeclList.Err (compiler-diagnostic-message (box-get diag)))]))

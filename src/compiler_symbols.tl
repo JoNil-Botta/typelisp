@@ -6,7 +6,7 @@
 (import stdlib.array)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
-(import "sym_i64_env.tl")
+(import sym_i64_env)
 (import stdlib.hashmap)
 (import stdlib.string)
 (import stdlib.option)
@@ -1644,14 +1644,14 @@
     [_ symbols]))
 
 (define (compiler-symbols-macro-module-set-add-decl
-  [modules : SymI64Env]
+  [modules : sym_i64_env.SymI64Env]
   [module-id : i64]
-  [decl : AstDecl]) : SymI64Env
+  [decl : AstDecl]) : sym_i64_env.SymI64Env
   (match decl
     [(AstDecl.DefMacro _ _ _ _)
-      (if (sym-i64-contains-id modules module-id)
+      (if (sym_i64_env.sym-i64-contains-id modules module-id)
         modules
-        (sym-i64-bind-id modules module-id 1))]
+        (sym_i64_env.sym-i64-bind-id modules module-id 1))]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -1665,7 +1665,7 @@
 (define (compiler-symbols-macro-module-set-list
   [decls : AstDeclList]
   [module-id : i64]
-  [modules : SymI64Env]) : SymI64Env
+  [modules : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match decls
     [(AstDeclList.Nil) modules]
     [(AstDeclList.Cons decl rest)
@@ -1691,8 +1691,11 @@
                 module-id
                 decl))]))]))
 
-(define (compiler-symbols-macro-module-set [decls : AstDeclList]) : SymI64Env
-  (compiler-symbols-macro-module-set-list decls (intern "") (sym-i64-empty)))
+(define (compiler-symbols-macro-module-set [decls : AstDeclList]) : sym_i64_env.SymI64Env
+  (compiler-symbols-macro-module-set-list
+    decls
+    (intern "")
+    (sym_i64_env.sym-i64-empty)))
 
 ;; An explicit `module ... as alias` import resolves dotted uses through the
 ;; import target directly. It should not leave the module's legacy bare macro
@@ -1703,60 +1706,43 @@
   [target-module-id : i64]
   [index : i64]
   [module-id : i64]) : CompilerSymbols
-  (match decls
-    [(AstDeclList.Nil) symbols]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Import _)
-            (compiler-symbols-remove-module-macro-aliases-list
-              symbols
-              rest
-              target-module-id
-              index
-              module-id)]
-          [(AstDecl.IncludeStr _ _)
-            (compiler-symbols-remove-module-macro-aliases-list
-              symbols
-              rest
-              target-module-id
-              index
-              module-id)]
-          [(AstDecl.IncludeBin _ _)
-            (compiler-symbols-remove-module-macro-aliases-list
-              symbols
-              rest
-              target-module-id
-              index
-              module-id)]
-          [(AstDecl.Module next-module)
-            (compiler-symbols-remove-module-macro-aliases-list
-              symbols
-              rest
-              target-module-id
-              index
-              next-module)]
-          [(AstDecl.Test _ _ _)
-            (compiler-symbols-remove-module-macro-aliases-list
-              symbols
-              rest
-              target-module-id
-              index
-              module-id)]
-          [_
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-symbols : CompilerSymbols symbols]
+    [cur-index : i64 index]
+    [cur-module : i64 module-id]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
             (let
-              [in-target : bool (= module-id target-module-id)]
-              [next-symbols : CompilerSymbols
-                (if in-target
-                  (compiler-symbols-remove-decl-macro-alias symbols decl index)
-                  symbols)]
-              (compiler-symbols-remove-module-macro-aliases-list
-                next-symbols
-                rest
-                target-module-id
-                (+ index 1)
-                module-id))]))]))
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDecl.Import _) (set! cur-decls rest)]
+                [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
+                [(AstDecl.IncludeBin _ _) (set! cur-decls rest)]
+                [(AstDecl.Module next-module)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-module next-module))]
+                [(AstDecl.Test _ _ _) (set! cur-decls rest)]
+                [_
+                  (let
+                    [in-target : bool (= cur-module target-module-id)]
+                    [next-symbols : CompilerSymbols
+                      (if in-target
+                        (compiler-symbols-remove-decl-macro-alias
+                          cur-symbols
+                          decl
+                          cur-index)
+                        cur-symbols)]
+                    (begin
+                      (set! cur-decls rest)
+                      (set! cur-symbols next-symbols)
+                      (set! cur-index (+ cur-index 1))))]))]))
+      cur-symbols)))
 
 (define (compiler-symbols-remove-module-macro-aliases
   [symbols : CompilerSymbols]
@@ -1776,70 +1762,44 @@
   [alias : String]
   [index : i64]
   [module-id : i64]) : CompilerSymbols
-  (match decls
-    [(AstDeclList.Nil) symbols]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Import _)
-            (compiler-symbols-add-module-aliases-list
-              symbols
-              rest
-              target-module-id
-              alias
-              index
-              module-id)]
-          [(AstDecl.IncludeStr _ _)
-            (compiler-symbols-add-module-aliases-list
-              symbols
-              rest
-              target-module-id
-              alias
-              index
-              module-id)]
-          [(AstDecl.IncludeBin _ _)
-            (compiler-symbols-add-module-aliases-list
-              symbols
-              rest
-              target-module-id
-              alias
-              index
-              module-id)]
-          [(AstDecl.Module next-module)
-            (compiler-symbols-add-module-aliases-list
-              symbols
-              rest
-              target-module-id
-              alias
-              index
-              next-module)]
-          [(AstDecl.Test _ _ _)
-            (compiler-symbols-add-module-aliases-list
-              symbols
-              rest
-              target-module-id
-              alias
-              index
-              module-id)]
-          [_
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-symbols : CompilerSymbols symbols]
+    [cur-index : i64 index]
+    [cur-module : i64 module-id]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
             (let
-              [in-target : bool (= module-id target-module-id)]
-              [next-symbols : CompilerSymbols
-                (if in-target
-                  (compiler-symbols-add-decl-alias-in-module
-                    symbols
-                    alias
-                    decl
-                    index)
-                  symbols)]
-              (compiler-symbols-add-module-aliases-list
-                next-symbols
-                rest
-                target-module-id
-                alias
-                (+ index 1)
-                module-id))]))]))
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDecl.Import _) (set! cur-decls rest)]
+                [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
+                [(AstDecl.IncludeBin _ _) (set! cur-decls rest)]
+                [(AstDecl.Module next-module)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-module next-module))]
+                [(AstDecl.Test _ _ _) (set! cur-decls rest)]
+                [_
+                  (let
+                    [in-target : bool (= cur-module target-module-id)]
+                    [next-symbols : CompilerSymbols
+                      (if in-target
+                        (compiler-symbols-add-decl-alias-in-module
+                          cur-symbols
+                          alias
+                          decl
+                          cur-index)
+                        cur-symbols)]
+                    (begin
+                      (set! cur-decls rest)
+                      (set! cur-symbols next-symbols)
+                      (set! cur-index (+ cur-index 1))))]))]))
+      cur-symbols)))
 
 (define (compiler-symbols-add-module-aliases
   [symbols : CompilerSymbols]
@@ -1866,52 +1826,56 @@
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [module : String]
-  [macro-modules : SymI64Env]) : CompilerSymbols
-  (match decls
-    [(AstDeclList.Nil) symbols]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [next-symbols : CompilerSymbols
-          (match decl
-            [(AstDecl.Import
-                (AstImportSpec.Spec
-                  _
-                  _
-                  (AstMaybeModuleName.Some target-module)
-                  (AstMaybeImportAlias.Some alias)
-                  _))
-              (let
-                [without-bare-macros : CompilerSymbols
-                  (if (sym-i64-contains-id macro-modules (intern target-module))
-                    (compiler-symbols-remove-module-macro-aliases
-                      symbols
-                      all-decls
-                      target-module)
-                    symbols)]
-                (if (string.string-eq alias "")
-                  (compiler-symbols-add-module-aliases
-                    without-bare-macros
-                    all-decls
-                    target-module
-                    (compiler-symbols-import-alias-key module alias))
-                  without-bare-macros))]
-            [_ symbols])]
-        (match decl
-          [(AstDecl.Module next-module)
-            (build-compiler-symbol-aliases-list
-              all-decls
-              rest
-              next-symbols
-              (intern-str next-module)
-              macro-modules)]
-          [_
-            (build-compiler-symbol-aliases-list
-              all-decls
-              rest
-              next-symbols
-              module
-              macro-modules)]))]))
+  [macro-modules : sym_i64_env.SymI64Env]) : CompilerSymbols
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-symbols : CompilerSymbols symbols]
+    [cur-module : String module]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [next-symbols : CompilerSymbols
+                (match decl
+                  [(AstDecl.Import
+                      (AstImportSpec.Spec
+                        _
+                        _
+                        (AstMaybeModuleName.Some target-module)
+                        (AstMaybeImportAlias.Some alias)
+                        _))
+                    (let
+                      [target-has-macros : bool
+                        (sym_i64_env.sym-i64-contains-id
+                          macro-modules
+                          (intern target-module))]
+                      [without-bare-macros : CompilerSymbols
+                        (if target-has-macros
+                          (compiler-symbols-remove-module-macro-aliases
+                            cur-symbols
+                            all-decls
+                            target-module)
+                          cur-symbols)]
+                      (if (string.string-eq alias "")
+                        (compiler-symbols-add-module-aliases
+                          without-bare-macros
+                          all-decls
+                          target-module
+                          (compiler-symbols-import-alias-key cur-module alias))
+                        without-bare-macros))]
+                  [_ cur-symbols])]
+              (begin
+                (set! cur-decls rest)
+                (set! cur-symbols next-symbols)
+                (match decl
+                  [(AstDecl.Module next-module)
+                    (set! cur-module (intern-str next-module))]
+                  [_ unit])))]))
+      cur-symbols)))
 
 (define (build-compiler-symbol-list
   [decls : AstDeclList]
@@ -2309,13 +2273,17 @@
             (compiler-decl-list-index-count decls))
           0)
           [(ResultCompilerSymbols.Ok symbols)
-            (ResultCompilerSymbols.Ok
-              (build-compiler-symbol-aliases-list
-                decls
-                decls
-                symbols
-                ""
-                (compiler-symbols-macro-module-set decls)))]
+            (let
+              [macro-modules : sym_i64_env.SymI64Env
+                (compiler-symbols-macro-module-set decls)]
+              [aliased : CompilerSymbols
+                (build-compiler-symbol-aliases-list
+                  decls
+                  decls
+                  symbols
+                  ""
+                  macro-modules)]
+              (ResultCompilerSymbols.Ok aliased))]
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
 
@@ -2652,70 +2620,45 @@
   [alias : String]
   [index : i64]
   [module : String]) : CompilerRegistries
-  (match decls
-    [(AstDeclList.Nil) registries]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        (match decl
-          [(AstDecl.Import _)
-            (compiler-registries-add-module-aliases-list
-              registries
-              rest
-              target-module
-              alias
-              index
-              module)]
-          [(AstDecl.IncludeStr _ _)
-            (compiler-registries-add-module-aliases-list
-              registries
-              rest
-              target-module
-              alias
-              index
-              module)]
-          [(AstDecl.IncludeBin _ _)
-            (compiler-registries-add-module-aliases-list
-              registries
-              rest
-              target-module
-              alias
-              index
-              module)]
-          [(AstDecl.Module next-module)
-            (compiler-registries-add-module-aliases-list
-              registries
-              rest
-              target-module
-              alias
-              index
-              (intern-str next-module))]
-          [(AstDecl.Test _ _ _)
-            (compiler-registries-add-module-aliases-list
-              registries
-              rest
-              target-module
-              alias
-              index
-              module)]
-          [_
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-registries : CompilerRegistries registries]
+    [cur-index : i64 index]
+    [cur-module : String module]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
             (let
-              [in-target : bool (string.string-eq module target-module)]
-              [next-registries : CompilerRegistries
-                (if in-target
-                  (compiler-registries-add-decl-alias-in-module
-                    registries
-                    alias
-                    decl
-                    index)
-                  registries)]
-              (compiler-registries-add-module-aliases-list
-                next-registries
-                rest
-                target-module
-                alias
-                (+ index 1)
-                module))]))]))
+              [rest : AstDeclList (box-get rest)]
+              (match decl
+                [(AstDecl.Import _) (set! cur-decls rest)]
+                [(AstDecl.IncludeStr _ _) (set! cur-decls rest)]
+                [(AstDecl.IncludeBin _ _) (set! cur-decls rest)]
+                [(AstDecl.Module next-module)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-module (intern-str next-module)))]
+                [(AstDecl.Test _ _ _) (set! cur-decls rest)]
+                [_
+                  (let
+                    [in-target : bool
+                      (string.string-eq cur-module target-module)]
+                    [next-registries : CompilerRegistries
+                      (if in-target
+                        (compiler-registries-add-decl-alias-in-module
+                          cur-registries
+                          alias
+                          decl
+                          cur-index)
+                        cur-registries)]
+                    (begin
+                      (set! cur-decls rest)
+                      (set! cur-registries next-registries)
+                      (set! cur-index (+ cur-index 1))))]))]))
+      cur-registries)))
 
 (define (compiler-registries-add-module-aliases
   [registries : CompilerRegistries]
@@ -2735,41 +2678,43 @@
   [decls : AstDeclList]
   [registries : CompilerRegistries]
   [module : String]) : CompilerRegistries
-  (match decls
-    [(AstDeclList.Nil) registries]
-    [(AstDeclList.Cons decl rest)
-      (let
-        [rest : AstDeclList (box-get rest)]
-        [next-registries : CompilerRegistries
-          (match decl
-            [(AstDecl.Import
-                (AstImportSpec.Spec
-                  _
-                  _
-                  (AstMaybeModuleName.Some target-module)
-                  (AstMaybeImportAlias.Some alias)
-                  _))
-              (if (string.string-eq alias "")
-                (compiler-registries-add-module-aliases
-                  registries
-                  all-decls
-                  target-module
-                  (compiler-symbols-import-alias-key module alias))
-                registries)]
-            [_ registries])]
-        (match decl
-          [(AstDecl.Module next-module)
-            (build-compiler-registry-aliases-list
-              all-decls
-              rest
-              next-registries
-              (intern-str next-module))]
-          [_
-            (build-compiler-registry-aliases-list
-              all-decls
-              rest
-              next-registries
-              module)]))]))
+  (let
+    [cur-decls : AstDeclList decls]
+    [cur-registries : CompilerRegistries registries]
+    [cur-module : String module]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur-decls
+          [(AstDeclList.Nil) (set! done true)]
+          [(AstDeclList.Cons decl rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [next-registries : CompilerRegistries
+                (match decl
+                  [(AstDecl.Import
+                      (AstImportSpec.Spec
+                        _
+                        _
+                        (AstMaybeModuleName.Some target-module)
+                        (AstMaybeImportAlias.Some alias)
+                        _))
+                    (if (string.string-eq alias "")
+                      (compiler-registries-add-module-aliases
+                        cur-registries
+                        all-decls
+                        target-module
+                        (compiler-symbols-import-alias-key cur-module alias))
+                      cur-registries)]
+                  [_ cur-registries])]
+              (begin
+                (set! cur-decls rest)
+                (set! cur-registries next-registries)
+                (match decl
+                  [(AstDecl.Module next-module)
+                    (set! cur-module (intern-str next-module))]
+                  [_ unit])))]))
+      cur-registries)))
 
 (define (build-compiler-variant-registry-list
   [variants : AstVariantDefList]
@@ -2820,7 +2765,7 @@
 (define (build-compiler-field-registry-list
   [fields : AstFieldDefList]
   [registries : CompilerRegistries]
-  [seen : SymI64Env]
+  [seen : sym_i64_env.SymI64Env]
   [struct-name : String]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
@@ -2831,7 +2776,7 @@
         [rest : AstFieldDefList (box-get rest)]
         (match field
           [(AstFieldDef name _ _)
-            (if (sym-i64-contains-id seen name)
+            (if (sym_i64_env.sym-i64-contains-id seen name)
               (ResultCompilerRegistries.Err
                 (compiler-registries-duplicate-field-message
                   struct-name
@@ -2846,7 +2791,7 @@
                   (build-compiler-field-registry-list
                     rest
                     next-registries
-                    (sym-i64-bind-id seen name field-index)
+                    (sym_i64_env.sym-i64-bind-id seen name field-index)
                     struct-name
                     struct-index
                     (+ field-index 1))]
@@ -2929,7 +2874,7 @@
                   (match (build-compiler-field-registry-list
                     fields
                     cur-registries
-                    (sym-i64-empty)
+                    (sym_i64_env.sym-i64-empty)
                     (compiler-symbol-module-key cur-module (intern-str name))
                     cur-index
                     0)
@@ -2946,7 +2891,7 @@
                   (match (build-compiler-field-registry-list
                     fields
                     cur-registries
-                    (sym-i64-empty)
+                    (sym_i64_env.sym-i64-empty)
                     (compiler-symbol-module-key cur-module (intern-str name))
                     cur-index
                     0)
@@ -3005,7 +2950,7 @@
                         (match (build-compiler-field-registry-list
                           fields
                           cur-registries
-                          (sym-i64-empty)
+                          (sym_i64_env.sym-i64-empty)
                           (compiler-symbol-module-key
                             cur-module
                             (intern-str name))
@@ -3026,7 +2971,7 @@
                         (match (build-compiler-field-registry-list
                           fields
                           cur-registries
-                          (sym-i64-empty)
+                          (sym_i64_env.sym-i64-empty)
                           (compiler-symbol-module-key
                             cur-module
                             (intern-str name))
@@ -3065,8 +3010,10 @@
           (compiler-registries-empty)
           0)
           [(ResultCompilerRegistries.Ok registries)
-            (ResultCompilerRegistries.Ok
-              (build-compiler-registry-aliases-list decls decls registries ""))]
+            (let
+              [aliased : CompilerRegistries
+                (build-compiler-registry-aliases-list decls decls registries "")]
+              (ResultCompilerRegistries.Ok aliased))]
           [(ResultCompilerRegistries.Err message)
             (ResultCompilerRegistries.Err message)]))]))
 

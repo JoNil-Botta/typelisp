@@ -1262,7 +1262,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # The compile-only bootstrapped stage1 has `compile` but not `build`, so
         # emit Windows asm then assemble (clang) + link (lld-link), mirroring the
         # Linux compile->as->ld path below.
-        run_build "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows -o "$asm" \
+        run_build "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
@@ -1326,7 +1327,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             continue
         fi
     else
-        run_build "$COMPILER" compile "$work_src" -o "$asm" > "$build_stdout" 2> "$build_stderr"
+        run_build "$COMPILER" compile "$work_src" \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
+            > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
             if should_skip_staged "$requires_symbol" "$build_stderr"; then
                 echo "[integration] SKIP $name (awaiting stage0 compiler support for '$requires_symbol')"

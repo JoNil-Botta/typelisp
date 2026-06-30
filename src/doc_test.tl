@@ -22,6 +22,7 @@
 (import stdlib.str_cat)
 (import stdlib.option)
 (import (option i64) as option_i64)
+(import sym_i64_env)
 
 (defenum DocTestExpectation
   (Pass)
@@ -1406,7 +1407,8 @@
     [index : i64 (doc-test-example-index example)]
     [virtual-path : String (doc-test-example-virtual-path path index)]
     [code : String (doc-test-example-code example)]
-    [cfgs : SymI64Env (compiler-driver-target-cfgs target (compiler-cfg-empty))]
+    [cfgs : sym_i64_env.SymI64Env
+      (compiler-driver-target-cfgs target (compiler-cfg-empty))]
     (match (compiler-driver-load-source-with-runtime
       virtual-path
       code

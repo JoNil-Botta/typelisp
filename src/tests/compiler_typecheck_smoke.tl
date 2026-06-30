@@ -1603,7 +1603,7 @@
 
 ;; Declaration-emitting macros must be able to emit functions with non-trivial
 ;; bodies (#3193 / #3074). The macro-output serializer round-trips arithmetic,
-;; struct-get, array.make-array, array.array-ref/array.set!, let, while,
+;; struct-get, array.make-array, array.ref/array-set!, let, while,
 ;; and set! back to
 ;; declarations; before that surface existed these fixtures failed with
 ;; "module macro output contains syntax that cannot be parsed as a declaration".

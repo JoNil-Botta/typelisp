@@ -1574,7 +1574,7 @@
   compile-profile
   (define (tc-lp-count [index : i64]) : i64
     (if (tc-lp-index-valid? index)
-      (array.array-ref tc-lp-counts index)
+      (array.ref tc-lp-counts index)
       0)))
 
 (cfg

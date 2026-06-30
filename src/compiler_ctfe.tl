@@ -4273,6 +4273,7 @@
       [(string.string-eq lookup-name "expr-string") "expr-string"]
       [(string.string-eq lookup-name "expr-var") "expr-var"]
       [(string.string-eq lookup-name "expr-struct-get") "expr-struct-get"]
+      [(string.string-eq lookup-name "expr-tuple-ref") "expr-tuple-ref"]
       [(string.string-eq lookup-name "expr-struct-set") "expr-struct-set"]
       [(string.string-eq lookup-name "expr-splice") "expr-splice"]
       [(string.string-eq lookup-name "expr-if") "expr-if"]
@@ -4786,6 +4787,74 @@
           (ctfe-diagnostic-at-expr
             expr
             "expr-struct-get expects exactly two args")))]))
+
+;; `(expr-tuple-ref target index)` builds a tuple-ref Expr whose index is
+;; computed at macro CTFE. The expanded program typechecks the tuple access.
+(define (ctfe-eval-expr-tuple-ref-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match args
+    [(AstExprList.Cons target-arg tail)
+      (let
+        [target-arg : AstExpr (ctfe-ast-get env target-arg)]
+        [tail : AstExprList (box-get tail)]
+        (match tail
+          [(AstExprList.Cons index-arg rest)
+            (let
+              [index-arg : AstExpr (ctfe-ast-get env index-arg)]
+              [rest : AstExprList (box-get rest)]
+              (match rest
+                [(AstExprList.Nil)
+                  (match (compiler-ctfe-eval target-arg env fuel)
+                    [(ResultCtfe.Ok target-val target-fuel)
+                      (match target-val
+                        [(CompilerCtfeValue.Expr target-node _)
+                          (match (compiler-ctfe-eval index-arg env target-fuel)
+                            [(ResultCtfe.Ok index-val index-fuel)
+                              (match index-val
+                                [(CompilerCtfeValue.I64 index)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.Expr
+                                      (ast-expr-tuple-ref-with-pools
+                                        (ctfe-env-pools env)
+                                        target-node
+                                        index)
+                                      (ctfe-untyped-expr-type))
+                                    index-fuel)]
+                                [_
+                                  (ResultCtfe.Err
+                                    (box
+                                      (ctfe-diagnostic-at-expr
+                                        expr
+                                        "expr-tuple-ref index expects i64")))])]
+                            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+                        [_
+                          (ResultCtfe.Err
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "expr-tuple-ref target expects Expr")))])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+                [_
+                  (ResultCtfe.Err
+                    (box
+                      (ctfe-diagnostic-at-expr
+                        expr
+                        "expr-tuple-ref expects exactly two args")))]))]
+          [_
+            (ResultCtfe.Err
+              (box
+                (ctfe-diagnostic-at-expr
+                  expr
+                  "expr-tuple-ref expects exactly two args")))]))]
+    [_
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "expr-tuple-ref expects exactly two args")))]))
 
 ;; `(expr-struct-set target field value)` builds a struct field assignment whose
 ;; field name is computed at macro CTFE. The expanded program typechecks the
@@ -6201,6 +6270,8 @@
             (ctfe-eval-expr-var-call args expr env fuel)]
           [(string.string-eq call-name "expr-struct-get")
             (ctfe-eval-expr-struct-get-call args expr env fuel)]
+          [(string.string-eq call-name "expr-tuple-ref")
+            (ctfe-eval-expr-tuple-ref-call args expr env fuel)]
           [(string.string-eq call-name "expr-struct-set")
             (ctfe-eval-expr-struct-set-call args expr env fuel)]
           [(string.string-eq call-name "expr-splice")
@@ -10400,6 +10471,9 @@
 (define (ctfe-expr-struct-get [target : i64] [field : String]) : i64
   (ast-expr-struct-get target field))
 
+(define (ctfe-expr-tuple-ref [target : i64] [index : i64]) : i64
+  (ast-expr-tuple-ref target index))
+
 (define (ctfe-expr-if [cond : i64] [then-branch : i64] [else-branch : i64]) : i64
   (ast-expr-if cond then-branch else-branch))
 
@@ -12170,6 +12244,14 @@
         "expr-struct-get"
         point-expr
         field-name-lit)]
+    [tuple-index-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLitInt 1 "")))]
+    [tuple-ref-expr : i64
+      (compiler-ctfe-call2-in-env
+        env
+        "expr-tuple-ref"
+        point-expr
+        tuple-index-lit)]
     [field-set-expr : i64
       (compiler-ctfe-call3-in-env
         env
@@ -12182,6 +12264,11 @@
         (ctfe-env-pools env)
         (ctfe-ast-push env (AstExpr.Var (intern "point")))
         "x")]
+    [expected-tuple-ref : i64
+      (ast-expr-tuple-ref-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (AstExpr.Var (intern "point")))
+        1)]
     [expected-field-set : i64
       (ast-expr-struct-set-with-pools
         (ctfe-env-pools env)
@@ -12223,6 +12310,18 @@
               (and
                 (ctfe-untyped-expr-type? checked-ty)
                 (ctfe-test-expr-eq-in-env env node expected-field))]
+            [_ false])]
+        [(ResultCtfe.Err _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env tuple-ref-expr)
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.Expr node checked-ty)
+              (and
+                (ctfe-untyped-expr-type? checked-ty)
+                (ctfe-test-expr-eq-in-env env node expected-tuple-ref))]
             [_ false])]
         [(ResultCtfe.Err _) false])
       (match (compiler-ctfe-eval

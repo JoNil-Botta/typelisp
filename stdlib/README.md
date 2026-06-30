@@ -210,11 +210,11 @@ use.
   module exposes `encode` / `decode` over the strategy's `Value` type, a local
   `Result` enum, and any format-specific declarations emitted by the strategy's
   `extra-decls` hook. Current derives cover structs with scalar `bool`, integer,
-  float, and `String` fields, nested structs, fixed arrays, and dynamic arrays;
-  strategy hooks own object and sequence representation, decode diagnostics, and
-  helper aliases. The checked toy format exercises the hook contract, and
-  `json.tl` provides the JSON integration strategy. Enum serialization remains a
-  separate follow-up.
+  float, and `String` fields, nested structs, fixed arrays, dynamic arrays, and
+  tuples; strategy hooks own object and sequence representation, decode
+  diagnostics, and helper aliases. The checked toy format exercises the hook
+  contract, and `json.tl` provides the JSON integration strategy. Enum
+  serialization remains a separate follow-up.
 - `process.tl`: process command/output/error data model and the public
   `output`/`start`/`wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

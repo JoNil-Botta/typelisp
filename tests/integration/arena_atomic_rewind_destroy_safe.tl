@@ -1,6 +1,6 @@
 (import stdlib.arena)
-(import "stdlib/thread.tl")
-(import (thread-handle i64) as thread_i64)
+(import stdlib.thread)
+(import (thread.handle i64) as thread_i64)
 (import "stdlib/string.tl")
 
 (define (atomic-arena-join-code [worker : thread_i64.Handle]) : i64

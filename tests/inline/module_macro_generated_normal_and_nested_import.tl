@@ -8,8 +8,8 @@
 (test
   generated-module-body-normal-import-with-nested-generated-import
   (let
-      [items : (Array i64) (array.make-array i64 2)]
-      (begin
+    [items : (Array i64) (array.make-array i64 2)]
+    (begin
       (array-set! items 0 11)
       (array-set! items 1 31)
       (let

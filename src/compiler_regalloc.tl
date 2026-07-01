@@ -14135,10 +14135,9 @@
       CompilerRegAbiLinux)))
 
 ;; Scalar register plan (#perf, opt level 2): full dataflow live intervals for
-;; small multi-block functions, structural ineligibility that keeps
-;; call-spanning integers/handles in callee-saved registers, and
-;; float-call-spanning exclusion for the caller-saved XMM pool. Single-block
-;; functions cannot have loop-carried values.
+;; ALL functions, structural ineligibility that keeps call-spanning
+;; integers/handles in callee-saved registers, and float-call-spanning
+;; exclusion for the caller-saved XMM pool.
 ;;
 ;; The precise (segmented, hole-aware) interval builder feeds
 ;; compiler-reg-vars-interfere-segmented-index?, whose exact segment-overlap test
@@ -14148,35 +14147,35 @@
 ;; (compiler-reg-block-intervals) leaves segments empty, so every function on it
 ;; is stuck with that conservative fallback.
 ;;
-;; Two windows get the precise builder: tiny functions (<= 10 blocks) and
-;; GENUINELY LARGE ones (>= 100 blocks). The large window is the added tier
-;; (#regalloc): the worst spillers in the self-host -- emit-instrs-step (299
-;; blocks), ctfe-quote-expr (378), lower-expr-with-type, the tc_/lower/spec
-;; walkers -- have hundreds of blocks and dozens of disjoint live ranges, so
-;; precise interference removes real phantom conflicts there (measured: -90 net
-;; static stack reloads across s2, concentrated in functions over 500 reloads,
-;; 91 improved / 1 regressed; full-liveness cost was negligible -- s1->s2 build
-;; time unchanged). The MEDIUM band (11-99 blocks) is deliberately left on the
-;; coarse builder: measurement showed precise intervals there perturb the greedy
-;; spill-victim/eviction heuristics non-monotonically and net-REGRESS reloads, so
-;; extending the tier downward (or removing the cap outright) is a net loss until
-;; that interaction is reworked.
-(define (compiler-reg-scalar-full-interval-block-limit) : i64
-  10)
-
-(define (compiler-reg-scalar-full-interval-huge-floor) : i64
-  100)
-
+;; History (M-D): precise intervals were once limited to 2-10-block functions,
+;; then extended to >= 100 blocks (#regalloc: -90 net static stack reloads in
+;; the self-host's huge walkers, full-liveness compile cost negligible). The
+;; 11-99-block band and single-block functions were deliberately kept coarse
+;; because a measurement AT THAT TIME showed precise intervals in the medium
+;; band perturbed the greedy spill-victim/eviction heuristics non-monotonically
+;; and net-regressed reloads. That measurement predates params-as-greedy-
+;; candidates (M-A) and dead result-store elision (M-B), which reshaped the
+;; interference/pressure landscape; re-measured after M-B, precise intervals
+;; everywhere are a net win, so every scalar-mode function now gets the precise
+;; builder (single-block functions included: multi-def vars with disjoint
+;; single-block ranges suffer the same phantom conflicts under the coarse
+;; fallback, and the M-A param entry-extension below runs on the interval
+;; index regardless of builder). This predicate also gates the loop-split
+;; rescue passes, which require the precise index; they now run for every
+;; function shape. The coarse compiler-reg-block-intervals branch in
+;; compiler-reg-plan-function-scalar-for-abi is kept as the fallback: flipping
+;; this predicate is the single switch back should a pathological shape appear.
+;;
+;; NOTE: enabling this detonated a LATENT BACKEND BUG, fixed together with it:
+;; precise mid-band plans saturate the register pool, so the backend's
+;; EMERGENCY scavenge (all pool regs occupied) started firing in fused
+;; destructure emitters, where its candidate pick ignored the sibling load's
+;; register home and the emergency-wrap restore overwrote the just-loaded
+;; result (false OOB abort in lex-parse-based-int). See the M-D clobber fix in
+;; compiler-backend-emit-load-from-gep-pair / compiler-backend-emit-load-load.
 (define (compiler-reg-scalar-full-intervals? [func : CompilerIrFunction]) : bool
   (match func
-    [(IrFunction _ _ _ _ blocks)
-      (let
-        [count : i64 (compiler-ir-block-list-count blocks)]
-        (and
-          (> count 1)
-          (or
-            (<= count (compiler-reg-scalar-full-interval-block-limit))
-            (>= count (compiler-reg-scalar-full-interval-huge-floor)))))]))
+    [(IrFunction _ _ _ _ _) true]))
 
 ;; M-A (RC1) correctness requirement: a register-homed param's home register is
 ;; WRITTEN by the backend's entry copy in the prologue, before the first

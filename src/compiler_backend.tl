@@ -13394,11 +13394,28 @@
     ;; Scavenge ONE base register and share it across both loads: the 1st load
     ;; materializes the base into it, the 2nd reuses it (no reload, byte-identical
     ;; to the old %r10 path while %r10 is reserved).
+    ;;
+    ;; M-D clobber fix: EXPLICITLY exclude the SIBLING load's register home.
+    ;; scavenge-reg's dst-var only excludes load-dst0's home, and the sibling is
+    ;; protected on the free path solely by the staging-window occupancy query --
+    ;; which the EMERGENCY path deliberately ignores (everything is occupied when
+    ;; it fires). Under full occupancy the emergency scratch could land on
+    ;; load-dst1's home; the emergency-wrap restore then overwrites the second
+    ;; load's just-defined result (lex-parse-based-int: string len loaded into
+    ;; %r9, restored over before the bounds cmp -> false OOB abort). The free
+    ;; path never picked the sibling home (occupied in the window), so this
+    ;; exclusion only changes emergency picks, i.e. only the buggy case.
+    [dst1-home : String
+      (compiler-backend-var-register-home assignments load-dst1)]
     [base-reg : String
       (compiler-backend-scavenge-reg
         load-dst0
-        (compiler-backend-addr-scavenge-exclude)
-        0
+        (if (string-eq dst1-home "")
+          (compiler-backend-addr-scavenge-exclude)
+          (compiler-backend-one-exclude dst1-home))
+        (if (string-eq dst1-home "")
+          0
+          1)
         "%r10")]
     (match (compiler-backend-emit-load-from-gep
       assignments
@@ -13432,10 +13449,19 @@
     [_first-dst : i64 first-dst]
     (if (= (compiler-backend-type-size first-ty) 8)
       (let
+        ;; M-D clobber fix (see emit-load-from-gep-pair): the pointer-chase base
+        ;; scratch must not land on second-dst's register home under EMERGENCY
+        ;; scavenge -- the wrap restore would overwrite the chased load's result.
+        [second-home : String
+          (compiler-backend-var-register-home assignments second-dst)]
         [base : String
           (compiler-backend-scavenge-reg-here
-            (compiler-backend-addr-scavenge-exclude)
-            0
+            (if (string-eq second-home "")
+              (compiler-backend-addr-scavenge-exclude)
+              (compiler-backend-one-exclude second-home))
+            (if (string-eq second-home "")
+              0
+              1)
             "%r10")]
         [base-mem : String (compiler-backend-base-deref base)]
         (match (compiler-backend-emit-load-value-with-plan assignments ptr base)
@@ -23466,16 +23492,15 @@
   [func-diag : CompilerDiagnostic]
   [use-counts : (Array i64)]
   [buf : text_buf.TextBuf]) : ResultCompilerBackend
-  (let
-    [single : ResultCompilerBackend
-      (compiler-backend-emit-load-from-gep
-        assignments
-        load-dst
-        base
-        offset
-        elem-ty
-        load-ty
-        "")]
+  ;; M-D emergency-leak fix: the single gep+load emission is inlined at each
+  ;; fallthrough site instead of being computed SPECULATIVELY up front.
+  ;; emit-load-from-gep scavenges a base register; under full occupancy that
+  ;; scavenge EMERGENCY-adds the picked register to the global pending set as
+  ;; a side effect. The speculative single asm was discarded on the PAIR path,
+  ;; but its pending registers leaked into the pair wrap, whose stray trailing
+  ;; restore overwrote the pair's second loaded result (lex-parse-based-int:
+  ;; string len in %r9 restored-over before its bounds compare -> false OOB
+  ;; abort on every mid-band self-host build).
     (match (compiler-backend-value-as-i64 offset)
       [(CompilerBackendSomeI64 _)
         (match rest
@@ -23547,7 +23572,14 @@
                                   blocks
                                   current-label
                                   fallthrough
-                                  single
+                                  (compiler-backend-emit-load-from-gep
+                                    assignments
+                                    load-dst
+                                    base
+                                    offset
+                                    elem-ty
+                                    load-ty
+                                    "")
                                   rest
                                   assignments
                                   vars
@@ -23570,7 +23602,14 @@
                                 blocks
                                 current-label
                                 fallthrough
-                                single
+                                (compiler-backend-emit-load-from-gep
+                                  assignments
+                                  load-dst
+                                  base
+                                  offset
+                                  elem-ty
+                                  load-ty
+                                  "")
                                 rest
                                 assignments
                                 vars
@@ -23593,7 +23632,14 @@
                             blocks
                             current-label
                             fallthrough
-                            single
+                            (compiler-backend-emit-load-from-gep
+                              assignments
+                              load-dst
+                              base
+                              offset
+                              elem-ty
+                              load-ty
+                              "")
                             rest
                             assignments
                             vars
@@ -23616,7 +23662,14 @@
                         blocks
                         current-label
                         fallthrough
-                        single
+                        (compiler-backend-emit-load-from-gep
+                          assignments
+                          load-dst
+                          base
+                          offset
+                          elem-ty
+                          load-ty
+                          "")
                         rest
                         assignments
                         vars
@@ -23638,7 +23691,14 @@
                     blocks
                     current-label
                     fallthrough
-                    single
+                    (compiler-backend-emit-load-from-gep
+                      assignments
+                      load-dst
+                      base
+                      offset
+                      elem-ty
+                      load-ty
+                      "")
                     rest
                     assignments
                     vars
@@ -23661,7 +23721,14 @@
                   blocks
                   current-label
                   fallthrough
-                  single
+                  (compiler-backend-emit-load-from-gep
+                    assignments
+                    load-dst
+                    base
+                    offset
+                    elem-ty
+                    load-ty
+                    "")
                   rest
                   assignments
                   vars
@@ -23684,7 +23751,14 @@
               blocks
               current-label
               fallthrough
-              single
+              (compiler-backend-emit-load-from-gep
+                assignments
+                load-dst
+                base
+                offset
+                elem-ty
+                load-ty
+                "")
               rest
               assignments
               vars
@@ -23707,7 +23781,14 @@
           blocks
           current-label
           fallthrough
-          single
+          (compiler-backend-emit-load-from-gep
+            assignments
+            load-dst
+            base
+            offset
+            elem-ty
+            load-ty
+            "")
           rest
           assignments
           vars
@@ -23721,7 +23802,7 @@
           spans
           func-diag
           use-counts
-          buf)])))
+          buf)]))
 
 (define (compiler-backend-emit-fused-gep-store-rest
   [target : CompilerBackendTarget]

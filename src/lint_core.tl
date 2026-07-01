@@ -2000,6 +2000,8 @@
   [module-name : String]) : bool
   (match decl
     [(AstDecl.Module _) false]
+    [(AstDecl.ModuleBody _ body)
+      (lint-decl-list-uses-import? (box-get body) alias module-name)]
     [(AstDecl.Def _ maybe-ty body)
       (if (lint-maybe-type-uses-import? maybe-ty alias module-name)
         true
@@ -7178,6 +7180,8 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (lint-walk-decl inner threshold acc))]
+    [(AstDecl.ModuleBody _ body-box)
+      (lint-walk-decl-list (box-get body-box) threshold acc)]
     [(AstDecl.Module _) acc]
     [(AstDecl.Extern _ _ _ _) acc]
     [(AstDecl.DefEnum _ _ _) acc]

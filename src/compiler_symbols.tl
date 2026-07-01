@@ -163,6 +163,12 @@
               (match decl
                 [(AstDecl.Import _) unit]
                 [(AstDecl.Module _) unit]
+                [(AstDecl.ModuleBody _ body-box)
+                  (set!
+                    count
+                    (+
+                      count
+                      (compiler-decl-list-index-count (box-get body-box))))]
                 [(AstDecl.Test _ _ _) unit]
                 [_ (set! count (+ count 1))])
               (set! cursor (box-get rest)))]))
@@ -1190,6 +1196,13 @@
     [(AstDecl.IncludeBin _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Import _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
+    [(AstDecl.ModuleBody name body-box)
+      (build-compiler-symbol-list-in-module
+        (box-get body-box)
+        (box-get body-box)
+        symbols
+        index
+        (intern-str name))]
     [(AstDecl.Test _ _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -1447,6 +1460,7 @@
     [(AstDecl.IncludeBin _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Import _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
+    [(AstDecl.ModuleBody _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Test _ _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -1625,6 +1639,7 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (compiler-symbols-add-decl-alias-in-module symbols alias inner index))]
+    [(AstDecl.ModuleBody _ _) symbols]
     [_ symbols]))
 
 (define (compiler-symbols-remove-decl-macro-alias
@@ -1664,6 +1679,8 @@
       (let
         [inner : AstDecl (box-get inner-box)]
         (compiler-symbols-macro-module-set-add-decl modules module-id inner))]
+    [(AstDecl.ModuleBody name body-box)
+      (compiler-symbols-macro-module-set-list (box-get body-box) name modules)]
     [_ modules]))
 
 (define (compiler-symbols-macro-module-set-list
@@ -1893,8 +1910,17 @@
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.Module _) false]
+    [(AstDecl.ModuleBody _ _) false]
     [(AstDecl.Test _ _ _) false]
     [_ true]))
+
+(define (compiler-symbol-path-list-repeat [decls : AstDeclList] [path : String]) : AstDeclPathList
+  (match decls
+    [(AstDeclList.Nil) AstDeclPathList.Nil]
+    [(AstDeclList.Cons _ rest)
+      (let
+        [rest : AstDeclList (box-get rest)]
+        (ast-decl-path-cons path (compiler-symbol-path-list-repeat rest path)))]))
 
 (define (compiler-symbol-path-at-index
   [decls : AstDeclList]
@@ -1917,11 +1943,32 @@
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
             [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
-        (if (compiler-symbol-decl-counts-for-index? decl)
-          (if (= target index)
-            decl-path
-            (compiler-symbol-path-at-index rest rest-paths target (+ index 1)))
-          (compiler-symbol-path-at-index rest rest-paths target index)))]))
+        (match decl
+          [(AstDecl.ModuleBody _ body-box)
+            (let
+              [body : AstDeclList (box-get body-box)]
+              [body-count : i64 (compiler-decl-list-index-count body)]
+              (if (< target (+ index body-count))
+                (compiler-symbol-path-at-index
+                  body
+                  (compiler-symbol-path-list-repeat body decl-path)
+                  target
+                  index)
+                (compiler-symbol-path-at-index
+                  rest
+                  rest-paths
+                  target
+                  (+ index body-count))))]
+          [_
+            (if (compiler-symbol-decl-counts-for-index? decl)
+              (if (= target index)
+                decl-path
+                (compiler-symbol-path-at-index
+                  rest
+                  rest-paths
+                  target
+                  (+ index 1)))
+              (compiler-symbol-path-at-index rest rest-paths target index))]))]))
 
 (define (compiler-symbols-duplicate-location-suffix
   [first-path : String]
@@ -2138,6 +2185,25 @@
                 symbols
                 index
                 next-module-name))]
+          [(AstDecl.ModuleBody name body-box)
+            (let
+              [body : AstDeclList (box-get body-box)]
+              [body-count : i64 (compiler-decl-list-index-count body)]
+              (match (build-compiler-symbol-list-in-module
+                all-decls
+                body
+                symbols
+                index
+                (intern-str name))
+                [(ResultCompilerSymbols.Ok body-symbols)
+                  (build-compiler-symbol-list-in-module
+                    all-decls
+                    rest
+                    body-symbols
+                    (+ index body-count)
+                    module)]
+                [(ResultCompilerSymbols.Err message)
+                  (ResultCompilerSymbols.Err message)]))]
           [(AstDecl.Test _ _ _)
             (build-compiler-symbol-list-in-module
               all-decls
@@ -2219,6 +2285,30 @@
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
                     (set! cur-module (intern-str next-module)))]
+                [(AstDecl.ModuleBody name body-box)
+                  (let
+                    [body : AstDeclList (box-get body-box)]
+                    [body-count : i64 (compiler-decl-list-index-count body)]
+                    [body-paths : AstDeclPathList
+                      (compiler-symbol-path-list-repeat body decl-path)]
+                    (match (build-compiler-symbol-list-with-paths-in-module
+                      all-decls
+                      all-paths
+                      body
+                      body-paths
+                      cur-symbols
+                      cur-index
+                      (intern-str name))
+                      [(ResultCompilerSymbols.Ok next-symbols)
+                        (begin
+                          (set! cur-decls rest)
+                          (set! cur-paths rest-paths)
+                          (set! cur-symbols next-symbols)
+                          (set! cur-index (+ cur-index body-count)))]
+                      [(ResultCompilerSymbols.Err message)
+                        (begin
+                          (set! result (ResultCompilerSymbols.Err message))
+                          (set! done true))]))]
                 [(AstDecl.Test _ _ _)
                   (begin
                     (set! cur-decls rest)
@@ -2847,6 +2937,24 @@
                   (begin
                     (set! cur-decls rest)
                     (set! cur-module (intern-str next-module)))]
+                [(AstDecl.ModuleBody name body-box)
+                  (let
+                    [body : AstDeclList (box-get body-box)]
+                    [body-count : i64 (compiler-decl-list-index-count body)]
+                    (match (build-compiler-registry-list-in-module
+                      body
+                      cur-registries
+                      cur-index
+                      (intern-str name))
+                      [(ResultCompilerRegistries.Ok next-registries)
+                        (begin
+                          (set! cur-decls rest)
+                          (set! cur-registries next-registries)
+                          (set! cur-index (+ cur-index body-count)))]
+                      [(ResultCompilerRegistries.Err message)
+                        (begin
+                          (set! result (ResultCompilerRegistries.Err message))
+                          (set! done true))]))]
                 [(AstDecl.Test _ _ _) (set! cur-decls rest)]
                 [(AstDecl.DefEnum name _ variants)
                   (match (build-compiler-variant-registry-list-in-module

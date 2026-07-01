@@ -7358,6 +7358,26 @@
 (import (gen) as generated)
 (define (main) : i64 (generated.answer))")
 
+(define (compiler-typecheck-module-body-source) : String
+  "(module local.helper
+  (import stdlib.string)
+  (defstruct Pair (value i64))
+  (defenum Choice (Choice i64))
+  (defmacro (twice [value : i64]) : i64 `(+ ,value ,value))
+  (define value : i64 (twice 21))
+  (define (pair-value [p : Pair]) : i64 (struct-get p value)))
+(import local.helper as helper)
+(define value : i64 5)
+(define (main) : i64
+  (+ helper.value (+ value (helper.pair-value (helper.Pair 3)))))")
+
+(define (compiler-typecheck-module-macro-import-body-source) : String
+  "(defmacro (gen) : Module
+  `(module generated.module
+    (define (answer) : i64 42)))
+(import (gen) as generated)
+(define (main) : i64 (generated.answer))")
+
 (define (compiler-typecheck-module-macro-import-duplicate-source) : String
   "(defmacro (gen) : Module
   `(begin
@@ -7785,6 +7805,9 @@
     (compiler-typecheck-ok? (compiler-typecheck-module-macro-import-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-import-alias-source))
+    (compiler-typecheck-ok? (compiler-typecheck-module-body-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-module-macro-import-body-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-module-macro-import-duplicate-source))
     ;; Two generated module identities sharing the `generated.module` target and

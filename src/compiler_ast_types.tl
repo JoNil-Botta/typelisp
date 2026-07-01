@@ -1772,6 +1772,7 @@
 
 (defenum AstDecl
   (Module i64)
+  (ModuleBody i64 (Box AstDeclList))
   (Def i64 AstMaybeType i64)
   (DefFn i64 AstParamList AstType i64 AstFnExport)
   (DefMacro i64 AstMacroParamList AstType i64)
@@ -2843,6 +2844,12 @@
 (define (ast-decl-module-id [name : i64]) : AstDecl
   (AstDecl.Module name))
 
+(define (ast-decl-module-body [name : String] [body : AstDeclList]) : AstDecl
+  (AstDecl.ModuleBody (ci.intern name) (box body)))
+
+(define (ast-decl-module-body-id [name : i64] [body : AstDeclList]) : AstDecl
+  (AstDecl.ModuleBody name (box body)))
+
 (define (ast-decl-def [name : String] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
   (AstDecl.Def (ci.intern name) maybe-ty value))
 
@@ -3714,6 +3721,10 @@
   [decl : AstDecl]) : AstDecl
   (match decl
     [(AstDecl.Module name) (AstDecl.Module name)]
+    [(AstDecl.ModuleBody name body)
+      (AstDecl.ModuleBody
+        name
+        (box (ast-compaction-remap-decl-list remap (box-get body))))]
     [(AstDecl.Def name maybe-ty value)
       (AstDecl.Def
         name
@@ -3987,6 +3998,7 @@
     [(AstDecl.Test _ _ _) 7]
     [(AstDecl.ComptimeDecl _ _) 8]
     [(AstDecl.Module _) 9]
+    [(AstDecl.ModuleBody _ _) 18]
     [(AstDecl.IncludeStr _ _) 12]
     [(AstDecl.Unsafe _) 13]
     [(AstDecl.DefEnumLifetimes _ _ _ _) 14]

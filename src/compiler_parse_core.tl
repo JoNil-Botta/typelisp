@@ -6537,15 +6537,64 @@
         [_ (ResultAstDecl.Err "parse: malformed defdispatch")])]
     [_ (ResultAstDecl.Err "parse: malformed defdispatch")]))
 
-(define (parse-ast-module [rest : SpannedSexpr]) : ResultAstDecl
+(define (parse-ast-module-body-forms-into-vec
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [forms : SpannedSexpr]
+  [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
+  (match forms
+    [(SpannedSexpr.Nil _) (ResultParseAstDeclVec.Ok)]
+    [(SpannedSexpr.Cons form rest _)
+      (match (parse-ast-decl-maybe-with-pools dispatch pools (sp-node-get form))
+        [(ResultAstMaybeDecl.SomeDecl decl)
+          (begin
+            (parse-ast-decl-vec-push out decl)
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              (sp-node-get rest)
+              out))]
+        [(ResultAstMaybeDecl.Decls decls)
+          (begin
+            (parse-ast-decl-vec-push-list! out decls)
+            (parse-ast-module-body-forms-into-vec
+              dispatch
+              pools
+              (sp-node-get rest)
+              out))]
+        [(ResultAstMaybeDecl.NoDecl)
+          (parse-ast-module-body-forms-into-vec
+            dispatch
+            pools
+            (sp-node-get rest)
+            out)]
+        [(ResultAstMaybeDecl.Err message) (ResultParseAstDeclVec.Err message)])]
+    [_ (ResultParseAstDeclVec.Err "parse: malformed module")]))
+
+(define (parse-ast-module-body
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [name : String]
+  [body : SpannedSexpr]) : ResultAstDecl
+  (let
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    (match (parse-ast-module-body-forms-into-vec dispatch pools body (&mut out))
+      [(ResultParseAstDeclVec.Ok)
+        (ResultAstDecl.Ok
+          (ast-decl-module-body name (parse-ast-decl-vec-to-list (& out))))]
+      [(ResultParseAstDeclVec.Err message) (ResultAstDecl.Err message)])))
+
+(define (parse-ast-module
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstDecl
   (match rest
     [(SpannedSexpr.Cons name-node end _)
-      (match (sp-node-get end)
-        [(SpannedSexpr.Nil _)
-          (match (sp-node-get name-node)
-            [(SpannedSexpr.Sym name _)
-              (ResultAstDecl.Ok (ast-decl-module name))]
-            [_ (ResultAstDecl.Err "parse: malformed module")])]
+      (match (sp-node-get name-node)
+        [(SpannedSexpr.Sym name _)
+          (match (sp-node-get end)
+            [(SpannedSexpr.Nil _) (ResultAstDecl.Ok (ast-decl-module name))]
+            [_ (parse-ast-module-body dispatch pools name (sp-node-get end))])]
         [_ (ResultAstDecl.Err "parse: malformed module")])]
     [_ (ResultAstDecl.Err "parse: malformed module")]))
 
@@ -7079,7 +7128,7 @@
               [(= tag (compiler-parse-tag-decl-include-bin))
                 (parse-ast-include-bin (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-module))
-                (parse-ast-module (sp-node-get rest))]
+                (parse-ast-module dispatch pools (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-comptime-decl))
                 (parse-ast-comptime-decl dispatch pools (sp-node-get rest))]
               [(= tag (compiler-parse-tag-decl-comptime-decls))
@@ -7682,6 +7731,39 @@
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-module-body-ok?) : bool
+  (match (parse-ast-source "(module local.helper (define value : i64 1))")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match decls
+          [(AstDeclList.Cons (AstDecl.ModuleBody name body-box) rest)
+            (let
+              [rest : AstDeclList (box-get rest)]
+              [body : AstDeclList (box-get body-box)]
+              (match rest
+                [(AstDeclList.Nil)
+                  (match body
+                    [(AstDeclList.Cons (AstDecl.Def value-name _ _) body-rest)
+                      (let
+                        [body-rest : AstDeclList (box-get body-rest)]
+                        (and
+                          (= name (intern "local.helper"))
+                          (= value-name (intern "value"))
+                          (match body-rest
+                            [(AstDeclList.Nil) true]
+                            [_ false])))]
+                    [_ false])]
+                [_ false]))]
+          [_ false]))]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-parse-module-body-malformed-ok?) : bool
+  (match (parse-ast-source "(module local.helper (define bad))")
+    [(ResultAstProgram.Ok _) false]
+    [(ResultAstProgram.Err message)
+      (string.eq message "parse: malformed value definition")]))
 
 (define (compiler-parse-import-metadata-ok?) : bool
   (match (parse-ast-source "(import \"stdlib/tl\" module std.io :as io)")
@@ -10809,6 +10891,8 @@
         (compiler-parse-comptime-decl-ok?)
         (compiler-parse-unsafe-decl-ok?)
         (compiler-parse-module-decl-ok?)
+        (compiler-parse-module-body-ok?)
+        (compiler-parse-module-body-malformed-ok?)
         (compiler-parse-import-metadata-ok?)
         (compiler-parse-dotted-import-metadata-ok?)
         (compiler-parse-module-macro-surface-ok?)

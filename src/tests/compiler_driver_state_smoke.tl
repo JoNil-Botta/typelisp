@@ -135,7 +135,7 @@
         "prelude-key"
         AstDeclList.Nil
         AstDeclPathList.Nil
-        AstDeclModuleList.Nil
+        (ast-decl-module-list-new)
         (sym_i64_env.sym-i64-empty))
       (compiler-load-session-floors-set! 2 3 4)
       (compiler-driver-state-apply-session-flags! state-b)

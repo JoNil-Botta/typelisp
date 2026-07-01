@@ -18858,7 +18858,11 @@
   [arg-ty : AstType]) : ResultTcType
   (if (cbi.compiler-builtin-typecheck-array-length-id?
     (tc-builtin-name-id name))
-    (ResultTcType.Err "typecheck: array-length requires dynamic array")
+    (if (and
+      (tc-type-eq (tc-type-strip-region arg-ty) (AstType.Expr))
+      (tc-name-bound? env name))
+      (ResultTcType.Ok (AstType.I64))
+      (ResultTcType.Err "typecheck: array-length requires dynamic array"))
     (tc-length-string-call ctx env name func args arg-ty)))
 
 (define (tc-array-length-array-call
@@ -18887,9 +18891,11 @@
       (ResultTcArrayReceiver.Err
         "typecheck: array-length requires dynamic array")]))
 
-;; `array-length` remains dynamic-array-only. `length` remains a transitional
-;; array alias. String/bytes length is a stdlib wrapper over the private
-;; `__tl_string_length` intrinsic.
+;; Runtime `array-length` remains dynamic-array-only. Macro helper environments
+;; bind `array-length` for Expr operands so CTFE can validate fixed-array type
+;; reflection.
+;; `length` remains a transitional array alias. String/bytes length is a stdlib
+;; wrapper over the private `__tl_string_length` intrinsic.
 (define (tc-array-length-call
   [ctx : TcContext]
   [env : TcTypeEnv]

@@ -6641,12 +6641,18 @@
     1))
 
 (define (lower-used-types-add-type-id
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [ty-id : i64]) : hashmap.I64I64Map
-  (lower-used-types-add-type used module (ty-node-get ty-id)))
+  (lower-used-types-add-type
+    pools
+    used
+    module
+    (ast-node-pool-context-type-get pools ty-id)))
 
 (define (lower-used-types-add-type-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [types : AstTypeList]) : hashmap.I64I64Map
@@ -6654,47 +6660,58 @@
     [(AstTypeList.Nil) used]
     [(AstTypeList.Cons head rest)
       (lower-used-types-add-type-list
-        (lower-used-types-add-type-id used module head)
+        pools
+        (lower-used-types-add-type-id pools used module head)
         module
         (box-get rest))]))
 
 (define (lower-used-types-add-type
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [ty : AstType]) : hashmap.I64I64Map
   (match ty
     [(AstType.Func args ret)
       (lower-used-types-add-type-id
-        (lower-used-types-add-type-list used module (box-get args))
+        pools
+        (lower-used-types-add-type-list pools used module (box-get args))
         module
         ret)]
     [(AstType.Tuple elems)
-      (lower-used-types-add-type-list used module (box-get elems))]
-    [(AstType.Array elem _) (lower-used-types-add-type-id used module elem)]
-    [(AstType.DynArray elem) (lower-used-types-add-type-id used module elem)]
-    [(AstType.Box elem) (lower-used-types-add-type-id used module elem)]
-    [(AstType.Region _ inner) (lower-used-types-add-type-id used module inner)]
-    [(AstType.Ref _ inner) (lower-used-types-add-type-id used module inner)]
-    [(AstType.MutRef _ inner) (lower-used-types-add-type-id used module inner)]
+      (lower-used-types-add-type-list pools used module (box-get elems))]
+    [(AstType.Array elem _)
+      (lower-used-types-add-type-id pools used module elem)]
+    [(AstType.DynArray elem)
+      (lower-used-types-add-type-id pools used module elem)]
+    [(AstType.Box elem) (lower-used-types-add-type-id pools used module elem)]
+    [(AstType.Region _ inner)
+      (lower-used-types-add-type-id pools used module inner)]
+    [(AstType.Ref _ inner)
+      (lower-used-types-add-type-id pools used module inner)]
+    [(AstType.MutRef _ inner)
+      (lower-used-types-add-type-id pools used module inner)]
     [(AstType.Enum name) (lower-used-type-name-add used module name)]
     [(AstType.EnumArgs name _) (lower-used-type-name-add used module name)]
     [(AstType.Struct name) (lower-used-type-name-add used module name)]
     [(AstType.StructArgs name _) (lower-used-type-name-add used module name)]
     [(AstType.Var name) (lower-used-type-name-add used module name)]
     [(AstType.VarArgs name _) (lower-used-type-name-add used module name)]
-    [(AstType.Ptr inner) (lower-used-types-add-type-id used module inner)]
-    [(AstType.MutPtr inner) (lower-used-types-add-type-id used module inner)]
+    [(AstType.Ptr inner) (lower-used-types-add-type-id pools used module inner)]
+    [(AstType.MutPtr inner)
+      (lower-used-types-add-type-id pools used module inner)]
     [_ used]))
 
 (define (lower-used-types-add-maybe-type
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [maybe-ty : AstMaybeType]) : hashmap.I64I64Map
   (match maybe-ty
     [(AstMaybeType.No) used]
-    [(AstMaybeType.Some ty) (lower-used-types-add-type used module ty)]))
+    [(AstMaybeType.Some ty) (lower-used-types-add-type pools used module ty)]))
 
 (define (lower-used-types-add-param-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [params : AstParamList]) : hashmap.I64I64Map
@@ -6704,11 +6721,13 @@
       (match param
         [(AstParam.Param _ ty _)
           (lower-used-types-add-param-list
-            (lower-used-types-add-type used module ty)
+            pools
+            (lower-used-types-add-type pools used module ty)
             module
             (box-get rest))])]))
 
 (define (lower-used-types-add-macro-param-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [params : AstMacroParamList]) : hashmap.I64I64Map
@@ -6718,17 +6737,20 @@
       (match param
         [(AstMacroParam.Param _ ty _)
           (lower-used-types-add-macro-param-list
-            (lower-used-types-add-type used module ty)
+            pools
+            (lower-used-types-add-type pools used module ty)
             module
             (box-get rest))])]))
 
 (define (lower-used-types-add-expr-id
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [expr-id : i64]) : hashmap.I64I64Map
-  (lower-used-types-add-expr used module (ast-node-get expr-id)))
+  (lower-used-types-add-expr pools used module (ast-node-get expr-id)))
 
 (define (lower-used-types-add-expr-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [exprs : AstExprList]) : hashmap.I64I64Map
@@ -6736,19 +6758,25 @@
     [(AstExprList.Nil) used]
     [(AstExprList.Cons expr rest)
       (lower-used-types-add-expr-list
-        (lower-used-types-add-expr-id used module expr)
+        pools
+        (lower-used-types-add-expr-id pools used module expr)
         module
         (box-get rest))]))
 
 (define (lower-used-types-add-pattern
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [pattern : AstPattern]) : hashmap.I64I64Map
   (match pattern
     [(AstPattern.Var _ maybe-ty)
-      (lower-used-types-add-maybe-type used module maybe-ty)]
+      (lower-used-types-add-maybe-type pools used module maybe-ty)]
     [(AstPattern.Tuple patterns-box)
-      (lower-used-types-add-pattern-list used module (box-get patterns-box))]
+      (lower-used-types-add-pattern-list
+        pools
+        used
+        module
+        (box-get patterns-box))]
     [(AstPattern.Wildcard) used]
     [(AstPattern.Binding _) used]
     [(AstPattern.Variant name patterns-box)
@@ -6761,12 +6789,14 @@
             (lower-used-type-name-add used module name)
             used)]
         (lower-used-types-add-pattern-list
+          pools
           with-head
           module
           (box-get patterns-box)))]
     [(AstPattern.Literal _) used]))
 
 (define (lower-used-types-add-pattern-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [patterns : AstPatternList]) : hashmap.I64I64Map
@@ -6774,11 +6804,13 @@
     [(AstPatternList.Nil) used]
     [(AstPatternList.Cons pattern rest)
       (lower-used-types-add-pattern-list
-        (lower-used-types-add-pattern used module (box-get pattern))
+        pools
+        (lower-used-types-add-pattern pools used module (box-get pattern))
         module
         (box-get rest))]))
 
 (define (lower-used-types-add-let-bindings
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [bindings : AstLetBindingList]) : hashmap.I64I64Map
@@ -6788,14 +6820,17 @@
       (match binding
         [(AstLetBinding.Binding _ maybe-ty value-box)
           (lower-used-types-add-let-bindings
+            pools
             (lower-used-types-add-expr-id
-              (lower-used-types-add-maybe-type used module maybe-ty)
+              pools
+              (lower-used-types-add-maybe-type pools used module maybe-ty)
               module
               value-box)
             module
             (box-get rest))])]))
 
 (define (lower-used-types-add-match-arms
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [arms : AstMatchArmList]) : hashmap.I64I64Map
@@ -6805,14 +6840,17 @@
       (match arm
         [(AstMatchArm.Arm pattern body-box)
           (lower-used-types-add-match-arms
+            pools
             (lower-used-types-add-expr-id
-              (lower-used-types-add-pattern used module pattern)
+              pools
+              (lower-used-types-add-pattern pools used module pattern)
               module
               body-box)
             module
             (box-get rest))])]))
 
 (define (lower-used-types-add-resource-bindings
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [bindings : AstResourceBindingList]) : hashmap.I64I64Map
@@ -6822,38 +6860,45 @@
       (match binding
         [(AstResourceBinding.Binding _ acquire-box cleanup-box)
           (lower-used-types-add-resource-bindings
+            pools
             (lower-used-types-add-expr-id
-              (lower-used-types-add-expr-id used module acquire-box)
+              pools
+              (lower-used-types-add-expr-id pools used module acquire-box)
               module
               cleanup-box)
             module
             (box-get rest))])]))
 
 (define (lower-used-types-add-expr
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [expr : AstExpr]) : hashmap.I64I64Map
   (match expr
     [(AstExpr.Spanned inner-box _)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Literal _) used]
     [(AstExpr.Var _) used]
     [(AstExpr.Binary _ lhs-box rhs-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module lhs-box)
+        pools
+        (lower-used-types-add-expr-id pools used module lhs-box)
         module
         rhs-box)]
     [(AstExpr.Unary _ inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Call callee-box args)
       (lower-used-types-add-expr-list
-        (lower-used-types-add-expr-id used module callee-box)
+        pools
+        (lower-used-types-add-expr-id pools used module callee-box)
         module
         args)]
     [(AstExpr.If cond-box then-box else-box)
       (lower-used-types-add-expr-id
+        pools
         (lower-used-types-add-expr-id
-          (lower-used-types-add-expr-id used module cond-box)
+          pools
+          (lower-used-types-add-expr-id pools used module cond-box)
           module
           then-box)
         module
@@ -6862,86 +6907,106 @@
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
           (lower-used-types-add-expr-id
-            (lower-used-types-add-let-bindings used module bindings)
+            pools
+            (lower-used-types-add-let-bindings pools used module bindings)
             module
             body-box)])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params ret body-box)
           (lower-used-types-add-expr-id
+            pools
             (lower-used-types-add-maybe-type
-              (lower-used-types-add-param-list used module params)
+              pools
+              (lower-used-types-add-param-list pools used module params)
               module
               ret)
             module
             body-box)])]
-    [(AstExpr.Tuple values) (lower-used-types-add-expr-list used module values)]
+    [(AstExpr.Tuple values)
+      (lower-used-types-add-expr-list pools used module values)]
     [(AstExpr.TupleRef value-box _)
-      (lower-used-types-add-expr-id used module value-box)]
-    [(AstExpr.Array values) (lower-used-types-add-expr-list used module values)]
+      (lower-used-types-add-expr-id pools used module value-box)]
+    [(AstExpr.Array values)
+      (lower-used-types-add-expr-list pools used module values)]
     [(AstExpr.MakeArray ty len-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-type used module ty)
+        pools
+        (lower-used-types-add-type pools used module ty)
         module
         len-box)]
     [(AstExpr.ArrayRef array-box index-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module array-box)
+        pools
+        (lower-used-types-add-expr-id pools used module array-box)
         module
         index-box)]
     [(AstExpr.ArraySet array-box index-box value-box)
       (lower-used-types-add-expr-id
+        pools
         (lower-used-types-add-expr-id
-          (lower-used-types-add-expr-id used module array-box)
+          pools
+          (lower-used-types-add-expr-id pools used module array-box)
           module
           index-box)
         module
         value-box)]
     [(AstExpr.ArrayPush array-box value-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module array-box)
+        pools
+        (lower-used-types-add-expr-id pools used module array-box)
         module
         value-box)]
     [(AstExpr.StringRef text-box index-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module text-box)
+        pools
+        (lower-used-types-add-expr-id pools used module text-box)
         module
         index-box)]
     [(AstExpr.While cond-box body-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module cond-box)
+        pools
+        (lower-used-types-add-expr-id pools used module cond-box)
         module
         body-box)]
-    [(AstExpr.Begin exprs) (lower-used-types-add-expr-list used module exprs)]
-    [(AstExpr.Unsafe exprs) (lower-used-types-add-expr-list used module exprs)]
+    [(AstExpr.Begin exprs)
+      (lower-used-types-add-expr-list pools used module exprs)]
+    [(AstExpr.Unsafe exprs)
+      (lower-used-types-add-expr-list pools used module exprs)]
     [(AstExpr.Set _ value-box)
-      (lower-used-types-add-expr-id used module value-box)]
+      (lower-used-types-add-expr-id pools used module value-box)]
     [(AstExpr.Ann inner-box ty)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-type used module ty)
+        pools
+        (lower-used-types-add-type pools used module ty)
         module
         inner-box)]
     [(AstExpr.Cast inner-box ty)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-type used module ty)
+        pools
+        (lower-used-types-add-type pools used module ty)
         module
         inner-box)]
     [(AstExpr.Borrow _ _ inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match value-box arms)
           (lower-used-types-add-match-arms
-            (lower-used-types-add-expr-id used module value-box)
+            pools
+            (lower-used-types-add-expr-id pools used module value-box)
             module
             arms)])]
     [(AstExpr.Foreach foreach-box)
       (match (box-get foreach-box)
         [(AstForeach.Foreach _ index-ty start-box end-box body-box)
           (lower-used-types-add-expr-id
+            pools
             (lower-used-types-add-expr-id
+              pools
               (lower-used-types-add-expr-id
-                (lower-used-types-add-type used module index-ty)
+                pools
+                (lower-used-types-add-type pools used module index-ty)
                 module
                 start-box)
               module
@@ -6959,10 +7024,14 @@
             map-expr-box
             reduce-expr-box)
           (lower-used-types-add-expr-id
+            pools
             (lower-used-types-add-expr-id
+              pools
               (lower-used-types-add-expr-id
+                pools
                 (lower-used-types-add-expr-id
-                  (lower-used-types-add-type used module index-ty)
+                  pools
+                  (lower-used-types-add-type pools used module index-ty)
                   module
                   source-box)
                 module
@@ -6985,12 +7054,18 @@
             value-box
             body-box)
           (lower-used-types-add-expr-id
+            pools
             (lower-used-types-add-expr-id
+              pools
               (lower-used-types-add-expr-id
+                pools
                 (lower-used-types-add-expr-id
+                  pools
                   (lower-used-types-add-expr-id
+                    pools
                     (lower-used-types-add-type
-                      (lower-used-types-add-type used module index-ty)
+                      pools
+                      (lower-used-types-add-type pools used module index-ty)
                       module
                       prefix-ty)
                     module
@@ -7005,107 +7080,119 @@
             body-box)])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module value-box)
+        pools
+        (lower-used-types-add-expr-id pools used module value-box)
         module
         lane-box)]
     [(AstExpr.SpmdShuffle value-box lane-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module value-box)
+        pools
+        (lower-used-types-add-expr-id pools used module value-box)
         module
         lane-box)]
     [(AstExpr.StructGet value-box _)
-      (lower-used-types-add-expr-id used module value-box)]
+      (lower-used-types-add-expr-id pools used module value-box)]
     [(AstExpr.StructSet receiver-box _ value-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module receiver-box)
+        pools
+        (lower-used-types-add-expr-id pools used module receiver-box)
         module
         value-box)]
     [(AstExpr.WithRegion _ exprs)
-      (lower-used-types-add-expr-list used module exprs)]
+      (lower-used-types-add-expr-list pools used module exprs)]
     [(AstExpr.WithEscape scratch-box exprs)
       (lower-used-types-add-expr-list
-        (lower-used-types-add-expr-id used module scratch-box)
+        pools
+        (lower-used-types-add-expr-id pools used module scratch-box)
         module
         exprs)]
     [(AstExpr.WithScratch exprs)
-      (lower-used-types-add-expr-list used module exprs)]
+      (lower-used-types-add-expr-list pools used module exprs)]
     [(AstExpr.InArena arena-box exprs)
       (lower-used-types-add-expr-list
-        (lower-used-types-add-expr-id used module arena-box)
+        pools
+        (lower-used-types-add-expr-id pools used module arena-box)
         module
         exprs)]
     [(AstExpr.WithResource wr-box)
       (match (box-get wr-box)
         [(AstWithResource.WithResource bindings body)
           (lower-used-types-add-expr-list
-            (lower-used-types-add-resource-bindings used module bindings)
+            pools
+            (lower-used-types-add-resource-bindings pools used module bindings)
             module
             body)])]
     [(AstExpr.Box inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.BoxGet inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.BoxTake inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.BoxSet inner-box value-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module inner-box)
+        pools
+        (lower-used-types-add-expr-id pools used module inner-box)
         module
         value-box)]
-    [(AstExpr.TypeLiteral ty) (lower-used-types-add-type used module ty)]
+    [(AstExpr.TypeLiteral ty) (lower-used-types-add-type pools used module ty)]
     [(AstExpr.Init maybe-ty)
-      (lower-used-types-add-maybe-type used module maybe-ty)]
+      (lower-used-types-add-maybe-type pools used module maybe-ty)]
     [(AstExpr.Comptime inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Quote _) used]
     [(AstExpr.Quasiquote _) used]
     [(AstExpr.Unquote inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.UnquoteSplicing inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.BracketClause items)
-      (lower-used-types-add-expr-list used module items)]
+      (lower-used-types-add-expr-list pools used module items)]
     [(AstExpr.Try inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.Return inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
-    [(AstExpr.PtrNull ty) (lower-used-types-add-type used module ty)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
+    [(AstExpr.PtrNull ty) (lower-used-types-add-type pools used module ty)]
     [(AstExpr.PtrNullCheck value-box)
-      (lower-used-types-add-expr-id used module value-box)]
+      (lower-used-types-add-expr-id pools used module value-box)]
     [(AstExpr.PtrAddrOf _) used]
     [(AstExpr.PtrRead ptr-box)
-      (lower-used-types-add-expr-id used module ptr-box)]
+      (lower-used-types-add-expr-id pools used module ptr-box)]
     [(AstExpr.PtrWrite ptr-box value-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module ptr-box)
+        pools
+        (lower-used-types-add-expr-id pools used module ptr-box)
         module
         value-box)]
     [(AstExpr.PtrOffset ptr-box offset-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module ptr-box)
+        pools
+        (lower-used-types-add-expr-id pools used module ptr-box)
         module
         offset-box)]
     [(AstExpr.PtrCast ptr-box ty)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-type used module ty)
+        pools
+        (lower-used-types-add-type pools used module ty)
         module
         ptr-box)]
     [(AstExpr.PtrToInt ptr-box)
-      (lower-used-types-add-expr-id used module ptr-box)]
+      (lower-used-types-add-expr-id pools used module ptr-box)]
     [(AstExpr.IntToPtr value-box ty)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-type used module ty)
+        pools
+        (lower-used-types-add-type pools used module ty)
         module
         value-box)]
     [(AstExpr.StringData inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.StringFromBytes ptr-box len-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module ptr-box)
+        pools
+        (lower-used-types-add-expr-id pools used module ptr-box)
         module
         len-box)]
     [(AstExpr.ArrayData inner-box)
-      (lower-used-types-add-expr-id used module inner-box)]
+      (lower-used-types-add-expr-id pools used module inner-box)]
     [(AstExpr.BinaryData _) used]
     [(AstExpr.SpmdProgramIndex) used]
     [(AstExpr.SpmdProgramCount) used]
@@ -7114,29 +7201,35 @@
     [(AstExpr.ProgramEnvp) used]
     [(AstExpr.CpuIdEax leaf-box subleaf-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module leaf-box)
+        pools
+        (lower-used-types-add-expr-id pools used module leaf-box)
         module
         subleaf-box)]
     [(AstExpr.CpuIdEbx leaf-box subleaf-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module leaf-box)
+        pools
+        (lower-used-types-add-expr-id pools used module leaf-box)
         module
         subleaf-box)]
     [(AstExpr.CpuIdEcx leaf-box subleaf-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module leaf-box)
+        pools
+        (lower-used-types-add-expr-id pools used module leaf-box)
         module
         subleaf-box)]
     [(AstExpr.CpuIdEdx leaf-box subleaf-box)
       (lower-used-types-add-expr-id
-        (lower-used-types-add-expr-id used module leaf-box)
+        pools
+        (lower-used-types-add-expr-id pools used module leaf-box)
         module
         subleaf-box)]
     [(AstExpr.Xgetbv index-box)
-      (lower-used-types-add-expr-id used module index-box)]
-    [(AstExpr.Syscall args) (lower-used-types-add-expr-list used module args)]))
+      (lower-used-types-add-expr-id pools used module index-box)]
+    [(AstExpr.Syscall args)
+      (lower-used-types-add-expr-list pools used module args)]))
 
 (define (lower-used-types-add-field-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [fields : AstFieldDefList]) : hashmap.I64I64Map
@@ -7146,11 +7239,13 @@
       (match field
         [(AstFieldDef.Def _ ty _)
           (lower-used-types-add-field-list
-            (lower-used-types-add-type used module ty)
+            pools
+            (lower-used-types-add-type pools used module ty)
             module
             (box-get rest))])]))
 
 (define (lower-used-types-add-variant-list
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [variants : AstVariantDefList]) : hashmap.I64I64Map
@@ -7160,7 +7255,8 @@
       (match variant
         [(AstVariantDef.Def _ fields _)
           (lower-used-types-add-variant-list
-            (lower-used-types-add-type-list used module fields)
+            pools
+            (lower-used-types-add-type-list pools used module fields)
             module
             (box-get rest))])]))
 
@@ -7198,33 +7294,44 @@
       [_ true])))
 
 (define (lower-used-types-add-kept-runtime-decl
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [decl : AstDecl]) : hashmap.I64I64Map
   (match decl
     [(AstDecl.Def _ maybe-ty _)
-      (lower-used-types-add-maybe-type used module maybe-ty)]
+      (lower-used-types-add-maybe-type pools used module maybe-ty)]
     [(AstDecl.DefFn _ params ret _ _)
       (lower-used-types-add-type
-        (lower-used-types-add-param-list used module params)
+        pools
+        (lower-used-types-add-param-list pools used module params)
         module
         ret)]
     [(AstDecl.DefMacro _ params ret _)
       (lower-used-types-add-type
-        (lower-used-types-add-macro-param-list used module params)
+        pools
+        (lower-used-types-add-macro-param-list pools used module params)
         module
         ret)]
-    [(AstDecl.Extern _ _ _ ty) (lower-used-types-add-type used module ty)]
+    [(AstDecl.Extern _ _ _ ty) (lower-used-types-add-type pools used module ty)]
     [(AstDecl.DefEnum _ _ _) used]
     [(AstDecl.DefEnumLifetimes _ _ _ _) used]
     [(AstDecl.DefStruct _ _ _ _) used]
     [(AstDecl.DefStructLifetimes _ _ _ _ _) used]
     [(AstDecl.Test _ body-box _)
-      (lower-used-types-add-expr-id used module body-box)]
+      (lower-used-types-add-expr-id pools used module body-box)]
     [(AstDecl.Unsafe inner-box)
-      (lower-used-types-add-kept-runtime-decl used module (box-get inner-box))]
+      (lower-used-types-add-kept-runtime-decl
+        pools
+        used
+        module
+        (box-get inner-box))]
     [(AstDecl.ComptimeDecl _ inner-box)
-      (lower-used-types-add-kept-runtime-decl used module (box-get inner-box))]
+      (lower-used-types-add-kept-runtime-decl
+        pools
+        used
+        module
+        (box-get inner-box))]
     [_ used]))
 
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
@@ -7249,6 +7356,7 @@
     [(TcMaybeString.No) true]))
 
 (define (lower-used-types-add-type-decl-name
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [decl : AstDecl]) : hashmap.I64I64Map
@@ -7260,12 +7368,21 @@
     [(AstDecl.DefStructLifetimes name _ _ _ _)
       (lower-used-type-name-add used module name)]
     [(AstDecl.Unsafe inner-box)
-      (lower-used-types-add-type-decl-name used module (box-get inner-box))]
+      (lower-used-types-add-type-decl-name
+        pools
+        used
+        module
+        (box-get inner-box))]
     [(AstDecl.ComptimeDecl _ inner-box)
-      (lower-used-types-add-type-decl-name used module (box-get inner-box))]
+      (lower-used-types-add-type-decl-name
+        pools
+        used
+        module
+        (box-get inner-box))]
     [_ used]))
 
 (define (lower-used-types-path-seed-in-module
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
@@ -7289,6 +7406,7 @@
         (match decl
           [(AstDecl.Module next-module)
             (lower-used-types-path-seed-in-module
+              pools
               rest
               rest-paths
               entry-path
@@ -7304,17 +7422,19 @@
                   reachable-paths
                   (intern decl-path))]
               (lower-used-types-path-seed-in-module
+                pools
                 rest
                 rest-paths
                 entry-path
                 module
                 reachable-paths
                 (if (and is-type-decl path-covered)
-                  (lower-used-types-add-type-decl-name used module decl)
+                  (lower-used-types-add-type-decl-name pools used module decl)
                   used)
                 (and covered (or (not is-type-decl) path-covered))))]))]))
 
 (define (lower-used-types-from-kept-decls-in-module
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
@@ -7339,6 +7459,7 @@
         (match decl
           [(AstDecl.Module next-module)
             (lower-used-types-from-kept-decls-in-module
+              pools
               rest
               rest-paths
               entry-path
@@ -7349,6 +7470,7 @@
               used)]
           [_
             (lower-used-types-from-kept-decls-in-module
+              pools
               rest
               rest-paths
               entry-path
@@ -7364,10 +7486,11 @@
                 reachable
                 dispatch-variants
                 decl)
-                (lower-used-types-add-kept-runtime-decl used module decl)
+                (lower-used-types-add-kept-runtime-decl pools used module decl)
                 used))]))]))
 
 (define (lower-used-types-add-stdlib-arena-support-deps
+  [_pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [name : i64]) : hashmap.I64I64Map
@@ -7380,28 +7503,39 @@
     used))
 
 (define (lower-used-types-add-type-decl-deps
+  [pools : AstNodePoolContext]
   [used : hashmap.I64I64Map]
   [module : String]
   [decl : AstDecl]) : hashmap.I64I64Map
   (match decl
     [(AstDecl.DefEnum _ _ variants)
-      (lower-used-types-add-variant-list used module variants)]
+      (lower-used-types-add-variant-list pools used module variants)]
     [(AstDecl.DefEnumLifetimes _ _ _ variants)
-      (lower-used-types-add-variant-list used module variants)]
+      (lower-used-types-add-variant-list pools used module variants)]
     [(AstDecl.DefStruct name _ _ fields)
       (lower-used-types-add-field-list
-        (lower-used-types-add-stdlib-arena-support-deps used module name)
+        pools
+        (lower-used-types-add-stdlib-arena-support-deps pools used module name)
         module
         fields)]
     [(AstDecl.DefStructLifetimes _ _ _ _ fields)
-      (lower-used-types-add-field-list used module fields)]
+      (lower-used-types-add-field-list pools used module fields)]
     [(AstDecl.Unsafe inner-box)
-      (lower-used-types-add-type-decl-deps used module (box-get inner-box))]
+      (lower-used-types-add-type-decl-deps
+        pools
+        used
+        module
+        (box-get inner-box))]
     [(AstDecl.ComptimeDecl _ inner-box)
-      (lower-used-types-add-type-decl-deps used module (box-get inner-box))]
+      (lower-used-types-add-type-decl-deps
+        pools
+        used
+        module
+        (box-get inner-box))]
     [_ used]))
 
 (define (lower-used-types-add-type-decl-deps-in-module
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [module : String]
   [used : hashmap.I64I64Map]) : hashmap.I64I64Map
@@ -7413,11 +7547,13 @@
         (match decl
           [(AstDecl.Module next-module)
             (lower-used-types-add-type-decl-deps-in-module
+              pools
               rest
               (intern-str next-module)
               used)]
           [_
             (lower-used-types-add-type-decl-deps-in-module
+              pools
               rest
               module
               (if (and
@@ -7425,10 +7561,11 @@
                 (or
                   (lower-comptime-runtime-skip-module? module)
                   (lower-type-decl-used? module used decl)))
-                (lower-used-types-add-type-decl-deps used module decl)
+                (lower-used-types-add-type-decl-deps pools used module decl)
                 used))]))]))
 
 (define (lower-used-types-expand-fixed
+  [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [used : hashmap.I64I64Map]) : hashmap.I64I64Map
   (let
@@ -7440,7 +7577,11 @@
         (let
           [before : i64 (hashmap.i64-i64-map-len current)]
           [next : hashmap.I64I64Map
-            (lower-used-types-add-type-decl-deps-in-module decls "" current)]
+            (lower-used-types-add-type-decl-deps-in-module
+              pools
+              decls
+              ""
+              current)]
           (begin
             (set! current next)
             (set! iterations (+ iterations 1))
@@ -7801,6 +7942,7 @@
                 decl))]))]))
 
 (define (lower-prune-unreachable-functions-with-clone-roots
+  [pools : AstNodePoolContext]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
@@ -7908,6 +8050,7 @@
                           lower-reach-active-runtime-paths]
                         [type-path-seed : LowerUsedTypePathSeed
                           (lower-used-types-path-seed-in-module
+                            pools
                             decls
                             paths
                             entry-path
@@ -7923,8 +8066,10 @@
                               (if type-paths-covered
                                 (hashmap.i64-i64-map-with-capacity 8)
                                 (lower-used-types-expand-fixed
+                                  pools
                                   decls
                                   (lower-used-types-from-kept-decls-in-module
+                                    pools
                                     decls
                                     paths
                                     entry-path
@@ -7979,16 +8124,30 @@
               result))))]))
 
 (define (lower-prune-unreachable-functions
+  [pools : AstNodePoolContext]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [names : LowerNameEnv]) : LowerPrunedProgram
   (lower-prune-unreachable-functions-with-clone-roots
+    pools
     entry-path
     program
     paths
     names
     (CloneNameList.Nil)))
+
+(define (lower-test-prune-unreachable-functions
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [names : LowerNameEnv]) : LowerPrunedProgram
+  (lower-prune-unreachable-functions
+    (ast-node-pool-context-capture-active)
+    entry-path
+    program
+    paths
+    names))
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
@@ -10703,7 +10862,7 @@
                 result-ty)]
             [(AstType.Ref _ referent-ty)
               (match (tc-type-strip-region
-                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
                 [(AstType.Struct struct-name)
                   (lower-borrow-struct-field-address-from-memory
                     ctx
@@ -10730,7 +10889,7 @@
                         "lower: struct-get borrow requires struct place")))])]
             [(AstType.MutRef _ referent-ty)
               (match (tc-type-strip-region
-                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
                 [(AstType.Struct struct-name)
                   (lower-borrow-struct-field-address-from-memory
                     ctx
@@ -10788,7 +10947,7 @@
                 [(ResultLowerFieldInfo.Err message) (ErrLowerExpr message)])]
             [(AstType.Ref _ referent-ty)
               (match (tc-type-strip-region
-                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
                 [(AstType.Tuple elem-tys)
                   (match (lower-tuple-elem-info
                     ctx
@@ -10811,7 +10970,7 @@
                         "lower: tuple-ref borrow requires tuple place")))])]
             [(AstType.MutRef _ referent-ty)
               (match (tc-type-strip-region
-                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
                 [(AstType.Tuple elem-tys)
                   (match (lower-tuple-elem-info
                     ctx
@@ -10886,7 +11045,8 @@
                                 arr-value
                                 idx-value
                                 idx-value-ty
-                                (tc-type-without-regions (ty-node-get elem-ty)))
+                                (tc-type-without-regions
+                                  (tc-context-type-get ctx elem-ty)))
                                 [(LowerExpr addr-state elem-ptr _)
                                   (OkLowerExpr
                                     (LowerExpr addr-state elem-ptr result-ty))])])]
@@ -10898,7 +11058,7 @@
         [(AstType.Array elem-ty elem-count)
           (let
             [fixed-elem-ty : AstType
-              (tc-type-without-regions (ty-node-get elem-ty))]
+              (tc-type-without-regions (tc-context-type-get ctx elem-ty))]
             (match (lower-expr ctx state env type-env arr)
               [(OkLowerExpr arr-lowered)
                 (match arr-lowered
@@ -11048,7 +11208,7 @@
       [(AstType.Ref _ referent-ty)
         (if (lower-supported-reference-referent-type?
           ctx
-          (ty-node-get referent-ty))
+          (tc-context-type-get ctx referent-ty))
           (lower-borrow-place-address
             ctx
             state
@@ -11065,7 +11225,7 @@
       [(AstType.MutRef _ referent-ty)
         (if (lower-supported-reference-referent-type?
           ctx
-          (ty-node-get referent-ty))
+          (tc-context-type-get ctx referent-ty))
           (lower-borrow-place-address
             ctx
             state
@@ -11102,7 +11262,7 @@
       (match types
         [(AstTypeList.Cons ty rest-types)
           (let
-            [ty : AstType (ty-node-get ty)]
+            [ty : AstType (tc-context-type-get ctx ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -11237,7 +11397,7 @@
       (match types
         [(AstTypeList.Cons ty rest-types)
           (let
-            [ty : AstType (ty-node-get ty)]
+            [ty : AstType (tc-context-type-get ctx ty)]
             [rest-types : AstTypeList (box-get rest-types)]
             [resolved : AstType (tc-resolve-type ctx ty)]
             [offset : i64
@@ -11489,7 +11649,8 @@
           (let
             [inner : AstPattern (box-get inner)]
             [rest : AstPatternList (box-get rest-box)]
-            [inner-ty : AstType (tc-resolve-type ctx (ty-node-get inner-node))]
+            [inner-ty : AstType
+              (tc-resolve-type ctx (tc-context-type-get ctx inner-node))]
             (match rest
               [(AstPatternList.Nil)
                 (match (lower-load-inline-value-at-offset
@@ -11678,7 +11839,7 @@
         (match types
           [(AstTypeList.Cons ty rest-types)
             (let
-              [ty : AstType (ty-node-get ty)]
+              [ty : AstType (tc-context-type-get ctx ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [default-offset : i64
@@ -12041,7 +12202,7 @@
         (match types
           [(AstTypeList.Cons ty rest-types)
             (let
-              [ty : AstType (ty-node-get ty)]
+              [ty : AstType (tc-context-type-get ctx ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [default-offset : i64
@@ -12400,7 +12561,7 @@
         (match types
           [(AstTypeList.Cons ty rest-types)
             (let
-              [ty : AstType (ty-node-get ty)]
+              [ty : AstType (tc-context-type-get ctx ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               (if (lower-pattern-refutable-for-type? ctx pattern ty)
                 true
@@ -12814,7 +12975,8 @@
       (match (tc-expr ctx type-env lambda-expr)
         [(ResultTcType.Ok ty)
           (match (tc-type-strip-region ty)
-            [(AstType.Func _ ret) (ResultTcType.Ok (ty-node-get ret))]
+            [(AstType.Func _ ret)
+              (ResultTcType.Ok (tc-context-type-get ctx ret))]
             [_
               (ResultTcType.Err "lower: lambda did not typecheck as a function")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]))
@@ -12949,7 +13111,7 @@
         ctx
         state
         value
-        (tc-type-without-regions (ty-node-get elem-ty))
+        (tc-type-without-regions (tc-context-type-get ctx elem-ty))
         ty)]
     [(AstType.Tuple elem-tys)
       (lower-capture-snapshot-tuple-value
@@ -12967,7 +13129,7 @@
         env
         type-env
         value
-        (tc-type-without-regions (ty-node-get elem-ty))
+        (tc-type-without-regions (tc-context-type-get ctx elem-ty))
         count
         ty)]
     ;; #2386: a register-resident aggregate is word-class POD held in a register;
@@ -13126,7 +13288,7 @@
     [(AstTypeList.Nil) (ResultLowerState.Ok state)]
     [(AstTypeList.Cons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -14233,6 +14395,7 @@
 ;; frame reuse here, so deep envs stacked one ~12KB frame per binding (8,164
 ;; frames = 100MB of the measured 502MB stack peak). Iterate instead.
 (define (lower-emit-active-exits-with
+  [ctx : TcContext]
   [cleanup-marker-id : i64]
   [region-reset-marker-id : i64]
   [state : LowerState]
@@ -14261,7 +14424,8 @@
                     (match (box-get types)
                       [(AstTypeList.Cons hidden-ty type-rest)
                         (let
-                          [hidden-ty : AstType (ty-node-get hidden-ty)]
+                          [hidden-ty : AstType
+                            (tc-context-type-get ctx hidden-ty)]
                           [type-rest : AstTypeList (box-get type-rest)]
                           (match hidden-ty
                             [(AstType.Var hidden-name)
@@ -14269,7 +14433,7 @@
                                 [(AstTypeList.Cons cleanup-ty end)
                                   (let
                                     [cleanup-ty : AstType
-                                      (ty-node-get cleanup-ty)]
+                                      (tc-context-type-get ctx cleanup-ty)]
                                     [end : AstTypeList (box-get end)]
                                     (match cleanup-ty
                                       [(AstType.Var cleanup-name)
@@ -14312,7 +14476,8 @@
                       (match (box-get types)
                         [(AstTypeList.Cons hidden-ty end)
                           (let
-                            [hidden-ty : AstType (ty-node-get hidden-ty)]
+                            [hidden-ty : AstType
+                              (tc-context-type-get ctx hidden-ty)]
                             [end : AstTypeList (box-get end)]
                             (match hidden-ty
                               [(AstType.Var hidden-name)
@@ -14341,10 +14506,12 @@
       result)))
 
 (define (lower-emit-active-exits
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
   (lower-emit-active-exits-with
+    ctx
     (lower-cleanup-marker-id)
     (lower-region-reset-marker-id)
     state
@@ -14352,6 +14519,7 @@
     type-env))
 
 (define (lower-emit-active-cleanups-with
+  [ctx : TcContext]
   [cleanup-marker-id : i64]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -14360,6 +14528,7 @@
     [(TcTypeEnv.Nil) (ResultLowerState.Ok state)]
     [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
       (lower-emit-active-cleanups-with
+        ctx
         cleanup-marker-id
         state
         env
@@ -14371,14 +14540,15 @@
             (match (box-get types)
               [(AstTypeList.Cons hidden-ty type-rest)
                 (let
-                  [hidden-ty : AstType (ty-node-get hidden-ty)]
+                  [hidden-ty : AstType (tc-context-type-get ctx hidden-ty)]
                   [type-rest : AstTypeList (box-get type-rest)]
                   (match hidden-ty
                     [(AstType.Var hidden-name)
                       (match type-rest
                         [(AstTypeList.Cons cleanup-ty end)
                           (let
-                            [cleanup-ty : AstType (ty-node-get cleanup-ty)]
+                            [cleanup-ty : AstType
+                              (tc-context-type-get ctx cleanup-ty)]
                             [end : AstTypeList (box-get end)]
                             (match cleanup-ty
                               [(AstType.Var cleanup-name)
@@ -14391,6 +14561,7 @@
                                       (intern-str cleanup-name))
                                       [(ResultLowerState.Ok next-state)
                                         (lower-emit-active-cleanups-with
+                                          ctx
                                           cleanup-marker-id
                                           next-state
                                           env
@@ -14399,51 +14570,64 @@
                                         (ResultLowerState.Err message)])]
                                   [_
                                     (lower-emit-active-cleanups-with
+                                      ctx
                                       cleanup-marker-id
                                       state
                                       env
                                       (box-get rest))])]
                               [_
                                 (lower-emit-active-cleanups-with
+                                  ctx
                                   cleanup-marker-id
                                   state
                                   env
                                   (box-get rest))]))]
                         [_
                           (lower-emit-active-cleanups-with
+                            ctx
                             cleanup-marker-id
                             state
                             env
                             (box-get rest))])]
                     [_
                       (lower-emit-active-cleanups-with
+                        ctx
                         cleanup-marker-id
                         state
                         env
                         (box-get rest))]))]
               [_
                 (lower-emit-active-cleanups-with
+                  ctx
                   cleanup-marker-id
                   state
                   env
                   (box-get rest))])]
           [_
             (lower-emit-active-cleanups-with
+              ctx
               cleanup-marker-id
               state
               env
               (box-get rest))])
         (lower-emit-active-cleanups-with
+          ctx
           cleanup-marker-id
           state
           env
           (box-get rest)))]))
 
 (define (lower-emit-active-cleanups
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]) : ResultLowerState
-  (lower-emit-active-cleanups-with (lower-cleanup-marker-id) state env type-env))
+  (lower-emit-active-cleanups-with
+    ctx
+    (lower-cleanup-marker-id)
+    state
+    env
+    type-env))
 
 (define (lower-return-form
   [ctx : TcContext]
@@ -14462,7 +14646,11 @@
                 [(OkLowerExpr return-copy)
                   (match return-copy
                     [(LowerExpr return-state return-value _)
-                      (match (lower-emit-active-exits return-state env type-env)
+                      (match (lower-emit-active-exits
+                        ctx
+                        return-state
+                        env
+                        type-env)
                         [(ResultLowerState.Ok cleanup-state)
                           (OkLowerExpr
                             (LowerExpr
@@ -14616,7 +14804,7 @@
       result-value
       (tc-result-info-err-type operand-info))
       [(LowerExpr err-payload-state err-payload _)
-        (match (lower-emit-active-exits err-payload-state env type-env)
+        (match (lower-emit-active-exits ctx err-payload-state env type-env)
           [(ResultLowerState.Ok cleanup-state)
             (match (lower-return-result-err
               ctx
@@ -15012,7 +15200,7 @@
     [(AstTypeList.Nil) (ResultLowerState.Ok state)]
     [(AstTypeList.Cons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -15533,7 +15721,7 @@
           env
           type-env
           value
-          (tc-type-without-regions (ty-node-get elem-ty))
+          (tc-type-without-regions (tc-context-type-get ctx elem-ty))
           count
           clone-ty)]
       [(AstType.DynArray elem-ty)
@@ -15543,7 +15731,7 @@
           env
           type-env
           value
-          (tc-type-without-regions (ty-node-get elem-ty))
+          (tc-type-without-regions (tc-context-type-get ctx elem-ty))
           clone-ty)]
       [(AstType.Box elem-ty)
         (lower-clone-box-value
@@ -15552,7 +15740,7 @@
           env
           type-env
           value
-          (tc-type-without-regions (ty-node-get elem-ty))
+          (tc-type-without-regions (tc-context-type-get ctx elem-ty))
           clone-ty)]
       ;; #2386: a register-resident aggregate is word-class POD held in a
       ;; register, so cloning it is a value copy -- no deep-clone helper, no
@@ -15792,7 +15980,7 @@
         (match types
           [(AstTypeList.Cons expected rest-types)
             (let
-              [expected : AstType (ty-node-get expected)]
+              [expected : AstType (tc-context-type-get ctx expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -15894,7 +16082,7 @@
         (match types
           [(AstTypeList.Cons expected rest-types)
             (let
-              [expected : AstType (ty-node-get expected)]
+              [expected : AstType (tc-context-type-get ctx expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -15937,7 +16125,7 @@
     [(AstTypeList.Nil) false]
     [(AstTypeList.Cons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (match (tc-type-strip-region head)
           [(AstType.MutRef _ _) true]
@@ -16587,16 +16775,18 @@
     [(ResultAstFieldDefList.Err message)
       (ResultLowerState.Err (box (lower-diagnostic message)))]))
 
-(define (lower-init-expr-list-from-types [types : AstTypeList]) : AstExprList
+(define (lower-init-expr-list-from-types
+  [ctx : TcContext]
+  [types : AstTypeList]) : AstExprList
   (match types
     [(AstTypeList.Nil) AstExprList.Nil]
     [(AstTypeList.Cons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (ast-expr-cons
           (ast-expr-init head)
-          (lower-init-expr-list-from-types rest)))]))
+          (lower-init-expr-list-from-types ctx rest)))]))
 
 (define (lower-init-expr-list-repeat [ty : AstType] [count : i64]) : AstExprList
   (if (<= count 0)
@@ -16643,7 +16833,7 @@
               env
               type-env
               struct-name
-              (lower-init-expr-list-from-types field-types)
+              (lower-init-expr-list-from-types ctx field-types)
               struct-ty))]
         [(ResultAstFieldDefList.Err message)
           (ErrLowerExpr (box (lower-diagnostic message)))]))))
@@ -16697,7 +16887,7 @@
                           type-env
                           lookup-name
                           handle
-                          (lower-init-expr-list-from-types payload-types)
+                          (lower-init-expr-list-from-types ctx payload-types)
                           enum-name
                           enum-ty)
                         (ErrLowerExpr
@@ -16742,7 +16932,7 @@
               type-env
               dst
               struct-name
-              (lower-init-expr-list-from-types field-types)
+              (lower-init-expr-list-from-types ctx field-types)
               struct-ty))]
         [(ResultAstFieldDefList.Err message)
           (ResultLowerState.Err (box (lower-diagnostic message)))]))))
@@ -16798,7 +16988,7 @@
                           dst
                           lookup-name
                           handle
-                          (lower-init-expr-list-from-types payload-types)
+                          (lower-init-expr-list-from-types ctx payload-types)
                           enum-name
                           enum-ty)
                         (ResultLowerState.Err
@@ -16919,7 +17109,7 @@
             state
             env
             type-env
-            (ty-node-get elem)
+            (tc-context-type-get ctx elem)
             (CompilerIrValue.I64 0)
             (AstType.I64)
             (AstExpr.Literal (ast-lit-int 0))
@@ -16930,7 +17120,7 @@
             state
             env
             type-env
-            (AstExpr.Init (AstMaybeType.Some (ty-node-get elem)))
+            (AstExpr.Init (AstMaybeType.Some (tc-context-type-get ctx elem)))
             expr-ty)]
         [(AstType.Tuple elems)
           (lower-tuple
@@ -16938,7 +17128,7 @@
             state
             env
             type-env
-            (lower-init-expr-list-from-types (box-get elems))
+            (lower-init-expr-list-from-types ctx (box-get elems))
             expr-ty
             origin)]
         [(AstType.Array elem count)
@@ -16952,7 +17142,7 @@
               state
               env
               type-env
-              (lower-init-expr-list-repeat (ty-node-get elem) count)
+              (lower-init-expr-list-repeat (tc-context-type-get ctx elem) count)
               expr-ty
               origin))]
         [(AstType.Struct name)
@@ -17106,7 +17296,7 @@
               [(AstType.Func _ ret)
                 (ResultTcType.Ok
                   (tc-type-without-regions
-                    (tc-resolve-type ctx (ty-node-get ret))))]
+                    (tc-resolve-type ctx (tc-context-type-get ctx ret))))]
               [(AstType.Enum _)
                 (ResultTcType.Ok (tc-type-without-regions fn-ty))]
               [_
@@ -17157,7 +17347,7 @@
                   [(AstType.Func _ ret)
                     (ResultTcType.Ok
                       (tc-type-without-regions
-                        (tc-resolve-type ctx (ty-node-get ret))))]
+                        (tc-resolve-type ctx (tc-context-type-get ctx ret))))]
                   [_
                     (ResultTcType.Err
                       "lower: call result type is not fast-pathable")])]
@@ -17570,13 +17760,13 @@
                 (lower-projected-result-type-fast
                   ctx
                   array-ty
-                  (ty-node-get elem-ty)))]
+                  (tc-context-type-get ctx elem-ty)))]
             [(AstType.DynArray elem-ty)
               (ResultTcType.Ok
                 (lower-projected-result-type-fast
                   ctx
                   array-ty
-                  (ty-node-get elem-ty)))]
+                  (tc-context-type-get ctx elem-ty)))]
             [_
               (ResultTcType.Err
                 "lower: array-ref result type is not fast-pathable")])]
@@ -17643,7 +17833,10 @@
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
         [(AstType.Box inner-ty)
           (ResultTcType.Ok
-            (lower-projected-result-type-fast ctx box-ty (ty-node-get inner-ty)))]
+            (lower-projected-result-type-fast
+              ctx
+              box-ty
+              (tc-context-type-get ctx inner-ty)))]
         [_ (ResultTcType.Err "lower: box-get result type is not fast-pathable")])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
@@ -19004,7 +19197,7 @@
                               offset-state
                               ptr-value
                               offset-value
-                              (ty-node-get elem-ty))
+                              (tc-context-type-get ctx elem-ty))
                               [(LowerExpr gep-state gep-value _)
                                 (OkLowerExpr
                                   (LowerExpr gep-state gep-value expr-ty))])]
@@ -19014,7 +19207,7 @@
                               offset-state
                               ptr-value
                               offset-value
-                              (ty-node-get elem-ty))
+                              (tc-context-type-get ctx elem-ty))
                               [(LowerExpr gep-state gep-value _)
                                 (OkLowerExpr
                                   (LowerExpr gep-state gep-value expr-ty))])]
@@ -19290,7 +19483,7 @@
                     (let
                       [actual-ty : AstType
                         (tc-type-without-regions
-                          (tc-resolve-type ctx (ty-node-get ret-ty)))]
+                          (tc-resolve-type ctx (tc-context-type-get ctx ret-ty)))]
                       [expected-resolved : AstType
                         (tc-type-without-regions
                           (tc-resolve-type ctx expected-ty))]
@@ -19480,13 +19673,13 @@
                 result-ty)]
             [(AstType.Ref _ referent-ty)
               (match (tc-type-strip-region
-                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
                 [(AstType.Struct struct-name)
                   (lower-struct-get-through-reference
                     ctx
                     receiver-state
                     receiver-value
-                    (ty-node-get referent-ty)
+                    (tc-context-type-get ctx referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
@@ -19495,7 +19688,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    (ty-node-get referent-ty)
+                    (tc-context-type-get ctx referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
@@ -19507,13 +19700,13 @@
                         "lower: struct-get requires struct")))])]
             [(AstType.MutRef _ referent-ty)
               (match (tc-type-strip-region
-                (tc-resolve-type ctx (ty-node-get referent-ty)))
+                (tc-resolve-type ctx (tc-context-type-get ctx referent-ty)))
                 [(AstType.Struct struct-name)
                   (lower-struct-get-through-reference
                     ctx
                     receiver-state
                     receiver-value
-                    (ty-node-get referent-ty)
+                    (tc-context-type-get ctx referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
@@ -19522,7 +19715,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    (ty-node-get referent-ty)
+                    (tc-context-type-get ctx referent-ty)
                     (intern-str struct-name)
                     field
                     result-ty)]
@@ -19702,7 +19895,7 @@
         (box (lower-diagnostic "lower: tuple-ref index out of range")))]
     [(AstTypeList.Cons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         [resolved : AstType (tc-resolve-type ctx ty)]
         [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
@@ -19740,7 +19933,7 @@
               (box (lower-diagnostic "lower: tuple arity mismatch")))]
           [(AstTypeList.Cons ty rest-types)
             (let
-              [ty : AstType (ty-node-get ty)]
+              [ty : AstType (tc-context-type-get ctx ty)]
               [rest-types : AstTypeList (box-get rest-types)]
               [resolved : AstType (tc-resolve-type ctx ty)]
               [offset : i64
@@ -19925,8 +20118,10 @@
   (match (tc-resolve-type ctx result-ty)
     [(AstType.Array elem-ty count)
       (let
-        [resolved-elem : AstType (tc-resolve-type ctx (ty-node-get elem-ty))]
-        [elem-size : i64 (lower-type-size ctx (ty-node-get elem-ty))]
+        [resolved-elem : AstType
+          (tc-resolve-type ctx (tc-context-type-get ctx elem-ty))]
+        [elem-size : i64
+          (lower-type-size ctx (tc-context-type-get ctx elem-ty))]
         [storage-size : i64 (lower-type-size ctx result-ty)]
         (match (lower-reserve-inline-storage state storage-size result-ty)
           [(LowerExpr base-state base _)
@@ -21019,7 +21214,7 @@
         (match types
           [(AstTypeList.Cons expected rest-types)
             (let
-              [expected : AstType (ty-node-get expected)]
+              [expected : AstType (tc-context-type-get ctx expected)]
               [rest-types : AstTypeList (box-get rest-types)]
               [arg-ty : AstType
                 (tc-type-without-regions (tc-resolve-type ctx expected))]
@@ -25123,7 +25318,7 @@
     [(AstTypeList.Nil) true]
     [(AstTypeList.Cons head rest)
       (let
-        [head : AstType (ty-node-get head)]
+        [head : AstType (tc-context-type-get ctx head)]
         [rest : AstTypeList (box-get rest)]
         (if (lower-init-default-share-safe? ctx head)
           (lower-init-default-share-safe-type-list? ctx rest)
@@ -26113,7 +26308,10 @@
                 (match lowered
                   [(LowerExpr ref-state ref-value _)
                     (OkLowerExpr
-                      (LowerExpr ref-state ref-value (ty-node-get referent-ty)))])]
+                      (LowerExpr
+                        ref-state
+                        ref-value
+                        (tc-context-type-get ctx referent-ty)))])]
               [(ErrLowerExpr message) (ErrLowerExpr message)])]
           [(AstType.Ref _ _)
             (ErrLowerExpr
@@ -26168,7 +26366,7 @@
             ctx
             ref-state
             ref-value
-            (ty-node-get referent-ty)
+            (tc-context-type-get ctx referent-ty)
             field
             origin)])]
     [(AstType.Ref _ _)
@@ -26209,7 +26407,7 @@
             ctx
             ref-state
             ref-value
-            (ty-node-get referent-ty)
+            (tc-context-type-get ctx referent-ty)
             index
             origin)])]
     [(AstType.Ref _ _)
@@ -28412,6 +28610,7 @@
           (let
             [plan : LowerMaybeVectorReduce
               (lower-simple-vector-reduce
+                ctx
                 (lower-state-mode state)
                 env
                 type-env
@@ -28828,6 +29027,7 @@
     [_ false]))
 
 (define (lower-dynamic-array-var
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]) : LowerMaybeArrayVar
@@ -28835,11 +29035,11 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-dynamic-array-var env type-env inner))]
+        (lower-dynamic-array-var ctx env type-env inner))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-dynamic-array-var env type-env inner))]
+        (lower-dynamic-array-var ctx env type-env inner))]
     [(AstExpr.Var name)
       (let
         [var-id : i64
@@ -28854,20 +29054,24 @@
                 [(AstType.DynArray elem-ty)
                   (LowerSomeArrayVar
                     var-id
-                    (tc-type-without-regions (ty-node-get elem-ty)))]
+                    (tc-type-without-regions (tc-context-type-get ctx elem-ty)))]
                 [(AstType.Ref _ referent-ty)
-                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                  (match (tc-type-strip-region
+                    (tc-context-type-get ctx referent-ty))
                     [(AstType.DynArray elem-ty)
                       (LowerSomeArrayVar
                         var-id
-                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                        (tc-type-without-regions
+                          (tc-context-type-get ctx elem-ty)))]
                     [_ LowerNoArrayVar])]
                 [(AstType.MutRef _ referent-ty)
-                  (match (tc-type-strip-region (ty-node-get referent-ty))
+                  (match (tc-type-strip-region
+                    (tc-context-type-get ctx referent-ty))
                     [(AstType.DynArray elem-ty)
                       (LowerSomeArrayVar
                         var-id
-                        (tc-type-without-regions (ty-node-get elem-ty)))]
+                        (tc-type-without-regions
+                          (tc-context-type-get ctx elem-ty)))]
                     [_ LowerNoArrayVar])]
                 [_ LowerNoArrayVar])]
             [(ResultTcType.Err _) LowerNoArrayVar])
@@ -28875,6 +29079,7 @@
     [_ LowerNoArrayVar]))
 
 (define (lower-array-ref-var-for-index
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [expr : AstExpr]
@@ -28883,13 +29088,13 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-array-ref-var-for-index env type-env inner index))]
+        (lower-array-ref-var-for-index ctx env type-env inner index))]
     [(AstExpr.ArrayRef arr-box idx-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         (if (lower-expr-is-var? idx index)
-          (lower-dynamic-array-var env type-env arr)
+          (lower-dynamic-array-var ctx env type-env arr)
           LowerNoArrayVar))]
     [_ LowerNoArrayVar]))
 
@@ -29134,6 +29339,7 @@
   (hashmap.string-i64-map-with-capacity 16))
 
 (define (lower-masked-vector-expr-list-lanes-with-locals
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29148,6 +29354,7 @@
         [rest : AstExprList (box-get rest)]
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29155,6 +29362,7 @@
             lane-locals
             expr)
           (lower-masked-vector-expr-list-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29163,6 +29371,7 @@
             rest)))]))
 
 (define (lower-masked-vector-let-bindings-locals
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29180,6 +29389,7 @@
               [init : AstExpr (ast-node-get init-box)]
               [init-lanes : i64
                 (lower-masked-vector-expr-lanes-with-locals
+                  ctx
                   mode
                   env
                   type-env
@@ -29194,6 +29404,7 @@
                     init-lanes)
                   lane-locals)]
               (lower-masked-vector-let-bindings-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29202,6 +29413,7 @@
                 rest))]))]))
 
 (define (lower-masked-vector-let-bindings-lanes-with-locals
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29219,6 +29431,7 @@
               [init : AstExpr (ast-node-get init-box)]
               [init-lanes : i64
                 (lower-masked-vector-expr-lanes-with-locals
+                  ctx
                   mode
                   env
                   type-env
@@ -29235,6 +29448,7 @@
               (lower-masked-vector-lanes-merge
                 init-lanes
                 (lower-masked-vector-let-bindings-lanes-with-locals
+                  ctx
                   mode
                   env
                   type-env
@@ -29281,6 +29495,7 @@
           (lower-masked-vector-pattern-locals pattern scrut-lanes lane-locals)))]))
 
 (define (lower-masked-vector-match-arms-lanes-with-locals
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29304,6 +29519,7 @@
                   lane-locals)]
               (lower-masked-vector-lanes-merge
                 (lower-masked-vector-expr-lanes-with-locals
+                  ctx
                   mode
                   env
                   type-env
@@ -29311,6 +29527,7 @@
                   body-locals
                   body)
                 (lower-masked-vector-match-arms-lanes-with-locals
+                  ctx
                   mode
                   env
                   type-env
@@ -29320,6 +29537,7 @@
                   rest)))]))]))
 
 (define (lower-masked-vector-expr-lanes-with-locals
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29331,6 +29549,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-expr-lanes-with-locals
+          ctx
           mode
           env
           type-env
@@ -29341,6 +29560,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-expr-lanes-with-locals
+          ctx
           mode
           env
           type-env
@@ -29351,6 +29571,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-expr-lanes-with-locals
+          ctx
           mode
           env
           type-env
@@ -29372,6 +29593,7 @@
         (let
           [inner : AstExpr (ast-node-get inner-box)]
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29386,6 +29608,7 @@
           [right : AstExpr (ast-node-get right-box)]
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
+              ctx
               mode
               env
               type-env
@@ -29393,6 +29616,7 @@
               lane-locals
               left)
             (lower-masked-vector-expr-lanes-with-locals
+              ctx
               mode
               env
               type-env
@@ -29407,6 +29631,7 @@
             [body : AstExpr (ast-node-get body-box)]
             [body-locals : hashmap.StringI64Map
               (lower-masked-vector-let-bindings-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29415,6 +29640,7 @@
                 bindings)]
             (lower-masked-vector-lanes-merge
               (lower-masked-vector-let-bindings-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29422,6 +29648,7 @@
                 lane-locals
                 bindings)
               (lower-masked-vector-expr-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29435,6 +29662,7 @@
         [else-branch : AstExpr (ast-node-get else-box)]
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29443,6 +29671,7 @@
             cond)
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
+              ctx
               mode
               env
               type-env
@@ -29450,6 +29679,7 @@
               lane-locals
               then-branch)
             (lower-masked-vector-expr-lanes-with-locals
+              ctx
               mode
               env
               type-env
@@ -29462,6 +29692,7 @@
         [body : AstExpr (ast-node-get body-box)]
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29469,6 +29700,7 @@
             lane-locals
             cond)
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29482,6 +29714,7 @@
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             [scrut-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29491,6 +29724,7 @@
             (lower-masked-vector-lanes-merge
               scrut-lanes
               (lower-masked-vector-match-arms-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29500,6 +29734,7 @@
                 arms)))])]
     [(AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-lanes-with-locals
+        ctx
         mode
         env
         type-env
@@ -29511,7 +29746,7 @@
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         (if (>= (lower-masked-vector-index-offset index idx) 0)
-          (match (lower-dynamic-array-var env type-env arr)
+          (match (lower-dynamic-array-var ctx env type-env arr)
             [(LowerSomeArrayVar _ elem-ty)
               (if (lower-type-bool? elem-ty)
                 (lower-avx512-bool-lanes mode)
@@ -29524,12 +29759,13 @@
         [idx : AstExpr (ast-node-get idx-box)]
         [value : AstExpr (ast-node-get value-box)]
         (if (>= (lower-masked-vector-index-offset index idx) 0)
-          (match (lower-dynamic-array-var env type-env arr)
+          (match (lower-dynamic-array-var ctx env type-env arr)
             [(LowerSomeArrayVar _ elem-ty)
               (if (lower-type-bool? elem-ty)
                 (let
                   [value-lanes : i64
                     (lower-masked-vector-expr-lanes-with-locals
+                      ctx
                       mode
                       env
                       type-env
@@ -29544,6 +29780,7 @@
                 (lower-masked-vector-lanes-merge
                   (lower-simd-lanes-for-elem mode elem-ty)
                   (lower-masked-vector-expr-lanes-with-locals
+                    ctx
                     mode
                     env
                     type-env
@@ -29558,6 +29795,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (lower-masked-vector-lanes-merge
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29565,6 +29803,7 @@
             lane-locals
             receiver)
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29574,12 +29813,14 @@
     [_ -1]))
 
 (define (lower-masked-vector-expr-list-lanes
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : i64
   (lower-masked-vector-expr-list-lanes-with-locals
+    ctx
     mode
     env
     type-env
@@ -29588,12 +29829,14 @@
     exprs))
 
 (define (lower-masked-vector-let-bindings-lanes
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : i64
   (lower-masked-vector-let-bindings-lanes-with-locals
+    ctx
     mode
     env
     type-env
@@ -29602,12 +29845,14 @@
     bindings))
 
 (define (lower-masked-vector-expr-lanes
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : i64
   (lower-masked-vector-expr-lanes-with-locals
+    ctx
     mode
     env
     type-env
@@ -29616,6 +29861,7 @@
     expr))
 
 (define (lower-masked-vector-body-has-varying-if-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29627,6 +29873,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
+          ctx
           mode
           env
           type-env
@@ -29637,6 +29884,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
+          ctx
           mode
           env
           type-env
@@ -29647,6 +29895,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
+          ctx
           mode
           env
           type-env
@@ -29660,6 +29909,7 @@
         [else-branch : AstExpr (ast-node-get else-box)]
         (if (>
           (lower-masked-vector-expr-lanes-with-locals
+            ctx
             mode
             env
             type-env
@@ -29670,6 +29920,7 @@
           true
           (or
             (lower-masked-vector-body-has-varying-if-with-locals?
+              ctx
               mode
               env
               type-env
@@ -29677,6 +29928,7 @@
               lane-locals
               then-branch)
             (lower-masked-vector-body-has-varying-if-with-locals?
+              ctx
               mode
               env
               type-env
@@ -29690,6 +29942,7 @@
             [body : AstExpr (ast-node-get body-box)]
             [body-locals : hashmap.StringI64Map
               (lower-masked-vector-let-bindings-locals
+                ctx
                 mode
                 env
                 type-env
@@ -29698,6 +29951,7 @@
                 bindings)]
             (or
               (lower-masked-vector-let-bindings-have-varying-if-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -29705,6 +29959,7 @@
                 lane-locals
                 bindings)
               (lower-masked-vector-body-has-varying-if-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -29713,6 +29968,7 @@
                 body)))])]
     [(AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-if-with-locals?
+        ctx
         mode
         env
         type-env
@@ -29723,6 +29979,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-masked-vector-body-has-varying-if-with-locals?
+          ctx
           mode
           env
           type-env
@@ -29735,6 +29992,7 @@
         [right : AstExpr (ast-node-get right-box)]
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29742,6 +30000,7 @@
             lane-locals
             left)
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29754,6 +30013,7 @@
         [idx : AstExpr (ast-node-get idx-box)]
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29761,6 +30021,7 @@
             lane-locals
             arr)
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29774,6 +30035,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29781,6 +30043,7 @@
             lane-locals
             arr)
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29788,6 +30051,7 @@
             lane-locals
             idx)
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29800,6 +30064,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29807,6 +30072,7 @@
             lane-locals
             receiver)
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29816,6 +30082,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-varying-if-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29830,6 +30097,7 @@
         [rest : AstExprList (box-get rest)]
         (or
           (lower-masked-vector-body-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29837,6 +30105,7 @@
             lane-locals
             expr)
           (lower-masked-vector-expr-list-has-varying-if-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29845,6 +30114,7 @@
             rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-varying-if-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29862,6 +30132,7 @@
               [init : AstExpr (ast-node-get init-box)]
               [init-lanes : i64
                 (lower-masked-vector-expr-lanes-with-locals
+                  ctx
                   mode
                   env
                   type-env
@@ -29877,6 +30148,7 @@
                   lane-locals)]
               (or
                 (lower-masked-vector-body-has-varying-if-with-locals?
+                  ctx
                   mode
                   env
                   type-env
@@ -29884,6 +30156,7 @@
                   lane-locals
                   init)
                 (lower-masked-vector-let-bindings-have-varying-if-with-locals?
+                  ctx
                   mode
                   env
                   type-env
@@ -29892,12 +30165,14 @@
                   rest)))]))]))
 
 (define (lower-masked-vector-body-has-varying-if?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
   (lower-masked-vector-body-has-varying-if-with-locals?
+    ctx
     mode
     env
     type-env
@@ -29906,12 +30181,14 @@
     expr))
 
 (define (lower-masked-vector-expr-list-has-varying-if?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-if-with-locals?
+    ctx
     mode
     env
     type-env
@@ -29920,12 +30197,14 @@
     exprs))
 
 (define (lower-masked-vector-let-bindings-have-varying-if?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-if-with-locals?
+    ctx
     mode
     env
     type-env
@@ -29934,6 +30213,7 @@
     bindings))
 
 (define (lower-masked-vector-body-has-varying-while-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -29943,6 +30223,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (lower-masked-vector-body-has-varying-while-with-locals?
+        ctx
         mode
         env
         type-env
@@ -29951,6 +30232,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Ann inner-box _)
       (lower-masked-vector-body-has-varying-while-with-locals?
+        ctx
         mode
         env
         type-env
@@ -29959,6 +30241,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Cast inner-box _)
       (lower-masked-vector-body-has-varying-while-with-locals?
+        ctx
         mode
         env
         type-env
@@ -29972,6 +30255,7 @@
         (or
           (>
             (lower-masked-vector-expr-lanes-with-locals
+              ctx
               mode
               env
               type-env
@@ -29980,6 +30264,7 @@
               cond)
             0)
           (lower-masked-vector-body-has-varying-while-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29987,6 +30272,7 @@
             lane-locals
             cond)
           (lower-masked-vector-body-has-varying-while-with-locals?
+            ctx
             mode
             env
             type-env
@@ -29996,6 +30282,7 @@
     [(AstExpr.If cond-box then-box else-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30003,6 +30290,7 @@
           lane-locals
           (ast-node-get cond-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30010,6 +30298,7 @@
           lane-locals
           (ast-node-get then-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30023,6 +30312,7 @@
             [body : AstExpr (ast-node-get body-box)]
             [body-locals : hashmap.StringI64Map
               (lower-masked-vector-let-bindings-locals
+                ctx
                 mode
                 env
                 type-env
@@ -30031,6 +30321,7 @@
                 bindings)]
             (or
               (lower-masked-vector-let-bindings-have-varying-while-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30038,6 +30329,7 @@
                 lane-locals
                 bindings)
               (lower-masked-vector-body-has-varying-while-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30046,6 +30338,7 @@
                 body)))])]
     [(AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-while-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30054,6 +30347,7 @@
         exprs)]
     [(AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-while-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30063,6 +30357,7 @@
     [(AstExpr.Binary _ left-box right-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30070,6 +30365,7 @@
           lane-locals
           (ast-node-get left-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30079,6 +30375,7 @@
     [(AstExpr.ArrayRef arr-box idx-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30086,6 +30383,7 @@
           lane-locals
           (ast-node-get arr-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30095,6 +30393,7 @@
     [(AstExpr.ArraySet arr-box idx-box value-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30102,6 +30401,7 @@
           lane-locals
           (ast-node-get arr-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30109,6 +30409,7 @@
           lane-locals
           (ast-node-get idx-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30118,6 +30419,7 @@
     [(AstExpr.StructSet receiver-box _ value-box)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30125,6 +30427,7 @@
           lane-locals
           (ast-node-get receiver-box))
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30134,6 +30437,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-varying-while-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -30145,6 +30449,7 @@
     [(AstExprList.Cons expr rest)
       (or
         (lower-masked-vector-body-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30152,6 +30457,7 @@
           lane-locals
           (ast-node-get expr))
         (lower-masked-vector-expr-list-has-varying-while-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30160,6 +30466,7 @@
           (box-get rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-varying-while-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -30175,6 +30482,7 @@
             [init : AstExpr (ast-node-get init-box)]
             [init-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -30190,6 +30498,7 @@
                 lane-locals)]
             (or
               (lower-masked-vector-body-has-varying-while-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30197,6 +30506,7 @@
                 lane-locals
                 init)
               (lower-masked-vector-let-bindings-have-varying-while-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30205,12 +30515,14 @@
                 (box-get rest))))])]))
 
 (define (lower-masked-vector-body-has-varying-while?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
   (lower-masked-vector-body-has-varying-while-with-locals?
+    ctx
     mode
     env
     type-env
@@ -30219,6 +30531,7 @@
     expr))
 
 (define (lower-masked-vector-body-has-varying-match-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -30228,6 +30541,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (lower-masked-vector-body-has-varying-match-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30236,6 +30550,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Ann inner-box _)
       (lower-masked-vector-body-has-varying-match-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30244,6 +30559,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Cast inner-box _)
       (lower-masked-vector-body-has-varying-match-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30252,6 +30568,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-match-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30261,6 +30578,7 @@
     [(AstExpr.Binary _ left-box right-box)
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30268,6 +30586,7 @@
           lane-locals
           (ast-node-get left-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30279,6 +30598,7 @@
         [(AstLet.Let bindings body-box)
           (or
             (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+              ctx
               mode
               env
               type-env
@@ -30286,11 +30606,13 @@
               lane-locals
               bindings)
             (lower-masked-vector-body-has-varying-match-with-locals?
+              ctx
               mode
               env
               type-env
               index
               (lower-masked-vector-let-bindings-locals
+                ctx
                 mode
                 env
                 type-env
@@ -30301,6 +30623,7 @@
     [(AstExpr.If cond-box then-box else-box)
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30308,6 +30631,7 @@
           lane-locals
           (ast-node-get cond-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30315,6 +30639,7 @@
           lane-locals
           (ast-node-get then-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30328,6 +30653,7 @@
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             [scrut-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -30337,6 +30663,7 @@
             (or
               (> scrut-lanes 0)
               (lower-masked-vector-match-arms-have-varying-match-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30346,6 +30673,7 @@
                 arms)))])]
     [(AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-match-with-locals?
+        ctx
         mode
         env
         type-env
@@ -30355,6 +30683,7 @@
     [(AstExpr.ArrayRef arr-box idx-box)
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30362,6 +30691,7 @@
           lane-locals
           (ast-node-get arr-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30371,6 +30701,7 @@
     [(AstExpr.ArraySet arr-box idx-box value-box)
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30378,6 +30709,7 @@
           lane-locals
           (ast-node-get arr-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30385,6 +30717,7 @@
           lane-locals
           (ast-node-get idx-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30394,6 +30727,7 @@
     [(AstExpr.StructSet receiver-box _ value-box)
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30401,6 +30735,7 @@
           lane-locals
           (ast-node-get receiver-box))
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30410,6 +30745,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-varying-match-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -30421,6 +30757,7 @@
     [(AstExprList.Cons expr rest)
       (or
         (lower-masked-vector-body-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30428,6 +30765,7 @@
           lane-locals
           (ast-node-get expr))
         (lower-masked-vector-expr-list-has-varying-match-with-locals?
+          ctx
           mode
           env
           type-env
@@ -30436,6 +30774,7 @@
           (box-get rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -30451,6 +30790,7 @@
             [init : AstExpr (ast-node-get init-box)]
             [init-lanes : i64
               (lower-masked-vector-expr-lanes-with-locals
+                ctx
                 mode
                 env
                 type-env
@@ -30466,6 +30806,7 @@
                 lane-locals)]
             (or
               (lower-masked-vector-body-has-varying-match-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30473,6 +30814,7 @@
                 lane-locals
                 init)
               (lower-masked-vector-let-bindings-have-varying-match-with-locals?
+                ctx
                 mode
                 env
                 type-env
@@ -30481,6 +30823,7 @@
                 (box-get rest))))])]))
 
 (define (lower-masked-vector-match-arms-have-varying-match-with-locals?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -30495,6 +30838,7 @@
         [(AstMatchArm.Arm pattern body-box)
           (or
             (lower-masked-vector-body-has-varying-match-with-locals?
+              ctx
               mode
               env
               type-env
@@ -30505,6 +30849,7 @@
                 lane-locals)
               (ast-node-get body-box))
             (lower-masked-vector-match-arms-have-varying-match-with-locals?
+              ctx
               mode
               env
               type-env
@@ -30514,12 +30859,14 @@
               (box-get rest)))])]))
 
 (define (lower-masked-vector-body-has-varying-match?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
   (lower-masked-vector-body-has-varying-match-with-locals?
+    ctx
     mode
     env
     type-env
@@ -30534,6 +30881,7 @@
     [_ false]))
 
 (define (lower-masked-vector-array-ref-varying-enum?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30541,11 +30889,12 @@
   [idx : AstExpr]) : bool
   (and
     (>= (lower-masked-vector-index-offset index idx) 0)
-    (match (lower-dynamic-array-var env type-env arr)
+    (match (lower-dynamic-array-var ctx env type-env arr)
       [(LowerSomeArrayVar _ elem-ty) (lower-spmd-enum-type? elem-ty)]
       [LowerNoArrayVar false])))
 
 (define (lower-masked-vector-expr-varying-enum-with-locals?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30554,6 +30903,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (lower-masked-vector-expr-varying-enum-with-locals?
+        ctx
         env
         type-env
         index
@@ -30561,6 +30911,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Ann inner-box _)
       (lower-masked-vector-expr-varying-enum-with-locals?
+        ctx
         env
         type-env
         index
@@ -30568,6 +30919,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Cast inner-box _)
       (lower-masked-vector-expr-varying-enum-with-locals?
+        ctx
         env
         type-env
         index
@@ -30577,6 +30929,7 @@
       (lower-string-set-contains? enum-locals (intern-str name))]
     [(AstExpr.ArrayRef arr-box idx-box)
       (lower-masked-vector-array-ref-varying-enum?
+        ctx
         env
         type-env
         index
@@ -30585,6 +30938,7 @@
     [_ false]))
 
 (define (lower-masked-vector-enum-let-locals
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30601,6 +30955,7 @@
               [init : AstExpr (ast-node-get init-box)]
               [next-locals : LowerStringSet
                 (if (lower-masked-vector-expr-varying-enum-with-locals?
+                  ctx
                   env
                   type-env
                   index
@@ -30609,6 +30964,7 @@
                   (lower-string-set-insert enum-locals (intern-str name))
                   enum-locals)]
               (lower-masked-vector-enum-let-locals
+                ctx
                 env
                 type-env
                 index
@@ -30616,6 +30972,7 @@
                 rest))]))]))
 
 (define (lower-masked-vector-body-has-varying-enum-match-with-locals?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30624,6 +30981,7 @@
   (match expr
     [(AstExpr.Spanned inner-box _)
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        ctx
         env
         type-env
         index
@@ -30631,6 +30989,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Ann inner-box _)
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        ctx
         env
         type-env
         index
@@ -30638,6 +30997,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Cast inner-box _)
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        ctx
         env
         type-env
         index
@@ -30645,6 +31005,7 @@
         (ast-node-get inner-box))]
     [(AstExpr.Unary _ inner-box)
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
+        ctx
         env
         type-env
         index
@@ -30653,12 +31014,14 @@
     [(AstExpr.Binary _ left-box right-box)
       (or
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get left-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
@@ -30669,16 +31032,19 @@
         [(AstLet.Let bindings body-box)
           (or
             (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
+              ctx
               env
               type-env
               index
               enum-locals
               bindings)
             (lower-masked-vector-body-has-varying-enum-match-with-locals?
+              ctx
               env
               type-env
               index
               (lower-masked-vector-enum-let-locals
+                ctx
                 env
                 type-env
                 index
@@ -30688,18 +31054,21 @@
     [(AstExpr.If cond-box then-box else-box)
       (or
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get cond-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get then-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
@@ -30712,18 +31081,21 @@
             [scrutinee : AstExpr (ast-node-get scrutinee-box)]
             (or
               (lower-masked-vector-expr-varying-enum-with-locals?
+                ctx
                 env
                 type-env
                 index
                 enum-locals
                 scrutinee)
               (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                ctx
                 env
                 type-env
                 index
                 enum-locals
                 scrutinee)
               (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+                ctx
                 env
                 type-env
                 index
@@ -30731,6 +31103,7 @@
                 arms)))])]
     [(AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
+        ctx
         env
         type-env
         index
@@ -30739,12 +31112,14 @@
     [(AstExpr.ArrayRef arr-box idx-box)
       (or
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get arr-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
@@ -30753,18 +31128,21 @@
     [(AstExpr.ArraySet arr-box idx-box value-box)
       (or
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get arr-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get idx-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
@@ -30773,12 +31151,14 @@
     [(AstExpr.StructSet receiver-box _ value-box)
       (or
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get receiver-box))
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
@@ -30787,6 +31167,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30797,12 +31178,14 @@
     [(AstExprList.Cons expr rest)
       (or
         (lower-masked-vector-body-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
           enum-locals
           (ast-node-get expr))
         (lower-masked-vector-expr-list-has-varying-enum-match-with-locals?
+          ctx
           env
           type-env
           index
@@ -30810,6 +31193,7 @@
           (box-get rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30824,6 +31208,7 @@
             [init : AstExpr (ast-node-get init-box)]
             [next-locals : LowerStringSet
               (if (lower-masked-vector-expr-varying-enum-with-locals?
+                ctx
                 env
                 type-env
                 index
@@ -30833,12 +31218,14 @@
                 enum-locals)]
             (or
               (lower-masked-vector-body-has-varying-enum-match-with-locals?
+                ctx
                 env
                 type-env
                 index
                 enum-locals
                 init)
               (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
+                ctx
                 env
                 type-env
                 index
@@ -30846,6 +31233,7 @@
                 (box-get rest))))])]))
 
 (define (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30858,12 +31246,14 @@
         [(AstMatchArm.Arm _ body-box)
           (or
             (lower-masked-vector-body-has-varying-enum-match-with-locals?
+              ctx
               env
               type-env
               index
               enum-locals
               (ast-node-get body-box))
             (lower-masked-vector-match-arms-have-varying-enum-match-with-locals?
+              ctx
               env
               type-env
               index
@@ -30871,11 +31261,13 @@
               (box-get rest)))])]))
 
 (define (lower-masked-vector-body-has-varying-enum-match?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [expr : AstExpr]) : bool
   (lower-masked-vector-body-has-varying-enum-match-with-locals?
+    ctx
     env
     type-env
     index
@@ -30883,18 +31275,20 @@
     expr))
 
 (define (lower-masked-vector-bool-array-lane?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
   [arr : AstExpr]
   [idx : AstExpr]) : bool
   (if (>= (lower-masked-vector-index-offset index idx) 0)
-    (match (lower-dynamic-array-var env type-env arr)
+    (match (lower-dynamic-array-var ctx env type-env arr)
       [(LowerSomeArrayVar _ elem-ty) (lower-type-bool? elem-ty)]
       [LowerNoArrayVar false])
     false))
 
 (define (lower-masked-vector-body-has-bool-array-lane?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -30903,30 +31297,52 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+        (lower-masked-vector-body-has-bool-array-lane?
+          ctx
+          env
+          type-env
+          index
+          inner))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+        (lower-masked-vector-body-has-bool-array-lane?
+          ctx
+          env
+          type-env
+          index
+          inner))]
     [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+        (lower-masked-vector-body-has-bool-array-lane?
+          ctx
+          env
+          type-env
+          index
+          inner))]
     [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-body-has-bool-array-lane? env type-env index inner))]
+        (lower-masked-vector-body-has-bool-array-lane?
+          ctx
+          env
+          type-env
+          index
+          inner))]
     [(AstExpr.Binary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (or
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
             left)
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
@@ -30938,11 +31354,13 @@
             [body : AstExpr (ast-node-get body-box)]
             (or
               (lower-masked-vector-let-bindings-have-bool-array-lane?
+                ctx
                 env
                 type-env
                 index
                 bindings)
               (lower-masked-vector-body-has-bool-array-lane?
+                ctx
                 env
                 type-env
                 index
@@ -30954,16 +31372,19 @@
         [else-branch : AstExpr (ast-node-get else-box)]
         (or
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
             cond)
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
             then-branch)
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
@@ -30971,17 +31392,20 @@
     [(AstExpr.While cond-box body-box)
       (or
         (lower-masked-vector-body-has-bool-array-lane?
+          ctx
           env
           type-env
           index
           (ast-node-get cond-box))
         (lower-masked-vector-body-has-bool-array-lane?
+          ctx
           env
           type-env
           index
           (ast-node-get body-box)))]
     [(AstExpr.Begin exprs)
       (lower-masked-vector-expr-list-has-bool-array-lane?
+        ctx
         env
         type-env
         index
@@ -30990,15 +31414,16 @@
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
-        (lower-masked-vector-bool-array-lane? env type-env index arr idx))]
+        (lower-masked-vector-bool-array-lane? ctx env type-env index arr idx))]
     [(AstExpr.ArraySet arr-box idx-box value-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         [value : AstExpr (ast-node-get value-box)]
         (or
-          (lower-masked-vector-bool-array-lane? env type-env index arr idx)
+          (lower-masked-vector-bool-array-lane? ctx env type-env index arr idx)
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
@@ -31009,11 +31434,13 @@
         [value : AstExpr (ast-node-get value-box)]
         (or
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
             receiver)
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
@@ -31021,6 +31448,7 @@
     [_ false]))
 
 (define (lower-masked-vector-expr-list-has-bool-array-lane?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -31033,17 +31461,20 @@
         [rest : AstExprList (box-get rest)]
         (or
           (lower-masked-vector-body-has-bool-array-lane?
+            ctx
             env
             type-env
             index
             expr)
           (lower-masked-vector-expr-list-has-bool-array-lane?
+            ctx
             env
             type-env
             index
             rest)))]))
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane?
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -31059,17 +31490,20 @@
               [init : AstExpr (ast-node-get init-box)]
               (or
                 (lower-masked-vector-body-has-bool-array-lane?
+                  ctx
                   env
                   type-env
                   index
                   init)
                 (lower-masked-vector-let-bindings-have-bool-array-lane?
+                  ctx
                   env
                   type-env
                   index
                   rest)))]))]))
 
 (define (lower-masked-vector-map
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -31078,19 +31512,43 @@
   (if (and
     (lower-mode-avx512? mode)
     (or
-      (lower-masked-vector-body-has-varying-if? mode env type-env index body)
-      (lower-masked-vector-body-has-varying-while? mode env type-env index body)
-      (lower-masked-vector-body-has-varying-match? mode env type-env index body)
-      (lower-masked-vector-body-has-bool-array-lane? env type-env index body)))
+      (lower-masked-vector-body-has-varying-if?
+        ctx
+        mode
+        env
+        type-env
+        index
+        body)
+      (lower-masked-vector-body-has-varying-while?
+        ctx
+        mode
+        env
+        type-env
+        index
+        body)
+      (lower-masked-vector-body-has-varying-match?
+        ctx
+        mode
+        env
+        type-env
+        index
+        body)
+      (lower-masked-vector-body-has-bool-array-lane?
+        ctx
+        env
+        type-env
+        index
+        body)))
     (let
       [lanes : i64
-        (lower-masked-vector-expr-lanes mode env type-env index body)]
+        (lower-masked-vector-expr-lanes ctx mode env type-env index body)]
       (if (> lanes 0)
         (LowerSomeMaskedVectorMap lanes)
         LowerNoMaskedVectorMap))
     LowerNoMaskedVectorMap))
 
 (define (lower-masked-vector-array-vars
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -31099,26 +31557,26 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-array-vars env type-env index inner))]
+        (lower-masked-vector-array-vars ctx env type-env index inner))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-array-vars env type-env index inner))]
+        (lower-masked-vector-array-vars ctx env type-env index inner))]
     [(AstExpr.Cast inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-array-vars env type-env index inner))]
+        (lower-masked-vector-array-vars ctx env type-env index inner))]
     [(AstExpr.Unary _ inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-masked-vector-array-vars env type-env index inner))]
+        (lower-masked-vector-array-vars ctx env type-env index inner))]
     [(AstExpr.Binary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
         [right : AstExpr (ast-node-get right-box)]
         (lower-array-var-set-merge
-          (lower-masked-vector-array-vars env type-env index left)
-          (lower-masked-vector-array-vars env type-env index right)))]
+          (lower-masked-vector-array-vars ctx env type-env index left)
+          (lower-masked-vector-array-vars ctx env type-env index right)))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
@@ -31126,29 +31584,32 @@
             [body : AstExpr (ast-node-get body-box)]
             (lower-array-var-set-merge
               (lower-masked-vector-let-binding-array-vars
+                ctx
                 env
                 type-env
                 index
                 bindings)
-              (lower-masked-vector-array-vars env type-env index body)))])]
+              (lower-masked-vector-array-vars ctx env type-env index body)))])]
     [(AstExpr.If cond-box then-box else-box)
       (let
         [cond : AstExpr (ast-node-get cond-box)]
         [then-branch : AstExpr (ast-node-get then-box)]
         [else-branch : AstExpr (ast-node-get else-box)]
         (lower-array-var-set-merge
-          (lower-masked-vector-array-vars env type-env index cond)
+          (lower-masked-vector-array-vars ctx env type-env index cond)
           (lower-array-var-set-merge
-            (lower-masked-vector-array-vars env type-env index then-branch)
-            (lower-masked-vector-array-vars env type-env index else-branch))))]
+            (lower-masked-vector-array-vars ctx env type-env index then-branch)
+            (lower-masked-vector-array-vars ctx env type-env index else-branch))))]
     [(AstExpr.While cond-box body-box)
       (lower-array-var-set-merge
         (lower-masked-vector-array-vars
+          ctx
           env
           type-env
           index
           (ast-node-get cond-box))
         (lower-masked-vector-array-vars
+          ctx
           env
           type-env
           index
@@ -31158,20 +31619,26 @@
         [(AstMatch.Match scrutinee-box arms)
           (lower-array-var-set-merge
             (lower-masked-vector-array-vars
+              ctx
               env
               type-env
               index
               (ast-node-get scrutinee-box))
-            (lower-masked-vector-match-arms-array-vars env type-env index arms))])]
+            (lower-masked-vector-match-arms-array-vars
+              ctx
+              env
+              type-env
+              index
+              arms))])]
     [(AstExpr.Begin exprs)
-      (lower-masked-vector-expr-list-array-vars env type-env index exprs)]
+      (lower-masked-vector-expr-list-array-vars ctx env type-env index exprs)]
     [(AstExpr.ArrayRef arr-box idx-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [idx : AstExpr (ast-node-get idx-box)]
         [idx-offset : i64 (lower-masked-vector-index-offset index idx)]
         (if (>= idx-offset 0)
-          (match (lower-dynamic-array-var env type-env arr)
+          (match (lower-dynamic-array-var ctx env type-env arr)
             [(LowerSomeArrayVar var _)
               (lower-array-var-set-add
                 (lower-array-var-set-empty)
@@ -31187,7 +31654,7 @@
         [idx-offset : i64 (lower-masked-vector-index-offset index idx)]
         (lower-array-var-set-merge
           (if (>= idx-offset 0)
-            (match (lower-dynamic-array-var env type-env arr)
+            (match (lower-dynamic-array-var ctx env type-env arr)
               [(LowerSomeArrayVar var _)
                 (lower-array-var-set-add
                   (lower-array-var-set-empty)
@@ -31195,17 +31662,18 @@
                   idx-offset)]
               [LowerNoArrayVar (lower-array-var-set-empty)])
             (lower-array-var-set-empty))
-          (lower-masked-vector-array-vars env type-env index value)))]
+          (lower-masked-vector-array-vars ctx env type-env index value)))]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
         (lower-array-var-set-merge
-          (lower-masked-vector-array-vars env type-env index receiver)
-          (lower-masked-vector-array-vars env type-env index value)))]
+          (lower-masked-vector-array-vars ctx env type-env index receiver)
+          (lower-masked-vector-array-vars ctx env type-env index value)))]
     [_ (lower-array-var-set-empty)]))
 
 (define (lower-masked-vector-expr-list-array-vars
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -31217,10 +31685,11 @@
         [expr : AstExpr (ast-node-get expr)]
         [rest : AstExprList (box-get rest)]
         (lower-array-var-set-merge
-          (lower-masked-vector-array-vars env type-env index expr)
-          (lower-masked-vector-expr-list-array-vars env type-env index rest)))]))
+          (lower-masked-vector-array-vars ctx env type-env index expr)
+          (lower-masked-vector-expr-list-array-vars ctx env type-env index rest)))]))
 
 (define (lower-masked-vector-match-arms-array-vars
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -31232,17 +31701,20 @@
         [(AstMatchArm.Arm _ body-box)
           (lower-array-var-set-merge
             (lower-masked-vector-array-vars
+              ctx
               env
               type-env
               index
               (ast-node-get body-box))
             (lower-masked-vector-match-arms-array-vars
+              ctx
               env
               type-env
               index
               (box-get rest)))])]))
 
 (define (lower-masked-vector-let-binding-array-vars
+  [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
@@ -31257,8 +31729,9 @@
             (let
               [init : AstExpr (ast-node-get init-box)]
               (lower-array-var-set-merge
-                (lower-masked-vector-array-vars env type-env index init)
+                (lower-masked-vector-array-vars ctx env type-env index init)
                 (lower-masked-vector-let-binding-array-vars
+                  ctx
                   env
                   type-env
                   index
@@ -31693,6 +32166,7 @@
             (lower-spmd-let-bindings-have-mul? (box-get rest)))])]))
 
 (define (lower-simple-vector-map-has-unsupported-byte-mul?
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -31703,6 +32177,7 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lower-simple-vector-map-has-unsupported-byte-mul?
+          ctx
           mode
           env
           type-env
@@ -31714,7 +32189,7 @@
         [set-index : AstExpr (ast-node-get set-index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (if (lower-expr-is-var? set-index index)
-          (match (lower-dynamic-array-var env type-env arr)
+          (match (lower-dynamic-array-var ctx env type-env arr)
             [(LowerSomeArrayVar _ dst-elem)
               (and
                 (> (lower-simd-lanes-for-elem mode dst-elem) 0)
@@ -31748,6 +32223,7 @@
     [_ LowerNoVectorMapValue]))
 
 (define (lower-simple-vector-map-value
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -31758,11 +32234,25 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-simple-vector-map-value mode env type-env index dst-elem inner))]
+        (lower-simple-vector-map-value
+          ctx
+          mode
+          env
+          type-env
+          index
+          dst-elem
+          inner))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-simple-vector-map-value mode env type-env index dst-elem inner))]
+        (lower-simple-vector-map-value
+          ctx
+          mode
+          env
+          type-env
+          index
+          dst-elem
+          inner))]
     [(AstExpr.Cast inner-box cast-ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -31775,6 +32265,7 @@
           [(LowerSomeVectorMapValue plan) (LowerSomeVectorMapValue plan)]
           [LowerNoVectorMapValue
             (lower-simple-vector-map-value
+              ctx
               mode
               env
               type-env
@@ -31782,7 +32273,7 @@
               dst-elem
               inner)]))]
     [(AstExpr.ArrayRef _ _)
-      (match (lower-array-ref-var-for-index env type-env value index)
+      (match (lower-array-ref-var-for-index ctx env type-env value index)
         [(LowerSomeArrayVar array-var array-elem)
           (if (tc-type-eq array-elem dst-elem)
             (LowerSomeVectorMapValue (LowerVectorMapArray array-var))
@@ -31794,7 +32285,7 @@
         [lane : AstExpr (ast-node-get lane-box)]
         (match (lower-simple-spmd-broadcast-lane env type-env lane)
           [(LowerSomeIrValue lane-value)
-            (match (lower-array-ref-var-for-index env type-env source index)
+            (match (lower-array-ref-var-for-index ctx env type-env source index)
               [(LowerSomeArrayVar array-var array-elem)
                 (if (tc-type-eq array-elem dst-elem)
                   (LowerSomeVectorMapValue
@@ -31802,6 +32293,7 @@
                   LowerNoVectorMapValue)]
               [LowerNoArrayVar
                 (lower-simple-vector-map-value
+                  ctx
                   mode
                   env
                   type-env
@@ -31871,6 +32363,7 @@
           [lhs : AstExpr (ast-node-get lhs-box)]
           [rhs : AstExpr (ast-node-get rhs-box)]
           (match (lower-simple-vector-map-value
+            ctx
             mode
             env
             type-env
@@ -31879,6 +32372,7 @@
             lhs)
             [(LowerSomeVectorMapValue lhs-plan)
               (match (lower-simple-vector-map-value
+                ctx
                 mode
                 env
                 type-env
@@ -31911,6 +32405,7 @@
         (lower-vector-map-value-array-vars (box-get rhs)))]))
 
 (define (lower-simple-vector-map
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -31920,19 +32415,20 @@
     [(AstExpr.Spanned inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (lower-simple-vector-map mode env type-env index inner))]
+        (lower-simple-vector-map ctx mode env type-env index inner))]
     [(AstExpr.ArraySet arr-box set-index-box value-box)
       (let
         [arr : AstExpr (ast-node-get arr-box)]
         [set-index : AstExpr (ast-node-get set-index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (if (lower-expr-is-var? set-index index)
-          (match (lower-dynamic-array-var env type-env arr)
+          (match (lower-dynamic-array-var ctx env type-env arr)
             [(LowerSomeArrayVar dst-var dst-elem)
               (let
                 [lanes : i64 (lower-simd-lanes-for-elem mode dst-elem)]
                 (if (> lanes 0)
                   (match (lower-simple-vector-map-value
+                    ctx
                     mode
                     env
                     type-env
@@ -31977,6 +32473,7 @@
     [_ (CompilerIrVectorReduceOp.Sum)]))
 
 (define (lower-simple-vector-reduce
+  [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -31989,13 +32486,29 @@
       [(AstExpr.Spanned inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-simple-vector-reduce mode env type-env op index value-ty inner))]
+          (lower-simple-vector-reduce
+            ctx
+            mode
+            env
+            type-env
+            op
+            index
+            value-ty
+            inner))]
       [(AstExpr.Ann inner-box _)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
-          (lower-simple-vector-reduce mode env type-env op index value-ty inner))]
+          (lower-simple-vector-reduce
+            ctx
+            mode
+            env
+            type-env
+            op
+            index
+            value-ty
+            inner))]
       [_
-        (match (lower-array-ref-var-for-index env type-env value index)
+        (match (lower-array-ref-var-for-index ctx env type-env value index)
           [(LowerSomeArrayVar array-var elem-ty)
             (let
               [elem : AstType (tc-type-without-regions elem-ty)]
@@ -32017,6 +32530,7 @@
                 (> lanes 0)
                 (lower-simple-vector-reduce-op-supported? mode op elem))
                 (match (lower-simple-vector-map-value
+                  ctx
                   mode
                   env
                   type-env
@@ -34030,7 +34544,7 @@
             "unbound values inside masked vector expressions"))))))
 
 (define (lower-avx512-masked-array-ref
-  [_ctx : TcContext]
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
@@ -34041,7 +34555,7 @@
   [expr : AstExpr]
   [arr : AstExpr]
   [idx : AstExpr]) : ResultLowerExpr
-  (match (lower-dynamic-array-var env type-env arr)
+  (match (lower-dynamic-array-var ctx env type-env arr)
     [(LowerSomeArrayVar array-var elem-ty)
       (let
         [lane-ty : AstType (tc-type-without-regions elem-ty)]
@@ -34097,7 +34611,7 @@
   [arr : AstExpr]
   [idx : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (match (lower-dynamic-array-var env type-env arr)
+  (match (lower-dynamic-array-var ctx env type-env arr)
     [(LowerSomeArrayVar array-var elem-ty)
       (let
         [lane-ty : AstType (tc-type-without-regions elem-ty)]
@@ -35694,7 +36208,12 @@
               (sym_i64_env.sym-i64-bind env index index-var)]
             [body-type-env : TcTypeEnv (tc-bind type-env index index-ty)]
             [arrays : LowerArrayVarSet
-              (lower-masked-vector-array-vars body-env body-type-env index body)]
+              (lower-masked-vector-array-vars
+                ctx
+                body-env
+                body-type-env
+                index
+                body)]
             [header-label : String ""]
             [body-label : String ""]
             [tail-header-label : String ""]
@@ -36252,6 +36771,7 @@
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? index-ty))
     (match (lower-simple-vector-map
+      ctx
       (lower-state-mode state)
       env
       type-env
@@ -36269,6 +36789,7 @@
           end-value
           body
           (lower-simple-vector-map
+            ctx
             (lower-state-mode state)
             env
             type-env
@@ -36287,6 +36808,7 @@
             end-value
             body)
           (match (lower-masked-vector-map
+            ctx
             (lower-state-mode state)
             env
             type-env
@@ -36304,6 +36826,7 @@
                 end-value
                 body
                 (lower-masked-vector-map
+                  ctx
                   (lower-state-mode state)
                   env
                   type-env
@@ -36312,6 +36835,7 @@
             [LowerNoMaskedVectorMap
               (cond
                 [(lower-masked-vector-body-has-varying-while?
+                    ctx
                     (lower-state-mode state)
                     env
                     type-env
@@ -36325,6 +36849,7 @@
                           (lower-avx2-varying-while-diagnostic)
                           "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
                 [(lower-masked-vector-body-has-varying-if?
+                    ctx
                     (lower-state-mode state)
                     env
                     type-env
@@ -36338,6 +36863,7 @@
                           (lower-avx2-masked-if-diagnostic)
                           "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
                 [(lower-masked-vector-body-has-varying-enum-match?
+                    ctx
                     env
                     type-env
                     index
@@ -36359,6 +36885,7 @@
                       end-value
                       body))]
                 [(lower-masked-vector-body-has-varying-match?
+                    ctx
                     (lower-state-mode state)
                     env
                     type-env
@@ -36374,6 +36901,7 @@
                 [(and
                     (lower-mode-avx2? (lower-state-mode state))
                     (lower-masked-vector-body-has-bool-array-lane?
+                      ctx
                       env
                       type-env
                       index
@@ -36391,6 +36919,7 @@
                         (lower-spmd-shuffle-diagnostic))))]
                 [(lower-vector-body-has-array-read? body)
                   (if (lower-simple-vector-map-has-unsupported-byte-mul?
+                    ctx
                     (lower-state-mode state)
                     env
                     type-env
@@ -36555,7 +37084,9 @@
                       (let
                         [referent-ty : AstType
                           (tc-type-strip-region
-                            (tc-resolve-type ctx (ty-node-get referent-box)))]
+                            (tc-resolve-type
+                              ctx
+                              (tc-context-type-get ctx referent-box)))]
                         (match referent-ty
                           [(AstType.Enum _)
                             (lower-match-enum
@@ -36703,7 +37234,9 @@
                   (let
                     [referent-ty : AstType
                       (tc-type-strip-region
-                        (tc-resolve-type ctx (ty-node-get referent-box)))]
+                        (tc-resolve-type
+                          ctx
+                          (tc-context-type-get ctx referent-box)))]
                     (match referent-ty
                       [(AstType.Enum _)
                         (lower-match-borrowed-enum
@@ -36984,7 +37517,7 @@
                   (match types
                     [(AstTypeList.Cons ty rest-types)
                       (let
-                        [ty : AstType (ty-node-get ty)]
+                        [ty : AstType (tc-context-type-get ctx ty)]
                         [rest-types : AstTypeList (box-get rest-types)]
                         (match (lower-bind-struct-field-pattern
                           ctx
@@ -38500,7 +39033,7 @@
             (if (not
               (lower-tail-call-compatible-return?
                 ctx
-                (ty-node-get fn-ret)
+                (tc-context-type-get ctx fn-ret)
                 ret-ty))
               ;; The callee's declared return type differs from this function's
               ;; return type (beyond regions): the value path coerces the call
@@ -39704,7 +40237,9 @@
                 (let
                   [referent-ty : AstType
                     (tc-type-strip-region
-                      (tc-resolve-type ctx (ty-node-get referent-box)))]
+                      (tc-resolve-type
+                        ctx
+                        (tc-context-type-get ctx referent-box)))]
                   (match referent-ty
                     [(AstType.Enum _) true]
                     [(AstType.EnumArgs _ _) true]
@@ -40623,16 +41158,18 @@
           (CompilerLowerLinuxAvx512)
           (CompilerLowerAvx512)))]))
 
-(define (lower-dispatch-type-list-without-regions [types : AstTypeList]) : AstTypeList
+(define (lower-dispatch-type-list-without-regions
+  [ctx : TcContext]
+  [types : AstTypeList]) : AstTypeList
   (match types
     [(AstTypeList.Nil) AstTypeList.Nil]
     [(AstTypeList.Cons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (ast-type-cons
           (tc-type-without-regions ty)
-          (lower-dispatch-type-list-without-regions rest)))]))
+          (lower-dispatch-type-list-without-regions ctx rest)))]))
 
 (define (lower-dispatch-param-type-count [types : AstTypeList]) : i64
   (match types
@@ -40642,19 +41179,22 @@
         [rest : AstTypeList (box-get rest)]
         (+ 1 (lower-dispatch-param-type-count rest)))]))
 
-(define (lower-dispatch-param-list-from-types [types : AstTypeList] [idx : i64]) : CompilerIrParamList
+(define (lower-dispatch-param-list-from-types
+  [ctx : TcContext]
+  [types : AstTypeList]
+  [idx : i64]) : CompilerIrParamList
   (match types
     [(AstTypeList.Nil) CompilerIrParamList.Nil]
     [(AstTypeList.Cons ty rest)
       (let
-        [ty : AstType (ty-node-get ty)]
+        [ty : AstType (tc-context-type-get ctx ty)]
         [rest : AstTypeList (box-get rest)]
         (compiler-ir-param-cons
           (CompilerIrParam.Param
             (string.append "arg" (string.int->string idx))
             (tc-type-without-regions ty)
             idx)
-          (lower-dispatch-param-list-from-types rest (+ idx 1))))]))
+          (lower-dispatch-param-list-from-types ctx rest (+ idx 1))))]))
 
 (define (lower-dispatch-param-values [types : AstTypeList] [idx : i64]) : CompilerIrValueList
   (match types
@@ -40998,6 +41538,7 @@
       [(TcMaybeString.No) with-avx2])))
 
 (define (lower-dispatch-thunk-function
+  [ctx : TcContext]
   [logical-name : String]
   [fn-ty : AstType]
   [variants : AstDispatchVariantList]
@@ -41007,9 +41548,10 @@
   (match fn-ty
     [(AstType.Func param-types ret-box)
       (let
-        [ret-ty : AstType (tc-type-without-regions (ty-node-get ret-box))]
+        [ret-ty : AstType
+          (tc-type-without-regions (tc-context-type-get ctx ret-box))]
         [clean-param-types : AstTypeList
-          (lower-dispatch-type-list-without-regions (box-get param-types))]
+          (lower-dispatch-type-list-without-regions ctx (box-get param-types))]
         [param-count : i64 (lower-dispatch-param-type-count clean-param-types)]
         [cache-name : String (lower-dispatch-cache-name logical-name)]
         [args : CompilerIrCallArgs
@@ -41067,7 +41609,10 @@
                 (compiler-ir-function-cons
                   (CompilerIrFunction.Function
                     logical-name
-                    (lower-dispatch-param-list-from-types clean-param-types 0)
+                    (lower-dispatch-param-list-from-types
+                      ctx
+                      clean-param-types
+                      0)
                     ret-ty
                     (+ param-count 27)
                     (compiler-ir-block-list-compact blocks))
@@ -41276,6 +41821,7 @@
             CompilerIrFunctionList.Nil)
             [(ResultLowerFunction.Ok variant-functions variant-spans)
               (match (lower-dispatch-thunk-function
+                decl-ctx
                 logical-name
                 fn-ty
                 variants
@@ -42051,6 +42597,7 @@
                           LowerNameEnv.Nil))])
                   names)]
               (match (lower-prune-unreachable-functions-with-clone-roots
+                pools
                 entry-path
                 specialized
                 specialized-paths
@@ -52911,7 +53458,7 @@
               "entry.tl"
               LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         program
         AstDeclPathList.Nil
@@ -53235,13 +53782,13 @@
               "entry.tl"
               LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         program
         AstDeclPathList.Nil
         names)]
     [no-main-pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         no-main-program
         AstDeclPathList.Nil
@@ -53277,7 +53824,7 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(LowerPrunedProgram kept-program _)
         (match kept-program
@@ -53304,7 +53851,7 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(LowerPrunedProgram kept-program _)
         (match kept-program
@@ -53328,7 +53875,7 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(LowerPrunedProgram kept-program _)
         (match kept-program
@@ -53353,7 +53900,7 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(LowerPrunedProgram kept-program _)
         (match kept-program
@@ -53377,7 +53924,7 @@
             [decls : AstDeclList (box-get decls-box)]
             (lower-name-env-from-decls decls paths "entry.tl" LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions "entry.tl" program paths names)]
+      (lower-test-prune-unreachable-functions "entry.tl" program paths names)]
     (match pruned
       [(LowerPrunedProgram kept-program _)
         (match kept-program
@@ -53403,7 +53950,7 @@
               "entry.tl"
               LowerNameEnv.Nil))])]
     [pruned : LowerPrunedProgram
-      (lower-prune-unreachable-functions
+      (lower-test-prune-unreachable-functions
         "entry.tl"
         program
         AstDeclPathList.Nil
@@ -53456,7 +54003,7 @@
                 "entry.tl"
                 LowerNameEnv.Nil)]
             [pruned : LowerPrunedProgram
-              (lower-prune-unreachable-functions
+              (lower-test-prune-unreachable-functions
                 "entry.tl"
                 program
                 AstDeclPathList.Nil

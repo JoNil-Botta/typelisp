@@ -1237,6 +1237,319 @@
             (struct-get graph ids)
             (struct-get graph blocks))))]))
 
+;; ---------------------------------------------------------------------------
+;; Edge-precise (SSA) phi liveness -- used ONLY to build the coalescer's
+;; interference index (NOT allocation, NOT the backend).
+;;
+;; The baseline liveness above treats a phi `P = phi[(V_i, B_i)]` as USING every
+;; input V_i AT THE PHI BLOCK (compiler-live-instr-uses returns all inputs). That
+;; is sound (conservative) but over-approximate: it makes a back-edge / merge
+;; input appear live-in to the phi block from EVERY predecessor, leaking the input
+;; backward through edges it never travels and around the loop. The result is a
+;; loop-carried phi value whose live segments SPURIOUSLY overlap the carry's own
+;; segments (e.g. an increment value live at points BEFORE its own definition), so
+;; the interference-gated coalescer refuses to join the carry into one interval.
+;;
+;; Edge-precise liveness instead attributes each phi input to its OWN predecessor
+;; edge (LLVM PHIElimination semantics: the input is a COPY at the end of the
+;; predecessor): phi inputs are NOT uses at the phi block, and each input V_i is
+;; added to the live-out of its predecessor B_i. This removes the spurious overlap
+;; while staying SOUND (it is the exact SSA interference). It is used only to admit
+;; coalesces the conservative test wrongly rejected; allocation/eviction keep the
+;; conservative index, so an error here cannot under-approximate allocation
+;; interference -- only mis-coalesce, which the self-host fixpoint catches.
+;; ---------------------------------------------------------------------------
+
+(define (compiler-live-instr-uses-nophi [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (match instr
+    [(IrInstrPhi _ _ _) (compiler-live-set-empty)]
+    [_ (compiler-live-instr-uses instr)]))
+
+(define (compiler-live-block-use-def-nophi-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [uses : CompilerLiveI64Set]
+  [defs : CompilerLiveI64Set]) : CompilerLiveUseDef
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    (CompilerLiveUseDef uses defs)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      [instr-uses : CompilerLiveI64Set (compiler-live-instr-uses-nophi instr)]
+      [instr-defs : CompilerLiveI64Set (compiler-live-instr-defs instr)]
+      (compiler-live-block-use-def-nophi-seq-from
+        instrs
+        (+ index 1)
+        (compiler-live-set-union uses (compiler-live-set-minus instr-uses defs))
+        (compiler-live-set-union defs instr-defs)))))
+
+(define (compiler-live-build-block-nophi [block : CompilerIrBlock]) : CompilerLiveBlock
+  (match block
+    [(IrBlock label instrs)
+      (match (compiler-live-block-use-def-nophi-seq-from
+        instrs
+        0
+        (compiler-live-set-empty)
+        (compiler-live-set-empty))
+        [(CompilerLiveUseDef uses defs)
+          (CompilerLiveBlock
+            label
+            uses
+            defs
+            (compiler-live-set-empty)
+            (compiler-live-set-empty)
+            (compiler-live-block-successors block)
+            (compiler-live-instr-set-vec-empty))])]))
+
+(define (compiler-live-build-blocks-nophi [blocks : CompilerIrBlockList]) : CompilerLiveBlockList
+  (match blocks
+    [(IrBlockNil) CompilerLiveBlockNil]
+    [(IrBlockCons block rest)
+      (compiler-live-block-cons
+        (compiler-live-build-block-nophi block)
+        (compiler-live-build-blocks-nophi (box-get rest)))]
+    [(IrBlockArray seq)
+      (compiler-live-build-blocks-nophi (compiler-ir-block-seq-to-list seq))]))
+
+;; Accumulate every phi input (V, predLabel) of one phi into phi-out[ids[predLabel]].
+(define (compiler-live-phi-out-add-inputs!
+  [inputs : CompilerIrPhiInputList]
+  [ids : hashmap.StringI64Map]
+  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons value label rest)
+      (begin
+        (match value
+          [(IrValueVar v)
+            (match (hashmap.string-i64-map-get ids label)
+              [(hashmap.StringI64MapFound slot)
+                (if (and (>= slot 0) (< slot (array-length phi-out)))
+                  (array-set!
+                    phi-out
+                    slot
+                    (compiler-live-set-insert (array-ref phi-out slot) v))
+                  unit)]
+              [(hashmap.StringI64MapMissing) unit])]
+          [_ unit])
+        (compiler-live-phi-out-add-inputs! (box-get rest) ids phi-out))]))
+
+(define (compiler-live-phi-out-add-seq!
+  [instrs : CompilerIrInstrSeq]
+  [ids : hashmap.StringI64Map]
+  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (match (compiler-ir-instr-seq-ref instrs i)
+          [(IrInstrPhi _ inputs _)
+            (compiler-live-phi-out-add-inputs! inputs ids phi-out)]
+          [_ unit])
+        (set! i (+ i 1))))))
+
+(define (compiler-live-phi-out-build!
+  [blocks : CompilerIrBlockList]
+  [ids : hashmap.StringI64Map]
+  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (begin
+        (match block
+          [(IrBlock _ instrs)
+            (compiler-live-phi-out-add-seq! instrs ids phi-out)])
+        (compiler-live-phi-out-build! (box-get rest) ids phi-out))]
+    [(IrBlockArray seq)
+      (compiler-live-phi-out-build!
+        (compiler-ir-block-seq-to-list seq)
+        ids
+        phi-out)]))
+
+(define (compiler-live-recompute-block-graph-ep
+  [block : CompilerLiveBlock]
+  [graph : CompilerLiveBlockGraph]
+  [index : i64]
+  [phi-out : (Array CompilerLiveI64Set)]) : CompilerLiveBlock
+  (match block
+    [(CompilerLiveBlock label uses defs _ _ successors instr-after)
+      (let
+        [succ-out : CompilerLiveI64Set
+          (compiler-live-successor-live-out-graph
+            (array-ref (struct-get graph successors) index)
+            graph)]
+        [live-out : CompilerLiveI64Set
+          (if (and (>= index 0) (< index (array-length phi-out)))
+            (compiler-live-set-union succ-out (array-ref phi-out index))
+            succ-out)]
+        [live-in : CompilerLiveI64Set
+          (compiler-live-set-union uses (compiler-live-set-minus live-out defs))]
+        (CompilerLiveBlock
+          label
+          uses
+          defs
+          live-in
+          live-out
+          successors
+          instr-after))]))
+
+(define (compiler-live-graph-update-ep!
+  [graph : CompilerLiveBlockGraph]
+  [phi-out : (Array CompilerLiveI64Set)]) : bool
+  (let
+    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
+    [count : i64 (array-length blocks)]
+    [index : i64 (- count 1)]
+    [changed : bool false]
+    (begin
+      (while (>= index 0)
+        (let
+          [block : CompilerLiveBlock (array-ref blocks index)]
+          [updated : CompilerLiveBlock
+            (compiler-live-recompute-block-graph-ep block graph index phi-out)]
+          (begin
+            (if (compiler-live-block-liveness-eq? block updated)
+              unit
+              (begin
+                (array-set! blocks index updated)
+                (set! changed true)))
+            (set! index (- index 1)))))
+      changed)))
+
+(define (compiler-live-fixpoint-ep
+  [graph : CompilerLiveBlockGraph]
+  [phi-out : (Array CompilerLiveI64Set)]) : CompilerLiveBlockGraph
+  (let
+    [done : bool false]
+    (begin
+      (while (not done)
+        (set! done (not (compiler-live-graph-update-ep! graph phi-out))))
+      graph)))
+
+(define (compiler-live-before-instr-nophi
+  [live-after : CompilerLiveI64Set]
+  [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (compiler-live-set-union
+    (compiler-live-instr-uses-nophi instr)
+    (compiler-live-set-minus live-after (compiler-live-instr-defs instr))))
+
+(define (compiler-live-instr-seq-scan-nophi-from
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [live-after : CompilerLiveI64Set]
+  [out : (Array CompilerLiveI64Set)]) : CompilerLiveI64Set
+  (if (< index 0)
+    live-after
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+      (begin
+        (array-set! out index live-after)
+        (compiler-live-instr-seq-scan-nophi-from
+          instrs
+          (- index 1)
+          (compiler-live-before-instr-nophi live-after instr)
+          out)))))
+
+(define (compiler-live-fill-instr-after-block-ep
+  [ir-block : CompilerIrBlock]
+  [block : CompilerLiveBlock]) : CompilerLiveBlock
+  (match block
+    [(CompilerLiveBlock label uses defs live-in live-out successors _)
+      (match ir-block
+        [(IrBlock _ instrs)
+          (let
+            [count : i64 (compiler-ir-instr-seq-count instrs)]
+            [items : (Array CompilerLiveI64Set)
+              (make-array CompilerLiveI64Set count)]
+            (begin
+              (compiler-live-instr-seq-scan-nophi-from
+                instrs
+                (- count 1)
+                live-out
+                items)
+              (CompilerLiveBlock
+                label
+                uses
+                defs
+                live-in
+                live-out
+                successors
+                (CompilerLiveInstrSetVec items))))])]))
+
+(define (compiler-live-fill-instr-after-graph-ep-cons!
+  [ir-blocks : CompilerIrBlockList]
+  [blocks : (Array CompilerLiveBlock)]
+  [index : i64]) : unit
+  (match ir-blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons ir-block rest)
+      (if (>= index (array-length blocks))
+        unit
+        (begin
+          (array-set!
+            blocks
+            index
+            (compiler-live-fill-instr-after-block-ep
+              ir-block
+              (array-ref blocks index)))
+          (compiler-live-fill-instr-after-graph-ep-cons!
+            (box-get rest)
+            blocks
+            (+ index 1))))]
+    [(IrBlockArray seq)
+      (let
+        [i : i64 0]
+        [count : i64
+          (compiler-live-set-min
+            (compiler-ir-block-seq-count seq)
+            (- (array-length blocks) index))]
+        (while (< i count)
+          (let
+            [slot : i64 (+ index i)]
+            (begin
+              (array-set!
+                blocks
+                slot
+                (compiler-live-fill-instr-after-block-ep
+                  (compiler-ir-block-seq-ref seq i)
+                  (array-ref blocks slot)))
+              (set! i (+ i 1))))))]))
+
+(define (compiler-live-analyze-function-edge-precise
+  [func : CompilerIrFunction]) : CompilerFunctionLiveness
+  (match func
+    [(IrFunction _ _ _ _ blocks)
+      (let
+        [walk-blocks : CompilerIrBlockList
+          (compiler-ir-block-list-force-cons blocks)]
+        [graph0 : CompilerLiveBlockGraph
+          (compiler-live-block-graph-build
+            (compiler-live-build-blocks-nophi walk-blocks))]
+        [phi-out : (Array CompilerLiveI64Set)
+          (make-array
+            CompilerLiveI64Set
+            (array-length (struct-get graph0 blocks)))]
+        (begin
+          (let
+            [i : i64 0]
+            [n : i64 (array-length phi-out)]
+            (while (< i n)
+              (begin
+                (array-set! phi-out i (compiler-live-set-empty))
+                (set! i (+ i 1)))))
+          (compiler-live-phi-out-build! walk-blocks (struct-get graph0 ids) phi-out)
+          (let
+            [graph : CompilerLiveBlockGraph
+              (compiler-live-fixpoint-ep graph0 phi-out)]
+            (begin
+              (compiler-live-fill-instr-after-graph-ep-cons!
+                walk-blocks
+                (struct-get graph blocks)
+                0)
+              (CompilerFunctionLiveness
+                (struct-get graph ids)
+                (struct-get graph blocks))))))]))
+
 (define (compiler-live-function-blocks [liveness : CompilerFunctionLiveness]) : CompilerLiveBlockList
   (match liveness
     [(CompilerFunctionLiveness _ blocks)

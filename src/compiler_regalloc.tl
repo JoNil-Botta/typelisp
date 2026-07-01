@@ -1872,6 +1872,385 @@
             (CompilerRegIntervalIndex starts ends segments))))]))
 
 ;; ---------------------------------------------------------------------------
+;; Edge-precise segment build (used only for the coalescer's interference index).
+;; Identical to the conservative builder EXCEPT a phi instruction contributes NO
+;; uses at the phi point -- its inputs are edge-uses, already kept live to the end
+;; of their own predecessor by compiler-live-analyze-function-edge-precise's
+;; phi-out live-out. The phi result is still a def at the phi point, and live-after
+;; bridging is unchanged. This drops the spurious phi-input segments that make a
+;; loop carry falsely interfere with itself.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-extend-segment-instr-ep!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]
+  [live-after : CompilerLiveI64Set]
+  [point : i64]
+  [instr : CompilerIrInstr]) : unit
+  (begin
+    (compiler-reg-extend-segment-set-words!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      (compiler-live-instr-defs instr)
+      0
+      point)
+    (match instr
+      [(IrInstrPhi _ _ _) unit]
+      [_
+        (compiler-reg-extend-segment-set-words!
+          starts
+          ends
+          segments
+          segment-starts
+          segment-ends
+          (compiler-live-instr-uses instr)
+          0
+          point)])
+    (compiler-reg-segment-note-set-words!
+      segments
+      segment-starts
+      segment-ends
+      live-after
+      0
+      point)
+    (compiler-reg-extend-segment-set-words!
+      starts
+      ends
+      segments
+      segment-starts
+      segment-ends
+      live-after
+      0
+      (+ point 1))))
+
+(define (compiler-reg-live-interval-selection-ep-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [live-afters : CompilerLiveInstrSetVec]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [after-items : (Array CompilerLiveI64Set) (struct-get live-afters items)]
+    [index : i64 0]
+    [out-point : i64 point]
+    (begin
+      (while (< index count)
+        (let
+          [live-after : CompilerLiveI64Set
+            (if (< index (array.array-length after-items))
+              (array.array-ref after-items index)
+              (compiler-live-set-empty))]
+          [instr : CompilerIrInstr (array.array-ref slots index)]
+          (begin
+            (compiler-reg-extend-segment-instr-ep!
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends
+              live-after
+              out-point
+              instr)
+            (set! out-point (+ out-point 2))
+            (set! index (+ index 1)))))
+      out-point)))
+
+(define (compiler-reg-live-interval-selection-ep-blocks
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [point : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [segment-starts : (Array i64)]
+  [segment-ends : (Array i64)]) : i64
+  (match blocks
+    [(IrBlockNil) point]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (let
+            [live-afters : CompilerLiveInstrSetVec
+              (compiler-reg-live-intervals-find-afters liveness label)]
+            (compiler-reg-live-interval-selection-ep-blocks
+              (box-get rest)
+              liveness
+              (compiler-reg-live-interval-selection-ep-instr-seq
+                instrs
+                live-afters
+                point
+                starts
+                ends
+                segments
+                segment-starts
+                segment-ends)
+              starts
+              ends
+              segments
+              segment-starts
+              segment-ends))])]
+    [(IrBlockArray seq)
+      (compiler-reg-live-interval-selection-ep-blocks
+        (compiler-ir-block-seq-to-list seq)
+        liveness
+        point
+        starts
+        ends
+        segments
+        segment-starts
+        segment-ends)]))
+
+(define (compiler-reg-live-interval-selection-ep
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]) : CompilerRegIntervalIndex
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [starts : (Array i64) (array.make-array i64 vars)]
+        [ends : (Array i64) (array.make-array i64 vars)]
+        [segments : (Array CompilerRegIntervalList)
+          (array.make-array CompilerRegIntervalList vars)]
+        [segment-starts : (Array i64) (array.make-array i64 vars)]
+        [segment-ends : (Array i64) (array.make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array starts -1)
+          (compiler-reg-fill-i64-array ends -1)
+          (compiler-reg-fill-i64-array segment-starts -1)
+          (compiler-reg-fill-i64-array segment-ends -1)
+          (compiler-reg-live-interval-selection-ep-blocks
+            blocks
+            liveness
+            0
+            starts
+            ends
+            segments
+            segment-starts
+            segment-ends)
+          (let
+            [index : i64 0]
+            (while (< index vars)
+              (begin
+                (compiler-reg-segment-flush-var!
+                  segments
+                  segment-starts
+                  segment-ends
+                  index)
+                (set! index (+ index 1)))))
+          (CompilerRegIntervalIndex starts ends segments)))]))
+
+;; ---------------------------------------------------------------------------
+;; Hybrid coalescing interference index (SOUND containment of edge-precise).
+;;
+;; Edge-precise (EP) liveness is the precise SSA interference, but using it for
+;; EVERY var is risky: a single EP bug for a non-carry value would mis-coalesce it.
+;; We only NEED EP precision for the loop-carry phi web (phi results + their
+;; inputs); every other value's conservative interference is already correct.
+;;
+;; So the hybrid index keeps the CONSERVATIVE coarse [start,end] for all vars and
+;; the CONSERVATIVE segments for non-phi-touched vars, substituting EP segments
+;; ONLY for phi-touched vars (a phi result or a phi input). Soundness: for a pair
+;; (A phi-touched, B not), the overlap test compares A's EP segments against B's
+;; CONSERVATIVE segments; since conservative over-approximates B's real liveness,
+;; any real interference of A with B is still detected -- only A-vs-A' (both
+;; phi-touched carry-web members) get the precise relaxation. A non-phi value (e.g.
+;; a struct field bound by a match) therefore can never be wrongly coalesced.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-phi-touched-add-inputs!
+  [inputs : CompilerIrPhiInputList]
+  [mask : (Array i64)]) : unit
+  (match inputs
+    [(IrPhiInputNil) unit]
+    [(IrPhiInputCons value _ rest)
+      (begin
+        (match value
+          [(IrValueVar v) (compiler-reg-mark-phi-def! mask v)]
+          [_ unit])
+        (compiler-reg-phi-touched-add-inputs! (box-get rest) mask))]))
+
+(define (compiler-reg-phi-touched-seq!
+  [instrs : CompilerIrInstrSeq]
+  [mask : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array.array-ref slots index)
+            [(IrInstrPhi dst inputs _)
+              (begin
+                (compiler-reg-mark-phi-def! mask dst)
+                (compiler-reg-phi-touched-add-inputs! inputs mask))]
+            [_ unit])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-phi-touched-blocks!
+  [blocks : CompilerIrBlockList]
+  [mask : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock _ instrs)
+          (begin
+            (compiler-reg-phi-touched-seq! instrs mask)
+            (compiler-reg-phi-touched-blocks! (box-get rest) mask))])]
+    [(IrBlockArray seq)
+      (compiler-reg-phi-touched-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        mask)]))
+
+(define (compiler-reg-function-phi-touched [func : CompilerIrFunction]) : (Array i64)
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [mask : (Array i64) (array.make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array mask 0)
+          (compiler-reg-phi-touched-blocks! blocks mask)
+          mask))]))
+
+;; ---------------------------------------------------------------------------
+;; Live-out-input phi exclusion (soundness guard on the EP coalescer).
+;;
+;; Edge-precise coalescing of a phi carry is safe only when every phi input DIES at
+;; the phi -- i.e. is consumed on its predecessor edge and not live past the phi's
+;; block. When an input is instead live-OUT of the phi block (e.g. a mutable loop
+;; counter `v` that is a phi input to an in-loop `(if ... a v)` merge yet is also used
+;; across the rest of the loop), its edge-precise segment collapses to the tiny
+;; predecessor-edge slice, understating how entangled it is; coalescing this phi's
+;; result with a (dead) sibling input then shares a register across a region where the
+;; entangled input is genuinely live, corrupting it (this is exactly the
+;; `compiler-reg-merged-root-index` self-host mis-coalesce the fixpoint caught).
+;;
+;; So a phi with ANY live-out input is EXCLUDED from EP relaxation: its result and
+;; inputs fall back to the conservative coarse interference, refusing the relaxed
+;; coalesce (never mis-applying it). Pure loop/if-merge carries -- whose inputs are all
+;; dead after the merge -- stay relaxed, preserving the loop-carry win (qs_partition /
+;; loopcarry_coalesce). Using the (sound) EP block live-out here can only over-exclude
+;; (a missed coalesce), never under-exclude.
+;; ---------------------------------------------------------------------------
+(define (compiler-reg-block-live-out-by-label
+  [liveness : CompilerFunctionLiveness]
+  [label : String]) : CompilerLiveI64Set
+  (match (compiler-live-function-find-block liveness label)
+    [(CompilerLiveSomeBlock lb)
+      (match lb
+        [(CompilerLiveBlock _ _ _ _ live-out _ _) live-out])]
+    [(CompilerLiveNoBlock) (compiler-live-set-empty)]))
+
+(define (compiler-reg-phi-inputs-any-live-out?
+  [inputs : CompilerIrPhiInputList]
+  [live-out : CompilerLiveI64Set]) : bool
+  (match inputs
+    [(IrPhiInputNil) false]
+    [(IrPhiInputCons value _ rest)
+      (if (match value
+            [(IrValueVar v) (compiler-live-set-contains? live-out v)]
+            [_ false])
+        true
+        (compiler-reg-phi-inputs-any-live-out? (box-get rest) live-out))]))
+
+(define (compiler-reg-phi-touched-safe-seq!
+  [instrs : CompilerIrInstrSeq]
+  [live-out : CompilerLiveI64Set]
+  [mask : (Array i64)]) : unit
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (match (array.array-ref slots index)
+            [(IrInstrPhi dst inputs _)
+              (if (compiler-reg-phi-inputs-any-live-out? inputs live-out)
+                unit
+                (begin
+                  (compiler-reg-mark-phi-def! mask dst)
+                  (compiler-reg-phi-touched-add-inputs! inputs mask)))]
+            [_ unit])
+          (set! index (+ index 1))))
+      unit)))
+
+(define (compiler-reg-phi-touched-safe-blocks!
+  [blocks : CompilerIrBlockList]
+  [liveness : CompilerFunctionLiveness]
+  [mask : (Array i64)]) : unit
+  (match blocks
+    [(IrBlockNil) unit]
+    [(IrBlockCons block rest)
+      (match block
+        [(IrBlock label instrs)
+          (begin
+            (compiler-reg-phi-touched-safe-seq!
+              instrs
+              (compiler-reg-block-live-out-by-label liveness label)
+              mask)
+            (compiler-reg-phi-touched-safe-blocks! (box-get rest) liveness mask))])]
+    [(IrBlockArray seq)
+      (compiler-reg-phi-touched-safe-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        liveness
+        mask)]))
+
+(define (compiler-reg-function-phi-touched-safe
+  [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]) : (Array i64)
+  (match func
+    [(IrFunction _ _ _ vars blocks)
+      (let
+        [mask : (Array i64) (array.make-array i64 vars)]
+        (begin
+          (compiler-reg-fill-i64-array mask 0)
+          (compiler-reg-phi-touched-safe-blocks! blocks liveness mask)
+          mask))]))
+
+;; Hybrid segments: EP segments for phi-touched vars, conservative otherwise.
+(define (compiler-reg-hybrid-coalesce-index
+  [cons-index : CompilerRegIntervalIndex]
+  [ep-index : CompilerRegIntervalIndex]
+  [mask : (Array i64)]) : CompilerRegIntervalIndex
+  (let
+    [cons-starts : (Array i64) (struct-get cons-index starts)]
+    [cons-ends : (Array i64) (struct-get cons-index ends)]
+    [cons-segs : (Array CompilerRegIntervalList) (struct-get cons-index segments)]
+    [ep-segs : (Array CompilerRegIntervalList) (struct-get ep-index segments)]
+    [n : i64 (array.array-length cons-starts)]
+    [hybrid-segs : (Array CompilerRegIntervalList)
+      (array.make-array CompilerRegIntervalList n)]
+    [v : i64 0]
+    (begin
+      (while (< v n)
+        (begin
+          (array.array-set!
+            hybrid-segs
+            v
+            (if (if (< v (array.array-length mask))
+                  (= (array.array-ref mask v) 1)
+                  false)
+              (if (< v (array.array-length ep-segs))
+                (array.array-ref ep-segs v)
+                CompilerRegIntervalNil)
+              (if (< v (array.array-length cons-segs))
+                (array.array-ref cons-segs v)
+                CompilerRegIntervalNil)))
+          (set! v (+ v 1))))
+      (CompilerRegIntervalIndex cons-starts cons-ends hybrid-segs))))
+
+;; ---------------------------------------------------------------------------
 ;; Cheap block-level liveness for register planning (#perf).
 ;;
 ;; The register allocator only needs, per variable, a single [first-live,
@@ -11583,14 +11962,35 @@
       (compiler-reg-function-same-value-parents-filtered
         func
         (compiler-reg-same-value-eligible-vars interval-index clobber-points))]
+    ;; Edge-precise interference index (LLVM PHIElimination semantics) used ONLY to
+    ;; gate coalescing: a loop-carried phi value and its back-edge / merge input do
+    ;; not really interfere (the conservative index spuriously overlaps them via
+    ;; phi-inputs-live-at-the-header), so this lets the carry coalesce into ONE
+    ;; interval. Allocation/eviction below keep the conservative interval-index, so
+    ;; a precision error here can only mis-coalesce (caught by the fixpoint), never
+    ;; under-approximate allocation interference.
+    [coalesce-index : CompilerRegIntervalIndex
+      (if allow-caller-saved-zero-call
+        ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
+        ;; by the coalescing segment index AND the live-out-input phi exclusion.
+        (let
+          [ep-liveness : CompilerFunctionLiveness
+            (compiler-live-analyze-function-edge-precise func)]
+          (compiler-reg-hybrid-coalesce-index
+            interval-index
+            (compiler-reg-live-interval-selection-ep func ep-liveness)
+            ;; Exclude phis whose input is live-out of the phi block (unsafe for EP
+            ;; relaxation); pure carries stay relaxed.
+            (compiler-reg-function-phi-touched-safe func ep-liveness)))
+        interval-index)]
     [coalesce : CompilerRegCoalesceMap
       (if allow-caller-saved-zero-call
         (compiler-reg-coalesce-map-build
           moves
-          interval-index
+          coalesce-index
           type-info
           group-vars
-          (array.array-length (struct-get interval-index starts))
+          (array.array-length (struct-get coalesce-index starts))
           sv-parents)
         (CompilerRegCoalesceMap (array.make-array i64 0)))]
     ;; #3489 (PR2): collapse coalesce classes to one root candidate each, and run

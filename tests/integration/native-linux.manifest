@@ -34,6 +34,7 @@ arg_register_swap_cycle|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdl
 syscall_arg_alias|tests/integration/syscall_arg_alias.tl|42|ABCDEFGHI|-|stdlib/io.tl
 call_spanning_split|tests/integration/call_spanning_split.tl|42|-|-|stdlib/io.tl
 call_spanning_split_single|tests/integration/call_spanning_split_single.tl|42|-|-|stdlib/io.tl
+loopcarry_coalesce|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl
 loop_invariant_array_sum|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl
 scavenge_destructure_clobber|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl
 crossblock_reload_elide|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl

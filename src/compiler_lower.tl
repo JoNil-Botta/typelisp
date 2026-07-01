@@ -3047,6 +3047,9 @@
     (set! lower-spmd-inline-next-temp 0)
     (set! lower-no-main-entry-prune-active false)))
 
+(define (lower-reset-intern-owned-state!) : unit
+  (compiler-typecheck-reset-intern-owned-state!))
+
 (define (lower-context-expr-get [ctx : TcContext] [id : i64]) : AstExpr
   (tc-context-expr-get ctx id))
 
@@ -44129,6 +44132,7 @@
     ;; later compile never probes a dangling key. The multi-file driver compiles
     ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
     (intern-reset!)
+    (lower-reset-intern-owned-state!)
     (cbi.compiler-builtin-reset!)
     (match (parse-ast-source src)
       [(ResultAstProgram.Ok program)

@@ -128,6 +128,15 @@
 (define (lint-rule-cascading-and-or-suggestion) : String
   "flatten same-operator and/or operands, e.g. (and a b c)")
 
+(define (lint-rule-transitional-core-macro-qualifier-id) : String
+  "transitional-core-macro-qualifier")
+
+(define (lint-rule-transitional-core-macro-qualifier-message) : String
+  "transitional core macro qualifier: use the bare prelude macro spelling")
+
+(define (lint-rule-transitional-core-macro-qualifier-suggestion) : String
+  "replace core.when/core.unless/core.and/core.or/core.cond with when/unless/and/or/cond")
+
 (define (lint-rule-unused-import-id) : String
   "unused-import")
 
@@ -292,6 +301,12 @@
     (lint-rule-cascading-and-or-message)
     (lint-rule-cascading-and-or-suggestion)))
 
+(define (lint-rule-transitional-core-macro-qualifier) : LintRule
+  (LintRule
+    (lint-rule-transitional-core-macro-qualifier-id)
+    (lint-rule-transitional-core-macro-qualifier-message)
+    (lint-rule-transitional-core-macro-qualifier-suggestion)))
+
 (define (lint-rule-unused-import) : LintRule
   (LintRule
     (lint-rule-unused-import-id)
@@ -392,7 +407,9 @@
                                         (lint-rule-unused-variable)
                                         (lint-rule-cons
                                           (lint-rule-unused-unsafe)
-                                          LintRuleList.Nil)))))))))))))))))))))
+                                          (lint-rule-cons
+                                            (lint-rule-transitional-core-macro-qualifier)
+                                            LintRuleList.Nil))))))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -961,6 +978,54 @@
         (lint-and-or-func-op inner))]
     [(AstExpr.Var name) (lint-and-or-op-name (intern-str name))]
     [_ ""]))
+
+(define (lint-transitional-core-macro-bare-name [name : String]) : String
+  (cond
+    [(string.eq name "core.when") "when"]
+    [(string.eq name "core.unless") "unless"]
+    [(string.eq name "core.and") "and"]
+    [(string.eq name "core.or") "or"]
+    [(string.eq name "core.cond") "cond"]
+    [else ""]))
+
+(define (lint-transitional-core-macro-qualified-name [func : AstExpr]) : String
+  (match func
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (ast-node-get inner-box)]
+        (lint-transitional-core-macro-qualified-name inner))]
+    [(AstExpr.Var name)
+      (let
+        [text : String (intern-str name)]
+        (if (string.eq (lint-transitional-core-macro-bare-name text) "")
+          ""
+          text))]
+    [_ ""]))
+
+(define (lint-transitional-core-macro-finding
+  [qualified : String]
+  [bare : String]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string.append
+      "transitional core macro qualifier: use "
+      (string.append bare (string.append " instead of " qualified)))
+    (lint-rule-transitional-core-macro-qualifier-id)
+    0
+    span))
+
+(define (lint-transitional-core-macro-add
+  [func : AstExpr]
+  [span : AstSourceSpan]
+  [acc : LintFindings]) : LintFindings
+  (let
+    [qualified : String (lint-transitional-core-macro-qualified-name func)]
+    [bare : String (lint-transitional-core-macro-bare-name qualified)]
+    (if (string.eq bare "")
+      acc
+      (lint-findings-add
+        (lint-transitional-core-macro-finding qualified bare span)
+        acc))))
 
 (define (lint-str-cat-func? [func : AstExpr]) : bool
   (match func
@@ -6758,6 +6823,9 @@
   [acc : LintFindings]) : LintFindings
   (let
     [op : String (lint-and-or-func-op func)]
+    [walked-func : LintFindings (lint-walk-expr func threshold acc)]
+    [callee-findings : LintFindings
+      (lint-transitional-core-macro-add func span walked-func)]
     (if (and (not (string.eq op "")) (lint-and-or-args-have-kind? op args))
       (lint-walk-and-or-skip-args
         op
@@ -6765,15 +6833,13 @@
         threshold
         (lint-findings-add
           (lint-cascading-and-or-finding op (lint-expr-render func) args span)
-          (lint-walk-expr func threshold acc)))
+          callee-findings))
       (if (and (lint-str-cat-func? func) (lint-str-cat-args-have-nested? args))
         (lint-walk-expr-list
           args
           threshold
-          (lint-findings-add
-            (lint-nested-str-cat-finding span)
-            (lint-walk-expr func threshold acc)))
-        (lint-walk-expr-list args threshold (lint-walk-expr func threshold acc))))))
+          (lint-findings-add (lint-nested-str-cat-finding span) callee-findings))
+        (lint-walk-expr-list args threshold callee-findings)))))
 
 ;: Walk `expr`, collecting active lint findings while recursing into all
 ;: sub-expressions. Spanned expressions pass their wrapper span to rules that
@@ -7361,6 +7427,7 @@
     [and-callee : i64 (lint-test-var "and")]
     [or-callee : i64 (lint-test-var "or")]
     [core-and-callee : i64 (lint-test-var "core/and")]
+    [core-cond-dotted-callee : i64 (lint-test-var "core.cond")]
     [and-yz : i64 (ast-expr-call and-callee (lint-test-expr-list2 vy vz))]
     [and-xy : i64 (ast-expr-call and-callee (lint-test-expr-list2 vx vy))]
     [or-yz : i64 (ast-expr-call or-callee (lint-test-expr-list2 vy vz))]
@@ -7373,6 +7440,10 @@
       (ast-expr-call and-callee (lint-test-expr-list2 vx or-yz))]
     [core-and-cascade : i64
       (ast-expr-call core-and-callee (lint-test-expr-list2 vx and-yz))]
+    [core-cond-dotted-call : i64
+      (ast-expr-call core-cond-dotted-callee AstExprList.Nil)]
+    [spanned-core-cond-dotted-call : i64
+      (ast-expr-spanned core-cond-dotted-call (AstSourceSpan 22 7 22 18))]
     [double-and-cascade : i64
       (ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
     [spanned-and-cascade : i64
@@ -7821,6 +7892,36 @@
             (io.panic "lint: core/and cascade should preserve callee spelling"))]
         [(LintMaybeFinding.No)
           (io.panic "lint: core/and cascade should produce a finding")])
+      (match (lint-findings-get
+        (lint-test-walk
+          spanned-core-cond-dotted-call
+          (lint-default-ladder-threshold)
+          (lint-findings-empty))
+        0)
+        [(LintMaybeFinding.Some finding)
+          (let
+            [fspan : AstSourceSpan (struct-get finding span)]
+            (if (and
+              (=
+                (lint-findings-count
+                  (lint-test-walk
+                    spanned-core-cond-dotted-call
+                    (lint-default-ladder-threshold)
+                    (lint-findings-empty)))
+                1)
+              (= (struct-get fspan start-line) 22)
+              (string.eq
+                (struct-get finding rule-id)
+                (lint-rule-transitional-core-macro-qualifier-id))
+              (string.eq
+                (struct-get finding message)
+                "transitional core macro qualifier: use cond instead of core.cond"))
+              unit
+              (io.panic
+                "lint: transitional core macro finding metadata mismatch")))]
+        [(LintMaybeFinding.No)
+          (io.panic
+            "lint: core.cond call should produce transitional qualifier finding")])
       (if (=
         (lint-findings-count
           (lint-test-walk-tail
@@ -8106,6 +8207,18 @@
         "flatten same-operator and/or operands, e.g. (and a b c)")
         unit
         (io.panic "lint: cascading-and-or suggestion should be registered"))
+      (if (string.eq
+        (lint-rule-suggestion (lint-rule-transitional-core-macro-qualifier-id))
+        (lint-rule-transitional-core-macro-qualifier-suggestion))
+        unit
+        (io.panic
+          "lint: transitional-core-macro-qualifier suggestion should be registered"))
+      (if (string.eq
+        (lint-rule-message (lint-rule-transitional-core-macro-qualifier-id))
+        (lint-rule-transitional-core-macro-qualifier-message))
+        unit
+        (io.panic
+          "lint: transitional-core-macro-qualifier message should be registered"))
       (if (string.eq
         (lint-rule-suggestion (lint-rule-unused-import-id))
         "remove the import or prefix an intentionally unused alias with _")

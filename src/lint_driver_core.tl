@@ -2544,6 +2544,29 @@
   ;; lint-allow: cascading-and-or
   (and a (and b c)))")
 
+(define (selfhost-lint-transitional-core-macro-source) : String
+  "(define (check [flag : bool]) : i64
+  (begin
+    (core.when flag unit)
+    (core.unless false unit)
+    (if (core.and flag (core.or false true))
+      (if (core.cond [flag true] [else false]) 42 1)
+      1)))")
+
+(define (selfhost-lint-clean-core-macro-text-source) : String
+  ";; core.cond in a comment is not an expression call head.
+(import stdlib.core_macros as core)
+(define core-dot-cond-text : String \"core.cond\")
+(define (main) : i64
+  (let
+    [value : i64 core.cond]
+    value))")
+
+(define (selfhost-lint-suppressed-transitional-core-macro-source) : String
+  "(define (main) : i64
+  ;; lint-allow: transitional-core-macro-qualifier
+  (if (core.cond [true true] [else false]) 42 1))")
+
 (define (selfhost-lint-two-findings-source) : String
   "(define (first [x : i64]) : i64
   (if (= x 0)
@@ -2970,6 +2993,20 @@
           (string.eq (struct-get finding message) message)))]
     [(LintMaybeFinding.No) false]))
 
+(define (selfhost-lint-transitional-core-macro-finding-ok?
+  [findings : LintFindings]) : bool
+  (match (lint-findings-get findings 0)
+    [(LintMaybeFinding.Some finding)
+      (and
+        (= (lint-findings-count findings) 5)
+        (string.eq
+          (struct-get finding rule-id)
+          (lint-rule-transitional-core-macro-qualifier-id))
+        (string.eq
+          (struct-get finding message)
+          "transitional core macro qualifier: use when instead of core.when"))]
+    [(LintMaybeFinding.No) false]))
+
 (define (selfhost-lint-render-order-ok? [findings : LintFindings]) : bool
   (if (= (lint-findings-count findings) 2)
     (match (lint-findings-get findings 1)
@@ -3028,6 +3065,11 @@
         "lint_driver_self_test.tl"
         (selfhost-lint-cascading-core-and-source)
         (vector.string-vec-new))]
+    [transitional-core-reported : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_self_test.tl"
+        (selfhost-lint-transitional-core-macro-source)
+        (vector.string-vec-new))]
     (cond
       [(or
           (not (= (lint-findings-count reported) 1))
@@ -3058,6 +3100,25 @@
             cascading-core-and-reported
             "cascading and: prefer flat n-ary form (and a b c)"))
         25]
+      [(not (= (lint-findings-count transitional-core-reported) 5)) 37]
+      [(not
+          (selfhost-lint-transitional-core-macro-finding-ok?
+            transitional-core-reported))
+        38]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-clean-core-macro-text-source)
+              (lint-rule-transitional-core-macro-qualifier-id))
+            0))
+        39]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-suppressed-transitional-core-macro-source)
+              (lint-rule-transitional-core-macro-qualifier-id))
+            0))
+        40]
       [(not
           (=
             (selfhost-lint-source-finding-count (selfhost-lint-flat-and-source))

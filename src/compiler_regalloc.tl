@@ -126,13 +126,56 @@
 (define (compiler-reg-call-split-empty) : CompilerRegCallSplit
   (CompilerRegCallSplit (compiler-live-set-empty) (array.make-array String 0)))
 
+;; SplitKit occupant-liberation record (design 3.2): to free a callee-saved
+;; register R for a call-spanning value V across its crossing region, a cold
+;; through-occupant O of R is split -- stored to its slot before the region and
+;; reloaded after -- so R is free over [region-start,region-end). Fields:
+;;   occupant var O, region start, region end (point coords), the freed CSR
+;;   register, and O's stack slot offset (store-before / reload-after home).
+;; Carried by the split plan; the list stays Nil until M5 turns the
+;; live-occupant lever on.
+(defenum CompilerRegOccupantSplit
+  (CompilerRegOccupantSplit
+    i64
+    i64
+    i64
+    String
+    i64))
+
+(defenum CompilerRegOccupantSplitList
+  (CompilerRegOccupantSplitNil)
+  (CompilerRegOccupantSplitCons
+    CompilerRegOccupantSplit
+    (Box CompilerRegOccupantSplitList)))
+
+;; SplitKit per-sub-range value model (design 1.2). Produced by the greedy and
+;; threaded through CompilerRegPlan: a spilled call-spanning value V keeps its
+;; canonical stack slot while its live range partitions at call boundaries into
+;; register sub-ranges (future minted pieces V_i + boundary copies) and slot
+;; sub-ranges. Indexed by piece var id:
+;;   piece-of[V_i]        -- original root V of a minted piece; -1 for non-pieces
+;;   piece-start/-end     -- V_i's sub-range [start,end) in point coords
+;;   piece-reg[V_i]       -- physreg the worklist gave V_i ("" = piece spilled)
+;;   piece-writeback[V_i] -- 1 iff V is redefined inside V_i (needs the OUT copy)
+;;   occupant-split       -- the freed-CSR store/reload plans (design 3.2)
+;; M1 threads an EMPTY (budget-0) plan: no pieces are minted and nothing consumes
+;; it, so allocation and emission are unchanged until M2+ populate it.
+(defstruct CompilerRegSplitPlan
+  (piece-of (Array i64))
+  (piece-start (Array i64))
+  (piece-end (Array i64))
+  (piece-reg (Array String))
+  (piece-writeback (Array i64))
+  (occupant-split CompilerRegOccupantSplitList))
+
 (defenum CompilerRegPlan
   (CompilerRegPlan
     CompilerRegAssignmentList
     CompilerLiveI64Set
     CompilerRegIntervalList
     CompilerRegVarTypeList
-    CompilerRegCallSplit))
+    CompilerRegCallSplit
+    CompilerRegSplitPlan))
 
 (defenum CompilerRegAssignState
   (CompilerRegAssignState CompilerRegActiveList CompilerRegAssignmentTable))
@@ -9741,7 +9784,7 @@
       [census : CompilerRegCallSpanCensus (compiler-reg-call-span-census-empty)]
       (begin
         (match plan
-          [(CompilerRegPlan assignments ineligible intervals _ split-vars)
+          [(CompilerRegPlan assignments ineligible intervals _ split-vars _)
             (compiler-reg-call-span-census-intervals!
               census
               (compiler-reg-candidates intervals type-info ineligible false)
@@ -10520,6 +10563,18 @@
     (array.make-array i64 0)
     (array.make-array i64 0)
     (array.make-array CompilerRegIntervalList 0)))
+
+;; The empty (budget-0) split plan: no minted pieces, no occupant splits. M1
+;; threads this through CompilerRegPlan on every path so the per-sub-range model
+;; is carried but inert; M2+ replace it with a populated plan from the greedy.
+(define (compiler-reg-split-plan-empty) : CompilerRegSplitPlan
+  (CompilerRegSplitPlan
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array String 0)
+    (array.make-array i64 0)
+    CompilerRegOccupantSplitNil))
 
 ;; Build the split kit from the post-greedy, PRE-expansion ROOT assignment table:
 ;; at this point each coalesce class still has a single root carrying the merged
@@ -12244,6 +12299,23 @@
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(CompilerRegAssignState _ found) found])]
+    ;; SplitKit step 0 (M1): build the per-sub-range kit on the REAL allocation
+    ;; path, at the last point `assignments` still holds coalesce-class ROOTS with
+    ;; their merged segments intact -- compiler-reg-expand-class-assignments below
+    ;; decoalesces them (the #144 structure-loss point). Previously this kit was
+    ;; built only in the self-test and discarded; building it here makes the
+    ;; step-0 structure available to the greedy for M2+. M1 does NOT consume the
+    ;; kit yet (the threaded split plan is empty), so allocation and emitted code
+    ;; are unchanged -- the structure is inert until the split flips on.
+    [_split-kit : CompilerRegSplitKit
+      (if allow-caller-saved-zero-call
+        (compiler-reg-splitkit-build
+          assignments
+          coalesce
+          eff-index
+          (array.array-length (struct-get interval-index starts)))
+        (compiler-reg-splitkit-empty))]
+    [split-plan : CompilerRegSplitPlan (compiler-reg-split-plan-empty)]
     ;; #3489 (PR2): the passes above assigned class ROOTS; expand so every member
     ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
     ;; coalesce map, so this is the identity there.
@@ -12265,7 +12337,8 @@
       ineligible
       intervals
       types
-      call-save-split)))
+      call-save-split
+      split-plan)))
 
 ;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
 ;; intervals + the call-live-conservative ineligibility, keeping AVX backend
@@ -12405,7 +12478,8 @@
       (compiler-live-set-empty)
       CompilerRegIntervalNil
       (compiler-reg-var-types-list type-info)
-      (compiler-reg-call-split-empty))))
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))))
 
 ;; --- stack-slot compaction and storage coloring (#2598) ---------------------
 ;; One frame slot per raw IR variable wastes most of the frame once register
@@ -14194,27 +14268,27 @@
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentList
   (match plan
-    [(CompilerRegPlan assignments _ _ _ _) assignments]))
+    [(CompilerRegPlan assignments _ _ _ _ _) assignments]))
 
 (define (compiler-reg-plan-ineligible [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ ineligible _ _ _) ineligible]))
+    [(CompilerRegPlan _ ineligible _ _ _ _) ineligible]))
 
 (define (compiler-reg-plan-intervals [plan : CompilerRegPlan]) : CompilerRegIntervalList
   (match plan
-    [(CompilerRegPlan _ _ intervals _ _) intervals]))
+    [(CompilerRegPlan _ _ intervals _ _ _) intervals]))
 
 (define (compiler-reg-plan-types [plan : CompilerRegPlan]) : CompilerRegVarTypeList
   (match plan
-    [(CompilerRegPlan _ _ _ types _) types]))
+    [(CompilerRegPlan _ _ _ types _ _) types]))
 
 (define (compiler-reg-plan-caller-save-shadows [plan : CompilerRegPlan]) : CompilerLiveI64Set
   (match plan
-    [(CompilerRegPlan _ _ _ _ split) (compiler-reg-call-split-shadows split)]))
+    [(CompilerRegPlan _ _ _ _ split _) (compiler-reg-call-split-shadows split)]))
 
 (define (compiler-reg-plan-caller-save-regs [plan : CompilerRegPlan]) : (Array String)
   (match plan
-    [(CompilerRegPlan _ _ _ _ split) (compiler-reg-call-split-regs split)]))
+    [(CompilerRegPlan _ _ _ _ split _) (compiler-reg-call-split-regs split)]))
 
 (define (compiler-reg-assignment-list-merge
   [extra : CompilerRegAssignmentList]
@@ -14244,7 +14318,7 @@
   [plan : CompilerRegPlan]
   [rewrite : CompilerRegCallSaveRewrite]) : CompilerRegPlan
   (match plan
-    [(CompilerRegPlan assignments ineligible intervals types shadows)
+    [(CompilerRegPlan assignments ineligible intervals types shadows split-plan)
       (match rewrite
         [(CompilerRegCallSaveRewrite _ _ _ extra-assignments extra-types)
           (CompilerRegPlan
@@ -14252,7 +14326,8 @@
             ineligible
             intervals
             (compiler-reg-var-type-list-merge extra-types types)
-            shadows)])]))
+            shadows
+            split-plan)])]))
 
 (define (compiler-reg-caller-save-shadow-count-from
   [shadows : CompilerLiveI64Set]
@@ -16153,7 +16228,7 @@
 
 (define (compiler-reg-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (compiler-reg-location-register?
@@ -16165,7 +16240,7 @@
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 2)
         (compiler-reg-location-register?
@@ -16177,7 +16252,7 @@
 
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       ;; Seven simultaneously live values against a five-register callee-saved
       ;; pool: the first five take %r12..%r15 and %rbx, and the remaining two
       ;; spill. %rbx joined the pool once its fixed scratch role moved under the
@@ -16197,7 +16272,7 @@
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 5)
         (= (compiler-reg-spill-count assignments) 1)
@@ -16223,7 +16298,7 @@
 ;; The unit call result (var 1) stays ineligible (non-scalar).
 (define (compiler-reg-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (compiler-live-set-contains? ineligible 1)
@@ -16237,7 +16312,7 @@
 ;; while the unit call result stays ineligible.
 (define (compiler-reg-scalar-call-live-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (compiler-reg-location-any-register?
@@ -16250,14 +16325,14 @@
 (define (compiler-reg-scalar-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-f64-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-reg-unassigned? assignments 0))]))
 
 (define (compiler-reg-f64-call-live-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-live-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-live-set-contains? ineligible 1)
@@ -16269,7 +16344,7 @@
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-live-set-contains? ineligible 1)
@@ -16281,7 +16356,7 @@
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (compiler-live-set-contains? ineligible 0)
         (compiler-reg-unassigned? assignments 0)
@@ -16291,7 +16366,7 @@
 
 (define (compiler-reg-ineligible-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-ineligible-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (let
         [marked : bool
           (and
@@ -16323,7 +16398,7 @@
 ;; 8-byte values; address-taken values (var 3 via the AddrOf) stay ineligible.
 (define (compiler-reg-scalar-handle-eligible-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-ineligible-function))
-    [(CompilerRegPlan assignments ineligible _ _ _)
+    [(CompilerRegPlan assignments ineligible _ _ _ _)
       (and
         (not (compiler-live-set-contains? ineligible 0))
         (compiler-live-set-contains? ineligible 3)
@@ -16340,7 +16415,7 @@
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-register-function))
-      [(CompilerRegPlan assignments ineligible _ _ _)
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
@@ -16361,7 +16436,7 @@
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiWindows
       (compiler-reg-param-register-function))
-      [(CompilerRegPlan assignments ineligible _ _ _)
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
         (and
           (not (compiler-live-set-contains? ineligible 0))
           (not (compiler-live-set-contains? ineligible 1))
@@ -16380,7 +16455,7 @@
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-clobber-function))
-      [(CompilerRegPlan assignments ineligible _ _ _)
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
         (and
           (compiler-live-set-contains? ineligible 0)
           (compiler-reg-unassigned? assignments 0))])))
@@ -16391,7 +16466,7 @@
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-param-aggregate-function))
-      [(CompilerRegPlan assignments ineligible _ _ _)
+      [(CompilerRegPlan assignments ineligible _ _ _ _)
         (and
           (compiler-live-set-contains? ineligible 0)
           (compiler-reg-unassigned? assignments 0))])))
@@ -16399,19 +16474,19 @@
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-param-livein-gap-function))
-    [(CompilerRegPlan _ _ intervals _ _)
+    [(CompilerRegPlan _ _ intervals _ _ _)
       (compiler-reg-interval-range? intervals 0 1 4)]))
 
 (define (compiler-reg-scalar-interval-guardrail-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-single-block-livein-gap-function))
-    [(CompilerRegPlan _ _ intervals _ _)
+    [(CompilerRegPlan _ _ intervals _ _ _)
       (compiler-reg-interval-range? intervals 0 0 2)]))
 
 (define (compiler-reg-scalar-loop-backedge-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-loop-backedge-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       (and
         (compiler-reg-location-any-register?
           (compiler-reg-assignment-lookup assignments 1))
@@ -16573,7 +16648,7 @@
 
 (define (compiler-reg-scalar-zero-call-caller-saved-ok?) : bool
   (match (compiler-reg-plan-function-scalar (compiler-reg-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-assignment-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 0)
@@ -16598,7 +16673,7 @@
     (match (compiler-reg-plan-function-scalar-for-abi
       CompilerRegAbiLinux
       (compiler-reg-zero-call-param-conflict-function))
-      [(CompilerRegPlan assignments _ _ _ _)
+      [(CompilerRegPlan assignments _ _ _ _ _)
         (and
           (= (compiler-reg-spill-count assignments) 0)
           ;; #perf call-spanning-aware partitioning fills the caller-saved
@@ -16618,7 +16693,7 @@
 (define (compiler-reg-scalar-caller-saved-clobber-ok?) : bool
   (match (compiler-reg-plan-function-scalar
     (compiler-reg-syscall-clobber-overlap-function))
-    [(CompilerRegPlan assignments _ _ _ _)
+    [(CompilerRegPlan assignments _ _ _ _ _)
       (and
         (= (compiler-reg-spill-count assignments) 1)
         (compiler-reg-location-spill-offset?
@@ -16881,7 +16956,7 @@
       [discounted : (Array i64)
         (compiler-reg-function-spill-weights-remat func empty-coalesce)]
       (match (compiler-reg-plan-function-scalar func)
-        [(CompilerRegPlan assignments _ _ _ _)
+        [(CompilerRegPlan assignments _ _ _ _ _)
           (and
             (> (array.array-ref raw 0) (array.array-ref raw 1))
             (< (array.array-ref discounted 0) (array.array-ref discounted 1))
@@ -17021,7 +17096,7 @@
   (define (compiler-reg-spill-weight-eviction-ok?) : bool
     (match (compiler-reg-plan-function-scalar
       (compiler-reg-spill-weight-eviction-function))
-      [(CompilerRegPlan assignments _ _ _ _)
+      [(CompilerRegPlan assignments _ _ _ _ _)
         (and
           (compiler-reg-location-any-register?
             (compiler-reg-assignment-lookup assignments 0))
@@ -17098,7 +17173,7 @@
       [static-counts : (Array i64) (compiler-reg-function-ref-counts func)]
       [weighted-counts : (Array i64) (compiler-reg-function-spill-weights func)]
       (match (compiler-reg-plan-function-scalar func)
-        [(CompilerRegPlan assignments _ _ _ _)
+        [(CompilerRegPlan assignments _ _ _ _ _)
           (and
             (=
               (array.array-ref static-counts 0)
@@ -17521,7 +17596,8 @@
       (compiler-live-set-empty)
       CompilerRegIntervalNil
       (compiler-reg-var-types-list (compiler-reg-function-var-types func))
-      (compiler-reg-call-split-empty))))
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))))
 
 (cfg
   test
@@ -17537,7 +17613,8 @@
       (compiler-live-set-empty)
       CompilerRegIntervalNil
       (compiler-reg-var-types-list (compiler-reg-function-var-types func))
-      (compiler-reg-call-split-empty))))
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))))
 
 (cfg
   test
@@ -17850,7 +17927,7 @@
       (compiler-reg-call-spanning-caller-saved-function)]
     [plan : CompilerRegPlan (compiler-reg-plan-function-scalar func)]
     (match plan
-      [(CompilerRegPlan assignments _ _ _ split-vars)
+      [(CompilerRegPlan assignments _ _ _ split-vars _)
         (and
           ;; 7 call-spanning values vs 5 callee-saved registers -> 2 spill (call-
           ;; spanning values cannot use caller-saved across the call). The greedy's
@@ -17978,7 +18055,7 @@
         (compiler-reg-call-spanning-multiblock-local-function)]
       [plan : CompilerRegPlan (compiler-reg-plan-function-scalar func)]
       (match plan
-        [(CompilerRegPlan assignments _ _ _ split-vars)
+        [(CompilerRegPlan assignments _ _ _ split-vars _)
           (and
             ;; Same capacity story as the single-block fixture: the greedy
             ;; register-homes the hot call-spanning value (spill-weight priority)
@@ -17999,7 +18076,7 @@
         (compiler-reg-plan-function-scalar
           (compiler-reg-call-spanning-multiblock-boundary-function))]
       (match plan
-        [(CompilerRegPlan _ _ _ _ split-vars)
+        [(CompilerRegPlan _ _ _ _ split-vars _)
           (and
             (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 5))
             (not (compiler-live-set-contains? (compiler-reg-call-split-shadows split-vars) 6)))]))))
@@ -18224,7 +18301,8 @@
             (compiler-live-set-empty)
             intervals
             (compiler-reg-var-types-list type-info)
-            (compiler-reg-call-split-empty))]))))
+            (compiler-reg-call-split-empty)
+            (compiler-reg-split-plan-empty))]))))
 
 (cfg
   test
@@ -18248,7 +18326,8 @@
             (compiler-live-set-empty)
             intervals
             (compiler-reg-var-types-list type-info)
-            (compiler-reg-call-split-empty))]))))
+            (compiler-reg-call-split-empty)
+            (compiler-reg-split-plan-empty))]))))
 
 (cfg
   test
@@ -19254,18 +19333,18 @@
 
 (define (compiler-reg-coalesce-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-move-chain-function))
-    [(CompilerRegPlan chain-assignments _ _ _ _)
+    [(CompilerRegPlan chain-assignments _ _ _ _ _)
       (match (compiler-reg-plan-function (compiler-reg-phi-join-function))
-        [(CompilerRegPlan phi-assignments _ _ _ _)
+        [(CompilerRegPlan phi-assignments _ _ _ _ _)
           (match (compiler-reg-plan-function
             (compiler-reg-loop-backedge-function))
-            [(CompilerRegPlan loop-assignments _ _ _ _)
+            [(CompilerRegPlan loop-assignments _ _ _ _ _)
               (match (compiler-reg-plan-function
                 (compiler-reg-interference-blocks-coalesce-function))
-                [(CompilerRegPlan blocked-assignments _ _ _ _)
+                [(CompilerRegPlan blocked-assignments _ _ _ _ _)
                   (match (compiler-reg-plan-function
                     (compiler-reg-spill-coalesce-function))
-                    [(CompilerRegPlan spill-assignments _ _ _ _)
+                    [(CompilerRegPlan spill-assignments _ _ _ _ _)
                       (and
                         (compiler-reg-same-location? chain-assignments 0 1)
                         (compiler-reg-same-location? chain-assignments 1 2)
@@ -19287,12 +19366,12 @@
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
-    [(CompilerRegPlan vector-assignments _ _ _ _)
+    [(CompilerRegPlan vector-assignments _ _ _ _ _)
       (match (compiler-reg-plan-function
         (compiler-reg-vector-select-false-home-function))
-        [(CompilerRegPlan select-assignments _ _ _ _)
+        [(CompilerRegPlan select-assignments _ _ _ _ _)
           (match (compiler-reg-plan-function (compiler-reg-mask-home-function))
-            [(CompilerRegPlan mask-assignments _ _ _ _)
+            [(CompilerRegPlan mask-assignments _ _ _ _ _)
               (let
                 [vector-ok : bool
                   (and
@@ -19559,7 +19638,8 @@
       (compiler-live-set-empty)
       (compiler-reg-color-spill-sharing-intervals)
       (compiler-reg-color-spill-sharing-types 3)
-      (compiler-reg-call-split-empty))
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))
     (compiler-live-set-empty)
     IrParamNil
     IrBlockNil
@@ -19571,7 +19651,8 @@
           (compiler-live-set-empty)
           (compiler-reg-color-spill-split-intervals)
           (compiler-reg-color-spill-sharing-types 2)
-          (compiler-reg-call-split-empty))
+          (compiler-reg-call-split-empty)
+          (compiler-reg-split-plan-empty))
         (compiler-live-set-empty)
         IrParamNil
         IrBlockNil
@@ -19599,7 +19680,8 @@
       (compiler-live-set-empty)
       (compiler-reg-color-spill-param-intervals)
       (compiler-reg-color-spill-sharing-types 3)
-      (compiler-reg-call-split-empty))
+      (compiler-reg-call-split-empty)
+      (compiler-reg-split-plan-empty))
     (compiler-live-set-empty)
     (compiler-ir-param-cons (IrParam "pinned" (AstTyI64) 1) IrParamNil)
     IrBlockNil
@@ -19621,7 +19703,8 @@
           (compiler-live-set-empty)
           (compiler-reg-color-pointer-intervals)
           (compiler-reg-color-pointer-types)
-          (compiler-reg-call-split-empty))
+          (compiler-reg-call-split-empty)
+          (compiler-reg-split-plan-empty))
         (compiler-live-set-empty)
         params
         blocks
@@ -19649,7 +19732,8 @@
           (compiler-reg-var-type-cons
             (CompilerRegVarType group-var (AstTyStruct (intern "RegGroup")))
             CompilerRegVarTypeNil)
-          (compiler-reg-call-split-empty))
+          (compiler-reg-call-split-empty)
+          (compiler-reg-split-plan-empty))
         (compiler-live-set1 group-var)
         IrParamNil
         IrBlockNil

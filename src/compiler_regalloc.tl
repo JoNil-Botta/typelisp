@@ -257,6 +257,30 @@
 (defstruct CompilerRegCoalesceMap
   (parents (Array i64)))
 
+;; SplitKit Phase A (step 0): the segment + coalesce structure of every SPILLED
+;; value, captured at the spill decision so a later pass (Phase B, the per-sub-
+;; range caller-saved splitter) can split a spilled call-spanning value at its
+;; call boundaries instead of seeing a structureless whole-interval slot. This is
+;; the #144 fix at the data-structure level: once compiler-reg-expand-class-
+;; assignments copies a spilled coalesce ROOT's location onto every member, the
+;; class identity and the root's merged segment list are gone (decoalesced, whole-
+;; interval), so any later splitter finds 0 candidates. Capturing this kit BEFORE
+;; that expansion preserves both. Indexed by var id:
+;;   group-roots[v] -- the coalesce-class root of v (a spilled MEMBER resolves to
+;;                     its group, so the whole class is split as one unit);
+;;   spilled[r]     -- 1 iff coalesce root r received a Spill location (the actual
+;;                     greedy selectOrSplit decision), 0 otherwise;
+;;   segments[r]    -- the root's call-free live sub-ranges (the merged-root
+;;                     segment union from the effective interval index) for a
+;;                     spilled root; Nil otherwise.
+;; Step 0 only BUILDS this and exposes the accessors below; nothing consumes it
+;; yet, so codegen is byte-identical. Phase B reads it via spilled-value-group /
+;; spilled-value? / spilled-value-segments.
+(defstruct CompilerRegSplitKit
+  (group-roots (Array i64))
+  (spilled (Array i64))
+  (segments (Array CompilerRegIntervalList)))
+
 (define (compiler-reg-string-cons
   [head : String]
   [rest : CompilerRegStringList]) : CompilerRegStringList
@@ -10101,6 +10125,127 @@
           (set! v (+ v 1))))
       out)))
 
+;; ---------------------------------------------------------------------------
+;; SplitKit Phase A step 0: coalesce/segment-preserving spill bookkeeping.
+;; ---------------------------------------------------------------------------
+
+(define (compiler-reg-interval-list-count
+  [segments : CompilerRegIntervalList]) : i64
+  (match segments
+    [(CompilerRegIntervalNil) 0]
+    [(CompilerRegIntervalCons _ rest)
+      (+ 1 (compiler-reg-interval-list-count (box-get rest)))]))
+
+(define (compiler-reg-splitkit-empty) : CompilerRegSplitKit
+  (CompilerRegSplitKit
+    (array.make-array i64 0)
+    (array.make-array i64 0)
+    (array.make-array CompilerRegIntervalList 0)))
+
+;; Build the split kit from the post-greedy, PRE-expansion ROOT assignment table:
+;; at this point each coalesce class still has a single root carrying the merged
+;; interval + segment union (eff-index built by compiler-reg-merged-root-index),
+;; and the root's Spill/Register decision is final. compiler-reg-expand-class-
+;; assignments then copies the root location onto every member (realising the
+;; coalesce) and the class identity is gone; capturing here preserves both the
+;; segments and the group membership across that point so Phase B can split a
+;; spilled call-spanning value per call-free sub-range. Bounds-guarded throughout
+;; (it runs on the self-host hot path once Phase B wires it in; must never fault).
+(define (compiler-reg-splitkit-build
+  [assignments : CompilerRegAssignmentTable]
+  [coalesce : CompilerRegCoalesceMap]
+  [eff-index : CompilerRegIntervalIndex]
+  [vars : i64]) : CompilerRegSplitKit
+  (let
+    [n : i64 (if (< vars 1) 1 vars)]
+    [parents : (Array i64) (struct-get coalesce parents)]
+    [eff-starts : (Array i64) (struct-get eff-index starts)]
+    [eff-segs : (Array CompilerRegIntervalList) (struct-get eff-index segments)]
+    [group-roots : (Array i64) (array.make-array i64 n)]
+    [spilled : (Array i64) (array.make-array i64 n)]
+    [segments : (Array CompilerRegIntervalList)
+      (array.make-array CompilerRegIntervalList n)]
+    [v : i64 0]
+    (begin
+      ;; make-array does NOT zero object slots (see compiler-reg-merged-root-index
+      ;; PR4 note); initialise every slot before use. group-roots[v] = class root.
+      (while (< v n)
+        (begin
+          (array-set! segments v CompilerRegIntervalNil)
+          (array-set! spilled v 0)
+          (let
+            [r : i64
+              (if (< v (array-length parents))
+                (array-ref parents v)
+                v)]
+            (array-set! group-roots v (if (and (>= r 0) (< r n)) r v)))
+          (set! v (+ v 1))))
+      ;; For every coalesce ROOT (eff-start >= 0) the greedy spilled, retain its
+      ;; merged segment union -- the call-free sub-ranges Phase B re-homes.
+      (set! v 0)
+      (while (< v n)
+        (begin
+          (if (and
+            (< v (array-length eff-starts))
+            (>= (array-ref eff-starts v) 0))
+            (match (compiler-reg-assignment-table-lookup assignments v)
+              [(CompilerRegSomeLocation location)
+                (match location
+                  [(CompilerRegSpill _)
+                    (begin
+                      (array-set! spilled v 1)
+                      (array-set!
+                        segments
+                        v
+                        (if (< v (array-length eff-segs))
+                          (array-ref eff-segs v)
+                          CompilerRegIntervalNil)))]
+                  [_ unit])]
+              [(CompilerRegNoLocation) unit])
+            unit)
+          (set! v (+ v 1))))
+      (CompilerRegSplitKit group-roots spilled segments))))
+
+;; The coalesce-class root of `var` -- the spilled value's group identity. A
+;; spilled member resolves to its root so Phase B splits the whole class together.
+(define (compiler-reg-splitkit-spilled-value-group
+  [kit : CompilerRegSplitKit]
+  [var : i64]) : i64
+  (let
+    [roots : (Array i64) (struct-get kit group-roots)]
+    (if (and (>= var 0) (< var (array-length roots)))
+      (array-ref roots var)
+      var)))
+
+;; True iff `var` (root or coalesced member) belongs to a group the greedy spilled
+;; and whose structure was preserved through the spill decision.
+(define (compiler-reg-splitkit-spilled-value?
+  [kit : CompilerRegSplitKit]
+  [var : i64]) : bool
+  (let
+    [flags : (Array i64) (struct-get kit spilled)]
+    [root : i64 (compiler-reg-splitkit-spilled-value-group kit var)]
+    (and
+      (>= root 0)
+      (< root (array-length flags))
+      (= (array-ref flags root) 1))))
+
+;; The preserved call-free sub-ranges (segments) of `var`'s spilled group -- the
+;; splittable regions Phase B homes in caller-saved registers between call points.
+;; Empty when `var` did not spill or carried no segment structure.
+(define (compiler-reg-splitkit-spilled-value-segments
+  [kit : CompilerRegSplitKit]
+  [var : i64]) : CompilerRegIntervalList
+  (let
+    [segs : (Array CompilerRegIntervalList) (struct-get kit segments)]
+    [root : i64 (compiler-reg-splitkit-spilled-value-group kit var)]
+    (if (and
+      (compiler-reg-splitkit-spilled-value? kit var)
+      (>= root 0)
+      (< root (array-length segs)))
+      (array-ref segs root)
+      CompilerRegIntervalNil)))
+
 ;; #3489 (PR2): the spill-weight eviction scores a candidate by its use count,
 ;; but a merged class root carries only its OWN var's weight -- which can be the
 ;; least-used member of the class (e.g. a phi result used once), so the eviction
@@ -19161,6 +19306,84 @@
     (cfg test (compiler-reg-loop-split-low-benefit-ok?) true)
     (cfg test (compiler-reg-loop-split-phi-region-refusal-ok?) true)))
 
+;; SplitKit Phase A step 0: prove the spill bookkeeping preserves BOTH the
+;; coalesce group and the merged segment structure of a spilled call-spanning
+;; value, and resolves a spilled coalesced MEMBER to its root's split segments --
+;; exactly the (coalesce-root ∧ segmented ∧ Spill) structure #144 found was lost.
+(define (compiler-reg-splitkit-preserve-ok?) : bool
+  (let
+    [parents : (Array i64) (array.make-array i64 3)]
+    [starts : (Array i64) (array.make-array i64 3)]
+    [ends : (Array i64) (array.make-array i64 3)]
+    [segs : (Array CompilerRegIntervalList)
+      (array.make-array CompilerRegIntervalList 3)]
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make 3)]
+    (begin
+      ;; coalesce: vars 0,1 share root 0; var 2 is a singleton root.
+      (array-set! parents 0 0)
+      (array-set! parents 1 0)
+      (array-set! parents 2 2)
+      ;; eff-index: root 0 spans [0,20) as two call-free sub-ranges; the non-root
+      ;; member 1 is dropped (start -1); root 2 spans [10,15) as one segment.
+      (array-set! starts 0 0)
+      (array-set! ends 0 20)
+      (array-set! starts 1 -1)
+      (array-set! ends 1 -1)
+      (array-set! starts 2 10)
+      (array-set! ends 2 15)
+      (array-set!
+        segs
+        0
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 0 0 8)
+          (compiler-reg-interval-cons
+            (CompilerRegInterval 0 12 20)
+            CompilerRegIntervalNil)))
+      (array-set! segs 1 CompilerRegIntervalNil)
+      (array-set!
+        segs
+        2
+        (compiler-reg-interval-cons
+          (CompilerRegInterval 2 10 15)
+          CompilerRegIntervalNil))
+      ;; greedy decision: root 0 spilled, root 2 register-homed.
+      (compiler-reg-assignment-table-insert
+        assignments
+        0
+        (CompilerRegSpill (compiler-reg-stack-slot-offset 0)))
+      (compiler-reg-assignment-table-insert
+        assignments
+        2
+        (CompilerRegRegister "%r12"))
+      (let
+        [kit : CompilerRegSplitKit
+          (compiler-reg-splitkit-build
+            assignments
+            (CompilerRegCoalesceMap parents)
+            (CompilerRegIntervalIndex starts ends segs)
+            3)]
+        (and
+          ;; coalesce group membership preserved through the spill
+          (= (compiler-reg-splitkit-spilled-value-group kit 0) 0)
+          (= (compiler-reg-splitkit-spilled-value-group kit 1) 0)
+          (= (compiler-reg-splitkit-spilled-value-group kit 2) 2)
+          ;; spill status: the root AND its coalesced member are spilled; the
+          ;; register-homed singleton is not
+          (compiler-reg-splitkit-spilled-value? kit 0)
+          (compiler-reg-splitkit-spilled-value? kit 1)
+          (not (compiler-reg-splitkit-spilled-value? kit 2))
+          ;; segments preserved: the spilled root and its member both resolve to
+          ;; the two call-free sub-ranges; the register value exposes none
+          (= (compiler-reg-interval-list-count
+              (compiler-reg-splitkit-spilled-value-segments kit 0))
+            2)
+          (= (compiler-reg-interval-list-count
+              (compiler-reg-splitkit-spilled-value-segments kit 1))
+            2)
+          (compiler-reg-interval-list-empty?
+            (compiler-reg-splitkit-spilled-value-segments kit 2)))))))
+
 (define (compiler-regalloc-storage-self-test?) : bool
   (and
     (cfg test (compiler-reg-remat-classifier-ok?) true)
@@ -19181,7 +19404,8 @@
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)
     (compiler-reg-color-spill-param-pins-ok?)
-    (compiler-reg-color-storage-ranges-ok?)))
+    (compiler-reg-color-storage-ranges-ok?)
+    (compiler-reg-splitkit-preserve-ok?)))
 
 (define (compiler-regalloc-self-test) : i64
   (if (and

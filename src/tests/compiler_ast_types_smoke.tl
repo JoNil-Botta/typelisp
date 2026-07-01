@@ -236,12 +236,12 @@
   [source-span : i64]) : bool
   (match program
     [(AstProgram.Program decls-box)
-      (match (box-get decls-box)
-        [(AstDeclList.Cons first rest-box)
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons first rest-box)
           (match first
             [(AstDecl.Def _ maybe-ty first-body)
-              (match (box-get rest-box)
-                [(AstDeclList.Cons second tail-box)
+              (match (ast-decl-list-step (box-get rest-box))
+                [(AstDeclListStep.Cons second tail-box)
                   (match second
                     [(AstDecl.Test _ second-body _)
                       (and
@@ -272,8 +272,8 @@
                                     [_ false]))]
                               [_ false])]
                           [_ false])
-                        (match (box-get tail-box)
-                          [(AstDeclList.Nil) true]
+                        (match (ast-decl-list-step (box-get tail-box))
+                          [(AstDeclListStep.Nil) true]
                           [_ false]))]
                     [_ false])]
                 [_ false])]
@@ -320,7 +320,7 @@
           (ast-decl-def "value" (AstMaybeType.Some array-ty) source-body)
           (ast-decl-cons
             (ast-decl-test "same" source-body (AstSourceSpan 5 6 7 8))
-            AstDeclList.Nil)))]
+            (ast-decl-list-new))))]
     [dest-decoy-expr : i64
       (ast-node-pool-context-expr-push
         dest-pools
@@ -347,8 +347,8 @@
           [installed-ok : bool
             (match out-program
               [(AstProgram.Program decls-box)
-                (match (box-get decls-box)
-                  [(AstDeclList.Cons first _)
+                (match (ast-decl-list-step (box-get decls-box))
+                  [(AstDeclListStep.Cons first _)
                     (match first
                       [(AstDecl.Def _ maybe-ty body)
                         (match maybe-ty

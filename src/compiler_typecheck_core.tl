@@ -4832,9 +4832,9 @@
 (define (tc-stdlib-check-comptime-declaration-surface-list
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
-  (match decls
-    [(AstDeclList.Nil) ResultTcUnit.Ok]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) ResultTcUnit.Ok]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -8216,9 +8216,9 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cursor
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest-box)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest-box)
             (let
               [rest : AstDeclList (box-get rest-box)]
               (match decl
@@ -8504,9 +8504,9 @@
   [decls : AstDeclList]
   [target-module-id : i64]
   [current-module-id : i64]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (match decl
@@ -9728,10 +9728,10 @@
   [target : i64]
   [index : i64]
   [module : String]) : ResultTcString
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (ResultTcString.Err "typecheck: nominal owner not found")]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -11505,9 +11505,9 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [module : String]) : ResultTcUnit
-  (match decls
-    [(AstDeclList.Nil) ResultTcUnit.Ok]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) ResultTcUnit.Ok]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -13964,9 +13964,9 @@
     [ok : bool true]
     (begin
       (while ok
-        (match cursor
-          [(AstDeclList.Nil) (set! ok false)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! ok false)]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -14074,16 +14074,16 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cursor
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
             (begin
               (set! result (ast-decl-cons decl result))
               (set! cursor (box-get rest)))]))
       result)))
 
 (define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (tc-import-alias-ast-decl-list-reverse-into items AstDeclList.Nil))
+  (tc-import-alias-ast-decl-list-reverse-into items (ast-decl-list-new)))
 
 (define (tc-import-alias-summary-index-reverse-slots!
   [decls : (Array AstDeclList)]
@@ -14111,9 +14111,9 @@
     [ok : bool true]
     (begin
       (while ok
-        (match cur
-          [(AstDeclList.Nil) (set! ok false)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! ok false)]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [next : AstDeclList (box-get rest)]
               (match decl
@@ -14124,7 +14124,7 @@
                 [_
                   (let
                     [slot : i64 0]
-                    [existing : AstDeclList AstDeclList.Nil]
+                    [existing : AstDeclList (ast-decl-list-new)]
                     (begin
                       (match (hashmap.i64-i64-map-get modules cur-module-id)
                         [(hashmap.I64I64MapFound found-slot)
@@ -14140,7 +14140,7 @@
                                 modules
                                 cur-module-id
                                 slot))
-                            (array-set! decls slot AstDeclList.Nil)
+                            (array-set! decls slot (ast-decl-list-new))
                             (set! slot-count (+ slot-count 1)))])
                       (array-set! decls slot (ast-decl-cons decl existing))
                       (set! cur next)))]))]))
@@ -14443,9 +14443,9 @@
     [ok : bool true]
     (begin
       (while ok
-        (match cur
-          [(AstDeclList.Nil) (set! ok false)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! ok false)]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -14565,9 +14565,9 @@
     [seen-aliases : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
     (begin
       (while ok
-        (match cur
-          [(AstDeclList.Nil) (set! ok false)]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) (set! ok false)]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -14578,7 +14578,7 @@
                 [(AstDecl.ComptimeDecl _ template-box)
                   (set!
                     cur
-                    (AstDeclList.Cons (box-get template-box) (box rest)))]
+                    (ast-decl-cons-boxed (box-get template-box) (box rest)))]
                 [(AstDecl.Import
                     (AstImportSpec.Spec
                       _
@@ -14847,9 +14847,9 @@
   [env : TcTypeEnv]
   [target-module : String]
   [module : String]) : ResultTcEnv
-  (match decls
-    [(AstDeclList.Nil) (ResultTcEnv.Ok env)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ResultTcEnv.Ok env)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -21047,9 +21047,9 @@
   (or (string.eq path "stdlib/atomic.tl") (string.eq path "atomic.tl")))
 
 (define (tc-spmd-program-imports-atomic? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -25224,11 +25224,11 @@
   [decls : AstDeclList]
   [enum-name : String]
   [module : String]) : ResultAstVariantDefList
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (ResultAstVariantDefList.Err
         (string.append "typecheck: unknown enum " enum-name))]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -27106,9 +27106,9 @@
   [decls : AstDeclList]
   [module : String]
   [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
-  (match decls
-    [(AstDeclList.Nil) layouts]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) layouts]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -27528,10 +27528,10 @@
   [target : i64]
   [index : i64]
   [module : String]) : ResultTcString
-  (match decls
-    [(AstDeclList.Nil)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
       (ResultTcString.Err "typecheck: variant owner is not enum")]
-    [(AstDeclList.Cons decl rest)
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -41287,16 +41287,16 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cursor
-          [(AstDeclList.Nil) (set! done true)]
-          [(AstDeclList.Cons head rest)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons head rest)
             (begin
               (set! result (ast-decl-cons head result))
               (set! cursor (box-get rest)))]))
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (macro-decl-list-reverse-into items AstDeclList.Nil))
+  (macro-decl-list-reverse-into items (ast-decl-list-new)))
 
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (macro-decl-list-reverse-into (macro-decl-list-reverse left) right))
@@ -41304,9 +41304,9 @@
 (define (macro-flatten-module-body-decls-in-module
   [decls : AstDeclList]
   [module : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -41342,16 +41342,16 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cursor
-          [(AstDeclPathList.Nil) (set! done true)]
-          [(AstDeclPathList.Cons head rest)
+        (match (ast-decl-path-list-step cursor)
+          [(AstDeclPathListStep.Nil) (set! done true)]
+          [(AstDeclPathListStep.Cons head rest)
             (begin
               (set! result (ast-decl-path-cons head result))
               (set! cursor (box-get rest)))]))
       result)))
 
 (define (macro-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
-  (macro-decl-path-list-reverse-into items AstDeclPathList.Nil))
+  (macro-decl-path-list-reverse-into items (ast-decl-path-list-new)))
 
 (define (macro-decl-path-list-append
   [left : AstDeclPathList]
@@ -41430,9 +41430,9 @@
     [_ false]))
 
 (define (macro-decls-contain-path-import? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (macro-decl-contains-path-import? decl)
         (macro-decls-contain-path-import? (box-get rest)))]))
@@ -41460,16 +41460,16 @@
 (define (macro-followup-path-list-first
   [paths : AstDeclPathList]
   [fallback : String]) : String
-  (match paths
-    [(AstDeclPathList.Nil) fallback]
-    [(AstDeclPathList.Cons path _) path]))
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) fallback]
+    [(AstDeclPathListStep.Cons path _) path]))
 
 (define (macro-followup-path-list-last
   [paths : AstDeclPathList]
   [fallback : String]) : String
-  (match paths
-    [(AstDeclPathList.Nil) fallback]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) fallback]
+    [(AstDeclPathListStep.Cons path rest)
       (macro-followup-path-list-last (box-get rest) path)]))
 
 (define (macro-followup-work-at
@@ -41546,9 +41546,9 @@
     macro-followup-generated-import-work-metadata
     (let
       [decls : AstDeclList
-        (ast-decl-cons (ast-decl-module "generated.module") AstDeclList.Nil)]
+        (ast-decl-cons (ast-decl-module "generated.module") (ast-decl-list-new))]
       [paths : AstDeclPathList
-        (ast-decl-path-cons "generated.tl" AstDeclPathList.Nil)]
+        (ast-decl-path-cons "generated.tl" (ast-decl-path-list-new))]
       [items : MacroFollowupWorkList
         (macro-followup-work-for-decls
           2
@@ -41608,11 +41608,11 @@
       [decls : AstDeclList
         (ast-decl-cons
           (ast-decl-module "owner.module")
-          (ast-decl-cons placeholder AstDeclList.Nil))]
+          (ast-decl-cons placeholder (ast-decl-list-new)))]
       [paths : AstDeclPathList
         (ast-decl-path-cons
           "owner.tl"
-          (ast-decl-path-cons "owner.tl" AstDeclPathList.Nil))]
+          (ast-decl-path-cons "owner.tl" (ast-decl-path-list-new)))]
       [items : MacroFollowupWorkList
         (macro-module-placeholder-followup-work-list decls paths)]
       [work : MacroFollowupWork (macro-followup-test-head items)]
@@ -41646,15 +41646,15 @@
           "module placeholder cause")))))
 
 (define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
-  (match decls
-    [(AstDeclList.Nil) AstDeclPathList.Nil]
-    [(AstDeclList.Cons _ rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-path-list-new)]
+    [(AstDeclListStep.Cons _ rest)
       (ast-decl-path-cons path (macro-paths-for-decls (box-get rest) path))]))
 
 (define (macro-decls-final-module [decls : AstDeclList] [module : String]) : String
-  (match decls
-    [(AstDeclList.Nil) module]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) module]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -41667,9 +41667,9 @@
           [_ (macro-decls-final-module rest module)]))]))
 
 (define (macro-decls-module-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest-count : i64 (macro-decls-module-count (box-get rest))]
         (match decl
@@ -42061,9 +42061,9 @@
   [decls : AstDeclList]
   [generator : String]
   [key : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (ast-decl-cons
         (macro-wrap-generated-decl decl generator key)
         (macro-wrap-generated-decls (box-get rest) generator key))]))
@@ -42083,9 +42083,9 @@
   [decls : AstDeclList]
   [generator : String]
   [key : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (ast-decl-cons
         (macro-wrap-generated-decl-decls decl generator key)
         (macro-wrap-generated-decls-decls (box-get rest) generator key))]))
@@ -42138,9 +42138,9 @@
 (define (macro-generated-context-decls
   [decls : AstDeclList]
   [definition-module : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (ast-decl-cons
         (macro-generated-context-decl decl definition-module)
         (macro-generated-context-decls (box-get rest) definition-module))]))
@@ -42188,17 +42188,17 @@
 (define (macro-decls-contain-generated-key?
   [decls : AstDeclList]
   [key : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (macro-decl-generated-key? decl key)
         (macro-decls-contain-generated-key? (box-get rest) key))]))
 
 (define (macro-decls-filter-generated-key [decls : AstDeclList] [key : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [filtered-rest : AstDeclList
           (macro-decls-filter-generated-key (box-get rest) key)]
@@ -42211,9 +42211,9 @@
 (define (macro-decls-filter-generated-key-context
   [decls : AstDeclList]
   [key : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [filtered-rest : AstDeclList
           (macro-decls-filter-generated-key-context (box-get rest) key)]
@@ -42224,9 +42224,9 @@
 (define (macro-decl-list-contains-structural?
   [decls : AstDeclList]
   [want : AstDecl]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (gen-decl-eq? decl want)
         (macro-decl-list-contains-structural? (box-get rest) want))]))
@@ -42234,9 +42234,9 @@
 (define (macro-decls-missing-generated-imports
   [generated-body : AstDeclList]
   [existing-body : AstDeclList]) : AstDeclList
-  (match generated-body
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step generated-body)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [missing-rest : AstDeclList
           (macro-decls-missing-generated-imports (box-get rest) existing-body)]
@@ -42258,8 +42258,8 @@
       (macro-module-import-marker-decls target-module alias span)]
     [missing-imports : AstDeclList
       (macro-decls-missing-generated-imports generated-body existing-body)]
-    (match missing-imports
-      [(AstDeclList.Nil) marker-decls]
+    (match (ast-decl-list-step missing-imports)
+      [(AstDeclListStep.Nil) marker-decls]
       [_
         (macro-decl-list-append
           (ast-decl-cons (ast-decl-module target-module) missing-imports)
@@ -42269,9 +42269,9 @@
   [decls : AstDeclList]
   [identity : String]
   [module : String]) : CompilerMaybeString
-  (match decls
-    [(AstDeclList.Nil) CompilerNoString]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) CompilerNoString]
+    [(AstDeclListStep.Cons decl rest-box)
       (match decl
         [(AstDecl.Module next-module)
           (macro-find-generated-identity-module-in
@@ -42294,16 +42294,16 @@
   (macro-find-generated-identity-module-in decls identity ""))
 
 (define (macro-decl-list-structural-eq? [a : AstDeclList] [b : AstDeclList]) : bool
-  (match a
-    [(AstDeclList.Nil)
-      (match b
-        [(AstDeclList.Nil) true]
+  (match (ast-decl-list-step a)
+    [(AstDeclListStep.Nil)
+      (match (ast-decl-list-step b)
+        [(AstDeclListStep.Nil) true]
         [_ false])]
-    [(AstDeclList.Cons a-head a-rest)
+    [(AstDeclListStep.Cons a-head a-rest)
       (let
         [a-rest : AstDeclList (box-get a-rest)]
-        (match b
-          [(AstDeclList.Cons b-head b-rest)
+        (match (ast-decl-list-step b)
+          [(AstDeclListStep.Cons b-head b-rest)
             (let
               [b-rest : AstDeclList (box-get b-rest)]
               (and
@@ -43082,9 +43082,9 @@
     [_ (TcMaybeString.No)]))
 
 (define (macro-generated-fingerprint-decl-list [decls : AstDeclList]) : TcMaybeString
-  (match decls
-    [(AstDeclList.Nil) (TcMaybeString.Some "decls:nil")]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (TcMaybeString.Some "decls:nil")]
+    [(AstDeclListStep.Cons decl rest)
       (match (macro-generated-fingerprint-decl decl)
         [(TcMaybeString.Some head-key)
           (match (macro-generated-fingerprint-decl-list (box-get rest))
@@ -43314,9 +43314,9 @@
 (define (macro-find-generated-visible-decl
   [decls : AstDeclList]
   [name : String]) : MacroMaybeAstDecl
-  (match decls
-    [(AstDeclList.Nil) (MacroMaybeAstDecl.No)]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (MacroMaybeAstDecl.No)]
+    [(AstDeclListStep.Cons decl rest-box)
       (match (macro-generated-visible-name decl)
         [(SpecMaybeString.Some candidate)
           (if (string.eq candidate name)
@@ -43355,9 +43355,9 @@
   [existing-body : AstDeclList]
   [generated-body : AstDeclList]
   [state : MacroGeneratedTargetReplayScan]) : MacroGeneratedTargetReplayScan
-  (match generated-body
-    [(AstDeclList.Nil) state]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step generated-body)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest-box)
       (match (macro-generated-visible-name decl)
         [(SpecMaybeString.Some name)
           (match (macro-find-generated-visible-decl existing-body name)
@@ -43394,9 +43394,9 @@
     [_ (MacroGeneratedTargetReplay.NoReplay)]))
 
 (define (macro-module-exists? [decls : AstDeclList] [target-module : String]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (match decl
         [(AstDecl.Module module-name)
           (if (string.eq (intern-str module-name) target-module)
@@ -43408,9 +43408,9 @@
   [decls : AstDeclList]
   [target-module : String]
   [current-module : String]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (match decl
         [(AstDecl.Module module-name)
           (macro-collect-module-body-decls
@@ -44452,9 +44452,10 @@
   [origin : AstExpr]) : ResultMacroParsedDecls
   (match (parse-ast-decl-maybe dispatch form)
     [(ResultAstMaybeDecl.SomeDecl decl)
-      (ResultMacroParsedDecls.Ok (ast-decl-cons decl AstDeclList.Nil))]
+      (ResultMacroParsedDecls.Ok (ast-decl-cons decl (ast-decl-list-new)))]
     [(ResultAstMaybeDecl.Decls decls) (ResultMacroParsedDecls.Ok decls)]
-    [(ResultAstMaybeDecl.NoDecl) (ResultMacroParsedDecls.Ok AstDeclList.Nil)]
+    [(ResultAstMaybeDecl.NoDecl)
+      (ResultMacroParsedDecls.Ok (ast-decl-list-new))]
     [(ResultAstMaybeDecl.Err message)
       (ResultMacroParsedDecls.Err
         (box (macro-output-syntax-diag origin message)))]))
@@ -44493,7 +44494,7 @@
   [index : i64]
   [origin : AstExpr]) : ResultMacroParsedDecls
   (if (>= index (struct-get exprs len))
-    (ResultMacroParsedDecls.Ok AstDeclList.Nil)
+    (ResultMacroParsedDecls.Ok (ast-decl-list-new))
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
       (match (macro-parse-decls-from-expr dispatch head-expr origin)
@@ -44576,12 +44577,12 @@
     [cur-module : String ""]
     [out : TcStringList acc]
     (begin
-      (while (match cur
-        [(AstDeclList.Nil) false]
+      (while (match (ast-decl-list-step cur)
+        [(AstDeclListStep.Nil) false]
         [_ true])
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) unit]
+          [(AstDeclListStep.Cons decl rest)
             (begin
               (match decl
                 [(AstDecl.Module next-module)
@@ -44960,12 +44961,12 @@
     [cur-module-id : i64 (intern module)]
     [out : TcStringList acc]
     (begin
-      (while (match cur
-        [(AstDeclList.Nil) false]
+      (while (match (ast-decl-list-step cur)
+        [(AstDeclListStep.Nil) false]
         [_ true])
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) unit]
+          [(AstDeclListStep.Cons decl rest)
             (begin
               (match decl
                 [(AstDecl.Module next-module) (set! cur-module-id next-module)]
@@ -45785,9 +45786,9 @@
   [decls : AstDeclList]
   [name : String]
   [module : String]) : MacroMaybeDecl
-  (match decls
-    [(AstDeclList.Nil) (MacroMaybeDecl.No)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (MacroMaybeDecl.No)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -45885,9 +45886,9 @@
   [current-module-id : i64]
   [alias : String]
   [module-id : i64]) : TcMaybeString
-  (match decls
-    [(AstDeclList.Nil) (TcMaybeString.No)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (TcMaybeString.No)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -45899,13 +45900,13 @@
               next-module)]
           [(AstDecl.ComptimeDecl _ template-box)
             (macro-import-alias-target-ids
-              (AstDeclList.Cons (box-get template-box) (box rest))
+              (ast-decl-cons-boxed (box-get template-box) (box rest))
               current-module-id
               alias
               module-id)]
           [(AstDecl.Unsafe inner-box)
             (macro-import-alias-target-ids
-              (AstDeclList.Cons (box-get inner-box) (box rest))
+              (ast-decl-cons-boxed (box-get inner-box) (box rest))
               current-module-id
               alias
               module-id)]
@@ -46275,9 +46276,9 @@
   [current-module-id : i64]
   [module-id : i64]
   [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
-  (match decls
-    [(AstDeclList.Nil) (macro-flat-import-target-list-reverse targets)]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (macro-flat-import-target-list-reverse targets)]
+    [(AstDeclListStep.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         (match decl
@@ -46289,13 +46290,13 @@
               targets)]
           [(AstDecl.ComptimeDecl _ template-box)
             (macro-flat-import-targets-from-list
-              (AstDeclList.Cons (box-get template-box) (box rest))
+              (ast-decl-cons-boxed (box-get template-box) (box rest))
               current-module-id
               module-id
               targets)]
           [(AstDecl.Unsafe inner-box)
             (macro-flat-import-targets-from-list
-              (AstDeclList.Cons (box-get inner-box) (box rest))
+              (ast-decl-cons-boxed (box-get inner-box) (box rest))
               current-module-id
               module-id
               targets)]
@@ -48134,9 +48135,9 @@
   [definition-module : String]
   [env : CtfeEnv]
   [decls : AstDeclList]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (ast-decl-cons
         (macro-rewrite-generated-import-decl
           ctx
@@ -48584,7 +48585,7 @@
                             grow-name
                             vec-name
                             elem-ty)
-                          AstDeclList.Nil)))))))))))))
+                          (ast-decl-list-new))))))))))))))
 
 (define (macro-vector-family-fast-arity-error [call-expr : AstExpr]) : ResultMacroParsedDecls
   (ResultMacroParsedDecls.Err
@@ -48614,8 +48615,8 @@
                 [(TcMaybeString.Some base)
                   (ResultMacroParsedDecls.Ok
                     (macro-vf-decls elem-ty vec-name base))]
-                [(TcMaybeString.No) (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
-            [(TcMaybeString.No) (ResultMacroParsedDecls.Ok AstDeclList.Nil)])]
+                [(TcMaybeString.No) (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
+            [(TcMaybeString.No) (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-vector-family-fast-arity-error call-expr)))
 
@@ -50209,8 +50210,8 @@
 
 (define (macro-single-decl-expansion [decl : AstDecl] [path : String]) : ResultMacroDeclExpansion
   (ResultMacroDeclExpansion.Ok
-    (ast-decl-cons decl AstDeclList.Nil)
-    (ast-decl-path-cons path AstDeclPathList.Nil)))
+    (ast-decl-cons decl (ast-decl-list-new))
+    (ast-decl-path-cons path (ast-decl-path-list-new))))
 
 (define (macro-env-for-module
   [ctx : TcContext]
@@ -50237,7 +50238,7 @@
           (AstMaybeModuleName.Some target-module)
           binding-alias
           span))
-      AstDeclList.Nil)))
+      (ast-decl-list-new))))
 
 (define (macro-existing-module-import-target
   [ctx : TcContext]
@@ -50363,10 +50364,10 @@
   [module : String]
   [decls : AstDeclList]
   [decl-path : String]) : ResultMacroDeclExpansion
-  (match decls
-    [(AstDeclList.Nil)
-      (ResultMacroDeclExpansion.Ok AstDeclList.Nil AstDeclPathList.Nil)]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil)
+      (ResultMacroDeclExpansion.Ok (ast-decl-list-new) (ast-decl-path-list-new))]
+    [(AstDeclListStep.Cons decl rest-box)
       (match (macro-collapse-existing-module-import-decl
         ctx
         top-env
@@ -50496,9 +50497,9 @@
   [decls : AstDeclList]
   [target-module : String]
   [aliases : MacroGeneratedSurfaceNameSet]) : MacroGeneratedSurfaceNameSet
-  (match decls
-    [(AstDeclList.Nil) aliases]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) aliases]
+    [(AstDeclListStep.Cons decl rest)
       (macro-generated-surface-aliases-decls
         (box-get rest)
         target-module
@@ -51890,9 +51891,9 @@
   [aliases : MacroGeneratedSurfaceNameSet]
   [refs : MacroGeneratedSurfaceNameSet]
   [alias-qualified? : bool]) : MacroGeneratedSurfaceNameSet
-  (match decls
-    [(AstDeclList.Nil) refs]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) refs]
+    [(AstDeclListStep.Cons decl rest)
       (macro-generated-surface-decls-refs
         (box-get rest)
         aliases
@@ -51955,9 +51956,9 @@
 (define (macro-generated-surface-closure-pass
   [decls : AstDeclList]
   [needed : MacroGeneratedSurfaceNameSet]) : MacroGeneratedSurfaceNameSet
-  (match decls
-    [(AstDeclList.Nil) needed]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) needed]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [next-needed : MacroGeneratedSurfaceNameSet
           (if (macro-generated-surface-decl-needed? decl needed)
@@ -51989,9 +51990,9 @@
 (define (macro-generated-surface-filter-decls
   [decls : AstDeclList]
   [needed : MacroGeneratedSurfaceNameSet]) : AstDeclList
-  (match decls
-    [(AstDeclList.Nil) AstDeclList.Nil]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [filtered-rest : AstDeclList
           (macro-generated-surface-filter-decls (box-get rest) needed)]
@@ -52302,12 +52303,12 @@
             (ctfe-diagnostic-at-expr
               call-expr
               "typecheck: Module macro output must include exactly one module declaration")))
-        (match generated
-          [(AstDeclList.Cons first body-rest-box)
+        (match (ast-decl-list-step generated)
+          [(AstDeclListStep.Cons first body-rest-box)
             (match first
               [(AstDecl.ModuleBody target-module-id body-box)
-                (match (box-get body-rest-box)
-                  [(AstDeclList.Nil)
+                (match (ast-decl-list-step (box-get body-rest-box))
+                  [(AstDeclListStep.Nil)
                     (let
                       [target-module : String (intern-str target-module-id)]
                       [body-rest : AstDeclList
@@ -52399,7 +52400,7 @@
                     (ctfe-diagnostic-at-expr
                       call-expr
                       "typecheck: Module macro output must start with a module declaration")))])]
-          [(AstDeclList.Nil)
+          [(AstDeclListStep.Nil)
             (ResultMacroDeclExpansion.Err
               (box
                 (ctfe-diagnostic-at-expr
@@ -52850,9 +52851,9 @@
   [decls : AstDeclList]
   [target-module : String]
   [module : String]) : CompilerMaybeString
-  (match decls
-    [(AstDeclList.Nil) CompilerNoString]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) CompilerNoString]
+    [(AstDeclListStep.Cons decl rest-box)
       (match decl
         [(AstDecl.Module next-module)
           (macro-module-generated-identity-in
@@ -52896,9 +52897,9 @@
   [generated-body : AstDeclList]
   [import-module : String]
   [identity : String]) : CompilerMaybeString
-  (match generated-body
-    [(AstDeclList.Nil) CompilerNoString]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step generated-body)
+    [(AstDeclListStep.Nil) CompilerNoString]
+    [(AstDeclListStep.Cons decl rest-box)
       (match decl
         [_
           (macro-check-generated-import-collisions-in
@@ -54310,9 +54311,9 @@
     [_ false]))
 
 (define (ctfe-program-has-type-literal? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (ctfe-decl-has-type-literal? decl)
         (ctfe-program-has-type-literal? (box-get rest)))]))
@@ -54340,9 +54341,9 @@
     [_ false]))
 
 (define (macro-expanded-decls-inert? [decls : AstDeclList] [can-share : bool]) : bool
-  (match decls
-    [(AstDeclList.Nil) true]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) true]
+    [(AstDeclListStep.Cons decl rest)
       (and
         (macro-expanded-decl-inert? decl can-share)
         (macro-expanded-decls-inert? (box-get rest) can-share))]))
@@ -54418,8 +54419,8 @@
     [cur-orig-decls : AstDeclList orig-decls]
     [cur-ctx : TcContext ctx]
     [cur-top-env : TcTypeEnv top-env]
-    [out-rev : AstDeclList AstDeclList.Nil]
-    [out-paths-rev : AstDeclPathList AstDeclPathList.Nil]
+    [out-rev : AstDeclList (ast-decl-list-new)]
+    [out-paths-rev : AstDeclPathList (ast-decl-path-list-new)]
     ;; After an inert generated splice, continue across inert declarations,
     ;; vector-family splices, and core fast-path macros. Arbitrary macro work
     ;; needs a rebuilt top env so generated symbols are visible.
@@ -54430,8 +54431,8 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-decls
-          [(AstDeclList.Nil)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil)
             (begin
               (set!
                 result
@@ -54440,20 +54441,20 @@
                   (macro-decl-path-list-reverse out-paths-rev)
                   MacroFollowupWorkList.Nil))
               (set! done true))]
-          [(AstDeclList.Cons decl rest)
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) ""])]
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons path _) path]
+                  [(AstDeclPathListStep.Nil) ""])]
               [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
@@ -54719,9 +54720,9 @@
 
 ;; Whether a program needs the macro expansion pass.
 (define (macro-program-needs-expansion? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (or
@@ -54729,9 +54730,9 @@
           (macro-program-needs-expansion? rest)))]))
 
 (define (macro-program-has-defmacro? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (or (macro-decl-has-defmacro? decl) (macro-program-has-defmacro? rest)))]))
@@ -54749,9 +54750,9 @@
     [_ false]))
 
 (define (macro-program-might-fire-expression-macro? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (macro-decl-might-fire-expression-macro? decl)
         (macro-program-might-fire-expression-macro? (box-get rest)))]))
@@ -54783,9 +54784,9 @@
     [_ false]))
 
 (define (macro-program-has-summary-macro-import? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (macro-decl-has-summary-macro-import? decl)
         (macro-program-has-summary-macro-import? (box-get rest)))]))
@@ -54804,9 +54805,9 @@
     [_ false]))
 
 (define (macro-program-has-module-placeholder? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (macro-decl-has-module-placeholder? decl)
         (macro-program-has-module-placeholder? (box-get rest)))]))
@@ -54816,22 +54817,22 @@
   [paths : AstDeclPathList]
   [module : String]
   [index : i64]) : MacroFollowupWorkList
-  (match decls
-    [(AstDeclList.Nil) MacroFollowupWorkList.Nil]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) MacroFollowupWorkList.Nil]
+    [(AstDeclListStep.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) ""])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) ""])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest)
               (let
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         [next-module : String
           (match decl
             [(AstDecl.Module name) (intern-str name)]
@@ -54873,9 +54874,9 @@
     [_ 0]))
 
 (define (macro-program-module-placeholder-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (+
         (macro-decl-module-placeholder-count decl)
         (macro-program-module-placeholder-count (box-get rest)))]))
@@ -54888,9 +54889,9 @@
     (macro-decl-might-fire-expression-macro? decl)))
 
 (define (macro-decls-materialized-import-need-followup? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Nil) false]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
       (or
         (macro-decl-materialized-import-needs-followup? decl)
         (macro-decls-materialized-import-need-followup? (box-get rest)))]))
@@ -54918,7 +54919,7 @@
         (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
-      AstDeclList.Nil)))
+      (ast-decl-list-new))))
 
 (cfg
   test
@@ -54933,7 +54934,7 @@
             AstMaybeModuleName.No
             AstMaybeImportAlias.No
             span))]
-      (ast-decl-cons placeholder AstDeclList.Nil))))
+      (ast-decl-cons placeholder (ast-decl-list-new)))))
 
 (cfg
   test
@@ -55222,22 +55223,22 @@
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
   [module : String]) : sym_i64_env.SymI64Env
-  (match decls
-    [(AstDeclList.Nil) seen]
-    [(AstDeclList.Cons decl rest-box)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) seen]
+    [(AstDeclListStep.Cons decl rest-box)
       (let
         [rest : AstDeclList (box-get rest-box)]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) ""])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) ""])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest)
               (let
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         [next-module : String
           (match decl
             [(AstDecl.Module name) (intern-str name)]
@@ -55279,8 +55280,8 @@
   (match (macro-generated-normal-import decl)
     [(MacroMaybeGeneratedNormalImport.No)
       (ResultMacroMaterializeImport.Ok
-        (ast-decl-cons decl AstDeclList.Nil)
-        (ast-decl-path-cons decl-path AstDeclPathList.Nil)
+        (ast-decl-cons decl (ast-decl-list-new))
+        (ast-decl-path-cons decl-path (ast-decl-path-list-new))
         seen
         MacroFollowupWorkList.Nil)]
     [(MacroMaybeGeneratedNormalImport.Some
@@ -55336,13 +55337,13 @@
                       after-import-alias
                       module
                       imported-decls
-                      AstDeclList.Nil)]
+                      (ast-decl-list-new))]
                   [tail-paths : AstDeclPathList
                     (compiler-load-paths-after-import
                       decl-path
                       after-import-alias
                       imported-decls
-                      AstDeclPathList.Nil)]
+                      (ast-decl-path-list-new))]
                   [materialized-decls : AstDeclList
                     (macro-decl-list-append imported-decls tail-decls)]
                   [materialized-paths : AstDeclPathList
@@ -55377,8 +55378,8 @@
     [cur-paths : AstDeclPathList paths]
     [cur-module : String ""]
     [cur-index : i64 0]
-    [out-rev : AstDeclList AstDeclList.Nil]
-    [out-paths-rev : AstDeclPathList AstDeclPathList.Nil]
+    [out-rev : AstDeclList (ast-decl-list-new)]
+    [out-paths-rev : AstDeclPathList (ast-decl-path-list-new)]
     [followup-needed? : bool false]
     [followup-start-index : i64 0]
     [followup-start-module : String ""]
@@ -55389,8 +55390,8 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-decls
-          [(AstDeclList.Nil)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil)
             (let
               [final-decls : AstDeclList (macro-decl-list-reverse out-rev)]
               [final-paths : AstDeclPathList
@@ -55413,20 +55414,20 @@
                     seen
                     followup-work))
                 (set! done true)))]
-          [(AstDeclList.Cons decl rest-box)
+          [(AstDeclListStep.Cons decl rest-box)
             (let
               [rest : AstDeclList (box-get rest-box)]
               [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) ""])]
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons path _) path]
+                  [(AstDeclPathListStep.Nil) ""])]
               [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
@@ -56109,7 +56110,7 @@
     (ast-node-pool-context-capture-active)))
 
 (define (macro-expand-program [program : AstProgram]) : ResultMacroExpand
-  (macro-expand-program-with-paths program AstDeclPathList.Nil))
+  (macro-expand-program-with-paths program (ast-decl-path-list-new)))
 
 (define (tc-cleanup-owning-struct-type? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
@@ -56913,12 +56914,12 @@
       (ResultCompilerTypecheck.Ok current-summary)]
     (begin
       (while (not done)
-        (match cursor
-          [(AstDeclList.Nil)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil)
             (begin
               (set! result (ResultCompilerTypecheck.Ok current-summary))
               (set! done true))]
-          [(AstDeclList.Cons decl rest)
+          [(AstDeclListStep.Cons decl rest)
             (let
               [next : AstDeclList (box-get rest)]
               (match decl
@@ -56956,9 +56957,9 @@
       result)))
 
 (define (tc-decl-path-list-last [paths : AstDeclPathList] [last : String]) : String
-  (match paths
-    [(AstDeclPathList.Nil) last]
-    [(AstDeclPathList.Cons path rest)
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) last]
+    [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList (box-get rest)]
         (tc-decl-path-list-last rest path))]))
@@ -57050,22 +57051,22 @@
   [active-path : String]
   [active-path-module-safe : bool]
   [key : String]) : TcPrefixCandidate
-  (match decls
-    [(AstDeclList.Nil) (TcPrefixCandidate.No)]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (TcPrefixCandidate.No)]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         [decl-path : String
-          (match paths
-            [(AstDeclPathList.Cons path _) path]
-            [(AstDeclPathList.Nil) ""])]
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons path _) path]
+            [(AstDeclPathListStep.Nil) ""])]
         [rest-paths : AstDeclPathList
-          (match paths
-            [(AstDeclPathList.Cons _ path-rest)
+          (match (ast-decl-path-list-step paths)
+            [(AstDeclPathListStep.Cons _ path-rest)
               (let
                 [path-rest : AstDeclPathList (box-get path-rest)]
                 path-rest)]
-            [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
         [same-path : bool (string.eq active-path decl-path)]
         [same-path-module-safe : bool
           (if same-path
@@ -57125,32 +57126,32 @@
 
 (define (tc-decl-list-take [decls : AstDeclList] [count : i64]) : AstDeclList
   (if (<= count 0)
-    AstDeclList.Nil
-    (match decls
-      [(AstDeclList.Nil) AstDeclList.Nil]
-      [(AstDeclList.Cons decl rest)
+    (ast-decl-list-new)
+    (match (ast-decl-list-step decls)
+      [(AstDeclListStep.Nil) (ast-decl-list-new)]
+      [(AstDeclListStep.Cons decl rest)
         (let
           [rest : AstDeclList (box-get rest)]
-          (AstDeclList.Cons decl (box (tc-decl-list-take rest (- count 1)))))])))
+          (ast-decl-cons-boxed decl (box (tc-decl-list-take rest (- count 1)))))])))
 
 (define (tc-decl-path-list-take [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
   (if (<= count 0)
-    AstDeclPathList.Nil
-    (match paths
-      [(AstDeclPathList.Nil) AstDeclPathList.Nil]
-      [(AstDeclPathList.Cons path rest)
+    (ast-decl-path-list-new)
+    (match (ast-decl-path-list-step paths)
+      [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
+      [(AstDeclPathListStep.Cons path rest)
         (let
           [rest : AstDeclPathList (box-get rest)]
-          (AstDeclPathList.Cons
+          (ast-decl-path-cons-boxed
             path
             (box (tc-decl-path-list-take rest (- count 1)))))])))
 
 (define (tc-decl-list-drop [decls : AstDeclList] [count : i64]) : AstDeclList
   (if (<= count 0)
     decls
-    (match decls
-      [(AstDeclList.Nil) AstDeclList.Nil]
-      [(AstDeclList.Cons _ rest)
+    (match (ast-decl-list-step decls)
+      [(AstDeclListStep.Nil) (ast-decl-list-new)]
+      [(AstDeclListStep.Cons _ rest)
         (let
           [rest : AstDeclList (box-get rest)]
           (tc-decl-list-drop rest (- count 1)))])))
@@ -57158,9 +57159,9 @@
 (define (tc-decl-path-list-drop [paths : AstDeclPathList] [count : i64]) : AstDeclPathList
   (if (<= count 0)
     paths
-    (match paths
-      [(AstDeclPathList.Nil) AstDeclPathList.Nil]
-      [(AstDeclPathList.Cons _ rest)
+    (match (ast-decl-path-list-step paths)
+      [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
+      [(AstDeclPathListStep.Cons _ rest)
         (let
           [rest : AstDeclPathList (box-get rest)]
           (tc-decl-path-list-drop rest (- count 1)))])))
@@ -57375,26 +57376,26 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match cur-decls
-          [(AstDeclList.Nil)
+        (match (ast-decl-list-step cur-decls)
+          [(AstDeclListStep.Nil)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set! result (ResultCompilerTypecheck.Ok cur-summary))
               (set! done true))]
-          [(AstDeclList.Cons decl rest)
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               [decl-path : String
-                (match cur-paths
-                  [(AstDeclPathList.Cons path _) path]
-                  [(AstDeclPathList.Nil) ""])]
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons path _) path]
+                  [(AstDeclPathListStep.Nil) ""])]
               [rest-paths : AstDeclPathList
-                (match cur-paths
-                  [(AstDeclPathList.Cons _ path-rest)
+                (match (ast-decl-path-list-step cur-paths)
+                  [(AstDeclPathListStep.Cons _ path-rest)
                     (let
                       [path-rest : AstDeclPathList (box-get path-rest)]
                       path-rest)]
-                  [(AstDeclPathList.Nil) AstDeclPathList.Nil])]
+                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
               (match decl
                 [(AstDecl.Module next-module)
                   (begin

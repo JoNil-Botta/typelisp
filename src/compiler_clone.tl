@@ -332,12 +332,12 @@
     [out : CloneNameSet acc]
     [current-module : String module]
     (begin
-      (while (match cur
-        [(AstDeclList.Nil) false]
+      (while (match (ast-decl-list-step cur)
+        [(AstDeclListStep.Nil) false]
         [_ true])
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) unit]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -401,12 +401,12 @@
     [out : CloneNameSet acc]
     [current-module : String module]
     (begin
-      (while (match cur
-        [(AstDeclList.Nil) false]
+      (while (match (ast-decl-list-step cur)
+        [(AstDeclListStep.Nil) false]
         [_ true])
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) unit]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -1002,9 +1002,9 @@
     [pools : AstNodePoolContext]
     [decls : AstDeclList]
     [want : String]) : i64
-    (match decls
-      [(AstDeclList.Nil) 0]
-      [(AstDeclList.Cons decl rest)
+    (match (ast-decl-list-step decls)
+      [(AstDeclListStep.Nil) 0]
+      [(AstDeclListStep.Cons decl rest)
         (+
           (match decl
             [(AstDecl.DefFn _ _ _ body _)
@@ -1046,7 +1046,7 @@
           pools
           "CloneShortList"
           (clone-test-short-list-variants)
-          AstDeclList.Nil)]
+          (ast-decl-list-new))]
       (and
         (> (clone-test-decl-list-name-count pools decls "CloneShortList.Nil") 0)
         (>
@@ -1080,12 +1080,12 @@
     [out : AstDeclList acc]
     [current-module : String module]
     (begin
-      (while (match cur
-        [(AstDeclList.Nil) false]
+      (while (match (ast-decl-list-step cur)
+        [(AstDeclListStep.Nil) false]
         [_ true])
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) unit]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -1109,7 +1109,7 @@
                               pools
                               name-str
                               variants
-                              AstDeclList.Nil)
+                              (ast-decl-list-new))
                             out))
                         unit)
                       (set! cur rest)))]
@@ -1132,7 +1132,7 @@
                                   pools
                                   (clone-expr-push pools (AstExpr.Var name))
                                   (clone-struct-ctor-args pools fields)))
-                              AstDeclList.Nil)
+                              (ast-decl-list-new))
                             out))
                         unit)
                       (set! cur rest)))]
@@ -1152,28 +1152,12 @@
 
 (define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (let
-    [cur : AstDeclList left]
-    [rev : AstDeclList AstDeclList.Nil]
-    [out : AstDeclList right]
+    [out : AstDeclList
+      (ast-decl-list-with-capacity
+        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
     (begin
-      (while (match cur
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons head rest)
-            (begin
-              (set! rev (ast-decl-cons head rev))
-              (set! cur (box-get rest)))]))
-      (while (match rev
-        [(AstDeclList.Nil) false]
-        [_ true])
-        (match rev
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons head rest)
-            (begin
-              (set! out (ast-decl-cons head out))
-              (set! rev (box-get rest)))]))
+      (ast-decl-list-append-from (&mut out) (& left) 0)
+      (ast-decl-list-append-from (&mut out) (& right) 0)
       out)))
 
 (define (clone-root-add-type-list
@@ -1288,12 +1272,12 @@
     (begin
       (while (and
         (not done)
-        (match cur
-          [(AstDeclList.Nil) false]
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) false]
           [_ true]))
-        (match cur
-          [(AstDeclList.Nil) unit]
-          [(AstDeclList.Cons decl rest)
+        (match (ast-decl-list-step cur)
+          [(AstDeclListStep.Nil) unit]
+          [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList (box-get rest)]
               (match decl
@@ -1499,7 +1483,7 @@
         (clone-all-type-names decls (clone-name-set-empty)))]
     (clone-decl-list-append
       decls
-      (clone-generate-decls pools decls able AstDeclList.Nil))))
+      (clone-generate-decls pools decls able (ast-decl-list-new)))))
 
 (define (clone-augment-decls-with-roots-and-pools
   [pools : AstNodePoolContext]
@@ -1518,7 +1502,7 @@
         pools
         decls
         (clone-name-list-to-set expanded (clone-name-set-empty))
-        AstDeclList.Nil))))
+        (ast-decl-list-new)))))
 
 (define (clone-augment-decls [decls : AstDeclList]) : AstDeclList
   (let

@@ -7516,31 +7516,32 @@
 (define (parse-ast-decl-vec-push-list!
   [out : (&mut out ParseAstDeclVec)]
   [decls : AstDeclList]) : unit
-  (match decls
-    [(AstDeclList.Nil) unit]
-    [(AstDeclList.Cons head rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) unit]
+    [(AstDeclListStep.Cons head rest)
       (begin
         (parse-ast-decl-vec-push out head)
         (parse-ast-decl-vec-push-list! out (box-get rest)))]))
 
-(define (parse-ast-decl-vec-to-list-from
+(define (parse-ast-decl-vec-copy-to-list
   [items : (& items ParseAstDeclVec)]
   [index : i64]
-  [tail : AstDeclList]) : AstDeclList
-  (if (< index 0)
-    tail
-    (parse-ast-decl-vec-to-list-from
-      items
-      (- index 1)
-      (ast-decl-cons
-        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))
-        tail))))
+  [out : (&mut out AstDeclList)]) : unit
+  (if (>= index (parse-ast-decl-vec-len items))
+    unit
+    (begin
+      (ast-decl-list-push
+        out
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+      (parse-ast-decl-vec-copy-to-list items (+ index 1) out))))
 
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
-  (parse-ast-decl-vec-to-list-from
-    items
-    (- (parse-ast-decl-vec-len items) 1)
-    AstDeclList.Nil))
+  (let
+    [out : AstDeclList
+      (ast-decl-list-with-capacity (parse-ast-decl-vec-len items))]
+    (begin
+      (parse-ast-decl-vec-copy-to-list items 0 (&mut out))
+      out)))
 
 (define (parse-ast-program-forms-into-vec
   [dispatch : sym_i64_env.SymI64Env]
@@ -7866,17 +7867,17 @@
       result)))
 
 (define (ast-decl-list-count [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons _ rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons _ rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (+ 1 (ast-decl-list-count rest)))]))
 
 (define (ast-decl-list-tag-sum [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (+ (ast-decl-tag decl) (ast-decl-list-tag-sum rest)))]))
@@ -7904,22 +7905,22 @@
   (ast-resource-binding-list-len (& bindings)))
 
 (define (ast-first-import-ok? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Cons
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
         (AstDecl.Import (AstImportSpec.Spec (AstImportKind.Path) path _ _ _))
         _)
       (string.eq path "stdlib/test.tl")]
     [_ false]))
 
 (define (ast-first-include-str-ok? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Cons (AstDecl.IncludeStr name path) _)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.IncludeStr name path) _)
       (and (string.eq name "payload") (string.eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool
-  (match decls
-    [(AstDeclList.Cons (AstDecl.IncludeBin name path) _)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons (AstDecl.IncludeBin name path) _)
       (and (string.eq name "payload") (string.eq path "data.bin"))]
     [_ false]))
 
@@ -7928,12 +7929,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.Module name) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Module name) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil) (= name (intern "std.io"))]
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil) (= name (intern "std.io"))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
@@ -7943,22 +7944,24 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.ModuleBody name body-box) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.ModuleBody name body-box) rest)
             (let
               [rest : AstDeclList (box-get rest)]
               [body : AstDeclList (box-get body-box)]
-              (match rest
-                [(AstDeclList.Nil)
-                  (match body
-                    [(AstDeclList.Cons (AstDecl.Def value-name _ _) body-rest)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
+                  (match (ast-decl-list-step body)
+                    [(AstDeclListStep.Cons
+                        (AstDecl.Def value-name _ _)
+                        body-rest)
                       (let
                         [body-rest : AstDeclList (box-get body-rest)]
                         (and
                           (= name (intern "local.helper"))
                           (= value-name (intern "value"))
-                          (match body-rest
-                            [(AstDeclList.Nil) true]
+                          (match (ast-decl-list-step body-rest)
+                            [(AstDeclListStep.Nil) true]
                             [_ false])))]
                     [_ false])]
                 [_ false]))]
@@ -7976,8 +7979,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
               (AstDecl.Import
                 (AstImportSpec.Spec
                   (AstImportKind.Path)
@@ -7988,8 +7991,8 @@
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (string.eq path "stdlib/tl")
                     (string.eq module-name "std.io")
@@ -8003,8 +8006,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
               (AstDecl.Import
                 (AstImportSpec.Spec
                   (AstImportKind.Module)
@@ -8015,8 +8018,8 @@
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (string.eq module-path "stdlib.core_macros")
                     (string.eq module-name "stdlib.core_macros")
@@ -8030,8 +8033,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
               (AstDecl.Import
                 (AstImportSpec.Spec
                   (AstImportKind.Module)
@@ -8042,8 +8045,8 @@
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (string.eq module-path "stdlib.core_macros")
                     (string.eq module-name "stdlib.core_macros")
@@ -8062,8 +8065,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
               (AstDecl.Import
                 (AstImportSpec.Spec
                   (AstImportKind.MacroDecls call-expr _)
@@ -8074,8 +8077,8 @@
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (string.eq path "")
                     (compiler-parse-macro-call-node-ok? call-expr "point-vec" 1))]
@@ -8088,8 +8091,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
               (AstDecl.Import
                 (AstImportSpec.Spec
                   (AstImportKind.Macro call-expr _)
@@ -8100,8 +8103,8 @@
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (string.eq path "")
                     (string.eq alias "svec")
@@ -8216,12 +8219,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefDispatch name variants) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefDispatch name variants) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "dot"))
                     (compiler-parse-defdispatch-variants-ok? variants))]
@@ -8234,12 +8237,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefDispatch name variants) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefDispatch name variants) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "id"))
                     (= (struct-get (& variants) len) 1)
@@ -8280,9 +8283,9 @@
   (ast-expr-tag (ast-expr-unspan expr)))
 
 (define (ast-main-body-tag [decls : AstDeclList]) : i64
-  (match decls
-    [(AstDeclList.Nil) 0]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl
@@ -8299,8 +8302,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (match body
@@ -8406,8 +8409,10 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn name _ (AstType.F64) body-box _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefFn name _ (AstType.F64) body-box _)
+              _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
@@ -8529,8 +8534,10 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn name _ (AstType.I64) body-box _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefFn name _ (AstType.I64) body-box _)
+              _)
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
@@ -8640,12 +8647,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.Extern name _ _ ty) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Extern name _ _ ty) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "raw-map"))
                     (match ty
@@ -8696,12 +8703,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.Extern name _ metadata ty) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Extern name _ metadata ty) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "local-call"))
                     (string.eq
@@ -8823,20 +8830,20 @@
 (define (compiler-parse-extern-function-head-varargs-ok?) : bool
   (match (parse-ast-source (compiler-parse-extern-function-head-varargs-source))
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (match (box-get decls-box)
-        [(AstDeclList.Cons first rest0)
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons first rest0)
           (let
             [rest0 : AstDeclList (box-get rest0)]
-            (match rest0
-              [(AstDeclList.Cons second rest1)
+            (match (ast-decl-list-step rest0)
+              [(AstDeclListStep.Cons second rest1)
                 (let
                   [rest1 : AstDeclList (box-get rest1)]
-                  (match rest1
-                    [(AstDeclList.Cons third rest2)
+                  (match (ast-decl-list-step rest1)
+                    [(AstDeclListStep.Cons third rest2)
                       (let
                         [rest2 : AstDeclList (box-get rest2)]
-                        (match rest2
-                          [(AstDeclList.Nil)
+                        (match (ast-decl-list-step rest2)
+                          [(AstDeclListStep.Nil)
                             (and
                               (compiler-parse-extern-head-typed-varargs-decl-ok?
                                 first)
@@ -8854,12 +8861,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn name params ret _ export) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn name params ret _ export) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "_write"))
                     (= (compiler-parse-param-list-count params) 3)
@@ -8879,17 +8886,21 @@
 (define (compiler-parse-init-ok?) : bool
   (match (parse-ast-source "(define (main) : i64 (init : i64))")
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (match (box-get decls-box)
-        [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) AstDeclList.Nil)
-          (match (ast-expr-unspan (ast-node-get body-box))
-            [(AstExpr.Init ty)
-              (match ty
-                [(AstMaybeType.Some inner)
-                  (match inner
-                    [(AstType.I64) true]
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) done-box)
+          (let
+            [done : AstDeclList (box-get done-box)]
+            (and
+              (ast-decl-list-empty? (& done))
+              (match (ast-expr-unspan (ast-node-get body-box))
+                [(AstExpr.Init ty)
+                  (match ty
+                    [(AstMaybeType.Some inner)
+                      (match inner
+                        [(AstType.I64) true]
+                        [_ false])]
                     [_ false])]
-                [_ false])]
-            [_ false])]
+                [_ false])))]
         [_ false])]
     [(ResultAstProgram.Err _) false]))
 
@@ -8897,16 +8908,20 @@
   (match (parse-ast-source
     "(define (init) : i64 7) (define (main) : i64 (init))")
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (match (box-get decls-box)
-        [(AstDeclList.Cons _ rest)
-          (match (box-get rest)
-            [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) AstDeclList.Nil)
-              (match (ast-expr-unspan (ast-node-get body-box))
-                [(AstExpr.Init ty)
-                  (match ty
-                    [(AstMaybeType.No) true]
-                    [_ false])]
-                [_ false])]
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons _ rest)
+          (match (ast-decl-list-step (box-get rest))
+            [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) done-box)
+              (let
+                [done : AstDeclList (box-get done-box)]
+                (and
+                  (ast-decl-list-empty? (& done))
+                  (match (ast-expr-unspan (ast-node-get body-box))
+                    [(AstExpr.Init ty)
+                      (match ty
+                        [(AstMaybeType.No) true]
+                        [_ false])]
+                    [_ false])))]
             [_ false])]
         [_ false])]
     [(ResultAstProgram.Err _) false]))
@@ -8933,12 +8948,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ params _ _ _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ params _ _ _) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= (ast-param-list-len (& params)) 3)
                     (match (ast-param-list-get
@@ -9019,13 +9034,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Begin exprs)
                       (if (>= (struct-get (& exprs) len) 2)
@@ -9080,13 +9095,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Call _ args)
                       (if (= (struct-get (& args) len) 1)
@@ -9110,13 +9125,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Return inner-box)
                       (let
@@ -9181,13 +9196,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.Call func-box args)
                       (let
@@ -9362,24 +9377,24 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons first rest1-box)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons first rest1-box)
             (let
               [rest1 : AstDeclList (box-get rest1-box)]
-              (match rest1
-                [(AstDeclList.Cons second rest2-box)
+              (match (ast-decl-list-step rest1)
+                [(AstDeclListStep.Cons second rest2-box)
                   (let
                     [rest2 : AstDeclList (box-get rest2-box)]
-                    (match rest2
-                      [(AstDeclList.Cons third rest3-box)
+                    (match (ast-decl-list-step rest2)
+                      [(AstDeclListStep.Cons third rest3-box)
                         (let
                           [rest3 : AstDeclList (box-get rest3-box)]
-                          (match rest3
-                            [(AstDeclList.Cons fourth rest4-box)
+                          (match (ast-decl-list-step rest3)
+                            [(AstDeclListStep.Cons fourth rest4-box)
                               (let
                                 [rest4 : AstDeclList (box-get rest4-box)]
-                                (match rest4
-                                  [(AstDeclList.Nil)
+                                (match (ast-decl-list-step rest4)
+                                  [(AstDeclListStep.Nil)
                                     (and
                                       (= (ast-decl-list-count decls) 4)
                                       (= (ast-decl-list-tag-sum decls) 32)
@@ -9407,8 +9422,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons first tail)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons first tail)
             (let
               [tail : AstDeclList (box-get tail)]
               (match first
@@ -9417,26 +9432,34 @@
                     [first-inner : AstDecl (box-get first-inner-box)]
                     (match first-inner
                       [(AstDecl.DefFn name _ (AstType.I64) _ _)
-                        (match tail
-                          [(AstDeclList.Cons second AstDeclList.Nil)
-                            (match second
-                              [(AstDecl.Unsafe second-inner-box)
-                                (let
-                                  [second-inner : AstDecl
-                                    (box-get second-inner-box)]
-                                  (match second-inner
-                                    [(AstDecl.Extern extern-name _ _ extern-ty)
-                                      (and
-                                        (= name (intern "danger"))
-                                        (= extern-name (intern "raw-call"))
-                                        (match extern-ty
-                                          [(AstType.Func _ ret)
-                                            (match (ty-node-get ret)
-                                              [(AstType.I64) true]
-                                              [_ false])]
-                                          [_ false]))]
-                                    [_ false]))]
-                              [_ false])]
+                        (match (ast-decl-list-step tail)
+                          [(AstDeclListStep.Cons second done-box)
+                            (let
+                              [done : AstDeclList (box-get done-box)]
+                              (and
+                                (ast-decl-list-empty? (& done))
+                                (match second
+                                  [(AstDecl.Unsafe second-inner-box)
+                                    (let
+                                      [second-inner : AstDecl
+                                        (box-get second-inner-box)]
+                                      (match second-inner
+                                        [(AstDecl.Extern
+                                            extern-name
+                                            _
+                                            _
+                                            extern-ty)
+                                          (and
+                                            (= name (intern "danger"))
+                                            (= extern-name (intern "raw-call"))
+                                            (match extern-ty
+                                              [(AstType.Func _ ret)
+                                                (match (ty-node-get ret)
+                                                  [(AstType.I64) true]
+                                                  [_ false])]
+                                              [_ false]))]
+                                        [_ false]))]
+                                  [_ false])))]
                           [_ false])]
                       [_ false]))]
                 [_ false]))]
@@ -9519,12 +9542,14 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefStruct name repr cleanup fields) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
+              (AstDecl.DefStruct name repr cleanup fields)
+              rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "Resource"))
                     (match repr
@@ -9550,12 +9575,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefEnum name cleanup variants) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefEnum name cleanup variants) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "Resource"))
                     (match cleanup
@@ -9578,13 +9603,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.ComptimeDecl _ template-box) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.ComptimeDecl _ template-box) rest)
             (let
               [template : AstDecl (box-get template-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match template
                     [(AstDecl.DefStruct _ repr cleanup fields)
                       (and
@@ -9615,12 +9640,12 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefStruct name repr _ fields) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefStruct name repr _ fields) rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "Stat"))
                     (ast-struct-repr-c? repr)
@@ -9637,13 +9662,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.ComptimeDecl _ template-box) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.ComptimeDecl _ template-box) rest)
             (let
               [template : AstDecl (box-get template-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match template
                     [(AstDecl.DefStruct _ repr _ fields)
                       (and
@@ -9664,13 +9689,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.Test name body-box span) tail)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Test name body-box span) tail)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [tail : AstDeclList (box-get tail)]
-              (match tail
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step tail)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "parser-basic"))
                     (= (ast-source-span-start-line span) 1)
@@ -10457,13 +10482,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.WithEscape scratch-box body-exprs)
                       (let
@@ -10503,13 +10528,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.WithScratch body-exprs)
                       (= (struct-get (& body-exprs) len) 2)]
@@ -10532,13 +10557,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.InArena arena-box body-exprs)
                       (let
@@ -10579,13 +10604,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (match (ast-expr-unspan body)
                     [(AstExpr.WithResource wr-box)
                       (match (box-get wr-box)
@@ -10660,13 +10685,13 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ _ ret-ty body-box _) rest)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ ret-ty body-box _) rest)
             (let
               [body : AstExpr (ast-node-get body-box)]
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (match ret-ty
                       [(AstType.Var name) (string.eq (intern-str name) "Expr")]
@@ -10759,8 +10784,8 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons (AstDecl.DefFn _ params _ _ _) _)
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.DefFn _ params _ _ _) _)
             (ast-param-list-has-comptime? params)]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
@@ -10781,14 +10806,14 @@
     [(ResultAstProgram.Ok (AstProgram.Program decls-box))
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match decls
-          [(AstDeclList.Cons
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons
               (AstDecl.DefMacro name params (AstType.Bool) _)
               rest)
             (let
               [rest : AstDeclList (box-get rest)]
-              (match rest
-                [(AstDeclList.Nil)
+              (match (ast-decl-list-step rest)
+                [(AstDeclListStep.Nil)
                   (and
                     (= name (intern "all"))
                     (= (ast-macro-param-list-len (& params)) 2)

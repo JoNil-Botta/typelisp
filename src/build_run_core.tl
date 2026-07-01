@@ -460,9 +460,9 @@
 (define (source-tool-link-inputs-from-decls
   [decls : AstDeclList]
   [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
-  (match decls
-    [(AstDeclList.Nil) inputs]
-    [(AstDeclList.Cons decl rest)
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) inputs]
+    [(AstDeclListStep.Cons decl rest)
       (let
         [rest : AstDeclList (box-get rest)]
         (match decl

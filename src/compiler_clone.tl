@@ -19,7 +19,7 @@
 (cfg test (import stdlib.test))
 
 (defstruct CloneNameSet
-  (map clone_name_map.Map))
+  (map hashmap.StringI64Map))
 
 (defenum CloneNameList
   (Nil)
@@ -100,32 +100,28 @@
     variant-name))
 
 (define (clone-name-set-empty) : CloneNameSet
-  (CloneNameSet (clone_name_map.with-capacity 8)))
+  (CloneNameSet (hashmap.string-i64-map-with-capacity 8)))
 
 ;; The fixpoint rebuilds its accepted set on each step over the whole-program
 ;; type universe; seeding that accumulator at the input set's capacity (it can
 ;; only shrink relative to the input) avoids the rehash+fill-empty grow chain a
 ;; capacity-8 seed would walk on every step.
 (define (clone-name-set-with-capacity [capacity : i64]) : CloneNameSet
-  (CloneNameSet (clone_name_map.with-capacity capacity)))
+  (CloneNameSet (hashmap.string-i64-map-with-capacity capacity)))
 
-(define (clone-name-set-map [names : CloneNameSet]) : clone_name_map.Map
+(define (clone-name-set-map [names : CloneNameSet]) : hashmap.StringI64Map
   (struct-get names map))
 
 (define (clone-name-set-map-ref [names : (& names CloneNameSet)]) : (&
     names
-    clone_name_map.Map)
+    hashmap.StringI64Map)
   (& (struct-get names map)))
 
 (define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
-  (let
-    [next : CloneNameSet names]
-    (begin
-      (clone_name_map.insert (&mut (struct-get next map)) name 1)
-      next)))
+  (CloneNameSet (hashmap.string-i64-map-put (clone-name-set-map names) name 1)))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
-  (clone_name_map.contains-borrowed?
+  (hashmap.string-i64-map-contains-borrowed-ref?
     (clone-name-set-map-ref (& names))
     (& name)))
 
@@ -172,10 +168,15 @@
       found)))
 
 (define (clone-name-set-len [names : CloneNameSet]) : i64
-  (clone_name_map.len (clone-name-set-map-ref (& names))))
+  (hashmap.string-i64-map-len (clone-name-set-map names)))
 
 (define (clone-name-set-capacity [names : CloneNameSet]) : i64
-  (clone_name_map.capacity (clone-name-set-map-ref (& names))))
+  (hashmap.string-i64-map-capacity (clone-name-set-map names)))
+
+(define (clone-name-map-generated-import-smoke) : bool
+  (let
+    [map : clone_name_map.Map (clone_name_map.with-capacity 4)]
+    (clone_name_map.is-empty? (& map))))
 
 (define (clone-name-set-smoke-insert-count [names : CloneNameSet] [count : i64]) : CloneNameSet
   (if (<= count 0)
@@ -198,7 +199,8 @@
       (clone-name-set-contains? one "Alpha")
       (= (clone-name-set-len dupe) 1)
       (= (clone-name-set-len grown) 11)
-      (> (clone-name-set-capacity grown) seed-capacity))))
+      (> (clone-name-set-capacity grown) seed-capacity)
+      (clone-name-map-generated-import-smoke))))
 
 (define (clone-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-node-pool-context-type-get pools id))
